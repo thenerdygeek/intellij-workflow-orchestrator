@@ -3,7 +3,6 @@ package com.workflow.orchestrator.pullrequest.service
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.bitbucket.BitbucketMergeStatus
 import com.workflow.orchestrator.core.bitbucket.BitbucketMergeStrategy
@@ -14,7 +13,6 @@ import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
-import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
 
@@ -36,7 +34,6 @@ class PrActionService(private val project: Project) {
         }
     }
 
-    private val credentialStore = CredentialStore()
     @Volatile private var cachedClient: BitbucketBranchClient? = null
     @Volatile private var cachedBaseUrl: String? = null
 
@@ -45,10 +42,7 @@ class PrActionService(private val project: Project) {
         if (url.isBlank()) return null
         if (url != cachedBaseUrl || cachedClient == null) {
             cachedBaseUrl = url
-            cachedClient = BitbucketBranchClient(
-                baseUrl = url,
-                tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
-            )
+            cachedClient = BitbucketBranchClient.fromConfiguredSettings()
         }
         return cachedClient
     }

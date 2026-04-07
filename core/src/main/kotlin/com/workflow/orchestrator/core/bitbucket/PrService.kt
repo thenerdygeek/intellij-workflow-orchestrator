@@ -1,15 +1,12 @@
 package com.workflow.orchestrator.core.bitbucket
 
 import com.intellij.openapi.components.Service
-import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.workflow.orchestrator.core.psi.PsiContextEnricher
 import com.workflow.orchestrator.core.settings.PluginSettings
 
 object PrTitleRenderer {
-    private val log = Logger.getInstance(PrTitleRenderer::class.java)
-
     fun render(format: String, ticketId: String, summary: String, branch: String, maxLength: Int): String {
         val rendered = format
             .replace("{ticketId}", ticketId)
@@ -44,8 +41,6 @@ class PrService {
     }
 
     constructor()
-
-    private val log = Logger.getInstance(PrService::class.java)
 
     companion object {
         private const val DEFAULT_MAX_TITLE_LENGTH = 120

@@ -14,7 +14,6 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Credentials
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
 import javax.swing.Icon
@@ -56,7 +55,7 @@ class TagValidationBeforeRunProvider : BeforeRunTaskProvider<TagValidationBefore
 
         // Only validate configs that provide docker tags via the shared interface
         if (configuration !is DockerTagsProvider) return true
-        val buildVariables = (configuration as DockerTagsProvider).getDockerTagsJson()
+        val buildVariables = configuration.getDockerTagsJson()
 
         val dockerTagsJson = TagValidationLogic.extractDockerTagsJson(buildVariables)
         if (dockerTagsJson.isBlank()) return true

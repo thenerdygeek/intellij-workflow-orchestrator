@@ -10,6 +10,7 @@ import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.builtin.PathValidator
+import com.workflow.orchestrator.agent.tools.integration.ToolValidation
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.serialization.json.JsonObject
@@ -252,8 +253,8 @@ All actions accept optional session_id (defaults to active session).
     // ── run_to_cursor ───────────────────────────────────────────────────────
 
     private suspend fun executeRunToCursor(params: JsonObject, project: Project): ToolResult {
-        val filePath = params["file"]?.jsonPrimitive?.content ?: return missingParam("file")
-        val line = params["line"]?.jsonPrimitive?.intOrNull ?: return missingParam("line")
+        val filePath = params["file"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("file")
+        val line = params["line"]?.jsonPrimitive?.intOrNull ?: return ToolValidation.missingParam("line")
         val sessionId = params["session_id"]?.jsonPrimitive?.content
 
         if (line < 1) {
@@ -328,12 +329,4 @@ All actions accept optional session_id (defaults to active session).
         }
     }
 
-    // ── Private helpers ─────────────────────────────────────────────────────
-
-    private fun missingParam(name: String): ToolResult = ToolResult(
-        content = "Error: '$name' parameter required",
-        summary = "Error: missing $name",
-        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-        isError = true
-    )
 }

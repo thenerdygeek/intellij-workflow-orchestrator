@@ -57,7 +57,7 @@ class HealthCheckServiceTest {
     fun `skips when health check disabled`() = runTest {
         val (project, _) = mockSettingsAndBus(enabled = false)
         val service = HealthCheckService(project)
-        val context = HealthCheckContext(project, emptyList(), "msg", "main")
+        val context = HealthCheckContext(project, emptyList(), "main")
         val result = service.runChecks(context)
         assertTrue(result.skipped)
         assertTrue(result.passed)
@@ -67,7 +67,7 @@ class HealthCheckServiceTest {
     fun `skips when branch matches skip pattern`() = runTest {
         val (project, _) = mockSettingsAndBus(skipPattern = "hotfix/.*")
         val service = HealthCheckService(project)
-        val context = HealthCheckContext(project, emptyList(), "msg", "hotfix/urgent-fix")
+        val context = HealthCheckContext(project, emptyList(), "hotfix/urgent-fix")
         val result = service.runChecks(context)
         assertTrue(result.skipped)
     }
@@ -82,7 +82,7 @@ class HealthCheckServiceTest {
             sonarEnabled = false
         )
         val service = HealthCheckService(project)
-        val context = HealthCheckContext(project, emptyList(), "msg", "feature/my-branch")
+        val context = HealthCheckContext(project, emptyList(), "feature/my-branch")
         val result = service.runChecks(context)
         assertFalse(result.skipped)
         assertTrue(result.passed) // No checks enabled, so all pass
@@ -97,7 +97,7 @@ class HealthCheckServiceTest {
             sonarEnabled = true
         )
         val service = HealthCheckService(project)
-        val context = HealthCheckContext(project, emptyList(), "msg", "main")
+        val context = HealthCheckContext(project, emptyList(), "main")
         val result = service.runChecks(context)
 
         // Only sonar-gate should run (it returns passed with "no cached data" by default)
@@ -114,7 +114,7 @@ class HealthCheckServiceTest {
             sonarEnabled = true
         )
         val service = HealthCheckService(project)
-        val context = HealthCheckContext(project, emptyList(), "msg", "main")
+        val context = HealthCheckContext(project, emptyList(), "main")
         service.runChecks(context)
 
         coVerify {

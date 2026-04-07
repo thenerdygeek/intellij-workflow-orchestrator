@@ -30,16 +30,16 @@ class CompletionMacroService {
     )
 
     private fun getReviewTransitionLabel(): String {
-        val proj = project ?: return "Transition to Review"
-        val settings = PluginSettings.getInstance(proj)
-        val mappingsJson = settings.state.workflowMappings ?: return "Transition to Review"
-        if (mappingsJson.isBlank()) return "Transition to Review"
+        val proj = project ?: return DEFAULT_REVIEW_LABEL
+        val mappingsJson = PluginSettings.getInstance(proj).state.workflowMappings
+        if (mappingsJson.isNullOrBlank()) return DEFAULT_REVIEW_LABEL
         return try {
             val mappings = json.decodeFromString<List<WorkflowMappingEntry>>(mappingsJson)
-            val match = mappings.find { it.intent == "SUBMIT_FOR_REVIEW" }
-            if (match != null) "Transition to ${match.transitionName}" else "Transition to Review"
+            mappings.find { it.intent == "SUBMIT_FOR_REVIEW" }
+                ?.let { "Transition to ${it.transitionName}" }
+                ?: DEFAULT_REVIEW_LABEL
         } catch (_: Exception) {
-            "Transition to Review"
+            DEFAULT_REVIEW_LABEL
         }
     }
 
@@ -52,22 +52,15 @@ class CompletionMacroService {
         val source: String
     )
 
-    fun filterEnabledSteps(steps: List<MacroStep>): List<MacroStep> {
-        return steps.filter { it.enabled }
-    }
+    fun filterEnabledSteps(steps: List<MacroStep>): List<MacroStep> = steps.filter { it.enabled }
 
-    fun markStepStatus(steps: List<MacroStep>, stepId: String, status: MacroStepStatus): List<MacroStep> {
-        return steps.map { step ->
-            if (step.id == stepId) step.copy(status = status) else step
-        }
-    }
+    fun markStepStatus(steps: List<MacroStep>, stepId: String, status: MacroStepStatus): List<MacroStep> =
+        steps.map { step -> if (step.id == stepId) step.copy(status = status) else step }
 
-    fun markRemainingSkipped(steps: List<MacroStep>): List<MacroStep> {
-        return steps.map { step ->
-            if (step.status == MacroStepStatus.PENDING) step.copy(status = MacroStepStatus.SKIPPED)
-            else step
+    fun markRemainingSkipped(steps: List<MacroStep>): List<MacroStep> =
+        steps.map { step ->
+            if (step.status == MacroStepStatus.PENDING) step.copy(status = MacroStepStatus.SKIPPED) else step
         }
-    }
 
     /**
      * Execute macro steps sequentially. Each action returns true (success) or false (failure).
@@ -114,8 +107,9 @@ class CompletionMacroService {
     }
 
     companion object {
-        fun getInstance(project: Project): CompletionMacroService {
-            return project.getService(CompletionMacroService::class.java)
-        }
+        private const val DEFAULT_REVIEW_LABEL = "Transition to Review"
+
+        fun getInstance(project: Project): CompletionMacroService =
+            project.getService(CompletionMacroService::class.java)
     }
 }

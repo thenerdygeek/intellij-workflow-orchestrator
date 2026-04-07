@@ -10,7 +10,6 @@ import javax.swing.JComponent
  */
 class HistoryTabProvider : WorkflowTabProvider {
 
-    override val tabId: String = "history"
     override val tabTitle: String = "History"
     override val order: Int = 6
 

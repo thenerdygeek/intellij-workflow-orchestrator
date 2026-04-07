@@ -121,7 +121,6 @@ class SearchCodeTool : AgentTool {
     private fun formatContentMode(matches: List<SearchMatch>, pattern: String, maxResults: Int): ToolResult {
         val hasContext = matches.any { it.contextBefore.isNotEmpty() || it.contextAfter.isNotEmpty() }
         val sb = StringBuilder()
-        var prevPath: String? = null
 
         for ((index, match) in matches.withIndex()) {
             if (hasContext) {
@@ -140,7 +139,6 @@ class SearchCodeTool : AgentTool {
             } else {
                 sb.appendLine("${match.relativePath}:${match.lineNumber}: ${match.lineContent}")
             }
-            prevPath = match.relativePath
         }
 
         val content = sb.toString().trimEnd()

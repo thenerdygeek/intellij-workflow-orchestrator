@@ -51,8 +51,6 @@ class CurrentWorkSection(
         toolTipText = "Change target branch"
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val statusBadge = JBLabel("")
-    private val emptyPanel = JPanel(BorderLayout())
 
     companion object {
         private val ACTIVE_BG = JBColor(0xE8F5E9, 0x2A3B2A)
@@ -143,9 +141,7 @@ class CurrentWorkSection(
         scope.launch {
             val resolver = RepoContextResolver.getInstance(project)
             val targetRepo = com.intellij.openapi.application.ReadAction.compute<git4idea.repo.GitRepository?, Throwable> {
-                val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
-                val repos = GitRepositoryManager.getInstance(project).repositories
-                repos.find { it.root.path == repoConfig?.localVcsRootPath } ?: repos.firstOrNull()
+                resolver.resolveCurrentEditorRepoOrPrimary()
             }
             val currentBranch = targetRepo?.currentBranchName ?: ""
             val targetBranch = targetRepo?.let {

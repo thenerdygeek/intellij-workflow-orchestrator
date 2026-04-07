@@ -49,14 +49,4 @@ sealed class ApiResult<out T> {
         is Success -> onSuccess(data)
         is Error -> onError(this)
     }
-
-    inline fun onSuccess(action: (T) -> Unit): ApiResult<T> {
-        if (this is Success) action(data)
-        return this
-    }
-
-    inline fun onError(action: (Error) -> Unit): ApiResult<T> {
-        if (this is Error) action(this)
-        return this
-    }
 }

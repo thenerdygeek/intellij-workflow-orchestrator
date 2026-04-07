@@ -111,39 +111,39 @@ description optional: for approval dialog on rerun_failed_jobs/trigger_stage.
             }
 
             "get_project_plans" -> {
-                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return missingParam("project_key")
+                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("project_key")
                 ToolValidation.validateNotBlank(projectKey, "project_key")?.let { return it }
                 service.getProjectPlans(projectKey).toAgentToolResult()
             }
 
             "search_plans" -> {
-                val query = params["query"]?.jsonPrimitive?.content ?: return missingParam("query")
+                val query = params["query"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("query")
                 ToolValidation.validateNotBlank(query, "query")?.let { return it }
                 service.searchPlans(query).toAgentToolResult()
             }
 
             "get_plan_branches" -> {
-                val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return missingParam("plan_key")
+                val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("plan_key")
                 ToolValidation.validateBambooPlanKey(planKey)?.let { return it }
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
                 service.getPlanBranches(planKey, repoName = repoName).toAgentToolResult()
             }
 
             "get_build_variables" -> {
-                val resultKey = params["result_key"]?.jsonPrimitive?.content ?: return missingParam("result_key")
+                val resultKey = params["result_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("result_key")
                 ToolValidation.validateBambooBuildKey(resultKey)?.let { return it }
                 service.getBuildVariables(resultKey).toAgentToolResult()
             }
 
             "get_plan_variables" -> {
-                val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return missingParam("plan_key")
+                val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("plan_key")
                 ToolValidation.validateBambooPlanKey(planKey)?.let { return it }
                 service.getPlanVariables(planKey).toAgentToolResult()
             }
 
             "rerun_failed_jobs" -> {
-                val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return missingParam("plan_key")
-                val buildNumberStr = params["build_number"]?.jsonPrimitive?.content ?: return missingParam("build_number")
+                val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("plan_key")
+                val buildNumberStr = params["build_number"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("build_number")
                 val buildNumber = buildNumberStr.toIntOrNull()
                     ?: return ToolResult(
                         "Error: 'build_number' must be an integer, got '$buildNumberStr'",
@@ -156,7 +156,7 @@ description optional: for approval dialog on rerun_failed_jobs/trigger_stage.
             }
 
             "trigger_stage" -> {
-                val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return missingParam("plan_key")
+                val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("plan_key")
                 val stage = params["stage"]?.jsonPrimitive?.content
                 ToolValidation.validateBambooPlanKey(planKey)?.let { return it }
                 val variablesStr = params["variables"]?.jsonPrimitive?.content
@@ -184,11 +184,4 @@ description optional: for approval dialog on rerun_failed_jobs/trigger_stage.
             )
         }
     }
-
-    private fun missingParam(name: String): ToolResult = ToolResult(
-        content = "Error: '$name' parameter required",
-        summary = "Error: missing $name",
-        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-        isError = true
-    )
 }

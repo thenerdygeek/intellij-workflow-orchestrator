@@ -46,14 +46,6 @@ class IssueDetailCache {
         cache[issueKey] = existing.copy(attachments = attachments, fetchedAt = Instant.now())
     }
 
-    fun invalidate(issueKey: String) {
-        cache.remove(issueKey)
-    }
-
-    fun clear() {
-        cache.clear()
-    }
-
     private fun evictIfNeeded() {
         if (cache.size > MAX_SIZE) {
             // Remove oldest entries

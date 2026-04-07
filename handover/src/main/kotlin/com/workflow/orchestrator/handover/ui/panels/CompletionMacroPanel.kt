@@ -9,7 +9,6 @@ import com.workflow.orchestrator.handover.model.MacroStep
 import com.workflow.orchestrator.handover.model.MacroStepStatus
 import java.awt.BorderLayout
 import java.awt.CardLayout
-import javax.swing.BorderFactory
 import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JCheckBox
@@ -35,23 +34,6 @@ class CompletionMacroPanel(private val project: Project) : JPanel(BorderLayout()
     init {
         border = JBUI.Borders.empty(8)
 
-        val headerLabel = JBLabel("COMPLETE TASK MACRO").apply {
-            font = font.deriveFont(java.awt.Font.BOLD, JBUI.scale(12).toFloat())
-            foreground = StatusColors.SECONDARY_TEXT
-            border = JBUI.Borders.emptyLeft(8)
-        }
-        val header = JPanel(BorderLayout()).apply {
-            add(headerLabel, BorderLayout.CENTER)
-            border = BorderFactory.createCompoundBorder(
-                JBUI.Borders.customLine(StatusColors.BORDER, 0, 0, 1, 0),
-                BorderFactory.createCompoundBorder(
-                    JBUI.Borders.customLine(StatusColors.LINK, 0, 2, 0, 0),
-                    JBUI.Borders.empty(6, 0, 6, 0)
-                )
-            )
-            isOpaque = false
-        }
-
         val southPanel = JPanel(BorderLayout()).apply {
             add(runButton, BorderLayout.WEST)
             add(statusLabel, BorderLayout.EAST)
@@ -61,7 +43,7 @@ class CompletionMacroPanel(private val project: Project) : JPanel(BorderLayout()
         cardPanel.add(emptyLabel, "empty")
         cardLayout.show(cardPanel, "empty")
 
-        add(header, BorderLayout.NORTH)
+        add(handoverPanelHeader("COMPLETE TASK MACRO"), BorderLayout.NORTH)
         add(cardPanel, BorderLayout.CENTER)
         add(southPanel, BorderLayout.SOUTH)
     }
@@ -78,23 +60,13 @@ class CompletionMacroPanel(private val project: Project) : JPanel(BorderLayout()
         }
         cardLayout.show(cardPanel, "steps")
 
-        for (step in steps) {
+        steps.forEach { step ->
             val checkbox = JCheckBox(step.label, step.enabled)
             checkboxes[step.id] = checkbox
 
-            val icon = when (step.status) {
-                MacroStepStatus.PENDING -> null
-                MacroStepStatus.RUNNING -> AllIcons.Process.Step_1
-                MacroStepStatus.SUCCESS -> AllIcons.General.InspectionsOK
-                MacroStepStatus.FAILED -> AllIcons.General.Error
-                MacroStepStatus.SKIPPED -> AllIcons.RunConfigurations.TestNotRan
-            }
-
             val row = JPanel(BorderLayout()).apply {
                 add(checkbox, BorderLayout.WEST)
-                if (icon != null) {
-                    add(JBLabel(icon), BorderLayout.EAST)
-                }
+                stepStatusIcon(step.status)?.let { add(JBLabel(it), BorderLayout.EAST) }
             }
             stepsPanel.add(row)
         }
@@ -103,7 +75,14 @@ class CompletionMacroPanel(private val project: Project) : JPanel(BorderLayout()
         stepsPanel.repaint()
     }
 
-    fun getEnabledStepIds(): List<String> {
-        return checkboxes.filter { it.value.isSelected }.keys.toList()
+    fun getEnabledStepIds(): List<String> =
+        checkboxes.filterValues { it.isSelected }.keys.toList()
+
+    private fun stepStatusIcon(status: MacroStepStatus) = when (status) {
+        MacroStepStatus.PENDING -> null
+        MacroStepStatus.RUNNING -> AllIcons.Process.Step_1
+        MacroStepStatus.SUCCESS -> AllIcons.General.InspectionsOK
+        MacroStepStatus.FAILED -> AllIcons.General.Error
+        MacroStepStatus.SKIPPED -> AllIcons.RunConfigurations.TestNotRan
     }
 }

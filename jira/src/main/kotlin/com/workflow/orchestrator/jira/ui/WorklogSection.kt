@@ -8,7 +8,6 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.core.services.JiraService
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.jira.service.JiraServiceImpl
 import kotlinx.coroutines.CoroutineScope
@@ -197,8 +196,6 @@ class WorklogSection(private val project: Project) : JPanel(BorderLayout()) {
             val fontStyle = if (isHeader) Font.BOLD else Font.PLAIN
             val fontSize = if (isHeader) JBUI.scale(10).toFloat() else JBUI.scale(11).toFloat()
             val color = if (isHeader) StatusColors.SECONDARY_TEXT else JBColor.foreground()
-            val col2Color = if (isHeader) StatusColors.SECONDARY_TEXT else StatusColors.SECONDARY_TEXT
-            val col3Color = if (isHeader) StatusColors.SECONDARY_TEXT else StatusColors.SECONDARY_TEXT
 
             add(JBLabel(if (isHeader) col1.uppercase() else col1).apply {
                 font = font.deriveFont(fontStyle, fontSize)
@@ -206,11 +203,11 @@ class WorklogSection(private val project: Project) : JPanel(BorderLayout()) {
             })
             add(JBLabel(if (isHeader) col2.uppercase() else col2).apply {
                 font = font.deriveFont(fontStyle, fontSize)
-                foreground = col2Color
+                foreground = StatusColors.SECONDARY_TEXT
             })
             add(JBLabel(if (isHeader) col3.uppercase() else col3).apply {
                 font = font.deriveFont(if (isHeader) Font.BOLD else Font.ITALIC, fontSize)
-                foreground = col3Color
+                foreground = StatusColors.SECONDARY_TEXT
             })
         }
     }

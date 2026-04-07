@@ -1,12 +1,16 @@
 package com.workflow.orchestrator.handover.ui
 
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.EDT
 import com.intellij.openapi.project.Project
 import com.intellij.ui.JBSplitter
-import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.handover.service.HandoverStateService
-import com.workflow.orchestrator.handover.ui.panels.*
-import com.intellij.openapi.application.EDT
+import com.workflow.orchestrator.handover.ui.panels.CompletionMacroPanel
+import com.workflow.orchestrator.handover.ui.panels.CopyrightPanel
+import com.workflow.orchestrator.handover.ui.panels.JiraCommentPanel
+import com.workflow.orchestrator.handover.ui.panels.PreReviewPanel
+import com.workflow.orchestrator.handover.ui.panels.QaClipboardPanel
+import com.workflow.orchestrator.handover.ui.panels.TimeLogPanel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob

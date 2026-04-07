@@ -15,12 +15,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 @Serializable
-data class QuestionSet(
-    val title: String? = null,
-    val questions: List<Question>
-)
-
-@Serializable
 data class Question(
     val id: String,
     val question: String,
@@ -33,20 +27,6 @@ data class QuestionOption(
     val id: String,
     val label: String,
     val description: String = ""
-)
-
-@Serializable
-data class QuestionAnswer(
-    val questionId: String,
-    val selectedOptions: List<String>,
-    val chatMessage: String? = null
-)
-
-@Serializable
-data class QuestionResult(
-    val answers: Map<String, QuestionAnswer> = emptyMap(),
-    val skipped: List<String> = emptyList(),
-    val cancelled: Boolean = false
 )
 
 /**

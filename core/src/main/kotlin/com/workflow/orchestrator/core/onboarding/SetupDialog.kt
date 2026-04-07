@@ -40,18 +40,17 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
         }
         separator()
 
-        connectionSection("Jira", ServiceType.JIRA) { settings.connections.jiraUrl = it }
-        connectionSection("Bamboo", ServiceType.BAMBOO) { settings.connections.bambooUrl = it }
-        connectionSection("Bitbucket", ServiceType.BITBUCKET) { settings.connections.bitbucketUrl = it }
-        connectionSection("SonarQube", ServiceType.SONARQUBE) { settings.connections.sonarUrl = it }
-        connectionSection("Sourcegraph", ServiceType.SOURCEGRAPH) { settings.connections.sourcegraphUrl = it }
+        connectionSection("Jira", ServiceType.JIRA)
+        connectionSection("Bamboo", ServiceType.BAMBOO)
+        connectionSection("Bitbucket", ServiceType.BITBUCKET)
+        connectionSection("SonarQube", ServiceType.SONARQUBE)
+        connectionSection("Sourcegraph", ServiceType.SOURCEGRAPH)
         nexusConnectionSection()
     }
 
     private fun Panel.connectionSection(
         title: String,
-        serviceType: ServiceType,
-        urlSaver: (String) -> Unit
+        serviceType: ServiceType
     ) {
         val urlField = JTextField(20)
         val tokenField = JPasswordField(20)

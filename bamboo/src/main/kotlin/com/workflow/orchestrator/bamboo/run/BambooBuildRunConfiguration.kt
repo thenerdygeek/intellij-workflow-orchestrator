@@ -50,22 +50,20 @@ class BambooBuildRunConfiguration(
     override fun getState(executor: Executor, environment: ExecutionEnvironment): RunProfileState =
         BambooBuildRunState(environment, this)
 
-    fun getPlanKey(): String {
-        val configured = options.planKey.orEmpty()
-        if (configured.isNotBlank()) return configured
-        return PluginSettings.getInstance(project).state.bambooPlanKey.orEmpty()
-    }
-
-    fun getBranch(): String {
-        val configured = options.branch.orEmpty()
-        if (configured.isNotBlank()) return configured
-        return try {
-            GitRepositoryManager.getInstance(project).repositories
-                .firstOrNull()?.currentBranchName ?: ""
-        } catch (_: Exception) {
-            ""
+    fun getPlanKey(): String =
+        options.planKey.orEmpty().ifBlank {
+            PluginSettings.getInstance(project).state.bambooPlanKey.orEmpty()
         }
-    }
+
+    fun getBranch(): String =
+        options.branch.orEmpty().ifBlank {
+            try {
+                GitRepositoryManager.getInstance(project).repositories
+                    .firstOrNull()?.currentBranchName ?: ""
+            } catch (_: Exception) {
+                ""
+            }
+        }
 
     fun getBuildVariables(): Map<String, String> {
         val raw = options.buildVariables.orEmpty().trim()

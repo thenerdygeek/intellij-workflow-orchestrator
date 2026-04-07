@@ -1,7 +1,6 @@
 package com.workflow.orchestrator.agent.settings
 
 import com.intellij.icons.AllIcons
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.SearchableConfigurable
@@ -65,7 +64,6 @@ class AgentSettingsConfigurable(
     // ---- Database profiles state ----
     private val dbSettings = DatabaseSettings.getInstance(project)
     private val dbProfileModel = DefaultListModel<DatabaseProfile>()
-    private var dbProfileList: JBList<DatabaseProfile>? = null
 
     override fun getId(): String = "workflow.orchestrator.agent"
     override fun getDisplayName(): String = "Agent"
@@ -202,7 +200,6 @@ class AgentSettingsConfigurable(
             }
             preferredSize = Dimension(600, 120)
         }
-        dbProfileList = list
 
         return ToolbarDecorator.createDecorator(list)
             .setAddAction {
@@ -350,20 +347,12 @@ class AgentSettingsConfigurable(
             selectModelInDropdown(combo, comboModel, currentId)
         } else {
             // User hasn't manually selected — auto-upgrade to best available
-            val bestModel = findBestModel(models)
+            val bestModel = ModelCache.pickBest(models)
             if (bestModel != null) {
                 selectModelInDropdown(combo, comboModel, bestModel.id)
                 sourcegraphChatModel = bestModel.id
             }
         }
-    }
-
-    /**
-     * Find the best available model: prefer latest Opus thinking > Opus > latest Sonnet.
-     * Delegates to ModelCache.pickBest for consistent model selection across the plugin.
-     */
-    private fun findBestModel(models: List<ModelInfo>): ModelInfo? {
-        return ModelCache.pickBest(models)
     }
 
     private fun selectModelInDropdown(combo: JComboBox<ModelItem>, comboModel: DefaultComboBoxModel<ModelItem>, modelId: String) {
@@ -501,14 +490,11 @@ class AgentSettingsConfigurable(
             }
 
             // Text: formatted model name + provider
-            val displayName = model.displayName
-            val provider = model.displayProvider
-            label.text = if (value.isManualEntry && !value.isSeparator) {
-                "<html><b>${model.displayName}</b> <span style='color:gray;font-size:11px;'>${model.displayProvider}</span></html>"
-            } else if (value.isSeparator) {
-                "<html><b style='color:gray;font-size:11px;'>${value.separatorText}</b></html>"
-            } else {
-                "<html><b>$displayName</b> <span style='color:gray;font-size:11px;'>$provider</span></html>"
+            label.text = when {
+                value.isSeparator ->
+                    "<html><b style='color:gray;font-size:11px;'>${value.separatorText}</b></html>"
+                else ->
+                    "<html><b>${model.displayName}</b> <span style='color:gray;font-size:11px;'>${model.displayProvider}</span></html>"
             }
 
             // Selection styling

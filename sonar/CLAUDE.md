@@ -21,10 +21,9 @@ Key endpoints:
 
 ## Architecture
 
-- `SonarApiClient` — HTTP client, auto-detects project key from Maven `sonar.projectKey` property
-- `SonarServiceImpl` — implements `SonarService` (in :core), delegates to `SonarDataService`
+- `SonarApiClient` — HTTP client for SonarQube REST API
+- `SonarServiceImpl` — implements `SonarService` (in :core), delegates to `SonarDataService`, provides `searchProjects` for the manual project key picker
 - `SonarDataService` — caches state via `StateFlow<SonarState>`, refresh debouncing (500ms)
-- `ProjectKeyDetectionService` — auto-detect + manual project key picker
 - `IssueMapper` / `CoverageMapper` — transform DTOs to domain models
 
 ## UI

@@ -15,14 +15,12 @@ import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.bamboo.service.MarkdownToHtml
 import com.workflow.orchestrator.bamboo.service.PrDescriptionGenerator
-import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.bitbucket.BitbucketUser
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.intellij.openapi.application.EDT
 import com.workflow.orchestrator.core.workflow.JiraTicketProvider
@@ -288,12 +286,7 @@ class CreatePrDialog(
         userSearchJob?.cancel()
         userSearchJob = scope.launch {
             delay(300) // debounce
-            val bitbucketUrl = settings.connections.bitbucketUrl.orEmpty().trimEnd('/')
-            if (bitbucketUrl.isBlank()) return@launch
-            val client = BitbucketBranchClient(
-                baseUrl = bitbucketUrl,
-                tokenProvider = { CredentialStore().getToken(ServiceType.BITBUCKET) }
-            )
+            val client = BitbucketBranchClient.fromConfiguredSettings() ?: return@launch
             val result = client.getUsers(text)
             invokeLater {
                 if (result is ApiResult.Success) {
@@ -401,14 +394,16 @@ class CreatePrDialog(
         resultLabel.text = "Creating PR..."
         resultLabel.foreground = JBColor.foreground()
 
-        val bitbucketUrl = settings.connections.bitbucketUrl.orEmpty().trimEnd('/')
         val projectKey = settings.state.bitbucketProjectKey.orEmpty()
         val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
 
-        val client = BitbucketBranchClient(
-            baseUrl = bitbucketUrl,
-            tokenProvider = { CredentialStore().getToken(ServiceType.BITBUCKET) }
-        )
+        val client = BitbucketBranchClient.fromConfiguredSettings()
+        if (client == null) {
+            resultLabel.text = "Bitbucket not configured"
+            resultLabel.foreground = JBColor.RED
+            isOKActionEnabled = true
+            return
+        }
 
         val reviewers = selectedReviewers.map {
             com.workflow.orchestrator.core.bitbucket.BitbucketReviewer(

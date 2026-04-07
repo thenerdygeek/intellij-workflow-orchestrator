@@ -23,13 +23,10 @@ object BambooTestResultConverter {
      * @param buildLog Optional build log text — used to extract error messages for failed tests
      */
     fun toTeamCityMessages(testResults: BambooTestResultsDto, buildLog: String? = null): List<String> {
-        val messages = mutableListOf<String>()
-
-        val allTests = mutableListOf<BambooTestCaseDto>()
-        allTests.addAll(testResults.failedTests.testResult)
-        allTests.addAll(testResults.successfulTests.testResult)
-
+        val allTests = testResults.failedTests.testResult + testResults.successfulTests.testResult
         if (allTests.isEmpty()) return emptyList()
+
+        val messages = mutableListOf<String>()
 
         // Pre-parse error details from build log for failed tests
         val errorDetails = if (buildLog != null) {
@@ -171,7 +168,7 @@ object BambooTestResultConverter {
                 val errorBlock = match.groupValues[2].trim()
                 val lines = errorBlock.lines()
                 val message = lines.firstOrNull()?.trim() ?: "Test failed"
-                val stackTrace = lines.drop(0).joinToString("\n")
+                val stackTrace = errorBlock
                 return TestErrorInfo(
                     message = message,
                     stackTrace = stackTrace,

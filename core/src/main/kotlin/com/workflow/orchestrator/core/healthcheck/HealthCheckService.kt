@@ -22,14 +22,14 @@ class HealthCheckService(private val project: Project) : Disposable {
         sonarGateCheck
     )
 
-    data class ChangeClassification(
+    private data class ChangeClassification(
         val hasProductionCode: Boolean,
         val hasTestCode: Boolean,
         val hasResources: Boolean,
         val hasBuildConfig: Boolean
     )
 
-    fun classifyChanges(changedFiles: List<com.intellij.openapi.vfs.VirtualFile>): ChangeClassification {
+    private fun classifyChanges(changedFiles: List<com.intellij.openapi.vfs.VirtualFile>): ChangeClassification {
         return com.intellij.openapi.application.ReadAction.compute<ChangeClassification, RuntimeException> {
             val fileIndex = com.intellij.openapi.roots.ProjectFileIndex.getInstance(project)
             var hasProd = false; var hasTest = false; var hasRes = false; var hasBuild = false
@@ -150,7 +150,7 @@ class HealthCheckService(private val project: Project) : Disposable {
 
     companion object {
         /** Hard cap on total health check wall time (all checks combined). */
-        const val TOTAL_TIMEOUT_CAP_MS = 120_000L
+        private const val TOTAL_TIMEOUT_CAP_MS = 120_000L
 
         fun getInstance(project: Project): HealthCheckService =
             project.getService(HealthCheckService::class.java)

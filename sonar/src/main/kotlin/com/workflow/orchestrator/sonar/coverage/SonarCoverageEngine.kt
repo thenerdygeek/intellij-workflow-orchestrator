@@ -3,7 +3,6 @@ package com.workflow.orchestrator.sonar.coverage
 import com.intellij.coverage.*
 import com.intellij.execution.configurations.RunConfigurationBase
 import com.intellij.execution.configurations.coverage.CoverageEnabledConfiguration
-import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiFile
 
@@ -18,8 +17,6 @@ import com.intellij.psi.PsiFile
  * import from the Quality tab.
  */
 class SonarCoverageEngine : CoverageEngine() {
-
-    private val log = Logger.getInstance(SonarCoverageEngine::class.java)
 
     // ------------------------------------------------------------------ //
     //  Identity
@@ -113,10 +110,5 @@ class SonarCoverageEngine : CoverageEngine() {
         val vFile = sourceFile.virtualFile ?: return emptySet()
         // Return the path that SonarCoverageSuite uses as class-data key.
         return setOf(vFile.path)
-    }
-
-    companion object {
-        fun getInstance(): SonarCoverageEngine =
-            EP_NAME.findExtensionOrFail(SonarCoverageEngine::class.java)
     }
 }

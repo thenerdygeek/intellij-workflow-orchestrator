@@ -18,8 +18,7 @@ class CopyrightCheck : HealthCheck {
         return HealthCheck.CheckResult(
             passed = result.passed,
             message = if (result.passed) "All files have copyright headers"
-                     else "${result.violations.size} file(s) missing copyright header",
-            details = result.violations.map { "${it.file.name}: ${it.reason}" }
+                     else "${result.violations.size} file(s) missing copyright header"
         )
     }
 }

@@ -32,8 +32,5 @@ data class ToolResult<T>(
     companion object {
         fun <T> success(data: T, summary: String, hint: String? = null): ToolResult<T> =
             ToolResult(data = data, summary = summary, hint = hint)
-
-        fun error(summary: String, hint: String? = null): ToolResult<Unit> =
-            ToolResult(data = Unit, summary = summary, isError = true, hint = hint)
     }
 }

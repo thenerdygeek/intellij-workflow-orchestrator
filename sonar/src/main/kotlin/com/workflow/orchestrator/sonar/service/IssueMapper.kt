@@ -33,9 +33,6 @@ object IssueMapper {
         }
     }
 
-    fun groupByFile(issues: List<MappedIssue>): Map<String, List<MappedIssue>> =
-        issues.groupBy { it.filePath }
-
     private fun parseType(type: String): IssueType = when (type) {
         "BUG" -> IssueType.BUG
         "VULNERABILITY" -> IssueType.VULNERABILITY

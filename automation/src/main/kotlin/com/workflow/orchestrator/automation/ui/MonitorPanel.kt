@@ -4,9 +4,8 @@ import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.intellij.ui.ColorUtil
-import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
+import com.workflow.orchestrator.core.ui.ClipboardUtil
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
@@ -14,10 +13,8 @@ import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.polling.SmartPoller
 import kotlinx.coroutines.*
-import kotlinx.coroutines.cancel
 import java.awt.BorderLayout
 import java.awt.Color
-import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
 import java.awt.Graphics
@@ -128,18 +125,20 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
 
     private fun hasActiveRuns(): Boolean {
         for (i in 0 until runListModel.size()) {
-            val status = runListModel.getElementAt(i).status
-            if (status != "Successful" && status != "Failed") return true
+            if (runListModel.getElementAt(i).status !in TERMINAL_STATUSES) return true
         }
         return false
     }
+
+    private fun formatDuration(durationSeconds: Long): String =
+        if (durationSeconds > 0) "${durationSeconds / 60}m ${durationSeconds % 60}s" else ""
 
     private suspend fun pollAllRuns() {
         val bambooService = project.getService(BambooService::class.java) ?: return
 
         for (i in 0 until runListModel.size()) {
             val entry = runListModel.getElementAt(i)
-            if (entry.status == "Successful" || entry.status == "Failed") continue
+            if (entry.status in TERMINAL_STATUSES) continue
 
             try {
                 val result = bambooService.getBuild(entry.resultKey)
@@ -149,7 +148,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
                         StageInfo(
                             name = stage.name,
                             state = stage.state,
-                            duration = if (stage.durationSeconds > 0) "${stage.durationSeconds / 60}m ${stage.durationSeconds % 60}s" else ""
+                            duration = formatDuration(stage.durationSeconds)
                         )
                     }
 
@@ -158,12 +157,12 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
                         buildNumber = buildData.buildNumber,
                         status = buildData.state,
                         stages = stages,
-                        duration = "${buildData.durationSeconds / 60}m ${buildData.durationSeconds % 60}s",
+                        duration = formatDuration(buildData.durationSeconds),
                         bambooUrl = "$bambooUrl/browse/${entry.resultKey}"
                     )
 
                     // Fetch test results if build is finished
-                    if (buildData.state == "Successful" || buildData.state == "Failed") {
+                    if (buildData.state in TERMINAL_STATUSES) {
                         val testResult = bambooService.getTestResults(entry.resultKey)
                         if (!testResult.isError) {
                             val testData = testResult.data
@@ -361,14 +360,17 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
                 entry.failedTestNames.forEach { appendLine("  - $it") }
             }
         }
-        java.awt.Toolkit.getDefaultToolkit().systemClipboard
-            .setContents(java.awt.datatransfer.StringSelection(text), null)
+        ClipboardUtil.copyToClipboard(text)
         log.info("[Automation:Monitor] Results copied to clipboard")
     }
 
     override fun dispose() {
         poller?.stop()
         scope.cancel()
+    }
+
+    private companion object {
+        private val TERMINAL_STATUSES = setOf("Successful", "Failed")
     }
 
     private class RunListCellRenderer : ListCellRenderer<RunEntry> {

@@ -5,6 +5,7 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.model.ErrorType
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.model.bamboo.BuildResultData
 import com.workflow.orchestrator.core.model.bamboo.BuildStageData
@@ -19,6 +20,7 @@ import com.workflow.orchestrator.core.model.bamboo.TestResultsData
 import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.ui.TimeFormatter
 import com.workflow.orchestrator.bamboo.api.BambooApiClient
 import com.workflow.orchestrator.bamboo.api.dto.BambooResultDto
 
@@ -38,28 +40,18 @@ class BambooServiceImpl(private val project: Project) : BambooService {
     @Volatile private var cachedClient: BambooApiClient? = null
     @Volatile private var cachedBaseUrl: String? = null
 
-    private fun resolvePlanKey(planKey: String?, repoName: String?): String? {
-        if (!planKey.isNullOrBlank()) return planKey
-        if (repoName != null) {
-            val repo = settings.getRepoByName(repoName)
-            if (repo != null && !repo.bambooPlanKey.isNullOrBlank()) return repo.bambooPlanKey
-        }
-        val primary = settings.getPrimaryRepo()
-        if (primary != null && !primary.bambooPlanKey.isNullOrBlank()) return primary.bambooPlanKey
-        return settings.state.bambooPlanKey?.takeIf { it.isNotBlank() }
-    }
-
     private val client: BambooApiClient?
         get() {
             val url = settings.connections.bambooUrl.orEmpty().trimEnd('/')
             if (url.isBlank()) return null
             if (url != cachedBaseUrl || cachedClient == null) {
                 cachedBaseUrl = url
+                val timeouts = com.workflow.orchestrator.core.http.HttpClientFactory.timeoutsFromSettings(project)
                 cachedClient = BambooApiClient(
                     baseUrl = url,
                     tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) },
-                    connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
-                    readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
+                    connectTimeoutSeconds = timeouts.connectSeconds,
+                    readTimeoutSeconds = timeouts.readSeconds
                 )
             }
             return cachedClient
@@ -120,11 +112,11 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                     summary = "Error triggering build for $planKey: ${result.message}",
                     isError = true,
                     hint = when (result.type) {
-                        com.workflow.orchestrator.core.model.ErrorType.AUTH_FAILED ->
+                        ErrorType.AUTH_FAILED ->
                             "Check your Bamboo token in Settings."
-                        com.workflow.orchestrator.core.model.ErrorType.FORBIDDEN ->
+                        ErrorType.FORBIDDEN ->
                             "You may not have permission to trigger this plan."
-                        com.workflow.orchestrator.core.model.ErrorType.NOT_FOUND ->
+                        ErrorType.NOT_FOUND ->
                             "Verify the plan key is correct (e.g., PROJ-PLAN)."
                         else -> "Check Bamboo connection in Settings."
                     }
@@ -243,11 +235,11 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                     summary = "Error rerunning failed jobs for $planKey #$buildNumber: ${result.message}",
                     isError = true,
                     hint = when (result.type) {
-                        com.workflow.orchestrator.core.model.ErrorType.AUTH_FAILED ->
+                        ErrorType.AUTH_FAILED ->
                             "Check your Bamboo token in Settings."
-                        com.workflow.orchestrator.core.model.ErrorType.FORBIDDEN ->
+                        ErrorType.FORBIDDEN ->
                             "You may not have permission to restart this build."
-                        com.workflow.orchestrator.core.model.ErrorType.NOT_FOUND ->
+                        ErrorType.NOT_FOUND ->
                             "Build not found. Verify plan key and build number."
                         else -> "Check Bamboo connection in Settings."
                     }
@@ -308,9 +300,9 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                     summary = "Error triggering stage for $planKey: ${result.message}",
                     isError = true,
                     hint = when (result.type) {
-                        com.workflow.orchestrator.core.model.ErrorType.AUTH_FAILED ->
+                        ErrorType.AUTH_FAILED ->
                             "Check your Bamboo token in Settings."
-                        com.workflow.orchestrator.core.model.ErrorType.FORBIDDEN ->
+                        ErrorType.FORBIDDEN ->
                             "You may not have permission to trigger this plan."
                         else -> "Check Bamboo connection in Settings."
                     }
@@ -339,11 +331,11 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                     summary = "Error stopping build $resultKey: ${result.message}",
                     isError = true,
                     hint = when (result.type) {
-                        com.workflow.orchestrator.core.model.ErrorType.AUTH_FAILED ->
+                        ErrorType.AUTH_FAILED ->
                             "Check your Bamboo token in Settings."
-                        com.workflow.orchestrator.core.model.ErrorType.FORBIDDEN ->
+                        ErrorType.FORBIDDEN ->
                             "You may not have permission to stop this build."
-                        com.workflow.orchestrator.core.model.ErrorType.NOT_FOUND ->
+                        ErrorType.NOT_FOUND ->
                             "Build not found. It may have already finished."
                         else -> "Check Bamboo connection in Settings."
                     }
@@ -372,11 +364,11 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                     summary = "Error cancelling build $resultKey: ${result.message}",
                     isError = true,
                     hint = when (result.type) {
-                        com.workflow.orchestrator.core.model.ErrorType.AUTH_FAILED ->
+                        ErrorType.AUTH_FAILED ->
                             "Check your Bamboo token in Settings."
-                        com.workflow.orchestrator.core.model.ErrorType.FORBIDDEN ->
+                        ErrorType.FORBIDDEN ->
                             "You may not have permission to cancel this build."
-                        com.workflow.orchestrator.core.model.ErrorType.NOT_FOUND ->
+                        ErrorType.NOT_FOUND ->
                             "Build not found. It may have already started or finished."
                         else -> "Check Bamboo connection in Settings."
                     }
@@ -594,7 +586,7 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                     summary = "Error fetching plans for project $projectKey: ${result.message}",
                     isError = true,
                     hint = when (result.type) {
-                        com.workflow.orchestrator.core.model.ErrorType.NOT_FOUND ->
+                        ErrorType.NOT_FOUND ->
                             "Verify the project key is correct."
                         else -> "Check Bamboo connection in Settings."
                     }
@@ -668,7 +660,7 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                     summary = "Error fetching branches for $planKey: ${result.message}",
                     isError = true,
                     hint = when (result.type) {
-                        com.workflow.orchestrator.core.model.ErrorType.NOT_FOUND ->
+                        ErrorType.NOT_FOUND ->
                             "Verify the plan key is correct."
                         else -> "Check Bamboo connection in Settings."
                     }
@@ -803,7 +795,7 @@ class BambooServiceImpl(private val project: Project) : BambooService {
             stages = stages
         )
 
-        val durationFormatted = formatDuration(data.durationSeconds)
+        val durationFormatted = TimeFormatter.formatDurationSeconds(data.durationSeconds)
         val stagesSummary = if (stages.isNotEmpty()) {
             stages.joinToString(" | ") { "${it.name}: ${it.state}" }
         } else ""
@@ -825,9 +817,9 @@ class BambooServiceImpl(private val project: Project) : BambooService {
             summary = "Error fetching build $key: ${error.message}",
             isError = true,
             hint = when (error.type) {
-                com.workflow.orchestrator.core.model.ErrorType.AUTH_FAILED ->
+                ErrorType.AUTH_FAILED ->
                     "Check your Bamboo token in Settings."
-                com.workflow.orchestrator.core.model.ErrorType.NOT_FOUND ->
+                ErrorType.NOT_FOUND ->
                     "Verify the plan/build key is correct."
                 else -> "Check Bamboo connection in Settings."
             }
@@ -842,26 +834,6 @@ class BambooServiceImpl(private val project: Project) : BambooService {
             hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
         )
     }
-
-    private fun formatDuration(seconds: Long): String {
-        if (seconds <= 0) return "0s"
-        val hours = seconds / 3600
-        val mins = (seconds % 3600) / 60
-        val secs = seconds % 60
-        return buildString {
-            if (hours > 0) append("${hours}h ")
-            if (mins > 0) append("${mins}m ")
-            if (secs > 0 || isEmpty()) append("${secs}s")
-        }.trim()
-    }
-
-    /**
-     * Provides the underlying [BambooApiClient] for modules that need direct API access
-     * (e.g., automation services). Returns null if Bamboo is not configured.
-     *
-     * Prefer using the service-level methods (getLatestBuild, triggerBuild, etc.) when possible.
-     */
-    fun getApiClient(): BambooApiClient? = client
 
     companion object {
         @JvmStatic

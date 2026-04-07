@@ -155,23 +155,23 @@ description optional: for approval dialog on write actions.
         return when (action) {
             "get_ticket" -> {
                 val key = params["key"]?.jsonPrimitive?.content
-                    ?: return missingParam("key")
+                    ?: return ToolValidation.missingParam("key")
                 ToolValidation.validateJiraKey(key)?.let { return it }
                 service.getTicket(key).toAgentToolResult()
             }
 
             "get_transitions" -> {
                 val key = params["key"]?.jsonPrimitive?.content
-                    ?: return missingParam("key")
+                    ?: return ToolValidation.missingParam("key")
                 ToolValidation.validateJiraKey(key)?.let { return it }
                 service.getTransitions(key).toAgentToolResult()
             }
 
             "transition" -> {
                 val key = params["key"]?.jsonPrimitive?.content
-                    ?: return missingParam("key")
+                    ?: return ToolValidation.missingParam("key")
                 val transitionId = params["transition_id"]?.jsonPrimitive?.content
-                    ?: return missingParam("transition_id")
+                    ?: return ToolValidation.missingParam("transition_id")
                 val comment = params["comment"]?.jsonPrimitive?.content
                 ToolValidation.validateJiraKey(key)?.let { return it }
 
@@ -220,9 +220,9 @@ description optional: for approval dialog on write actions.
 
             "comment" -> {
                 val key = params["key"]?.jsonPrimitive?.content
-                    ?: return missingParam("key")
+                    ?: return ToolValidation.missingParam("key")
                 val body = params["body"]?.jsonPrimitive?.content
-                    ?: return missingParam("body")
+                    ?: return ToolValidation.missingParam("body")
                 ToolValidation.validateJiraKey(key)?.let { return it }
                 ToolValidation.validateNotBlank(body, "body")?.let { return it }
 
@@ -241,16 +241,16 @@ description optional: for approval dialog on write actions.
 
             "get_comments" -> {
                 val key = params["key"]?.jsonPrimitive?.content
-                    ?: return missingParam("key")
+                    ?: return ToolValidation.missingParam("key")
                 ToolValidation.validateJiraKey(key)?.let { return it }
                 service.getComments(key).toAgentToolResult()
             }
 
             "log_work" -> {
                 val key = params["key"]?.jsonPrimitive?.content
-                    ?: return missingParam("key")
+                    ?: return ToolValidation.missingParam("key")
                 val timeSpent = params["time_spent"]?.jsonPrimitive?.content
-                    ?: return missingParam("time_spent")
+                    ?: return ToolValidation.missingParam("time_spent")
                 val comment = params["comment"]?.jsonPrimitive?.content
                 ToolValidation.validateJiraKey(key)?.let { return it }
                 ToolValidation.validateTimeSpent(timeSpent)?.let { return it }
@@ -272,14 +272,14 @@ description optional: for approval dialog on write actions.
                 val issueKey = params["key"]?.jsonPrimitive?.content
                     ?: params["issue_key"]?.jsonPrimitive?.content
                     ?: params["issue_id"]?.jsonPrimitive?.content
-                    ?: return missingParam("key")
+                    ?: return ToolValidation.missingParam("key")
                 ToolValidation.validateJiraKey(issueKey)?.let { return it }
                 service.getWorklogs(issueKey).toAgentToolResult()
             }
 
             "get_sprints" -> {
                 val boardIdStr = params["board_id"]?.jsonPrimitive?.content
-                    ?: return missingParam("board_id")
+                    ?: return ToolValidation.missingParam("board_id")
                 val boardId = boardIdStr.toIntOrNull()
                     ?: return ToolResult("Error: 'board_id' must be an integer, got '$boardIdStr'", "Error: invalid board_id", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
                 service.getAvailableSprints(boardId).toAgentToolResult()
@@ -289,7 +289,7 @@ description optional: for approval dialog on write actions.
                 val issueKey = params["key"]?.jsonPrimitive?.content
                     ?: params["issue_key"]?.jsonPrimitive?.content
                     ?: params["issue_id"]?.jsonPrimitive?.content
-                    ?: return missingParam("key")
+                    ?: return ToolValidation.missingParam("key")
                 ToolValidation.validateNotBlank(issueKey, "key")?.let { return it }
                 service.getLinkedPullRequests(issueKey).toAgentToolResult()
             }
@@ -302,7 +302,7 @@ description optional: for approval dialog on write actions.
 
             "get_sprint_issues" -> {
                 val sprintIdStr = params["sprint_id"]?.jsonPrimitive?.content
-                    ?: return missingParam("sprint_id")
+                    ?: return ToolValidation.missingParam("sprint_id")
                 val sprintId = sprintIdStr.toIntOrNull()
                     ?: return ToolResult("Error: 'sprint_id' must be an integer, got '$sprintIdStr'", "Error: invalid sprint_id", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
                 service.getSprintIssues(sprintId).toAgentToolResult()
@@ -310,7 +310,7 @@ description optional: for approval dialog on write actions.
 
             "get_board_issues" -> {
                 val boardIdStr = params["board_id"]?.jsonPrimitive?.content
-                    ?: return missingParam("board_id")
+                    ?: return ToolValidation.missingParam("board_id")
                 val boardId = boardIdStr.toIntOrNull()
                     ?: return ToolResult("Error: 'board_id' must be an integer, got '$boardIdStr'", "Error: invalid board_id", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
                 service.getBoardIssues(boardId).toAgentToolResult()
@@ -318,7 +318,7 @@ description optional: for approval dialog on write actions.
 
             "search_issues" -> {
                 val text = params["text"]?.jsonPrimitive?.content
-                    ?: return missingParam("text")
+                    ?: return ToolValidation.missingParam("text")
                 val maxResults = params["max_results"]?.jsonPrimitive?.content?.toIntOrNull() ?: 20
                 val currentUserOnly = params["current_user_only"]?.jsonPrimitive?.content?.lowercase() != "false"
                 ToolValidation.validateNotBlank(text, "text")?.let { return it }
@@ -329,7 +329,7 @@ description optional: for approval dialog on write actions.
                 val issueKey = params["key"]?.jsonPrimitive?.content
                     ?: params["issue_key"]?.jsonPrimitive?.content
                     ?: params["issue_id"]?.jsonPrimitive?.content
-                    ?: return missingParam("key")
+                    ?: return ToolValidation.missingParam("key")
                 ToolValidation.validateNotBlank(issueKey, "key")?.let { return it }
                 service.getDevStatusBranches(issueKey).toAgentToolResult()
             }
@@ -338,11 +338,11 @@ description optional: for approval dialog on write actions.
                 val issueKey = params["key"]?.jsonPrimitive?.content
                     ?: params["issue_key"]?.jsonPrimitive?.content
                     ?: params["issue_id"]?.jsonPrimitive?.content
-                    ?: return missingParam("key")
+                    ?: return ToolValidation.missingParam("key")
                 val branchName = params["branch_name"]?.jsonPrimitive?.content
-                    ?: return missingParam("branch_name")
+                    ?: return ToolValidation.missingParam("branch_name")
                 val sourceBranch = params["source_branch"]?.jsonPrimitive?.content
-                    ?: return missingParam("source_branch")
+                    ?: return ToolValidation.missingParam("source_branch")
                 ToolValidation.validateJiraKey(issueKey)?.let { return it }
                 ToolValidation.validateNotBlank(branchName, "branch_name")?.let { return it }
                 ToolValidation.validateNotBlank(sourceBranch, "source_branch")?.let { return it }
@@ -351,7 +351,7 @@ description optional: for approval dialog on write actions.
 
             "search_tickets" -> {
                 val jql = params["jql"]?.jsonPrimitive?.content
-                    ?: return missingParam("jql")
+                    ?: return ToolValidation.missingParam("jql")
                 val maxResults = params["max_results"]?.jsonPrimitive?.content?.toIntOrNull() ?: 8
                 ToolValidation.validateNotBlank(jql, "jql")?.let { return it }
                 service.searchTickets(jql, maxResults).toAgentToolResult()
@@ -359,9 +359,9 @@ description optional: for approval dialog on write actions.
 
             "download_attachment" -> {
                 val key = params["key"]?.jsonPrimitive?.content
-                    ?: return missingParam("key")
+                    ?: return ToolValidation.missingParam("key")
                 val attachmentId = params["attachment_id"]?.jsonPrimitive?.content
-                    ?: return missingParam("attachment_id")
+                    ?: return ToolValidation.missingParam("attachment_id")
                 ToolValidation.validateJiraKey(key)?.let { return it }
                 service.downloadAttachment(key, attachmentId).toAgentToolResult()
             }
@@ -374,11 +374,4 @@ description optional: for approval dialog on write actions.
             )
         }
     }
-
-    private fun missingParam(name: String): ToolResult = ToolResult(
-        content = "Error: '$name' parameter required",
-        summary = "Error: missing $name",
-        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-        isError = true
-    )
 }

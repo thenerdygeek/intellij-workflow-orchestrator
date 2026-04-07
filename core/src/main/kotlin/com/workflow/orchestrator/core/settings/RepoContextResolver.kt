@@ -45,19 +45,37 @@ class RepoContextResolver(private val project: Project) {
         return getPrimary()
     }
 
-    /**
-     * Gets the currently selected editor file. Must be called on EDT or inside a read action.
-     * Use this to get the file first, then call [resolveFromFile] on a background thread.
-     */
-    fun getCurrentEditorFile(): VirtualFile? =
-        com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project).selectedEditor?.file
-
     fun resolveFromCurrentEditor(): RepoConfig? {
-        val file = getCurrentEditorFile() ?: return getPrimary()
+        val file = com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project).selectedEditor?.file
+            ?: return getPrimary()
         return resolveFromFile(file)
     }
 
-    fun getAllRepos(): List<RepoConfig> = PluginSettings.getInstance(project).getRepos()
+    /**
+     * Convenience resolver used by panels/services that need a concrete [GitRepository]:
+     * resolve the repo config from the current editor (or primary), then look up the
+     * matching [GitRepository] by local VCS root path. Falls back to the first known
+     * repository if no match is found.
+     *
+     * This centralises the "editor repo or primary, materialised as GitRepository"
+     * pattern that was previously duplicated in bamboo / sonar / pullrequest / jira.
+     */
+    fun resolveCurrentEditorRepoOrPrimary(): GitRepository? {
+        val repoConfig = resolveFromCurrentEditor() ?: getPrimary()
+        return materialize(repoConfig)
+    }
+
+    /**
+     * Same as [resolveCurrentEditorRepoOrPrimary] but skips the "current editor" lookup —
+     * returns the configured primary repository materialised as [GitRepository], falling
+     * back to the first known repository if no match is found.
+     */
+    fun resolvePrimaryGitRepo(): GitRepository? = materialize(getPrimary())
+
+    private fun materialize(repoConfig: RepoConfig?): GitRepository? {
+        val repos = GitRepositoryManager.getInstance(project).repositories
+        return repos.find { it.root.path == repoConfig?.localVcsRootPath } ?: repos.firstOrNull()
+    }
 
     fun getPrimary(): RepoConfig? = PluginSettings.getInstance(project).getPrimaryRepo()
 

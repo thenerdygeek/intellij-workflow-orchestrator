@@ -21,7 +21,6 @@ import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.settings.ToolPreferences
 import com.workflow.orchestrator.agent.observability.HaikuPhraseGenerator
 import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
-import com.workflow.orchestrator.agent.tools.ArtifactPayload
 import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
 import com.workflow.orchestrator.agent.ui.plan.AgentPlanEditor
 import com.workflow.orchestrator.agent.ui.plan.AgentPlanVirtualFile
@@ -148,9 +147,12 @@ class AgentController(
     //  Callback wiring — dashboard actions → controller
     // ═══════════════════════════════════════════════════
 
-    private fun wireCallbacks() {
-        // Primary action callbacks from the JCEF toolbar/input bar
-        dashboard.setCefActionCallbacks(
+    /**
+     * Wire the action / secondary / navigation / mention callbacks shared by the
+     * primary dashboard panel and any "View in Editor" mirror panels.
+     */
+    private fun wireSharedDashboardCallbacks(panel: AgentDashboardPanel) {
+        panel.setCefActionCallbacks(
             onCancel = ::cancelTask,
             onNewChat = ::newChat,
             onSendMessage = ::executeTask,
@@ -165,16 +167,19 @@ class AgentController(
             onOpenSettings = ::openSettings,
             onOpenToolsPanel = ::showToolsPanel
         )
-
-        // Mention-aware message callback — resolves @file, @folder, #ticket etc. into context
-        dashboard.setCefMentionCallbacks(::executeTaskWithMentions)
-
-        // Secondary callbacks
-        dashboard.setCefCallbacks(
+        panel.setCefMentionCallbacks(::executeTaskWithMentions)
+        panel.setCefCallbacks(
             onUndo = { LOG.info("Undo requested — not implemented in lean rewrite") },
             onViewTrace = { LOG.info("View trace requested — not implemented in lean rewrite") },
             onPromptSubmitted = ::executeTask
         )
+        panel.setCefNavigationCallbacks(onNavigateToFile = ::navigateToFile)
+        panel.onSendMessage = ::executeTask
+    }
+
+    private fun wireCallbacks() {
+        // Action callbacks shared with mirror panels
+        wireSharedDashboardCallbacks(dashboard)
 
         // Retry callback — re-executes last task with original mention context + clean display
         dashboard.setCefRetryCallback {
@@ -306,19 +311,14 @@ class AgentController(
                 if (pendingApprovalChoice) {
                     // System-level approval choice — route to our handler, not AskQuestionsTool
                     handleApprovalChoice(collectedAnswers)
-                    collectedAnswers.clear()
                 } else {
                     // Normal LLM-initiated question — resolve the pending deferred
-                    val answersJson = buildString {
-                        append("{")
-                        collectedAnswers.entries.joinTo(this) { (qid, opts) ->
-                            "\"$qid\":$opts"
-                        }
-                        append("}")
+                    val answersJson = collectedAnswers.entries.joinToString(",", "{", "}") { (qid, opts) ->
+                        "\"$qid\":$opts"
                     }
                     com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.resolveQuestions(answersJson)
-                    collectedAnswers.clear()
                 }
+                collectedAnswers.clear()
             },
             onCancelled = {
                 if (pendingApprovalChoice) {
@@ -345,14 +345,8 @@ class AgentController(
             com.workflow.orchestrator.agent.tools.builtin.AskUserInputTool.resolveInput(input)
         }
 
-        // File navigation — open file in editor when user clicks a path in chat
-        dashboard.setCefNavigationCallbacks(onNavigateToFile = ::navigateToFile)
-
         // "View in Editor" toolbar button — opens the chat in a full editor tab
         dashboard.setOnViewInEditor(::openChatInEditorTab)
-
-        // The fallback onSendMessage for non-JCEF (RichStreamingPanel) path
-        dashboard.onSendMessage = ::executeTask
 
         // Tool toggle — user enables/disables a tool via the Tools panel checkbox
         dashboard.setCefToolToggleCallback { toolName, enabled ->
@@ -1240,16 +1234,24 @@ class AgentController(
         // Don't wait for onComplete — it fires async and there's a race if the user
         // types a message right after stopping (the message would hit the steering queue
         // or channel path with stale state instead of starting a new loop).
+        clearActiveLoopState()
+        invokeLater {
+            dashboard.setBusy(false)
+            dashboard.focusInput()
+        }
+    }
+
+    /**
+     * Clear all transient state associated with the active agent loop iteration.
+     * Shared by [cancelTask], [newChat], and [dispose] to keep them in sync.
+     */
+    private fun clearActiveLoopState() {
         currentJob = null
         pendingApprovalChoice = false
         userInputChannel?.close()
         userInputChannel = null
         loopWaitingForInput = false
         steeringQueue.clear()
-        invokeLater {
-            dashboard.setBusy(false)
-            dashboard.focusInput()
-        }
     }
 
     fun newChat() {
@@ -1259,7 +1261,7 @@ class AgentController(
         service.resetForNewChat()
 
         // Reset controller state
-        currentJob = null
+        clearActiveLoopState()
         phraseTimerJob?.cancel()
         phraseTimerJob = null
         recentToolCalls.clear()
@@ -1276,11 +1278,6 @@ class AgentController(
         pendingApproval?.cancel()
         pendingApproval = null
         pendingApprovalToolName = null
-        pendingApprovalChoice = false
-        userInputChannel?.close()
-        userInputChannel = null
-        loopWaitingForInput = false
-        steeringQueue.clear()
 
         // Reset ALL dashboard UI components to clean state
         dashboard.reset()                                          // Clear chat messages + replay log
@@ -1313,21 +1310,7 @@ class AgentController(
      */
     fun resumeSession(sessionId: String) {
         LOG.info("AgentController.resumeSession: $sessionId")
-
-        // Cancel any running task first
-        if (currentJob?.isActive == true) {
-            service.cancelCurrentTask()
-        }
-        currentJob = null
-
-        // Reset UI for the resumed session
-        dashboard.reset()
-        dashboard.setBusy(true)
-        dashboard.setInputLocked(true)
-        taskStartTime = System.currentTimeMillis()
-
-        // Show that we're resuming
-        dashboard.appendStatus("Resuming session...", RichStreamingPanel.StatusType.INFO)
+        prepareForReplay("Resuming session...")
 
         // Attempt resume — AgentService rebuilds the ContextManager from JSONL checkpoint
         val job = service.resumeSession(
@@ -1344,33 +1327,32 @@ class AgentController(
             contextManager = null
         } else {
             // Resume failed — notify user
-            dashboard.appendError("Could not resume session. The session may have been deleted or has no saved messages.")
-            dashboard.setBusy(false)
-            dashboard.setInputLocked(false)
-            dashboard.focusInput()
+            failReplay("Could not resume session. The session may have been deleted or has no saved messages.")
         }
     }
 
     /**
-     * List resumable sessions for the session history panel.
-     * Returns sessions that were interrupted (not completed).
+     * Cancel the current task and reset the dashboard UI before replaying a saved
+     * session (resume / checkpoint revert). Shows the supplied status message.
      */
-    fun listResumableSessions(): List<com.workflow.orchestrator.agent.session.Session> {
-        return service.sessionStore.list().filter {
-            it.status != com.workflow.orchestrator.agent.session.SessionStatus.COMPLETED &&
-            it.messageCount > 0
+    private fun prepareForReplay(statusMessage: String) {
+        if (currentJob?.isActive == true) {
+            service.cancelCurrentTask()
         }
+        currentJob = null
+        dashboard.reset()
+        dashboard.setBusy(true)
+        dashboard.setInputLocked(true)
+        taskStartTime = System.currentTimeMillis()
+        dashboard.appendStatus(statusMessage, RichStreamingPanel.StatusType.INFO)
     }
 
-    /**
-     * List checkpoints for the current session.
-     *
-     * Ported from Cline's checkpoint reversion UI:
-     * returns the list of checkpoints so the UI can display them
-     * and allow the user to revert.
-     */
-    fun listCheckpoints(sessionId: String): List<com.workflow.orchestrator.agent.session.CheckpointInfo> {
-        return service.listCheckpoints(sessionId)
+    /** Show an error and unlock the input bar after a failed replay attempt. */
+    private fun failReplay(message: String) {
+        dashboard.appendError(message)
+        dashboard.setBusy(false)
+        dashboard.setInputLocked(false)
+        dashboard.focusInput()
     }
 
     /**
@@ -1381,20 +1363,7 @@ class AgentController(
      */
     fun revertToCheckpoint(sessionId: String, checkpointId: String) {
         LOG.info("AgentController.revertToCheckpoint: session=$sessionId, checkpoint=$checkpointId")
-
-        // Cancel any running task first
-        if (currentJob?.isActive == true) {
-            service.cancelCurrentTask()
-        }
-        currentJob = null
-
-        // Reset UI
-        dashboard.reset()
-        dashboard.setBusy(true)
-        dashboard.setInputLocked(true)
-        taskStartTime = System.currentTimeMillis()
-
-        dashboard.appendStatus("Reverting to checkpoint...", RichStreamingPanel.StatusType.INFO)
+        prepareForReplay("Reverting to checkpoint...")
 
         // Restore the last task text in the input bar so user can edit and re-send
         (lastDisplayText ?: lastTaskText)?.let { dashboard.restoreInputText(it) }
@@ -1424,10 +1393,7 @@ class AgentController(
                 dashboard.notifyRollback(rollbackJson)
             }
         } else {
-            dashboard.appendError("Could not revert to checkpoint. The checkpoint may have been deleted.")
-            dashboard.setBusy(false)
-            dashboard.setInputLocked(false)
-            dashboard.focusInput()
+            failReplay("Could not revert to checkpoint. The checkpoint may have been deleted.")
         }
     }
 
@@ -1651,33 +1617,10 @@ class AgentController(
      */
     fun addMirrorPanel(mirror: AgentDashboardPanel) {
         dashboard.addMirror(mirror)
-
         // Wire the mirror's input callbacks identically to the primary dashboard
-        mirror.setCefActionCallbacks(
-            onCancel = ::cancelTask,
-            onNewChat = ::newChat,
-            onSendMessage = ::executeTask,
-            onChangeModel = ::changeModel,
-            onTogglePlanMode = ::togglePlanMode,
-            onToggleRalphLoop = { /* Ralph loop not wired in lean rewrite */ },
-            onActivateSkill = { skillName ->
-                if (skillName in BUILTIN_COMMANDS) executeTask("/$skillName")
-                else executeTask("/skill $skillName")
-            },
-            onRequestFocusIde = { /* No-op: focus returns to IDE naturally */ },
-            onOpenSettings = ::openSettings,
-            onOpenToolsPanel = ::showToolsPanel
-        )
-        mirror.setCefCallbacks(
-            onUndo = { LOG.info("Undo requested — not implemented in lean rewrite") },
-            onViewTrace = { LOG.info("View trace requested — not implemented in lean rewrite") },
-            onPromptSubmitted = ::executeTask
-        )
-        mirror.setCefNavigationCallbacks(onNavigateToFile = ::navigateToFile)
-        mirror.setCefMentionCallbacks(::executeTaskWithMentions)
+        wireSharedDashboardCallbacks(mirror)
         // Reuse the shared provider so mirrors benefit from the ticket context cache
         sharedMentionSearchProvider?.let { mirror.setMentionSearchProvider(it) }
-        mirror.onSendMessage = ::executeTask
     }
 
     fun removeMirrorPanel(mirror: AgentDashboardPanel) {
@@ -1736,35 +1679,24 @@ class AgentController(
     //  Helpers
     // ═══════════════════════════════════════════════════
 
-    private fun buildToolsJson(): String {
-        val tools = service.registry.allTools()
-        val sb = StringBuilder("[")
-        tools.forEachIndexed { index, tool ->
-            if (index > 0) sb.append(",")
+    private fun buildToolsJson(): String =
+        service.registry.allTools().joinToString(",", "[", "]") { tool ->
             val escapedName = tool.name.replace("\"", "\\\"")
             val escapedDesc = tool.description.take(200).replace("\"", "\\\"").replace("\n", " ")
-            sb.append("""{"name":"$escapedName","description":"$escapedDesc","enabled":true}""")
+            """{"name":"$escapedName","description":"$escapedDesc","enabled":true}"""
         }
-        sb.append("]")
-        return sb.toString()
+
+    private fun escapeJsonForBridge(s: String): String {
+        val escaped = s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+        return "\"$escaped\""
     }
 
     /**
      * Format token count for display: "45K" for large counts, exact for small.
      * Ported from Cline's webview token display pattern.
      */
-    private fun escapeJsonForBridge(s: String): String {
-        val escaped = s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
-        return "\"$escaped\""
-    }
-
-    private fun formatTokenCount(tokens: Int): String {
-        return if (tokens >= 1000) {
-            "${tokens / 1000}K"
-        } else {
-            tokens.toString()
-        }
-    }
+    private fun formatTokenCount(tokens: Int): String =
+        if (tokens >= 1000) "${tokens / 1000}K" else tokens.toString()
 
     /**
      * Start a 30-second timer that generates humorous contextual working phrases via Haiku.
@@ -1823,10 +1755,7 @@ class AgentController(
                 if (newTitle != null) {
                     currentHaikuTitle = newTitle
                     // Update session metadata in store
-                    val sid = currentSessionId
-                    if (sid != null) {
-                        service.updateSessionTitle(sid, newTitle)
-                    }
+                    currentSessionId?.let { service.updateSessionTitle(it, newTitle) }
                     // Push to chat UI top bar
                     invokeLater { dashboard.setSessionTitle(newTitle) }
                     LOG.info("AgentController: conversation title set to: $newTitle")
@@ -1838,56 +1767,14 @@ class AgentController(
     }
 
     /**
-     * Build a contextual working phrase from the current tool call.
-     * Shown in the UI status area while the agent is executing tools.
-     */
-    private fun buildWorkingPhrase(toolName: String, args: String): String {
-        val parsedArgs = try {
-            kotlinx.serialization.json.Json.parseToJsonElement(args) as? kotlinx.serialization.json.JsonObject
-        } catch (_: Exception) { null }
-
-        val path = parsedArgs?.get("path")?.jsonPrimitive?.content
-            ?.substringAfterLast("/")
-
-        return when (toolName) {
-            "read_file" -> "Reading ${path ?: "file"}..."
-            "edit_file" -> "Editing ${path ?: "file"}..."
-            "create_file" -> "Creating ${path ?: "file"}..."
-            "search_code" -> {
-                val query = parsedArgs?.get("query")?.jsonPrimitive?.content?.take(30)
-                "Searching${query?.let { " for \"$it\"" } ?: ""}..."
-            }
-            "glob_files" -> "Finding files..."
-            "run_command" -> {
-                val cmd = parsedArgs?.get("command")?.jsonPrimitive?.content?.take(40)
-                "Running${cmd?.let { " $it" } ?: " command"}..."
-            }
-            "think" -> "Thinking..."
-            "attempt_completion" -> "Completing..."
-            "agent" -> "Delegating to sub-agent..."
-            "find_definition" -> "Finding definition..."
-            "find_references" -> "Finding references..."
-            "diagnostics" -> "Running diagnostics..."
-            "run_inspections" -> "Running inspections..."
-            else -> "Using $toolName..."
-        }
-    }
-
-    /**
      * Build a JSON array of checkpoint metadata for the dashboard UI.
      * Format: [{"id":"cp-1-123","description":"After edit_file: ...","timestamp":123456}]
      */
     private fun buildCheckpointsJson(
         checkpoints: List<com.workflow.orchestrator.agent.session.CheckpointInfo>
-    ): String {
-        val sb = StringBuilder("[")
-        checkpoints.forEachIndexed { index, cp ->
-            if (index > 0) sb.append(",")
-            val escapedDesc = cp.description.replace("\"", "\\\"").replace("\n", " ")
-            sb.append("""{"id":"${cp.id}","description":"$escapedDesc","timestamp":${cp.createdAt}}""")
-        }
-        sb.append("]")
-        return sb.toString()
+    ): String = checkpoints.joinToString(",", "[", "]") { cp ->
+        val escapedDesc = cp.description.replace("\"", "\\\"").replace("\n", " ")
+        """{"id":"${cp.id}","description":"$escapedDesc","timestamp":${cp.createdAt}}"""
     }
 
     fun dispose() {
@@ -1895,7 +1782,7 @@ class AgentController(
         if (currentJob?.isActive == true) {
             service.cancelCurrentTask()
         }
-        currentJob = null
+        clearActiveLoopState()
         phraseTimerJob?.cancel()
         phraseTimerJob = null
         contextManager = null
@@ -1904,8 +1791,5 @@ class AgentController(
         pendingApproval?.cancel()
         pendingApproval = null
         pendingApprovalToolName = null
-        userInputChannel?.close()
-        userInputChannel = null
-        loopWaitingForInput = false
     }
 }

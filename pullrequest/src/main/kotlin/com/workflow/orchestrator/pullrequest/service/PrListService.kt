@@ -4,11 +4,9 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrDetail
 import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.polling.SmartPoller
@@ -90,7 +88,6 @@ class PrListService(private val project: Project) : Disposable {
     /** Limits concurrent repo fetches to 3 to prevent monopolizing the connection pool. */
     private val repoFetchSemaphore = Semaphore(3)
 
-    private val credentialStore = CredentialStore()
     @Volatile private var cachedClient: BitbucketBranchClient? = null
     @Volatile private var cachedBaseUrl: String? = null
     private val pluginSettings by lazy { PluginSettings.getInstance(project) }
@@ -98,10 +95,8 @@ class PrListService(private val project: Project) : Disposable {
     private fun getClient(url: String): BitbucketBranchClient {
         if (url != cachedBaseUrl || cachedClient == null) {
             cachedBaseUrl = url
-            cachedClient = BitbucketBranchClient(
-                baseUrl = url,
-                tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
-            )
+            cachedClient = BitbucketBranchClient.fromConfiguredSettings()
+                ?: error("Bitbucket URL not configured")
         }
         return cachedClient!!
     }

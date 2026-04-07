@@ -19,21 +19,11 @@ class ToolPreferences : SimplePersistentStateComponent<ToolPreferences.State>(St
         var disabledTools by list<String>()
     }
 
-    fun isToolEnabled(toolName: String): Boolean =
-        toolName !in state.disabledTools
-
     fun setToolEnabled(toolName: String, enabled: Boolean) {
         val disabled = state.disabledTools.toMutableList()
         if (enabled) disabled.remove(toolName)
         else if (toolName !in disabled) disabled.add(toolName)
         state.disabledTools = disabled
-    }
-
-    fun getDisabledTools(): Set<String> = state.disabledTools.toSet()
-
-    fun getEnabledToolCount(allToolNames: Set<String>): Int {
-        val validDisabled = state.disabledTools.count { it in allToolNames }
-        return allToolNames.size - validDisabled
     }
 
     companion object {

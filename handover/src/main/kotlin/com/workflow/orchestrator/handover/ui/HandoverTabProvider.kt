@@ -8,7 +8,6 @@ import javax.swing.JComponent
 
 class HandoverTabProvider : WorkflowTabProvider {
 
-    override val tabId: String = "handover"
     override val tabTitle: String = "Handover"
     override val order: Int = 5
 

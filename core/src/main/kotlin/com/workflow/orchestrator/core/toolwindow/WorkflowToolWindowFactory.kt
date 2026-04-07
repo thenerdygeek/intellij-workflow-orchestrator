@@ -158,10 +158,6 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
                     val content = toolWindow.contentManager.selectedContent
                     val selectedTab = content?.displayName
                     log.info("[Workflow:UI] Refresh requested for tab: $selectedTab")
-                    val component = content?.component
-                    if (component is Refreshable) {
-                        (component as Refreshable).refresh()
-                    }
                 }
             },
 

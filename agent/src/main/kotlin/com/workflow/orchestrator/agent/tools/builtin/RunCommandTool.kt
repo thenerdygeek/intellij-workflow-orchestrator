@@ -71,25 +71,6 @@ class RunCommandTool : AgentTool {
          */
         var currentToolCallId: ThreadLocal<String?> = ThreadLocal.withInitial { null }
 
-        /** Commands that are always safe to run (read-only or build tools). */
-        private val ALLOWED_PREFIXES = listOf(
-            // Build tools
-            "mvn", "gradle", "./gradlew", "gradlew", "npm", "yarn", "pnpm",
-            // Version control (read-only)
-            "git status", "git log", "git diff", "git branch", "git show", "git blame",
-            // File inspection
-            "ls", "find", "cat", "head", "tail", "wc", "file", "stat",
-            "grep", "rg", "ag",
-            // Java/Kotlin
-            "java", "javac", "kotlin", "kotlinc", "jar",
-            // Docker (read-only)
-            "docker ps", "docker images", "docker logs", "docker inspect",
-            // System info
-            "uname", "whoami", "hostname", "pwd", "env", "echo", "date", "which",
-            // Testing
-            "pytest", "jest", "cargo test", "go test",
-        )
-
         /** Commands that are ALWAYS blocked (destructive, no approval possible). */
         private val HARD_BLOCKED = listOf(
             Regex("""rm\s+-rf\s+/"""),
@@ -270,16 +251,6 @@ class RunCommandTool : AgentTool {
         }
 
         /**
-         * Check if a command is on the allowlist (safe to run without approval).
-         */
-        fun isAllowed(command: String): Boolean {
-            val trimmed = command.trim()
-            return ALLOWED_PREFIXES.any { prefix ->
-                trimmed.startsWith(prefix) || trimmed.startsWith("./$prefix")
-            }
-        }
-
-        /**
          * Check if a command is hard-blocked (never run, even with approval).
          */
         fun isHardBlocked(command: String): Boolean {
@@ -339,13 +310,6 @@ class RunCommandTool : AgentTool {
                 5,
                 isError = true
             )
-        }
-
-        // Non-allowlisted commands still execute — AgentLoop's approvalGate shows a
-        // confirmation dialog for write tools (run_command classified as HIGH risk)
-        if (!isAllowed(command)) {
-            // Command will proceed — approval is handled by AgentLoop.approvalGate
-            // before this execute() method is called
         }
 
         val workingDir = params["working_dir"]?.jsonPrimitive?.content?.let { dir ->
@@ -433,7 +397,7 @@ class RunCommandTool : AgentTool {
                         )
                     }
                 }
-                else -> GeneralCommandLine("sh", "-c", command) // unreachable due to validation above
+                else -> error("unreachable: shell validated above")
             }
 
             val timeoutSeconds = (params["timeout"]?.jsonPrimitive?.int?.toLong() ?: DEFAULT_TIMEOUT_SECONDS)
@@ -521,10 +485,8 @@ class RunCommandTool : AgentTool {
                     return buildIdleResult(managed, idleThresholdMs / 1000)
                 }
             }
-
-            // Unreachable — loop always returns
             @Suppress("UNREACHABLE_CODE")
-            ToolResult("Error: unexpected exit from monitor loop", "Error: internal", 5, isError = true)
+            error("unreachable: while(true) always returns")
         } catch (e: kotlinx.coroutines.CancellationException) {
             // Coroutine cancelled (user pressed Stop) — ProcessRegistry.killAll() handles cleanup
             throw e // Propagate for structured concurrency

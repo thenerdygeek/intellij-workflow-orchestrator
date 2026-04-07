@@ -17,8 +17,8 @@ class AgentChatRedirectImpl : AgentChatRedirect {
         val toolWindow = ToolWindowManager.getInstance(project).getToolWindow("Workflow")
         toolWindow?.activate {
             val contentManager = toolWindow.contentManager
-            val agentContent = contentManager.contents.find { it.displayName == "Agent" }
-            agentContent?.let { contentManager.setSelectedContent(it) }
+            contentManager.contents.find { it.displayName == "Agent" }
+                ?.let { contentManager.setSelectedContent(it) }
         }
 
         val controller = AgentControllerRegistry.getInstance(project).controller

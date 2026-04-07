@@ -11,7 +11,6 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
-import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrResponse
@@ -19,18 +18,15 @@ import com.workflow.orchestrator.core.bitbucket.PrService
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.core.util.DefaultBranchResolver
-import git4idea.repo.GitRepositoryManager
+import com.workflow.orchestrator.core.util.HtmlEscape
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.BorderLayout
-import java.awt.CardLayout
-import java.awt.Color
 import java.awt.FlowLayout
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
@@ -283,16 +279,12 @@ class PrBar(
             val projectKey = settings.state.bitbucketProjectKey.orEmpty()
             val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
 
-            val remoteBranches = if (bitbucketUrl.isNotBlank()) {
-                val client = BitbucketBranchClient(
-                    baseUrl = bitbucketUrl,
-                    tokenProvider = { CredentialStore().getToken(ServiceType.BITBUCKET) }
-                )
+            val remoteBranches = BitbucketBranchClient.fromConfiguredSettings()?.let { client ->
                 when (val r = client.getBranches(projectKey, repoSlug)) {
                     is ApiResult.Success -> r.data.map { it.displayId }
                     is ApiResult.Error -> emptyList()
                 }
-            } else emptyList()
+            } ?: emptyList()
 
             val jiraProvider = com.workflow.orchestrator.core.workflow.JiraTicketProvider.getInstance()
             val ticketDetails = if (ticketId.isNotBlank()) {
@@ -334,7 +326,7 @@ class PrBar(
      * Called by BuildDashboardPanel when PrSelected event or PrContext provides the PR.
      */
     fun showPrInfo(prId: Int, fromBranch: String, toBranch: String) {
-        prInfoLabel.text = "<html><b>PR #$prId</b> &nbsp; ${escapeHtml(fromBranch)} \u2192 $toBranch</html>"
+        prInfoLabel.text = "<html><b>PR #$prId</b> &nbsp; ${HtmlEscape.escapeHtml(fromBranch)} \u2192 $toBranch</html>"
         selectedPr = currentPrs.find { it.id.toInt() == prId }
         showPanel(singlePrPanel)
     }
@@ -362,11 +354,7 @@ class PrBar(
         }
         isVisible = true
 
-        val credentialStore = CredentialStore()
-        val client = BitbucketBranchClient(
-            baseUrl = bitbucketUrl,
-            tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
-        )
+        val client = BitbucketBranchClient.fromConfiguredSettings() ?: return
 
         scope.launch {
             // Resolve branch off-EDT to avoid synchronous VCS repository update on EDT
@@ -425,7 +413,7 @@ class PrBar(
 
     private fun updateSinglePrInfo(pr: BitbucketPrResponse) {
         val target = pr.toRef?.displayId ?: "?"
-        prInfoLabel.text = "<html><b>PR #${pr.id}</b> &nbsp; ${escapeHtml(pr.title)} &nbsp; <font color='${StatusColors.htmlColor(StatusColors.SECONDARY_TEXT)}'>→ $target</font> &nbsp; <font color='${statusColor(pr.state)}'>${pr.state}</font></html>"
+        prInfoLabel.text = "<html><b>PR #${pr.id}</b> &nbsp; ${HtmlEscape.escapeHtml(pr.title)} &nbsp; <font color='${StatusColors.htmlColor(StatusColors.SECONDARY_TEXT)}'>→ $target</font> &nbsp; <font color='${statusColor(pr.state)}'>${pr.state}</font></html>"
     }
 
     private fun statusColor(state: String): String = when (state.uppercase()) {
@@ -435,16 +423,10 @@ class PrBar(
         else -> StatusColors.htmlColor(StatusColors.INFO)
     }
 
-    private fun getGitRepo(): git4idea.repo.GitRepository? {
-        val resolver = RepoContextResolver.getInstance(project)
-        val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
-        val repos = GitRepositoryManager.getInstance(project).repositories
-        return repos.find { it.root.path == repoConfig?.localVcsRootPath } ?: repos.firstOrNull()
-    }
+    private fun getGitRepo(): git4idea.repo.GitRepository? =
+        RepoContextResolver.getInstance(project).resolveCurrentEditorRepoOrPrimary()
 
     private fun resolveCurrentBranch(): String? = getGitRepo()?.currentBranchName
-
-    private fun escapeHtml(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     private fun onSubmitPr() {
         val title = titleField.text.orEmpty().trim()
@@ -454,7 +436,6 @@ class PrBar(
             return
         }
 
-        val bitbucketUrl = settings.connections.bitbucketUrl.orEmpty().trimEnd('/')
         val projectKey = settings.state.bitbucketProjectKey.orEmpty()
         val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
         submitButton.isEnabled = false
@@ -462,7 +443,6 @@ class PrBar(
         formResultLabel.text = "Creating PR..."
         formResultLabel.foreground = JBColor.foreground()
 
-        val credentialStore = CredentialStore()
         val prService = PrService.getInstance(project)
         val reviewers = prService.buildDefaultReviewers()
 
@@ -470,10 +450,16 @@ class PrBar(
             val fromBranch = com.intellij.openapi.application.ReadAction.compute<String?, Throwable> { resolveCurrentBranch() } ?: ""
             val toRepo = com.intellij.openapi.application.ReadAction.compute<git4idea.repo.GitRepository?, Throwable> { getGitRepo() }
             val toBranch = toRepo?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
-            val client = BitbucketBranchClient(
-                baseUrl = bitbucketUrl,
-                tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
-            )
+            val client = BitbucketBranchClient.fromConfiguredSettings()
+            if (client == null) {
+                invokeLater {
+                    submitButton.isEnabled = true
+                    regenerateButton.isEnabled = true
+                    formResultLabel.text = "Bitbucket not configured"
+                    formResultLabel.foreground = JBColor.RED
+                }
+                return@launch
+            }
             val result = client.createPullRequest(
                 projectKey, repoSlug, title, descriptionArea.text.orEmpty(),
                 fromBranch, toBranch, reviewers

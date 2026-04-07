@@ -17,7 +17,7 @@ import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import com.workflow.orchestrator.sonar.api.SonarApiClient
 import com.workflow.orchestrator.core.model.sonar.SecurityHotspotData
 import com.workflow.orchestrator.sonar.model.*
-import git4idea.repo.GitRepositoryManager
+import com.workflow.orchestrator.sonar.util.SonarRatingUtils
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -55,21 +55,19 @@ class SonarDataService(private val project: Project) : Disposable {
         if (url.isBlank()) return null
         if (url != cachedSonarUrl || cachedApiClient == null) {
             cachedSonarUrl = url
+            val timeouts = com.workflow.orchestrator.core.http.HttpClientFactory.timeoutsFromSettings(project)
             cachedApiClient = SonarApiClient(
                 baseUrl = url,
                 tokenProvider = { credentialStore.getToken(ServiceType.SONARQUBE) },
-                connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
-                readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
+                connectTimeoutSeconds = timeouts.connectSeconds,
+                readTimeoutSeconds = timeouts.readSeconds
             )
         }
         return cachedApiClient
     }
 
     private suspend fun getCurrentBranch(): String {
-        val resolver = RepoContextResolver.getInstance(project)
-        val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
-        val repos = GitRepositoryManager.getInstance(project).repositories
-        val targetRepo = repos.find { it.root.path == repoConfig?.localVcsRootPath } ?: repos.firstOrNull()
+        val targetRepo = RepoContextResolver.getInstance(project).resolveCurrentEditorRepoOrPrimary()
         return targetRepo?.let { it.currentBranchName ?: DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
     }
 
@@ -499,19 +497,11 @@ class SonarDataService(private val project: Project) : Disposable {
 
     private fun mapProjectHealth(measures: List<com.workflow.orchestrator.sonar.api.dto.SonarMeasureDto>): ProjectHealthMetrics {
         val byMetric = measures.associateBy { it.metric }
-        // SonarQube ratings are stored as 1.0=A, 2.0=B, 3.0=C, 4.0=D, 5.0=E
-        fun ratingLetter(value: String?): String {
-            val num = value?.toDoubleOrNull()?.toInt() ?: return ""
-            return when (num) {
-                1 -> "A"; 2 -> "B"; 3 -> "C"; 4 -> "D"; 5 -> "E"
-                else -> ""
-            }
-        }
         return ProjectHealthMetrics(
             technicalDebtMinutes = byMetric["sqale_index"]?.value?.toDoubleOrNull()?.toInt() ?: 0,
-            maintainabilityRating = ratingLetter(byMetric["sqale_rating"]?.value),
-            reliabilityRating = ratingLetter(byMetric["reliability_rating"]?.value),
-            securityRating = ratingLetter(byMetric["security_rating"]?.value),
+            maintainabilityRating = SonarRatingUtils.ratingLetter(byMetric["sqale_rating"]?.value),
+            reliabilityRating = SonarRatingUtils.ratingLetter(byMetric["reliability_rating"]?.value),
+            securityRating = SonarRatingUtils.ratingLetter(byMetric["security_rating"]?.value),
             duplicatedLinesDensity = byMetric["duplicated_lines_density"]?.value?.toDoubleOrNull() ?: 0.0,
             cognitiveComplexity = byMetric["cognitive_complexity"]?.value?.toDoubleOrNull()?.toInt() ?: 0,
             lineCoverage = byMetric["coverage"]?.value?.toDoubleOrNull(),

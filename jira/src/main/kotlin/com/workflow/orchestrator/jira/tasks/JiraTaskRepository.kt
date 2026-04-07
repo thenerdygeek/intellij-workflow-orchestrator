@@ -3,9 +3,8 @@ package com.workflow.orchestrator.jira.tasks
 import com.intellij.tasks.Task
 import com.intellij.tasks.impl.BaseRepositoryImpl
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
-import com.workflow.orchestrator.jira.api.dto.JiraIssueFields
 import com.workflow.orchestrator.jira.api.dto.JiraIssueSearchResult
-import com.workflow.orchestrator.jira.api.dto.JiraStatus
+import com.workflow.orchestrator.jira.api.escapeJql
 import com.intellij.openapi.diagnostic.Logger
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
@@ -153,13 +152,4 @@ class JiraTaskRepository : BaseRepositoryImpl {
         return if (jql.isNotBlank()) "$jql ORDER BY updated DESC" else "ORDER BY updated DESC"
     }
 
-    private fun escapeJql(text: String): String {
-        val reserved = setOf('+', '-', '&', '|', '!', '(', ')', '{', '}', '[', ']', '^', '"', '~', '*', '?', '\\', '/')
-        return buildString {
-            for (c in text) {
-                if (c in reserved) append('\\')
-                append(c)
-            }
-        }
-    }
 }

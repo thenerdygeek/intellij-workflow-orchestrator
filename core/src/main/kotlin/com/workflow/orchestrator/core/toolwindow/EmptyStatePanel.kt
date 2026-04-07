@@ -12,8 +12,7 @@ import javax.swing.SwingConstants
 
 class EmptyStatePanel(
     private val project: Project,
-    message: String,
-    showSettingsLink: Boolean = true
+    message: String
 ) : JPanel(BorderLayout()) {
 
     init {
@@ -25,17 +24,13 @@ class EmptyStatePanel(
         label.foreground = JBUI.CurrentTheme.Label.disabledForeground()
         centerPanel.add(label)
 
-        if (showSettingsLink) {
-            val settingsButton = JButton("Open Settings")
-            settingsButton.addActionListener {
-                ShowSettingsUtil.getInstance().showSettingsDialog(project, "Workflow Orchestrator")
-            }
-            val buttonPanel = JPanel(FlowLayout(FlowLayout.CENTER))
-            buttonPanel.add(settingsButton)
-            add(buttonPanel, BorderLayout.CENTER)
-            add(centerPanel, BorderLayout.NORTH)
-        } else {
-            add(centerPanel, BorderLayout.CENTER)
+        val settingsButton = JButton("Open Settings")
+        settingsButton.addActionListener {
+            ShowSettingsUtil.getInstance().showSettingsDialog(project, "Workflow Orchestrator")
         }
+        val buttonPanel = JPanel(FlowLayout(FlowLayout.CENTER))
+        buttonPanel.add(settingsButton)
+        add(buttonPanel, BorderLayout.CENTER)
+        add(centerPanel, BorderLayout.NORTH)
     }
 }

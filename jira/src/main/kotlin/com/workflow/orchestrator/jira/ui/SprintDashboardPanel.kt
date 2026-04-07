@@ -17,10 +17,8 @@ import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.ai.BranchNameAiGenerator
-import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
@@ -28,9 +26,7 @@ import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import git4idea.repo.GitRepositoryManager
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
-import com.workflow.orchestrator.jira.api.dto.JiraIssueFields
 import com.workflow.orchestrator.jira.api.dto.JiraSprint
-import com.workflow.orchestrator.jira.api.dto.JiraStatus
 import com.workflow.orchestrator.jira.listeners.BranchChangeTicketDetector
 import com.workflow.orchestrator.jira.service.toJiraTicketData
 import com.workflow.orchestrator.jira.service.ActiveTicketService
@@ -58,7 +54,6 @@ import java.awt.event.MouseMotionAdapter
 import javax.swing.*
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
-import javax.swing.SwingConstants
 
 /**
  * Main Sprint Dashboard panel that composes the ticket list, detail panel,
@@ -383,12 +378,6 @@ class SprintDashboardPanel(
             isOpaque = false
             border = JBUI.Borders.empty(0, 8, 4, 0)
         }
-        val sectionsPanel = JPanel().apply {
-            layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.Y_AXIS)
-            isOpaque = false
-        }
-        sectionsPanel.add(currentWorkCollapsible)
-        sectionsPanel.add(sprintCollapsible)
 
         // Current work section is fixed at top, sprint fills remaining space
         leftPanel.add(currentWorkCollapsible, BorderLayout.NORTH)
@@ -768,8 +757,6 @@ class SprintDashboardPanel(
                 return
             }
 
-            val credentialStore = CredentialStore()
-
             val needsAi = BranchNameValidator.requiresAiSummary(pattern)
             log.info("[Jira:StartWork] Pattern='$pattern', needsAi=$needsAi")
 
@@ -810,10 +797,13 @@ class SprintDashboardPanel(
                     return@launch
                 }
 
-                val branchClient = BitbucketBranchClient(
-                    baseUrl = bitbucketUrl,
-                    tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
-                )
+                val branchClient = BitbucketBranchClient.fromConfiguredSettings()
+                if (branchClient == null) {
+                    withContext(Dispatchers.EDT) {
+                        setLoading(false, "Configure Bitbucket URL in Settings first")
+                    }
+                    return@launch
+                }
 
                 val gitRepo = com.intellij.openapi.application.ReadAction.compute<git4idea.repo.GitRepository?, Throwable> {
                     GitRepositoryManager.getInstance(project).repositories.firstOrNull()

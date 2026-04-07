@@ -61,61 +61,6 @@ class MavenBuildService(private val project: Project) {
         )
     }
 
-    /**
-     * Primary path: uses IntelliJ's MavenRunner for IDE-integrated builds.
-     * Reuses IDE's Maven installation, settings, and local repository cache.
-     */
-    suspend fun runBuildViaRunner(
-        goals: String,
-        modules: List<String> = emptyList()
-    ): MavenBuildResult = withContext(Dispatchers.IO) {
-        val mavenManager = try {
-            org.jetbrains.idea.maven.project.MavenProjectsManager.getInstance(project)
-                .takeIf { it.isMavenizedProject }
-        } catch (_: Exception) { null }
-
-        if (mavenManager == null) {
-            return@withContext runBuild(goals, modules)
-        }
-
-        try {
-            val params = org.jetbrains.idea.maven.execution.MavenRunnerParameters(
-                true,
-                project.basePath!!,
-                "pom.xml",
-                goals.split(" "),
-                emptyList()
-            )
-
-            val settings = org.jetbrains.idea.maven.execution.MavenRunner.getInstance(project).settings.clone()
-            val startTime = System.currentTimeMillis()
-
-            // MavenRunner.run() integrates with IntelliJ's build tool window
-            val completionFuture = java.util.concurrent.CompletableFuture<Boolean>()
-            org.jetbrains.idea.maven.execution.MavenRunner.getInstance(project).run(params, settings) {
-                completionFuture.complete(true)
-            }
-
-            val timeoutMs = PluginSettings.getInstance(project).state.healthCheckTimeoutSeconds * 1000L
-            val completed = try {
-                completionFuture.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-            } catch (_: java.util.concurrent.TimeoutException) {
-                false
-            }
-
-            MavenBuildResult(
-                success = completed,
-                exitCode = if (completed) 0 else -1,
-                output = "Build executed via MavenRunner (IDE-integrated)",
-                errors = "",
-                timedOut = !completed
-            )
-        } catch (e: Exception) {
-            // Fallback to subprocess if MavenRunner fails
-            runBuild(goals, modules)
-        }
-    }
-
     fun buildCommandLine(goals: String, modules: List<String> = emptyList()): GeneralCommandLine {
         val detector = MavenModuleDetector(project)
         val args = detector.buildMavenArgs(modules, goals)

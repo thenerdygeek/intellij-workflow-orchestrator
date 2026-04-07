@@ -86,15 +86,15 @@ class CreateFileTool : AgentTool {
             )
         }
 
+        val lineCount = content.lines().size
+
         // Track in EditFileTool.lastEditLineRanges for diff-aware diagnostics
         try {
-            val lineCount = content.count { it == '\n' } + 1
             EditFileTool.lastEditLineRanges[file.canonicalPath] = 1..lineCount
         } catch (_: Exception) { }
 
         // Change tracking: AgentLoop.modifiedFiles collects artifacts from ToolResult
 
-        val lineCount = content.lines().size
         val summary = "Created $rawPath ($lineCount lines, ${content.length} chars)"
 
         // Generate diff for new file (all additions — ported from Cline's DiffViewProvider)

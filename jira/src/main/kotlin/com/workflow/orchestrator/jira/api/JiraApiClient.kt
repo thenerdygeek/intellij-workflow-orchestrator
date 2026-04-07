@@ -41,12 +41,10 @@ class JiraApiClient(
 
     suspend fun getBoards(boardType: String = "", nameFilter: String = ""): ApiResult<List<JiraBoard>> {
         log.debug("[Jira:API] GET /rest/agile/1.0/board (type=$boardType, name=$nameFilter)")
-        val params = mutableListOf<String>()
+        val params = mutableListOf("maxResults=200")
         if (boardType.isNotBlank()) params.add("type=$boardType")
         if (nameFilter.isNotBlank()) params.add("name=${URLEncoder.encode(nameFilter, "UTF-8")}")
-        params.add("maxResults=200")
-        val query = if (params.isNotEmpty()) "?${params.joinToString("&")}" else ""
-        return get<JiraBoardSearchResult>("/rest/agile/1.0/board$query").map { it.values }
+        return get<JiraBoardSearchResult>("/rest/agile/1.0/board?${params.joinToString("&")}").map { it.values }
     }
 
     suspend fun getActiveSprints(boardId: Int): ApiResult<List<JiraSprint>> {
@@ -293,16 +291,6 @@ class JiraApiClient(
         }
     }
 
-    private fun escapeJql(text: String): String {
-        val reserved = setOf('+', '-', '&', '|', '!', '(', ')', '{', '}', '[', ']', '^', '"', '~', '*', '?', '\\', '/')
-        return buildString {
-            for (c in text) {
-                if (c in reserved) append('\\')
-                append(c)
-            }
-        }
-    }
-
     private suspend inline fun <reified T> get(path: String): ApiResult<T> =
         withContext(Dispatchers.IO) {
             try {
@@ -356,7 +344,7 @@ class JiraApiClient(
                 response.use {
                     log.debug("[Jira:API] POST $path -> ${it.code}")
                     when (it.code) {
-                        in 200..299, 204 -> ApiResult.Success(Unit)
+                        in 200..299 -> ApiResult.Success(Unit)
                         401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Jira token").also {
                             log.warn("[Jira:API] Authentication failed (401)")
                         }
@@ -373,4 +361,15 @@ class JiraApiClient(
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Jira: ${e.message}", e)
             }
         }
+}
+
+/** Escapes JQL reserved characters in user-supplied text. Shared by [JiraApiClient] and Tasks integration. */
+internal fun escapeJql(text: String): String {
+    val reserved = setOf('+', '-', '&', '|', '!', '(', ')', '{', '}', '[', ']', '^', '"', '~', '*', '?', '\\', '/')
+    return buildString {
+        for (c in text) {
+            if (c in reserved) append('\\')
+            append(c)
+        }
+    }
 }

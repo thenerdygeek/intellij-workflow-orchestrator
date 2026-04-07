@@ -52,6 +52,17 @@ object ToolValidation {
         return null
     }
 
+    /**
+     * Standard error result for a missing required parameter.
+     * Used by every meta-tool when a required parameter is absent for the chosen action.
+     */
+    fun missingParam(name: String): ToolResult = ToolResult(
+        content = "Error: '$name' parameter required",
+        summary = "Error: missing $name",
+        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+        isError = true
+    )
+
     fun validateTimeSpent(timeSpent: String): ToolResult? {
         if (timeSpent.isBlank()) {
             return error("'time_spent' cannot be empty. Use Jira format: '2h', '30m', '1d', '1h 30m'")

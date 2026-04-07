@@ -1,9 +1,14 @@
 package com.workflow.orchestrator.handover.service
 
+import com.intellij.lang.LanguageCommenters
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileTypes.FileType
+import com.intellij.openapi.fileTypes.FileTypeRegistry
+import com.intellij.openapi.fileTypes.LanguageFileType
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.roots.ProjectFileIndex
+import com.intellij.openapi.vfs.VirtualFile
 import com.workflow.orchestrator.handover.model.CopyrightFileEntry
 import com.workflow.orchestrator.handover.model.CopyrightStatus
 import java.time.Year
@@ -35,10 +40,10 @@ class CopyrightFixService {
      */
     private val fileTypeCache = ConcurrentHashMap<String, FileType>()
 
-    private fun getCachedFileType(file: com.intellij.openapi.vfs.VirtualFile): FileType {
+    private fun getCachedFileType(file: VirtualFile): FileType {
         val ext = file.extension ?: ""
         return fileTypeCache.getOrPut(ext) {
-            com.intellij.openapi.fileTypes.FileTypeRegistry.getInstance().getFileTypeByFile(file)
+            FileTypeRegistry.getInstance().getFileTypeByFile(file)
         }
     }
 
@@ -69,41 +74,36 @@ class CopyrightFixService {
         return if (minYear == currentYear) "$currentYear" else "$minYear-$currentYear"
     }
 
-    fun wrapForLanguage(template: String, file: com.intellij.openapi.vfs.VirtualFile): String {
-        val fileType = getCachedFileType(file)
-        val language = (fileType as? com.intellij.openapi.fileTypes.LanguageFileType)?.language ?: return template
-        val commenter = com.intellij.lang.LanguageCommenters.INSTANCE.forLanguage(language) ?: return template
+    fun wrapForLanguage(template: String, file: VirtualFile): String {
+        val language = (getCachedFileType(file) as? LanguageFileType)?.language ?: return template
+        val commenter = LanguageCommenters.INSTANCE.forLanguage(language) ?: return template
 
         val blockStart = commenter.blockCommentPrefix
         val blockEnd = commenter.blockCommentSuffix
         val linePrefix = commenter.lineCommentPrefix
 
-        return if (blockStart != null && blockEnd != null) {
-            "$blockStart\n${template.lines().joinToString("\n") { " * $it" }}\n $blockEnd"
-        } else if (linePrefix != null) {
-            template.lines().joinToString("\n") { "$linePrefix $it" }
-        } else {
-            template
+        return when {
+            blockStart != null && blockEnd != null ->
+                "$blockStart\n${template.lines().joinToString("\n") { " * $it" }}\n $blockEnd"
+            linePrefix != null ->
+                template.lines().joinToString("\n") { "$linePrefix $it" }
+            else -> template
         }
     }
 
-    fun prepareHeader(template: String, currentYear: Int): String {
-        return template.replace("{year}", currentYear.toString())
-    }
+    fun prepareHeader(template: String, currentYear: Int): String =
+        template.replace("{year}", currentYear.toString())
 
     fun hasCopyrightHeader(content: String): Boolean {
         val headerRegion = content.lines().take(15).joinToString("\n").lowercase()
         return headerRegion.contains("copyright")
     }
 
-    fun isSourceFile(file: com.intellij.openapi.vfs.VirtualFile): Boolean {
-        val fileType = getCachedFileType(file)
-        return !fileType.isBinary
-    }
+    fun isSourceFile(file: VirtualFile): Boolean = !getCachedFileType(file).isBinary
 
-    fun isGeneratedFile(file: com.intellij.openapi.vfs.VirtualFile): Boolean {
+    fun isGeneratedFile(file: VirtualFile): Boolean {
         val proj = project ?: return false
-        val fileIndex = com.intellij.openapi.roots.ProjectFileIndex.getInstance(proj)
+        val fileIndex = ProjectFileIndex.getInstance(proj)
         return fileIndex.isInGeneratedSources(file) || fileIndex.isExcluded(file)
     }
 
@@ -140,8 +140,7 @@ class CopyrightFixService {
     }
 
     companion object {
-        fun getInstance(project: Project): CopyrightFixService {
-            return project.getService(CopyrightFixService::class.java)
-        }
+        fun getInstance(project: Project): CopyrightFixService =
+            project.getService(CopyrightFixService::class.java)
     }
 }

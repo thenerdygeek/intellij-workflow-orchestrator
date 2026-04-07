@@ -364,7 +364,7 @@ class AgentLoop(
      */
     suspend fun run(task: String): LoopResult {
         if (cancelled.get()) {
-            return LoopResult.Cancelled(iterations = 0, tokensUsed = 0, inputTokens = 0, outputTokens = 0)
+            return makeCancelled(0)
         }
 
         LOG.info("[Loop] Starting task (maxIterations=$maxIterations, planMode=$planMode)")
@@ -376,9 +376,7 @@ class AgentLoop(
             TokenEstimator.estimateToolDefinitions(toolDefinitions)
         )
 
-        val envDetails = environmentDetailsProvider?.invoke()
-        val taskWithEnv = if (envDetails != null) "$task\n\n$envDetails" else task
-        contextManager.addUserMessage(taskWithEnv)
+        contextManager.addUserMessage(withEnvDetails(task))
 
         var iteration = 0
         var consecutiveEmpties = 0
@@ -412,21 +410,10 @@ class AgentLoop(
             // We drain them here — after compaction (so context is fresh) but before the
             // LLM call (so the model sees the user's feedback in context).
             if (steeringQueue != null && steeringQueue.isNotEmpty()) {
-                val drained = mutableListOf<SteeringMessage>()
-                while (true) {
-                    val msg = steeringQueue.poll() ?: break
-                    drained.add(msg)
-                }
+                val drained = generateSequence { steeringQueue.poll() }.toList()
                 if (drained.isNotEmpty()) {
-                    val combinedText = if (drained.size == 1) {
-                        drained[0].text
-                    } else {
-                        drained.joinToString("\n\n") { it.text }
-                    }
-                    val steeringEnvDetails = environmentDetailsProvider?.invoke()
-                    val fullMessage = STEERING_MESSAGE_PREFIX + combinedText +
-                        (if (steeringEnvDetails != null) "\n\n$steeringEnvDetails" else "")
-                    contextManager.addUserMessage(fullMessage)
+                    val combinedText = drained.joinToString("\n\n") { it.text }
+                    contextManager.addUserMessage(withEnvDetails(STEERING_MESSAGE_PREFIX + combinedText))
                     LOG.info("[Loop] Injected ${drained.size} steering message(s) into context")
                     onSteeringDrained?.invoke(drained.map { it.id })
                 }
@@ -518,16 +505,7 @@ class AgentLoop(
                     continue
                 }
                 LOG.warn("[Loop] Task failed after $iteration iterations: ${apiResult.message.take(200)}")
-                return LoopResult.Failed(
-                    error = apiResult.message,
-                    iterations = iteration,
-                    tokensUsed = totalTokensUsed,
-                    inputTokens = totalInputTokens,
-                    outputTokens = totalOutputTokens,
-                    filesModified = filesModifiedList(),
-                    linesAdded = totalLinesAdded,
-                    linesRemoved = totalLinesRemoved
-                )
+                return makeFailed(apiResult.message, iteration)
             }
 
             val response = (apiResult as ApiResult.Success).data
@@ -607,31 +585,16 @@ class AgentLoop(
 
                     if (planMode && userInputChannel != null) {
                         // In plan mode, text-only responses are conversational turns.
-                        val userMessage = userInputChannel.receive()
-                        val envDetails = environmentDetailsProvider?.invoke()
-                        val messageWithEnv = if (envDetails != null) "$userMessage\n\n$envDetails" else userMessage
-                        contextManager.addUserMessage(messageWithEnv)
+                        contextManager.addUserMessage(withEnvDetails(userInputChannel.receive()))
                         consecutiveMistakes = 0
                     } else if (consecutiveMistakes >= maxConsecutiveMistakes && userInputChannel != null) {
                         // Cline pattern: at max mistakes, ask user for feedback instead of failing
                         LOG.warn("[Loop] Max consecutive mistakes ($maxConsecutiveMistakes) — waiting for user feedback")
-                        val userMessage = userInputChannel.receive()
-                        val envDetails = environmentDetailsProvider?.invoke()
-                        val messageWithEnv = if (envDetails != null) "$userMessage\n\n$envDetails" else userMessage
-                        contextManager.addUserMessage(messageWithEnv)
+                        contextManager.addUserMessage(withEnvDetails(userInputChannel.receive()))
                         consecutiveMistakes = 0
                     } else if (consecutiveMistakes >= maxConsecutiveMistakes) {
                         // No user input channel (sub-agent) — fail
-                        return LoopResult.Failed(
-                            error = "Agent failed to use tools after $maxConsecutiveMistakes attempts.",
-                            iterations = iteration,
-                            tokensUsed = totalTokensUsed,
-                            inputTokens = totalInputTokens,
-                            outputTokens = totalOutputTokens,
-                            filesModified = filesModifiedList(),
-                            linesAdded = totalLinesAdded,
-                            linesRemoved = totalLinesRemoved
-                        )
+                        return makeFailed("Agent failed to use tools after $maxConsecutiveMistakes attempts.", iteration)
                     } else {
                         // Below max — inject nudge and continue (Cline: noToolsUsed message)
                         contextManager.addUserMessage(TEXT_ONLY_NUDGE)
@@ -644,15 +607,9 @@ class AgentLoop(
                     consecutiveEmpties++
                     LOG.warn("[Loop] Empty response from LLM — provider error (attempt $consecutiveEmpties/$MAX_CONSECUTIVE_EMPTIES)")
                     if (consecutiveEmpties >= MAX_CONSECUTIVE_EMPTIES) {
-                        return LoopResult.Failed(
-                            error = "Provider returned $MAX_CONSECUTIVE_EMPTIES consecutive empty responses. Check model/provider configuration.",
-                            iterations = iteration,
-                            tokensUsed = totalTokensUsed,
-                            inputTokens = totalInputTokens,
-                            outputTokens = totalOutputTokens,
-                            filesModified = filesModifiedList(),
-                            linesAdded = totalLinesAdded,
-                            linesRemoved = totalLinesRemoved
+                        return makeFailed(
+                            "Provider returned $MAX_CONSECUTIVE_EMPTIES consecutive empty responses. Check model/provider configuration.",
+                            iteration
                         )
                     }
                     contextManager.addUserMessage(EMPTY_RESPONSE_ERROR)
@@ -662,27 +619,13 @@ class AgentLoop(
 
         if (cancelled.get()) {
             LOG.info("[Loop] Task cancelled at iteration $iteration")
-            return LoopResult.Cancelled(
-                iterations = iteration,
-                tokensUsed = totalTokensUsed,
-                inputTokens = totalInputTokens,
-                outputTokens = totalOutputTokens,
-                filesModified = filesModifiedList(),
-                linesAdded = totalLinesAdded,
-                linesRemoved = totalLinesRemoved
-            )
+            return makeCancelled(iteration)
         }
 
         LOG.warn("[Loop] Task failed after $iteration iterations: exceeded maximum iterations ($maxIterations)")
-        return LoopResult.Failed(
-            error = "Exceeded maximum iterations ($maxIterations). The task may be too complex or the model is stuck.",
-            iterations = iteration,
-            tokensUsed = totalTokensUsed,
-            inputTokens = totalInputTokens,
-            outputTokens = totalOutputTokens,
-            filesModified = filesModifiedList(),
-            linesAdded = totalLinesAdded,
-            linesRemoved = totalLinesRemoved
+        return makeFailed(
+            "Exceeded maximum iterations ($maxIterations). The task may be too complex or the model is stuck.",
+            iteration
         )
     }
 
@@ -725,15 +668,7 @@ class AgentLoop(
     private suspend fun executeToolCalls(toolCalls: List<ToolCall>, iteration: Int): LoopResult? {
         for (call in toolCalls) {
             if (cancelled.get()) {
-                return LoopResult.Cancelled(
-                    iterations = iteration,
-                    tokensUsed = totalTokensUsed,
-                    inputTokens = totalInputTokens,
-                    outputTokens = totalOutputTokens,
-                    filesModified = filesModifiedList(),
-                    linesAdded = totalLinesAdded,
-                    linesRemoved = totalLinesRemoved
-                )
+                return makeCancelled(iteration)
             }
 
             val toolName = call.function.name
@@ -741,37 +676,15 @@ class AgentLoop(
             val startTime = System.currentTimeMillis()
 
             // Loop detection (from Cline) — check BEFORE executing
-            val loopStatus = loopDetector.recordToolCall(toolName, call.function.arguments)
-            when (loopStatus) {
+            when (loopDetector.recordToolCall(toolName, call.function.arguments)) {
                 LoopStatus.HARD_LIMIT -> {
                     LOG.warn("[Loop] Hard loop limit reached: '$toolName' called ${loopDetector.currentCount} times consecutively")
                     fileLogger?.logLoopDetection(sessionId ?: "", toolName, loopDetector.currentCount, isHard = true)
                     onDebugLog?.invoke("error", "loop", "Loop HARD limit: $toolName — aborting", null)
-                    contextManager.addToolResult(
-                        toolCallId = toolCallId,
-                        content = LOOP_HARD_FAILURE,
-                        isError = true,
-                        toolName = toolName
-                    )
-                    onToolCall(
-                        ToolCallProgress(
-                            toolName = toolName,
-                            args = call.function.arguments,
-                            result = LOOP_HARD_FAILURE,
-                            durationMs = System.currentTimeMillis() - startTime,
-                            isError = true,
-                            toolCallId = toolCallId
-                        )
-                    )
-                    return LoopResult.Failed(
-                        error = "Loop detected: '$toolName' called ${loopDetector.currentCount} times with identical arguments.",
-                        iterations = iteration,
-                        tokensUsed = totalTokensUsed,
-                        inputTokens = totalInputTokens,
-                        outputTokens = totalOutputTokens,
-                        filesModified = filesModifiedList(),
-                        linesAdded = totalLinesAdded,
-                        linesRemoved = totalLinesRemoved
+                    reportToolError(call, startTime, LOOP_HARD_FAILURE)
+                    return makeFailed(
+                        "Loop detected: '$toolName' called ${loopDetector.currentCount} times with identical arguments.",
+                        iteration
                     )
                 }
                 LoopStatus.SOFT_WARNING -> {
@@ -788,34 +701,15 @@ class AgentLoop(
             if (tool == null) {
                 // Unknown tool
                 val allToolNames = if (toolResolver != null) "use tool_search to find tools" else tools.keys.joinToString(", ")
-                val errorMsg = "Unknown tool: '$toolName'. Available tools: $allToolNames"
-                contextManager.addToolResult(toolCallId = toolCallId, content = errorMsg, isError = true, toolName = toolName)
-                onToolCall(
-                    ToolCallProgress(
-                        toolName = toolName,
-                        args = call.function.arguments,
-                        result = errorMsg,
-                        durationMs = System.currentTimeMillis() - startTime,
-                        isError = true,
-                        toolCallId = toolCallId
-                    )
-                )
+                reportToolError(call, startTime, "Unknown tool: '$toolName'. Available tools: $allToolNames")
                 continue
             }
 
             // Plan mode guard: block write tools even if the LLM hallucinates them
             if (planMode && toolName in WRITE_TOOLS) {
-                val errorMsg = "Error: '$toolName' is blocked in plan mode. You can only read, search, and analyze code."
-                contextManager.addToolResult(toolCallId = toolCallId, content = errorMsg, isError = true, toolName = toolName)
-                onToolCall(
-                    ToolCallProgress(
-                        toolName = toolName,
-                        args = call.function.arguments,
-                        result = errorMsg,
-                        durationMs = System.currentTimeMillis() - startTime,
-                        isError = true,
-                        toolCallId = toolCallId
-                    )
+                reportToolError(
+                    call, startTime,
+                    "Error: '$toolName' is blocked in plan mode. You can only read, search, and analyze code."
                 )
                 continue
             }
@@ -824,18 +718,10 @@ class AgentLoop(
             // Cline: "This tool cannot be called consecutively — each use must be
             // followed by a different tool call or completion."
             if (toolName == "act_mode_respond" && lastToolName == "act_mode_respond") {
-                val errorMsg = "Error: act_mode_respond cannot be called consecutively. " +
-                    "Use a different tool or call attempt_completion."
-                contextManager.addToolResult(toolCallId = toolCallId, content = errorMsg, isError = true, toolName = toolName)
-                onToolCall(
-                    ToolCallProgress(
-                        toolName = toolName,
-                        args = call.function.arguments,
-                        result = errorMsg,
-                        durationMs = System.currentTimeMillis() - startTime,
-                        isError = true,
-                        toolCallId = toolCallId
-                    )
+                reportToolError(
+                    call, startTime,
+                    "Error: act_mode_respond cannot be called consecutively. " +
+                        "Use a different tool or call attempt_completion."
                 )
                 continue
             }
@@ -848,18 +734,7 @@ class AgentLoop(
                 val result = approvalGate.invoke(toolName, call.function.arguments, riskLevel)
                 when (result) {
                     ApprovalResult.DENIED -> {
-                        val errorMsg = "Tool execution denied by user."
-                        contextManager.addToolResult(toolCallId = toolCallId, content = errorMsg, isError = true, toolName = toolName)
-                        onToolCall(
-                            ToolCallProgress(
-                                toolName = toolName,
-                                args = call.function.arguments,
-                                result = errorMsg,
-                                durationMs = System.currentTimeMillis() - startTime,
-                                isError = true,
-                                toolCallId = toolCallId
-                            )
-                        )
+                        reportToolError(call, startTime, "Tool execution denied by user.")
                         continue
                     }
                     ApprovalResult.ALLOWED_FOR_SESSION -> approvedForSession.add(toolName)
@@ -871,18 +746,7 @@ class AgentLoop(
             val params: JsonObject = try {
                 json.decodeFromString<JsonObject>(call.function.arguments)
             } catch (e: Exception) {
-                val errorMsg = "Invalid JSON arguments for '$toolName': ${e.message}"
-                contextManager.addToolResult(toolCallId = toolCallId, content = errorMsg, isError = true, toolName = toolName)
-                onToolCall(
-                    ToolCallProgress(
-                        toolName = toolName,
-                        args = call.function.arguments,
-                        result = errorMsg,
-                        durationMs = System.currentTimeMillis() - startTime,
-                        isError = true,
-                        toolCallId = toolCallId
-                    )
-                )
+                reportToolError(call, startTime, "Invalid JSON arguments for '$toolName': ${e.message}")
                 continue
             }
 
@@ -909,25 +773,13 @@ class AgentLoop(
                     )
                 )
                 if (preHookResult is HookResult.Cancel) {
-                    val errorMsg = "Tool '$toolName' blocked by PreToolUse hook: ${preHookResult.reason}"
-                    contextManager.addToolResult(toolCallId = toolCallId, content = errorMsg, isError = true, toolName = toolName)
-                    onToolCall(
-                        ToolCallProgress(
-                            toolName = toolName,
-                            args = call.function.arguments,
-                            result = errorMsg,
-                            durationMs = System.currentTimeMillis() - startTime,
-                            isError = true,
-                            toolCallId = toolCallId
-                        )
-                    )
+                    reportToolError(call, startTime, "Tool '$toolName' blocked by PreToolUse hook: ${preHookResult.reason}")
                     continue
                 }
             }
 
             // Fire start callback (empty result, zero duration = RUNNING)
-            val argsSummary = call.function.arguments.take(200)
-            LOG.info("[Loop] Executing tool: $toolName ($argsSummary)")
+            LOG.info("[Loop] Executing tool: $toolName (${call.function.arguments.take(200)})")
             onToolCall(
                 ToolCallProgress(
                     toolName = toolName,
@@ -953,17 +805,7 @@ class AgentLoop(
                 sessionMetrics?.recordToolCall(toolName, exceptionDurationMs, true)
                 onDebugLog?.invoke("error", "tool_call", "$toolName EXCEPTION (${exceptionDurationMs}ms)",
                     mapOf("tool" to toolName, "error" to errorMsg.take(200)))
-                contextManager.addToolResult(toolCallId = toolCallId, content = errorMsg, isError = true, toolName = toolName)
-                onToolCall(
-                    ToolCallProgress(
-                        toolName = toolName,
-                        args = call.function.arguments,
-                        result = errorMsg,
-                        durationMs = System.currentTimeMillis() - startTime,
-                        isError = true,
-                        toolCallId = toolCallId
-                    )
-                )
+                reportToolError(call, startTime, errorMsg)
                 continue
             }
 
@@ -1060,9 +902,7 @@ class AgentLoop(
             )
 
             // Artifact rendering: push interactive React artifacts to the chat UI
-            if (toolResult.artifact != null) {
-                onArtifactRendered?.invoke(toolResult.artifact!!)
-            }
+            toolResult.artifact?.let { onArtifactRendered?.invoke(it) }
 
             // Track last tool name for consecutive-call guards
             lastToolName = toolName
@@ -1110,10 +950,7 @@ class AgentLoop(
                     // Wait for user input (matches Cline's ask() pattern).
                     // The user can: type in chat, add step comments, or click approve.
                     // Each sends a message into the channel, which resumes the loop.
-                    val userMessage = userInputChannel.receive()
-                    val envDetails = environmentDetailsProvider?.invoke()
-                    val messageWithEnv = if (envDetails != null) "$userMessage\n\n$envDetails" else userMessage
-                    contextManager.addUserMessage(messageWithEnv)
+                    contextManager.addUserMessage(withEnvDetails(userInputChannel.receive()))
                     // Continue the loop — LLM will see the user's message and respond
                 }
                 // needs_more_exploration=true OR no channel: loop continues immediately
@@ -1137,6 +974,67 @@ class AgentLoop(
 
     /** Build the common tracking fields for LoopResult. */
     private fun filesModifiedList(): List<String> = modifiedFiles.toList()
+
+    /** Build a Failed result with current loop tracking state. */
+    private fun makeFailed(error: String, iterations: Int): LoopResult.Failed = LoopResult.Failed(
+        error = error,
+        iterations = iterations,
+        tokensUsed = totalTokensUsed,
+        inputTokens = totalInputTokens,
+        outputTokens = totalOutputTokens,
+        filesModified = filesModifiedList(),
+        linesAdded = totalLinesAdded,
+        linesRemoved = totalLinesRemoved
+    )
+
+    /** Build a Cancelled result with current loop tracking state. */
+    private fun makeCancelled(iterations: Int): LoopResult.Cancelled = LoopResult.Cancelled(
+        iterations = iterations,
+        tokensUsed = totalTokensUsed,
+        inputTokens = totalInputTokens,
+        outputTokens = totalOutputTokens,
+        filesModified = filesModifiedList(),
+        linesAdded = totalLinesAdded,
+        linesRemoved = totalLinesRemoved
+    )
+
+    /**
+     * Append the latest environment_details block to a user message.
+     * Returns the message unchanged if the provider returns null.
+     */
+    private fun withEnvDetails(message: String): String {
+        val envDetails = environmentDetailsProvider?.invoke()
+        return if (envDetails != null) "$message\n\n$envDetails" else message
+    }
+
+    /**
+     * Record a tool call error: add to context as a tool result and notify the UI callback.
+     * Used by all the pre-execution guard paths (unknown tool, plan mode block, denied, parse error, etc.).
+     */
+    private fun reportToolError(
+        call: ToolCall,
+        startTime: Long,
+        errorMsg: String
+    ) {
+        val toolName = call.function.name
+        val toolCallId = call.id
+        contextManager.addToolResult(
+            toolCallId = toolCallId,
+            content = errorMsg,
+            isError = true,
+            toolName = toolName
+        )
+        onToolCall(
+            ToolCallProgress(
+                toolName = toolName,
+                args = call.function.arguments,
+                result = errorMsg,
+                durationMs = System.currentTimeMillis() - startTime,
+                isError = true,
+                toolCallId = toolCallId
+            )
+        )
+    }
 
     /**
      * Count added/removed lines from a unified diff string.
@@ -1164,15 +1062,9 @@ class AgentLoop(
      * @param params the parsed JSON arguments from the tool call
      */
     private fun extractTaskProgress(params: JsonObject) {
-        val progressValue = params[TASK_PROGRESS_PARAM]
-        if (progressValue is JsonPrimitive) {
-            val markdown = progressValue.contentOrNull
-            if (!markdown.isNullOrBlank()) {
-                val parsed = contextManager.setTaskProgress(markdown)
-                if (parsed != null) {
-                    onTaskProgress(parsed)
-                }
-            }
+        val markdown = (params[TASK_PROGRESS_PARAM] as? JsonPrimitive)?.contentOrNull
+        if (!markdown.isNullOrBlank()) {
+            contextManager.setTaskProgress(markdown)?.let { onTaskProgress(it) }
         }
     }
 
@@ -1187,25 +1079,23 @@ class AgentLoop(
      * @param argsJson the raw JSON arguments string
      * @return "low", "medium", or "high"
      */
-    internal fun assessRisk(toolName: String, argsJson: String): String {
-        return when (toolName) {
-            "run_command" -> {
-                // Extract command from JSON args and classify with CommandSafetyAnalyzer
-                try {
-                    val args = json.decodeFromString<JsonObject>(argsJson)
-                    val command = (args["command"] as? JsonPrimitive)?.contentOrNull ?: ""
-                    when (CommandSafetyAnalyzer.classify(command)) {
-                        CommandRisk.DANGEROUS -> "high"
-                        CommandRisk.RISKY -> "medium"
-                        CommandRisk.SAFE -> "low"
-                    }
-                } catch (_: Exception) {
-                    "medium" // can't parse args — default to medium
+    internal fun assessRisk(toolName: String, argsJson: String): String = when (toolName) {
+        "run_command" -> {
+            // Extract command from JSON args and classify with CommandSafetyAnalyzer
+            try {
+                val args = json.decodeFromString<JsonObject>(argsJson)
+                val command = (args["command"] as? JsonPrimitive)?.contentOrNull ?: ""
+                when (CommandSafetyAnalyzer.classify(command)) {
+                    CommandRisk.DANGEROUS -> "high"
+                    CommandRisk.RISKY -> "medium"
+                    CommandRisk.SAFE -> "low"
                 }
+            } catch (_: Exception) {
+                "medium" // can't parse args — default to medium
             }
-            "revert_file" -> "medium"
-            "edit_file", "create_file" -> "low"
-            else -> "medium"
         }
+        "revert_file" -> "medium"
+        "edit_file", "create_file" -> "low"
+        else -> "medium"
     }
 }

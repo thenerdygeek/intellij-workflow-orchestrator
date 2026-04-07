@@ -93,7 +93,7 @@ class CopyrightCheckTest {
 
         val file = mockSourceFile("Foo.java", "// Copyright 2026\nclass Foo {}")
 
-        val context = HealthCheckContext(project, listOf(file), "msg", "main")
+        val context = HealthCheckContext(project, listOf(file), "main")
         val result = CopyrightCheck().execute(context)
         assertTrue(result.passed)
     }
@@ -111,7 +111,7 @@ class CopyrightCheckTest {
 
         val file = mockSourceFile("Bar.java", "class Bar {}")
 
-        val context = HealthCheckContext(project, listOf(file), "msg", "main")
+        val context = HealthCheckContext(project, listOf(file), "main")
         val result = CopyrightCheck().execute(context)
         assertFalse(result.passed)
         assertTrue(result.message.contains("1 file(s)"))

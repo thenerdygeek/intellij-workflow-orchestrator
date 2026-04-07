@@ -53,7 +53,6 @@ class AutomationPanel(
     private val tabbedPane = JBTabbedPane()
 
     // State
-    private var currentTags: List<TagEntry> = emptyList()
     private var currentSuitePlanKey: String = ""
 
     init {
@@ -177,10 +176,9 @@ class AutomationPanel(
                 } catch (_: Exception) { "" }
                 val serviceCiPlanKey = settings.state.serviceCiPlanKey.orEmpty()
 
-                var featureTag: String? = null
-                if (serviceCiPlanKey.isNotBlank() && branch.isNotBlank()) {
-                    featureTag = tagBuilderService.extractDockerTagFromBuildLog(serviceCiPlanKey, branch)
-                }
+                val featureTag = if (serviceCiPlanKey.isNotBlank() && branch.isNotBlank()) {
+                    tagBuilderService.extractDockerTagFromBuildLog(serviceCiPlanKey, branch)
+                } else null
 
                 if (featureTag != null) {
                     tagBuilderService.replaceCurrentRepoTag(tags, CurrentRepoContext(
@@ -191,8 +189,6 @@ class AutomationPanel(
                     ))
                 } else tags
             } else tags
-
-            currentTags = updatedTags
 
             // Load plan variables via BambooService (core interface)
             val varsResult = bambooService.getPlanVariables(planKey)

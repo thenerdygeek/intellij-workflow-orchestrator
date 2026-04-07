@@ -6,7 +6,6 @@ import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.project.Project
-import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.intellij.ui.components.JBScrollPane

@@ -117,9 +117,8 @@ Be conservative: minor follow-ups, refinements, or related questions are NOT a s
             LOG.info("[$tag] API call failed: $result")
             return null
         }
-        @Suppress("UNCHECKED_CAST")
-        val response = result as ApiResult.Success<com.workflow.orchestrator.core.ai.dto.ChatCompletionResponse>
-        val text = response.data.choices.firstOrNull()?.message?.content?.trim()
+        val data = result.data as? com.workflow.orchestrator.core.ai.dto.ChatCompletionResponse
+        val text = data?.choices?.firstOrNull()?.message?.content?.trim()
         if (text.isNullOrBlank()) {
             LOG.info("[$tag] Empty response from API")
             return null

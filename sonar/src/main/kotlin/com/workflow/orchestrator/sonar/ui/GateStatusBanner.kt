@@ -6,8 +6,6 @@ import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.sonar.model.*
 import java.awt.*
-import javax.swing.BorderFactory
-import javax.swing.BoxLayout
 import javax.swing.JPanel
 
 /**

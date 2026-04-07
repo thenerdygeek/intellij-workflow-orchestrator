@@ -8,7 +8,6 @@ import com.intellij.execution.process.ProcessOutputTypes
 import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.execution.runners.ProgramRunner
 import com.intellij.execution.configurations.RunProfileState
-import com.intellij.execution.ui.ConsoleViewContentType
 import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.bamboo.api.BambooApiClient
 import com.workflow.orchestrator.core.auth.CredentialStore
@@ -95,11 +94,12 @@ class BambooBuildProcessHandler(
         printOutput("\n")
 
         val credentialStore = CredentialStore()
+        val timeouts = com.workflow.orchestrator.core.http.HttpClientFactory.timeoutsFromSettings(environment.project)
         val client = BambooApiClient(
             baseUrl = bambooUrl,
             tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) },
-            connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
-            readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
+            connectTimeoutSeconds = timeouts.connectSeconds,
+            readTimeoutSeconds = timeouts.readSeconds
         )
 
         printOutput("Triggering build...\n")

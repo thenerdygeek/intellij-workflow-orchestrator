@@ -103,21 +103,4 @@ class IssueMapperTest {
         assertEquals(IssueType.SECURITY_HOTSPOT, result[3].type)
     }
 
-    @Test
-    fun `groups issues by file path`() {
-        val dtos = listOf(
-            SonarIssueDto(key = "k1", rule = "r", severity = "MAJOR", message = "m1",
-                component = "p:k:src/A.kt", type = "BUG"),
-            SonarIssueDto(key = "k2", rule = "r", severity = "MINOR", message = "m2",
-                component = "p:k:src/A.kt", type = "BUG"),
-            SonarIssueDto(key = "k3", rule = "r", severity = "INFO", message = "m3",
-                component = "p:k:src/B.kt", type = "CODE_SMELL")
-        )
-
-        val result = IssueMapper.groupByFile(IssueMapper.mapIssues(dtos, "p:k"))
-
-        assertEquals(2, result.size)
-        assertEquals(2, result["src/A.kt"]?.size)
-        assertEquals(1, result["src/B.kt"]?.size)
-    }
 }

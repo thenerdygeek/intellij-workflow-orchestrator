@@ -1,9 +1,7 @@
 package com.workflow.orchestrator.core.http
 
 import com.intellij.openapi.application.PathManager
-import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.model.ServiceType
-import com.workflow.orchestrator.core.settings.PluginSettings
 import okhttp3.Cache
 import okhttp3.ConnectionPool
 import okhttp3.Interceptor
@@ -12,6 +10,21 @@ import okhttp3.Response
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+
+/**
+ * Connect/read timeout pair (in seconds) shared between all API clients in the plugin.
+ * Centralised here so that callers don't have to read both
+ * `settings.state.httpConnectTimeoutSeconds` and `httpReadTimeoutSeconds` and convert
+ * them to `Long` at every construction site.
+ *
+ * Use [HttpClientFactory.timeoutsFromSettings] to read the configured pair from
+ * [com.workflow.orchestrator.core.settings.PluginSettings].
+ */
+data class HttpTimeouts(val connectSeconds: Long, val readSeconds: Long) {
+    companion object {
+        val DEFAULT = HttpTimeouts(10, 30)
+    }
+}
 
 class HttpClientFactory(
     private val tokenProvider: (ServiceType) -> String?,
@@ -70,11 +83,24 @@ class HttpClientFactory(
     }
 
     companion object {
+        /**
+         * Reads the connect/read HTTP timeouts from the project's [com.workflow.orchestrator.core.settings.PluginSettings].
+         * Centralises the `settings.state.httpConnectTimeoutSeconds.toLong() / .httpReadTimeoutSeconds.toLong()`
+         * pattern that was previously duplicated by every API client construction site.
+         */
+        fun timeoutsFromSettings(project: com.intellij.openapi.project.Project): HttpTimeouts {
+            val state = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).state
+            return HttpTimeouts(
+                connectSeconds = state.httpConnectTimeoutSeconds.toLong(),
+                readSeconds = state.httpReadTimeoutSeconds.toLong()
+            )
+        }
+
         /** Shared connection pool across all OkHttpClient instances in the plugin. */
-        val sharedConnectionPool = ConnectionPool(15, 5, TimeUnit.MINUTES)
+        private val sharedConnectionPool = ConnectionPool(15, 5, TimeUnit.MINUTES)
 
         /** Shared HTTP response cache (10 MB) for ETag/304 support. */
-        val sharedCache: Cache by lazy {
+        private val sharedCache: Cache by lazy {
             val cacheDir = File(PathManager.getSystemPath(), "workflow-orchestrator/http-cache")
             Cache(cacheDir, 10L * 1024 * 1024)
         }
@@ -88,18 +114,6 @@ class HttpClientFactory(
                 .connectionPool(sharedConnectionPool)
                 .cache(sharedCache)
                 .build()
-        }
-
-        /**
-         * Creates an [HttpClientFactory] with timeouts read from [PluginSettings].
-         */
-        fun fromSettings(project: Project, tokenProvider: (ServiceType) -> String?): HttpClientFactory {
-            val settings = PluginSettings.getInstance(project)
-            return HttpClientFactory(
-                tokenProvider = tokenProvider,
-                connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
-                readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
-            )
         }
     }
 }

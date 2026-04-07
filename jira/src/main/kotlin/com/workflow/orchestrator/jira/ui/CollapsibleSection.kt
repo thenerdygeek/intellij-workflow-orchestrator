@@ -1,7 +1,6 @@
 package com.workflow.orchestrator.jira.ui
 
 import com.intellij.icons.AllIcons
-import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.intellij.util.ui.JBUI
@@ -70,15 +69,7 @@ class CollapsibleSection(
         repaint()
     }
 
-    fun setExpanded(expand: Boolean) {
-        if (expanded != expand) toggle()
-    }
-
     fun updateCount(newCount: Int) {
         countLabel.text = "($newCount)"
-    }
-
-    fun updateTitle(newTitle: String) {
-        titleLabel.text = newTitle
     }
 }

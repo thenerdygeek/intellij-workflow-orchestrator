@@ -47,7 +47,7 @@ class MavenCompileCheckTest {
             success = true, exitCode = 0, output = "", errors = ""
         )
 
-        val context = HealthCheckContext(project, emptyList(), "msg", "main")
+        val context = HealthCheckContext(project, emptyList(), "main")
         val result = MavenCompileCheck().execute(context)
         assertTrue(result.passed)
     }
@@ -64,7 +64,7 @@ class MavenCompileCheckTest {
             success = false, exitCode = 1, output = "", errors = "[ERROR] Failed to compile"
         )
 
-        val context = HealthCheckContext(project, emptyList(), "msg", "main")
+        val context = HealthCheckContext(project, emptyList(), "main")
         val result = MavenCompileCheck().execute(context)
         assertFalse(result.passed)
         assertTrue(result.message.contains("exit code 1"))

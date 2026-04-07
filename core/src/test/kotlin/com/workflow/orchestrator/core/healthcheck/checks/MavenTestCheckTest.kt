@@ -44,7 +44,7 @@ class MavenTestCheckTest {
             success = true, exitCode = 0, output = "", errors = ""
         )
 
-        val context = HealthCheckContext(project, emptyList(), "msg", "main")
+        val context = HealthCheckContext(project, emptyList(), "main")
         val result = MavenTestCheck().execute(context)
         assertTrue(result.passed)
     }
@@ -61,7 +61,7 @@ class MavenTestCheckTest {
             success = false, exitCode = -1, output = "", errors = "", timedOut = true
         )
 
-        val context = HealthCheckContext(project, emptyList(), "msg", "main")
+        val context = HealthCheckContext(project, emptyList(), "main")
         val result = MavenTestCheck().execute(context)
         assertFalse(result.passed)
         assertTrue(result.message.contains("timed out"))

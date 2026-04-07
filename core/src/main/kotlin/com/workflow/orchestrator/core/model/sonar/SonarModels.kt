@@ -84,22 +84,6 @@ data class SonarAnalysisTaskData(
 )
 
 /**
- * Project-level health metrics: technical debt, ratings, duplication.
- */
-@Serializable
-data class ProjectHealthData(
-    val technicalDebtMinutes: Long,
-    val technicalDebtFormatted: String,
-    val maintainabilityRating: String,
-    val reliabilityRating: String,
-    val securityRating: String,
-    val duplicatedLinesDensity: Double,
-    val cognitiveComplexity: Long,
-    val lineCoverage: Double,
-    val branchCoverage: Double
-)
-
-/**
  * SonarQube branch info for a project.
  */
 @Serializable

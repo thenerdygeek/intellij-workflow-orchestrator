@@ -7,6 +7,7 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.ui.StatusColors
+import com.workflow.orchestrator.core.ui.TimeFormatter
 import com.workflow.orchestrator.sonar.model.*
 import com.intellij.util.ui.JBFont
 import java.awt.*
@@ -183,7 +184,7 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
         val hotspots = state.securityHotspots.size
         // Calculate total effort from all active issues
         val totalEffortMinutes = state.activeIssues.mapNotNull { it.effort?.let { e -> parseEffortToMinutes(e) } }.sum()
-        val effortText = formatEffortMinutes(totalEffortMinutes)
+        val effortText = TimeFormatter.formatEffortMinutes(totalEffortMinutes)
 
         issueBreakdownLabel.text = "<html>${bugs}B ${vulns}V ${smells}S ${hotspots}H<br/><font color='${StatusColors.htmlColor(StatusColors.SECONDARY_TEXT)}'>Total effort: $effortText</font></html>"
         issueBreakdownLabel.font = FONT_PLAIN_10
@@ -315,20 +316,6 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
         return total
     }
 
-    /**
-     * Format total minutes as human-readable duration (e.g., "4h 30min", "2d 3h").
-     */
-    private fun formatEffortMinutes(totalMinutes: Int): String {
-        if (totalMinutes <= 0) return "0min"
-        val days = totalMinutes / (8 * 60)
-        val hours = (totalMinutes % (8 * 60)) / 60
-        val mins = totalMinutes % 60
-        return buildString {
-            if (days > 0) append("${days}d ")
-            if (hours > 0) append("${hours}h ")
-            if (mins > 0 && days == 0) append("${mins}min")
-        }.trim().ifEmpty { "0min" }
-    }
 }
 
 private class CoverageProgressBar : JPanel() {

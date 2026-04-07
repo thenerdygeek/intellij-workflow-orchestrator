@@ -19,7 +19,6 @@ import javax.swing.JComponent
 
 class AgentTabProvider : WorkflowTabProvider {
 
-    override val tabId: String = "agent"
     override val tabTitle: String = "Agent"
     override val order: Int = 5
 

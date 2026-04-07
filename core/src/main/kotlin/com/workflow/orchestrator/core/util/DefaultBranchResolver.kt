@@ -4,13 +4,10 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.core.model.ServiceType
-import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
 import git4idea.repo.GitRepository
 import kotlinx.coroutines.*
@@ -243,25 +240,13 @@ class DefaultBranchResolver(private val project: Project) : Disposable {
         log.info("[BranchResolver] Override set: $branch → $target")
     }
 
-    fun getOverride(repoPath: String, branch: String): String? {
+    private fun getOverride(repoPath: String, branch: String): String? {
         val key = buildOverrideKey(repoPath, branch)
         return loadOverrides()[key]
     }
 
-    fun removeOverride(repoPath: String, branch: String) {
-        val key = buildOverrideKey(repoPath, branch)
-        val overrides = loadOverrides().toMutableMap()
-        overrides.remove(key)
-        saveOverrides(overrides)
-        cache.clear()
-    }
-
     fun clearAllOverrides() {
         PluginSettings.getInstance(project).state.branchTargetOverrides = ""
-        cache.clear()
-    }
-
-    fun clearCache() {
         cache.clear()
     }
 
@@ -274,15 +259,8 @@ class DefaultBranchResolver(private val project: Project) : Disposable {
         PluginSettings.getInstance(project).state.branchTargetOverrides = serializeOverrides(map)
     }
 
-    private fun createBitbucketClient(): BitbucketBranchClient? {
-        val connSettings = ConnectionSettings.getInstance().state
-        val url = connSettings.bitbucketUrl.trimEnd('/')
-        if (url.isBlank()) return null
-        return BitbucketBranchClient(
-            baseUrl = url,
-            tokenProvider = { CredentialStore().getToken(ServiceType.BITBUCKET) }
-        )
-    }
+    private fun createBitbucketClient(): BitbucketBranchClient? =
+        BitbucketBranchClient.fromConfiguredSettings()
 
     override fun dispose() {
         scope.cancel()

@@ -7,9 +7,9 @@ import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.ui.StatusColors
 import java.awt.BorderLayout
 import java.awt.CardLayout
+import java.awt.FlowLayout
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
-import javax.swing.BorderFactory
 import javax.swing.JButton
 import javax.swing.JPanel
 import javax.swing.SwingConstants
@@ -28,16 +28,10 @@ class TimeLogPanel(private val project: Project) : JPanel(BorderLayout()) {
     val dateField = JBTextField(10)
     val hoursField = JBTextField("1.0", 5)
     private val decrementButton = JButton("-").apply {
-        addActionListener {
-            val current = hoursField.text.toDoubleOrNull() ?: 1.0
-            hoursField.text = (current - 0.5).coerceAtLeast(0.5).toString()
-        }
+        addActionListener { adjustHours(-HOURS_STEP) }
     }
     private val incrementButton = JButton("+").apply {
-        addActionListener {
-            val current = hoursField.text.toDoubleOrNull() ?: 1.0
-            hoursField.text = (current + 0.5).coerceAtMost(7.0).toString()
-        }
+        addActionListener { adjustHours(HOURS_STEP) }
     }
     val commentField = JBTextField()
     val elapsedHintLabel = JBLabel("")
@@ -49,23 +43,6 @@ class TimeLogPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     init {
         border = JBUI.Borders.empty(8)
-
-        val headerLabel = JBLabel("TIME TRACKING").apply {
-            font = font.deriveFont(java.awt.Font.BOLD, JBUI.scale(12).toFloat())
-            foreground = StatusColors.SECONDARY_TEXT
-            border = JBUI.Borders.emptyLeft(8)
-        }
-        val header = JPanel(BorderLayout()).apply {
-            add(headerLabel, BorderLayout.CENTER)
-            border = BorderFactory.createCompoundBorder(
-                JBUI.Borders.customLine(StatusColors.BORDER, 0, 0, 1, 0),
-                BorderFactory.createCompoundBorder(
-                    JBUI.Borders.customLine(StatusColors.LINK, 0, 2, 0, 0),
-                    JBUI.Borders.empty(6, 0, 6, 0)
-                )
-            )
-            isOpaque = false
-        }
 
         val formPanel = JPanel(GridBagLayout())
         val gbc = GridBagConstraints().apply {
@@ -86,7 +63,7 @@ class TimeLogPanel(private val project: Project) : JPanel(BorderLayout()) {
         gbc.gridx = 0; gbc.gridy = 2; gbc.weightx = 0.0
         formPanel.add(JBLabel("Hours (max 7):"), gbc)
         gbc.gridx = 1; gbc.weightx = 1.0
-        val hoursStepper = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 2, 0)).apply {
+        val hoursStepper = JPanel(FlowLayout(FlowLayout.LEFT, 2, 0)).apply {
             add(decrementButton)
             add(hoursField)
             add(incrementButton)
@@ -110,9 +87,14 @@ class TimeLogPanel(private val project: Project) : JPanel(BorderLayout()) {
         cardPanel.add(emptyLabel, "empty")
         cardLayout.show(cardPanel, "empty")
 
-        add(header, BorderLayout.NORTH)
+        add(handoverPanelHeader("TIME TRACKING"), BorderLayout.NORTH)
         add(cardPanel, BorderLayout.CENTER)
         add(southPanel, BorderLayout.SOUTH)
+    }
+
+    private fun adjustHours(delta: Double) {
+        val current = hoursField.text.toDoubleOrNull() ?: DEFAULT_HOURS
+        hoursField.text = (current + delta).coerceIn(MIN_HOURS, MAX_HOURS).toString()
     }
 
     /** Show the form when a ticket is selected, or empty state when cleared. */
@@ -123,5 +105,12 @@ class TimeLogPanel(private val project: Project) : JPanel(BorderLayout()) {
             ticketLabel.text = ticketKey
             cardLayout.show(cardPanel, "form")
         }
+    }
+
+    companion object {
+        private const val DEFAULT_HOURS = 1.0
+        private const val MIN_HOURS = 0.5
+        private const val MAX_HOURS = 7.0
+        private const val HOURS_STEP = 0.5
     }
 }

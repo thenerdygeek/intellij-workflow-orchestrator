@@ -133,10 +133,11 @@ class DockerRegistryClient(
     suspend fun getLatestReleaseTag(serviceName: String): ApiResult<String?> {
         return when (val result = listTags(serviceName)) {
             is ApiResult.Success -> {
-                val semverPattern = Regex("""^\d+\.\d+\.\d+.*$""")
-                val releaseTags = result.data.filter { semverPattern.matches(it) }
-                val sorted = releaseTags.sortedWith(SemverComparator)
-                ApiResult.Success(sorted.lastOrNull())
+                val latest = result.data
+                    .filter { SEMVER_PATTERN.matches(it) }
+                    .sortedWith(SemverComparator)
+                    .lastOrNull()
+                ApiResult.Success(latest)
             }
             is ApiResult.Error -> ApiResult.Error(result.type, result.message, result.cause)
         }
@@ -309,5 +310,9 @@ class DockerRegistryClient(
             }
             return 0
         }
+    }
+
+    private companion object {
+        private val SEMVER_PATTERN = Regex("""^\d+\.\d+\.\d+.*$""")
     }
 }

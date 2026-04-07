@@ -33,20 +33,19 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketPrRef
 import com.workflow.orchestrator.core.ui.TimeFormatter
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
-import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.bitbucket.BitbucketReviewer
 import com.workflow.orchestrator.core.bitbucket.BitbucketReviewerUser
 import com.workflow.orchestrator.core.bitbucket.BitbucketUser
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
-import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.pullrequest.service.PrActionService
 import com.workflow.orchestrator.pullrequest.service.PrDetailService
 import com.workflow.orchestrator.pullrequest.service.PrListService
 import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.core.util.DefaultBranchResolver
+import com.workflow.orchestrator.core.util.StringUtils
 import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.*
 import java.awt.*
@@ -57,7 +56,6 @@ import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.awt.geom.RoundRectangle2D
-import java.util.*
 import javax.swing.*
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
@@ -418,13 +416,11 @@ class PrDetailPanel(
         createRepoConfig = repoConfig
 
         // Get current git branch using the provided repo config or falling back to context detection
-        val gitRepos = GitRepositoryManager.getInstance(project).repositories
         val targetRepo = if (repoConfig?.localVcsRootPath?.isNotBlank() == true) {
+            val gitRepos = GitRepositoryManager.getInstance(project).repositories
             gitRepos.find { it.root.path == repoConfig.localVcsRootPath } ?: gitRepos.firstOrNull()
         } else {
-            val resolver = RepoContextResolver.getInstance(project)
-            val detected = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
-            gitRepos.find { it.root.path == detected?.localVcsRootPath } ?: gitRepos.firstOrNull()
+            RepoContextResolver.getInstance(project).resolveCurrentEditorRepoOrPrimary()
         }
         val currentBranch = targetRepo?.currentBranch?.name ?: "unknown"
         createSourceBranchLabel.text = currentBranch
@@ -475,11 +471,7 @@ class PrDetailPanel(
                 return@launch
             }
 
-            val credentialStore = CredentialStore()
-            val client = BitbucketBranchClient(
-                baseUrl = url,
-                tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
-            )
+            val client = BitbucketBranchClient.fromConfiguredSettings() ?: return@launch
             when (val result = client.getBranches(projectKey, repoSlug)) {
                 is ApiResult.Success -> {
                     invokeLater {
@@ -665,11 +657,7 @@ class PrDetailPanel(
             .takeIf { it.isNotEmpty() }
 
         scope.launch {
-            val credentialStore = CredentialStore()
-            val client = BitbucketBranchClient(
-                baseUrl = url,
-                tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
-            )
+            val client = BitbucketBranchClient.fromConfiguredSettings() ?: return@launch
             when (val result = client.createPullRequest(
                 projectKey = projectKey,
                 repoSlug = repoSlug,
@@ -751,97 +739,14 @@ class PrDetailPanel(
     }
 
     private fun showCreateReviewerPopup(relativeTo: Component) {
-        val popupContent = JPanel(BorderLayout()).apply {
-            preferredSize = Dimension(JBUI.scale(260), JBUI.scale(200))
-            border = JBUI.Borders.empty(8)
+        showUserSearchPopup(
+            relativeTo = relativeTo,
+            excludeUsernames = selectedReviewerUsernames.toSet()
+        ) { user, _ ->
+            selectedReviewerUsernames.add(user.name)
+            selectedReviewerDisplayNames.add(user.displayName.ifBlank { user.name })
+            renderCreateReviewers()
         }
-
-        val searchField = JBTextField().apply {
-            emptyText.text = "Search users..."
-        }
-
-        val userListModel = DefaultListModel<BitbucketUser>()
-        val userList = JBList(userListModel).apply {
-            cellRenderer = object : DefaultListCellRenderer() {
-                override fun getListCellRendererComponent(
-                    list: JList<*>?, value: Any?, index: Int, isSelected: Boolean, cellHasFocus: Boolean
-                ): Component {
-                    super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
-                    val user = value as? BitbucketUser
-                    text = if (user != null) {
-                        val display = user.displayName.ifBlank { user.name }
-                        "$display (${user.name})"
-                    } else ""
-                    return this
-                }
-            }
-        }
-
-        popupContent.add(searchField, BorderLayout.NORTH)
-        popupContent.add(JBScrollPane(userList).apply {
-            border = JBUI.Borders.emptyTop(4)
-        }, BorderLayout.CENTER)
-
-        val popup = com.intellij.openapi.ui.popup.JBPopupFactory.getInstance()
-            .createComponentPopupBuilder(popupContent, searchField)
-            .setRequestFocus(true)
-            .setFocusable(true)
-            .setMovable(true)
-            .setTitle("Add Reviewer")
-            .createPopup()
-
-        // Debounced search
-        var searchJob: Job? = null
-        searchField.document.addDocumentListener(object : DocumentListener {
-            override fun insertUpdate(e: DocumentEvent) = triggerSearch()
-            override fun removeUpdate(e: DocumentEvent) = triggerSearch()
-            override fun changedUpdate(e: DocumentEvent) = triggerSearch()
-
-            private fun triggerSearch() {
-                searchJob?.cancel()
-                val query = searchField.text.trim()
-                if (query.length < 2) {
-                    userListModel.clear()
-                    return
-                }
-                searchJob = scope.launch {
-                    delay(300) // debounce
-                    val url = ConnectionSettings.getInstance().state.bitbucketUrl.trimEnd('/')
-                    if (url.isBlank()) return@launch
-                    val credentialStore = CredentialStore()
-                    val client = BitbucketBranchClient(
-                        baseUrl = url,
-                        tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
-                    )
-                    when (val result = client.getUsers(query)) {
-                        is ApiResult.Success -> {
-                            invokeLater {
-                                userListModel.clear()
-                                result.data
-                                    .filter { it.name !in selectedReviewerUsernames }
-                                    .forEach { userListModel.addElement(it) }
-                            }
-                        }
-                        is ApiResult.Error -> { /* ignore search errors */ }
-                    }
-                }
-            }
-        })
-
-        // Click to add reviewer
-        userList.addMouseListener(object : MouseAdapter() {
-            override fun mouseClicked(e: MouseEvent) {
-                if (e.clickCount == 1) {
-                    val selected = userList.selectedValue ?: return
-                    popup.cancel()
-                    selectedReviewerUsernames.add(selected.name)
-                    selectedReviewerDisplayNames.add(selected.displayName.ifBlank { selected.name })
-                    renderCreateReviewers()
-                }
-            }
-        })
-
-        popup.showUnderneathOf(relativeTo)
     }
 
     override fun dispose() {
@@ -1280,13 +1185,7 @@ class PrDetailPanel(
 
     private suspend fun resolveCurrentUsername(): String? {
         cachedUsername?.let { return it }
-        val url = ConnectionSettings.getInstance().state.bitbucketUrl.trimEnd('/')
-        if (url.isBlank()) return null
-        val credentialStore = CredentialStore()
-        val client = BitbucketBranchClient(
-            baseUrl = url,
-            tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
-        )
+        val client = BitbucketBranchClient.fromConfiguredSettings() ?: return null
         return when (val result = client.getCurrentUsername()) {
             is ApiResult.Success -> { cachedUsername = result.data; result.data }
             is ApiResult.Error -> null
@@ -1433,10 +1332,35 @@ class PrDetailPanel(
     }
 
     /**
-     * Shows a popup with user search for adding reviewers.
+     * Shows a popup with user search for adding reviewers to an existing PR.
      * Debounces input by 300ms, queries BitbucketBranchClient.getUsers().
      */
     private fun showAddReviewerPopup(relativeTo: Component) {
+        showUserSearchPopup(relativeTo = relativeTo) { user, popup ->
+            val prId = currentPrId ?: return@showUserSearchPopup
+            popup.cancel()
+            scope.launch {
+                val result = PrActionService.getInstance(project).addReviewer(prId, user.name)
+                invokeLater {
+                    when (result) {
+                        is ApiResult.Success -> refreshCurrentPr()
+                        is ApiResult.Error -> showNotification("Failed to add reviewer: ${result.message}")
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Shared user search popup used by both create-PR and detail-panel reviewer addition.
+     * @param excludeUsernames usernames to filter out of search results (e.g., already selected)
+     * @param onUserSelected callback receiving the selected user and the popup (for dismissal)
+     */
+    private fun showUserSearchPopup(
+        relativeTo: Component,
+        excludeUsernames: Set<String> = emptySet(),
+        onUserSelected: (BitbucketUser, com.intellij.openapi.ui.popup.JBPopup) -> Unit
+    ) {
         val popupContent = JPanel(BorderLayout()).apply {
             preferredSize = Dimension(JBUI.scale(260), JBUI.scale(200))
             border = JBUI.Borders.empty(8)
@@ -1492,18 +1416,14 @@ class PrDetailPanel(
                 }
                 searchJob = scope.launch {
                     delay(300) // debounce
-                    val url = ConnectionSettings.getInstance().state.bitbucketUrl.trimEnd('/')
-                    if (url.isBlank()) return@launch
-                    val credentialStore = CredentialStore()
-                    val client = BitbucketBranchClient(
-                        baseUrl = url,
-                        tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
-                    )
+                    val client = BitbucketBranchClient.fromConfiguredSettings() ?: return@launch
                     when (val result = client.getUsers(query)) {
                         is ApiResult.Success -> {
                             invokeLater {
                                 userListModel.clear()
-                                result.data.forEach { userListModel.addElement(it) }
+                                result.data
+                                    .filter { it.name !in excludeUsernames }
+                                    .forEach { userListModel.addElement(it) }
                             }
                         }
                         is ApiResult.Error -> { /* ignore search errors */ }
@@ -1512,22 +1432,13 @@ class PrDetailPanel(
             }
         })
 
-        // Click to add reviewer
+        // Click to select user
         userList.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
                 if (e.clickCount == 1) {
                     val selected = userList.selectedValue ?: return
-                    val prId = currentPrId ?: return
                     popup.cancel()
-                    scope.launch {
-                        val result = PrActionService.getInstance(project).addReviewer(prId, selected.name)
-                        invokeLater {
-                            when (result) {
-                                is ApiResult.Success -> refreshCurrentPr()
-                                is ApiResult.Error -> showNotification("Failed to add reviewer: ${result.message}")
-                            }
-                        }
-                    }
+                    onUserSelected(selected, popup)
                 }
             }
         })
@@ -1763,7 +1674,7 @@ class PrDetailPanel(
         }
 
         private fun markdownToHtml(md: String): String {
-            var html = md
+            val html = md
                 .replace("&", "&amp;")
                 .replace("<", "&lt;")
                 .replace(">", "&gt;")
@@ -1783,7 +1694,6 @@ class PrDetailPanel(
                 }
                 .replace("\n\n", "<br><br>")
 
-            val bgColor = StatusColors.htmlColor(CARD_BG)
             val textColor = StatusColors.htmlColor(SECONDARY_TEXT)
             return "<html><body style='font-family: sans-serif; color: $textColor;'>$html</body></html>"
         }
@@ -2011,11 +1921,7 @@ class PrDetailPanel(
             }
         }
 
-        /** Stored activities for refresh after reply. */
-        private var lastActivities: List<BitbucketPrActivity> = emptyList()
-
         fun showActivities(activities: List<BitbucketPrActivity>) {
-            lastActivities = activities
             removeAll()
             contentPanel.removeAll()
 
@@ -2135,7 +2041,7 @@ class PrDetailPanel(
                     isOpaque = false
                     border = JBUI.Borders.emptyLeft(JBUI.scale(8))
                 }
-                bodyPanel.add(JBLabel(PrListPanel.truncate(commentText, 150)).apply {
+                bodyPanel.add(JBLabel(StringUtils.truncate(commentText, 150)).apply {
                     font = font.deriveFont(JBUI.scale(11).toFloat())
                     foreground = SECONDARY_TEXT
                     toolTipText = if (commentText.length > 150) commentText else null
@@ -2186,7 +2092,7 @@ class PrDetailPanel(
             }
 
             if (commentText.isNotBlank()) {
-                bodyPanel.add(JBLabel(PrListPanel.truncate(commentText, 200)).apply {
+                bodyPanel.add(JBLabel(StringUtils.truncate(commentText, 200)).apply {
                     font = font.deriveFont(JBUI.scale(11).toFloat())
                     foreground = JBColor.foreground()
                     toolTipText = if (commentText.length > 200) commentText else null

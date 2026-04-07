@@ -54,7 +54,6 @@ import com.workflow.orchestrator.core.ai.LlmBrainFactory
 import com.workflow.orchestrator.core.ai.ModelCache
 import com.workflow.orchestrator.core.ai.OpenAiCompatBrain
 import com.workflow.orchestrator.core.ai.SourcegraphChatClient
-import com.workflow.orchestrator.core.ai.dto.ToolDefinition
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.agent.loop.ModelFallbackManager
@@ -413,11 +412,6 @@ class AgentService(private val project: Project) : Disposable {
         }
     }
 
-    /** Backward-compatible register — delegates to core. */
-    private inline fun safeRegister(factory: () -> AgentTool) {
-        safeRegisterCore(factory)
-    }
-
     // ── Task Execution ─────────────────────────────────────────────────────
 
     /**
@@ -644,11 +638,6 @@ class AgentService(private val project: Project) : Disposable {
                 val systemPrompt = SystemPrompt.build(
                     projectName = projectName,
                     projectPath = projectPath,
-                    osName = System.getProperty("os.name") ?: "Unknown",
-                    shell = if ((System.getProperty("os.name") ?: "").lowercase().contains("win"))
-                        System.getenv("COMSPEC") ?: "cmd.exe"
-                    else
-                        System.getenv("SHELL") ?: "/bin/bash",
                     planModeEnabled = planModeActive.get(),
                     additionalContext = projectInstructions,
                     availableSkills = availableSkills,
@@ -984,16 +973,9 @@ class AgentService(private val project: Project) : Disposable {
             ctx.setSystemPrompt(session.systemPrompt)
         } else {
             // Rebuild system prompt from current settings (fallback)
-            val projectName = project.name
-            val projectPath = project.basePath ?: ""
             val systemPrompt = SystemPrompt.build(
-                projectName = projectName,
-                projectPath = projectPath,
-                osName = System.getProperty("os.name") ?: "Unknown",
-                shell = if ((System.getProperty("os.name") ?: "").lowercase().contains("win"))
-                    System.getenv("COMSPEC") ?: "cmd.exe"
-                else
-                    System.getenv("SHELL") ?: "/bin/bash",
+                projectName = project.name,
+                projectPath = project.basePath ?: "",
                 planModeEnabled = session.planModeEnabled
             )
             ctx.setSystemPrompt(systemPrompt)
@@ -1149,7 +1131,7 @@ class AgentService(private val project: Project) : Disposable {
     fun getFilesModifiedSinceCheckpoint(sessionId: String, checkpointId: String): List<String> {
         return try {
             val checkpointMessages = sessionStore.loadCheckpoint(sessionId, checkpointId) ?: return emptyList()
-            val currentMessages = sessionStore.loadMessages(sessionId) ?: return emptyList()
+            val currentMessages = sessionStore.loadMessages(sessionId)
             // Messages after the checkpoint = those beyond checkpointMessages.size
             val afterCheckpoint = currentMessages.drop(checkpointMessages.size)
             // Extract file paths from tool calls in assistant messages

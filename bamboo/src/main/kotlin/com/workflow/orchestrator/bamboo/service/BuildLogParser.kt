@@ -25,8 +25,7 @@ object BuildLogParser {
 
     fun parse(buildLog: String): List<BuildError> {
         val lines = buildLog.lineSequence()
-        val lineCount = buildLog.count { it == '\n' } + 1
-        log.info("[Bamboo:Parser] Starting build log parsing (~$lineCount lines)")
+        log.info("[Bamboo:Parser] Starting build log parsing (~${buildLog.count { it == '\n' } + 1} lines)")
         val errors = mutableListOf<BuildError>()
 
         for (line in lines) {

@@ -3,10 +3,8 @@ package com.workflow.orchestrator.pullrequest.service
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrReviewerRef
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrUpdateRequest
 import com.workflow.orchestrator.core.bitbucket.BitbucketReviewerUser
@@ -26,7 +24,6 @@ import com.workflow.orchestrator.core.settings.PluginSettings
 class BitbucketServiceImpl(private val project: Project) : BitbucketService {
 
     private val log = Logger.getInstance(BitbucketServiceImpl::class.java)
-    private val credentialStore = CredentialStore()
     private val settings get() = PluginSettings.getInstance(project)
 
     @Volatile private var cachedClient: BitbucketBranchClient? = null
@@ -38,10 +35,7 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
             if (url.isBlank()) return null
             if (url != cachedBaseUrl || cachedClient == null) {
                 cachedBaseUrl = url
-                cachedClient = BitbucketBranchClient(
-                    baseUrl = url,
-                    tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
-                )
+                cachedClient = BitbucketBranchClient.fromConfiguredSettings()
             }
             return cachedClient
         }
@@ -887,9 +881,4 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
         }
     }
 
-    companion object {
-        @JvmStatic
-        fun getInstance(project: Project): BitbucketServiceImpl =
-            project.getService(BitbucketService::class.java) as BitbucketServiceImpl
-    }
 }

@@ -14,7 +14,6 @@ import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.ai.AgentChatRedirect
 import com.workflow.orchestrator.core.ai.LlmBrainFactory
 import com.workflow.orchestrator.core.model.sonar.SecurityHotspotData
-import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.ui.TimeFormatter
 import com.workflow.orchestrator.sonar.model.*

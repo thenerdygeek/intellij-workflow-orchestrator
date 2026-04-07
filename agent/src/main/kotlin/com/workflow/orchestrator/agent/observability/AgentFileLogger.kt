@@ -59,7 +59,7 @@ class AgentFileLogger(private val logDir: File) {
             LogEntry(
                 ts = now(),
                 session = truncateSession(sessionId),
-                event = if (isError) "tool_call" else "tool_call",
+                event = "tool_call",
                 tool = toolName,
                 status = if (isError) "error" else "ok",
                 args = args?.take(500),
@@ -108,6 +108,7 @@ class AgentFileLogger(private val logDir: File) {
         )
     }
 
+    @Suppress("UNUSED_PARAMETER")
     fun logCompaction(
         sessionId: String,
         trigger: String,
@@ -141,6 +142,7 @@ class AgentFileLogger(private val logDir: File) {
         )
     }
 
+    @Suppress("UNUSED_PARAMETER")
     fun logSessionStart(
         sessionId: String,
         task: String,
@@ -166,7 +168,7 @@ class AgentFileLogger(private val logDir: File) {
             LogEntry(
                 ts = now(),
                 session = truncateSession(sessionId),
-                event = if (error != null) "session_end" else "session_end",
+                event = "session_end",
                 iteration = iterations,
                 tokens = totalTokens,
                 durationMs = durationMs,
@@ -260,7 +262,6 @@ class AgentFileLogger(private val logDir: File) {
         val tool: String? = null,
         val status: String? = null,
         val args: String? = null,
-        val result: String? = null,
         val error: String? = null,
         val durationMs: Long? = null,
         val latencyMs: Long? = null,

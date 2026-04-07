@@ -114,7 +114,7 @@ description optional: for approval dialog on trigger/stop/cancel.
 
         return when (action) {
             "build_status" -> {
-                val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return missingParam("plan_key")
+                val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("plan_key")
                 ToolValidation.validateBambooPlanKey(planKey)?.let { return it }
                 val branch = params["branch"]?.jsonPrimitive?.content
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
@@ -122,13 +122,13 @@ description optional: for approval dialog on trigger/stop/cancel.
             }
 
             "get_build" -> {
-                val buildKey = params["build_key"]?.jsonPrimitive?.content ?: return missingParam("build_key")
+                val buildKey = params["build_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("build_key")
                 ToolValidation.validateBambooBuildKey(buildKey)?.let { return it }
                 service.getBuild(buildKey).toAgentToolResult()
             }
 
             "trigger_build" -> {
-                val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return missingParam("plan_key")
+                val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("plan_key")
                 ToolValidation.validateBambooPlanKey(planKey)?.let { return it }
                 val variablesStr = params["variables"]?.jsonPrimitive?.content
                 val variables = if (!variablesStr.isNullOrBlank()) {
@@ -148,13 +148,13 @@ description optional: for approval dialog on trigger/stop/cancel.
             }
 
             "get_build_log" -> {
-                val buildKey = params["build_key"]?.jsonPrimitive?.content ?: return missingParam("build_key")
+                val buildKey = params["build_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("build_key")
                 ToolValidation.validateBambooBuildKey(buildKey)?.let { return it }
                 service.getBuildLog(buildKey).toAgentToolResult()
             }
 
             "get_test_results" -> {
-                val buildKey = params["build_key"]?.jsonPrimitive?.content ?: return missingParam("build_key")
+                val buildKey = params["build_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("build_key")
                 ToolValidation.validateBambooBuildKey(buildKey)?.let { return it }
                 service.getTestResults(buildKey).toAgentToolResult()
             }
@@ -162,7 +162,7 @@ description optional: for approval dialog on trigger/stop/cancel.
             "stop_build" -> {
                 val buildKey = params["build_key"]?.jsonPrimitive?.content
                     ?: params["result_key"]?.jsonPrimitive?.content
-                    ?: return missingParam("build_key")
+                    ?: return ToolValidation.missingParam("build_key")
                 ToolValidation.validateBambooBuildKey(buildKey)?.let { return it }
                 service.stopBuild(buildKey).toAgentToolResult()
             }
@@ -170,7 +170,7 @@ description optional: for approval dialog on trigger/stop/cancel.
             "cancel_build" -> {
                 val buildKey = params["build_key"]?.jsonPrimitive?.content
                     ?: params["result_key"]?.jsonPrimitive?.content
-                    ?: return missingParam("build_key")
+                    ?: return ToolValidation.missingParam("build_key")
                 ToolValidation.validateBambooBuildKey(buildKey)?.let { return it }
                 service.cancelBuild(buildKey).toAgentToolResult()
             }
@@ -178,14 +178,14 @@ description optional: for approval dialog on trigger/stop/cancel.
             "get_artifacts" -> {
                 val buildKey = params["build_key"]?.jsonPrimitive?.content
                     ?: params["result_key"]?.jsonPrimitive?.content
-                    ?: return missingParam("build_key")
+                    ?: return ToolValidation.missingParam("build_key")
                 ToolValidation.validateBambooBuildKey(buildKey)?.let { return it }
                 service.getArtifacts(buildKey).toAgentToolResult()
             }
 
             "download_artifact" -> {
                 val artifactUrl = params["artifact_url"]?.jsonPrimitive?.content
-                    ?: return missingParam("artifact_url")
+                    ?: return ToolValidation.missingParam("artifact_url")
                 val targetPath = params["target_path"]?.jsonPrimitive?.content
                 val targetFile = if (targetPath != null) {
                     java.io.File(targetPath)
@@ -206,7 +206,7 @@ description optional: for approval dialog on trigger/stop/cancel.
             }
 
             "recent_builds" -> {
-                val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return missingParam("plan_key")
+                val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("plan_key")
                 val maxResults = params["max_results"]?.jsonPrimitive?.content?.toIntOrNull() ?: 10
                 ToolValidation.validateBambooPlanKey(planKey)?.let { return it }
                 val branch = params["branch"]?.jsonPrimitive?.content
@@ -215,7 +215,7 @@ description optional: for approval dialog on trigger/stop/cancel.
             }
 
             "get_running_builds" -> {
-                val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return missingParam("plan_key")
+                val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("plan_key")
                 ToolValidation.validateBambooPlanKey(planKey)?.let { return it }
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
                 service.getRunningBuilds(planKey, repoName = repoName).toAgentToolResult()
@@ -229,11 +229,4 @@ description optional: for approval dialog on trigger/stop/cancel.
             )
         }
     }
-
-    private fun missingParam(name: String): ToolResult = ToolResult(
-        content = "Error: '$name' parameter required",
-        summary = "Error: missing $name",
-        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-        isError = true
-    )
 }

@@ -5,7 +5,6 @@ import com.intellij.openapi.project.Project
 import javax.swing.JComponent
 
 interface WorkflowTabProvider {
-    val tabId: String
     val tabTitle: String
     val order: Int
     fun createPanel(project: Project): JComponent

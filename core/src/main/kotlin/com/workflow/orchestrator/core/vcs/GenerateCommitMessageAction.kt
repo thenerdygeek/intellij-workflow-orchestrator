@@ -24,7 +24,6 @@ import com.workflow.orchestrator.core.settings.RepoContextResolver
 import git4idea.commands.Git
 import git4idea.commands.GitCommand
 import git4idea.commands.GitLineHandler
-import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -225,16 +224,8 @@ class GenerateCommitMessageAction : AnAction(
      * Get the git diff for uncommitted changes.
      * Tries staged diff first, falls back to unstaged diff.
      */
-    private fun resolveTargetRepo(project: Project): git4idea.repo.GitRepository? {
-        val resolver = RepoContextResolver.getInstance(project)
-        val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
-        val repos = GitRepositoryManager.getInstance(project).repositories
-        return if (repoConfig?.localVcsRootPath != null) {
-            repos.find { it.root.path == repoConfig.localVcsRootPath }
-        } else {
-            repos.firstOrNull()
-        } ?: repos.firstOrNull()
-    }
+    private fun resolveTargetRepo(project: Project): git4idea.repo.GitRepository? =
+        RepoContextResolver.getInstance(project).resolveCurrentEditorRepoOrPrimary()
 
     private fun getGitDiff(project: Project, preResolvedRepo: git4idea.repo.GitRepository? = null): String? {
         val repo = preResolvedRepo ?: resolveTargetRepo(project) ?: return null

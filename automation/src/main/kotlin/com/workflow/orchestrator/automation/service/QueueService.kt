@@ -57,11 +57,12 @@ class QueueService : Disposable {
         val registryUrl = (settings.state.dockerRegistryUrl.takeUnless { it.isNullOrBlank() }
             ?: settings.connections.nexusUrl.orEmpty()).trimEnd('/')
         val nexusUsername = settings.connections.nexusUsername.orEmpty()
+        val timeouts = com.workflow.orchestrator.core.http.HttpClientFactory.timeoutsFromSettings(p)
         DockerRegistryClient(
             registryUrl = registryUrl,
             tokenProvider = { credentialStore.getNexusBasicAuthToken(nexusUsername) },
-            connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
-            readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
+            connectTimeoutSeconds = timeouts.connectSeconds,
+            readTimeoutSeconds = timeouts.readSeconds
         ).also { _registryClient = it }
     }
 
@@ -158,10 +159,10 @@ class QueueService : Disposable {
                 val entry = _stateFlow.value.find { it.id == entryId } ?: return@launch
                 log.info("[Automation:Queue] Cancelling entry $entryId (status=${entry.status}, suite='${entry.suitePlanKey}')")
 
-                if (entry.bambooResultKey != null &&
-                    entry.status in listOf(QueueEntryStatus.QUEUED_ON_BAMBOO)) {
-                    log.info("[Automation:Queue] Cancelling Bamboo build ${entry.bambooResultKey}")
-                    bambooService.cancelBuild(entry.bambooResultKey!!)
+                val resultKey = entry.bambooResultKey
+                if (resultKey != null && entry.status == QueueEntryStatus.QUEUED_ON_BAMBOO) {
+                    log.info("[Automation:Queue] Cancelling Bamboo build $resultKey")
+                    bambooService.cancelBuild(resultKey)
                 }
 
                 tagHistoryService.updateQueueEntryStatus(entryId, QueueEntryStatus.CANCELLED)
@@ -203,9 +204,7 @@ class QueueService : Disposable {
                         pollInProgress.set(false)
                     }
                 }
-                val hasActive = _stateFlow.value.any {
-                    it.status in listOf(QueueEntryStatus.RUNNING, QueueEntryStatus.QUEUED_ON_BAMBOO)
-                }
+                val hasActive = _stateFlow.value.any { it.status in ACTIVE_STATUSES }
                 val interval = if (hasActive) 15_000L else 60_000L
                 val jitter = kotlin.random.Random.nextLong(interval / 10)
                 delay(interval + jitter)
@@ -244,8 +243,7 @@ class QueueService : Disposable {
 
     private suspend fun handleWaitingLocal(planKey: String, entry: QueueEntry): QueueEntry {
         val oldestWaiting = _stateFlow.value
-            .filter { it.suitePlanKey == planKey && it.status == QueueEntryStatus.WAITING_LOCAL }
-            .firstOrNull()
+            .firstOrNull { it.suitePlanKey == planKey && it.status == QueueEntryStatus.WAITING_LOCAL }
 
         if (oldestWaiting?.id != entry.id) return entry
 
@@ -374,5 +372,9 @@ class QueueService : Disposable {
         log.info("[Automation:Queue] QueueService disposing, cancelling polling and scope")
         pollingJob?.cancel()
         scope.cancel()
+    }
+
+    private companion object {
+        private val ACTIVE_STATUSES = setOf(QueueEntryStatus.RUNNING, QueueEntryStatus.QUEUED_ON_BAMBOO)
     }
 }

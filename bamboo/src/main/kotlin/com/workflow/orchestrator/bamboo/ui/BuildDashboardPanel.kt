@@ -25,15 +25,13 @@ import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.bamboo.model.BuildStatus
 import com.workflow.orchestrator.bamboo.service.BuildLogParser
 import com.workflow.orchestrator.bamboo.service.BuildMonitorService
-import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.maven.MavenBuildService
 import com.workflow.orchestrator.core.maven.SurefireReportParser
 import com.workflow.orchestrator.core.maven.TeamCityMessageConverter
-import com.intellij.ui.JBColor
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.ui.StatusColors
+import com.workflow.orchestrator.core.ui.TimeFormatter
 import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.model.bamboo.BuildResultData
 import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.events.EventBus
@@ -44,17 +42,14 @@ import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import git4idea.repo.GitRepositoryManager
-import com.intellij.openapi.application.EDT
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.awt.*
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
-import javax.swing.ComboBoxModel
 import javax.swing.DefaultComboBoxModel
 import javax.swing.DefaultListModel
 import javax.swing.JList
@@ -67,7 +62,6 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     private val log = Logger.getInstance(BuildDashboardPanel::class.java)
     private val settings = PluginSettings.getInstance(project)
     private var localBuildRunning = false
-    private val credentialStore = CredentialStore()
     private val bambooService = project.getService(BambooService::class.java)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     // Auto-detected plan key (not saved to settings — it's branch-specific)
@@ -216,10 +210,8 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     private fun getOrCreateBitbucketClient(url: String): BitbucketBranchClient {
         if (url != cachedBitbucketUrl || cachedBitbucketClient == null) {
             cachedBitbucketUrl = url
-            cachedBitbucketClient = BitbucketBranchClient(
-                baseUrl = url,
-                tokenProvider = { credentialStore.getToken(ServiceType.BITBUCKET) }
-            )
+            cachedBitbucketClient = BitbucketBranchClient.fromConfiguredSettings()
+                ?: error("Bitbucket URL not configured")
         }
         return cachedBitbucketClient!!
     }
@@ -234,10 +226,12 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             is ApiResult.Success -> {
                 val statuses = result.data
                 if (statuses.isNotEmpty()) {
-                    // Use the build status key directly — it's the Bamboo branch plan key
-                    // e.g., "PROJ-PLAN123" is the key for this branch's builds
-                    val planKey = statuses.first().key
-                    log.info("[Build:Dashboard] Using build status key as plan key: '$planKey' (url='${statuses.first().url}')")
+                    // Bitbucket reports the *build* key (e.g. `PROJ-PLAN-42`); strip the
+                    // `-42` build-number suffix so the plan key can be used to trigger new
+                    // builds. Prefers parsing the browse URL, falls back to trimming digits.
+                    val first = statuses.first()
+                    val planKey = BitbucketBranchClient.extractPlanKey(first)
+                    log.info("[Build:Dashboard] Extracted plan key '$planKey' from build status (raw='${first.key}', url='${first.url}')")
                     planKey
                 } else {
                     log.info("[Build:Dashboard] No build statuses found for commit ${commitId.take(8)}")
@@ -248,18 +242,12 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                 log.warn("[Build:Dashboard] Failed to get build statuses: ${result.message}")
                 null
             }
-            else -> null
         }
     }
 
     private suspend fun checkDivergence(remoteCommit: String) {
         try {
-            val resolver = RepoContextResolver.getInstance(project)
-            val repoConfig = withContext(Dispatchers.EDT) { resolver.resolveFromCurrentEditor() } ?: resolver.getPrimary()
-            val repos = GitRepositoryManager.getInstance(project).repositories
-            val repo = (if (repoConfig?.localVcsRootPath != null) {
-                repos.find { it.root.path == repoConfig.localVcsRootPath }
-            } else repos.firstOrNull()) ?: repos.firstOrNull() ?: return
+            val repo = getGitRepo() ?: return
             val localHead = repo.currentRevision ?: return
 
             if (localHead == remoteCommit) {
@@ -447,7 +435,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                         // Only update header/stages if not viewing a historical build
                         if (!viewingHistoricalBuild) {
                             headerLabel.text = "Plan: ${state.planKey} / ${state.branch}  #${state.buildNumber}"
-                            statusLabel.text = "${state.overallStatus} — ${formatDuration(state.stages.sumOf { it.durationMs ?: 0 })}"
+                            statusLabel.text = "${state.overallStatus} — ${TimeFormatter.formatDurationMillis(state.stages.sumOf { it.durationMs ?: 0 })}"
 
                             // Only rebuild stage list if build number changed (avoids resetting selection + re-fetching log)
                             if (state.buildNumber != lastDisplayedBuildNumber) {
@@ -629,12 +617,8 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         }
     }
 
-    private fun getGitRepo(): git4idea.repo.GitRepository? {
-        val resolver = RepoContextResolver.getInstance(project)
-        val repoConfig = resolver.getPrimary()
-        val repos = GitRepositoryManager.getInstance(project).repositories
-        return repos.find { it.root.path == repoConfig?.localVcsRootPath } ?: repos.firstOrNull()
-    }
+    private fun getGitRepo(): git4idea.repo.GitRepository? =
+        RepoContextResolver.getInstance(project).resolvePrimaryGitRepo()
 
     private fun getCurrentBranch(): String? = getGitRepo()?.currentBranchName
 
@@ -684,7 +668,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             if (!buildResult.isError) {
                 val data = buildResult.data
                 invokeLater {
-                    statusLabel.text = "${data.state} — ${formatDurationSeconds(data.durationSeconds)}"
+                    statusLabel.text = "${data.state} — ${TimeFormatter.formatDurationMillis(data.durationSeconds * 1000)}"
 
                     // Convert BuildResultData stages to StageState for the stage list panel
                     val stageStates = data.stages.map { stage ->
@@ -716,7 +700,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         val state = monitorService.stateFlow.value
         if (state != null) {
             headerLabel.text = "Plan: ${state.planKey} / ${state.branch}  #${state.buildNumber}"
-            statusLabel.text = "${state.overallStatus} — ${formatDuration(state.stages.sumOf { it.durationMs ?: 0 })}"
+            statusLabel.text = "${state.overallStatus} — ${TimeFormatter.formatDurationMillis(state.stages.sumOf { it.durationMs ?: 0 })}"
             stageListPanel.updateStages(state.stages)
         }
     }
@@ -1022,13 +1006,6 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         ManualStageDialog(project, planKey, scope = scope, triggerMode = TriggerMode.FULL_BUILD).show()
     }
 
-    private fun formatDurationSeconds(seconds: Long): String {
-        if (seconds <= 0) return "0s"
-        val mins = seconds / 60
-        val secs = seconds % 60
-        return if (mins > 0) "${mins}m ${secs}s" else "${secs}s"
-    }
-
     /**
      * Cell renderer for the build history list.
      * Stitch design: left border accent by status, monospace bold build number,
@@ -1100,7 +1077,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             }
 
             // Duration
-            val durationStr = formatHistoryDuration(value.durationSeconds)
+            val durationStr = TimeFormatter.formatDurationMillis(value.durationSeconds * 1000)
             append("   $durationStr", SimpleTextAttributes.GRAYED_ATTRIBUTES)
 
             // Relative time
@@ -1112,12 +1089,6 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             }
         }
 
-        private fun formatHistoryDuration(seconds: Long): String {
-            if (seconds <= 0) return "--"
-            val mins = seconds / 60
-            val secs = seconds % 60
-            return if (mins > 0) "${mins}m ${secs}s" else "${secs}s"
-        }
     }
 }
 

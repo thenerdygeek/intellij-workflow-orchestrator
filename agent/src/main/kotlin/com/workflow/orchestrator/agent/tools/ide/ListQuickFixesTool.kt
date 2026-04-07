@@ -1,7 +1,6 @@
 package com.workflow.orchestrator.agent.tools.ide
 
 import com.intellij.codeInspection.InspectionManager
-import com.intellij.codeInspection.LocalInspectionTool
 import com.intellij.codeInspection.ProblemsHolder
 import com.intellij.codeInspection.ex.LocalInspectionToolWrapper
 import com.intellij.openapi.application.ReadAction

@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.ui
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.agent.util.AgentStringUtils
+import com.workflow.orchestrator.core.util.HtmlEscape
 import java.awt.BorderLayout
 import java.awt.Color
 import javax.swing.JEditorPane
@@ -106,7 +107,7 @@ class RichStreamingPanel : JPanel(BorderLayout()) {
 
     fun appendUserMessage(text: String) = runOnEdt {
         flushStreamBuffer()
-        appendHtml("""<div class="user-bubble"><div class="user-label">You</div>${escapeHtml(text)}</div>""")
+        appendHtml("""<div class="user-bubble"><div class="user-label">You</div>${HtmlEscape.escapeHtml(text)}</div>""")
     }
 
     fun completeSession(
@@ -120,7 +121,7 @@ class RichStreamingPanel : JPanel(BorderLayout()) {
             SessionStatus.CANCELLED -> Triple("&#9724;", AgentColors.hex(AgentColors.mutedText), "Cancelled")
         }
         val files = if (filesModified.isNotEmpty()) {
-            "<div class='footer-files'><b>Files:</b> ${filesModified.joinToString(", ") { escapeHtml(it.substringAfterLast('/')) }}</div>"
+            "<div class='footer-files'><b>Files:</b> ${filesModified.joinToString(", ") { HtmlEscape.escapeHtml(it.substringAfterLast('/')) }}</div>"
         } else ""
 
         appendHtml("""
@@ -146,11 +147,11 @@ class RichStreamingPanel : JPanel(BorderLayout()) {
         try {
             val streamEl = htmlDoc.getElement(activeStreamId)
             if (streamEl != null) {
-                htmlDoc.insertBeforeEnd(streamEl, escapeHtml(token).replace("\n", "<br>"))
+                htmlDoc.insertBeforeEnd(streamEl, HtmlEscape.escapeHtml(token).replace("\n", "<br>"))
             }
         } catch (_: Exception) {
             // Fallback: just append to body
-            appendHtml(escapeHtml(token).replace("\n", "<br>"))
+            appendHtml(HtmlEscape.escapeHtml(token).replace("\n", "<br>"))
         }
         scrollToBottom()
     }
@@ -176,7 +177,7 @@ class RichStreamingPanel : JPanel(BorderLayout()) {
             ToolCallStatus.FAILED -> "<span class='timing' style='color:${AgentColors.hex(AgentColors.error)}'>&#10007; failed</span>"
         }
         val argsHtml = if (args.isNotBlank() && args.length > 2) {
-            "<div class='tool-detail'>${escapeHtml(args.take(300))}</div>"
+            "<div class='tool-detail'>${HtmlEscape.escapeHtml(args.take(300))}</div>"
         } else ""
 
         appendHtml("""
@@ -192,7 +193,7 @@ class RichStreamingPanel : JPanel(BorderLayout()) {
     ) = runOnEdt {
         // For simplicity, append the result as a detail line
         if (result.isNotBlank()) {
-            appendHtml("<div style='font-size:12px;color:${AgentColors.hex(AgentColors.secondaryText)};padding:0 10px 6px 10px;'>${escapeHtml(result.take(300))}</div>")
+            appendHtml("<div style='font-size:12px;color:${AgentColors.hex(AgentColors.secondaryText)};padding:0 10px 6px 10px;'>${HtmlEscape.escapeHtml(result.take(300))}</div>")
         }
     }
 
@@ -216,7 +217,7 @@ class RichStreamingPanel : JPanel(BorderLayout()) {
             <div class="diff-card">
                 <div class="diff-header">
                     <span class="badge badge-edit">EDIT</span>
-                    <span class="target">${escapeHtml(fileName)}</span>
+                    <span class="target">${HtmlEscape.escapeHtml(fileName)}</span>
                     $statusHtml
                 </div>
                 $diffLines
@@ -227,12 +228,6 @@ class RichStreamingPanel : JPanel(BorderLayout()) {
     // ═══════════════════════════════════════════════════
     //  Public API — Other Blocks
     // ═══════════════════════════════════════════════════
-
-    fun appendCodeBlock(code: String, language: String = "") = runOnEdt {
-        flushStreamBuffer()
-        val langLabel = if (language.isNotBlank()) "<div style='font-size:10px;color:${AgentColors.hex(AgentColors.mutedText)};padding:4px 12px 0 12px;background:${AgentColors.hex(AgentColors.codeBg)};'>${escapeHtml(language)}</div>" else ""
-        appendHtml("$langLabel<div class='code-block'>${escapeHtml(code)}</div>")
-    }
 
     fun appendStatus(message: String, type: StatusType = StatusType.INFO) = runOnEdt {
         flushStreamBuffer()
@@ -248,14 +243,14 @@ class RichStreamingPanel : JPanel(BorderLayout()) {
             StatusType.WARNING -> "&#9888;"
             StatusType.ERROR -> "&#10007;"
         }
-        appendHtml("<div class='$cls'>$icon ${escapeHtml(message)}</div>")
+        appendHtml("<div class='$cls'>$icon ${HtmlEscape.escapeHtml(message)}</div>")
     }
 
     fun appendError(message: String) = appendStatus(message, StatusType.ERROR)
 
     fun appendThinking(text: String) = runOnEdt {
         flushStreamBuffer()
-        appendHtml("<div class='thinking'>${escapeHtml(text)}</div>")
+        appendHtml("<div class='thinking'>${HtmlEscape.escapeHtml(text)}</div>")
     }
 
     fun clear() = runOnEdt {
@@ -332,23 +327,12 @@ class RichStreamingPanel : JPanel(BorderLayout()) {
     private fun buildDiffHtml(oldLines: List<String>, newLines: List<String>): String {
         val sb = StringBuilder()
         for (line in oldLines) {
-            sb.append("<div class='diff-rem'>- ${escapeHtml(line)}</div>")
+            sb.append("<div class='diff-rem'>- ${HtmlEscape.escapeHtml(line)}</div>")
         }
         for (line in newLines) {
-            sb.append("<div class='diff-add'>+ ${escapeHtml(line)}</div>")
+            sb.append("<div class='diff-add'>+ ${HtmlEscape.escapeHtml(line)}</div>")
         }
         return sb.toString()
-    }
-
-    private fun markdownToHtml(text: String): String {
-        var html = text
-        html = html.replace(Regex("```(\\w*)\n([\\s\\S]*?)```")) { m ->
-            "<div class='code-block'>${m.groupValues[2].trimEnd()}</div>"
-        }
-        html = html.replace(Regex("`([^`]+)`")) { "<span class='inline-code'>${it.groupValues[1]}</span>" }
-        html = html.replace(Regex("\\*\\*(.+?)\\*\\*")) { "<b>${it.groupValues[1]}</b>" }
-        html = html.replace("\n", "<br>")
-        return html
     }
 
     private fun scrollToBottom() {
@@ -362,9 +346,6 @@ class RichStreamingPanel : JPanel(BorderLayout()) {
         ms < 60_000 -> "%.1fs".format(ms / 1000.0)
         else -> "${ms / 60_000}m ${(ms % 60_000) / 1000}s"
     }
-
-    private fun escapeHtml(text: String): String =
-        text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     private fun runOnEdt(action: () -> Unit) {
         if (SwingUtilities.isEventDispatchThread()) action()

@@ -5,8 +5,10 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.workflow.orchestrator.core.psi.PsiContextEnricher
+import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.handover.model.FindingSeverity
 import com.workflow.orchestrator.handover.model.ReviewFinding
+import kotlinx.coroutines.CancellationException
 
 @Service(Service.Level.PROJECT)
 class PreReviewService {
@@ -21,8 +23,6 @@ class PreReviewService {
 
     private val log = Logger.getInstance(PreReviewService::class.java)
 
-    // PsiContextEnricher is now in :core — direct usage, no reflection needed.
-
     /**
      * Parses the AI review text response into structured findings.
      * The LLM returns free-text; we look for patterns like:
@@ -30,28 +30,23 @@ class PreReviewService {
      */
     fun parseFindings(aiResponse: String): List<ReviewFinding> {
         log.debug("[Handover:Review] Parsing findings from AI response (${aiResponse.length} chars)")
-        val findings = mutableListOf<ReviewFinding>()
-        val pattern = Regex(
-            """\*\*(HIGH|MEDIUM|LOW)\*\*\s+`([^:]+):(\d+)`\s*[-\u2013\u2014]\s*(.+?)\s*\[([^\]]+)]"""
-        )
-
-        for (match in pattern.findAll(aiResponse)) {
+        val findings = FINDING_PATTERN.findAll(aiResponse).map { match ->
             val severity = when (match.groupValues[1]) {
                 "HIGH" -> FindingSeverity.HIGH
                 "MEDIUM" -> FindingSeverity.MEDIUM
                 else -> FindingSeverity.LOW
             }
-            findings.add(ReviewFinding(
+            ReviewFinding(
                 severity = severity,
                 filePath = match.groupValues[2],
                 lineNumber = match.groupValues[3].toIntOrNull() ?: 0,
                 message = match.groupValues[4].trim(),
                 pattern = match.groupValues[5]
-            ))
-        }
+            )
+        }.sortedBy { it.severity.ordinal }.toList()
 
         log.info("[Handover:Review] Parsed ${findings.size} findings from AI response")
-        return findings.sortedBy { it.severity.ordinal }
+        return findings
     }
 
     fun buildReviewPrompt(diff: String): String {
@@ -91,8 +86,9 @@ class PreReviewService {
             val fileAnnotations = buildFileAnnotations(proj, changedFiles)
             log.debug("[Handover:Review] Enriched prompt includes ${fileAnnotations.size} file annotations")
             buildAnnotatedPrompt(diff, fileAnnotations)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
             log.warn("[Handover:Review] Enrichment failed, falling back to plain prompt: ${e.message}")
             buildReviewPrompt(diff)
         }
@@ -103,39 +99,32 @@ class PreReviewService {
         changedFiles: List<VirtualFile>
     ): List<String> {
         val enricher = PsiContextEnricher(proj)
-
         return changedFiles.mapNotNull { file ->
             try {
                 val psi = enricher.enrich(file.path)
-
                 val className = psi.className ?: return@mapNotNull null
-
-                buildString {
-                    append("${file.name}: $className")
-                    if (psi.classAnnotations.isNotEmpty()) {
-                        append(" (${psi.classAnnotations.joinToString(", ") { "@$it" }})")
-                    }
-                }
+                val annotations = if (psi.classAnnotations.isNotEmpty()) {
+                    " (${psi.classAnnotations.joinToString(", ") { "@$it" }})"
+                } else ""
+                "${file.name}: $className$annotations"
             } catch (_: Exception) {
                 null
             }
         }
     }
 
-    private fun buildAnnotatedPrompt(diff: String, fileAnnotations: List<String>): String {
-        return buildString {
-            append("Analyze this Spring Boot code diff for anti-patterns, ")
-            append("missing @Transactional annotations, incorrect bean scoping, ")
-            append("and potential issues.\n")
-            append("For each issue found, format as:\n")
-            append("**SEVERITY** `file:line` — description [pattern-name]\n\n")
-            if (fileAnnotations.isNotEmpty()) {
-                append("## Changed Classes (IDE Analysis)\n")
-                fileAnnotations.forEach { append("- $it\n") }
-                append("\n")
-            }
-            append("## Diff\n```diff\n$diff\n```")
+    private fun buildAnnotatedPrompt(diff: String, fileAnnotations: List<String>): String = buildString {
+        append("Analyze this Spring Boot code diff for anti-patterns, ")
+        append("missing @Transactional annotations, incorrect bean scoping, ")
+        append("and potential issues.\n")
+        append("For each issue found, format as:\n")
+        append("**SEVERITY** `file:line` — description [pattern-name]\n\n")
+        if (fileAnnotations.isNotEmpty()) {
+            append("## Changed Classes (IDE Analysis)\n")
+            fileAnnotations.forEach { append("- $it\n") }
+            append("\n")
         }
+        append("## Diff\n```diff\n$diff\n```")
     }
 
     enum class DiffValidation { OK, EMPTY, TOO_LARGE }
@@ -145,9 +134,8 @@ class PreReviewService {
             log.warn("[Handover:Review] Diff validation failed: diff is empty")
             return DiffValidation.EMPTY
         }
-        val maxLines = project?.let {
-            com.workflow.orchestrator.core.settings.PluginSettings.getInstance(it).state.maxDiffLinesForReview
-        } ?: 10_000
+        val maxLines = project?.let { PluginSettings.getInstance(it).state.maxDiffLinesForReview }
+            ?: DEFAULT_MAX_DIFF_LINES
         val lineCount = diff.lines().size
         if (lineCount > maxLines) {
             log.warn("[Handover:Review] Diff validation failed: $lineCount lines exceeds max $maxLines")
@@ -158,8 +146,13 @@ class PreReviewService {
     }
 
     companion object {
-        fun getInstance(project: Project): PreReviewService {
-            return project.getService(PreReviewService::class.java)
-        }
+        private const val DEFAULT_MAX_DIFF_LINES = 10_000
+
+        private val FINDING_PATTERN = Regex(
+            """\*\*(HIGH|MEDIUM|LOW)\*\*\s+`([^:]+):(\d+)`\s*[-\u2013\u2014]\s*(.+?)\s*\[([^\]]+)]"""
+        )
+
+        fun getInstance(project: Project): PreReviewService =
+            project.getService(PreReviewService::class.java)
     }
 }

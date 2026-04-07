@@ -62,23 +62,12 @@ private class AutomationStatusBarWidget(
             try {
                 val queueService = project.getService(QueueService::class.java) ?: return@launch
                 queueService.stateFlow.collectLatest { entries ->
+                    val queueCount = entries.count { it.status in QUEUED_STATUSES }
                     val hasRunning = entries.any { it.status == QueueEntryStatus.RUNNING }
-                    val hasQueued = entries.any {
-                        it.status in listOf(
-                            QueueEntryStatus.WAITING_LOCAL,
-                            QueueEntryStatus.QUEUED_ON_BAMBOO
-                        )
-                    }
-                    val queueCount = entries.count {
-                        it.status in listOf(
-                            QueueEntryStatus.WAITING_LOCAL,
-                            QueueEntryStatus.QUEUED_ON_BAMBOO
-                        )
-                    }
 
                     text = when {
                         hasRunning -> "\u25B6 Running"
-                        hasQueued -> "Queue #$queueCount"
+                        queueCount > 0 -> "Queue #$queueCount"
                         else -> "\u2713 Suite Idle"
                     }
 
@@ -95,5 +84,12 @@ private class AutomationStatusBarWidget(
     override fun dispose() {
         scope.cancel()
         super.dispose()
+    }
+
+    private companion object {
+        private val QUEUED_STATUSES = setOf(
+            QueueEntryStatus.WAITING_LOCAL,
+            QueueEntryStatus.QUEUED_ON_BAMBOO
+        )
     }
 }

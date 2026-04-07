@@ -1,14 +1,12 @@
 package com.workflow.orchestrator.automation.service
 
 import com.intellij.openapi.components.Service
-import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.automation.api.DockerRegistryClient
 import com.workflow.orchestrator.automation.model.DriftResult
 import com.workflow.orchestrator.automation.model.TagEntry
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -19,7 +17,6 @@ import kotlinx.coroutines.sync.withPermit
 @Service(Service.Level.PROJECT)
 class DriftDetectorService {
 
-    private val log = Logger.getInstance(DriftDetectorService::class.java)
     private val registryClient: DockerRegistryClient
 
     /** Project service constructor — used by IntelliJ DI. */
@@ -30,11 +27,12 @@ class DriftDetectorService {
             ?: settings.connections.nexusUrl.orEmpty()).trimEnd('/')
         val credentialStore = CredentialStore()
         val nexusUsername = settings.connections.nexusUsername.orEmpty()
+        val timeouts = com.workflow.orchestrator.core.http.HttpClientFactory.timeoutsFromSettings(project)
         this.registryClient = DockerRegistryClient(
             registryUrl = registryUrl,
             tokenProvider = { credentialStore.getNexusBasicAuthToken(nexusUsername) },
-            connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
-            readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
+            connectTimeoutSeconds = timeouts.connectSeconds,
+            readTimeoutSeconds = timeouts.readSeconds
         )
     }
 

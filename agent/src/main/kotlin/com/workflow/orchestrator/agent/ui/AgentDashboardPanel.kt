@@ -43,7 +43,6 @@ class AgentDashboardPanel(
         null
     }
     private val fallbackPanel: RichStreamingPanel? = if (cefPanel == null) RichStreamingPanel() else null
-    val usingJcef: Boolean get() = cefPanel != null
 
     var onSendMessage: ((String) -> Unit)? = null
 
@@ -55,13 +54,13 @@ class AgentDashboardPanel(
      * the conversation has already started). Stores the last known value for each
      * idempotent state setter so mirrors can be brought up to speed immediately.
      */
-    @Volatile var cachedModelName: String? = null; private set
-    @Volatile var cachedModelListJson: String? = null; private set
-    @Volatile var cachedSkillsJson: String? = null; private set
-    @Volatile var cachedPlanMode: Boolean = false; private set
-    @Volatile var cachedDebugLogVisible: Boolean = false; private set
-    @Volatile var cachedBusy: Boolean = false; private set
-    @Volatile var cachedInputLocked: Boolean = false; private set
+    @Volatile private var cachedModelName: String? = null
+    @Volatile private var cachedModelListJson: String? = null
+    @Volatile private var cachedSkillsJson: String? = null
+    @Volatile private var cachedPlanMode: Boolean = false
+    @Volatile private var cachedDebugLogVisible: Boolean = false
+    @Volatile private var cachedBusy: Boolean = false
+    @Volatile private var cachedInputLocked: Boolean = false
 
     /** Ordered log of output calls to replay chat content to late-joining mirrors. */
     private val replayLog = java.util.concurrent.CopyOnWriteArrayList<(AgentDashboardPanel) -> Unit>()
@@ -95,6 +94,16 @@ class AgentDashboardPanel(
         if (replayLog.size < maxReplayLogSize) {
             replayLog.add(action)
         }
+    }
+
+    /**
+     * Forward an action to all mirror panels and (optionally) record it for replay
+     * to late-joining mirrors. Use this from delegate methods after pushing to the
+     * underlying CEF/fallback panel.
+     */
+    private inline fun broadcast(replay: Boolean = true, crossinline action: (AgentDashboardPanel) -> Unit) {
+        mirrors.forEach { action(it) }
+        if (replay) recordReplay { p -> action(p) }
     }
 
     init {
@@ -143,17 +152,17 @@ class AgentDashboardPanel(
     fun setBusy(busy: Boolean) {
         cachedBusy = busy
         runOnEdt { cefPanel?.setBusy(busy) }
-        mirrors.forEach { it.setBusy(busy) }
+        broadcast(replay = false) { it.setBusy(busy) }
     }
 
     fun setSteeringMode(enabled: Boolean) {
         runOnEdt { cefPanel?.setSteeringMode(enabled) }
-        mirrors.forEach { it.setSteeringMode(enabled) }
+        broadcast(replay = false) { it.setSteeringMode(enabled) }
     }
 
     fun updateProgress(step: String, tokensUsed: Int, maxTokens: Int) {
         runOnEdt { cefPanel?.updateTokenBudget(tokensUsed, maxTokens) }
-        mirrors.forEach { it.updateProgress(step, tokensUsed, maxTokens) }
+        broadcast(replay = false) { it.updateProgress(step, tokensUsed, maxTokens) }
     }
 
     fun setModelName(name: String) {
@@ -162,35 +171,35 @@ class AgentDashboardPanel(
             val shortName = name.substringAfterLast("::").ifBlank { name }
             cefPanel?.setModelName(shortName)
         }
-        mirrors.forEach { it.setModelName(name) }
+        broadcast(replay = false) { it.setModelName(name) }
     }
 
     fun updateModelList(modelsJson: String) {
         cachedModelListJson = modelsJson
         runOnEdt { cefPanel?.updateModelList(modelsJson) }
-        mirrors.forEach { it.updateModelList(modelsJson) }
+        broadcast(replay = false) { it.updateModelList(modelsJson) }
     }
 
     fun setInputLocked(locked: Boolean) {
         cachedInputLocked = locked
         runOnEdt { cefPanel?.setInputLocked(locked) }
-        mirrors.forEach { it.setInputLocked(locked) }
+        broadcast(replay = false) { it.setInputLocked(locked) }
     }
 
     fun showRetryButton(lastMessage: String) {
         cefPanel?.showRetryButton(lastMessage)
-        mirrors.forEach { it.showRetryButton(lastMessage) }
+        broadcast(replay = false) { it.showRetryButton(lastMessage) }
     }
 
     fun focusInput() {
         runOnEdt { cefPanel?.focusInput() }
-        mirrors.forEach { it.focusInput() }
+        broadcast(replay = false) { it.focusInput() }
     }
 
     fun updateSkillsList(skillsJson: String) {
         cachedSkillsJson = skillsJson
         cefPanel?.updateSkillsList(skillsJson)
-        mirrors.forEach { it.updateSkillsList(skillsJson) }
+        broadcast(replay = false) { it.updateSkillsList(skillsJson) }
     }
 
     // ═══════════════════════════════════════════════════
@@ -222,7 +231,7 @@ class AgentDashboardPanel(
 
     fun showToolsPanel(toolsJson: String) {
         cefPanel?.showToolsPanel(toolsJson)
-        mirrors.forEach { it.showToolsPanel(toolsJson) }
+        broadcast(replay = false) { it.showToolsPanel(toolsJson) }
     }
 
     fun setCefToolToggleCallback(onToggle: (String, Boolean) -> Unit) {
@@ -232,67 +241,66 @@ class AgentDashboardPanel(
     fun renderPlan(planJson: String) {
         cefPanel?.renderPlan(planJson)
             ?: fallbackPanel?.appendStatus("Plan created — approve in the chat panel", RichStreamingPanel.StatusType.INFO)
-        mirrors.forEach { it.renderPlan(planJson) }
-        recordReplay { p -> p.renderPlan(planJson) }
+        broadcast { it.renderPlan(planJson) }
     }
 
     fun approvePlanInUi() {
         cefPanel?.approvePlanInUi()
-        mirrors.forEach { it.approvePlanInUi() }
+        broadcast(replay = false) { it.approvePlanInUi() }
     }
 
     fun updatePlanStep(stepId: String, status: String) {
         cefPanel?.updatePlanStep(stepId, status)
-        mirrors.forEach { it.updatePlanStep(stepId, status) }
+        broadcast(replay = false) { it.updatePlanStep(stepId, status) }
     }
 
     fun replaceExecutionSteps(stepsJson: String) {
         cefPanel?.replaceExecutionSteps(stepsJson)
-        mirrors.forEach { it.replaceExecutionSteps(stepsJson) }
+        broadcast(replay = false) { it.replaceExecutionSteps(stepsJson) }
     }
 
     fun setPlanCommentCount(count: Int) {
         cefPanel?.setPlanCommentCount(count)
-        mirrors.forEach { it.setPlanCommentCount(count) }
+        broadcast(replay = false) { it.setPlanCommentCount(count) }
     }
 
     fun updatePlanSummary(summary: String) {
         cefPanel?.updatePlanSummary(summary)
-        mirrors.forEach { it.updatePlanSummary(summary) }
+        broadcast(replay = false) { it.updatePlanSummary(summary) }
     }
 
     // ── Question wizard delegation ──
 
     fun showQuestions(questionsJson: String) {
         cefPanel?.showQuestions(questionsJson)
-        mirrors.forEach { it.showQuestions(questionsJson) }
+        broadcast(replay = false) { it.showQuestions(questionsJson) }
     }
 
     fun showQuestion(index: Int) {
         cefPanel?.showQuestion(index)
-        mirrors.forEach { it.showQuestion(index) }
+        broadcast(replay = false) { it.showQuestion(index) }
     }
 
     fun showQuestionSummary(summaryJson: String) {
         cefPanel?.showQuestionSummary(summaryJson)
-        mirrors.forEach { it.showQuestionSummary(summaryJson) }
+        broadcast(replay = false) { it.showQuestionSummary(summaryJson) }
     }
 
     fun enableChatInput() {
         cefPanel?.enableChatInput()
-        mirrors.forEach { it.enableChatInput() }
+        broadcast(replay = false) { it.enableChatInput() }
     }
 
     // ── Skill banner delegation ──
 
     fun showSkillBanner(name: String) {
         cefPanel?.showSkillBanner(name)
-        mirrors.forEach { it.showSkillBanner(name) }
+        broadcast(replay = false) { it.showSkillBanner(name) }
     }
 
     fun hideSkillBanner() {
         cefPanel?.hideSkillBanner()
-        mirrors.forEach { it.hideSkillBanner() }
+        broadcast(replay = false) { it.hideSkillBanner() }
     }
 
     fun setCefMentionCallbacks(onSendWithMentions: (String, String) -> Unit) {
@@ -309,22 +317,22 @@ class AgentDashboardPanel(
 
     fun appendJiraCard(cardJson: String) {
         cefPanel?.appendJiraCard(cardJson)
-        mirrors.forEach { it.appendJiraCard(cardJson) }
+        broadcast(replay = false) { it.appendJiraCard(cardJson) }
     }
 
     fun appendSonarBadge(badgeJson: String) {
         cefPanel?.appendSonarBadge(badgeJson)
-        mirrors.forEach { it.appendSonarBadge(badgeJson) }
+        broadcast(replay = false) { it.appendSonarBadge(badgeJson) }
     }
 
     fun showApproval(toolName: String, riskLevel: String, description: String, metadataJson: String, diffContent: String? = null) {
         cefPanel?.showApproval(toolName, riskLevel, description, metadataJson, diffContent)
-        mirrors.forEach { it.showApproval(toolName, riskLevel, description, metadataJson, diffContent) }
+        broadcast(replay = false) { it.showApproval(toolName, riskLevel, description, metadataJson, diffContent) }
     }
 
     fun showProcessInput(processId: String, description: String, prompt: String, command: String) {
         cefPanel?.showProcessInput(processId, description, prompt, command)
-        mirrors.forEach { it.showProcessInput(processId, description, prompt, command) }
+        broadcast(replay = false) { it.showProcessInput(processId, description, prompt, command) }
     }
 
     fun setCefProcessInputCallbacks(onInput: (String) -> Unit) {
@@ -388,28 +396,24 @@ class AgentDashboardPanel(
 
     fun startSession(task: String) {
         cefPanel?.startSession(task) ?: fallbackPanel?.startSession(task)
-        mirrors.forEach { it.startSession(task) }
-        recordReplay { p -> p.startSession(task) }
+        broadcast { it.startSession(task) }
     }
 
     fun startSessionWithMentions(task: String, mentionsJson: String) {
         cefPanel?.startSessionWithMentions(task, mentionsJson)
             ?: fallbackPanel?.startSession(task)
-        mirrors.forEach { it.startSession(task) }
-        recordReplay { p -> p.startSession(task) }
+        broadcast { it.startSession(task) }
     }
 
     fun appendUserMessage(text: String) {
         cefPanel?.appendUserMessage(text) ?: fallbackPanel?.appendUserMessage(text)
-        mirrors.forEach { it.appendUserMessage(text) }
-        recordReplay { p -> p.appendUserMessage(text) }
+        broadcast { it.appendUserMessage(text) }
     }
 
     fun appendUserMessageWithMentions(text: String, mentionsJson: String) {
         cefPanel?.appendUserMessageWithMentions(text, mentionsJson)
             ?: fallbackPanel?.appendUserMessage(text)
-        mirrors.forEach { it.appendUserMessage(text) }
-        recordReplay { p -> p.appendUserMessage(text) }
+        broadcast { it.appendUserMessage(text) }
     }
 
     fun finalizeQuestionsAsMessage() {
@@ -422,33 +426,28 @@ class AgentDashboardPanel(
     ) {
         cefPanel?.completeSession(tokensUsed, iterations, filesModified, durationMs, status)
             ?: fallbackPanel?.completeSession(tokensUsed, iterations, filesModified, durationMs, status)
-        mirrors.forEach { it.completeSession(tokensUsed, iterations, filesModified, durationMs, status) }
-        recordReplay { p -> p.completeSession(tokensUsed, iterations, filesModified, durationMs, status) }
+        broadcast { it.completeSession(tokensUsed, iterations, filesModified, durationMs, status) }
     }
 
     fun appendStreamToken(token: String) {
         cefPanel?.appendStreamToken(token) ?: fallbackPanel?.appendStreamToken(token)
-        mirrors.forEach { it.appendStreamToken(token) }
-        recordReplay { p -> p.appendStreamToken(token) }
+        broadcast { it.appendStreamToken(token) }
     }
 
     fun flushStreamBuffer() {
         cefPanel?.flushStreamBuffer() ?: fallbackPanel?.flushStreamBuffer()
-        mirrors.forEach { it.flushStreamBuffer() }
-        recordReplay { p -> p.flushStreamBuffer() }
+        broadcast { it.flushStreamBuffer() }
     }
 
     fun finalizeToolChain() {
         cefPanel?.finalizeToolChain()
-        mirrors.forEach { it.finalizeToolChain() }
-        recordReplay { p -> p.finalizeToolChain() }
+        broadcast { it.finalizeToolChain() }
     }
 
     fun appendCompletionSummary(result: String, verifyCommand: String? = null) {
         cefPanel?.appendCompletionSummary(result, verifyCommand)
             ?: fallbackPanel?.appendStatus("Task completed: $result", RichStreamingPanel.StatusType.SUCCESS)
-        mirrors.forEach { it.appendCompletionSummary(result, verifyCommand) }
-        recordReplay { p -> p.appendCompletionSummary(result, verifyCommand) }
+        broadcast { it.appendCompletionSummary(result, verifyCommand) }
     }
 
     fun appendToolCall(
@@ -457,8 +456,7 @@ class AgentDashboardPanel(
         status: RichStreamingPanel.ToolCallStatus = RichStreamingPanel.ToolCallStatus.RUNNING
     ) {
         cefPanel?.appendToolCall(toolCallId, toolName, args, status) ?: fallbackPanel?.appendToolCall(toolName, args, status)
-        mirrors.forEach { it.appendToolCall(toolCallId, toolName, args, status) }
-        recordReplay { p -> p.appendToolCall(toolCallId, toolName, args, status) }
+        broadcast { it.appendToolCall(toolCallId, toolName, args, status) }
     }
 
     fun updateLastToolCall(
@@ -467,38 +465,33 @@ class AgentDashboardPanel(
     ) {
         cefPanel?.updateLastToolCall(status, result, durationMs, toolName, output, diff)
             ?: fallbackPanel?.updateLastToolCall(status, result, durationMs)
-        mirrors.forEach { it.updateLastToolCall(status, result, durationMs, toolName, output, diff) }
-        recordReplay { p -> p.updateLastToolCall(status, result, durationMs, toolName, output, diff) }
+        broadcast { it.updateLastToolCall(status, result, durationMs, toolName, output, diff) }
     }
 
     fun appendToolOutput(toolCallId: String, chunk: String) {
         cefPanel?.appendToolOutput(toolCallId, chunk)
-        mirrors.forEach { it.appendToolOutput(toolCallId, chunk) }
+        broadcast(replay = false) { it.appendToolOutput(toolCallId, chunk) }
     }
 
     fun appendEditDiff(filePath: String, oldText: String, newText: String, accepted: Boolean? = null) {
         cefPanel?.appendEditDiff(filePath, oldText, newText, accepted)
             ?: fallbackPanel?.appendEditDiff(filePath, oldText, newText, accepted)
-        mirrors.forEach { it.appendEditDiff(filePath, oldText, newText, accepted) }
-        recordReplay { p -> p.appendEditDiff(filePath, oldText, newText, accepted) }
+        broadcast { it.appendEditDiff(filePath, oldText, newText, accepted) }
     }
 
     fun appendDiffExplanation(title: String, diffSource: String) {
         cefPanel?.appendDiffExplanation(title, diffSource)
-        mirrors.forEach { it.appendDiffExplanation(title, diffSource) }
-        recordReplay { p -> p.appendDiffExplanation(title, diffSource) }
+        broadcast { it.appendDiffExplanation(title, diffSource) }
     }
 
     fun appendStatus(message: String, type: RichStreamingPanel.StatusType = RichStreamingPanel.StatusType.INFO) {
         cefPanel?.appendStatus(message, type) ?: fallbackPanel?.appendStatus(message, type)
-        mirrors.forEach { it.appendStatus(message, type) }
-        recordReplay { p -> p.appendStatus(message, type) }
+        broadcast { it.appendStatus(message, type) }
     }
 
     fun appendError(message: String) {
         cefPanel?.appendError(message) ?: fallbackPanel?.appendError(message)
-        mirrors.forEach { it.appendError(message) }
-        recordReplay { p -> p.appendError(message) }
+        broadcast { it.appendError(message) }
     }
 
     /**
@@ -508,18 +501,18 @@ class AgentDashboardPanel(
     fun setDebugLogVisible(visible: Boolean) {
         cachedDebugLogVisible = visible
         runOnEdt { cefPanel?.updateDebugLogVisibility(visible) }
-        mirrors.forEach { it.setDebugLogVisible(visible) }
+        broadcast(replay = false) { it.setDebugLogVisible(visible) }
     }
 
     fun pushDebugLogEntry(level: String, event: String, detail: String, meta: Map<String, Any?>? = null) {
         runOnEdt { cefPanel?.pushDebugLogEntry(level, event, detail, meta) }
-        mirrors.forEach { it.pushDebugLogEntry(level, event, detail, meta) }
+        broadcast(replay = false) { it.pushDebugLogEntry(level, event, detail, meta) }
     }
 
     fun reset() {
         replayLog.clear()
         runOnEdt { cefPanel?.clear() ?: fallbackPanel?.clear() }
-        mirrors.forEach { it.reset() }
+        broadcast(replay = false) { it.reset() }
     }
 
     // ── Plan mode delegation ──
@@ -527,7 +520,7 @@ class AgentDashboardPanel(
     fun setPlanMode(enabled: Boolean) {
         cachedPlanMode = enabled
         runOnEdt { cefPanel?.setPlanMode(enabled) }
-        mirrors.forEach { it.setPlanMode(enabled) }
+        broadcast(replay = false) { it.setPlanMode(enabled) }
     }
 
     fun setRalphLoop(enabled: Boolean) {
@@ -538,37 +531,37 @@ class AgentDashboardPanel(
 
     fun spawnSubAgent(agentId: String, label: String) {
         runOnEdt { cefPanel?.spawnSubAgent(agentId, label) }
-        mirrors.forEach { it.spawnSubAgent(agentId, label) }
+        broadcast(replay = false) { it.spawnSubAgent(agentId, label) }
     }
 
     fun updateSubAgentIteration(agentId: String, iteration: Int) {
         runOnEdt { cefPanel?.updateSubAgentIteration(agentId, iteration) }
-        mirrors.forEach { it.updateSubAgentIteration(agentId, iteration) }
+        broadcast(replay = false) { it.updateSubAgentIteration(agentId, iteration) }
     }
 
     fun addSubAgentToolCall(agentId: String, toolName: String, toolArgs: String) {
         runOnEdt { cefPanel?.addSubAgentToolCall(agentId, toolName, toolArgs) }
-        mirrors.forEach { it.addSubAgentToolCall(agentId, toolName, toolArgs) }
+        broadcast(replay = false) { it.addSubAgentToolCall(agentId, toolName, toolArgs) }
     }
 
     fun updateSubAgentToolCall(agentId: String, toolName: String, result: String, durationMs: Long, isError: Boolean) {
         runOnEdt { cefPanel?.updateSubAgentToolCall(agentId, toolName, result, durationMs, isError) }
-        mirrors.forEach { it.updateSubAgentToolCall(agentId, toolName, result, durationMs, isError) }
+        broadcast(replay = false) { it.updateSubAgentToolCall(agentId, toolName, result, durationMs, isError) }
     }
 
     fun updateSubAgentMessage(agentId: String, textContent: String) {
         runOnEdt { cefPanel?.updateSubAgentMessage(agentId, textContent) }
-        mirrors.forEach { it.updateSubAgentMessage(agentId, textContent) }
+        broadcast(replay = false) { it.updateSubAgentMessage(agentId, textContent) }
     }
 
     fun completeSubAgent(agentId: String, textContent: String, tokensUsed: Int, isError: Boolean) {
         runOnEdt { cefPanel?.completeSubAgent(agentId, textContent, tokensUsed, isError) }
-        mirrors.forEach { it.completeSubAgent(agentId, textContent, tokensUsed, isError) }
+        broadcast(replay = false) { it.completeSubAgent(agentId, textContent, tokensUsed, isError) }
     }
 
     fun renderArtifact(title: String, source: String) {
         runOnEdt { cefPanel?.renderArtifact(title, source) }
-        mirrors.forEach { it.renderArtifact(title, source) }
+        broadcast(replay = false) { it.renderArtifact(title, source) }
     }
 
     fun setCefKillSubAgentCallback(onKill: (String) -> Unit) {
@@ -579,27 +572,27 @@ class AgentDashboardPanel(
 
     fun updateEditStats(added: Int, removed: Int, files: Int) {
         runOnEdt { cefPanel?.updateEditStats(added, removed, files) }
-        mirrors.forEach { it.updateEditStats(added, removed, files) }
+        broadcast(replay = false) { it.updateEditStats(added, removed, files) }
     }
 
     fun updateCheckpoints(checkpointsJson: String) {
         runOnEdt { cefPanel?.updateCheckpoints(checkpointsJson) }
-        mirrors.forEach { it.updateCheckpoints(checkpointsJson) }
+        broadcast(replay = false) { it.updateCheckpoints(checkpointsJson) }
     }
 
     fun notifyRollback(rollbackJson: String) {
         runOnEdt { cefPanel?.notifyRollback(rollbackJson) }
-        mirrors.forEach { it.notifyRollback(rollbackJson) }
+        broadcast(replay = false) { it.notifyRollback(rollbackJson) }
     }
 
     fun setSmartWorkingPhrase(phrase: String) {
         runOnEdt { cefPanel?.setSmartWorkingPhrase(phrase) }
-        mirrors.forEach { it.setSmartWorkingPhrase(phrase) }
+        broadcast(replay = false) { it.setSmartWorkingPhrase(phrase) }
     }
 
     fun setSessionTitle(title: String) {
         runOnEdt { cefPanel?.setSessionTitle(title) }
-        mirrors.forEach { it.setSessionTitle(title) }
+        broadcast(replay = false) { it.setSessionTitle(title) }
     }
 
     fun setCefRevertCheckpointCallback(onRevert: (String) -> Unit) {
@@ -610,22 +603,22 @@ class AgentDashboardPanel(
 
     fun addQueuedSteeringMessage(id: String, text: String) {
         runOnEdt { cefPanel?.addQueuedSteeringMessage(id, text) }
-        mirrors.forEach { it.addQueuedSteeringMessage(id, text) }
+        broadcast(replay = false) { it.addQueuedSteeringMessage(id, text) }
     }
 
     fun removeQueuedSteeringMessage(id: String) {
         runOnEdt { cefPanel?.removeQueuedSteeringMessage(id) }
-        mirrors.forEach { it.removeQueuedSteeringMessage(id) }
+        broadcast(replay = false) { it.removeQueuedSteeringMessage(id) }
     }
 
     fun promoteQueuedSteeringMessages(ids: List<String>) {
         runOnEdt { cefPanel?.promoteQueuedSteeringMessages(ids) }
-        mirrors.forEach { it.promoteQueuedSteeringMessages(ids) }
+        broadcast(replay = false) { it.promoteQueuedSteeringMessages(ids) }
     }
 
     fun restoreInputText(text: String) {
         runOnEdt { cefPanel?.restoreInputText(text) }
-        mirrors.forEach { it.restoreInputText(text) }
+        broadcast(replay = false) { it.restoreInputText(text) }
     }
 
     fun setCefCancelSteeringCallback(onCancel: (String) -> Unit) {

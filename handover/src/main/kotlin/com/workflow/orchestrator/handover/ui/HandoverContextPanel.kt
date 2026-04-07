@@ -399,19 +399,12 @@ class HandoverContextPanel : JPanel(BorderLayout()) {
         prStatusLabel.font = prStatusLabel.font.deriveFont(JBUI.scale(11).toFloat())
 
         // -- Builds --
+        val buildStatus = state.buildStatus?.status
         buildStatusLabel.text = state.buildStatus?.let { build ->
             "${build.planKey} #${build.buildNumber} — ${build.status.name}"
         } ?: "No build data"
-        buildStatusLabel.icon = when (state.buildStatus?.status) {
-            WorkflowEvent.BuildEventStatus.SUCCESS -> AllIcons.General.InspectionsOK
-            WorkflowEvent.BuildEventStatus.FAILED -> AllIcons.General.Error
-            null -> null
-        }
-        buildStatusLabel.foreground = when (state.buildStatus?.status) {
-            WorkflowEvent.BuildEventStatus.SUCCESS -> StatusColors.SUCCESS
-            WorkflowEvent.BuildEventStatus.FAILED -> StatusColors.ERROR
-            null -> StatusColors.SECONDARY_TEXT
-        }
+        buildStatusLabel.icon = buildStatusIcon(buildStatus)
+        buildStatusLabel.foreground = buildStatusColor(buildStatus)
         buildStatusLabel.font = buildStatusLabel.font.deriveFont(JBUI.scale(11).toFloat())
 
         // -- Quality --
@@ -420,21 +413,12 @@ class HandoverContextPanel : JPanel(BorderLayout()) {
             false -> "FAILED"
             null -> "Unknown"
         }
-        qualityLabel.icon = when (state.qualityGatePassed) {
-            true -> AllIcons.General.InspectionsOK
-            false -> AllIcons.General.Error
-            null -> null
-        }
-        qualityLabel.foreground = when (state.qualityGatePassed) {
-            true -> StatusColors.SUCCESS
-            false -> StatusColors.ERROR
-            null -> StatusColors.SECONDARY_TEXT
-        }
+        qualityLabel.icon = passFailIcon(state.qualityGatePassed)
+        qualityLabel.foreground = passFailColor(state.qualityGatePassed)
         qualityLabel.font = qualityLabel.font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
 
         // -- Docker tags --
-        val latestSuite = state.suiteResults.lastOrNull()
-        dockerTagLabel.text = latestSuite?.dockerTagsJson?.take(50) ?: "No docker tags"
+        dockerTagLabel.text = state.suiteResults.lastOrNull()?.dockerTagsJson?.take(50) ?: "No docker tags"
 
         // -- Automation suites --
         suiteSectionPanel.removeAll()
@@ -444,27 +428,19 @@ class HandoverContextPanel : JPanel(BorderLayout()) {
                 font = font.deriveFont(JBUI.scale(11).toFloat())
             })
         } else {
-            for (suite in state.suiteResults) {
-                val icon = when (suite.passed) {
-                    true -> AllIcons.General.InspectionsOK
-                    false -> AllIcons.General.Error
-                    null -> AllIcons.Process.Step_1
-                }
-                val color = when (suite.passed) {
-                    true -> StatusColors.SUCCESS
-                    false -> StatusColors.ERROR
-                    null -> StatusColors.WARNING
-                }
+            state.suiteResults.forEach { suite ->
                 val statusText = when (suite.passed) {
                     true -> "PASS"
                     false -> "FAIL"
                     null -> "running"
                 }
-                suiteSectionPanel.add(JBLabel("${suite.suitePlanKey}: $statusText", icon, SwingConstants.LEFT).apply {
-                    foreground = color
-                    font = font.deriveFont(JBUI.scale(11).toFloat())
-                    border = JBUI.Borders.emptyBottom(2)
-                })
+                suiteSectionPanel.add(
+                    JBLabel("${suite.suitePlanKey}: $statusText", suiteIcon(suite.passed), SwingConstants.LEFT).apply {
+                        foreground = suiteColor(suite.passed)
+                        font = font.deriveFont(JBUI.scale(11).toFloat())
+                        border = JBUI.Borders.emptyBottom(2)
+                    }
+                )
             }
         }
 
@@ -478,15 +454,6 @@ class HandoverContextPanel : JPanel(BorderLayout()) {
 
         revalidate()
         repaint()
-    }
-
-    fun setTransitions(transitions: List<String>) {
-        transitionComboBox.removeAllItems()
-        transitions.forEach { transitionComboBox.addItem(it) }
-    }
-
-    fun getSelectedTransition(): String? {
-        return transitionComboBox.selectedItem as? String
     }
 
     // =======================================================================
@@ -582,5 +549,41 @@ class HandoverContextPanel : JPanel(BorderLayout()) {
                 border = JBUI.Borders.emptyLeft(4)
             })
         }
+    }
+
+    private fun buildStatusIcon(status: WorkflowEvent.BuildEventStatus?): Icon? = when (status) {
+        WorkflowEvent.BuildEventStatus.SUCCESS -> AllIcons.General.InspectionsOK
+        WorkflowEvent.BuildEventStatus.FAILED -> AllIcons.General.Error
+        null -> null
+    }
+
+    private fun buildStatusColor(status: WorkflowEvent.BuildEventStatus?): JBColor = when (status) {
+        WorkflowEvent.BuildEventStatus.SUCCESS -> StatusColors.SUCCESS
+        WorkflowEvent.BuildEventStatus.FAILED -> StatusColors.ERROR
+        null -> StatusColors.SECONDARY_TEXT
+    }
+
+    private fun passFailIcon(passed: Boolean?): Icon? = when (passed) {
+        true -> AllIcons.General.InspectionsOK
+        false -> AllIcons.General.Error
+        null -> null
+    }
+
+    private fun passFailColor(passed: Boolean?): JBColor = when (passed) {
+        true -> StatusColors.SUCCESS
+        false -> StatusColors.ERROR
+        null -> StatusColors.SECONDARY_TEXT
+    }
+
+    private fun suiteIcon(passed: Boolean?): Icon = when (passed) {
+        true -> AllIcons.General.InspectionsOK
+        false -> AllIcons.General.Error
+        null -> AllIcons.Process.Step_1
+    }
+
+    private fun suiteColor(passed: Boolean?): JBColor = when (passed) {
+        true -> StatusColors.SUCCESS
+        false -> StatusColors.ERROR
+        null -> StatusColors.WARNING
     }
 }

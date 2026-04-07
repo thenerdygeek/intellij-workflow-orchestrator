@@ -20,15 +20,12 @@ class MavenTestCheck : HealthCheck {
         val result = MavenBuildService.getInstance(project)
             .runBuild("test", modules)
 
-        return if (result.success) {
-            HealthCheck.CheckResult(passed = true, message = "Maven tests passed")
-        } else if (result.timedOut) {
-            HealthCheck.CheckResult(passed = false, message = "Maven test timed out")
-        } else {
-            HealthCheck.CheckResult(
+        return when {
+            result.success -> HealthCheck.CheckResult(passed = true, message = "Maven tests passed")
+            result.timedOut -> HealthCheck.CheckResult(passed = false, message = "Maven test timed out")
+            else -> HealthCheck.CheckResult(
                 passed = false,
-                message = "Maven tests failed (exit code ${result.exitCode})",
-                details = result.errors.lines().filter { it.contains("[ERROR]") || it.contains("FAILURE") }
+                message = "Maven tests failed (exit code ${result.exitCode})"
             )
         }
     }

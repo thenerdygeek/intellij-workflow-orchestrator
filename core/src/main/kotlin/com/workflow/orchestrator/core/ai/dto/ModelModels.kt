@@ -29,12 +29,6 @@ data class ModelInfo(
     /** Extract the model name (e.g., "claude-sonnet-4" from "anthropic::2024-10-22::claude-sonnet-4"). */
     val modelName: String get() = id.substringAfterLast("::", id)
 
-    /** Extract the API version date from the model ID (e.g., "2024-10-22"). */
-    val apiVersion: String get() {
-        val parts = id.split("::")
-        return if (parts.size >= 3) parts[1] else ""
-    }
-
     /** Human-readable display name with proper formatting. */
     val displayName: String get() = formatModelName(modelName)
 

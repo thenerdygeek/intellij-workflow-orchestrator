@@ -54,9 +54,6 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
     }
 
     companion object {
-        /** Default values — used as fallback when settings aren't available. */
-        val DEFAULTS = State()
-
         fun getInstance(project: Project): AgentSettings {
             return project.service<AgentSettings>()
         }

@@ -34,6 +34,7 @@ import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.builtin.PathValidator
+import com.workflow.orchestrator.agent.tools.integration.ToolValidation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -215,8 +216,8 @@ All breakpoint actions modify IDE state. start_session/attach_to_process create 
     // ── add_breakpoint ──────────────────────────────────────────────────────
 
     private suspend fun executeAddBreakpoint(params: JsonObject, project: Project): ToolResult {
-        val filePath = params["file"]?.jsonPrimitive?.content ?: return missingParam("file")
-        val line = params["line"]?.jsonPrimitive?.intOrNull ?: return missingParam("line")
+        val filePath = params["file"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("file")
+        val line = params["line"]?.jsonPrimitive?.intOrNull ?: return ToolValidation.missingParam("line")
         val condition = params["condition"]?.jsonPrimitive?.content
         val logExpression = params["log_expression"]?.jsonPrimitive?.content
         val temporary = params["temporary"]?.jsonPrimitive?.booleanOrNull ?: false
@@ -324,8 +325,8 @@ All breakpoint actions modify IDE state. start_session/attach_to_process create 
     // ── method_breakpoint ───────────────────────────────────────────────────
 
     private suspend fun executeMethodBreakpoint(params: JsonObject, project: Project): ToolResult {
-        val className = params["class_name"]?.jsonPrimitive?.content ?: return missingParam("class_name")
-        val methodName = params["method_name"]?.jsonPrimitive?.content ?: return missingParam("method_name")
+        val className = params["class_name"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("class_name")
+        val methodName = params["method_name"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("method_name")
         val watchEntry = params["watch_entry"]?.jsonPrimitive?.booleanOrNull ?: true
         val watchExit = params["watch_exit"]?.jsonPrimitive?.booleanOrNull ?: false
 
@@ -438,7 +439,7 @@ All breakpoint actions modify IDE state. start_session/attach_to_process create 
     // ── exception_breakpoint ────────────────────────────────────────────────
 
     private suspend fun executeExceptionBreakpoint(params: JsonObject, project: Project): ToolResult {
-        val exceptionClass = params["exception_class"]?.jsonPrimitive?.content ?: return missingParam("exception_class")
+        val exceptionClass = params["exception_class"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("exception_class")
         val caught = params["caught"]?.jsonPrimitive?.booleanOrNull ?: true
         val uncaught = params["uncaught"]?.jsonPrimitive?.booleanOrNull ?: true
         val condition = params["condition"]?.jsonPrimitive?.content
@@ -497,8 +498,8 @@ All breakpoint actions modify IDE state. start_session/attach_to_process create 
     // ── field_watchpoint ────────────────────────────────────────────────────
 
     private suspend fun executeFieldWatchpoint(params: JsonObject, project: Project): ToolResult {
-        val className = params["class_name"]?.jsonPrimitive?.content ?: return missingParam("class_name")
-        val fieldName = params["field_name"]?.jsonPrimitive?.content ?: return missingParam("field_name")
+        val className = params["class_name"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("class_name")
+        val fieldName = params["field_name"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("field_name")
         val filePath = params["file"]?.jsonPrimitive?.content
         val watchRead = params["watch_read"]?.jsonPrimitive?.booleanOrNull ?: false
         val watchWrite = params["watch_write"]?.jsonPrimitive?.booleanOrNull ?: true
@@ -576,8 +577,8 @@ All breakpoint actions modify IDE state. start_session/attach_to_process create 
     // ── remove_breakpoint ───────────────────────────────────────────────────
 
     private suspend fun executeRemoveBreakpoint(params: JsonObject, project: Project): ToolResult {
-        val filePath = params["file"]?.jsonPrimitive?.content ?: return missingParam("file")
-        val line = params["line"]?.jsonPrimitive?.intOrNull ?: return missingParam("line")
+        val filePath = params["file"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("file")
+        val line = params["line"]?.jsonPrimitive?.intOrNull ?: return ToolValidation.missingParam("line")
 
         if (line < 1) {
             return ToolResult("Line number must be >= 1, got: $line", "Invalid line", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
@@ -687,7 +688,7 @@ All breakpoint actions modify IDE state. start_session/attach_to_process create 
     // ── start_session ───────────────────────────────────────────────────────
 
     private suspend fun executeStartSession(params: JsonObject, project: Project): ToolResult {
-        val configName = params["config_name"]?.jsonPrimitive?.content ?: return missingParam("config_name")
+        val configName = params["config_name"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("config_name")
         val waitForPause = params["wait_for_pause"]?.jsonPrimitive?.intOrNull ?: 0
 
         return try {
@@ -783,7 +784,7 @@ All breakpoint actions modify IDE state. start_session/attach_to_process create 
 
     private suspend fun executeAttachToProcess(params: JsonObject, project: Project): ToolResult {
         val host = params["host"]?.jsonPrimitive?.content ?: "localhost"
-        val port = params["port"]?.jsonPrimitive?.intOrNull ?: return missingParam("port")
+        val port = params["port"]?.jsonPrimitive?.intOrNull ?: return ToolValidation.missingParam("port")
         val displayName = params["name"]?.jsonPrimitive?.content ?: "[Agent] Remote Debug $host:$port"
 
         if (port < 1 || port > 65535) {
@@ -861,13 +862,6 @@ All breakpoint actions modify IDE state. start_session/attach_to_process create 
     }
 
     // ── Private helpers ─────────────────────────────────────────────────────
-
-    private fun missingParam(name: String): ToolResult = ToolResult(
-        content = "Error: '$name' parameter required",
-        summary = "Error: missing $name",
-        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-        isError = true
-    )
 
     private fun resolveBreakpointType(fileName: String): com.intellij.xdebugger.breakpoints.XLineBreakpointType<*> {
         val ext = fileName.substringAfterLast('.', "").lowercase()

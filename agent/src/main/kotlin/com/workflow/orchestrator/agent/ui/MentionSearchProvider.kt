@@ -9,7 +9,6 @@ import com.intellij.psi.search.PsiShortNamesCache
 import com.workflow.orchestrator.core.model.jira.JiraCommentData
 import com.workflow.orchestrator.core.model.jira.JiraTicketData
 import com.workflow.orchestrator.core.services.JiraService
-import com.workflow.orchestrator.core.services.ToolResult
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
@@ -37,8 +36,14 @@ class MentionSearchProvider(private val project: Project) {
         private const val MAX_RESULTS_PER_TYPE = 10
         private const val MAX_COLLECT = 100 // collect more, then rank and trim
         private val FILE_EXTENSIONS = setOf("kt", "java", "xml", "yaml", "yml", "json", "properties", "gradle", "md", "html", "css", "js", "ts", "py", "go", "rs")
+        /** Directories skipped by file/folder traversal. */
+        private val EXCLUDED_DIRS = setOf("node_modules", "build", "out")
         /** Cache entries older than 5 minutes are considered stale. */
         private const val CACHE_TTL_MS = 5 * 60 * 1000L
+
+        /** True if a directory should be skipped during traversal (hidden or excluded). */
+        private fun isSkippedDir(name: String): Boolean =
+            name.startsWith(".") || name in EXCLUDED_DIRS
     }
 
     /**
@@ -185,7 +190,7 @@ class MentionSearchProvider(private val project: Project) {
         fileResults: MutableList<ScoredResult>,
         folderResults: MutableList<ScoredResult>
     ) {
-        if (dir.name.startsWith(".") || dir.name == "node_modules" || dir.name == "build" || dir.name == "out") return
+        if (isSkippedDir(dir.name)) return
 
         // Score this directory as a folder result
         if (query.isNotBlank()) {
@@ -256,21 +261,8 @@ class MentionSearchProvider(private val project: Project) {
         })
     }.toString()
 
-    private fun searchFiles(query: String): String {
-        val lowerQuery = query.lowercase()
-        val results = mutableListOf<JsonObject>()
-        val basePath = project.basePath ?: return "[]"
-
-        try {
-            val roots = ProjectRootManager.getInstance(project).contentSourceRoots
-            for (root in roots) {
-                if (results.size >= MAX_RESULTS) break
-                collectFiles(root, lowerQuery, basePath, results)
-            }
-        } catch (_: Exception) {}
-
-        return JsonArray(results).toString()
-    }
+    private fun searchFiles(query: String): String =
+        collectFromRoots(query) { root, q, basePath, results -> collectFiles(root, q, basePath, results) }
 
     private fun collectFiles(
         dir: com.intellij.openapi.vfs.VirtualFile,
@@ -282,7 +274,7 @@ class MentionSearchProvider(private val project: Project) {
         for (child in dir.children) {
             if (results.size >= MAX_RESULTS) return
             if (child.isDirectory) {
-                if (child.name.startsWith(".") || child.name == "node_modules" || child.name == "build" || child.name == "out") continue
+                if (isSkippedDir(child.name)) continue
                 collectFiles(child, query, basePath, results)
             } else {
                 if (child.extension?.lowercase() !in FILE_EXTENSIONS) continue
@@ -299,7 +291,17 @@ class MentionSearchProvider(private val project: Project) {
         }
     }
 
-    private fun searchFolders(query: String): String {
+    private fun searchFolders(query: String): String =
+        collectFromRoots(query) { root, q, basePath, results -> collectFolders(root, q, basePath, results) }
+
+    /**
+     * Walk all source roots collecting matching results until [MAX_RESULTS] is reached.
+     * Returns a JSON array string suitable for the JCEF dropdown.
+     */
+    private inline fun collectFromRoots(
+        query: String,
+        collect: (com.intellij.openapi.vfs.VirtualFile, String, String, MutableList<JsonObject>) -> Unit
+    ): String {
         val lowerQuery = query.lowercase()
         val results = mutableListOf<JsonObject>()
         val basePath = project.basePath ?: return "[]"
@@ -308,7 +310,7 @@ class MentionSearchProvider(private val project: Project) {
             val roots = ProjectRootManager.getInstance(project).contentSourceRoots
             for (root in roots) {
                 if (results.size >= MAX_RESULTS) break
-                collectFolders(root, lowerQuery, basePath, results)
+                collect(root, lowerQuery, basePath, results)
             }
         } catch (_: Exception) {}
 
@@ -322,7 +324,7 @@ class MentionSearchProvider(private val project: Project) {
         results: MutableList<JsonObject>
     ) {
         if (results.size >= MAX_RESULTS) return
-        if (dir.name.startsWith(".") || dir.name == "node_modules" || dir.name == "build" || dir.name == "out") return
+        if (isSkippedDir(dir.name)) return
         val relativePath = dir.path.removePrefix("$basePath/")
         if (query.isBlank() || dir.name.lowercase().contains(query) || relativePath.lowercase().contains(query)) {
             results.add(buildJsonObject {

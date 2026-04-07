@@ -23,7 +23,7 @@ class SonarGateCheckTest {
     @Test
     fun `returns passed when no cached data`() = runTest {
         val check = SonarGateCheck()
-        val context = HealthCheckContext(project, emptyList(), "msg", "main")
+        val context = HealthCheckContext(project, emptyList(), "main")
         val result = check.execute(context)
         assertTrue(result.passed)
         assertTrue(result.message.contains("no cached data"))
@@ -33,7 +33,7 @@ class SonarGateCheckTest {
     fun `returns passed when gate passed`() = runTest {
         val check = SonarGateCheck()
         check.setLastKnownGateStatus(true)
-        val context = HealthCheckContext(project, emptyList(), "msg", "main")
+        val context = HealthCheckContext(project, emptyList(), "main")
         val result = check.execute(context)
         assertTrue(result.passed)
     }
@@ -42,7 +42,7 @@ class SonarGateCheckTest {
     fun `returns failed when gate failed`() = runTest {
         val check = SonarGateCheck()
         check.setLastKnownGateStatus(false)
-        val context = HealthCheckContext(project, emptyList(), "msg", "main")
+        val context = HealthCheckContext(project, emptyList(), "main")
         val result = check.execute(context)
         assertFalse(result.passed)
     }

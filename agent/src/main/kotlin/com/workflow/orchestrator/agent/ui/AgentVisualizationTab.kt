@@ -50,7 +50,6 @@ class AgentVisualizationVirtualFile(
 // ── FileEditor ──
 
 class AgentVisualizationEditor(
-    private val project: Project,
     private val vizFile: AgentVisualizationVirtualFile
 ) : UserDataHolderBase(), FileEditor {
 
@@ -166,7 +165,7 @@ class AgentVisualizationEditor(
 class AgentVisualizationEditorProvider : FileEditorProvider, DumbAware {
     override fun accept(project: Project, file: VirtualFile) = file is AgentVisualizationVirtualFile
     override fun createEditor(project: Project, file: VirtualFile): FileEditor {
-        return AgentVisualizationEditor(project, file as AgentVisualizationVirtualFile)
+        return AgentVisualizationEditor(file as AgentVisualizationVirtualFile)
     }
     override fun getEditorTypeId() = "AgentVisualizationEditor"
     override fun getPolicy() = FileEditorPolicy.HIDE_DEFAULT_EDITOR

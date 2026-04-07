@@ -295,13 +295,12 @@ class EditFileTool : AgentTool {
     }
 
     private fun countOccurrences(text: String, search: String): Int {
+        if (search.isEmpty()) return 0
         var count = 0
-        var startIndex = 0
-        while (true) {
-            val index = text.indexOf(search, startIndex)
-            if (index < 0) break
+        var index = text.indexOf(search)
+        while (index >= 0) {
             count++
-            startIndex = index + 1
+            index = text.indexOf(search, index + 1)
         }
         return count
     }

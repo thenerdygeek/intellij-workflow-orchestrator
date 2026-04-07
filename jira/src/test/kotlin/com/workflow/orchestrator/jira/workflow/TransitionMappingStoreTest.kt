@@ -36,13 +36,6 @@ class TransitionMappingStoreTest {
     }
 
     @Test
-    fun `clear mapping removes it`() {
-        store.saveMapping(TransitionMapping("START_WORK", "In Progress", "PROJ", null, "learned"))
-        store.clearMapping("START_WORK", "PROJ")
-        assertNull(store.getMapping("START_WORK", "PROJ"))
-    }
-
-    @Test
     fun `serialize and deserialize round-trip`() {
         store.saveMapping(TransitionMapping("START_WORK", "In Progress", "PROJ", null, "learned"))
         store.saveMapping(TransitionMapping("CLOSE", "Done", "PROJ", null, "explicit"))
@@ -51,13 +44,6 @@ class TransitionMappingStoreTest {
         restored.loadFromJson(json)
         assertEquals("In Progress", restored.getMapping("START_WORK", "PROJ")?.transitionName)
         assertEquals("Done", restored.getMapping("CLOSE", "PROJ")?.transitionName)
-    }
-
-    @Test
-    fun `getAllMappings returns all saved`() {
-        store.saveMapping(TransitionMapping("START_WORK", "In Progress", "PROJ", null, "learned"))
-        store.saveMapping(TransitionMapping("CLOSE", "Done", "OTHER", null, "explicit"))
-        assertEquals(2, store.getAllMappings().size)
     }
 
     @Test

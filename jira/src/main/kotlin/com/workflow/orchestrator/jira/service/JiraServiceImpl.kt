@@ -866,12 +866,6 @@ class JiraServiceImpl(private val project: Project) : JiraService {
             .toList()
     }
 
-    private fun formatSize(bytes: Long): String = when {
-        bytes < 1024 -> "${bytes}B"
-        bytes < 1024 * 1024 -> "${bytes / 1024}KB"
-        else -> "${"%.1f".format(bytes / (1024.0 * 1024.0))}MB"
-    }
-
     companion object {
         @JvmStatic
         fun getInstance(project: Project): JiraServiceImpl =

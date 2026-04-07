@@ -66,7 +66,7 @@ class HandoverStateService : Disposable {
     private fun handleEvent(event: WorkflowEvent) {
         log.debug("[Handover:State] Handling event: ${event::class.simpleName}")
         val current = _stateFlow.value
-        _stateFlow.value = when (event) {
+        val next = when (event) {
             is WorkflowEvent.BuildFinished -> current.copy(
                 buildStatus = BuildSummary(
                     buildNumber = event.buildNumber,
@@ -75,13 +75,9 @@ class HandoverStateService : Disposable {
                 )
             )
 
-            is WorkflowEvent.QualityGateResult -> current.copy(
-                qualityGatePassed = event.passed
-            )
+            is WorkflowEvent.QualityGateResult -> current.copy(qualityGatePassed = event.passed)
 
-            is WorkflowEvent.HealthCheckFinished -> current.copy(
-                healthCheckPassed = event.passed
-            )
+            is WorkflowEvent.HealthCheckFinished -> current.copy(healthCheckPassed = event.passed)
 
             is WorkflowEvent.AutomationTriggered -> {
                 val bambooUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/')
@@ -114,18 +110,18 @@ class HandoverStateService : Disposable {
                 prCreated = true
             )
 
-            is WorkflowEvent.JiraCommentPosted -> current.copy(
-                jiraCommentPosted = true
-            )
+            is WorkflowEvent.JiraCommentPosted -> current.copy(jiraCommentPosted = true)
 
             is WorkflowEvent.TicketChanged -> {
                 log.info("[Handover:State] Ticket changed to ${event.ticketId}")
+                // resetForNewTicket updates _stateFlow directly; return to skip the assignment below.
                 resetForNewTicket(event.ticketId, event.ticketSummary)
-                _stateFlow.value // resetForNewTicket already updates _stateFlow
+                return
             }
 
-            else -> current // Ignore events we don't care about
+            else -> return // Ignore events we don't care about
         }
+        _stateFlow.value = next
     }
 
     fun markCopyrightFixed() {
@@ -134,7 +130,7 @@ class HandoverStateService : Disposable {
     }
 
     fun markJiraTransitioned(statusName: String? = null) {
-        log.info("[Handover:State] Marked Jira as transitioned${statusName?.let { " to $it" } ?: ""}")
+        log.info("[Handover:State] Marked Jira as transitioned${statusName?.let { " to $it" }.orEmpty()}")
         _stateFlow.value = _stateFlow.value.copy(
             jiraTransitioned = true,
             currentStatusName = statusName ?: _stateFlow.value.currentStatusName
@@ -160,8 +156,7 @@ class HandoverStateService : Disposable {
     }
 
     companion object {
-        fun getInstance(project: Project): HandoverStateService {
-            return project.getService(HandoverStateService::class.java)
-        }
+        fun getInstance(project: Project): HandoverStateService =
+            project.getService(HandoverStateService::class.java)
     }
 }

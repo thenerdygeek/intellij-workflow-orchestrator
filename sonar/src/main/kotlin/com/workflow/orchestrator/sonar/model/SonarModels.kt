@@ -1,5 +1,7 @@
 package com.workflow.orchestrator.sonar.model
 
+import com.workflow.orchestrator.core.ui.TimeFormatter
+
 enum class QualityGateStatus { PASSED, FAILED, NONE }
 
 enum class IssueType { BUG, VULNERABILITY, CODE_SMELL, SECURITY_HOTSPOT }
@@ -92,17 +94,7 @@ data class ProjectHealthMetrics(
     val branchCoverage: Double? = null
 ) {
     /** Format technical debt as human-readable duration (e.g., "4h 30min", "2d 3h"). */
-    val formattedDebt: String get() {
-        if (technicalDebtMinutes <= 0) return "0min"
-        val days = technicalDebtMinutes / (8 * 60) // 8h work day
-        val hours = (technicalDebtMinutes % (8 * 60)) / 60
-        val mins = technicalDebtMinutes % 60
-        return buildString {
-            if (days > 0) append("${days}d ")
-            if (hours > 0) append("${hours}h ")
-            if (mins > 0 && days == 0) append("${mins}min") // skip mins when days present
-        }.trim().ifEmpty { "0min" }
-    }
+    val formattedDebt: String get() = TimeFormatter.formatEffortMinutes(technicalDebtMinutes)
 }
 
 data class SonarBranch(

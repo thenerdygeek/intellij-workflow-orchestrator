@@ -14,12 +14,11 @@ import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.core.ui.ClipboardUtil
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
 import java.awt.*
-import java.awt.datatransfer.StringSelection
 import javax.swing.*
-import javax.swing.border.TitledBorder
 
 /**
  * Interactive tool testing panel that lets you pick any registered agent tool,
@@ -524,7 +523,7 @@ class ToolTestingPanel(
     private fun copyOutput() {
         val text = contentArea.text
         if (text.isNotBlank()) {
-            Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
+            ClipboardUtil.copyToClipboard(text)
         }
     }
 

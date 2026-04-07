@@ -92,6 +92,37 @@ object ProcessRegistry {
     }
 
     /**
+     * Returns all processes whose `idleSignaledAt` is non-zero and more than [thresholdMs]
+     * milliseconds in the past. Used by the idle-process reaper coroutine.
+     */
+    fun getIdleProcesses(thresholdMs: Long): List<ManagedProcess> {
+        val now = System.currentTimeMillis()
+        return running.values.filter { managed ->
+            val idleAt = managed.idleSignaledAt.get()
+            idleAt > 0 && (now - idleAt) >= thresholdMs
+        }
+    }
+
+    /**
+     * Reaper: kill and unregister every process that has been idle-signaled for more than
+     * [maxIdleSinceSignalMs] milliseconds without further user interaction. Call this
+     * periodically (every ~10s) from a background coroutine tied to the agent session
+     * scope to prevent orphaned interactive processes from leaking.
+     */
+    fun reapIdleProcesses(maxIdleSinceSignalMs: Long = 60_000) {
+        val now = System.currentTimeMillis()
+        val toReap = running.entries.filter { (_, managed) ->
+            val idleAt = managed.idleSignaledAt.get()
+            idleAt > 0 && (now - idleAt) > maxIdleSinceSignalMs
+        }
+        for ((id, managed) in toReap) {
+            running.remove(id)
+            gracefulKill(managed.process)
+            log.info("[ProcessRegistry] Reaped idle process: $id (idleSignaledAt=${managed.idleSignaledAt.get()})")
+        }
+    }
+
+    /**
      * Two-phase graceful kill:
      * 1. destroy() sends SIGTERM (allows Maven/Gradle/Docker to release locks and clean up)
      * 2. Wait up to GRACEFUL_KILL_WAIT_MS for process to exit
@@ -124,40 +155,4 @@ object ProcessRegistry {
     }
 
     private const val GRACEFUL_KILL_WAIT_MS = 5000L
-
-    /**
-     * Finds all processes where [ManagedProcess.idleSignaledAt] > 0 and
-     * the time since idle signal exceeds [maxIdleSinceSignalMs], then kills and removes them.
-     */
-    fun reapIdleProcesses(maxIdleSinceSignalMs: Long = 60_000) {
-        val now = System.currentTimeMillis()
-        val toReap = running.entries.filter { (_, managed) ->
-            val idleAt = managed.idleSignaledAt.get()
-            idleAt > 0 && (now - idleAt) > maxIdleSinceSignalMs
-        }
-        for ((id, managed) in toReap) {
-            running.remove(id)
-            gracefulKill(managed.process)
-            log.info("[ProcessRegistry] Reaped idle process: $id (idleSignaledAt=${managed.idleSignaledAt.get()})")
-        }
-    }
-
-    /**
-     * Returns all processes whose [ManagedProcess.lastOutputAt] is non-zero and
-     * at least [thresholdMs] milliseconds in the past (i.e. idle based on output activity).
-     */
-    fun getIdleProcesses(thresholdMs: Long): List<ManagedProcess> {
-        val now = System.currentTimeMillis()
-        return running.values.filter { managed ->
-            val lastOutput = managed.lastOutputAt.get()
-            lastOutput > 0 && (now - lastOutput) >= thresholdMs
-        }
-    }
-
-    fun isRunning(toolCallId: String): Boolean {
-        val managed = running[toolCallId] ?: return false
-        return managed.process.isAlive
-    }
-
-    fun runningCount(): Int = running.size
 }

@@ -26,13 +26,6 @@ data class BitbucketProject(
 )
 
 @Serializable
-data class BitbucketRepo(
-    val slug: String,
-    val name: String,
-    val project: BitbucketProject? = null
-)
-
-@Serializable
 data class BitbucketBranch(
     val id: String,
     val displayId: String,
@@ -56,12 +49,6 @@ private data class UserListResponse(
 @Serializable
 private data class ProjectListResponse(
     val values: List<BitbucketProject>,
-    val isLastPage: Boolean = true
-)
-
-@Serializable
-private data class RepoListResponse(
-    val values: List<BitbucketRepo>,
     val isLastPage: Boolean = true
 )
 
@@ -371,6 +358,66 @@ class BitbucketBranchClient(
     private val baseUrl: String,
     private val tokenProvider: () -> String?
 ) {
+    companion object {
+        /**
+         * Factory method for the common "create a client from the configured Bitbucket URL
+         * and the stored Bitbucket credential" pattern.
+         *
+         * Returns `null` if Bitbucket is not configured (blank base URL). Callers that
+         * need to differentiate between missing config and an HTTP error should branch on
+         * the `null` return before invoking any method.
+         */
+        fun fromConfiguredSettings(): BitbucketBranchClient? {
+            val url = com.workflow.orchestrator.core.settings.ConnectionSettings.getInstance()
+                .state.bitbucketUrl.trimEnd('/')
+            if (url.isBlank()) return null
+            val credentialStore = com.workflow.orchestrator.core.auth.CredentialStore()
+            return BitbucketBranchClient(
+                baseUrl = url,
+                tokenProvider = { credentialStore.getToken(com.workflow.orchestrator.core.model.ServiceType.BITBUCKET) }
+            )
+        }
+
+        /**
+         * Extract the Bamboo plan key from a Bitbucket build status.
+         *
+         * Bitbucket build statuses report the *build* key (e.g. `PROJ-PLAN-42`), but
+         * triggering a new build requires the plan key without the build-number suffix
+         * (`PROJ-PLAN`). This helper prefers parsing the browse URL
+         * (`.../browse/PROJ-PLAN-42` → `PROJ-PLAN`) and falls back to stripping the
+         * trailing `-42` digits from the key.
+         */
+        fun extractPlanKey(buildStatus: BitbucketBuildStatus): String {
+            // Prefer the browse URL: https://bamboo.example.com/browse/PROJ-PLAN-42
+            val url = buildStatus.url
+            if (url.contains("/browse/")) {
+                val browseKey = url.substringAfter("/browse/").substringBefore("?").trim('/')
+                val lastDash = browseKey.lastIndexOf('-')
+                if (lastDash > 0) {
+                    val suffix = browseKey.substring(lastDash + 1)
+                    if (suffix.all { it.isDigit() }) {
+                        return browseKey.substring(0, lastDash)
+                    }
+                }
+            }
+
+            // Fallback: strip the trailing "-<digits>" build number from the key.
+            // e.g. PROJ-BUILD-42 → PROJ-BUILD
+            val key = buildStatus.key
+            val lastDash = key.lastIndexOf('-')
+            if (lastDash > 0) {
+                val suffix = key.substring(lastDash + 1)
+                if (suffix.all { it.isDigit() }) {
+                    return key.substring(0, lastDash)
+                }
+            }
+
+            // Last resort: strip trailing digits without a dash boundary.
+            // e.g. PROJ-SERVICE514 → PROJ-SERVICE
+            return key.trimEnd { it.isDigit() }.ifEmpty { key }
+        }
+    }
+
     private val log = Logger.getInstance(BitbucketBranchClient::class.java)
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -411,39 +458,6 @@ class BitbucketBranchClient(
                 }
             } catch (e: IOException) {
                 log.error("[Core:Bitbucket] Network error fetching projects", e)
-                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
-            }
-        }
-
-    /**
-     * Lists repositories in a Bitbucket Server project.
-     * GET /rest/api/1.0/projects/{projectKey}/repos
-     */
-    suspend fun getRepos(projectKey: String): ApiResult<List<BitbucketRepo>> =
-        withContext(Dispatchers.IO) {
-            log.info("[Core:Bitbucket] Fetching repos for project $projectKey")
-            try {
-                val request = Request.Builder()
-                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos?limit=100")
-                    .get()
-                    .header("Accept", "application/json")
-                    .build()
-                val response = httpClient.newCall(request).execute()
-                response.use {
-                    when (it.code) {
-                        in 200..299 -> {
-                            val body = it.body?.string() ?: ""
-                            val parsed = json.decodeFromString<RepoListResponse>(body)
-                            log.info("[Core:Bitbucket] Found ${parsed.values.size} repos in $projectKey")
-                            ApiResult.Success(parsed.values)
-                        }
-                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
-                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Project $projectKey not found")
-                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
-                    }
-                }
-            } catch (e: IOException) {
-                log.error("[Core:Bitbucket] Network error fetching repos", e)
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
             }
         }
@@ -1636,40 +1650,4 @@ class BitbucketBranchClient(
             }
         }
 
-    companion object {
-        /**
-         * Extract Bamboo plan key from a build status.
-         * Prefers extracting from the URL (e.g., ".../browse/PROJ-PLAN-42" → "PROJ-PLAN")
-         * Falls back to stripping trailing digits from the key.
-         */
-        fun extractPlanKey(buildStatus: BitbucketBuildStatus): String {
-            // Try URL first: https://bamboo.example.com/browse/PROJ-PLAN-42
-            val url = buildStatus.url
-            if (url.contains("/browse/")) {
-                val browseKey = url.substringAfter("/browse/").substringBefore("?").trim('/')
-                val lastDash = browseKey.lastIndexOf('-')
-                if (lastDash > 0) {
-                    val suffix = browseKey.substring(lastDash + 1)
-                    if (suffix.all { it.isDigit() }) {
-                        return browseKey.substring(0, lastDash)
-                    }
-                }
-            }
-
-            // Fallback: strip trailing digits from key
-            val key = buildStatus.key
-            // Try last-dash approach: PROJ-BUILD-42 → PROJ-BUILD
-            val lastDash = key.lastIndexOf('-')
-            if (lastDash > 0) {
-                val suffix = key.substring(lastDash + 1)
-                if (suffix.all { it.isDigit() }) {
-                    return key.substring(0, lastDash)
-                }
-            }
-
-            // Last resort: strip trailing digits from end of key
-            // e.g., PROJ-SERVICE514 → PROJ-SERVICE
-            return key.trimEnd { it.isDigit() }.ifEmpty { key }
-        }
-    }
 }

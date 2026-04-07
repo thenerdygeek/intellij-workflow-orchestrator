@@ -78,22 +78,6 @@ class CredentialStore(
         return result
     }
 
-    fun removeToken(service: ServiceType) {
-        val attributes = credentialAttributes(service)
-        safe().set(attributes, null)
-        tokenCache.remove(service)
-        log.info("[Core:Credentials] Removed credential for ${service.name}")
-    }
-
-    /** Clear all cached tokens on this instance (delegates to global cache). */
-    fun clearCache() = clearGlobalCache()
-
-    /** Clear cached token for a specific service. */
-    fun clearCache(service: ServiceType) {
-        tokenCache.remove(service)
-        log.debug("[Core:Credentials] Cleared cached token for ${service.name}")
-    }
-
     fun hasToken(service: ServiceType): Boolean {
         return getToken(service) != null
     }

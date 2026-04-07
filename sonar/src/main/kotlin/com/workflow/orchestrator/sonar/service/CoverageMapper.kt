@@ -11,9 +11,10 @@ object CoverageMapper {
         return components
             .filter { it.path != null }
             .associate { comp ->
+                val path = comp.path!!
                 val measures = comp.measures.associate { it.metric to it.value }
-                comp.path!! to FileCoverageData(
-                    filePath = comp.path!!,
+                path to FileCoverageData(
+                    filePath = path,
                     lineCoverage = measures["line_coverage"]?.toDoubleOrNull() ?: 0.0,
                     branchCoverage = measures["branch_coverage"]?.toDoubleOrNull() ?: 0.0,
                     uncoveredLines = measures["uncovered_lines"]?.toIntOrNull() ?: 0,
@@ -36,7 +37,7 @@ object CoverageMapper {
                 val status = when {
                     line.lineHits == 0 -> LineCoverageStatus.UNCOVERED
                     line.conditions != null && line.coveredConditions != null
-                        && line.coveredConditions!! < line.conditions!! -> LineCoverageStatus.PARTIAL
+                        && line.coveredConditions < line.conditions -> LineCoverageStatus.PARTIAL
                     else -> LineCoverageStatus.COVERED
                 }
                 line.line to status

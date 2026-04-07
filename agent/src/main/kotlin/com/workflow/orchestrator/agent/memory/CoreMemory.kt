@@ -23,8 +23,6 @@ class CoreMemory(private val storageFile: File) {
     companion object {
         /** Default per-block character limit. Letta uses 100K; we use 5K for IDE context efficiency. */
         const val DEFAULT_BLOCK_LIMIT = 5_000
-        /** Maximum total core memory size (all blocks). Spec says 4KB but we use chars not bytes. */
-        const val MAX_TOTAL_CHARS = 20_000
 
         private val json = Json { prettyPrint = true; ignoreUnknownKeys = true; encodeDefaults = true }
 

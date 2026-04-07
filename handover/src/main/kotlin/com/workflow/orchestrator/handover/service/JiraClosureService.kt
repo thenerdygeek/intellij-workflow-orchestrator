@@ -30,53 +30,52 @@ class JiraClosureService {
             return ""
         }
 
-        val sb = StringBuilder()
-
-        // Suite results table
-        sb.appendLine("h4. Automation Results")
-        sb.appendLine("|| Suite || Status || Link ||")
-        for (suite in suiteResults) {
-            val statusIcon = when (suite.passed) {
-                true -> "(/) PASS"
-                false -> "(x) FAIL"
-                null -> "(?) RUNNING"
+        val mergedTags = mergeDockerTags(suiteResults)
+        val comment = buildString {
+            // Suite results table
+            appendLine("h4. Automation Results")
+            appendLine("|| Suite || Status || Link ||")
+            for (suite in suiteResults) {
+                val statusIcon = when (suite.passed) {
+                    true -> "(/) PASS"
+                    false -> "(x) FAIL"
+                    null -> "(?) RUNNING"
+                }
+                appendLine("| ${escapeWikiMarkup(suite.suitePlanKey)} | $statusIcon | [View Results|${suite.bambooLink}] |")
             }
-            sb.appendLine("| ${escapeWikiMarkup(suite.suitePlanKey)} | $statusIcon | [View Results|${suite.bambooLink}] |")
+
+            if (mergedTags.isNotEmpty()) {
+                appendLine()
+                appendLine("h4. Docker Tags")
+                appendLine("{code:json}")
+                appendLine(json.encodeToString(mergedTags))
+                append("{code}")
+            }
         }
 
-        // Docker tags
+        log.info("[Handover:Jira] Closure comment built with ${mergedTags.size} docker tags")
+        log.debug("[Handover:Jira] Comment preview: ${comment.take(200)}")
+        return comment
+    }
+
+    private fun mergeDockerTags(suiteResults: List<SuiteResult>): Map<String, String> {
         val mergedTags = mutableMapOf<String, String>()
         for (suite in suiteResults) {
             try {
                 val parsed = json.decodeFromString<JsonObject>(suite.dockerTagsJson)
-                for ((key, value) in parsed) {
-                    mergedTags[key] = value.jsonPrimitive.content
-                }
+                parsed.forEach { (key, value) -> mergedTags[key] = value.jsonPrimitive.content }
             } catch (_: Exception) {
                 // Malformed JSON — skip this suite's tags
             }
         }
-
-        if (mergedTags.isNotEmpty()) {
-            sb.appendLine()
-            sb.appendLine("h4. Docker Tags")
-            sb.appendLine("{code:json}")
-            sb.appendLine(json.encodeToString(mergedTags))
-            sb.append("{code}")
-        }
-
-        log.info("[Handover:Jira] Closure comment built with ${mergedTags.size} docker tags")
-        log.debug("[Handover:Jira] Comment preview: ${sb.toString().take(200)}")
-        return sb.toString()
+        return mergedTags
     }
 
-    private fun escapeWikiMarkup(text: String): String {
-        return text.replace("|", "\\|").replace("{", "\\{").replace("}", "\\}")
-    }
+    private fun escapeWikiMarkup(text: String): String =
+        text.replace("|", "\\|").replace("{", "\\{").replace("}", "\\}")
 
     companion object {
-        fun getInstance(project: Project): JiraClosureService {
-            return project.getService(JiraClosureService::class.java)
-        }
+        fun getInstance(project: Project): JiraClosureService =
+            project.getService(JiraClosureService::class.java)
     }
 }

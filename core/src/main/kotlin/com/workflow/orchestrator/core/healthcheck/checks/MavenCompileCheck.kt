@@ -20,15 +20,12 @@ class MavenCompileCheck : HealthCheck {
         val result = MavenBuildService.getInstance(project)
             .runBuild("compile", modules)
 
-        return if (result.success) {
-            HealthCheck.CheckResult(passed = true, message = "Maven compile passed")
-        } else if (result.timedOut) {
-            HealthCheck.CheckResult(passed = false, message = "Maven compile timed out")
-        } else {
-            HealthCheck.CheckResult(
+        return when {
+            result.success -> HealthCheck.CheckResult(passed = true, message = "Maven compile passed")
+            result.timedOut -> HealthCheck.CheckResult(passed = false, message = "Maven compile timed out")
+            else -> HealthCheck.CheckResult(
                 passed = false,
-                message = "Maven compile failed (exit code ${result.exitCode})",
-                details = result.errors.lines().filter { it.contains("[ERROR]") }
+                message = "Maven compile failed (exit code ${result.exitCode})"
             )
         }
     }

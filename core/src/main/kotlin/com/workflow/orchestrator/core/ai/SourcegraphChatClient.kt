@@ -131,14 +131,6 @@ class SourcegraphChatClient(
     }
 
     /**
-     * Pass through max_tokens from settings. No clamping — the actual limit
-     * varies per model and Sourcegraph instance. Let the API reject if too high.
-     */
-    private fun clampMaxTokens(maxTokens: Int?): Int? {
-        return maxTokens
-    }
-
-    /**
      * Convert messages to Sourcegraph/Anthropic-compatible format.
      *
      * Constraints:
@@ -288,7 +280,7 @@ class SourcegraphChatClient(
                 tools = tools?.takeIf { it.isNotEmpty() },
                 toolChoice = null,
                 temperature = temperature,
-                maxTokens = clampMaxTokens(maxTokens),
+                maxTokens = maxTokens,
                 stream = true
             )
 
@@ -485,7 +477,7 @@ class SourcegraphChatClient(
                 tools = tools?.takeIf { it.isNotEmpty() },
                 toolChoice = null,
                 temperature = temperature,
-                maxTokens = clampMaxTokens(maxTokens)
+                maxTokens = maxTokens
             )
 
             val jsonBody = json.encodeToString(request)

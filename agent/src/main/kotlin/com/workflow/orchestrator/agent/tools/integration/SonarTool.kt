@@ -127,7 +127,7 @@ Common optional: repo_name for multi-repo projects.
 
         return when (action) {
             "issues" -> {
-                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return missingParam("project_key")
+                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("project_key")
                 val file = params["file"]?.jsonPrimitive?.content
                 val branch = params["branch"]?.jsonPrimitive?.content
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
@@ -136,7 +136,7 @@ Common optional: repo_name for multi-repo projects.
             }
 
             "quality_gate" -> {
-                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return missingParam("project_key")
+                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("project_key")
                 ToolValidation.validateNotBlank(projectKey, "project_key")?.let { return it }
                 val branch = params["branch"]?.jsonPrimitive?.content
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
@@ -144,7 +144,7 @@ Common optional: repo_name for multi-repo projects.
             }
 
             "coverage" -> {
-                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return missingParam("project_key")
+                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("project_key")
                 ToolValidation.validateNotBlank(projectKey, "project_key")?.let { return it }
                 val branch = params["branch"]?.jsonPrimitive?.content
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
@@ -152,33 +152,33 @@ Common optional: repo_name for multi-repo projects.
             }
 
             "search_projects" -> {
-                val query = params["query"]?.jsonPrimitive?.content ?: return missingParam("query")
+                val query = params["query"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("query")
                 ToolValidation.validateNotBlank(query, "query")?.let { return it }
                 service.searchProjects(query).toAgentToolResult()
             }
 
             "analysis_tasks" -> {
-                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return missingParam("project_key")
+                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("project_key")
                 ToolValidation.validateNotBlank(projectKey, "project_key")?.let { return it }
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
                 service.getAnalysisTasks(projectKey, repoName = repoName).toAgentToolResult()
             }
 
             "branches" -> {
-                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return missingParam("project_key")
+                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("project_key")
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
                 service.getBranches(projectKey, repoName = repoName).toAgentToolResult()
             }
 
             "project_measures" -> {
-                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return missingParam("project_key")
+                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("project_key")
                 val branch = params["branch"]?.jsonPrimitive?.content
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
                 service.getProjectMeasures(projectKey, branch, repoName = repoName).toAgentToolResult()
             }
 
             "source_lines" -> {
-                val componentKey = params["component_key"]?.jsonPrimitive?.content ?: return missingParam("component_key")
+                val componentKey = params["component_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("component_key")
                 val from = params["from"]?.jsonPrimitive?.content?.toIntOrNull()
                 val to = params["to"]?.jsonPrimitive?.content?.toIntOrNull()
                 val branch = params["branch"]?.jsonPrimitive?.content
@@ -187,7 +187,7 @@ Common optional: repo_name for multi-repo projects.
             }
 
             "issues_paged" -> {
-                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return missingParam("project_key")
+                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("project_key")
                 val page = params["page"]?.jsonPrimitive?.content?.toIntOrNull() ?: 1
                 val pageSize = params["page_size"]?.jsonPrimitive?.content?.toIntOrNull() ?: 100
                 val branch = params["branch"]?.jsonPrimitive?.content
@@ -197,22 +197,22 @@ Common optional: repo_name for multi-repo projects.
             }
 
             "security_hotspots" -> {
-                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return missingParam("project_key")
+                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("project_key")
                 val branch = params["branch"]?.jsonPrimitive?.content
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
                 service.getSecurityHotspots(projectKey, branch = branch, repoName = repoName).toAgentToolResult()
             }
 
             "duplications" -> {
-                val componentKey = params["component_key"]?.jsonPrimitive?.content ?: return missingParam("component_key")
+                val componentKey = params["component_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("component_key")
                 val branch = params["branch"]?.jsonPrimitive?.content
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
                 service.getDuplications(componentKey, branch = branch, repoName = repoName).toAgentToolResult()
             }
 
             "branch_quality_report" -> {
-                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return missingParam("project_key")
-                val branch = params["branch"]?.jsonPrimitive?.content ?: return missingParam("branch")
+                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("project_key")
+                val branch = params["branch"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("branch")
                 ToolValidation.validateNotBlank(projectKey, "project_key")?.let { return it }
                 ToolValidation.validateNotBlank(branch, "branch")?.let { return it }
                 val maxFiles = params["max_files"]?.jsonPrimitive?.content?.toIntOrNull() ?: 20
@@ -228,11 +228,4 @@ Common optional: repo_name for multi-repo projects.
             )
         }
     }
-
-    private fun missingParam(name: String): ToolResult = ToolResult(
-        content = "Error: '$name' parameter required",
-        summary = "Error: missing $name",
-        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-        isError = true
-    )
 }

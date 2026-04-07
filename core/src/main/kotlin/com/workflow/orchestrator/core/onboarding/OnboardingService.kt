@@ -11,8 +11,7 @@ class OnboardingService(private val project: Project) {
 
     private val log = Logger.getInstance(OnboardingService::class.java)
 
-    var hasShownOnboarding: Boolean = false
-        private set
+    private var hasShownOnboarding: Boolean = false
 
     fun shouldShowOnboarding(): Boolean {
         if (hasShownOnboarding) return false

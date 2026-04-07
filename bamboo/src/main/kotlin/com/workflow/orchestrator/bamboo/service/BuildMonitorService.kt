@@ -25,7 +25,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 import java.time.Instant
 
 @Service(Service.Level.PROJECT)
@@ -45,11 +44,12 @@ class BuildMonitorService : Disposable {
         val p = _project!!
         val settings = PluginSettings.getInstance(p)
         val credentialStore = CredentialStore()
+        val timeouts = com.workflow.orchestrator.core.http.HttpClientFactory.timeoutsFromSettings(p)
         BambooApiClient(
             baseUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/'),
             tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) },
-            connectTimeoutSeconds = settings.state.httpConnectTimeoutSeconds.toLong(),
-            readTimeoutSeconds = settings.state.httpReadTimeoutSeconds.toLong()
+            connectTimeoutSeconds = timeouts.connectSeconds,
+            readTimeoutSeconds = timeouts.readSeconds
         ).also { _apiClient = it }
     }
 

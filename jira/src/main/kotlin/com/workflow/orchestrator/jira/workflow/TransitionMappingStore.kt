@@ -40,15 +40,9 @@ class TransitionMappingStore {
         mappings.add(mapping)
     }
 
-    fun clearMapping(intent: String, projectKey: String) {
-        mappings.removeAll { it.intent == intent && it.projectKey == projectKey }
-    }
-
     fun clearExplicitGlobalMapping(intent: String) {
         mappings.removeAll { it.intent == intent && it.projectKey == "" && it.source == "explicit" }
     }
-
-    fun getAllMappings(): List<TransitionMapping> = mappings.toList()
 
     fun toJson(): String = json.encodeToString(mappings.toList())
 

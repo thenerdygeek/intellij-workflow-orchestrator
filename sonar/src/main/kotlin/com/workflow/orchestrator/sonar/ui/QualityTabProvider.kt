@@ -8,7 +8,6 @@ import javax.swing.JComponent
 
 class QualityTabProvider : WorkflowTabProvider {
 
-    override val tabId: String = "quality"
     override val tabTitle: String = "Quality"
     override val order: Int = 3
 

@@ -5,7 +5,6 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.ValidationInfo
 import com.intellij.ui.AnimatedIcon
-import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
@@ -15,7 +14,6 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketBranch
 import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.ui.StatusColors
 import java.awt.BorderLayout
-import java.awt.CardLayout
 import java.awt.FlowLayout
 import javax.swing.*
 

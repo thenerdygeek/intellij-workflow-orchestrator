@@ -16,6 +16,8 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.ui.StatusColors
+import com.workflow.orchestrator.core.util.HtmlEscape
+import com.workflow.orchestrator.core.util.StringUtils
 import com.workflow.orchestrator.jira.api.dto.JiraAttachment
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.workflow.orchestrator.jira.api.dto.JiraIssueLink
@@ -288,7 +290,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                 foreground = StatusColors.LINK
                 cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
             })
-            leftPanel.add(JBLabel(truncate(subtask.fields.summary, 50)).apply {
+            leftPanel.add(JBLabel(StringUtils.truncate(subtask.fields.summary, 50)).apply {
                 font = font.deriveFont(JBUI.scale(11).toFloat())
                 foreground = StatusColors.SECONDARY_TEXT
                 if (subtask.fields.summary.length > 50) toolTipText = subtask.fields.summary
@@ -455,7 +457,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                 }
 
                 // Filename label
-                add(JBLabel(truncate(att.filename, 16)).apply {
+                add(JBLabel(StringUtils.truncate(att.filename, 16)).apply {
                     font = font.deriveFont(JBUI.scale(11).toFloat())
                     alignmentX = Component.CENTER_ALIGNMENT
                     if (att.filename.length > 16) toolTipText = att.filename
@@ -558,10 +560,13 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
 
             val cache = IssueDetailCache.getInstance(project)
             val cached = cache.get(issueKey)
+            // Treat cached comments older than the TTL as a miss so activity from other
+            // sources (browser, teammates, other plugin actions) eventually shows up.
+            val fresh = cached?.comments?.takeIf {
+                java.time.Duration.between(cached.fetchedAt, java.time.Instant.now()).seconds < COMMENTS_CACHE_TTL_SECONDS
+            }
 
-            val comments = if (cached?.comments != null) {
-                cached.comments
-            } else {
+            val comments = fresh ?: run {
                 val jiraService = project.getService(com.workflow.orchestrator.core.services.JiraService::class.java)
                 val result = jiraService.getComments(issueKey)
                 if (!result.isError) {
@@ -644,7 +649,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         commentPanel.add(headerRow, BorderLayout.NORTH)
 
         val bodyLabel = JBLabel("<html><body style='font-size:${JBUI.scale(11)}px; color:${colorToHex(StatusColors.SECONDARY_TEXT)};'>" +
-            escapeHtml(comment.body).replace("\n", "<br>") +
+            HtmlEscape.escapeHtml(comment.body).replace("\n", "<br>") +
             "</body></html>").apply {
             border = JBUI.Borders.emptyLeft(JBUI.scale(26))
         }
@@ -904,7 +909,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                 font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
                 foreground = JBColor.foreground()
             })
-            leftPanel.add(JBLabel(truncate(linkedIssue.fields.summary, 50)).apply {
+            leftPanel.add(JBLabel(StringUtils.truncate(linkedIssue.fields.summary, 50)).apply {
                 font = font.deriveFont(JBUI.scale(11).toFloat())
                 foreground = StatusColors.SECONDARY_TEXT
                 if (linkedIssue.fields.summary.length > 50) toolTipText = linkedIssue.fields.summary
@@ -944,7 +949,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
             contentType = "text/html"
             text = "<html><body style='font-family: sans-serif; font-size: ${JBUI.scale(12)}px; " +
                     "color: ${colorToHex(JBColor.foreground())}; margin: 0; padding: 0;'>" +
-                    escapeHtml(desc).replace("\n", "<br>") +
+                    HtmlEscape.escapeHtml(desc).replace("\n", "<br>") +
                     "</body></html>"
             isEditable = false
             isOpaque = false
@@ -1185,6 +1190,9 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
     // ---------------------------------------------------------------
 
     companion object {
+        /** Maximum age (seconds) of a cached comments list before a re-fetch is forced. */
+        private const val COMMENTS_CACHE_TTL_SECONDS = 60L
+
         private val BLOCKED_BY_TINT = JBColor(0xFFF0F0, 0x3D2020)
         private val BLOCKS_TINT = JBColor(0xFFF8F0, 0x3D3020)
 
@@ -1196,19 +1204,6 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
             JBColor(0xCF222E, 0xF85149),
             JBColor(0x0E8A16, 0x2EA043)
         )
-
-        private fun truncate(text: String, maxLength: Int): String {
-            return if (text.length <= maxLength) text
-            else text.substring(0, maxLength - 1) + "\u2026"
-        }
-
-        private fun escapeHtml(text: String): String {
-            return text
-                .replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-                .replace("\"", "&quot;")
-        }
 
         private fun colorToHex(color: Color): String {
             return String.format("#%02x%02x%02x", color.red, color.green, color.blue)

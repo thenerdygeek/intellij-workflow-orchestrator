@@ -101,10 +101,6 @@ class SmartPoller(
         }
     }
 
-    fun resetBackoff() {
-        currentBackoff = 1.0
-    }
-
     private fun isIdeFocused(): Boolean {
         return try {
             val frame = IdeFocusManager.getGlobalInstance().lastFocusedFrame

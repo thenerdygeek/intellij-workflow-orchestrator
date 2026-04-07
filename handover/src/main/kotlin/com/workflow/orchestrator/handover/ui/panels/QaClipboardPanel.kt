@@ -1,14 +1,15 @@
 package com.workflow.orchestrator.handover.ui.panels
 
+import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.ui.ClipboardUtil
 import com.workflow.orchestrator.core.ui.StatusColors
 import java.awt.BorderLayout
 import java.awt.CardLayout
-import javax.swing.BorderFactory
 import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JPanel
@@ -18,10 +19,13 @@ class QaClipboardPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     val textArea = JBTextArea(8, 40).apply {
         isEditable = false
-        font = JBUI.Fonts.create(com.intellij.openapi.editor.colors.EditorColorsManager.getInstance().globalScheme.editorFontName, 12)
+        font = JBUI.Fonts.create(EditorColorsManager.getInstance().globalScheme.editorFontName, 12)
     }
     val copyAllButton = JButton("Copy All")
-    val addServiceButton = JButton("Add Service")
+    val addServiceButton = JButton("Add Service").apply {
+        isEnabled = false
+        toolTipText = "Coming soon"
+    }
     val statusLabel = JBLabel("")
     private val tagListPanel = JPanel().apply {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
@@ -37,34 +41,13 @@ class QaClipboardPanel(private val project: Project) : JPanel(BorderLayout()) {
     init {
         border = JBUI.Borders.empty(8)
 
-        val headerLabel = JBLabel("QA HANDOVER").apply {
-            font = font.deriveFont(java.awt.Font.BOLD, JBUI.scale(12).toFloat())
-            foreground = StatusColors.SECONDARY_TEXT
-            border = JBUI.Borders.emptyLeft(8)
-        }
-        val header = JPanel(BorderLayout()).apply {
-            add(headerLabel, BorderLayout.WEST)
-            add(addServiceButton, BorderLayout.EAST)
-            border = BorderFactory.createCompoundBorder(
-                JBUI.Borders.customLine(StatusColors.BORDER, 0, 0, 1, 0),
-                BorderFactory.createCompoundBorder(
-                    JBUI.Borders.customLine(StatusColors.LINK, 0, 2, 0, 0),
-                    JBUI.Borders.empty(6, 0, 6, 0)
-                )
-            )
-            isOpaque = false
-        }
-
         copyAllButton.addActionListener {
             val text = textArea.text
             if (text.isNotBlank()) {
-                val content = java.awt.datatransfer.StringSelection(text)
-                java.awt.Toolkit.getDefaultToolkit().systemClipboard.setContents(content, null)
+                copyToClipboard(text)
                 statusLabel.text = "Copied!"
             }
         }
-        addServiceButton.isEnabled = false
-        addServiceButton.toolTipText = "Coming soon"
 
         val buttonPanel = JPanel().apply {
             add(copyAllButton)
@@ -84,7 +67,7 @@ class QaClipboardPanel(private val project: Project) : JPanel(BorderLayout()) {
         cardPanel.add(emptyLabel, "empty")
         cardLayout.show(cardPanel, "empty")
 
-        add(header, BorderLayout.NORTH)
+        add(handoverPanelHeader("QA HANDOVER", addServiceButton), BorderLayout.NORTH)
         add(cardPanel, BorderLayout.CENTER)
         add(southPanel, BorderLayout.SOUTH)
     }
@@ -98,13 +81,11 @@ class QaClipboardPanel(private val project: Project) : JPanel(BorderLayout()) {
             return
         }
         cardLayout.show(cardPanel, "content")
-        for ((service, tag) in tags) {
+        tags.forEach { (service, tag) ->
             val row = JPanel(BorderLayout()).apply {
                 add(JBLabel("  $service: $tag"), BorderLayout.CENTER)
-                val copyBtn = JButton("Copy")
-                copyBtn.addActionListener {
-                    val content = java.awt.datatransfer.StringSelection("$service:$tag")
-                    java.awt.Toolkit.getDefaultToolkit().systemClipboard.setContents(content, null)
+                val copyBtn = JButton("Copy").apply {
+                    addActionListener { copyToClipboard("$service:$tag") }
                 }
                 add(copyBtn, BorderLayout.EAST)
             }
@@ -116,5 +97,9 @@ class QaClipboardPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     fun setFormattedText(text: String) {
         textArea.text = text
+    }
+
+    private fun copyToClipboard(text: String) {
+        ClipboardUtil.copyToClipboard(text)
     }
 }

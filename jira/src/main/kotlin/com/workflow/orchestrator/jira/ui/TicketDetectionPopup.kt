@@ -4,7 +4,6 @@ import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.ui.StatusColors
-import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.Cursor
 import java.awt.FlowLayout

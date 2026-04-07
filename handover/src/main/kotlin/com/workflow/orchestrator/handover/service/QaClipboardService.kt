@@ -26,30 +26,26 @@ class QaClipboardService {
 
     fun formatForClipboard(payload: ClipboardPayload): String {
         log.info("[Handover:QA] Formatting clipboard content: ${payload.dockerTags.size} docker tags, ${payload.suiteLinks.size} suite links, ${payload.ticketIds.size} tickets")
-        val sb = StringBuilder()
+        return buildString {
+            if (payload.dockerTags.isNotEmpty()) {
+                appendLine("Docker Tags:")
+                payload.dockerTags.forEach { (service, tag) -> appendLine("  • $service: $tag") }
+            }
 
-        if (payload.dockerTags.isNotEmpty()) {
-            sb.appendLine("Docker Tags:")
-            for ((service, tag) in payload.dockerTags) {
-                sb.appendLine("  • $service: $tag")
+            if (payload.suiteLinks.isNotEmpty()) {
+                if (isNotEmpty()) appendLine()
+                appendLine("Automation Results:")
+                payload.suiteLinks.forEach { link ->
+                    val status = if (link.passed) "PASS" else "FAIL"
+                    appendLine("  • ${link.suiteName}: $status — ${link.link}")
+                }
+            }
+
+            if (payload.ticketIds.isNotEmpty()) {
+                if (isNotEmpty()) appendLine()
+                append("Tickets: ${payload.ticketIds.joinToString(", ")}")
             }
         }
-
-        if (payload.suiteLinks.isNotEmpty()) {
-            if (sb.isNotEmpty()) sb.appendLine()
-            sb.appendLine("Automation Results:")
-            for (link in payload.suiteLinks) {
-                val status = if (link.passed) "PASS" else "FAIL"
-                sb.appendLine("  • ${link.suiteName}: $status — ${link.link}")
-            }
-        }
-
-        if (payload.ticketIds.isNotEmpty()) {
-            if (sb.isNotEmpty()) sb.appendLine()
-            sb.append("Tickets: ${payload.ticketIds.joinToString(", ")}")
-        }
-
-        return sb.toString()
     }
 
     fun buildPayloadFromSuiteResults(
@@ -64,21 +60,20 @@ class QaClipboardService {
             // Extract docker tags
             try {
                 val parsed = json.decodeFromString<JsonObject>(suite.dockerTagsJson)
-                for ((key, value) in parsed) {
-                    mergedTags[key] = value.jsonPrimitive.content
-                }
+                parsed.forEach { (key, value) -> mergedTags[key] = value.jsonPrimitive.content }
             } catch (_: Exception) {
                 // Skip malformed JSON
             }
 
-            // Build suite link
             // Only include completed suites in clipboard
             if (suite.passed != null) {
-                suiteLinks.add(SuiteLinkEntry(
-                    suiteName = suite.suitePlanKey,
-                    passed = suite.passed,
-                    link = suite.bambooLink
-                ))
+                suiteLinks.add(
+                    SuiteLinkEntry(
+                        suiteName = suite.suitePlanKey,
+                        passed = suite.passed,
+                        link = suite.bambooLink
+                    )
+                )
             }
         }
 
@@ -91,8 +86,7 @@ class QaClipboardService {
     }
 
     companion object {
-        fun getInstance(project: Project): QaClipboardService {
-            return project.getService(QaClipboardService::class.java)
-        }
+        fun getInstance(project: Project): QaClipboardService =
+            project.getService(QaClipboardService::class.java)
     }
 }

@@ -8,12 +8,10 @@ import javax.swing.JComponent
 
 class AutomationTabProvider : WorkflowTabProvider {
 
-    override val tabId: String = TAB_ID
     override val tabTitle: String = TAB_TITLE
     override val order: Int = 4
 
     companion object {
-        const val TAB_ID = "automation"
         const val TAB_TITLE = "Automation"
     }
 

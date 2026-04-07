@@ -12,6 +12,7 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.integration.ToolValidation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -165,7 +166,7 @@ Most actions require a suspended session. session_id defaults to active session.
     // ── evaluate ────────────────────────────────────────────────────────────
 
     private suspend fun executeEvaluate(params: JsonObject, project: Project): ToolResult {
-        val expression = params["expression"]?.jsonPrimitive?.content ?: return missingParam("expression")
+        val expression = params["expression"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("expression")
         if (expression.isBlank()) {
             return ToolResult("Expression cannot be blank.", "Blank expression", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
@@ -357,8 +358,8 @@ Most actions require a suspended session. session_id defaults to active session.
      * (e.g., computed properties, watch expressions).
      */
     private suspend fun executeSetValue(params: JsonObject, project: Project): ToolResult {
-        val variableName = params["variable_name"]?.jsonPrimitive?.content ?: return missingParam("variable_name")
-        val newValue = params["new_value"]?.jsonPrimitive?.content ?: return missingParam("new_value")
+        val variableName = params["variable_name"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("variable_name")
+        val newValue = params["new_value"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("new_value")
         val sessionId = params["session_id"]?.jsonPrimitive?.content
 
         val session = controller.getSession(sessionId)
@@ -545,7 +546,7 @@ Most actions require a suspended session. session_id defaults to active session.
 
     private suspend fun executeMemoryView(params: JsonObject, project: Project): ToolResult {
         val sessionId = params["session_id"]?.jsonPrimitive?.content
-        val className = params["class_name"]?.jsonPrimitive?.content ?: return missingParam("class_name")
+        val className = params["class_name"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("class_name")
         val maxInstances = params["max_instances"]?.jsonPrimitive?.intOrNull ?: 0
 
         val session = controller.getSession(sessionId)
@@ -895,13 +896,6 @@ Most actions require a suspended session. session_id defaults to active session.
     }
 
     // ── Private helpers ─────────────────────────────────────────────────────
-
-    private fun missingParam(name: String): ToolResult = ToolResult(
-        content = "Error: '$name' parameter required",
-        summary = "Error: missing $name",
-        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-        isError = true
-    )
 
     private fun inferReturnType(returnValue: String?): String {
         if (returnValue == null) return "void"

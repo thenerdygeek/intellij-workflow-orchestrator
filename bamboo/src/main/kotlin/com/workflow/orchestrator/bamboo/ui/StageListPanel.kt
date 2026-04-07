@@ -6,6 +6,7 @@ import com.intellij.ui.ColoredListCellRenderer
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleTextAttributes
 import com.workflow.orchestrator.core.ui.StatusColors
+import com.workflow.orchestrator.core.ui.TimeFormatter
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
@@ -153,7 +154,7 @@ class StageListPanel : JPanel(BorderLayout()) {
             ))
 
             // Duration
-            val duration = value.durationMs?.let { formatDuration(it) } ?: "--"
+            val duration = value.durationMs?.let { TimeFormatter.formatDurationMillis(it) } ?: "--"
             append("  $duration", SimpleTextAttributes.GRAYED_ATTRIBUTES)
 
             // Manual indicator
@@ -162,12 +163,4 @@ class StageListPanel : JPanel(BorderLayout()) {
             }
         }
     }
-}
-
-internal fun formatDuration(ms: Long): String {
-    if (ms <= 0) return "--"
-    val totalSeconds = ms / 1000
-    val minutes = totalSeconds / 60
-    val seconds = totalSeconds % 60
-    return if (minutes > 0) "${minutes}m ${seconds}s" else "${seconds}s"
 }

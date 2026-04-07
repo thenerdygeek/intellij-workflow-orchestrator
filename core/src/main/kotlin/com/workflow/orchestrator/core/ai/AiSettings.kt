@@ -9,7 +9,6 @@ class AiSettings : PersistentStateComponent<AiSettings.State> {
 
     class State : BaseState() {
         var sourcegraphChatModel by string(null)
-        var maxOutputTokens by property(64000)
     }
 
     private var myState = State()

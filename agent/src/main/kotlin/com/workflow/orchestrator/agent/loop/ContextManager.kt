@@ -407,7 +407,7 @@ class ContextManager(
 
         // On LLM failure, skip compaction entirely — leave messages as-is.
         if (result is ApiResult.Error) {
-            LOG.warn("[Context] Summarization failed: ${(result as ApiResult.Error).message}, skipping")
+            LOG.warn("[Context] Summarization failed: ${result.message}, skipping")
             return
         }
 
@@ -417,12 +417,11 @@ class ContextManager(
         // Store for summary chaining
         lastSummary = summaryContent
 
-        val removedCount = splitPoint
         // Remove old messages, insert summary as ASSISTANT message
         // (not user, to avoid consecutive user messages — bug fix from expert review)
         messages.subList(0, splitPoint).clear()
         messages.add(0, ChatMessage(role = "assistant", content = "[Context Summary]\n$summaryContent"))
-        LOG.info("[Context] Summarized: $removedCount messages -> summary (${summaryContent.length} chars)")
+        LOG.info("[Context] Summarized: $splitPoint messages -> summary (${summaryContent.length} chars)")
 
         // Rebuild file read indices since messages shifted
         rebuildFileReadIndices()
@@ -472,7 +471,6 @@ class ContextManager(
         }
 
         // Stage 1: Duplicate file read detection (from Cline)
-        val countBeforeDedup = messageCount()
         val percentSaved = deduplicateFileReads()
         invalidateTokens()
 
@@ -489,11 +487,8 @@ class ContextManager(
             // Match Cline's strategy selection:
             // If tokens/2 > maxAllowed, use quarter (more aggressive); else half
             val estimatedTokens = lastPromptTokens ?: tokenEstimate()
-            val keep = if (estimatedTokens / 2 > maxInputTokens) {
-                TruncationStrategy.QUARTER
-            } else {
-                TruncationStrategy.HALF
-            }
+            val keep = if (estimatedTokens / 2 > maxInputTokens) TruncationStrategy.QUARTER
+                       else TruncationStrategy.HALF
             val countBeforeTruncation = messageCount()
             truncateConversation(keep)
             invalidateTokens()

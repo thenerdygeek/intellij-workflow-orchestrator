@@ -15,8 +15,6 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketPrDetail
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.ui.StatusColors
-import com.workflow.orchestrator.core.events.PrContext
-import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.services.BitbucketService
 import com.workflow.orchestrator.core.services.SonarService
 import com.workflow.orchestrator.core.settings.PluginSettings

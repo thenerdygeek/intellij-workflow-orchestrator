@@ -178,10 +178,8 @@ class SendStdinTool : AgentTool {
                 )
             }
         }
-
-        // Unreachable
         @Suppress("UNREACHABLE_CODE")
-        ToolResult("Error: unexpected exit from monitor loop", "Error: internal", 5, isError = true)
+        error("unreachable: while(true) always returns")
     }
 
     private fun collectNewOutput(managed: ManagedProcess, fromIndex: Int): String {

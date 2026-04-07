@@ -1,7 +1,6 @@
 package com.workflow.orchestrator.sonar.api
 
 import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.http.AuthInterceptor
 import com.workflow.orchestrator.core.http.AuthScheme
 import com.workflow.orchestrator.core.http.RetryInterceptor
@@ -14,7 +13,6 @@ import kotlinx.serialization.json.Json
 import okhttp3.CacheControl
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import org.jetbrains.idea.maven.project.MavenProjectsManager
 import java.io.IOException
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
@@ -40,39 +38,6 @@ class SonarApiClient(
             "sqale_index,sqale_rating,duplicated_lines_density,cognitive_complexity," +
             "reliability_rating,security_rating,coverage,branch_coverage"
 
-        private val companionLog = Logger.getInstance(SonarApiClient::class.java)
-
-        /**
-         * Auto-detect sonar.projectKey from the Maven project's pom.xml properties.
-         * Returns null if Maven is not available or the property is not set.
-         */
-        fun autoDetectProjectKey(project: Project): String? {
-            return try {
-                val mavenManager = MavenProjectsManager.getInstance(project)
-                val mavenProjects = mavenManager.projects
-                if (mavenProjects.isEmpty()) {
-                    companionLog.info("[Sonar:AutoDetect] No Maven projects found")
-                    return null
-                }
-                // Check root project first, then sub-projects
-                for (mavenProject in mavenProjects) {
-                    val props = mavenProject.properties
-                    val sonarKey = props.getProperty("sonar.projectKey")
-                    if (!sonarKey.isNullOrBlank()) {
-                        companionLog.info("[Sonar:AutoDetect] Found sonar.projectKey='$sonarKey' in ${mavenProject.displayName}")
-                        return sonarKey
-                    }
-                }
-                // Fallback: use groupId:artifactId of the root project
-                val root = mavenProjects.first()
-                val fallback = "${root.mavenId.groupId}:${root.mavenId.artifactId}"
-                companionLog.info("[Sonar:AutoDetect] No sonar.projectKey property found, using fallback '$fallback'")
-                fallback
-            } catch (e: Exception) {
-                companionLog.warn("[Sonar:AutoDetect] Failed to detect project key: ${e.message}", e)
-                null
-            }
-        }
     }
     private val log = Logger.getInstance(SonarApiClient::class.java)
     private val json = Json { ignoreUnknownKeys = true }

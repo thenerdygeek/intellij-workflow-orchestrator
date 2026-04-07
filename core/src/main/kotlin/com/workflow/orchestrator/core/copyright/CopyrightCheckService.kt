@@ -27,7 +27,7 @@ class CopyrightCheckService(private val project: Project) {
             val content = document.text
             val headerLines = content.lines().take(10).joinToString("\n")
             if (!regex.containsMatchIn(headerLines)) {
-                violations.add(CopyrightViolation(file, "Missing copyright header"))
+                violations.add(CopyrightViolation(file))
             }
         }
 
@@ -46,7 +46,4 @@ data class CopyrightCheckResult(val violations: List<CopyrightViolation>) {
     val passed: Boolean get() = violations.isEmpty()
 }
 
-data class CopyrightViolation(
-    val file: VirtualFile,
-    val reason: String
-)
+data class CopyrightViolation(val file: VirtualFile)

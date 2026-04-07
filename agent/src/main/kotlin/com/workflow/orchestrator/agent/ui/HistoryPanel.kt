@@ -62,7 +62,7 @@ class HistoryPanel(private val project: Project? = null) : JPanel(BorderLayout()
         refresh()
     }
 
-    fun refresh() {
+    private fun refresh() {
         listModel.clear()
         val service = try {
             project?.let { AgentService.getInstance(it) }

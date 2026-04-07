@@ -73,7 +73,6 @@ class HealthCheckCheckinHandler(
         val context = HealthCheckContext(
             project = project,
             changedFiles = changedFiles,
-            commitMessage = panel.commitMessage ?: "",
             branch = currentBranch
         )
 

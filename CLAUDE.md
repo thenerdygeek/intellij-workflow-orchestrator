@@ -110,8 +110,20 @@ If any answer is NO, the AI agent cannot use this feature.
 ## Shared Utilities (in :core)
 
 - **StatusColors** — JBColor constants: SUCCESS, ERROR, WARNING, INFO, LINK, OPEN, MERGED, DECLINED, SECONDARY_TEXT
-- **TimeFormatter** — relative/absolute time formatting
-- **HttpClientFactory** — shared ConnectionPool, per-service auth scheme (Bearer/Basic/Token)
+- **TimeFormatter** — relative/absolute time formatting plus duration helpers
+  (`formatDurationSeconds`, `formatDurationMillis`, `formatEffortMinutes`)
+- **HttpClientFactory** — shared ConnectionPool, per-service auth scheme (Bearer/Basic/Token).
+  `HttpClientFactory.timeoutsFromSettings(project)` returns the configured `HttpTimeouts` pair so
+  individual API client constructions don't repeat the `httpConnectTimeoutSeconds.toLong()` boilerplate.
+- **BitbucketBranchClient.fromConfiguredSettings()** — factory that builds a `BitbucketBranchClient`
+  from the application-level Bitbucket URL + credential, returning `null` when not configured.
+  All cached/ad-hoc clients in pullrequest/bamboo/jira/sonar go through this.
+- **RepoContextResolver.resolveCurrentEditorRepoOrPrimary()** / **resolvePrimaryGitRepo()** —
+  centralised "editor repo or primary, materialised as `GitRepository`" lookup that was duplicated
+  across bamboo / sonar / pullrequest / jira / core.
+- **ClipboardUtil** — `copyToClipboard(text)` wrapper around the AWT system clipboard.
+- **HtmlEscape** — `escapeHtml(s)` for safe embedding of user text into HTML body / attributes.
+- **StringUtils** — `truncate(text, maxLength)` ellipsis-truncation helper.
 - **SmartPoller** — activity-aware polling with exponential backoff (1.5x) + jitter, visibility gating
 - **EventBus** — SharedFlow for cross-module events (see `WorkflowEvent.kt` for full list)
 - **CredentialStore** — PasswordSafe wrapper for all secrets

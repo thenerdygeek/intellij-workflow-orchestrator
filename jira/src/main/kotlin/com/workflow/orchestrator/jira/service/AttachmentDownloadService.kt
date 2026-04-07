@@ -8,7 +8,6 @@ import com.workflow.orchestrator.core.http.AuthScheme
 import com.workflow.orchestrator.core.http.HttpClientFactory
 import com.workflow.orchestrator.core.http.RetryInterceptor
 import com.workflow.orchestrator.core.model.ServiceType
-import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.jira.api.dto.JiraAttachment
 import com.workflow.orchestrator.jira.model.AttachmentDownloadResult
 import kotlinx.coroutines.Dispatchers
@@ -178,10 +177,8 @@ class AttachmentDownloadService(private val project: Project) {
         }
     }
 
-    private fun createTempDir(): File {
-        val dir = java.nio.file.Files.createTempDirectory("workflow-orchestrator-attachments").toFile()
-        return dir
-    }
+    private fun createTempDir(): File =
+        java.nio.file.Files.createTempDirectory("workflow-orchestrator-attachments").toFile()
 
     companion object {
         private const val MAX_THUMBNAIL_CACHE_SIZE = 50

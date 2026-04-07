@@ -19,10 +19,5 @@ object BitbucketToolUtils {
         isError = true
     )
 
-    fun missingParam(name: String): ToolResult = ToolResult(
-        content = "Error: '$name' parameter required",
-        summary = "Error: missing $name",
-        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-        isError = true
-    )
+    fun missingParam(name: String): ToolResult = ToolValidation.missingParam(name)
 }

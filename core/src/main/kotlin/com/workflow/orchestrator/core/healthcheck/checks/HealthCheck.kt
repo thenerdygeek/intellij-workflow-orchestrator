@@ -13,14 +13,12 @@ interface HealthCheck {
 
     data class CheckResult(
         val passed: Boolean,
-        val message: String,
-        val details: List<String> = emptyList()
+        val message: String
     )
 }
 
 data class HealthCheckContext(
     val project: Project,
     val changedFiles: List<VirtualFile>,
-    val commitMessage: String,
     val branch: String
 )

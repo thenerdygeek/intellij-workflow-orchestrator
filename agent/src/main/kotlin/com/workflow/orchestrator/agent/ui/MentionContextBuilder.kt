@@ -152,13 +152,11 @@ class MentionContextBuilder(
         return sb.toString()
     }
 
-    private fun buildSymbolContext(mention: Mention): String {
-        return "<mentioned_symbol name=\"${mention.name}\" qualified=\"${mention.value}\">\nSymbol: ${mention.value}\nThe user is referencing this symbol. Use find_definition or find_references to explore it.\n</mentioned_symbol>\n\n"
-    }
+    private fun buildSymbolContext(mention: Mention): String =
+        "<mentioned_symbol name=\"${mention.name}\" qualified=\"${mention.value}\">\nSymbol: ${mention.value}\nThe user is referencing this symbol. Use find_definition or find_references to explore it.\n</mentioned_symbol>\n\n"
 
-    private fun buildToolContext(mention: Mention): String {
-        return "<mentioned_tool name=\"${mention.value}\">\nThe user wants you to use the ${mention.value} tool.\n</mentioned_tool>\n\n"
-    }
+    private fun buildToolContext(mention: Mention): String =
+        "<mentioned_tool name=\"${mention.value}\">\nThe user wants you to use the ${mention.value} tool.\n</mentioned_tool>\n\n"
 
     private fun buildSkillContext(mention: Mention): String {
         val projectPath = project.basePath ?: ""

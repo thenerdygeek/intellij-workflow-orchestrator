@@ -8,6 +8,7 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.ui.TimeFormatter
+import com.workflow.orchestrator.core.util.StringUtils
 import java.awt.*
 import java.awt.geom.RoundRectangle2D
 import javax.swing.*
@@ -29,7 +30,6 @@ data class PrListItem(
     val toBranch: String,
     /** true = section header (non-selectable), false = normal PR row */
     val isHeader: Boolean = false,
-    val version: Int = 0,
     /** Source repo name — displayed as badge when multiple repos are configured */
     val repoName: String = ""
 )
@@ -112,12 +112,7 @@ class PrListPanel : JPanel(BorderLayout()) {
 
     fun showEmpty() {
         allItems = emptyList()
-        // Keep search panel in NORTH, replace CENTER with empty label
-        val centerComponent = (layout as BorderLayout).getLayoutComponent(BorderLayout.CENTER)
-        if (centerComponent != null) remove(centerComponent)
-        add(emptyLabel, BorderLayout.CENTER)
-        revalidate()
-        repaint()
+        replaceCenterWith(emptyLabel)
     }
 
     /**
@@ -130,40 +125,17 @@ class PrListPanel : JPanel(BorderLayout()) {
             return
         }
 
-        // Build the new items list
         val newItems = mutableListOf<PrListItem>()
         if (myPrs.isNotEmpty()) {
-            newItems.add(PrListItem(
-                id = -1, title = "My Pull Requests (${myPrs.size})", authorName = "",
-                status = "", reviewerCount = 0, updatedDate = 0,
-                fromBranch = "", toBranch = "", isHeader = true
-            ))
+            newItems.add(sectionHeader(-1, "My Pull Requests (${myPrs.size})"))
             newItems.addAll(myPrs)
         }
         if (reviewingPrs.isNotEmpty()) {
-            newItems.add(PrListItem(
-                id = -2, title = "Reviewing (${reviewingPrs.size})", authorName = "",
-                status = "", reviewerCount = 0, updatedDate = 0,
-                fromBranch = "", toBranch = "", isHeader = true
-            ))
+            newItems.add(sectionHeader(-2, "Reviewing (${reviewingPrs.size})"))
             newItems.addAll(reviewingPrs)
         }
 
-        // Store all items for filtering
-        allItems = newItems
-
-        // Ensure scroll pane is showing (not empty state)
-        val centerComponent = (layout as BorderLayout).getLayoutComponent(BorderLayout.CENTER)
-        if (centerComponent !is JBScrollPane) {
-            if (centerComponent != null) remove(centerComponent)
-            add(JBScrollPane(prList).apply {
-                border = JBUI.Borders.empty()
-                isOpaque = false
-                viewport.isOpaque = false
-            }, BorderLayout.CENTER)
-        }
-
-        applyFilter(searchField.text.orEmpty())
+        setItems(newItems)
     }
 
     /**
@@ -176,15 +148,26 @@ class PrListPanel : JPanel(BorderLayout()) {
         }
 
         val newItems = mutableListOf<PrListItem>()
-        newItems.add(PrListItem(
-            id = -3, title = "All Pull Requests (${prs.size})", authorName = "",
-            status = "", reviewerCount = 0, updatedDate = 0,
-            fromBranch = "", toBranch = "", isHeader = true
-        ))
+        newItems.add(sectionHeader(-3, "All Pull Requests (${prs.size})"))
         newItems.addAll(prs)
 
-        allItems = newItems
+        setItems(newItems)
+    }
 
+    private fun sectionHeader(id: Int, title: String) = PrListItem(
+        id = id, title = title, authorName = "",
+        status = "", reviewerCount = 0, updatedDate = 0,
+        fromBranch = "", toBranch = "", isHeader = true
+    )
+
+    private fun setItems(newItems: List<PrListItem>) {
+        allItems = newItems
+        ensureScrollPaneVisible()
+        applyFilter(searchField.text.orEmpty())
+    }
+
+    /** Swap the CENTER component to the scroll pane if it's not already showing. */
+    private fun ensureScrollPaneVisible() {
         val centerComponent = (layout as BorderLayout).getLayoutComponent(BorderLayout.CENTER)
         if (centerComponent !is JBScrollPane) {
             if (centerComponent != null) remove(centerComponent)
@@ -194,8 +177,15 @@ class PrListPanel : JPanel(BorderLayout()) {
                 viewport.isOpaque = false
             }, BorderLayout.CENTER)
         }
+    }
 
-        applyFilter(searchField.text.orEmpty())
+    /** Replace the CENTER component with the given component. */
+    private fun replaceCenterWith(component: JComponent) {
+        val centerComponent = (layout as BorderLayout).getLayoutComponent(BorderLayout.CENTER)
+        if (centerComponent != null) remove(centerComponent)
+        add(component, BorderLayout.CENTER)
+        revalidate()
+        repaint()
     }
 
     /**
@@ -353,7 +343,7 @@ class PrListPanel : JPanel(BorderLayout()) {
         }
         private val branchLabel = JBLabel().apply {
             font = font.deriveFont(JBUI.scale(10).toFloat())
-            foreground = BRANCH_TEXT
+            foreground = SECONDARY_TEXT
         }
         private val reviewerLabel = JBLabel().apply {
             font = font.deriveFont(JBUI.scale(10).toFloat())
@@ -409,7 +399,7 @@ class PrListPanel : JPanel(BorderLayout()) {
             idLabel.text = "#${value.id}"
             idLabel.foreground = if (isSelected) JBColor.foreground() else LINK_COLOR
 
-            titleLabel.text = truncate(value.title, 45)
+            titleLabel.text = StringUtils.truncate(value.title, 45)
             titleLabel.foreground = if (isSelected) JBColor.foreground() else SECONDARY_TEXT
             titleLabel.toolTipText = if (value.title.length > 45) value.title else null
 
@@ -426,7 +416,7 @@ class PrListPanel : JPanel(BorderLayout()) {
             authorLabel.text = value.authorName
             authorLabel.isVisible = true
 
-            branchLabel.text = "${truncate(value.fromBranch, 20)} \u2192 ${truncate(value.toBranch, 20)}"
+            branchLabel.text = "${StringUtils.truncate(value.fromBranch, 20)} \u2192 ${StringUtils.truncate(value.toBranch, 20)}"
             branchLabel.toolTipText = if (value.fromBranch.length > 20 || value.toBranch.length > 20) {
                 "${value.fromBranch} \u2192 ${value.toBranch}"
             } else null
@@ -553,16 +543,11 @@ class PrListPanel : JPanel(BorderLayout()) {
     companion object {
         private val SECONDARY_TEXT = StatusColors.SECONDARY_TEXT
         private val LINK_COLOR = StatusColors.LINK
-        private val BRANCH_TEXT = StatusColors.SECONDARY_TEXT
         private val SELECTION_BG get() = UIManager.getColor("List.selectionBackground") ?: StatusColors.HIGHLIGHT_BG
         private val CARD_BG = JBColor(0xF5F5F5, 0x1C1B1B)
         private val STATUS_OPEN = StatusColors.OPEN
         private val STATUS_MERGED = StatusColors.MERGED
         private val STATUS_DECLINED = StatusColors.DECLINED
 
-        fun truncate(text: String, maxLength: Int): String {
-            return if (text.length <= maxLength) text
-            else text.substring(0, maxLength - 1) + "\u2026"
-        }
     }
 }

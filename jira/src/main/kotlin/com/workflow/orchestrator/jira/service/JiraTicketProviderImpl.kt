@@ -9,7 +9,6 @@ import com.workflow.orchestrator.core.workflow.JiraTicketProvider
 import com.workflow.orchestrator.core.workflow.TicketDetails
 import com.workflow.orchestrator.core.workflow.TicketTransition
 import com.intellij.openapi.progress.runBackgroundableTask
-import com.workflow.orchestrator.core.workflow.WorkflowIntent
 import com.workflow.orchestrator.jira.api.JiraApiClient
 
 /**

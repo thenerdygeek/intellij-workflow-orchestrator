@@ -1,5 +1,7 @@
 package com.workflow.orchestrator.bamboo.service
 
+import com.workflow.orchestrator.core.util.HtmlEscape
+
 /**
  * Simple markdown-to-HTML converter for the PR description Preview tab.
  * Handles the subset of markdown that Bitbucket Server renders.
@@ -28,7 +30,7 @@ object MarkdownToHtml {
                 continue
             }
             if (inCodeBlock) {
-                html.append(escapeHtml(line)).append("\n")
+                html.append(HtmlEscape.escapeHtml(line)).append("\n")
                 continue
             }
 
@@ -79,7 +81,7 @@ object MarkdownToHtml {
     }
 
     private fun inlineFormat(text: String): String {
-        var result = escapeHtml(text)
+        var result = HtmlEscape.escapeHtml(text)
         // Bold
         result = result.replace(Regex("\\*\\*(.+?)\\*\\*"), "<b>$1</b>")
         // Inline code
@@ -99,7 +101,4 @@ object MarkdownToHtml {
         val trimmed = url.trim().lowercase()
         return if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) url else "#"
     }
-
-    private fun escapeHtml(text: String): String =
-        text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 }

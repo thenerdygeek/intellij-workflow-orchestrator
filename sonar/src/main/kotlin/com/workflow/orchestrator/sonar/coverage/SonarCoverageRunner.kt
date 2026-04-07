@@ -39,8 +39,5 @@ class SonarCoverageRunner : CoverageRunner() {
 
     companion object {
         const val RUNNER_ID = "SonarQubeCoverage"
-
-        fun getInstance(): SonarCoverageRunner =
-            getInstance(SonarCoverageRunner::class.java)
     }
 }

@@ -4,7 +4,6 @@ import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.roots.ModuleRootManager
 import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.tools.AgentTool
@@ -16,7 +15,6 @@ import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.PrContext
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
-import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import git4idea.commands.Git
 import git4idea.commands.GitCommand

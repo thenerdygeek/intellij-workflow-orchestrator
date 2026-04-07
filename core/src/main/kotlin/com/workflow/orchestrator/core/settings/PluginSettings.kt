@@ -13,8 +13,6 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
     class State : BaseState() {
         // Polling intervals (seconds)
         var buildPollIntervalSeconds by property(30)
-        var queuePollIntervalSeconds by property(60)
-        var sonarPollIntervalSeconds by property(60)
 
         // Bamboo plan key (auto-detected or user-configured)
         var bambooPlanKey by string("")
@@ -65,12 +63,9 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
 
         // Automation & Docker Registry settings
         var dockerRegistryUrl by string("")
-        var dockerRegistryCaPath by string("")
-        var queueActivePollingIntervalSeconds by property(15)
         var queueAutoTriggerEnabled by property(true)
         var tagValidationOnTrigger by property(true)
         var queueMaxDepthPerSuite by property(10)
-        var queueBuildQueuedTimeoutSeconds by property(720)
 
         // Phase 2B: Handover settings
         var defaultTargetBranch by string("develop")

@@ -23,6 +23,7 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.integration.ToolValidation
 import com.workflow.orchestrator.agent.tools.psi.PsiToolUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -422,7 +423,7 @@ Actions and their parameters:
         if (PsiToolUtils.isDumb(project)) return PsiToolUtils.dumbModeError()
 
         val beanName = params["bean_name"]?.jsonPrimitive?.contentOrNull
-            ?: return missingParam("bean_name")
+            ?: return ToolValidation.missingParam("bean_name")
 
         val content = ReadAction.nonBlocking<String> {
             buildDependencyGraph(project, beanName)
@@ -2811,17 +2812,6 @@ Actions and their parameters:
         val text = value.text.removeSurrounding("\"")
         return if (text.isBlank() || text == "\"\"") null else text
     }
-
-    // ─────────────────────────────────────────────────────────────────────────────
-    // Shared helpers
-    // ─────────────────────────────────────────────────────────────────────────────
-
-    private fun missingParam(name: String): ToolResult = ToolResult(
-        content = "Error: '$name' parameter required",
-        summary = "Error: missing $name",
-        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-        isError = true
-    )
 
     companion object {
         internal const val SPRING_PLUGIN_MISSING_MSG =

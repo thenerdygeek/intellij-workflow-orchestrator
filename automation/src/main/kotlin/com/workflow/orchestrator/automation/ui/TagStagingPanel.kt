@@ -80,37 +80,30 @@ class TagStagingPanel(
         add(cardPanel, BorderLayout.CENTER)
     }
 
-    fun setEntries(entries: List<TagEntry>) {
+    fun updateTags(tags: List<TagEntry>) {
         val oldEntries = tableModel.entries
 
         // Skip update entirely if data is identical
-        if (oldEntries == entries) {
-            return
-        }
+        if (oldEntries == tags) return
 
-        tableModel.entries = entries
+        tableModel.entries = tags
 
-        if (oldEntries.size != entries.size) {
+        if (oldEntries.size != tags.size) {
             // Row count changed — must do full structural update
             tableModel.fireTableDataChanged()
         } else {
             // Same row count — only fire updates for rows that actually changed
-            for (i in entries.indices) {
-                if (oldEntries[i] != entries[i]) {
+            for (i in tags.indices) {
+                if (oldEntries[i] != tags[i]) {
                     tableModel.fireTableRowsUpdated(i, i)
                 }
             }
         }
-        cardLayout.show(cardPanel, if (entries.isEmpty()) "empty" else "table")
+        cardLayout.show(cardPanel, if (tags.isEmpty()) "empty" else "table")
     }
 
-    fun getEntries(): List<TagEntry> = tableModel.entries
-
-    /** Alias for setEntries — used by AutomationPanel. */
-    fun updateTags(tags: List<TagEntry>) = setEntries(tags)
-
     /** Get current tag entries (may have user edits). */
-    fun getCurrentTags(): List<TagEntry> = getEntries()
+    fun getCurrentTags(): List<TagEntry> = tableModel.entries
 
     override fun dispose() {}
 

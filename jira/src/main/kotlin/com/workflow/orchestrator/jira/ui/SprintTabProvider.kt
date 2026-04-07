@@ -13,7 +13,6 @@ import javax.swing.JComponent
 
 class SprintTabProvider : WorkflowTabProvider {
 
-    override val tabId: String = "sprint"
     override val tabTitle: String = "Sprint"
     override val order: Int = 0
 
