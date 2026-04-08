@@ -413,12 +413,19 @@ class AgentLoop(
          */
         var sameTierRecycles = 0
         /**
-         * Index into [cachedFallbackChain] for L2 tier escalation. Starts at 0 (the
-         * primary model). Advances by 1 each time L2 escalation fires. Only used when
-         * [fallbackManager] is null — when fallback is enabled, ModelFallbackManager
-         * tracks its own index and L2 doesn't engage.
+         * Index into [cachedFallbackChain] of the live brain's current tier. Used by L2
+         * escalation to know how far down the chain we already are. Resynced on every
+         * brain swap so it tracks reality, not the chain's "primary" assumption.
+         *
+         * Initial value is computed from `brain.modelId`'s position in the chain so that
+         * a user with a settings override (e.g. forcing Sonnet) starts at the correct
+         * tier instead of incorrectly being treated as on Opus thinking.
+         *
+         * Sentinel: -1 means "current model not in chain" — L2 is disabled in that case
+         * because escalating into the chain would land on a tier the user explicitly
+         * didn't pick. The L2 guard checks `l2TierIdx >= 0` before any index arithmetic.
          */
-        var l2TierIdx = 0
+        var l2TierIdx = cachedFallbackChain?.indexOf(brain.modelId) ?: -1
 
         while (!cancelled.get() && iteration < maxIterations) {
             iteration++
@@ -486,7 +493,7 @@ class AgentLoop(
                 val maxRetries = if (isTimeoutError) MAX_TIMEOUT_RETRIES else MAX_API_RETRIES
                 if (apiResult.type in RETRYABLE_ERRORS && apiRetryCount < maxRetries) {
                     apiRetryCount++
-                    // L1: Smart model fallback on timeout/network errors (when fallback is enabled)
+                    // L1-fallback: Smart model fallback on timeout/network errors (when fallback is enabled)
                     if (fallbackManager != null && brainFactory != null && apiResult.type in TIMEOUT_ERRORS) {
                         val oldModel = brain.modelId
                         if (pendingEscalation) {
@@ -496,6 +503,9 @@ class AgentLoop(
                             onModelSwitch?.invoke(oldModel, revertModel, "Escalation failed — reverting")
                             LOG.info("[Loop] Escalation failed, reverting: $oldModel → $revertModel")
                             pendingEscalation = false
+                            // Tier swap: resync L2 index + refill recycle budget for the new tier
+                            l2TierIdx = cachedFallbackChain?.indexOf(revertModel) ?: -1
+                            sameTierRecycles = 0
                         } else {
                             // Normal fallback — advance down the chain
                             val nextModel = fallbackManager.onNetworkError()
@@ -503,10 +513,13 @@ class AgentLoop(
                                 brain = brainFactory.invoke(nextModel, "Network error on $oldModel: ${apiResult.type.name} — falling back to $nextModel")
                                 onModelSwitch?.invoke(oldModel, nextModel, "Network error — falling back")
                                 LOG.info("[Loop] Model fallback: $oldModel → $nextModel")
+                                // Tier swap: resync L2 index + refill recycle budget for the new tier
+                                l2TierIdx = cachedFallbackChain?.indexOf(nextModel) ?: -1
+                                sameTierRecycles = 0
                             }
                         }
                     }
-                    // L1 (alt): Same-model brain recycle when fallback is NOT engaged.
+                    // L1-recycle: Same-model brain recycle when fallback is NOT engaged.
                     // Throws away the OpenAiCompatBrain (and its OkHttpClient + ConnectionPool +
                     // activeCall ref) and rebuilds it with the SAME model id. Fixes broken
                     // sockets / dead TCP state that OkHttp can't detect (e.g. corporate proxy
@@ -527,6 +540,11 @@ class AgentLoop(
                             "recycleCount" to sameTierRecycles
                         ))
                         brain = brainFactory.invoke(sameModel, reason)
+                        // Surface the recycle in the UI even though the model id is unchanged.
+                        // The chip text stays the same; the controller may flash the fallback
+                        // indicator (amber border + Zap icon) with the recycle reason as tooltip,
+                        // matching the existing onModelSwitch convention.
+                        onModelSwitch?.invoke(sameModel, sameModel, "Brain recycled #$sameTierRecycles — fresh OkHttp pool (${apiResult.type.name})")
                     }
                     // L2: Tier escalation when same-tier recycles are exhausted and an
                     // alternate tier is available. Only engages when fallbackManager is
@@ -534,13 +552,17 @@ class AgentLoop(
                     // handles tier switching). Crosses the gateway routing layer for
                     // -latest aliased models — the only client-side intervention that
                     // actually changes which backend serves the request.
+                    //
+                    // Guard order matters: check l2TierIdx >= 0 BEFORE the size arithmetic
+                    // so the sentinel "model not in chain" (-1) cleanly disables L2.
                     else if (
                         fallbackManager == null &&
                         brainFactory != null &&
                         apiResult.type in TIMEOUT_ERRORS &&
                         sameTierRecycles >= MAX_SAME_TIER_RECYCLES &&
                         cachedFallbackChain != null &&
-                        l2TierIdx < cachedFallbackChain.size - 1
+                        l2TierIdx >= 0 &&
+                        l2TierIdx + 1 < cachedFallbackChain.size
                     ) {
                         l2TierIdx++
                         val oldModel = brain.modelId
@@ -608,6 +630,8 @@ class AgentLoop(
                     onModelSwitch?.invoke(oldModel, escalationModel, "Escalating back")
                     LOG.info("[Loop] Model escalation: $oldModel → $escalationModel")
                     pendingEscalation = true
+                    // Tier swap: resync L2 index for the new tier
+                    l2TierIdx = cachedFallbackChain?.indexOf(escalationModel) ?: -1
                 }
             }
 
