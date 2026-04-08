@@ -162,6 +162,13 @@ class SonarApiClient(
             .map { it.tasks }
     }
 
+    /** Poll a specific CE task by ID — used to wait for local scanner analysis to complete. */
+    suspend fun getCeTask(taskId: String): ApiResult<SonarCeTaskDto> {
+        log.info("[Sonar:API] GET /api/ce/task?id=$taskId")
+        return get<SonarCeTaskResponse>("/api/ce/task?id=${URLEncoder.encode(taskId, "UTF-8")}")
+            .map { it.task }
+    }
+
     suspend fun getNewCodePeriod(projectKey: String, branch: String? = null): ApiResult<SonarNewCodePeriodDto> {
         log.info("[Sonar:API] GET /api/new_code_periods/show for project '$projectKey' branch='${branch ?: "default"}'")
         val params = buildString {

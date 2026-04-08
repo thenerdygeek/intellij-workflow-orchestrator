@@ -305,6 +305,26 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         }
     }
 
+    override suspend fun getCeTaskStatus(taskId: String): ToolResult<String> {
+        val api = client ?: return ToolResult(
+            data = "UNKNOWN",
+            summary = "SonarQube not configured. Cannot poll CE task.",
+            isError = true
+        )
+        return when (val result = api.getCeTask(taskId)) {
+            is ApiResult.Success -> ToolResult(
+                data = result.data.status,
+                summary = "CE task $taskId: ${result.data.status}" +
+                    (result.data.errorMessage?.let { " — $it" } ?: "")
+            )
+            is ApiResult.Error -> ToolResult(
+                data = "UNKNOWN",
+                summary = "Error polling CE task $taskId: ${result.message}",
+                isError = true
+            )
+        }
+    }
+
     override suspend fun testConnection(): ToolResult<Unit> {
         val api = client ?: return ToolResult(
             data = Unit,

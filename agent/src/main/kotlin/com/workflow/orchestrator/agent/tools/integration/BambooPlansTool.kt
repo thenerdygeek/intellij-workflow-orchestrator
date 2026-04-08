@@ -35,6 +35,7 @@ Actions and their parameters:
 - get_plan_variables(plan_key) → Default plan variables
 - rerun_failed_jobs(plan_key, build_number) → Rerun failed jobs in build
 - trigger_stage(plan_key, stage?, variables?) → Trigger specific stage (variables: JSON {"key":"value"})
+- auto_detect_plan(git_remote_url) → Auto-detect the Bamboo plan key from a Git remote URL
 
 description optional: for approval dialog on rerun_failed_jobs/trigger_stage.
 """.trimIndent()
@@ -46,7 +47,8 @@ description optional: for approval dialog on rerun_failed_jobs/trigger_stage.
                 description = "Operation to perform",
                 enumValues = listOf(
                     "get_plans", "get_project_plans", "search_plans", "get_plan_branches",
-                    "get_build_variables", "get_plan_variables", "rerun_failed_jobs", "trigger_stage"
+                    "get_build_variables", "get_plan_variables", "rerun_failed_jobs", "trigger_stage",
+                    "auto_detect_plan"
                 )
             ),
             "plan_key" to ParameterProperty(
@@ -80,6 +82,10 @@ description optional: for approval dialog on rerun_failed_jobs/trigger_stage.
             "variables" to ParameterProperty(
                 type = "string",
                 description = "JSON object of build variables e.g. '{\"key\":\"value\"}' — for trigger_stage"
+            ),
+            "git_remote_url" to ParameterProperty(
+                type = "string",
+                description = "Git remote URL (e.g. git@github.com:org/repo.git or https://github.com/org/repo) — for auto_detect_plan"
             ),
             "description" to ParameterProperty(
                 type = "string",
@@ -163,6 +169,13 @@ description optional: for approval dialog on rerun_failed_jobs/trigger_stage.
                     is BambooToolUtils.VariablesParseResult.Failure -> return parsed.error
                 }
                 service.triggerStage(planKey, variables, stage).toAgentToolResult()
+            }
+
+            "auto_detect_plan" -> {
+                val gitRemoteUrl = params["git_remote_url"]?.jsonPrimitive?.content
+                    ?: return ToolValidation.missingParam("git_remote_url")
+                ToolValidation.validateNotBlank(gitRemoteUrl, "git_remote_url")?.let { return it }
+                service.autoDetectPlan(gitRemoteUrl).toAgentToolResult()
             }
 
             else -> ToolResult(

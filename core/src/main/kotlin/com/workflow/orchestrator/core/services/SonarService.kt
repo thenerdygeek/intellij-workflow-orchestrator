@@ -34,6 +34,14 @@ interface SonarService {
     /** Get recent analysis tasks for a project. */
     suspend fun getAnalysisTasks(projectKey: String, repoName: String? = null): ToolResult<List<SonarAnalysisTaskData>>
 
+    /**
+     * Poll the status of a specific CE (Compute Engine) task by ID.
+     * Used after a local sonar-scanner run to wait for server-side processing to finish
+     * before fetching fresh results. Returns the task status string:
+     * PENDING, IN_PROGRESS, SUCCESS, FAILED, CANCELED.
+     */
+    suspend fun getCeTaskStatus(taskId: String): ToolResult<String>
+
     /** Test the SonarQube connection. */
     suspend fun testConnection(): ToolResult<Unit>
 

@@ -224,6 +224,7 @@ You run inside IntelliJ IDEA with access to tools across several categories. Cor
 - Use project_context early to get comprehensive state: branch, uncommitted changes, active Jira ticket, service keys, PR status, build results, Sonar quality gate, project type.
 - render_artifact tool: produce interactive React visualizations in chat. Load the frontend-design skill first for component APIs and design guidelines. Available: Tailwind CSS, Recharts, Lucide icons, UI components (Card, Badge, Tabs, Progress, Accordion, Tooltip). All scope variables — use directly, not as props.
 - Database workflow — always follow this sequence: (1) db_list_profiles to discover configured connections, (2) db_list_databases to list user databases on a server profile (system DBs are filtered out), (3) db_schema to inspect table structure before writing queries, (4) db_query to run read-only SELECT statements. Profiles are server-level — one PostgreSQL profile can reach all databases on that server via the optional `database` parameter.
+- After refactoring code, use sonar.local_analysis(files=...) to get immediate SonarQube feedback on the changed files without waiting for the CI pipeline to complete a full scan. This runs the Sonar scanner locally and fetches fresh issues, hotspots, coverage, and duplications for exactly the files you changed.
 - You can call multiple tools in a single response. If calls are independent, make them all in parallel for efficiency. If calls depend on each other, run them sequentially."""
 
     /**

@@ -189,6 +189,12 @@ data class SonarCeActivityResponse(
     val tasks: List<SonarCeTaskDto> = emptyList()
 )
 
+/** Single-task response from /api/ce/task?id={taskId} */
+@Serializable
+data class SonarCeTaskResponse(
+    val task: SonarCeTaskDto = SonarCeTaskDto()
+)
+
 @Serializable
 data class SonarCeTaskDto(
     val id: String = "",

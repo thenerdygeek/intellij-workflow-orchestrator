@@ -19,10 +19,11 @@ class BambooPlansToolTest {
     }
 
     @Test
-    fun `action enum contains all 8 actions`() {
+    fun `action enum contains all 9 actions`() {
         val actions = tool.parameters.properties["action"]?.enumValues
         assertNotNull(actions)
-        assertEquals(8, actions!!.size)
+        assertEquals(9, actions!!.size)
+        assertTrue("auto_detect_plan" in actions)
         assertTrue("get_plans" in actions)
         assertTrue("get_project_plans" in actions)
         assertTrue("search_plans" in actions)

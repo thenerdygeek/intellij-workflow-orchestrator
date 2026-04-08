@@ -6,8 +6,6 @@ import com.intellij.execution.configurations.ConfigurationType
 import com.intellij.execution.process.ProcessAdapter
 import com.intellij.execution.process.ProcessEvent
 import com.intellij.execution.process.ProcessHandler
-import com.intellij.execution.runners.ExecutionEnvironmentBuilder
-import com.intellij.execution.runners.ProgramRunner
 import com.intellij.execution.testframework.sm.runner.SMTestProxy
 import com.intellij.execution.testframework.sm.runner.ui.TestResultsViewer
 import com.intellij.execution.ui.RunContentDescriptor
@@ -25,9 +23,11 @@ import com.workflow.orchestrator.agent.tools.TestConsoleUtils
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.util.ReflectionUtils
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -38,11 +38,16 @@ import kotlin.coroutines.coroutineContext
 import kotlin.coroutines.resume
 
 /**
- * Coverage tool — runs tests with IntelliJ's native coverage executor and returns
- * line-level coverage data.
+ * Coverage tool — runs tests with IntelliJ's native coverage executor (or JaCoCo) and returns
+ * rich per-file coverage data: line hits, branch coverage (jumps + switches), method coverage,
+ * and partial-coverage indicators.
+ *
+ * Works with both the IntelliJ native runner (.ic files) and JaCoCo (.exec files). IntelliJ
+ * converts JaCoCo data to its own ProjectData format internally, so the same reflection-based
+ * extraction path handles both runners.
  *
  * Actions:
- * - run_with_coverage: Launch tests via CoverageExecutor, return test results + line-level coverage
+ * - run_with_coverage: Launch tests via CoverageExecutor, return test results + full coverage detail
  * - get_file_coverage: Re-read coverage for a specific file from cached data (no re-run)
  */
 class CoverageTool : AgentTool {
@@ -50,11 +55,11 @@ class CoverageTool : AgentTool {
     override val name = "coverage"
 
     override val description = """
-Run tests with coverage analysis and retrieve line-level coverage data.
+Run tests with coverage analysis and retrieve rich per-file coverage data.
 
 Actions and their parameters:
-- run_with_coverage(test_class, method?, timeout?) → Run tests via IntelliJ Coverage executor, return test results + line-level coverage data
-- get_file_coverage(file_path) → Re-read coverage for a specific file from the last coverage run (no re-run)
+- run_with_coverage(test_class, method?, timeout?) → Run tests via IntelliJ Coverage executor, return test results + line/branch/method coverage
+- get_file_coverage(file_path) → Re-read full coverage detail for a specific file from the last coverage run (no re-run)
 """.trimIndent()
 
     override val parameters = FunctionParameters(
@@ -91,6 +96,10 @@ Actions and their parameters:
     /** Cached coverage snapshot from the last run_with_coverage execution. */
     @Volatile
     internal var lastSnapshot: CoverageSnapshot? = null
+
+    /** Diagnostic info from the last extraction attempt — included in error responses. */
+    @Volatile
+    internal var lastExtractionDiag: String? = null
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         coroutineContext.ensureActive()
@@ -133,7 +142,6 @@ Actions and their parameters:
 
         val testTarget = if (method != null) "$testClass#$method" else testClass
 
-        // Create JUnit run configuration
         val settings = createJUnitRunSettings(project, testClass, method)
             ?: return ToolResult(
                 "Error: Could not create run configuration for '$testTarget'. " +
@@ -143,7 +151,6 @@ Actions and their parameters:
                 isError = true
             )
 
-        // Find coverage executor
         val coverageExecutor = com.intellij.execution.ExecutorRegistry.getInstance()
             .getExecutorById("Coverage")
             ?: return ToolResult(
@@ -153,9 +160,6 @@ Actions and their parameters:
                 isError = true
             )
 
-        // Register a CoverageSuiteListener BEFORE launching the run.
-        // coverageDataCalculated() fires when the coverage engine finishes processing
-        // the .exec/.ic data — this is the reliable signal that data is ready.
         val coverageDeferred = CompletableDeferred<CoverageSnapshot?>()
         val listenerDisposable = registerCoverageListener(project, coverageDeferred)
 
@@ -167,7 +171,7 @@ Actions and their parameters:
                 continuation.invokeOnCancellation { buildConnRef.get()?.disconnect() }
                 invokeLater {
                     try {
-                        val env = ExecutionEnvironmentBuilder
+                        val env = com.intellij.execution.runners.ExecutionEnvironmentBuilder
                             .createOrNull(coverageExecutor, settings)
                             ?.build()
 
@@ -178,7 +182,7 @@ Actions and their parameters:
                             return@invokeLater
                         }
 
-                        val callback = object : ProgramRunner.Callback {
+                        val callback = object : com.intellij.execution.runners.ProgramRunner.Callback {
                             override fun processStarted(descriptor: RunContentDescriptor?) {
                                 if (descriptor == null) {
                                     if (continuation.isActive) continuation.resume(
@@ -202,7 +206,6 @@ Actions and their parameters:
                                 } else if (handler != null) {
                                     handler.addProcessListener(object : ProcessAdapter() {
                                         override fun processTerminated(event: ProcessEvent) {
-                                            // Delay to let the test tree finalize (matches RuntimeExecTool pattern)
                                             java.util.Timer().schedule(object : java.util.TimerTask() {
                                                 override fun run() {
                                                     if (continuation.isActive) {
@@ -237,8 +240,7 @@ Actions and their parameters:
                             ProgramRunnerUtil.executeConfiguration(env, false, true)
                         }
 
-                        // Build watchdog: detect before-run task failure (e.g. Make fails)
-                        // via ExecutionListener.processNotStarted — no race condition.
+                        // Build watchdog: detect before-run task failure via ExecutionListener.processNotStarted
                         val buildConn = project.messageBus.connect()
                         buildConnRef.set(buildConn)
                         buildConn.subscribe(com.intellij.execution.ExecutionManager.EXECUTION_TOPIC,
@@ -256,7 +258,7 @@ Actions and their parameters:
                                         }
                                     }
                                 }
-                                override fun processStarted(executorId: String, e: com.intellij.execution.runners.ExecutionEnvironment, handler: com.intellij.execution.process.ProcessHandler) {
+                                override fun processStarted(executorId: String, e: com.intellij.execution.runners.ExecutionEnvironment, handler: ProcessHandler) {
                                     if (e == env) buildConn.disconnect()
                                 }
                             }
@@ -284,14 +286,10 @@ Actions and their parameters:
             )
         }
 
-        // Wait for coverage data via the CoverageSuiteListener callback.
-        // The listener fires coverageDataCalculated() when the engine finishes —
-        // no polling needed. Falls back to a direct read if the listener wasn't registered.
         val snapshot = if (listenerDisposable != null) {
             withTimeoutOrNull(COVERAGE_LISTENER_TIMEOUT_MS) { coverageDeferred.await() }
-                ?: extractCoverageSnapshot(project)  // fallback: one direct read
+                ?: extractCoverageSnapshot(project)
         } else {
-            // Listener registration failed (coverage module reflection issue) — direct read with short delay
             delay(COVERAGE_FALLBACK_DELAY_MS)
             extractCoverageSnapshot(project)
         }
@@ -318,13 +316,6 @@ Actions and their parameters:
     /**
      * Register a CoverageSuiteListener via reflection to be notified when coverage data
      * is ready. Returns a Disposable to unregister the listener, or null if registration failed.
-     *
-     * Uses reflection because the coverage module (com.intellij.coverage) is optional —
-     * we can't have a compile-time dependency on it.
-     *
-     * Listener lifecycle:
-     *   coverageDataCalculated(bundle) fires when the engine finishes processing the
-     *   .exec/.ic file — at that point, getCurrentSuitesBundle().getCoverageData() is populated.
      */
     private fun registerCoverageListener(
         project: Project,
@@ -336,21 +327,17 @@ Actions and their parameters:
             val dataManager = getInstanceMethod.invoke(null, project) ?: return null
 
             val listenerClass = Class.forName("com.intellij.coverage.CoverageSuiteListener")
-
-            // Create a dynamic proxy implementing CoverageSuiteListener
             val listener = java.lang.reflect.Proxy.newProxyInstance(
                 listenerClass.classLoader,
                 arrayOf(listenerClass)
             ) { _, method, _ ->
                 if (method.name == "coverageDataCalculated" && !deferred.isCompleted) {
-                    // Coverage data is now ready — extract the snapshot
                     val snapshot = extractCoverageSnapshot(project)
                     deferred.complete(snapshot)
                 }
-                null  // all methods return void
+                null
             }
 
-            // Register with a Disposable so the listener is automatically cleaned up
             val disposable = com.intellij.openapi.util.Disposer.newDisposable("CoverageTool-listener")
             val addListenerMethod = dataManagerClass.getMethod(
                 "addSuiteListener",
@@ -359,8 +346,8 @@ Actions and their parameters:
             )
             addListenerMethod.invoke(dataManager, listener, disposable)
             disposable
-        } catch (e: Exception) {
-            null  // Coverage module not available or API changed — fall back to direct read
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -368,7 +355,7 @@ Actions and their parameters:
     // Action: get_file_coverage
     // ══════════════════════════════════════════════════════════════════════
 
-    private fun executeGetFileCoverage(params: JsonObject, project: Project): ToolResult {
+    private suspend fun executeGetFileCoverage(params: JsonObject, project: Project): ToolResult {
         val filePath = params["file_path"]?.jsonPrimitive?.contentOrNull
             ?: return ToolResult(
                 "Error: 'file_path' parameter is required for get_file_coverage",
@@ -377,15 +364,10 @@ Actions and their parameters:
                 isError = true
             )
 
-        // Try cached snapshot first, then live-read from the IDE's active coverage suite.
-        // This handles the case where run_with_coverage missed the data due to timing,
-        // but the IDE's coverage tab is now showing results.
         var snapshot = lastSnapshot
         if (snapshot == null || snapshot.files.isEmpty()) {
-            snapshot = extractCoverageSnapshot(project)
-            if (snapshot != null && snapshot.files.isNotEmpty()) {
-                lastSnapshot = snapshot
-            }
+            snapshot = withContext(Dispatchers.IO) { extractCoverageSnapshot(project) }
+            if (snapshot != null && snapshot.files.isNotEmpty()) lastSnapshot = snapshot
         }
         if (snapshot == null || snapshot.files.isEmpty()) {
             val diag = lastExtractionDiag?.let { "\n\nExtraction diagnostics:\n$it" } ?: ""
@@ -398,14 +380,12 @@ Actions and their parameters:
             )
         }
 
-        // Coverage keys are fully qualified class names (e.g. "com.example.ServiceImpl").
-        // The user may pass a file path or a class name — resolve via PSI for accuracy.
         val resolvedClassName = resolveToClassName(filePath, project)
         val simpleClassName = filePath.substringAfterLast('/').removeSuffix(".java").removeSuffix(".kt").removeSuffix(".groovy")
 
-        val entry = snapshot.files[filePath]                                               // exact match (already a class name)
-            ?: resolvedClassName?.let { snapshot.files[it] }                               // PSI-resolved class name
-            ?: snapshot.files.entries.find { it.key.endsWith(".$simpleClassName") }?.value  // simple name suffix
+        val matchedEntry = snapshot.files.entries.find { it.key == filePath }
+            ?: resolvedClassName?.let { cn -> snapshot.files.entries.find { it.key == cn } }
+            ?: snapshot.files.entries.find { it.key.endsWith(".$simpleClassName") }
             ?: return ToolResult(
                 "No coverage data found for '$filePath'." +
                     (resolvedClassName?.let { " (resolved to class: $it)" } ?: "") +
@@ -415,73 +395,61 @@ Actions and their parameters:
                 isError = true
             )
 
-        val matchedKey = snapshot.files.entries.find { it.value === entry }?.key ?: filePath
-        val content = formatFileCoverage(matchedKey, entry)
+        val content = formatFileCoverageDetail(matchedEntry.key, matchedEntry.value)
         return ToolResult(
             content = content,
-            summary = "${matchedKey.substringAfterLast("/")} — ${String.format("%.1f", entry.coveragePercent)}% coverage",
+            summary = "${matchedEntry.key.substringAfterLast(".")} — ${String.format("%.1f", matchedEntry.value.lineCoveragePercent)}% lines, " +
+                if (matchedEntry.value.totalBranches > 0) "${String.format("%.1f", matchedEntry.value.branchCoveragePercent)}% branches"
+                else "no branch data",
             tokenEstimate = content.length / 4
         )
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // Coverage data extraction (uses reflection to avoid compile-time
-    // dependency on coverage agent classes)
+    // Coverage data extraction
+    // Works for both IntelliJ native runner and JaCoCo — IntelliJ converts
+    // JaCoCo exec data to its own ProjectData/ClassData/LineData format
+    // internally, so the same reflection path handles both runners.
     // ══════════════════════════════════════════════════════════════════════
-
-    /** Diagnostic info from the last extraction attempt — included in error responses. */
-    @Volatile
-    internal var lastExtractionDiag: String? = null
 
     private fun extractCoverageSnapshot(project: Project): CoverageSnapshot? {
         val diag = StringBuilder()
         return try {
-            // Step 1: CoverageDataManager
             val dataManagerClass = Class.forName("com.intellij.coverage.CoverageDataManager")
-            val getInstanceMethod = dataManagerClass.getMethod("getInstance", Project::class.java)
-            val dataManager = getInstanceMethod.invoke(null, project)
-            if (dataManager == null) { diag.append("CoverageDataManager.getInstance() returned null"); lastExtractionDiag = diag.toString(); return null }
-            val implClass = dataManager.javaClass
-            diag.appendLine("CoverageDataManager: ${implClass.name}")
+            val dataManager = dataManagerClass.getMethod("getInstance", Project::class.java)
+                .invoke(null, project)
+            if (dataManager == null) {
+                lastExtractionDiag = "CoverageDataManager.getInstance() returned null"
+                return null
+            }
+            diag.appendLine("CoverageDataManager: ${dataManager.javaClass.name}")
 
-            // Step 2: Get ProjectData — two paths:
-            //   Path A: getCurrentSuitesBundle() → bundle.getCoverageData() (no params)
-            //   Path B: getSuites() → suite.getCoverageData(manager) (takes manager param)
-            // getCurrentSuitesBundle() can return null even when suites exist — it only
-            // returns the bundle the user explicitly selected. getSuites() returns the raw
-            // CoverageSuite[] which always have data.
+            // Path A: getCurrentSuitesBundle() → bundle.getCoverageData()
             var projectData: Any? = null
-
-            // Path A: Try bundle first (fastest when available)
-            val bundle = ReflectionUtils.tryReflective { implClass.getMethod("getCurrentSuitesBundle").invoke(dataManager) }
+            val bundle = ReflectionUtils.tryReflective {
+                dataManager.javaClass.getMethod("getCurrentSuitesBundle").invoke(dataManager)
+            }
             if (bundle != null) {
                 diag.appendLine("getCurrentSuitesBundle(): ${bundle.javaClass.simpleName}")
-                projectData = ReflectionUtils.tryReflective { bundle.javaClass.getMethod("getCoverageData").invoke(bundle) }
+                projectData = ReflectionUtils.tryReflective {
+                    bundle.javaClass.getMethod("getCoverageData").invoke(bundle)
+                }
                 if (projectData != null) diag.appendLine("Path A: bundle.getCoverageData() OK")
             } else {
                 diag.appendLine("getCurrentSuitesBundle() returned null")
             }
 
-            // Path B: Fall back to individual suites — getSuites() returns CoverageSuite[]
-            // Each suite has getCoverageData(CoverageDataManager) which loads/caches the data
+            // Path B: getSuites() → most recent suite → getCoverageData(manager)
             if (projectData == null) {
                 try {
-                    val suites = implClass.getMethod("getSuites").invoke(dataManager) as? Array<*>
+                    val suites = dataManager.javaClass.getMethod("getSuites").invoke(dataManager) as? Array<*>
                     diag.appendLine("getSuites() returned ${suites?.size ?: "null"} suites")
-                    if (suites != null && suites.isNotEmpty()) {
-                        // Use the most recent suite (last in array)
-                        val latestSuite = suites.last()
-                        if (latestSuite != null) {
-                            diag.appendLine("Using suite: ${latestSuite.javaClass.simpleName}")
-                            // CoverageSuite.getCoverageData(CoverageDataManager) — note the parameter
-                            val getCoverageDataMethod = latestSuite.javaClass.getMethod("getCoverageData", dataManagerClass)
-                            projectData = getCoverageDataMethod.invoke(latestSuite, dataManager)
-                            if (projectData != null) {
-                                diag.appendLine("Path B: suite.getCoverageData(manager) OK")
-                            } else {
-                                diag.appendLine("Path B: suite.getCoverageData(manager) returned null")
-                            }
-                        }
+                    val latestSuite = suites?.lastOrNull()
+                    if (latestSuite != null) {
+                        val getCoverageData = latestSuite.javaClass.getMethod("getCoverageData", dataManagerClass)
+                        projectData = getCoverageData.invoke(latestSuite, dataManager)
+                        if (projectData != null) diag.appendLine("Path B: suite.getCoverageData(manager) OK")
+                        else diag.appendLine("Path B: suite.getCoverageData(manager) returned null")
                     }
                 } catch (e: Exception) {
                     diag.appendLine("Path B failed: ${e.javaClass.simpleName}: ${e.message}")
@@ -494,64 +462,22 @@ Actions and their parameters:
                 return null
             }
 
-            diag.appendLine("ProjectData: ${projectData.javaClass.name}")
-
-            // Step 3: Classes map from ProjectData
-            val getClassesMethod = projectData.javaClass.getMethod("getClasses")
-            val rawClasses = getClassesMethod.invoke(projectData)
             @Suppress("UNCHECKED_CAST")
-            val classes = rawClasses as? Map<String, Any>
+            val classes = projectData.javaClass.getMethod("getClasses").invoke(projectData) as? Map<String, Any>
             if (classes == null || classes.isEmpty()) {
-                diag.appendLine("getClasses() returned ${if (rawClasses == null) "null" else "${rawClasses.javaClass.simpleName} (empty or wrong type)"}")
+                diag.appendLine("getClasses() returned null or empty")
                 lastExtractionDiag = diag.toString()
                 return null
             }
             diag.appendLine("Classes: ${classes.size}")
 
-            // Step 4: Extract per-class line coverage
-            val files = mutableMapOf<String, FileCoverageResult>()
-            var classesProcessed = 0
-            var classesSkipped = 0
-
+            val files = mutableMapOf<String, FileCoverageDetail>()
+            var processed = 0; var skipped = 0
             for ((className, classData) in classes) {
-                try {
-                    val getLinesMethod = classData.javaClass.getMethod("getLines")
-                    val lines = getLinesMethod.invoke(classData) as? Array<*>
-                    if (lines == null) { classesSkipped++; continue }
-
-                    var covered = 0
-                    var total = 0
-                    val uncoveredLines = mutableListOf<Int>()
-
-                    for (element in lines) {
-                        if (element == null) continue
-                        total++
-                        val getHitsMethod = element.javaClass.getMethod("getHits")
-                        val hits = getHitsMethod.invoke(element) as? Int ?: 0
-                        if (hits > 0) {
-                            covered++
-                        } else {
-                            val getLineNumberMethod = element.javaClass.getMethod("getLineNumber")
-                            val lineNumber = getLineNumberMethod.invoke(element) as? Int ?: continue
-                            uncoveredLines.add(lineNumber)
-                        }
-                    }
-
-                    if (total > 0) {
-                        files[className] = FileCoverageResult(
-                            coveredLines = covered,
-                            totalLines = total,
-                            uncoveredRanges = collapseToRanges(uncoveredLines)
-                        )
-                        classesProcessed++
-                    }
-                } catch (e: Exception) {
-                    classesSkipped++
-                    if (classesSkipped == 1) diag.appendLine("First class error ($className): ${e.javaClass.simpleName}: ${e.message}")
-                }
+                val detail = extractFileCoverageDetail(classData)
+                if (detail != null) { files[className] = detail; processed++ } else skipped++
             }
-
-            diag.appendLine("Processed: $classesProcessed, Skipped: $classesSkipped, Files: ${files.size}")
+            diag.appendLine("Processed: $processed, Skipped: $skipped, Files: ${files.size}")
             lastExtractionDiag = diag.toString()
             CoverageSnapshot(files)
         } catch (e: Exception) {
@@ -561,56 +487,295 @@ Actions and their parameters:
         }
     }
 
+    /**
+     * Extract full coverage detail for one class from its ClassData object.
+     *
+     * Extracts per-line hit counts, FULL/PARTIAL/NONE status, jump (if/else/ternary/&&/||)
+     * branch counts, switch case counts, and per-method coverage rollups.
+     * Only PARTIAL and NONE lines are stored in [FileCoverageDetail.lines] to keep output
+     * concise — FULL lines are counted in totals but not stored individually.
+     */
+    private fun extractFileCoverageDetail(classData: Any): FileCoverageDetail? {
+        val linesArray = ReflectionUtils.tryReflective {
+            classData.javaClass.getMethod("getLines").invoke(classData) as? Array<*>
+        } ?: return null
+
+        var coveredLines = 0; var totalLines = 0
+        var coveredBranches = 0; var totalBranches = 0
+        val lineDetails = mutableListOf<LineCoverageDetail>()
+        val methodStats = mutableMapOf<String, MethodStats>()
+
+        for (lineObj in linesArray) {
+            if (lineObj == null) continue
+            val lineClass = lineObj.javaClass
+
+            val lineNumber = ReflectionUtils.tryReflective { lineClass.getMethod("getLineNumber").invoke(lineObj) as? Int }
+                ?: continue
+            val hits = ReflectionUtils.tryReflective { lineClass.getMethod("getHits").invoke(lineObj) as? Int } ?: 0
+            val methodSig = ReflectionUtils.tryReflective { lineClass.getMethod("getMethodSignature").invoke(lineObj) as? String }
+
+            // getStatus() returns a byte (FULL=2, PARTIAL=1, NONE=0) — handle both Byte and Int boxing
+            val statusInt = when (val raw = ReflectionUtils.tryReflective { lineClass.getMethod("getStatus").invoke(lineObj) }) {
+                is Byte -> raw.toInt()
+                is Int -> raw
+                else -> if (hits > 0) 2 else 0
+            }
+            val status = when (statusInt) {
+                2 -> LineCoverageStatus.FULL
+                1 -> LineCoverageStatus.PARTIAL
+                else -> LineCoverageStatus.NONE
+            }
+
+            totalLines++
+            if (hits > 0) coveredLines++
+
+            // Extract jump (if/else/ternary/&&/||) branch data
+            val jumps = mutableListOf<JumpCoverageDetail>()
+            val jumpsArray = ReflectionUtils.tryReflective { lineClass.getMethod("getJumps").invoke(lineObj) as? Array<*> }
+            jumpsArray?.forEachIndexed { idx, jumpObj ->
+                if (jumpObj == null) return@forEachIndexed
+                val trueHits = ReflectionUtils.tryReflective { jumpObj.javaClass.getMethod("getTrueHits").invoke(jumpObj) as? Int } ?: 0
+                val falseHits = ReflectionUtils.tryReflective { jumpObj.javaClass.getMethod("getFalseHits").invoke(jumpObj) as? Int } ?: 0
+                jumps.add(JumpCoverageDetail(idx, trueHits, falseHits))
+                totalBranches += 2
+                if (trueHits > 0) coveredBranches++
+                if (falseHits > 0) coveredBranches++
+            }
+
+            // Extract switch statement branch data
+            val switches = mutableListOf<SwitchCoverageDetail>()
+            val switchesArray = ReflectionUtils.tryReflective { lineClass.getMethod("getSwitches").invoke(lineObj) as? Array<*> }
+            switchesArray?.forEachIndexed { idx, switchObj ->
+                if (switchObj == null) return@forEachIndexed
+                val keys = ReflectionUtils.tryReflective { switchObj.javaClass.getMethod("getKeys").invoke(switchObj) as? IntArray } ?: IntArray(0)
+                // SwitchData.getHits() is the no-arg form returning int[] (parallel to getKeys()).
+                // Not to be confused with a hypothetical parameterised variant — the IntelliJ
+                // coverage API defines it as: public int[] getHits()
+                val switchHits = ReflectionUtils.tryReflective { switchObj.javaClass.getMethod("getHits").invoke(switchObj) as? IntArray } ?: IntArray(0)
+                val defaultHits = ReflectionUtils.tryReflective { switchObj.javaClass.getMethod("getDefaultHits").invoke(switchObj) as? Int } ?: 0
+
+                val cases = mutableListOf<Pair<Int?, Int>>()
+                keys.forEachIndexed { i, key ->
+                    val h = if (i < switchHits.size) switchHits[i] else 0
+                    cases.add(key to h)
+                    totalBranches++
+                    if (h > 0) coveredBranches++
+                }
+                // Default case
+                cases.add(null to defaultHits)
+                totalBranches++
+                if (defaultHits > 0) coveredBranches++
+
+                switches.add(SwitchCoverageDetail(idx, cases))
+            }
+
+            // Accumulate per-method stats
+            if (methodSig != null) {
+                val ms = methodStats.getOrPut(methodSig) { MethodStats() }
+                ms.totalLines++
+                if (hits > 0) ms.coveredLines++
+                ms.totalBranches += jumps.size * 2 + switches.sumOf { it.cases.size }
+                ms.coveredBranches += jumps.count { it.trueHits > 0 } + jumps.count { it.falseHits > 0 } +
+                    switches.sumOf { sw -> sw.cases.count { (_, h) -> h > 0 } }
+            }
+
+            // Only store PARTIAL and NONE lines — FULL lines counted in totals only
+            if (status != LineCoverageStatus.FULL) {
+                lineDetails.add(LineCoverageDetail(lineNumber, hits, status, methodSig, jumps, switches))
+            }
+        }
+
+        if (totalLines == 0) return null
+
+        val methods = methodStats.map { (sig, ms) ->
+            MethodCoverageDetail(sig, ms.coveredLines, ms.totalLines, ms.coveredBranches, ms.totalBranches)
+        }.sortedWith(compareBy({ it.coveredLines > 0 }, { it.coveredLines.toDouble() / it.totalLines.coerceAtLeast(1) }))
+
+        return FileCoverageDetail(
+            coveredLines = coveredLines,
+            totalLines = totalLines,
+            coveredBranches = coveredBranches,
+            totalBranches = totalBranches,
+            lineCoveragePercent = coveredLines.toDouble() / totalLines * 100,
+            branchCoveragePercent = if (totalBranches == 0) 0.0 else coveredBranches.toDouble() / totalBranches * 100,
+            methods = methods,
+            lines = lineDetails.sortedBy { it.lineNumber }
+        )
+    }
+
+    /** Temporary accumulator for per-method stats during extraction. */
+    private data class MethodStats(
+        var coveredLines: Int = 0,
+        var totalLines: Int = 0,
+        var coveredBranches: Int = 0,
+        var totalBranches: Int = 0
+    )
+
     // ══════════════════════════════════════════════════════════════════════
     // Formatting
     // ══════════════════════════════════════════════════════════════════════
 
+    /**
+     * Multi-file summary for run_with_coverage output.
+     * Shows line % and branch % per file, sorted by line coverage ascending.
+     */
     internal fun formatCoverageSummary(snapshot: CoverageSnapshot): String {
         val sb = StringBuilder()
         sb.appendLine("\nCoverage (${snapshot.files.size} files):")
 
-        val sortedFiles = snapshot.files.entries.sortedBy { it.value.coveragePercent }
-        for ((name, result) in sortedFiles) {
+        val sorted = snapshot.files.entries.sortedBy { it.value.lineCoveragePercent }
+        for ((name, detail) in sorted) {
             val shortName = name.substringAfterLast('.')
-            val pct = String.format("%.1f", result.coveragePercent)
-            if (result.uncoveredRanges.isEmpty()) {
-                sb.appendLine("  $shortName — ${pct}%")
-            } else {
-                val ranges = result.uncoveredRanges.joinToString(", ") { range ->
-                    if (range.first == range.last) "line ${range.first}" else "lines ${range.first}-${range.last}"
-                }
-                sb.appendLine("  $shortName — ${pct}% ($ranges uncovered)")
-            }
+            val linePct = String.format("%.1f", detail.lineCoveragePercent)
+            val branchPart = if (detail.totalBranches > 0)
+                ", ${String.format("%.1f", detail.branchCoveragePercent)}% branches"
+            else ""
+            sb.appendLine("  $shortName — ${linePct}% lines$branchPart")
         }
 
         val totalCovered = snapshot.files.values.sumOf { it.coveredLines }
         val totalLines = snapshot.files.values.sumOf { it.totalLines }
-        val overallPct = if (totalLines == 0) 0.0 else totalCovered.toDouble() / totalLines * 100
+        val overallLinePct = if (totalLines == 0) 0.0 else totalCovered.toDouble() / totalLines * 100
+
+        val totalCovBranches = snapshot.files.values.sumOf { it.coveredBranches }
+        val totalBranches = snapshot.files.values.sumOf { it.totalBranches }
+
         sb.appendLine()
-        sb.appendLine("Overall: ${String.format("%.1f", overallPct)}% line coverage")
-
-        return sb.toString().trimEnd()
-    }
-
-    private fun formatFileCoverage(fileName: String, result: FileCoverageResult): String {
-        val sb = StringBuilder()
-        val pct = String.format("%.1f", result.coveragePercent)
-        sb.appendLine("$fileName — ${pct}% line coverage (${result.coveredLines}/${result.totalLines} lines)")
-
-        if (result.uncoveredRanges.isNotEmpty()) {
-            sb.appendLine()
-            sb.appendLine("Uncovered lines:")
-            for (range in result.uncoveredRanges) {
-                if (range.first == range.last) {
-                    sb.appendLine("  ${range.first}: 0 hits")
-                } else {
-                    sb.appendLine("  ${range.first}-${range.last}: 0 hits")
-                }
-            }
+        if (totalBranches > 0) {
+            val overallBranchPct = totalCovBranches.toDouble() / totalBranches * 100
+            sb.appendLine("Overall: ${String.format("%.1f", overallLinePct)}% line coverage, ${String.format("%.1f", overallBranchPct)}% branch coverage")
+        } else {
+            sb.appendLine("Overall: ${String.format("%.1f", overallLinePct)}% line coverage")
         }
 
         return sb.toString().trimEnd()
     }
+
+    /**
+     * Full per-file coverage detail — used by both run_with_coverage (per file) and get_file_coverage.
+     *
+     * Format:
+     *   === ClassName ===
+     *   Lines   : 74.3%  (89/120 covered)
+     *   Branches: 61.5%  (32/52 covered)
+     *
+     *   Methods (N uncovered / M total):
+     *     ✗ methodName  — 0/12 lines, 0/4 branches
+     *     ~ methodName  — 4/8 lines, 1/4 branches
+     *
+     *   Uncovered / Partial Lines:
+     *     line 42  [NONE]    hits=0   method=methodName
+     *       if[0] → true=0, false=3
+     *     lines 43–45 [NONE] hits=0
+     *     line 67  [PARTIAL] hits=5   method=methodName
+     *       if[0] → true=5, false=0
+     *       switch[0]: case(1)=3, case(2)=0, default=0
+     */
+    internal fun formatFileCoverageDetail(className: String, detail: FileCoverageDetail): String {
+        val sb = StringBuilder()
+        sb.appendLine("=== ${className.substringAfterLast('.')} ===")
+
+        val linePct = String.format("%.1f", detail.lineCoveragePercent)
+        sb.appendLine("Lines   : $linePct%  (${detail.coveredLines}/${detail.totalLines} covered)")
+
+        if (detail.totalBranches > 0) {
+            val branchPct = String.format("%.1f", detail.branchCoveragePercent)
+            sb.appendLine("Branches: $branchPct%  (${detail.coveredBranches}/${detail.totalBranches} covered)")
+        } else {
+            sb.appendLine("Branches: N/A  (no branch data)")
+        }
+
+        // Methods section — only show uncovered (✗) and partial (~) methods
+        val uncovered = detail.methods.filter { it.coveredLines == 0 }
+        val partial = detail.methods.filter { it.coveredLines > 0 && it.coveredLines < it.totalLines }
+        if (uncovered.isNotEmpty() || partial.isNotEmpty()) {
+            sb.appendLine()
+            sb.appendLine("Methods (${uncovered.size} uncovered / ${detail.methods.size} total):")
+            for (m in uncovered) {
+                val branchStr = if (m.totalBranches > 0) ", ${m.coveredBranches}/${m.totalBranches} branches" else ""
+                sb.appendLine("  ✗ ${m.signature.substringBefore("(")}  — ${m.coveredLines}/${m.totalLines} lines$branchStr")
+            }
+            for (m in partial) {
+                val branchStr = if (m.totalBranches > 0) ", ${m.coveredBranches}/${m.totalBranches} branches" else ""
+                sb.appendLine("  ~ ${m.signature.substringBefore("(")}  — ${m.coveredLines}/${m.totalLines} lines$branchStr")
+            }
+        } else if (detail.methods.isNotEmpty()) {
+            sb.appendLine()
+            sb.appendLine("Methods: all covered (${detail.methods.size} total)")
+        }
+
+        // Uncovered / partial lines — with range collapsing for plain NONE lines
+        if (detail.lines.isNotEmpty()) {
+            sb.appendLine()
+            sb.appendLine("Uncovered / Partial Lines:")
+            val rendered = buildUncoveredLineOutput(detail.lines)
+            val toShow = rendered.take(MAX_UNCOVERED_ENTRIES)
+            toShow.forEach { sb.appendLine(it) }
+            if (rendered.size > MAX_UNCOVERED_ENTRIES) {
+                sb.appendLine("  ... and ${rendered.size - MAX_UNCOVERED_ENTRIES} more uncovered/partial lines")
+            }
+        } else if (detail.coveredLines == detail.totalLines) {
+            sb.appendLine()
+            sb.appendLine("All lines covered.")
+        }
+
+        return sb.toString().trimEnd()
+    }
+
+    /**
+     * Build the rendered list of uncovered/partial line strings.
+     * Consecutive NONE lines with no branches and the same method are range-collapsed.
+     */
+    private fun buildUncoveredLineOutput(lines: List<LineCoverageDetail>): List<String> {
+        val out = mutableListOf<String>()
+        var rangeStart: LineCoverageDetail? = null
+        var rangeEnd: LineCoverageDetail? = null
+
+        fun flushRange() {
+            val s = rangeStart ?: return
+            val e = rangeEnd ?: return
+            val methodStr = s.methodSignature?.let { "  method=${it.substringBefore("(")}" } ?: ""
+            out.add(if (s.lineNumber == e.lineNumber)
+                "  line ${s.lineNumber} [NONE]  hits=0$methodStr"
+            else
+                "  lines ${s.lineNumber}–${e.lineNumber} [NONE]  hits=0$methodStr"
+            )
+            rangeStart = null; rangeEnd = null
+        }
+
+        for (line in lines) {
+            val collapsible = line.status == LineCoverageStatus.NONE && line.jumps.isEmpty() && line.switches.isEmpty()
+            val consecutive = rangeEnd != null && line.lineNumber == rangeEnd!!.lineNumber + 1
+            val sameMethod = rangeStart?.methodSignature == line.methodSignature
+
+            if (collapsible && consecutive && sameMethod) {
+                rangeEnd = line
+            } else {
+                flushRange()
+                if (collapsible) {
+                    rangeStart = line; rangeEnd = line
+                } else {
+                    val methodStr = line.methodSignature?.let { "  method=${it.substringBefore("(")}" } ?: ""
+                    out.add("  line ${line.lineNumber} [${line.status}]  hits=${line.hits}$methodStr")
+                    for (jump in line.jumps) {
+                        out.add("    if[${jump.index}] → true=${jump.trueHits}, false=${jump.falseHits}")
+                    }
+                    for (sw in line.switches) {
+                        val cases = sw.cases.joinToString(", ") { (key, h) ->
+                            if (key == null) "default=$h" else "case($key)=$h"
+                        }
+                        out.add("    switch[${sw.index}]: $cases")
+                    }
+                }
+            }
+        }
+        flushRange()
+        return out
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Test results formatting
+    // ══════════════════════════════════════════════════════════════════════
 
     private fun formatTestResults(root: SMTestProxy.SMRootTestProxy, testTarget: String): CoverageRunResult {
         val allTests = collectAllTests(root)
@@ -628,15 +793,19 @@ Actions and their parameters:
             sb.appendLine()
             sb.appendLine("FAILED:")
             for (test in failedTests) {
-                val errorMsg = test.errorMessage ?: "unknown error"
-                sb.appendLine("  ${test.name} — $errorMsg")
-                val stackTrace = test.stacktrace
-                if (!stackTrace.isNullOrBlank()) {
-                    val firstLine = stackTrace.lines().firstOrNull { it.contains("at ") }
-                    if (firstLine != null) {
-                        sb.appendLine("    ${firstLine.trim()}")
-                    }
-                }
+                sb.appendLine("  ${test.name} — ${test.errorMessage ?: "unknown error"}")
+                val firstFrame = test.stacktrace?.lines()?.firstOrNull { it.contains("at ") }
+                if (firstFrame != null) sb.appendLine("    ${firstFrame.trim()}")
+            }
+        }
+
+        val skippedTests = allTests.filter { it.isIgnored }
+        if (skippedTests.isNotEmpty()) {
+            sb.appendLine()
+            sb.appendLine("SKIPPED:")
+            for (test in skippedTests) {
+                val reason = test.errorMessage
+                if (reason != null) sb.appendLine("  ${test.name} — $reason") else sb.appendLine("  ${test.name}")
             }
         }
 
@@ -644,20 +813,17 @@ Actions and their parameters:
         return CoverageRunResult(sb.toString().trimEnd(), "$summary: $passed passed, $failed failed")
     }
 
-    private fun SMTestProxy.isErrorProxy(): Boolean {
-        return magnitudeInfo?.title?.contains("error", ignoreCase = true) == true ||
+    private fun SMTestProxy.isErrorProxy(): Boolean =
+        magnitudeInfo?.title?.contains("error", ignoreCase = true) == true ||
             errorMessage?.startsWith("java.lang.") == true
-    }
 
     private fun collectAllTests(proxy: SMTestProxy): List<SMTestProxy> {
-        if (proxy.children.isEmpty() && proxy !is SMTestProxy.SMRootTestProxy) {
-            return listOf(proxy)
-        }
+        if (proxy.children.isEmpty() && proxy !is SMTestProxy.SMRootTestProxy) return listOf(proxy)
         return proxy.children.flatMap { collectAllTests(it) }
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // Run configuration creation (follows RuntimeExecTool pattern)
+    // Run configuration creation
     // ══════════════════════════════════════════════════════════════════════
 
     private fun createJUnitRunSettings(
@@ -665,65 +831,41 @@ Actions and their parameters:
     ): com.intellij.execution.RunnerAndConfigurationSettings? {
         return try {
             val runManager = RunManager.getInstance(project)
-
             val testFramework = detectTestFramework(project, className)
-            val configTypeId = when (testFramework) {
-                "TestNG" -> "TestNG"
-                else -> "JUnit"
-            }
+            val configTypeId = if (testFramework == "TestNG") "TestNG" else "JUnit"
             val testConfigType = ConfigurationType.CONFIGURATION_TYPE_EP.extensionList.find { type ->
                 type.id == configTypeId || type.displayName == configTypeId
             } ?: return null
-
             val factory = testConfigType.configurationFactories.firstOrNull() ?: return null
+
             val configName = "[Coverage] ${className.substringAfterLast('.')}${if (method != null) ".$method" else ""}"
             val settings = runManager.createConfiguration(configName, factory)
-
             val config = settings.configuration
             val isTestNG = testFramework == "TestNG"
 
             try {
                 val dataMethodName = if (isTestNG) "getPersistantData" else "getPersistentData"
-                val getDataMethod = config.javaClass.methods.find { it.name == dataMethodName }
-                val data = getDataMethod?.invoke(config)
-                if (data != null) {
-                    val testObjectField = data.javaClass.getField("TEST_OBJECT")
-                    val mainClassField = data.javaClass.getField("MAIN_CLASS_NAME")
-
-                    val testType = if (method != null) {
-                        if (isTestNG) "METHOD" else "method"
-                    } else {
-                        if (isTestNG) "CLASS" else "class"
-                    }
-                    testObjectField.set(data, testType)
-                    mainClassField.set(data, className)
-
-                    ReflectionUtils.tryReflective {
-                        val packageField = data.javaClass.getField("PACKAGE_NAME")
-                        packageField.set(data, className.substringBeforeLast('.', ""))
-                    }
-
-                    if (method != null) {
-                        val methodField = data.javaClass.getField("METHOD_NAME")
-                        methodField.set(data, method)
-                    }
-                } else {
-                    return null
+                val data = config.javaClass.methods.find { it.name == dataMethodName }?.invoke(config)
+                    ?: return null
+                data.javaClass.getField("TEST_OBJECT").set(data,
+                    if (method != null) if (isTestNG) "METHOD" else "method"
+                    else if (isTestNG) "CLASS" else "class")
+                data.javaClass.getField("MAIN_CLASS_NAME").set(data, className)
+                ReflectionUtils.tryReflective {
+                    data.javaClass.getField("PACKAGE_NAME").set(data, className.substringBeforeLast('.', ""))
                 }
-            } catch (_: Exception) {
-                return null
-            }
+                if (method != null) data.javaClass.getField("METHOD_NAME").set(data, method)
+            } catch (_: Exception) { return null }
 
             val testModule = findModuleForClass(project, className) ?: return null
             try {
-                val setModuleMethod = config.javaClass.getMethod("setModule", com.intellij.openapi.module.Module::class.java)
-                setModuleMethod.invoke(config, testModule)
+                config.javaClass.getMethod("setModule", com.intellij.openapi.module.Module::class.java)
+                    .invoke(config, testModule)
             } catch (_: Exception) {
                 try {
-                    val getConfigModule = config.javaClass.getMethod("getConfigurationModule")
-                    val configModule = getConfigModule.invoke(config)
-                    val setModule = configModule.javaClass.getMethod("setModule", com.intellij.openapi.module.Module::class.java)
-                    setModule.invoke(configModule, testModule)
+                    val configModule = config.javaClass.getMethod("getConfigurationModule").invoke(config)
+                    configModule.javaClass.getMethod("setModule", com.intellij.openapi.module.Module::class.java)
+                        .invoke(configModule, testModule)
                 } catch (_: Exception) {}
             }
 
@@ -738,10 +880,8 @@ Actions and their parameters:
                 val psiClass = JavaPsiFacade.getInstance(project)
                     .findClass(className, GlobalSearchScope.projectScope(project))
                     ?: return@compute "Unknown"
-
                 val annotations = psiClass.annotations.map { it.qualifiedName.orEmpty() } +
                     psiClass.methods.flatMap { m -> m.annotations.map { it.qualifiedName.orEmpty() } }
-
                 when {
                     annotations.any { it.startsWith("org.testng.") } -> "TestNG"
                     annotations.any { it.startsWith("org.junit.") } -> "JUnit"
@@ -766,85 +906,64 @@ Actions and their parameters:
     // Utilities
     // ══════════════════════════════════════════════════════════════════════
 
-    /**
-     * Resolve a file path to its fully qualified class name using IntelliJ's PSI.
-     * Handles both absolute and project-relative paths.
-     * Returns null if the file can't be resolved (not a Java/Kotlin file, doesn't exist, etc.).
-     */
     private fun resolveToClassName(filePath: String, project: Project): String? {
         return try {
             ReadAction.compute<String?, Exception> {
                 val basePath = project.basePath ?: return@compute null
                 val absolutePath = if (filePath.startsWith("/") || filePath.contains(":\\")) filePath
                     else "$basePath/$filePath"
-
                 val vf = com.intellij.openapi.vfs.LocalFileSystem.getInstance()
                     .findFileByIoFile(java.io.File(absolutePath)) ?: return@compute null
-
                 val psiFile = com.intellij.psi.PsiManager.getInstance(project).findFile(vf) ?: return@compute null
-
-                // Java files: PsiJavaFile has packageName + class declarations
                 if (psiFile is com.intellij.psi.PsiJavaFile) {
                     val pkg = psiFile.packageName
-                    val className = psiFile.classes.firstOrNull()?.name ?: return@compute null
-                    return@compute if (pkg.isNotBlank()) "$pkg.$className" else className
+                    val cls = psiFile.classes.firstOrNull()?.name ?: return@compute null
+                    return@compute if (pkg.isNotBlank()) "$pkg.$cls" else cls
                 }
-
-                // Kotlin files: KtFile has packageFqName
                 try {
                     val ktFileClass = Class.forName("org.jetbrains.kotlin.psi.KtFile")
                     if (ktFileClass.isInstance(psiFile)) {
-                        val getPackageFqName = ktFileClass.getMethod("getPackageFqName")
-                        val fqName = getPackageFqName.invoke(psiFile)
-                        val pkg = fqName?.toString() ?: ""
-                        val className = vf.nameWithoutExtension
-                        return@compute if (pkg.isNotBlank()) "$pkg.$className" else className
+                        val pkg = ktFileClass.getMethod("getPackageFqName").invoke(psiFile)?.toString() ?: ""
+                        val cls = vf.nameWithoutExtension
+                        return@compute if (pkg.isNotBlank()) "$pkg.$cls" else cls
                     }
                 } catch (_: Exception) {}
-
                 null
             }
-        } catch (_: Exception) {
-            null
-        }
+        } catch (_: Exception) { null }
     }
 
     companion object {
         private const val DEFAULT_TIMEOUT = 300L
         private const val MAX_TIMEOUT = 900L
-        /** Max time to wait for coverageDataCalculated() listener callback (ms). */
         private const val COVERAGE_LISTENER_TIMEOUT_MS = 30_000L
-        /** Delay before direct read fallback when listener registration fails (ms). */
         private const val COVERAGE_FALLBACK_DELAY_MS = 5_000L
+        private const val MAX_UNCOVERED_ENTRIES = 50
 
         /**
          * Collapse a sorted list of line numbers into contiguous ranges.
-         * E.g., [3, 4, 5, 10, 12, 13] -> [3..5, 10..10, 12..13]
+         * E.g., [3, 4, 5, 10, 12, 13] → [3..5, 10..10, 12..13]
          */
         internal fun collapseToRanges(lines: List<Int>): List<IntRange> {
             if (lines.isEmpty()) return emptyList()
             val sorted = lines.sorted()
             val ranges = mutableListOf<IntRange>()
-            var start = sorted[0]
-            var end = sorted[0]
+            var start = sorted[0]; var end = sorted[0]
             for (i in 1 until sorted.size) {
-                if (sorted[i] == end + 1) {
-                    end = sorted[i]
-                } else {
-                    ranges.add(start..end)
-                    start = sorted[i]
-                    end = sorted[i]
-                }
+                if (sorted[i] == end + 1) end = sorted[i]
+                else { ranges.add(start..end); start = sorted[i]; end = sorted[i] }
             }
             ranges.add(start..end)
             return ranges
         }
 
-        /**
-         * Test helper — exposes formatCoverageSummary for unit tests.
-         */
+        /** Test helper — exposes formatCoverageSummary for unit tests. */
         fun formatCoverageSnapshotPublic(snapshot: CoverageSnapshot): String =
             CoverageTool().formatCoverageSummary(snapshot)
+
+        /** Test helper — exposes formatFileCoverageDetail for unit tests. */
+        fun formatFileCoverageDetailPublic(className: String, detail: FileCoverageDetail): String =
+            CoverageTool().formatFileCoverageDetail(className, detail)
     }
 }
 
@@ -852,19 +971,62 @@ Actions and their parameters:
 // Data classes
 // ══════════════════════════════════════════════════════════════════════════
 
-/** Internal result holder for test output + summary from a coverage run. */
-internal data class CoverageRunResult(
-    val testResult: String,
-    val testSummary: String
+/** Line coverage status matching IntelliJ's FULL=2 / PARTIAL=1 / NONE=0 constants. */
+enum class LineCoverageStatus { FULL, PARTIAL, NONE }
+
+/** Hit counts for one conditional jump (if/else, ternary, &&, ||) on a line. */
+data class JumpCoverageDetail(
+    val index: Int,       // jump index within the line (0-based)
+    val trueHits: Int,    // times the true branch was taken
+    val falseHits: Int    // times the false branch was taken
 )
 
-data class CoverageSnapshot(val files: Map<String, FileCoverageResult>)
+/**
+ * Hit counts for one switch statement on a line.
+ * [cases] pairs: key (null = default) → hit count.
+ */
+data class SwitchCoverageDetail(
+    val index: Int,
+    val cases: List<Pair<Int?, Int>>
+)
 
-data class FileCoverageResult(
+/** Full coverage detail for one executable line. */
+data class LineCoverageDetail(
+    val lineNumber: Int,
+    val hits: Int,                          // execution count (0 = not covered)
+    val status: LineCoverageStatus,         // FULL / PARTIAL / NONE
+    val methodSignature: String?,           // JVM method descriptor this line belongs to
+    val jumps: List<JumpCoverageDetail>,    // empty if no conditional branches on this line
+    val switches: List<SwitchCoverageDetail>
+)
+
+/** Per-method coverage rollup derived from per-line method signatures. */
+data class MethodCoverageDetail(
+    val signature: String,      // JVM method descriptor (e.g. "processOrder(Lcom/example/Order;)V")
     val coveredLines: Int,
     val totalLines: Int,
-    val uncoveredRanges: List<IntRange>
-) {
-    val coveragePercent: Double
-        get() = if (totalLines == 0) 0.0 else coveredLines.toDouble() / totalLines * 100
-}
+    val coveredBranches: Int,
+    val totalBranches: Int
+)
+
+/**
+ * Full coverage detail for one class — returned by both run_with_coverage and get_file_coverage.
+ *
+ * [lines] contains only PARTIAL and NONE lines to keep output concise.
+ * FULL lines are counted in [coveredLines] / [totalLines] but not stored individually.
+ */
+data class FileCoverageDetail(
+    val coveredLines: Int,
+    val totalLines: Int,
+    val coveredBranches: Int,
+    val totalBranches: Int,
+    val lineCoveragePercent: Double,
+    val branchCoveragePercent: Double,   // 0.0 when totalBranches == 0
+    val methods: List<MethodCoverageDetail>,
+    val lines: List<LineCoverageDetail>  // only PARTIAL and NONE
+)
+
+/** Top-level snapshot from a coverage run — keyed by fully qualified class name. */
+data class CoverageSnapshot(val files: Map<String, FileCoverageDetail>)
+
+internal data class CoverageRunResult(val testResult: String, val testSummary: String)

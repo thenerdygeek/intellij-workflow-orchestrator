@@ -505,7 +505,8 @@ description optional: for approval dialog on run_tests, compile_module.
             if (skippedTests.isNotEmpty()) {
                 sb.appendLine("--- SKIPPED ---")
                 for (test in skippedTests) {
-                    sb.appendLine(test.name)
+                    val reason = test.errorMessage
+                    if (reason != null) sb.appendLine("${test.name} — $reason") else sb.appendLine(test.name)
                 }
                 sb.appendLine()
             }
@@ -1054,10 +1055,27 @@ description optional: for approval dialog on run_tests, compile_module.
             if (exitCode == 0) {
                 ToolResult("Tests PASSED for $testTarget.\n\n$truncatedOutput", "Tests PASSED: $testTarget", TokenEstimator.estimate(truncatedOutput))
             } else {
-                ToolResult(
-                    "Tests FAILED for $testTarget (exit code $exitCode).\n\n$truncatedOutput",
-                    "Tests FAILED: $testTarget", TokenEstimator.estimate(truncatedOutput), isError = true
-                )
+                // Distinguish build/compilation failure from test failure so the agent
+                // doesn't confuse "no tests ran" with "tests ran and failed".
+                val isBuildFailure = truncatedOutput.contains("BUILD FAILURE") ||       // Maven
+                    truncatedOutput.contains("COMPILATION ERROR") ||                    // Maven
+                    truncatedOutput.contains("compileTestJava FAILED") ||               // Gradle Java
+                    truncatedOutput.contains("compileTestKotlin FAILED")                // Gradle Kotlin
+                if (isBuildFailure) {
+                    ToolResult(
+                        "BUILD FAILED — test execution did not start (exit code $exitCode).\n\n" +
+                            "Fix compilation errors and try again. Use diagnostics tool to check for errors.\n\n" +
+                            truncatedOutput,
+                        "Build failed before tests",
+                        TokenEstimator.estimate(truncatedOutput),
+                        isError = true
+                    )
+                } else {
+                    ToolResult(
+                        "Tests FAILED for $testTarget (exit code $exitCode).\n\n$truncatedOutput",
+                        "Tests FAILED: $testTarget", TokenEstimator.estimate(truncatedOutput), isError = true
+                    )
+                }
             }
         } catch (e: Exception) {
             ToolResult("Error running tests: ${e.message}", "Test execution error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
@@ -1221,7 +1239,8 @@ description optional: for approval dialog on run_tests, compile_module.
         if (skippedTests.isNotEmpty()) {
             sb.appendLine("--- SKIPPED ---")
             for (test in skippedTests) {
-                sb.appendLine(test.name)
+                val reason = test.errorMessage
+                if (reason != null) sb.appendLine("${test.name} — $reason") else sb.appendLine(test.name)
             }
             sb.appendLine()
         }
