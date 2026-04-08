@@ -80,12 +80,11 @@ class DbQueryTool : AgentTool {
         )
 
         val result = DatabaseConnectionManager.withConnection(profile, database) { conn ->
-            val stmt = DatabaseConnectionManager.createStatement(conn)
-            val rs = stmt.executeQuery(sql)
-            val (table, rowCount) = DatabaseConnectionManager.resultSetToMarkdown(rs)
-            rs.close()
-            stmt.close()
-            Pair(table, rowCount)
+            DatabaseConnectionManager.createStatement(conn).use { stmt ->
+                stmt.executeQuery(sql).use { rs ->
+                    DatabaseConnectionManager.resultSetToMarkdown(rs)
+                }
+            }
         }
 
         val targetLabel = database?.let { "${profile.displayName} / $it" } ?: profile.displayName

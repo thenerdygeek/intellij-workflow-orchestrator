@@ -82,8 +82,11 @@ object DatabaseConnectionManager {
         block: (Connection) -> T
     ): Result<T> = withContext(Dispatchers.IO) {
         runCatching {
+            val requiresPassword = profile.dbType != DbType.SQLITE && profile.dbType != DbType.GENERIC
             val password = DatabaseCredentialHelper.getPassword(profile.id)
-                ?: error("No password stored for profile '${profile.displayName}'. Check Settings > Agent.")
+                ?: if (requiresPassword)
+                    error("No password stored for profile '${profile.displayName}'. Check Settings > Agent.")
+                else ""
 
             val targetUrl = profile.jdbcUrlFor(database)
             val conn = openConnection(profile, targetUrl, password)

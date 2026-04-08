@@ -1,6 +1,8 @@
 package com.workflow.orchestrator.agent.settings
 
 import com.intellij.openapi.application.EDT
+import com.intellij.openapi.application.ModalityState
+import com.intellij.openapi.application.asContextElement
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.ValidationInfo
 import com.intellij.ui.components.JBLabel
@@ -86,10 +88,14 @@ class DatabaseProfileDialog(
     }
 
     // Coroutine scope owned by the dialog — cancelled in dispose() so an
-    // in-flight test connection can't outlive the dialog. Base dispatcher
-    // is EDT so UI updates after `withContext(Dispatchers.IO)` blocks
-    // return directly to the EDT without another explicit switch.
-    private val dialogScope = CoroutineScope(SupervisorJob() + Dispatchers.EDT)
+    // in-flight test connection can't outlive the dialog. Uses EDT + ModalityState.any()
+    // so that continuations after withContext(Dispatchers.IO) can dispatch back to the
+    // EDT while the dialog is still open. Without ModalityState.any(), IntelliJ's EDT
+    // dispatcher defaults to NON_MODAL, which is blocked by the dialog's own modality
+    // and causes UI updates to never fire until the dialog is dismissed.
+    private val dialogScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.EDT + ModalityState.any().asContextElement()
+    )
 
     // Raw URL field (SQLite, Generic, or escape hatch for server engines)
     private val urlField = JBTextField(existing?.jdbcUrl ?: "").apply {
@@ -274,7 +280,10 @@ class DatabaseProfileDialog(
                 },
                 onFailure = { ex ->
                     testPassed = false
-                    okAction.isEnabled = false
+                    // Existing profiles remain saveable even on test failure (same grandfathering
+                    // rule as invalidateTestResult). The user may just be updating a non-connection
+                    // field while the DB is temporarily unreachable.
+                    okAction.isEnabled = (existing != null)
                     testStatusLabel.foreground = com.intellij.ui.JBColor.RED
                     val raw = ex.message ?: ex.javaClass.simpleName
                     val truncated = if (raw.length > 200) raw.take(200) + "…" else raw
@@ -304,7 +313,9 @@ class DatabaseProfileDialog(
         if (!testPassed) return
         testPassed = false
         okAction.isEnabled = (existing != null)  // grandfathered profiles stay saveable
-        defaultDbCombo.isEnabled = false
+        // Re-apply the full visibility rule so existing profiles keep the combo usable
+        // (updateFieldVisibility uses `existing != null` to gate the combo, not just testPassed)
+        updateFieldVisibility()
         testStatusLabel.text = ""
     }
 
@@ -319,6 +330,7 @@ class DatabaseProfileDialog(
     }
 
     override fun createCenterPanel(): JComponent = panel {
+        // ── Identity ──────────────────────────────────────────────────────
         row("Profile ID:") {
             cell(idField).align(AlignX.FILL).comment("Short slug, e.g. local, docker, qa (used as the key)")
         }
@@ -329,43 +341,45 @@ class DatabaseProfileDialog(
             cell(typeCombo)
         }
 
-        // Structured fields — visible for all engines but disabled when raw URL mode is on
+        // ── Connection ────────────────────────────────────────────────────
+        // Structured fields — disabled when raw URL mode is active
         row("Host:") {
             cell(hostField).align(AlignX.FILL).comment("Server hostname, e.g. localhost or db.example.com")
         }
         row("Port:") {
             cell(portField).comment("Defaults to engine standard if blank (5432 / 3306 / 1433)")
         }
-        row("Default database:") {
-            cell(defaultDbCombo).align(AlignX.FILL).comment(
-                "Click 'Test Connection' below to discover and select a database. " +
-                    "The agent uses this when no explicit database is supplied to a query, " +
-                    "and can still switch databases per-query via db_query(database=…)."
-            )
-        }
-
-        row {
-            cell(testButton)
-        }
-        row {
-            cell(testStatusLabel).align(AlignX.FILL)
-        }
-        row {
-            cell(rawUrlCheckbox)
-        }
+        // Raw URL field — enabled only in raw URL mode
         row("JDBC URL:") {
             cell(urlField).align(AlignX.FILL).comment(
                 "Raw URL — required for SQLite (e.g. jdbc:sqlite:/path/to/file.db), " +
                     "Generic JDBC, or when you need custom connection params."
             )
         }
+        row {
+            cell(rawUrlCheckbox)
+        }
 
+        // ── Credentials ───────────────────────────────────────────────────
         row("Username:") {
             cell(userField).align(AlignX.FILL)
         }
         row("Password:") {
             cell(passField).align(AlignX.FILL)
             cell(passHint)
+        }
+
+        // ── Test & result ─────────────────────────────────────────────────
+        row {
+            cell(testButton)
+            cell(testStatusLabel).align(AlignX.FILL)
+        }
+        // Default database is populated by Test Connection — shown after the button
+        row("Default database:") {
+            cell(defaultDbCombo).align(AlignX.FILL).comment(
+                "Populated by 'Test Connection'. The agent connects here when no explicit " +
+                    "database is supplied to a query; can override per-query via db_query(database=…)."
+            )
         }
     }
 
@@ -374,7 +388,12 @@ class DatabaseProfileDialog(
         if (!idField.text.matches(Regex("[a-zA-Z0-9_-]+")))
             return ValidationInfo("Profile ID may only contain letters, numbers, hyphens, underscores", idField)
         if (nameField.text.isBlank()) return ValidationInfo("Display name is required", nameField)
-        if (userField.text.isBlank()) return ValidationInfo("Username is required", userField)
+
+        val type = typeCombo.selectedItem as DbType
+        val requiresCredentials = type != DbType.SQLITE && type != DbType.GENERIC
+
+        if (requiresCredentials && userField.text.isBlank())
+            return ValidationInfo("Username is required", userField)
 
         if (rawUrlCheckbox.isSelected) {
             if (urlField.text.isBlank()) return ValidationInfo("JDBC URL is required in raw mode", urlField)
@@ -393,7 +412,7 @@ class DatabaseProfileDialog(
                 )
         }
 
-        if (existing == null && passField.password.isEmpty())
+        if (requiresCredentials && existing == null && passField.password.isEmpty())
             return ValidationInfo("Password is required", passField)
         return null
     }
@@ -429,6 +448,10 @@ class DatabaseProfileDialog(
         val pw = String(passField.password)
         if (pw.isNotEmpty()) {
             DatabaseCredentialHelper.storePassword(profile.id, pw)
+        }
+        // If the profile ID changed during edit, remove the stale PasswordSafe entry
+        if (existing != null && existing.id != profile.id) {
+            DatabaseCredentialHelper.removePassword(existing.id)
         }
         return profile
     }

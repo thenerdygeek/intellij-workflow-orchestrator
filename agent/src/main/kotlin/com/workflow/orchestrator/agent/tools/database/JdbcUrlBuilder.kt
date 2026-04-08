@@ -122,11 +122,10 @@ object JdbcUrlBuilder {
         val portStr = hostPort.substring(colonIdx + 1)
         val port = portStr.toIntOrNull() ?: return null
         if (host.isBlank()) return null
-        // Find databaseName parameter
+        // Find databaseName parameter (case-insensitive key, preserve value)
         val dbName = params.split(';')
             .firstOrNull { it.startsWith("databaseName=", ignoreCase = true) }
-            ?.removePrefix("databaseName=")
-            ?.removePrefix("DATABASENAME=")
+            ?.substringAfter('=')
             ?: return null
         if (dbName.isBlank()) return null
         return UrlParts(host, port, dbName)

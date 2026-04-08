@@ -66,19 +66,17 @@ class DbListDatabasesTool : AgentTool {
             )
         }
 
-        val listSql = listDatabasesSql(profile.dbType)
+        val listSql = DatabaseDiscovery.discoveryQuery(profile.dbType)
             ?: return error("No database listing query implemented for ${profile.dbType.displayName}.")
 
         val result = DatabaseConnectionManager.withConnection(profile) { conn ->
-            val stmt = DatabaseConnectionManager.createStatement(conn)
-            val rs = stmt.executeQuery(listSql)
-            val databases = mutableListOf<String>()
-            while (rs.next()) {
-                databases.add(rs.getString(1))
+            DatabaseConnectionManager.createStatement(conn).use { stmt ->
+                stmt.executeQuery(listSql).use { rs ->
+                    val raw = mutableListOf<String>()
+                    while (rs.next()) raw.add(rs.getString(1))
+                    DatabaseDiscovery.filterSystemDatabases(profile.dbType, raw)
+                }
             }
-            rs.close()
-            stmt.close()
-            databases
         }
 
         return result.fold(
@@ -105,13 +103,6 @@ class DbListDatabasesTool : AgentTool {
                 error("Failed to list databases on '${profile.id}': ${e.message}")
             }
         )
-    }
-
-    private fun listDatabasesSql(dbType: DbType): String? = when (dbType) {
-        DbType.POSTGRESQL -> "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname"
-        DbType.MYSQL -> "SHOW DATABASES"
-        DbType.MSSQL -> "SELECT name FROM sys.databases WHERE database_id > 4 ORDER BY name"
-        DbType.SQLITE, DbType.GENERIC -> null
     }
 
     private fun error(msg: String) = ToolResult(

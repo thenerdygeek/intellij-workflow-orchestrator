@@ -215,7 +215,7 @@ You run inside IntelliJ IDEA with access to tools across several categories. Cor
 - Debug: debug_breakpoints (breakpoints + session launch), debug_step (stepping + lifecycle), debug_inspect (evaluate, variables, set_value, thread_dump, hotswap)
 - Git: git_blame, git_branches, git_show_file, git_show_commit, git_file_history, git_merge_base
 - Integration: jira, bamboo_builds, sonar, bitbucket_pr, bitbucket_repo, bitbucket_review
-- Database: db_schema, db_query
+- Database: db_list_profiles, db_list_databases, db_schema, db_query
 
 **Usage tips:**
 - Use glob_files with patterns like '**/*.kt' (recursive) or '*.xml' (top-level) to explore the project at '$projectPath'. Use search_code with output_mode='content' for regex searches with surrounding code.
@@ -223,6 +223,7 @@ You run inside IntelliJ IDEA with access to tools across several categories. Cor
 - curl/wget to localhost/127.0.0.1 is always allowed — useful for testing Spring Boot endpoints. Remote URLs require approval.
 - Use project_context early to get comprehensive state: branch, uncommitted changes, active Jira ticket, service keys, PR status, build results, Sonar quality gate, project type.
 - render_artifact tool: produce interactive React visualizations in chat. Load the frontend-design skill first for component APIs and design guidelines. Available: Tailwind CSS, Recharts, Lucide icons, UI components (Card, Badge, Tabs, Progress, Accordion, Tooltip). All scope variables — use directly, not as props.
+- Database workflow — always follow this sequence: (1) db_list_profiles to discover configured connections, (2) db_list_databases to list user databases on a server profile (system DBs are filtered out), (3) db_schema to inspect table structure before writing queries, (4) db_query to run read-only SELECT statements. Profiles are server-level — one PostgreSQL profile can reach all databases on that server via the optional `database` parameter.
 - You can call multiple tools in a single response. If calls are independent, make them all in parallel for efficiency. If calls depend on each other, run them sequentially."""
 
     /**

@@ -89,12 +89,12 @@ class DbSchemaTool : AgentTool {
             } else {
                 // List all tables in the schema
                 val effectiveSchema = schemaFilter ?: defaultSchema(profile)
-                val rs = meta.getTables(null, effectiveSchema, "%", arrayOf("TABLE", "VIEW"))
                 val tables = mutableListOf<Pair<String, String>>() // name to type
-                while (rs.next()) {
-                    tables.add(rs.getString("TABLE_NAME") to rs.getString("TABLE_TYPE"))
+                meta.getTables(null, effectiveSchema, "%", arrayOf("TABLE", "VIEW")).use { rs ->
+                    while (rs.next()) {
+                        tables.add(rs.getString("TABLE_NAME") to rs.getString("TABLE_TYPE"))
+                    }
                 }
-                rs.close()
 
                 if (tables.isEmpty()) {
                     sb.append("No tables found in schema '${effectiveSchema ?: "default"}'.\n")
@@ -146,17 +146,17 @@ class DbSchemaTool : AgentTool {
         sb.append("### `$table`\n\n")
 
         // Columns
-        val cols = meta.getColumns(null, schema, table, "%")
         val columnRows = mutableListOf<List<String>>()
-        while (cols.next()) {
-            columnRows.add(listOf(
-                cols.getString("COLUMN_NAME"),
-                cols.getString("TYPE_NAME"),
-                if (cols.getString("NULLABLE") == "1") "NULL" else "NOT NULL",
-                cols.getString("COLUMN_DEF") ?: ""
-            ))
+        meta.getColumns(null, schema, table, "%").use { cols ->
+            while (cols.next()) {
+                columnRows.add(listOf(
+                    cols.getString("COLUMN_NAME"),
+                    cols.getString("TYPE_NAME"),
+                    if (cols.getString("NULLABLE") == "1") "NULL" else "NOT NULL",
+                    cols.getString("COLUMN_DEF") ?: ""
+                ))
+            }
         }
-        cols.close()
 
         sb.append("| Column | Type | Nullable | Default |\n")
         sb.append("| --- | --- | --- | --- |\n")
@@ -164,10 +164,10 @@ class DbSchemaTool : AgentTool {
 
         // Primary keys
         runCatching {
-            val pks = meta.getPrimaryKeys(null, schema, table)
             val pkCols = mutableListOf<String>()
-            while (pks.next()) pkCols.add(pks.getString("COLUMN_NAME"))
-            pks.close()
+            meta.getPrimaryKeys(null, schema, table).use { pks ->
+                while (pks.next()) pkCols.add(pks.getString("COLUMN_NAME"))
+            }
             if (pkCols.isNotEmpty()) {
                 sb.append("\n**Primary key:** ${pkCols.joinToString(", ")}\n")
             }
@@ -175,15 +175,15 @@ class DbSchemaTool : AgentTool {
 
         // Foreign keys
         runCatching {
-            val fks = meta.getImportedKeys(null, schema, table)
             val fkLines = mutableListOf<String>()
-            while (fks.next()) {
-                fkLines.add(
-                    "`${fks.getString("FKCOLUMN_NAME")}` → " +
-                        "`${fks.getString("PKTABLE_NAME")}.${fks.getString("PKCOLUMN_NAME")}`"
-                )
+            meta.getImportedKeys(null, schema, table).use { fks ->
+                while (fks.next()) {
+                    fkLines.add(
+                        "`${fks.getString("FKCOLUMN_NAME")}` → " +
+                            "`${fks.getString("PKTABLE_NAME")}.${fks.getString("PKCOLUMN_NAME")}`"
+                    )
+                }
             }
-            fks.close()
             if (fkLines.isNotEmpty()) {
                 sb.append("\n**Foreign keys:**\n")
                 fkLines.forEach { sb.append("- $it\n") }
