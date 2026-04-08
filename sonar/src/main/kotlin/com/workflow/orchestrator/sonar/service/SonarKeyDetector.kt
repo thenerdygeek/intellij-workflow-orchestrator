@@ -3,6 +3,7 @@ package com.workflow.orchestrator.sonar.service
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.core.autodetect.SonarKeyDetectorService
 import org.jetbrains.idea.maven.project.MavenProject
 import org.jetbrains.idea.maven.project.MavenProjectsManager
 import java.nio.file.Paths
@@ -21,18 +22,21 @@ import java.nio.file.Paths
  *   - `detect()`: legacy single-project case, uses the first Maven root.
  *   - `detectForPath(repoRootPath)`: multi-repo case, finds the Maven root
  *     whose directory matches the given repo path.
+ *
+ * Implements [SonarKeyDetectorService] so that [com.workflow.orchestrator.core.autodetect.AutoDetectOrchestrator]
+ * can call it from :core without a compile-time dependency on :sonar.
  */
 @Service(Service.Level.PROJECT)
-class SonarKeyDetector(private val project: Project) {
+class SonarKeyDetector(private val project: Project) : SonarKeyDetectorService {
 
     private val log = logger<SonarKeyDetector>()
 
-    fun detect(): String? {
+    override fun detect(): String? {
         val root = firstMavenRoot() ?: return null
         return extractKey(root)
     }
 
-    fun detectForPath(repoRootPath: String): String? {
+    override fun detectForPath(repoRootPath: String): String? {
         return try {
             val mavenManager = MavenProjectsManager.getInstance(project)
             if (!mavenManager.isMavenizedProject) return null

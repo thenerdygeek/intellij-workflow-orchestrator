@@ -103,6 +103,9 @@
         <notificationGroup id="workflow.quality" displayType="BALLOON"/>
         <notificationGroup id="workflow.queue" displayType="BALLOON"/>
         <notificationGroup id="workflow.automation" displayType="BALLOON"/>
+        <notificationGroup id="Workflow Orchestrator"
+                           displayType="BALLOON"
+                           isLogByDefault="false"/>
 
         <!-- Project Services -->
         <projectService
@@ -165,10 +168,15 @@
 
         <!-- TODO Phase 1B: BuildStatusBarWidgetFactory -->
 
+        <!-- Auto-detect orchestrator (core, no module dependency) -->
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.core.autodetect.AutoDetectOrchestrator"/>
+
         <!-- SonarQube Project Services -->
         <projectService
             serviceImplementation="com.workflow.orchestrator.sonar.service.SonarDataService"/>
         <projectService
+            serviceInterface="com.workflow.orchestrator.core.autodetect.SonarKeyDetectorService"
             serviceImplementation="com.workflow.orchestrator.sonar.service.SonarKeyDetector"/>
         <!-- SonarQube Editor Integration -->
         <codeInsight.lineMarkerProvider language="JAVA"
