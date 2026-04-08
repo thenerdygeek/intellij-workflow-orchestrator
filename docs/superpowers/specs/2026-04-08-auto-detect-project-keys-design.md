@@ -20,6 +20,7 @@ The plugin auto-detects some project identifiers (bitbucket project/repo via `Re
 3. Run all detection automatically in the background on project open, branch switch, credential update, and relevant file changes — without requiring users to click anything.
 4. Never overwrite values the user has manually set.
 5. Keep the existing manual auto-detect buttons working as a forced re-run.
+6. **Multi-repo support:** when the project has multiple repos configured in `PluginSettings.repos`, detect docker tag, sonar key, and bamboo plan key *per repo* and write to each `RepoConfig` — not just to the global `PluginSettings.State` fields.
 
 ## Non-Goals
 
@@ -72,16 +73,21 @@ Each method is independently triggerable and writes its results to `PluginSettin
 
 #### New: `SonarKeyDetector` (`:sonar`, project-level service)
 
-Extracts the existing Maven detection logic from `CodeQualityConfigurable.kt:70-89` into a reusable service:
+Extracts the existing Maven detection logic from `CodeQualityConfigurable.kt:70-89` into a reusable service, with two methods — one for the legacy single-project case and one for multi-repo:
 
 ```kotlin
 @Service(Service.Level.PROJECT)
 class SonarKeyDetector(private val project: Project) {
-    fun detect(): String?  // null if no Maven project or property absent
+    /** Legacy single-project: returns sonar key from the IDE's first Maven root project. */
+    fun detect(): String?
+
+    /** Multi-repo: returns sonar key from the Maven project rooted at the given path,
+     *  or null if no Maven root matches that directory. */
+    fun detectForPath(repoRootPath: String): String?
 }
 ```
 
-Implementation is identical to today: `MavenProjectsManager.getInstance(project).rootProjects.firstOrNull()?.properties?.getProperty("sonar.projectKey")`. Maven's model already resolves `${project.artifactId}` placeholders, so no additional fallback is needed.
+Both methods use the same lookup chain: `properties["sonar.projectKey"]` → `${groupId}:${artifactId}`. Maven's model already resolves `${project.artifactId}` placeholders, so no additional fallback is needed. `detectForPath` finds the matching Maven root by comparing absolute normalized directory paths.
 
 #### Modified: `RepoContextResolver` (`:core`)
 
@@ -124,6 +130,22 @@ Applied to every field write. **No schema migration**, no `Source` enum. The con
 - If the user wants to force re-detection, they clear the field manually and the next trigger refills it.
 
 This rule is the single biggest reason this design stays surgical.
+
+### Multi-Repo Handling
+
+The plugin already supports multi-repo projects via `PluginSettings.repos: List<RepoConfig>`. Each `RepoConfig` has its own `sonarProjectKey`, `bambooPlanKey`, `dockerTagKey`, and `localVcsRootPath`. The repo edit dialog in `RepositoriesConfigurable` lets users set these per repo. The Sonar runtime (`SonarDataService`, `QualityDashboardPanel`) already reads per-repo values when an event carries a repo context, falling back to global `PluginSettings.State` otherwise.
+
+The auto-detect orchestrator must populate per-repo values when repos are configured:
+
+1. **`detectFromBambooSpecs()`** — for each `RepoConfig` with a non-blank `localVcsRootPath`, parse `<repoRoot>/bamboo-specs/src/main/java/**/*.java` and write `DOCKER_TAG_NAME` → `repo.dockerTagKey` and `PLAN_KEY` → `repo.bambooPlanKey`.
+2. **`detectSonarKey()`** — for each `RepoConfig` with a non-blank `localVcsRootPath`, call `SonarKeyDetector.detectForPath(repoRoot)` and write to `repo.sonarProjectKey`.
+3. **`detectBambooPlan()`** — iterate over `GitRepositoryManager.repositories`, match each git repo to a `RepoConfig` by `localVcsRootPath` (via `PluginSettings.getRepoForPath`), then call `PlanDetectionService.autoDetectIfMissing(repo.bambooPlanKey, gitRemoteUrl)` and write to `repo.bambooPlanKey`.
+
+**Fallback for no-repo projects:** when `PluginSettings.repos` is empty, the orchestrator behaves as before — it uses `project.basePath` as a synthetic single repo and writes to global `PluginSettings.State` fields directly.
+
+**Mirror to global:** after per-repo detection completes, the primary repo's values (`PluginSettings.getPrimaryRepo()`) mirror to global `PluginSettings.State` via the same fill-only-empty rule. This preserves the existing global-fallback path used by code that doesn't have a repo context (e.g. notifications, generic refresh paths in `SonarDataService`).
+
+The fill-only-empty rule applies at every write — both per-repo and to the global mirror.
 
 ### Triggers
 
@@ -179,6 +201,9 @@ Subsequent triggers are silent — they just update fields. No popups, no progre
 - One detector throwing does not block the others
 - `firstSweepNotified` fires exactly once per session even across multiple `detectAll()` calls
 - Branch-change trigger calls only the two branch-sensitive detectors
+- **Multi-repo:** when `PluginSettings.repos` has 2 entries with different `localVcsRootPath`s, each gets its own detected sonar key / docker tag / plan key
+- **Multi-repo mirror:** after multi-repo detection, the primary repo's values appear in global `PluginSettings.State`
+- **No-repo fallback:** when `PluginSettings.repos` is empty, detection writes to global `PluginSettings.State` using `project.basePath` as the synthetic repo path
 
 **`SonarKeyDetectorTest`** — uses an in-memory Maven project fixture (or mocks `MavenProjectsManager`) to verify property lookup.
 
@@ -225,3 +250,5 @@ In `runIde` sandbox, verify:
 1. **Branch-sensitive bamboo-specs:** If a project has different `DOCKER_TAG_NAME` constants on different branches, the fill-only-empty rule means only the *first* branch's value sticks (because subsequent triggers see a non-blank field). Mitigation: documented behavior; users on multi-tag projects should use manual entry. We considered this acceptable because (a) it's rare, and (b) the alternative is overwriting user input, which is worse.
 2. **Maven model not ready at startup:** `SonarKeyDetector` may return `null` if called before Maven import completes. Mitigation: the `pom.xml` modified / Maven reimport trigger will catch up once import finishes. The `WorkflowAutoDetectStartupActivity` waits on `DumbService.smartInvokeLater` which only handles indexing readiness, not Maven import — so the first `detectAll()` may miss the sonar key on first project open of a fresh import. This is acceptable because the next trigger will fix it.
 3. **Notification spam during rapid file changes:** The `firstSweepNotified` flag is per-project-session, not per-fill. If the user closes and reopens the project, they'll see one balloon again. This matches IDE convention.
+4. **Multi-repo with missing `localVcsRootPath`:** A `RepoConfig` entry with no `localVcsRootPath` is silently skipped by the per-repo detectors. This is the correct behavior — without a path we can't locate the repo's `bamboo-specs/` or `pom.xml` — but means hand-edited entries that lack the path will not auto-fill. Mitigation: documented behavior; users should set `localVcsRootPath` (which `RepoContextResolver.autoDetectRepos()` does automatically).
+5. **Multi-repo Maven roots not matching repo paths:** `SonarKeyDetector.detectForPath` requires the exact repo root to match a Maven root project's directory. Repos that are not Maven projects (or whose root pom is in a subdirectory) return null. This matches today's behavior; the user can fall back to manual entry.

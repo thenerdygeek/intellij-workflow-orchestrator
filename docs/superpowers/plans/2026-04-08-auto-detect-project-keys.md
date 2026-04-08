@@ -312,6 +312,45 @@ class SonarKeyDetectorTest {
         every { mavenManager.rootProjects } returns emptyList()
         assertNull(detector.detect())
     }
+
+    @Test
+    fun `detectForPath returns sonar key from matching maven root`() {
+        val mavenProjectA = mockk<MavenProject>()
+        val mavenProjectB = mockk<MavenProject>()
+        val propsA = Properties().apply { setProperty("sonar.projectKey", "service-a-key") }
+        val propsB = Properties().apply { setProperty("sonar.projectKey", "service-b-key") }
+        every { mavenManager.isMavenizedProject } returns true
+        every { mavenManager.rootProjects } returns listOf(mavenProjectA, mavenProjectB)
+        every { mavenProjectA.directory } returns "/projects/service-a"
+        every { mavenProjectB.directory } returns "/projects/service-b"
+        every { mavenProjectA.properties } returns propsA
+        every { mavenProjectB.properties } returns propsB
+
+        assertEquals("service-a-key", detector.detectForPath("/projects/service-a"))
+        assertEquals("service-b-key", detector.detectForPath("/projects/service-b"))
+    }
+
+    @Test
+    fun `detectForPath returns null when no maven root matches the path`() {
+        val mavenProject = mockk<MavenProject>()
+        every { mavenManager.isMavenizedProject } returns true
+        every { mavenManager.rootProjects } returns listOf(mavenProject)
+        every { mavenProject.directory } returns "/projects/other"
+
+        assertNull(detector.detectForPath("/projects/missing"))
+    }
+
+    @Test
+    fun `detectForPath falls back to groupId-artifactId when sonar property absent`() {
+        val mavenProject = mockk<MavenProject>()
+        every { mavenManager.isMavenizedProject } returns true
+        every { mavenManager.rootProjects } returns listOf(mavenProject)
+        every { mavenProject.directory } returns "/projects/svc"
+        every { mavenProject.properties } returns Properties()
+        every { mavenProject.mavenId } returns MavenId("com.acme", "svc", "1.0")
+
+        assertEquals("com.acme:svc", detector.detectForPath("/projects/svc"))
+    }
 }
 ```
 
@@ -333,7 +372,9 @@ package com.workflow.orchestrator.sonar.service
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
+import org.jetbrains.idea.maven.project.MavenProject
 import org.jetbrains.idea.maven.project.MavenProjectsManager
+import java.nio.file.Paths
 
 /**
  * Detects the SonarQube project key from the IDE's resolved Maven model.
@@ -343,36 +384,66 @@ import org.jetbrains.idea.maven.project.MavenProjectsManager
  *      (Maven model already resolves placeholders like `${project.artifactId}`.)
  *   2. Synthesized `groupId:artifactId` from the root project's MavenId.
  *
- * Returns null if the project is not mavenized or has no root projects.
+ * Returns null if the project is not mavenized or no Maven root matches.
+ *
+ * Two methods:
+ *   - `detect()`: legacy single-project case, uses the first Maven root.
+ *   - `detectForPath(repoRootPath)`: multi-repo case, finds the Maven root
+ *     whose directory matches the given repo path.
  */
 @Service(Service.Level.PROJECT)
 class SonarKeyDetector(private val project: Project) {
 
     private val log = logger<SonarKeyDetector>()
 
-    fun detect(): String? {
+    fun detect(): String? = extractKey(firstMavenRoot() ?: return null)
+
+    fun detectForPath(repoRootPath: String): String? {
+        return try {
+            val mavenManager = MavenProjectsManager.getInstance(project)
+            if (!mavenManager.isMavenizedProject) return null
+            val targetPath = Paths.get(repoRootPath).toAbsolutePath().normalize()
+            val matching = mavenManager.rootProjects.firstOrNull { mavenProject ->
+                try {
+                    Paths.get(mavenProject.directory).toAbsolutePath().normalize() == targetPath
+                } catch (_: Exception) { false }
+            } ?: run {
+                log.debug("[Sonar:Detect] No Maven root matches repo path: $repoRootPath")
+                return null
+            }
+            extractKey(matching)
+        } catch (e: Exception) {
+            log.warn("[Sonar:Detect] detectForPath failed for $repoRootPath", e)
+            null
+        }
+    }
+
+    private fun firstMavenRoot(): MavenProject? {
         return try {
             val mavenManager = MavenProjectsManager.getInstance(project)
             if (!mavenManager.isMavenizedProject) {
                 log.debug("[Sonar:Detect] Project is not mavenized")
-                return null
-            }
-            val rootProject = mavenManager.rootProjects.firstOrNull() ?: run {
-                log.debug("[Sonar:Detect] No root Maven projects")
-                return null
-            }
-            val explicit = rootProject.properties?.getProperty("sonar.projectKey")
+                null
+            } else mavenManager.rootProjects.firstOrNull()
+                ?: run { log.debug("[Sonar:Detect] No root Maven projects"); null }
+        } catch (e: Exception) {
+            log.warn("[Sonar:Detect] firstMavenRoot failed", e); null
+        }
+    }
+
+    private fun extractKey(mavenProject: MavenProject): String? {
+        return try {
+            val explicit = mavenProject.properties?.getProperty("sonar.projectKey")
             if (!explicit.isNullOrBlank()) {
                 log.info("[Sonar:Detect] Found explicit sonar.projectKey: $explicit")
                 return explicit
             }
-            val mavenId = rootProject.mavenId
+            val mavenId = mavenProject.mavenId
             val synthesized = "${mavenId.groupId}:${mavenId.artifactId}"
             log.info("[Sonar:Detect] Synthesized sonar key from coordinates: $synthesized")
             synthesized
         } catch (e: Exception) {
-            log.warn("[Sonar:Detect] Detection failed", e)
-            null
+            log.warn("[Sonar:Detect] extractKey failed", e); null
         }
     }
 }
@@ -717,7 +788,7 @@ user-set value). detectAll() is a stub — wired in next task."
 - Modify: `core/src/main/kotlin/com/workflow/orchestrator/core/autodetect/AutoDetectOrchestrator.kt`
 - Modify: `core/src/test/kotlin/com/workflow/orchestrator/core/autodetect/AutoDetectOrchestratorTest.kt`
 
-- [ ] **Step 1: Add tests for the four detector methods**
+- [ ] **Step 1: Add tests for the four detector methods (single-repo + multi-repo)**
 
 Append these tests to `AutoDetectOrchestratorTest.kt`:
 
@@ -734,45 +805,111 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 @Nested
-inner class DetectFromBambooSpecsTests {
+inner class ApplyBambooSpecsToStateTests {
 
     @Test
-    fun `fills dockerTagKey when DOCKER_TAG_NAME constant exists and field empty`(@TempDir root: Path) = runTest {
-        val javaDir = root.resolve("bamboo-specs/src/main/java/constants")
-        Files.createDirectories(javaDir)
-        Files.writeString(javaDir.resolve("PlanProperties.java"),
-            """class PlanProperties { private static final String DOCKER_TAG_NAME = "MyServiceDockerTag"; }""")
+    fun `fills empty state fields from constants map`() {
+        val state = PluginSettings.State()
+        val constants = mapOf(
+            "DOCKER_TAG_NAME" to "MyServiceDockerTag",
+            "PLAN_KEY" to "MYSERVICE"
+        )
+        val filled = mutableListOf<String>()
+        AutoDetectOrchestrator.applyBambooSpecsToState(state, constants, "global", filled)
 
-        val project = mockk<Project>(relaxed = true)
-        every { project.basePath } returns root.toString()
-        val settings = PluginSettings.State()
-        // settings.dockerTagKey is "" by default
-
-        val orchestrator = AutoDetectOrchestrator(project)
-        val constants = BambooSpecsParser.parseConstants(root)
-        val filled = orchestrator.applyBambooSpecsConstants(settings, constants)
-
-        assertEquals("MyServiceDockerTag", settings.dockerTagKey)
-        assertEquals(listOf("dockerTagKey"), filled)
+        assertEquals("MyServiceDockerTag", state.dockerTagKey)
+        assertEquals("MYSERVICE", state.bambooPlanKey)
+        assertTrue(filled.contains("global.dockerTagKey"))
+        assertTrue(filled.contains("global.bambooPlanKey"))
     }
 
     @Test
-    fun `does not overwrite user-set dockerTagKey`(@TempDir root: Path) = runTest {
-        val javaDir = root.resolve("bamboo-specs/src/main/java")
-        Files.createDirectories(javaDir)
-        Files.writeString(javaDir.resolve("X.java"),
-            """class X { private static final String DOCKER_TAG_NAME = "DetectedTag"; }""")
+    fun `does not overwrite user-set state fields`() {
+        val state = PluginSettings.State().apply {
+            dockerTagKey = "UserSetTag"
+            bambooPlanKey = "USERPLAN"
+        }
+        val constants = mapOf("DOCKER_TAG_NAME" to "DetectedTag", "PLAN_KEY" to "DETECTED")
+        val filled = mutableListOf<String>()
+        AutoDetectOrchestrator.applyBambooSpecsToState(state, constants, "global", filled)
 
-        val project = mockk<Project>(relaxed = true)
-        every { project.basePath } returns root.toString()
-        val settings = PluginSettings.State().apply { dockerTagKey = "UserSetTag" }
-
-        val orchestrator = AutoDetectOrchestrator(project)
-        val constants = BambooSpecsParser.parseConstants(root)
-        val filled = orchestrator.applyBambooSpecsConstants(settings, constants)
-
-        assertEquals("UserSetTag", settings.dockerTagKey)
+        assertEquals("UserSetTag", state.dockerTagKey)
+        assertEquals("USERPLAN", state.bambooPlanKey)
         assertTrue(filled.isEmpty())
+    }
+}
+
+@Nested
+inner class ApplyBambooSpecsToRepoTests {
+
+    @Test
+    fun `fills empty repo fields from constants map`() {
+        val repo = RepoConfig().apply { name = "service-a" }
+        val constants = mapOf(
+            "DOCKER_TAG_NAME" to "ServiceADockerTag",
+            "PLAN_KEY" to "SERVICEA"
+        )
+        val filled = mutableListOf<String>()
+        AutoDetectOrchestrator.applyBambooSpecsToRepo(repo, constants, filled)
+
+        assertEquals("ServiceADockerTag", repo.dockerTagKey)
+        assertEquals("SERVICEA", repo.bambooPlanKey)
+        assertTrue(filled.contains("service-a.dockerTagKey"))
+        assertTrue(filled.contains("service-a.bambooPlanKey"))
+    }
+
+    @Test
+    fun `does not overwrite user-set repo fields`() {
+        val repo = RepoConfig().apply {
+            name = "service-a"
+            dockerTagKey = "UserSetTag"
+            bambooPlanKey = "USERPLAN"
+        }
+        val constants = mapOf("DOCKER_TAG_NAME" to "DetectedTag", "PLAN_KEY" to "DETECTED")
+        val filled = mutableListOf<String>()
+        AutoDetectOrchestrator.applyBambooSpecsToRepo(repo, constants, filled)
+
+        assertEquals("UserSetTag", repo.dockerTagKey)
+        assertEquals("USERPLAN", repo.bambooPlanKey)
+        assertTrue(filled.isEmpty())
+    }
+}
+
+@Nested
+inner class MirrorPrimaryToGlobalTests {
+
+    @Test
+    fun `mirrors primary repo values to global state when global is empty`() {
+        val state = PluginSettings.State()
+        val primary = RepoConfig().apply {
+            isPrimary = true
+            sonarProjectKey = "primary-sonar"
+            bambooPlanKey = "PRIMARY"
+            dockerTagKey = "PrimaryDockerTag"
+        }
+        val filled = mutableListOf<String>()
+        AutoDetectOrchestrator.mirrorPrimaryToGlobal(state, primary, filled)
+
+        assertEquals("primary-sonar", state.sonarProjectKey)
+        assertEquals("PRIMARY", state.bambooPlanKey)
+        assertEquals("PrimaryDockerTag", state.dockerTagKey)
+    }
+
+    @Test
+    fun `does not mirror when global already has values`() {
+        val state = PluginSettings.State().apply {
+            sonarProjectKey = "global-sonar"
+            bambooPlanKey = "GLOBAL"
+        }
+        val primary = RepoConfig().apply {
+            sonarProjectKey = "primary-sonar"
+            bambooPlanKey = "PRIMARY"
+        }
+        val filled = mutableListOf<String>()
+        AutoDetectOrchestrator.mirrorPrimaryToGlobal(state, primary, filled)
+
+        assertEquals("global-sonar", state.sonarProjectKey)
+        assertEquals("GLOBAL", state.bambooPlanKey)
     }
 }
 ```
@@ -785,9 +922,11 @@ inner class DetectFromBambooSpecsTests {
 
 Expected: FAIL with "Unresolved reference: applyBambooSpecsConstants"
 
-- [ ] **Step 3: Implement the four detector methods**
+- [ ] **Step 3: Implement the four detector methods (multi-repo aware)**
 
-Replace the stub `detectAll()` and add new methods in `AutoDetectOrchestrator.kt`:
+Replace the stub `detectAll()`, add the new instance methods, AND replace the existing `companion object` block (which currently only contains `fillIfEmpty`) with the expanded version below — the new companion includes `fillIfEmpty` plus three internal helpers (`applyBambooSpecsToState`, `applyBambooSpecsToRepo`, `mirrorPrimaryToGlobal`) used by the tests.
+
+Edit `core/src/main/kotlin/com/workflow/orchestrator/core/autodetect/AutoDetectOrchestrator.kt`:
 
 ```kotlin
 // Add these imports at the top:
@@ -796,7 +935,7 @@ import com.intellij.notification.NotificationType
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.settings.PluginSettings
-import com.workflow.orchestrator.core.settings.RepoContextResolver
+import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.sonar.service.SonarKeyDetector
 import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.coroutineScope
@@ -813,7 +952,16 @@ suspend fun detectAll(): AutoDetectResult = coroutineScope {
     runDetector("bamboo-specs", filled, errors) { detectFromBambooSpecs(it) }
     runDetector("git-remote", filled, errors) { detectGitDerivable(it) }
     runDetector("sonar-key", filled, errors) { detectSonarKey(it) }
-    runDetector("bamboo-plan", filled, errors) { detectBambooPlan(it) }
+    runDetector("bamboo-plan", filled, errors) { runBlockingPlan(it) }
+
+    // After per-repo writes, mirror primary repo values to global as fallback
+    val settings = PluginSettings.getInstance(project)
+    val primary = settings.getPrimaryRepo()
+    if (primary != null) {
+        runDetector("mirror-primary", filled, errors) {
+            mirrorPrimaryToGlobal(settings.state, primary, it)
+        }
+    }
 
     val result = AutoDetectResult(filledFields = filled, errors = errors)
     if (result.anyFilled && firstSweepNotified.compareAndSet(false, true)) {
@@ -836,31 +984,27 @@ private inline fun runDetector(
     }
 }
 
-fun detectFromBambooSpecs(filled: MutableList<String>) {
-    val basePath = project.basePath ?: return
-    val constants = BambooSpecsParser.parseConstants(Paths.get(basePath))
-    if (constants.isEmpty()) return
-    val settings = PluginSettings.getInstance(project).state
-    filled += applyBambooSpecsConstants(settings, constants)
+private fun runBlockingPlan(filled: MutableList<String>) {
+    // detectBambooPlan is suspend; bridge it for runDetector's sync block.
+    kotlinx.coroutines.runBlocking { detectBambooPlan(filled) }
 }
 
-/** Visible for testing. Returns names of fields that were actually filled. */
-internal fun applyBambooSpecsConstants(
-    settings: PluginSettings.State,
-    constants: Map<String, String>
-): List<String> {
-    val filled = mutableListOf<String>()
-    val newDocker = fillIfEmpty(settings.dockerTagKey, constants["DOCKER_TAG_NAME"])
-    if (newDocker != settings.dockerTagKey && !newDocker.isNullOrBlank()) {
-        settings.dockerTagKey = newDocker
-        filled += "dockerTagKey"
+fun detectFromBambooSpecs(filled: MutableList<String>) {
+    val settings = PluginSettings.getInstance(project)
+    val repos = settings.getRepos()
+    if (repos.isEmpty()) {
+        val basePath = project.basePath ?: return
+        val constants = BambooSpecsParser.parseConstants(Paths.get(basePath))
+        if (constants.isEmpty()) return
+        applyBambooSpecsToState(settings.state, constants, "global", filled)
+        return
     }
-    val newPlan = fillIfEmpty(settings.bambooPlanKey, constants["PLAN_KEY"])
-    if (newPlan != settings.bambooPlanKey && !newPlan.isNullOrBlank()) {
-        settings.bambooPlanKey = newPlan
-        filled += "bambooPlanKey"
+    for (repo in repos) {
+        val rootPath = repo.localVcsRootPath?.takeIf { it.isNotBlank() } ?: continue
+        val constants = BambooSpecsParser.parseConstants(Paths.get(rootPath))
+        if (constants.isEmpty()) continue
+        applyBambooSpecsToRepo(repo, constants, filled)
     }
-    return filled
 }
 
 fun detectGitDerivable(filled: MutableList<String>) {
@@ -872,30 +1016,81 @@ fun detectGitDerivable(filled: MutableList<String>) {
 }
 
 fun detectSonarKey(filled: MutableList<String>) {
-    val detected = project.getService(SonarKeyDetector::class.java)?.detect() ?: return
-    val settings = PluginSettings.getInstance(project).state
-    val current = settings.sonarProjectKey
-    val updated = fillIfEmpty(current, detected)
-    if (updated != current && !updated.isNullOrBlank()) {
-        settings.sonarProjectKey = updated
-        filled += "sonarProjectKey"
+    val detector = project.getService(SonarKeyDetector::class.java) ?: return
+    val settings = PluginSettings.getInstance(project)
+    val repos = settings.getRepos()
+
+    if (repos.isEmpty()) {
+        val detected = detector.detect() ?: return
+        val state = settings.state
+        val updated = fillIfEmpty(state.sonarProjectKey, detected)
+        if (updated != state.sonarProjectKey && !updated.isNullOrBlank()) {
+            state.sonarProjectKey = updated
+            filled += "global.sonarProjectKey"
+        }
+        return
+    }
+
+    for (repo in repos) {
+        val rootPath = repo.localVcsRootPath?.takeIf { it.isNotBlank() } ?: continue
+        val detected = detector.detectForPath(rootPath) ?: continue
+        val updated = fillIfEmpty(repo.sonarProjectKey, detected)
+        if (updated != repo.sonarProjectKey && !updated.isNullOrBlank()) {
+            repo.sonarProjectKey = updated
+            filled += "${repoLabel(repo)}.sonarProjectKey"
+        }
     }
 }
 
-suspend fun detectBambooPlan(filled: MutableList<String> = mutableListOf()) {
-    val settings = PluginSettings.getInstance(project).state
-    if (settings.bambooPlanKey.isNotBlank()) return
-    val gitRepo = GitRepositoryManager.getInstance(project).repositories.firstOrNull() ?: return
-    val remoteUrl = gitRepo.remotes.firstOrNull()?.firstUrl ?: return
-    val planService = project.getService(
-        Class.forName("com.workflow.orchestrator.bamboo.service.PlanDetectionService")
-    ) as? Any ?: return
-    // Call autoDetectIfMissing via reflection to avoid :core depending on :bamboo
-    val method = planService.javaClass.getMethod("autoDetectIfMissing", String::class.java, String::class.java)
-    val detected = method.invoke(planService, "", remoteUrl) as? String ?: return
-    settings.bambooPlanKey = detected
-    filled += "bambooPlanKey"
+suspend fun detectBambooPlan(filled: MutableList<String>) {
+    val settings = PluginSettings.getInstance(project)
+    val repos = settings.getRepos()
+    val gitRepos = GitRepositoryManager.getInstance(project).repositories
+
+    if (repos.isEmpty()) {
+        // Fallback: single global plan key from first git repo
+        val state = settings.state
+        if (state.bambooPlanKey.isNotBlank()) return
+        val remoteUrl = gitRepos.firstOrNull()?.remotes?.firstOrNull()?.firstUrl ?: return
+        val detected = invokeAutoDetectIfMissing("", remoteUrl) ?: return
+        state.bambooPlanKey = detected
+        filled += "global.bambooPlanKey"
+        return
+    }
+
+    // Multi-repo: iterate over git repos, match each to a RepoConfig by path
+    for (gitRepo in gitRepos) {
+        val rootPath = gitRepo.root.path
+        val repoConfig = settings.getRepoForPath(rootPath) ?: continue
+        if (repoConfig.bambooPlanKey.isNotBlank()) continue
+        val remoteUrl = gitRepo.remotes.firstOrNull()?.firstUrl ?: continue
+        val detected = invokeAutoDetectIfMissing(repoConfig.bambooPlanKey, remoteUrl) ?: continue
+        repoConfig.bambooPlanKey = detected
+        filled += "${repoLabel(repoConfig)}.bambooPlanKey"
+    }
 }
+
+/** Reflection wrapper to call PlanDetectionService without :core depending on :bamboo. */
+private fun invokeAutoDetectIfMissing(currentPlanKey: String, gitRemoteUrl: String): String? {
+    return try {
+        val planServiceClass = Class.forName("com.workflow.orchestrator.bamboo.service.PlanDetectionService")
+        val planService = project.getService(planServiceClass) ?: return null
+        val method = planServiceClass.getMethod("autoDetectIfMissing", String::class.java, String::class.java)
+        // The method is suspend; reflective call expects a Continuation. Use the
+        // kotlin.coroutines.jvm.internal helper or wrap with kotlinx.coroutines.runBlocking.
+        kotlinx.coroutines.runBlocking {
+            val callable = planServiceClass.kotlin.members.firstOrNull { it.name == "autoDetectIfMissing" }
+                ?: return@runBlocking null
+            callable.callSuspend(planService, currentPlanKey, gitRemoteUrl) as? String
+        }
+    } catch (e: Exception) {
+        log.warn("[AutoDetect] Failed to invoke PlanDetectionService.autoDetectIfMissing reflectively", e)
+        null
+    }
+}
+
+private fun repoLabel(repo: RepoConfig): String =
+    repo.name.takeIf { it.isNotBlank() } ?: repo.bitbucketRepoSlug.takeIf { it.isNotBlank() } ?: "unnamed"
 
 private fun showNotification(result: AutoDetectResult) {
     val msg = "Auto-detected project keys: ${result.filledFields.joinToString(", ")}. " +
@@ -919,11 +1114,83 @@ init {
         }
     }
 }
+
+companion object {
+    /** Returns `detected` only when `current` is null/blank AND `detected` is non-blank. */
+    fun fillIfEmpty(current: String?, detected: String?): String? =
+        if (current.isNullOrBlank() && !detected.isNullOrBlank()) detected else current
+
+    /** Visible for testing. Writes constants into a state object via fill-only-empty. */
+    internal fun applyBambooSpecsToState(
+        state: PluginSettings.State,
+        constants: Map<String, String>,
+        label: String,
+        filled: MutableList<String>
+    ) {
+        val newDocker = fillIfEmpty(state.dockerTagKey, constants["DOCKER_TAG_NAME"])
+        if (newDocker != state.dockerTagKey && !newDocker.isNullOrBlank()) {
+            state.dockerTagKey = newDocker
+            filled += "$label.dockerTagKey"
+        }
+        val newPlan = fillIfEmpty(state.bambooPlanKey, constants["PLAN_KEY"])
+        if (newPlan != state.bambooPlanKey && !newPlan.isNullOrBlank()) {
+            state.bambooPlanKey = newPlan
+            filled += "$label.bambooPlanKey"
+        }
+    }
+
+    /** Visible for testing. Writes constants into a repo via fill-only-empty. */
+    internal fun applyBambooSpecsToRepo(
+        repo: RepoConfig,
+        constants: Map<String, String>,
+        filled: MutableList<String>
+    ) {
+        val label = repo.name.takeIf { it.isNotBlank() }
+            ?: repo.bitbucketRepoSlug.takeIf { it.isNotBlank() } ?: "unnamed"
+        val newDocker = fillIfEmpty(repo.dockerTagKey, constants["DOCKER_TAG_NAME"])
+        if (newDocker != repo.dockerTagKey && !newDocker.isNullOrBlank()) {
+            repo.dockerTagKey = newDocker
+            filled += "$label.dockerTagKey"
+        }
+        val newPlan = fillIfEmpty(repo.bambooPlanKey, constants["PLAN_KEY"])
+        if (newPlan != repo.bambooPlanKey && !newPlan.isNullOrBlank()) {
+            repo.bambooPlanKey = newPlan
+            filled += "$label.bambooPlanKey"
+        }
+    }
+
+    /** Visible for testing. Mirrors primary repo's values to global state via fill-only-empty. */
+    internal fun mirrorPrimaryToGlobal(
+        state: PluginSettings.State,
+        primary: RepoConfig,
+        filled: MutableList<String>
+    ) {
+        val newSonar = fillIfEmpty(state.sonarProjectKey, primary.sonarProjectKey)
+        if (newSonar != state.sonarProjectKey && !newSonar.isNullOrBlank()) {
+            state.sonarProjectKey = newSonar
+            filled += "global.sonarProjectKey"
+        }
+        val newPlan = fillIfEmpty(state.bambooPlanKey, primary.bambooPlanKey)
+        if (newPlan != state.bambooPlanKey && !newPlan.isNullOrBlank()) {
+            state.bambooPlanKey = newPlan
+            filled += "global.bambooPlanKey"
+        }
+        val newDocker = fillIfEmpty(state.dockerTagKey, primary.dockerTagKey)
+        if (newDocker != state.dockerTagKey && !newDocker.isNullOrBlank()) {
+            state.dockerTagKey = newDocker
+            filled += "global.dockerTagKey"
+        }
+    }
+}
 ```
 
-> **Note on `:core` -> `:bamboo` reflection:** The dependency rule (`:core` cannot depend on feature modules) forces us to use reflection for the bamboo plan service. If a future task adds `BambooService` to the unified service layer in `:core`, this reflection can be replaced with a direct call.
+> **Note on `:core` -> `:bamboo` reflection:** The dependency rule (`:core` cannot depend on feature modules) forces us to use reflection for the bamboo plan service. The reflective `callSuspend` call (from `kotlin-reflect`) handles the suspend signature; if `kotlin-reflect` isn't already on the `:core` classpath, add it as an `implementation` dependency in `core/build.gradle.kts`. If a future task adds `BambooService` to the unified service layer in `:core`, this reflection can be replaced with a direct call.
 
 > **Note on `detectGitDerivable`:** Currently a no-op because `RepoContextResolver.autoDetectRepos()` already populates `RepoConfig` entries with the git-derived fields, and that path is owned by `RepositoriesConfigurable`. We keep the method as a hook so the trigger wiring (file listener for `.git/config`) has a place to call.
+
+> **Note on `runBlocking` in `runBlockingPlan` and `invokeAutoDetectIfMissing`:** Acceptable because `detectAll()` runs on `Dispatchers.IO`, never on the EDT. The brief block is needed to bridge the suspend `detectBambooPlan()` into the synchronous `runDetector` helper and to bridge the reflective suspend call.
+
+> **Companion-object visibility:** `applyBambooSpecsToState`, `applyBambooSpecsToRepo`, and `mirrorPrimaryToGlobal` are `internal` companion methods so the tests in the same module can call them statically without constructing a real `Project`. The instance methods `detectFromBambooSpecs`, `detectSonarKey`, etc. delegate to these.
 
 - [ ] **Step 4: Run tests**
 
@@ -1277,12 +1544,14 @@ both outcomes."
 
 ## Phase 6: Integration
 
-### Task 9: Integration test with fixture project
+### Task 9: Integration test with fixture project (single + multi-repo)
 
 **Files:**
 - Create: `core/src/test/testData/auto-detect-project/.git/config`
 - Create: `core/src/test/testData/auto-detect-project/pom.xml`
 - Create: `core/src/test/testData/auto-detect-project/bamboo-specs/src/main/java/constants/PlanProperties.java`
+- Create: `core/src/test/testData/auto-detect-multi-repo/service-a/bamboo-specs/src/main/java/constants/PlanProperties.java`
+- Create: `core/src/test/testData/auto-detect-multi-repo/service-b/bamboo-specs/src/main/java/constants/PlanProperties.java`
 - Create: `core/src/test/kotlin/com/workflow/orchestrator/core/autodetect/AutoDetectIntegrationTest.kt`
 
 - [ ] **Step 1: Create the fixture tree**
@@ -1331,6 +1600,30 @@ public class PlanProperties {
 }
 ```
 
+Create `core/src/test/testData/auto-detect-multi-repo/service-a/bamboo-specs/src/main/java/constants/PlanProperties.java`:
+
+```java
+package constants;
+
+public class PlanProperties {
+    private static final String REPOSITORY_NAME = "service-a";
+    private static final String PLAN_KEY = "SERVICEA";
+    private static final String DOCKER_TAG_NAME = "ServiceADockerTag";
+}
+```
+
+Create `core/src/test/testData/auto-detect-multi-repo/service-b/bamboo-specs/src/main/java/constants/PlanProperties.java`:
+
+```java
+package constants;
+
+public class PlanProperties {
+    private static final String REPOSITORY_NAME = "service-b";
+    private static final String PLAN_KEY = "SERVICEB";
+    private static final String DOCKER_TAG_NAME = "ServiceBDockerTag";
+}
+```
+
 - [ ] **Step 2: Write the integration test**
 
 Create `core/src/test/kotlin/com/workflow/orchestrator/core/autodetect/AutoDetectIntegrationTest.kt`:
@@ -1367,19 +1660,64 @@ class AutoDetectIntegrationTest {
     }
 
     @Test
-    fun `applyBambooSpecsConstants fills all empty fields from fixture`() {
+    fun `applyBambooSpecsToState fills all empty fields from single-repo fixture`() {
         val constants = BambooSpecsParser.parseConstants(fixtureRoot)
-        val settings = com.workflow.orchestrator.core.settings.PluginSettings.State()
-        // settings.dockerTagKey and settings.bambooPlanKey are "" by default
+        val state = com.workflow.orchestrator.core.settings.PluginSettings.State()
+        val filled = mutableListOf<String>()
 
-        // Use the companion's static-like method via a stub orchestrator
-        // (we can't construct AutoDetectOrchestrator without a project, so we
-        // test the pure rule directly via fillIfEmpty + manual application)
-        settings.dockerTagKey = AutoDetectOrchestrator.fillIfEmpty(settings.dockerTagKey, constants["DOCKER_TAG_NAME"]) ?: ""
-        settings.bambooPlanKey = AutoDetectOrchestrator.fillIfEmpty(settings.bambooPlanKey, constants["PLAN_KEY"]) ?: ""
+        AutoDetectOrchestrator.applyBambooSpecsToState(state, constants, "global", filled)
 
-        assertEquals("MySampleServiceDockerTag", settings.dockerTagKey)
-        assertEquals("MYSAMPLESERVICE", settings.bambooPlanKey)
+        assertEquals("MySampleServiceDockerTag", state.dockerTagKey)
+        assertEquals("MYSAMPLESERVICE", state.bambooPlanKey)
+        assertTrue(filled.contains("global.dockerTagKey"))
+        assertTrue(filled.contains("global.bambooPlanKey"))
+    }
+
+    @Test
+    fun `multi-repo fixture fills each repo with its own constants`() {
+        val multiRoot: Path = Paths.get("src/test/testData/auto-detect-multi-repo")
+        val repoA = com.workflow.orchestrator.core.settings.RepoConfig().apply {
+            name = "service-a"
+            localVcsRootPath = multiRoot.resolve("service-a").toString()
+        }
+        val repoB = com.workflow.orchestrator.core.settings.RepoConfig().apply {
+            name = "service-b"
+            localVcsRootPath = multiRoot.resolve("service-b").toString()
+        }
+        val filled = mutableListOf<String>()
+
+        for (repo in listOf(repoA, repoB)) {
+            val constants = BambooSpecsParser.parseConstants(Paths.get(repo.localVcsRootPath!!))
+            AutoDetectOrchestrator.applyBambooSpecsToRepo(repo, constants, filled)
+        }
+
+        assertEquals("ServiceADockerTag", repoA.dockerTagKey)
+        assertEquals("SERVICEA", repoA.bambooPlanKey)
+        assertEquals("ServiceBDockerTag", repoB.dockerTagKey)
+        assertEquals("SERVICEB", repoB.bambooPlanKey)
+        assertTrue(filled.contains("service-a.dockerTagKey"))
+        assertTrue(filled.contains("service-a.bambooPlanKey"))
+        assertTrue(filled.contains("service-b.dockerTagKey"))
+        assertTrue(filled.contains("service-b.bambooPlanKey"))
+    }
+
+    @Test
+    fun `multi-repo mirror copies primary repo values to global state`() {
+        val state = com.workflow.orchestrator.core.settings.PluginSettings.State()
+        val primary = com.workflow.orchestrator.core.settings.RepoConfig().apply {
+            name = "service-a"
+            isPrimary = true
+            sonarProjectKey = "service-a"
+            bambooPlanKey = "SERVICEA"
+            dockerTagKey = "ServiceADockerTag"
+        }
+        val filled = mutableListOf<String>()
+
+        AutoDetectOrchestrator.mirrorPrimaryToGlobal(state, primary, filled)
+
+        assertEquals("service-a", state.sonarProjectKey)
+        assertEquals("SERVICEA", state.bambooPlanKey)
+        assertEquals("ServiceADockerTag", state.dockerTagKey)
     }
 }
 ```
@@ -1407,6 +1745,8 @@ Expected: All green. `verifyPlugin` passes.
 ```
 
 In the sandbox IDE:
+
+**Single-repo scenario:**
 1. Open a project that has `bamboo-specs/src/main/java/constants/PlanProperties.java` with a `DOCKER_TAG_NAME` constant.
 2. Verify a notification appears: "Auto-detected project keys: ..."
 3. Open Settings → Tools → Workflow Orchestrator → Repositories. Verify `dockerTagKey` is filled.
@@ -1415,16 +1755,28 @@ In the sandbox IDE:
 6. Switch git branches. Verify the orchestrator re-runs (check the IDE log for `[AutoDetect] BranchChanged`).
 7. Edit `bamboo-specs/.../PlanProperties.java`. Verify the file listener fires within 500ms (check log for `[AutoDetect:FileListener] bamboo-specs changed`).
 
+**Multi-repo scenario:**
+8. Open a project that has multiple git repositories (e.g. via `File → Project Structure → VCS Mappings`, add 2+ Git roots). Each repo has its own `bamboo-specs/.../PlanProperties.java` with different `DOCKER_TAG_NAME` and `PLAN_KEY` constants. Each repo's root pom.xml has its own `sonar.projectKey`.
+9. Click Settings → Tools → Workflow Orchestrator → Repositories → Auto-Detect.
+10. Verify the repo table shows multiple repos, each with its own `dockerTagKey`, `bambooPlanKey`, and `sonarProjectKey` filled from that repo's files (not all the same value).
+11. Edit one repo's `bamboo-specs/.../PlanProperties.java`. Verify only that repo's docker tag re-detects (other repos unchanged).
+12. Verify the global `PluginSettings.sonarProjectKey` (visible on the Sonar settings page) shows the **primary** repo's value.
+13. Manually set one repo's `dockerTagKey` to a custom value and click Auto-Detect again. Verify only the empty repos get filled; the manually-set one is preserved.
+
 - [ ] **Step 6: Commit**
 
 ```bash
 git add core/src/test/testData/auto-detect-project \
+        core/src/test/testData/auto-detect-multi-repo \
         core/src/test/kotlin/com/workflow/orchestrator/core/autodetect/AutoDetectIntegrationTest.kt
-git commit -m "test(autodetect): add fixture project + integration test
+git commit -m "test(autodetect): add single + multi-repo fixtures + integration test
 
-Realistic fixture tree (.git/config, pom.xml, PlanProperties.java)
-for end-to-end verification of BambooSpecsParser and the
-fill-only-empty rule. Manual smoke steps documented in plan."
+Single-repo fixture (.git/config, pom.xml, PlanProperties.java) and
+multi-repo fixture (service-a + service-b each with their own
+bamboo-specs constants). Verifies the fill-only-empty rule and the
+per-repo write paths for BambooSpecsParser, applyBambooSpecsToRepo,
+and mirrorPrimaryToGlobal. Manual smoke steps include multi-repo
+scenarios."
 ```
 
 ---
@@ -1438,22 +1790,28 @@ fill-only-empty rule. Manual smoke steps documented in plan."
 - [x] Goal 3 (auto-trigger on project open / branch / file changes): Tasks 5 (BranchChanged subscription), 6 (startup activity), 7 (file listener)
 - [x] Goal 4 (never overwrite user-set values): Task 4 (`fillIfEmpty`), tests in Tasks 4 and 5
 - [x] Goal 5 (manual buttons still work): Tasks 2 (sonar), 8 (repositories)
-- [x] SonarKeyDetector extraction: Task 2
+- [x] **Goal 6 (multi-repo per-repo writes for sonar / docker tag / bamboo plan):** Task 2 (`SonarKeyDetector.detectForPath`), Task 5 (orchestrator iterates over `getRepos()`, writes to each `RepoConfig`, mirrors primary to global), Task 9 (multi-repo fixture + tests)
+- [x] SonarKeyDetector extraction + `detectForPath`: Task 2
 - [x] PlanDetectionService.autoDetectIfMissing: Task 3
 - [x] One-time notification: Task 5
 - [x] BambooSpecsParser tests: Task 1
-- [x] AutoDetectOrchestrator tests: Tasks 4, 5
-- [x] SonarKeyDetector tests: Task 2
-- [x] Integration test: Task 9
+- [x] AutoDetectOrchestrator tests (single-repo + multi-repo): Tasks 4, 5
+- [x] SonarKeyDetector tests (`detect` + `detectForPath`): Task 2
+- [x] Integration test (single + multi-repo fixtures): Task 9
+- [x] `mirrorPrimaryToGlobal` helper + tests: Task 5
 
 **Placeholder scan:** No TBD/TODO/"add appropriate" placeholders. Every code step shows the actual code.
 
 **Type consistency:**
 - `BambooSpecsParser.parseConstants(Path): Map<String, String>` — used consistently in Tasks 1, 5, 9.
 - `AutoDetectResult(filledFields: List<String>, errors: List<String>)` — Task 4 defines, Task 5 returns it, Task 8 reads `.anyFilled` and `.filledFields`.
-- `AutoDetectOrchestrator.fillIfEmpty(String?, String?): String?` — Task 4 defines, Task 5 uses, Task 9 uses.
-- `PlanDetectionService.autoDetectIfMissing(currentPlanKey: String, gitRemoteUrl: String): String?` — Task 3 defines, Task 5 calls via reflection.
-- `SonarKeyDetector.detect(): String?` — Task 2 defines, Task 2 step 5 uses, Task 5 uses.
+- `AutoDetectOrchestrator.fillIfEmpty(String?, String?): String?` — Task 4 defines, Task 5 keeps in expanded companion, Task 9 uses.
+- `AutoDetectOrchestrator.applyBambooSpecsToState(State, Map, String, MutableList): Unit` — Task 5 defines as internal companion, Tasks 5 + 9 test.
+- `AutoDetectOrchestrator.applyBambooSpecsToRepo(RepoConfig, Map, MutableList): Unit` — Task 5 defines as internal companion, Tasks 5 + 9 test.
+- `AutoDetectOrchestrator.mirrorPrimaryToGlobal(State, RepoConfig, MutableList): Unit` — Task 5 defines as internal companion, Tasks 5 + 9 test.
+- `PlanDetectionService.autoDetectIfMissing(currentPlanKey: String, gitRemoteUrl: String): String?` — Task 3 defines as suspend, Task 5 calls via `callSuspend` reflection.
+- `SonarKeyDetector.detect(): String?` — Task 2 defines, Task 2 step 5 uses, Task 5 uses for no-repo fallback.
+- `SonarKeyDetector.detectForPath(repoRootPath: String): String?` — Task 2 defines, Task 5 uses for per-repo iteration.
 
 **Risks not covered by tests:**
 - File listener debounce timing — covered by manual smoke in Task 9 step 5.
