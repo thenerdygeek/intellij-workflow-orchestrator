@@ -493,11 +493,19 @@ class AgentLoop(
                 val maxRetries = if (isTimeoutError) MAX_TIMEOUT_RETRIES else MAX_API_RETRIES
                 if (apiResult.type in RETRYABLE_ERRORS && apiRetryCount < maxRetries) {
                     apiRetryCount++
+
+                    // Tracks whether any of the three recovery layers (L1-fallback,
+                    // L1-recycle, L2) has already swapped the brain in this iteration.
+                    // Used so the L1-recycle branch can fire even when L1-fallback is
+                    // enabled but its chain is exhausted (nextModel == null) — otherwise
+                    // the loop would retry against the same dead socket.
+                    var brainSwapAttempted = false
+
                     // L1-fallback: Smart model fallback on timeout/network errors (when fallback is enabled)
                     if (fallbackManager != null && brainFactory != null && apiResult.type in TIMEOUT_ERRORS) {
                         val oldModel = brain.modelId
                         if (pendingEscalation) {
-                            // Escalation back to primary failed
+                            // Escalation back to primary failed — always swaps
                             val revertModel = fallbackManager.onEscalationFailed()
                             brain = brainFactory.invoke(revertModel, "Fallback escalation failed — reverting from $oldModel to $revertModel")
                             onModelSwitch?.invoke(oldModel, revertModel, "Escalation failed — reverting")
@@ -506,8 +514,9 @@ class AgentLoop(
                             // Tier swap: resync L2 index + refill recycle budget for the new tier
                             l2TierIdx = cachedFallbackChain?.indexOf(revertModel) ?: -1
                             sameTierRecycles = 0
+                            brainSwapAttempted = true
                         } else {
-                            // Normal fallback — advance down the chain
+                            // Normal fallback — advance down the chain if possible
                             val nextModel = fallbackManager.onNetworkError()
                             if (nextModel != null) {
                                 brain = brainFactory.invoke(nextModel, "Network error on $oldModel: ${apiResult.type.name} — falling back to $nextModel")
@@ -516,20 +525,28 @@ class AgentLoop(
                                 // Tier swap: resync L2 index + refill recycle budget for the new tier
                                 l2TierIdx = cachedFallbackChain?.indexOf(nextModel) ?: -1
                                 sameTierRecycles = 0
+                                brainSwapAttempted = true
                             }
+                            // else: fallback chain exhausted — fall through to L1-recycle below
+                            // so we at least retry against a fresh OkHttpClient instead of the
+                            // same dead socket.
                         }
                     }
-                    // L1-recycle: Same-model brain recycle when fallback is NOT engaged.
+
+                    // L1-recycle: Same-model brain recycle when L1-fallback did not swap.
                     // Throws away the OpenAiCompatBrain (and its OkHttpClient + ConnectionPool +
                     // activeCall ref) and rebuilds it with the SAME model id. Fixes broken
                     // sockets / dead TCP state that OkHttp can't detect (e.g. corporate proxy
                     // RST injection mid-stream). Conversation context is unaffected — we only
                     // recycle the network plumbing, not the message history.
                     //
-                    // Skipped if fallback already engaged above (model id changed). Bounded by
-                    // MAX_SAME_TIER_RECYCLES — beyond that, the issue likely isn't socket-level
-                    // and L2 tier escalation takes over.
-                    else if (brainFactory != null && apiResult.type in TIMEOUT_ERRORS && sameTierRecycles < MAX_SAME_TIER_RECYCLES) {
+                    // Fires when either:
+                    //   - fallback is disabled (original motivation), OR
+                    //   - fallback is enabled but its chain is exhausted (M3 fix: was leaving
+                    //     the loop to retry against the same dead socket)
+                    // Bounded by MAX_SAME_TIER_RECYCLES — beyond that, the issue likely is
+                    // not socket-level and L2 tier escalation takes over.
+                    if (!brainSwapAttempted && brainFactory != null && apiResult.type in TIMEOUT_ERRORS && sameTierRecycles < MAX_SAME_TIER_RECYCLES) {
                         sameTierRecycles++
                         val sameModel = brain.modelId
                         val reason = "Same-tier recycle #$sameTierRecycles on ${apiResult.type.name}: ${apiResult.message.take(120)}"
@@ -545,17 +562,20 @@ class AgentLoop(
                         // indicator (amber border + Zap icon) with the recycle reason as tooltip,
                         // matching the existing onModelSwitch convention.
                         onModelSwitch?.invoke(sameModel, sameModel, "Brain recycled #$sameTierRecycles — fresh OkHttp pool (${apiResult.type.name})")
+                        brainSwapAttempted = true
                     }
+
                     // L2: Tier escalation when same-tier recycles are exhausted and an
                     // alternate tier is available. Only engages when fallbackManager is
-                    // null (when fallback is enabled, the existing fallback path above
-                    // handles tier switching). Crosses the gateway routing layer for
-                    // -latest aliased models — the only client-side intervention that
-                    // actually changes which backend serves the request.
+                    // null (when fallback is enabled, fallbackManager owns chain advancement
+                    // and L2 would race against it on the same chain). Crosses the gateway
+                    // routing layer for -latest aliased models — the only client-side
+                    // intervention that actually changes which backend serves the request.
                     //
                     // Guard order matters: check l2TierIdx >= 0 BEFORE the size arithmetic
                     // so the sentinel "model not in chain" (-1) cleanly disables L2.
-                    else if (
+                    if (
+                        !brainSwapAttempted &&
                         fallbackManager == null &&
                         brainFactory != null &&
                         apiResult.type in TIMEOUT_ERRORS &&
@@ -577,6 +597,7 @@ class AgentLoop(
                         brain = brainFactory.invoke(newTierModel, reason)
                         onModelSwitch?.invoke(oldModel, newTierModel, "Same-tier recovery exhausted — escalating tier")
                         sameTierRecycles = 0  // reset budget for the new tier
+                        brainSwapAttempted = true
                     }
                     // Use server-provided retry delay if available (ported from Cline's retry.ts),
                     // otherwise fall back to exponential backoff

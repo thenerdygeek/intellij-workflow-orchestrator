@@ -627,13 +627,20 @@ class AgentService(private val project: Project) : Disposable {
                         // stay monotonic across the new brain's calls.
                         b.setSharedApiCallCounter(sharedApiCounter)
                     }
-                    // Update the cancel-button reference so user-initiated cancel hits the
-                    // live brain. Without this, "Stop" would cancel the now-discarded brain.
+                    // Track the currently-live brain so the finally block at task end clears
+                    // the api-debug dir on the right instance (a recycled brain, not a stale
+                    // discarded one). Cancel propagation doesn't use brainRef — it goes
+                    // through `task.loop.cancel()` + `task.job.cancel()` which propagate
+                    // coroutine cancellation through brain.chatStream()'s suspension points
+                    // regardless of which brain instance is currently in use.
                     brainRef = newBrain
 
                     // Write a recycle marker file into api-debug/ so the directory listing
                     // tells the recovery story: "after call NNN, the brain was recycled
                     // because <reason>; the next call comes from a fresh OkHttpClient".
+                    // The api-debug/ directory is already created on first access by
+                    // SourcegraphChatClient.apiDebugDir getter when it dumps a call, so we
+                    // don't need to mkdirs() again here.
                     try {
                         val recycleIdx = recycleMarkerCounter.incrementAndGet()
                         val lastCallNum = sharedApiCounter.get()
@@ -641,7 +648,6 @@ class AgentService(private val project: Project) : Disposable {
                             sessionDebugDir,
                             "api-debug/recycle-${String.format("%03d", recycleIdx)}.txt"
                         )
-                        markerFile.parentFile.mkdirs()
                         markerFile.writeText(buildString {
                             appendLine("=== Brain Recycle #$recycleIdx === ${java.time.Instant.now()} ===")
                             appendLine("Model:        $modelId")

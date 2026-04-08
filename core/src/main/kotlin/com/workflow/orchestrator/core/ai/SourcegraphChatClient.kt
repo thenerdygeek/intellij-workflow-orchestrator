@@ -622,8 +622,17 @@ class SourcegraphChatClient(
      * The session owns the counter's lifecycle — clients only read/increment it.
      * This makes brain recycling and multi-message chats produce non-overlapping
      * `call-NNN-{request,response,error}.txt` filenames in `api-debug/`.
+     *
+     * Write access is restricted to [setSharedApiCallCounter] so callers can't
+     * silently swap the counter mid-call and desynchronise [lastDumpedCallNum].
      */
     @Volatile var sharedApiCallCounter: AtomicInteger? = null
+        private set
+
+    /** Inject the session-scoped API call counter. See [sharedApiCallCounter]. */
+    fun setSharedApiCallCounter(counter: AtomicInteger) {
+        sharedApiCallCounter = counter
+    }
 
     /** Local fallback counter for callers that don't inject a shared one (tests, commit msg). */
     @Volatile private var localApiCallCounter = 0
@@ -745,6 +754,10 @@ class SourcegraphChatClient(
                 appendLine("HTTP $code")
                 appendLine(body)
             })
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            // Match dumpApiRequest/dumpApiResponse: log at debug so dump failures
+            // are observable in idea.log without polluting warn-level output.
+            log.debug("[Agent:API] Failed to dump error: ${e.message}")
+        }
     }
 }

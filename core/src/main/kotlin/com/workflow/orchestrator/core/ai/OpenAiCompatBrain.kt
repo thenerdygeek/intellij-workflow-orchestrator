@@ -112,6 +112,6 @@ class OpenAiCompatBrain(
      * session). When null, the inner client falls back to its local counter.
      */
     fun setSharedApiCallCounter(counter: java.util.concurrent.atomic.AtomicInteger) {
-        client.sharedApiCallCounter = counter
+        client.setSharedApiCallCounter(counter)
     }
 }
