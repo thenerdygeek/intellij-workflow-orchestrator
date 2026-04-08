@@ -54,31 +54,19 @@ class AutoDetectFileListener : BulkFileListener {
             if (bambooSpecsTouched) {
                 bambooSpecsJob = debounce(bambooSpecsJob) {
                     log.info("[AutoDetect:FileListener] bamboo-specs changed → re-running")
-                    try {
-                        orchestrator.detectFromBambooSpecs(mutableListOf())
-                    } catch (e: Exception) {
-                        log.warn("[AutoDetect:FileListener] bamboo-specs re-run failed", e)
-                    }
+                    orchestrator.runPartial { filled -> detectFromBambooSpecs(filled) }
                 }
             }
             if (pomTouched) {
                 pomJob = debounce(pomJob) {
                     log.info("[AutoDetect:FileListener] pom.xml changed → re-running sonar")
-                    try {
-                        orchestrator.detectSonarKey(mutableListOf())
-                    } catch (e: Exception) {
-                        log.warn("[AutoDetect:FileListener] sonar re-run failed", e)
-                    }
+                    orchestrator.runPartial { filled -> detectSonarKey(filled) }
                 }
             }
             if (gitConfigTouched) {
                 gitConfigJob = debounce(gitConfigJob) {
                     log.info("[AutoDetect:FileListener] .git/config changed → re-running git-derivable")
-                    try {
-                        orchestrator.detectGitDerivable(mutableListOf())
-                    } catch (e: Exception) {
-                        log.warn("[AutoDetect:FileListener] git-derivable re-run failed", e)
-                    }
+                    orchestrator.runPartial { filled -> detectGitDerivable(filled) }
                 }
             }
         }

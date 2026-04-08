@@ -15,6 +15,7 @@ import com.workflow.orchestrator.core.settings.RepoConfig
 import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
@@ -42,7 +43,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class AutoDetectOrchestrator(private val project: Project) : Disposable {
 
     private val log = logger<AutoDetectOrchestrator>()
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    internal val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val firstSweepNotified = AtomicBoolean(false)
     private val detectionMutex = Mutex()
 
@@ -103,6 +104,30 @@ class AutoDetectOrchestrator(private val project: Project) : Disposable {
             result
         }
     }
+
+    /**
+     * Runs a targeted partial detection (sub-sweep) under the same mutex as detectAll().
+     * Used by AutoDetectFileListener for incremental re-detection on file changes
+     * without the cost of a full sweep. The block receives a `filled` list which is
+     * discarded after execution (partial sweeps don't surface results to the user).
+     */
+    suspend fun runPartial(block: suspend AutoDetectOrchestrator.(MutableList<String>) -> Unit) {
+        detectionMutex.withLock {
+            val filled = mutableListOf<String>()
+            try {
+                block(filled)
+            } catch (e: Exception) {
+                log.warn("[AutoDetect] Partial detection failed", e)
+            }
+        }
+    }
+
+    /**
+     * Fire-and-forget version of detectAll() that uses the orchestrator's own
+     * coroutine scope. Safe for callers like startup activities and file listeners
+     * that cannot or should not await the result.
+     */
+    fun launchDetectAll(): Job = scope.launch { detectAll() }
 
     private inline fun runDetector(
         name: String,
