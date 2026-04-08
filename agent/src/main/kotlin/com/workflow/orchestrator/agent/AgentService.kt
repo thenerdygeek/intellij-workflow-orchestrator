@@ -580,16 +580,25 @@ class AgentService(private val project: Project) : Disposable {
 
                 // Network error strategy
                 val strategy = agentSettings.state.networkErrorStrategy ?: "none"
-                val fallbackManager = if (strategy == "model_fallback") {
+
+                // Build the fallback chain ONCE — used by both ModelFallbackManager (when
+                // enabled) AND L2 tier escalation (always, when chain has >=2 entries).
+                // Order: Opus thinking → Opus → Sonnet thinking → Sonnet (no Haiku).
+                val cachedFallbackChain = run {
                     val cachedModels = ModelCache.getCached()
                     val chain = ModelCache.buildFallbackChain(cachedModels)
                     if (chain.size > 1) {
-                        log.info("[Agent] Model fallback enabled, chain: ${chain.map { it.substringAfterLast("::") }}")
-                        ModelFallbackManager(chain)
+                        log.info("[Agent] Fallback chain available: ${chain.map { it.substringAfterLast("::") }}")
+                        chain
                     } else {
-                        log.info("[Agent] Model fallback enabled but chain has ≤1 model, skipping")
+                        log.info("[Agent] Fallback chain has ≤1 model — L2 tier escalation disabled")
                         null
                     }
+                }
+
+                val fallbackManager = if (strategy == "model_fallback" && cachedFallbackChain != null) {
+                    log.info("[Agent] Model fallback enabled (L1 takes priority over L2)")
+                    ModelFallbackManager(cachedFallbackChain)
                 } else null
                 val compactOnTimeoutExhaustion = strategy == "context_compaction"
 
@@ -798,6 +807,7 @@ class AgentService(private val project: Project) : Disposable {
                     onSteeringDrained = onSteeringDrained,
                     fallbackManager = fallbackManager,
                     brainFactory = brainFactory,
+                    cachedFallbackChain = cachedFallbackChain,
                     onModelSwitch = onModelSwitch,
                     compactOnTimeoutExhaustion = compactOnTimeoutExhaustion,
                     onCheckpoint = {

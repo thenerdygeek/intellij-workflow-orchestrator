@@ -221,8 +221,18 @@ class AgentLoop(
      * Used by:
      *   - the model fallback manager to switch models mid-loop (reason describes the switch)
      *   - same-tier brain recycling on stream/timeout errors (reason describes the error)
+     *   - L2 tier escalation when same-tier recycles are exhausted and fallback is disabled
      */
     private val brainFactory: (suspend (modelId: String, reason: String?) -> LlmBrain)? = null,
+    /**
+     * Always-built fallback chain (Opus thinking → Opus → Sonnet thinking → Sonnet, no Haiku)
+     * used by L2 tier escalation when [fallbackManager] is null but the loop has exhausted
+     * same-tier brain recycles. Must contain at least 2 entries for L2 to engage.
+     *
+     * Built once at task start by AgentService from ModelCache.buildFallbackChain(). Independent
+     * from [fallbackManager] which handles the same chain when enableModelFallback is on.
+     */
+    private val cachedFallbackChain: List<String>? = null,
     /**
      * Callback fired when the loop switches to a different model.
      * Used by the UI to update the model chip and show a status message.
@@ -402,6 +412,13 @@ class AgentLoop(
          * Bounded by [MAX_SAME_TIER_RECYCLES].
          */
         var sameTierRecycles = 0
+        /**
+         * Index into [cachedFallbackChain] for L2 tier escalation. Starts at 0 (the
+         * primary model). Advances by 1 each time L2 escalation fires. Only used when
+         * [fallbackManager] is null — when fallback is enabled, ModelFallbackManager
+         * tracks its own index and L2 doesn't engage.
+         */
+        var l2TierIdx = 0
 
         while (!cancelled.get() && iteration < maxIterations) {
             iteration++
@@ -498,7 +515,7 @@ class AgentLoop(
                     //
                     // Skipped if fallback already engaged above (model id changed). Bounded by
                     // MAX_SAME_TIER_RECYCLES — beyond that, the issue likely isn't socket-level
-                    // and L2 tier escalation (commit 3) takes over.
+                    // and L2 tier escalation takes over.
                     else if (brainFactory != null && apiResult.type in TIMEOUT_ERRORS && sameTierRecycles < MAX_SAME_TIER_RECYCLES) {
                         sameTierRecycles++
                         val sameModel = brain.modelId
@@ -510,6 +527,34 @@ class AgentLoop(
                             "recycleCount" to sameTierRecycles
                         ))
                         brain = brainFactory.invoke(sameModel, reason)
+                    }
+                    // L2: Tier escalation when same-tier recycles are exhausted and an
+                    // alternate tier is available. Only engages when fallbackManager is
+                    // null (when fallback is enabled, the existing fallback path above
+                    // handles tier switching). Crosses the gateway routing layer for
+                    // -latest aliased models — the only client-side intervention that
+                    // actually changes which backend serves the request.
+                    else if (
+                        fallbackManager == null &&
+                        brainFactory != null &&
+                        apiResult.type in TIMEOUT_ERRORS &&
+                        sameTierRecycles >= MAX_SAME_TIER_RECYCLES &&
+                        cachedFallbackChain != null &&
+                        l2TierIdx < cachedFallbackChain.size - 1
+                    ) {
+                        l2TierIdx++
+                        val oldModel = brain.modelId
+                        val newTierModel = cachedFallbackChain[l2TierIdx]
+                        val reason = "L2 tier escalation: $MAX_SAME_TIER_RECYCLES same-tier recycles exhausted on ${apiResult.type.name}; advancing $oldModel → $newTierModel"
+                        LOG.warn("[Loop] L2 tier escalation: ${oldModel.substringAfterLast("::")} → ${newTierModel.substringAfterLast("::")}")
+                        onDebugLog?.invoke("warn", "tier_escalation", "Tier escalated after $MAX_SAME_TIER_RECYCLES recycles", mapOf(
+                            "fromModel" to oldModel,
+                            "toModel" to newTierModel,
+                            "tierIdx" to l2TierIdx
+                        ))
+                        brain = brainFactory.invoke(newTierModel, reason)
+                        onModelSwitch?.invoke(oldModel, newTierModel, "Same-tier recovery exhausted — escalating tier")
+                        sameTierRecycles = 0  // reset budget for the new tier
                     }
                     // Use server-provided retry delay if available (ported from Cline's retry.ts),
                     // otherwise fall back to exponential backoff
