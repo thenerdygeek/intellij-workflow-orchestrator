@@ -264,8 +264,19 @@ Tips:
         val uiLabel = "$description (${config.name})"
         runningAgents[agentId] = runner
         try {
+            // Emit a single explicit "spawn" event with the label so the UI can render
+            // exactly one card for this run. Subsequent progress events use the same
+            // agentId — the UI dedupes on agentId.
+            onSubagentProgress?.invoke(
+                agentId,
+                SubagentProgressUpdate(status = "running", label = uiLabel)
+            )
             val result = runner.run(prompt) { progress ->
-                onSubagentProgress?.invoke(uiLabel, progress)
+                // Don't re-emit "running" for per-tool ticks — that would re-spawn
+                // the card. The runner only emits status="running" once at start;
+                // we already emitted that above with the label, so suppress it here.
+                val safe = if (progress.status == "running") progress.copy(status = null) else progress
+                onSubagentProgress?.invoke(agentId, safe)
             }
             return mapSingleResult(description, config.name, result)
         } finally {
@@ -317,7 +328,9 @@ Tips:
             )
         }
 
-        // Run all prompts in parallel using supervisorScope
+        // Run all prompts in parallel using supervisorScope.
+        // Each child gets its OWN agentId (UUID) and emits its OWN spawn event,
+        // so the UI renders one card per child with stable per-child dedupe.
         val results = supervisorScope {
             prompts.mapIndexed { idx, p ->
                 async {
@@ -334,14 +347,22 @@ Tips:
                         apiDebugDir = subagentDebugDir("${description}-${idx + 1}")
                     )
 
-                    entries[idx].status = "running"
-                    emitGroupProgress(uiLabel, entries)
+                    val childAgentId = generateAgentId()
+                    val childLabel = "${description} #${idx + 1} (${config.name})"
+                    runningAgents[childAgentId] = runner
 
-                    val agentId = generateAgentId()
-                    runningAgents[agentId] = runner
+                    // Emit ONE explicit spawn event for this child. The UI dedupes
+                    // on agentId, so subsequent progress events for the same id
+                    // update the existing card instead of spawning new ones.
+                    onSubagentProgress?.invoke(
+                        childAgentId,
+                        SubagentProgressUpdate(status = "running", label = childLabel)
+                    )
+                    entries[idx].status = "running"
+
                     try {
                         val result = runner.run(p) { progress ->
-                            // Update the entry with progress info
+                            // Mirror progress into the entry for the group summary.
                             progress.stats?.let { stats ->
                                 entries[idx].toolCalls = stats.toolCalls
                                 entries[idx].inputTokens = stats.inputTokens
@@ -352,10 +373,16 @@ Tips:
                                 entries[idx].contextUsagePercentage = stats.contextUsagePercentage
                             }
                             progress.latestToolCall?.let { entries[idx].latestToolCall = it }
-                            emitGroupProgress(uiLabel, entries)
+
+                            // Forward this update to the UI under the CHILD agentId.
+                            // Suppress any "running" status from the runner — we already
+                            // spawned the card explicitly above, and re-emitting "running"
+                            // would re-spawn duplicate cards (the original 77-card bug).
+                            val safe = if (progress.status == "running") progress.copy(status = null) else progress
+                            onSubagentProgress?.invoke(childAgentId, safe)
                         }
 
-                        // Update entry with final result
+                        // Final per-child status
                         when (result.status) {
                             SubagentRunStatus.COMPLETED -> {
                                 entries[idx].status = "completed"
@@ -366,18 +393,21 @@ Tips:
                                 entries[idx].error = result.error
                             }
                         }
-                        emitGroupProgress(uiLabel, entries)
                         result
                     } catch (e: Exception) {
                         entries[idx].status = "failed"
                         entries[idx].error = e.message ?: "Unknown error"
-                        emitGroupProgress(uiLabel, entries)
+                        // Tell the UI this specific child failed.
+                        onSubagentProgress?.invoke(
+                            childAgentId,
+                            SubagentProgressUpdate(status = "failed", error = e.message ?: "Unknown error")
+                        )
                         SubagentRunResult(
                             status = SubagentRunStatus.FAILED,
                             error = e.message ?: "Unknown error"
                         )
                     } finally {
-                        runningAgents.remove(agentId)
+                        runningAgents.remove(childAgentId)
                     }
                 }
             }.map { it.await() }
@@ -421,15 +451,6 @@ Tips:
             summary = summary,
             tokenEstimate = estimateTokens(content),
             isError = hasErrors && succeeded == 0 // only error if ALL failed
-        )
-    }
-
-    private suspend fun emitGroupProgress(description: String, entries: List<SubagentStatusItem>) {
-        val completed = entries.count { it.status == "completed" || it.status == "failed" }
-        val status = if (completed == entries.size) "completed" else "running"
-        onSubagentProgress?.invoke(
-            description,
-            SubagentProgressUpdate(status = status)
         )
     }
 

@@ -65,6 +65,13 @@ data class SubagentProgressUpdate(
     val toolCompleteResult: String? = null,
     val toolCompleteDurationMs: Long = 0L,
     val toolCompleteIsError: Boolean = false,
+    /**
+     * Human-readable label for the subagent (e.g. "Search for X (explorer)").
+     * Set on the FIRST event for a given agentId so the UI can render the card title;
+     * may be null on subsequent events. The agentId (passed alongside this update) is
+     * the stable per-run identifier for dedupe.
+     */
+    val label: String? = null,
 )
 
 /**

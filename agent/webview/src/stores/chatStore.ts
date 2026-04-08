@@ -1024,31 +1024,39 @@ export const useChatStore = create<ChatState>((set, get) => ({
   // ── Sub-Agent Actions ──
   spawnSubAgent(payload: string) {
     const data = JSON.parse(payload);
-    const msgId = nextId('subagent');
-    
-    const subAgentState: SubAgentState = {
-      agentId: data.agentId,
-      label: data.label,
-      status: 'RUNNING',
-      iteration: 1,
-      tokensUsed: 0,
-      messages: [],
-      activeToolChain: [],
-      startedAt: Date.now(),
-    };
 
-    set((state) => ({
-      messages: [
-        ...state.messages,
-        {
-          id: msgId,
-          role: 'system',
-          content: 'subagent', // sentinel to trigger SubAgentView
-          timestamp: Date.now(),
-          subAgent: subAgentState
-        }
-      ]
-    }));
+    set((state) => {
+      // Dedupe on agentId. Defensive guard against any future Kotlin-side
+      // regression that re-fires status="running" — without this, every
+      // spurious spawn event renders a new card (the original 77-card bug).
+      if (state.messages.some((m) => m.subAgent?.agentId === data.agentId)) {
+        return state;
+      }
+
+      const subAgentState: SubAgentState = {
+        agentId: data.agentId,
+        label: data.label,
+        status: 'RUNNING',
+        iteration: 1,
+        tokensUsed: 0,
+        messages: [],
+        activeToolChain: [],
+        startedAt: Date.now(),
+      };
+
+      return {
+        messages: [
+          ...state.messages,
+          {
+            id: nextId('subagent'),
+            role: 'system',
+            content: 'subagent', // sentinel to trigger SubAgentView
+            timestamp: Date.now(),
+            subAgent: subAgentState,
+          },
+        ],
+      };
+    });
   },
 
   updateSubAgentIteration(payload: string) {

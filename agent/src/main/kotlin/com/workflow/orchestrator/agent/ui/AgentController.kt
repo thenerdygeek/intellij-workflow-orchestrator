@@ -945,7 +945,10 @@ class AgentController(
         invokeLater {
             when (update.status) {
                 "running" -> {
-                    val label = update.latestToolCall ?: "Starting..."
+                    // SpawnAgentTool emits "running" exactly once per child, with the
+                    // human-readable label set on the same update. The webview dedupes
+                    // on agentId, so this call materialises one card per real run.
+                    val label = update.label ?: update.latestToolCall ?: "Starting..."
                     dashboard.spawnSubAgent(agentId, label)
                 }
                 "completed" -> {
