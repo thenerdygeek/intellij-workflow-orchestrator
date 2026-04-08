@@ -166,6 +166,10 @@
         <postStartupActivity
             implementation="com.workflow.orchestrator.core.onboarding.OnboardingStartupListener"/>
 
+        <!-- Auto-detect startup activity (runs after DumbService smart mode) -->
+        <postStartupActivity
+            implementation="com.workflow.orchestrator.core.autodetect.WorkflowAutoDetectStartupActivity"/>
+
         <!-- TODO Phase 1B: BuildStatusBarWidgetFactory -->
 
         <!-- Auto-detect orchestrator (core, no module dependency) -->
