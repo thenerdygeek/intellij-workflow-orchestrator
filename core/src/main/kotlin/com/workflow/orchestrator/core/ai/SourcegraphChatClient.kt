@@ -13,6 +13,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -612,17 +613,47 @@ class SourcegraphChatClient(
         } else null
     }
 
-    @Volatile private var apiCallCounter = 0
+    /**
+     * Session-scoped API call counter, injected by the caller (e.g. AgentService) so
+     * multiple SourcegraphChatClient instances within one logical task share monotonic
+     * call numbering. When set, [nextCallNumber] increments this atomic; when null,
+     * [localApiCallCounter] is used as a per-client fallback.
+     *
+     * The session owns the counter's lifecycle — clients only read/increment it.
+     * This makes brain recycling and multi-message chats produce non-overlapping
+     * `call-NNN-{request,response,error}.txt` filenames in `api-debug/`.
+     */
+    @Volatile var sharedApiCallCounter: AtomicInteger? = null
 
-    /** Reset the API call counter — call when starting a new session. */
+    /** Local fallback counter for callers that don't inject a shared one (tests, commit msg). */
+    @Volatile private var localApiCallCounter = 0
+
+    /**
+     * The call number this client most recently assigned via [nextCallNumber].
+     * Used by [dumpApiResponse] and [dumpApiError] to write to the same call number
+     * as the matching request — even when other clients (e.g. a recycled brain) have
+     * since incremented the shared counter.
+     */
+    @Volatile private var lastDumpedCallNum = 0
+
+    /** Increment the active counter (shared if injected, otherwise local) and remember it. */
+    private fun nextCallNumber(): Int {
+        val n = sharedApiCallCounter?.incrementAndGet() ?: ++localApiCallCounter
+        lastDumpedCallNum = n
+        return n
+    }
+
+    /** Reset the API call counter — call when starting a new session that doesn't inject a shared counter. */
     fun resetApiCallCounter() {
-        apiCallCounter = 0
+        localApiCallCounter = 0
+        lastDumpedCallNum = 0
+        // Note: sharedApiCallCounter (if set) is owned by the session and not reset here.
     }
 
     private fun dumpApiRequest(messages: List<ChatMessage>, tools: List<ToolDefinition>?, bodyLength: Int) {
         val dir = apiDebugDir ?: return
         try {
-            val idx = ++apiCallCounter
+            val idx = nextCallNumber()
             val file = java.io.File(dir, "call-${String.format("%03d", idx)}-request.txt")
             file.writeText(buildString {
                 appendLine("=== API Request #$idx === ${java.time.Instant.now()} ===")
@@ -669,7 +700,7 @@ class SourcegraphChatClient(
     private fun dumpApiResponse(response: ChatCompletionResponse) {
         val dir = apiDebugDir ?: return
         try {
-            val idx = apiCallCounter
+            val idx = lastDumpedCallNum
             val file = java.io.File(dir, "call-${String.format("%03d", idx)}-response.txt")
             val choice = response.choices.firstOrNull()
             file.writeText(buildString {
@@ -707,7 +738,7 @@ class SourcegraphChatClient(
     private fun dumpApiError(code: Int, body: String) {
         val dir = apiDebugDir ?: return
         try {
-            val idx = apiCallCounter
+            val idx = lastDumpedCallNum
             val file = java.io.File(dir, "call-${String.format("%03d", idx)}-error.txt")
             file.writeText(buildString {
                 appendLine("=== API Error #$idx === ${java.time.Instant.now()} ===")

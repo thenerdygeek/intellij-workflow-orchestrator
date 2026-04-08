@@ -565,9 +565,14 @@ class AgentService(private val project: Project) : Disposable {
                     ProjectIdentifier.agentDir(basePath),
                     "sessions/$sid"
                 )
+                // Session-scoped API call counter — shared across the initial brain AND any
+                // brains spawned by the brainFactory below (recycle, model fallback). Keeps
+                // `api-debug/call-NNN-*.txt` filenames monotonic across the entire task,
+                // even if the brain is replaced mid-loop. Owned by this executeTask scope.
+                val sharedApiCounter = java.util.concurrent.atomic.AtomicInteger(0)
                 if (brain is OpenAiCompatBrain) {
                     brain.setApiDebugDir(sessionDebugDir)
-                    brain.resetApiCallCounter()
+                    brain.setSharedApiCallCounter(sharedApiCounter)
                     log.debug("[Agent] API debug dir: ${sessionDebugDir.absolutePath}/api-debug/")
                 }
 
@@ -600,6 +605,9 @@ class AgentService(private val project: Project) : Disposable {
                             model = modelId
                         ).also { newBrain ->
                             newBrain.setApiDebugDir(sessionDebugDir)
+                            // Inherit the shared counter so fallback brains continue numbering
+                            // from where the previous brain left off — no overwrites.
+                            newBrain.setSharedApiCallCounter(sharedApiCounter)
                         }
                     }
                 } else null

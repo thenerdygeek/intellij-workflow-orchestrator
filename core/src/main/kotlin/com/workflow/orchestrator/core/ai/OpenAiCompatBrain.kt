@@ -100,4 +100,18 @@ class OpenAiCompatBrain(
     fun resetApiCallCounter() {
         client.resetApiCallCounter()
     }
+
+    /**
+     * Inject a session-scoped API call counter so multiple brains within one
+     * task share monotonic call numbering. Used by AgentService to keep
+     * `api-debug/call-NNN-*.txt` filenames non-overlapping across:
+     *   - multi-message chats (each user message creates a new brain)
+     *   - brain recycling on stream errors (new brain mid-task)
+     *
+     * The injected counter's lifecycle is owned by the caller (typically the
+     * session). When null, the inner client falls back to its local counter.
+     */
+    fun setSharedApiCallCounter(counter: java.util.concurrent.atomic.AtomicInteger) {
+        client.sharedApiCallCounter = counter
+    }
 }
