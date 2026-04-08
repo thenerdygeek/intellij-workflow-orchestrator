@@ -400,8 +400,75 @@ class SourcegraphClient:
         r.raise_for_status()
         return [m["id"] for m in r.json().get("data", [])]
 
+    def list_models_full(self) -> tuple[int, dict, dict]:
+        """Return (status, full_json, response_headers) so we can field-walk."""
+        r = self.session.get(self.base_url + MODELS_PATH, timeout=30)
+        try:
+            body = r.json()
+        except Exception:
+            body = {"raw": r.text[:2000]}
+        return r.status_code, body, dict(r.headers)
+
+    def get_model(self, model_id: str) -> tuple[int, Any, dict]:
+        """GET /.api/llm/models/{id} — single-model retrieve endpoint."""
+        url = f"{self.base_url}{MODELS_PATH}/{model_id}"
+        r = self.session.get(url, timeout=30)
+        try:
+            body = r.json()
+        except Exception:
+            body = {"raw": r.text[:2000]}
+        return r.status_code, body, dict(r.headers)
+
     def post_chat(self, body: dict, stream: bool) -> requests.Response:
         return self.session.post(self.base_url + CHAT_PATH, json=body, stream=stream, timeout=self.timeout)
+
+
+# ─────────────────────────────────────────────────────────────
+# Generic JSON walkers — for finding undocumented response fields
+# ─────────────────────────────────────────────────────────────
+
+def walk_keys(obj: Any, path: str = "") -> list[tuple[str, str]]:
+    """Recursively walk a JSON object and return [(dotted_path, type_name)] tuples."""
+    out: list[tuple[str, str]] = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            child_path = f"{path}.{k}" if path else k
+            out.append((child_path, type(v).__name__))
+            out.extend(walk_keys(v, child_path))
+    elif isinstance(obj, list):
+        if obj:
+            out.extend(walk_keys(obj[0], f"{path}[]"))
+    return out
+
+
+def find_thinking_fields(obj: Any, path: str = "") -> list[tuple[str, Any]]:
+    """Recursively find any field whose key suggests reasoning/thinking content."""
+    triggers = ("thinking", "reasoning", "thought", "reflect", "deliberat",
+                "scratchpad", "chain_of_thought", "cot")
+    out: list[tuple[str, Any]] = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            child_path = f"{path}.{k}" if path else k
+            kl = k.lower()
+            if any(t in kl for t in triggers):
+                preview = json.dumps(v)[:240] if not isinstance(v, str) else v[:240]
+                out.append((child_path, preview))
+            out.extend(find_thinking_fields(v, child_path))
+    elif isinstance(obj, list):
+        for i, item in enumerate(obj):
+            out.extend(find_thinking_fields(item, f"{path}[{i}]"))
+    return out
+
+
+def find_unknown_keys(obj: Any, known: set[str]) -> list[str]:
+    """Return dotted paths whose leaf key is NOT in the known set."""
+    paths = walk_keys(obj)
+    out = []
+    for path, _t in paths:
+        leaf = path.split(".")[-1].split("[")[0]
+        if leaf not in known:
+            out.append(path)
+    return sorted(set(out))
 
 
 def iter_sse_lines(resp: requests.Response) -> Iterator[str]:
@@ -958,6 +1025,402 @@ def probe_include_usage_isolation(client: SourcegraphClient, model: str) -> dict
         return {"status": 0, "error": str(e)}
 
 
+# ═════════════════════════════════════════════════════════════
+# ADVANCED PROBES — thinking, model metadata, headers, vision,
+# Anthropic native fields, prompt-cache verification
+# ═════════════════════════════════════════════════════════════
+
+# Known OpenAI-spec leaf keys for chat completions / models endpoints.
+# Anything outside this set is "interesting".
+KNOWN_RESPONSE_KEYS = {
+    "id", "object", "created", "model", "choices", "index", "message", "delta",
+    "role", "content", "tool_calls", "tool_call_id", "function", "name",
+    "arguments", "type", "finish_reason", "usage", "prompt_tokens",
+    "completion_tokens", "total_tokens", "system_fingerprint", "service_tier",
+    "data", "owned_by", "permission", "root", "parent", "logprobs",
+    "top_logprobs", "text", "image_url", "url",
+}
+
+
+def _decode_json(resp: requests.Response) -> Any:
+    try:
+        return resp.json()
+    except Exception:
+        return {"_raw": resp.text[:2000]}
+
+
+def probe_thinking_strategies(client: SourcegraphClient, model: str,
+                              thinking_model: str | None) -> dict:
+    """Try every known way to activate extended thinking / reasoning across
+    Anthropic, OpenAI o-series, and DeepSeek-style models. For each strategy
+    we look at the response for fields whose name suggests reasoning content."""
+    target = thinking_model or model
+    out: dict[str, Any] = {"target_model": target, "strategies": {}}
+
+    base = {
+        "model": target,
+        "max_tokens": 2048,
+        "temperature": 1.0,  # Anthropic thinking REQUIRES temperature=1
+        "messages": [{
+            "role": "user",
+            "content": (
+                "Explain step by step why the sum of the first 100 positive "
+                "integers is 5050. Show your reasoning."
+            ),
+        }],
+    }
+
+    strategies = {
+        "baseline_no_thinking_param": {},
+        "anthropic_thinking_block": {
+            "thinking": {"type": "enabled", "budget_tokens": 1024}
+        },
+        "anthropic_thinking_top_only": {
+            "thinking": {"budget_tokens": 1024}
+        },
+        "extended_thinking_flag": {
+            "extended_thinking": True
+        },
+        "openai_reasoning_effort_high": {
+            "reasoning_effort": "high"
+        },
+        "openai_reasoning_object": {
+            "reasoning": {"effort": "high"}
+        },
+        "deepseek_reasoning_content_hint": {
+            "include_reasoning": True
+        },
+        "anthropic_thinking_streaming": {
+            "thinking": {"type": "enabled", "budget_tokens": 1024},
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        },
+    }
+
+    for label, extra in strategies.items():
+        body = {**base, **extra}
+        record: dict[str, Any] = {"sent": list(extra.keys()) or ["(none)"]}
+        try:
+            stream = bool(extra.get("stream"))
+            r = client.post_chat(body, stream=stream)
+            record["status"] = r.status_code
+            if r.status_code != 200:
+                record["error_preview"] = _short(r.text, 300)
+                out["strategies"][label] = record
+                continue
+
+            if not stream:
+                resp = _decode_json(r)
+                # Look for thinking/reasoning fields anywhere in the response
+                hits = find_thinking_fields(resp)
+                record["thinking_field_hits"] = [
+                    {"path": p, "preview": v} for p, v in hits
+                ]
+                # Top-level usage extras (Anthropic adds reasoning_tokens etc.)
+                usage = resp.get("usage") if isinstance(resp, dict) else None
+                if usage:
+                    record["usage"] = usage
+                    record["usage_extra_keys"] = [
+                        k for k in usage.keys()
+                        if k not in {"prompt_tokens", "completion_tokens", "total_tokens"}
+                    ]
+                # Unknown keys overall
+                record["unknown_keys"] = find_unknown_keys(resp, KNOWN_RESPONSE_KEYS)
+                # Save full body trimmed for forensic review
+                record["full_body_preview"] = json.dumps(resp)[:800]
+            else:
+                # Streaming variant: collect deltas, look for thinking-shaped delta keys
+                delta_keys: set[str] = set()
+                thinking_chunks: list[str] = []
+                content_chunks: list[str] = []
+                last_usage: dict | None = None
+                first_chunk_dump: list[str] = []
+                for line in iter_sse_lines(r):
+                    payload = extract_sse_data(line)
+                    if not payload:
+                        continue
+                    if len(first_chunk_dump) < 3:
+                        first_chunk_dump.append(payload[:300])
+                    try:
+                        ch = json.loads(payload)
+                    except json.JSONDecodeError:
+                        continue
+                    if ch.get("usage"):
+                        last_usage = ch["usage"]
+                    for choice in ch.get("choices", []):
+                        delta = choice.get("delta") or {}
+                        for k in delta.keys():
+                            delta_keys.add(k)
+                        # Common thinking-delta locations
+                        for k in ("thinking", "reasoning", "reasoning_content",
+                                  "thought", "thinking_content"):
+                            v = delta.get(k)
+                            if isinstance(v, str) and v:
+                                thinking_chunks.append(v)
+                            elif isinstance(v, dict):
+                                inner = v.get("text") or v.get("content")
+                                if isinstance(inner, str):
+                                    thinking_chunks.append(inner)
+                        c = delta.get("content")
+                        if isinstance(c, str):
+                            content_chunks.append(c)
+                record["delta_keys_seen"] = sorted(delta_keys)
+                record["thinking_chunks_count"] = len(thinking_chunks)
+                record["thinking_preview"] = ("".join(thinking_chunks))[:500]
+                record["content_preview"] = ("".join(content_chunks))[:300]
+                record["usage"] = last_usage
+                record["first_chunks_raw"] = first_chunk_dump
+        except requests.RequestException as e:
+            record["error"] = str(e)
+        out["strategies"][label] = record
+    return out
+
+
+def probe_model_metadata(client: SourcegraphClient) -> dict:
+    """Dump full /.api/llm/models payload, the per-model retrieve endpoint,
+    and look for context_window / max_output_tokens / capability fields."""
+    out: dict[str, Any] = {}
+
+    # 1. List models — dump first 5 in full + report all unique keys observed
+    status, body, headers = client.list_models_full()
+    out["list_status"] = status
+    out["list_response_headers"] = {
+        k: v for k, v in headers.items() if k.lower().startswith(("x-", "ratelimit", "retry"))
+    }
+    if isinstance(body, dict) and "data" in body:
+        models = body["data"]
+        out["model_count"] = len(models)
+        out["first_5_models_full"] = models[:5]
+
+        # Collect every leaf key seen across all models
+        all_keys: set[str] = set()
+        for m in models:
+            for path, _t in walk_keys(m):
+                all_keys.add(path)
+        out["all_observed_model_keys"] = sorted(all_keys)
+
+        # Look for capability/context-window-shaped keys
+        capability_hits: dict[str, list[str]] = {}
+        for m in models:
+            for path, _t in walk_keys(m):
+                leaf = path.split(".")[-1].lower()
+                if any(t in leaf for t in (
+                    "context", "window", "max_token", "max_output",
+                    "capability", "supports", "modality", "vision",
+                    "tool", "input_limit", "output_limit", "limit",
+                )):
+                    capability_hits.setdefault(path, []).append(m.get("id", "?"))
+        out["capability_field_hits"] = capability_hits
+    else:
+        out["list_body_preview"] = json.dumps(body)[:500]
+
+    # 2. Per-model retrieve — try with the first available id
+    if isinstance(body, dict) and body.get("data"):
+        first_id = body["data"][0]["id"]
+        status2, single_body, _h = client.get_model(first_id)
+        out["retrieve_status"] = status2
+        out["retrieve_first_id"] = first_id
+        if status2 == 200:
+            out["retrieve_full"] = single_body
+            out["retrieve_unknown_keys"] = find_unknown_keys(single_body, KNOWN_RESPONSE_KEYS)
+        else:
+            out["retrieve_preview"] = json.dumps(single_body)[:400]
+    return out
+
+
+def probe_response_headers(client: SourcegraphClient, model: str) -> dict:
+    """Dump every response header from a basic chat call. Hunt for x-* hints
+    about rate limits, request id, served-by, model used, cache state, etc."""
+    body = {
+        "model": model, "max_tokens": 16, "temperature": 0,
+        "messages": [{"role": "user", "content": "Reply with 'ok'."}],
+    }
+    try:
+        r = client.post_chat(body, stream=False)
+        headers = dict(r.headers)
+        # Categorize
+        rate_limit = {k: v for k, v in headers.items() if "ratelimit" in k.lower() or "retry" in k.lower()}
+        request_id = {k: v for k, v in headers.items() if "request-id" in k.lower() or "trace" in k.lower()}
+        served_by = {k: v for k, v in headers.items() if "served" in k.lower() or "via" in k.lower() or "cf-" in k.lower()}
+        anthropic = {k: v for k, v in headers.items() if "anthropic" in k.lower()}
+        sourcegraph = {k: v for k, v in headers.items() if "sourcegraph" in k.lower() or "x-sg-" in k.lower()}
+        cache = {k: v for k, v in headers.items() if "cache" in k.lower() or "age" in k.lower() or "etag" in k.lower()}
+        return {
+            "status": r.status_code,
+            "all_headers": headers,
+            "rate_limit": rate_limit,
+            "request_id": request_id,
+            "served_by": served_by,
+            "anthropic_passthrough": anthropic,
+            "sourcegraph_specific": sourcegraph,
+            "cache_headers": cache,
+        }
+    except requests.RequestException as e:
+        return {"status": 0, "error": str(e)}
+
+
+# 1x1 transparent PNG (smallest valid PNG)
+TINY_PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkAAIAAAUAAen63NgAAAAASUVORK5CYII="
+)
+
+
+def probe_vision_input(client: SourcegraphClient, model: str) -> dict:
+    """Send a tiny base64 PNG as a content part. Does the gateway accept
+    multimodal input? If not, what error?"""
+    body = {
+        "model": model, "max_tokens": 64, "temperature": 0,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "What is in this image? Reply in 5 words."},
+                {"type": "image_url",
+                 "image_url": {"url": f"data:image/png;base64,{TINY_PNG_B64}"}},
+            ],
+        }],
+    }
+    try:
+        r = client.post_chat(body, stream=False)
+        return {"status": r.status_code, "preview": _short(r.text, 400)}
+    except requests.RequestException as e:
+        return {"status": 0, "error": str(e)}
+
+
+def probe_anthropic_native_fields(client: SourcegraphClient, model: str) -> dict:
+    """Try sending Anthropic-native fields that aren't in the OpenAI shape:
+    top-level system, top_k, metadata.user_id."""
+    out = {}
+    cases = {
+        "top_level_system": {
+            "model": model, "max_tokens": 32, "temperature": 0,
+            "system": "You are terse. Reply with one word.",
+            "messages": [{"role": "user", "content": "Hi."}],
+        },
+        "top_k": {
+            "model": model, "max_tokens": 32, "temperature": 0, "top_k": 5,
+            "messages": [{"role": "user", "content": "Reply 'ok'."}],
+        },
+        "metadata_user_id": {
+            "model": model, "max_tokens": 32, "temperature": 0,
+            "metadata": {"user_id": "lab-test-user"},
+            "messages": [{"role": "user", "content": "Reply 'ok'."}],
+        },
+        "stop_sequences": {
+            "model": model, "max_tokens": 32, "temperature": 0,
+            "stop": ["STOP_HERE"],
+            "messages": [{"role": "user", "content": "Count 1 to 10 then say STOP_HERE then 11."}],
+        },
+        "seed_determinism_first": {
+            "model": model, "max_tokens": 32, "temperature": 0, "seed": 42,
+            "messages": [{"role": "user", "content": "Tell me a random number."}],
+        },
+        "seed_determinism_second": {
+            "model": model, "max_tokens": 32, "temperature": 0, "seed": 42,
+            "messages": [{"role": "user", "content": "Tell me a random number."}],
+        },
+        "logprobs": {
+            "model": model, "max_tokens": 16, "temperature": 0,
+            "logprobs": True, "top_logprobs": 3,
+            "messages": [{"role": "user", "content": "Reply 'ok'."}],
+        },
+        "n_multiple_completions": {
+            "model": model, "max_tokens": 16, "temperature": 0.5, "n": 2,
+            "messages": [{"role": "user", "content": "Tell me a colour."}],
+        },
+        "service_tier": {
+            "model": model, "max_tokens": 16, "temperature": 0,
+            "service_tier": "auto",
+            "messages": [{"role": "user", "content": "Reply 'ok'."}],
+        },
+    }
+    for label, body in cases.items():
+        try:
+            r = client.post_chat(body, stream=False)
+            entry: dict[str, Any] = {"status": r.status_code}
+            if r.status_code == 200:
+                resp = _decode_json(r)
+                entry["unknown_keys"] = find_unknown_keys(resp, KNOWN_RESPONSE_KEYS)
+                if isinstance(resp, dict):
+                    msg = (resp.get("choices") or [{}])[0].get("message", {})
+                    entry["content_preview"] = (msg.get("content") or "")[:200]
+                    entry["choices_count"] = len(resp.get("choices") or [])
+                    entry["usage"] = resp.get("usage")
+                    entry["finish_reason"] = (resp.get("choices") or [{}])[0].get("finish_reason")
+            else:
+                entry["preview"] = _short(r.text, 300)
+            out[label] = entry
+        except requests.RequestException as e:
+            out[label] = {"status": 0, "error": str(e)}
+
+    # Cross-check seed determinism
+    a = out.get("seed_determinism_first", {}).get("content_preview", "")
+    b = out.get("seed_determinism_second", {}).get("content_preview", "")
+    out["_seed_deterministic"] = bool(a) and bool(b) and a == b
+    return out
+
+
+def probe_cache_hit_verification(client: SourcegraphClient, model: str) -> dict:
+    """Send the SAME request twice with cache_control on a long stable prefix.
+    If the gateway honors prompt caching, the second call should report
+    cache_read_input_tokens > 0 (Anthropic-style)."""
+    long_prefix = "Background context for caching test. " * 200  # ~6KB stable prefix
+    msg = [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": long_prefix, "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": "Reply with the single word 'ok'."},
+        ],
+    }]
+    body = {
+        "model": model, "max_tokens": 16, "temperature": 0, "messages": msg,
+    }
+    out: dict[str, Any] = {}
+    for label in ("first_call", "second_call"):
+        try:
+            r = client.post_chat(body, stream=False)
+            entry: dict[str, Any] = {"status": r.status_code}
+            if r.status_code == 200:
+                resp = _decode_json(r)
+                usage = resp.get("usage") if isinstance(resp, dict) else None
+                entry["usage"] = usage
+                if isinstance(usage, dict):
+                    entry["cache_read"] = usage.get("cache_read_input_tokens")
+                    entry["cache_create"] = usage.get("cache_creation_input_tokens")
+            else:
+                entry["preview"] = _short(r.text, 300)
+            out[label] = entry
+        except requests.RequestException as e:
+            out[label] = {"status": 0, "error": str(e)}
+
+    second = out.get("second_call", {})
+    out["_cache_hit_observed"] = bool(second.get("cache_read"))
+    return out
+
+
+def probe_endpoint_discovery(client: SourcegraphClient) -> dict:
+    """Try a handful of plausible Sourcegraph paths to see what responds.
+    Useful for finding undocumented endpoints (model details, embeddings, etc.)."""
+    candidates = [
+        "/.api/llm/v1/models",
+        "/.api/llm/completions",
+        "/.api/llm/embeddings",
+        "/.api/llm/v1/chat/completions",
+        "/.api/cody/context",  # documented but rarely tested
+        "/.api/completions/code",
+        "/.api/completions/stream",
+        "/.api/graphql",
+    ]
+    out = {}
+    for path in candidates:
+        try:
+            r = client.session.get(client.base_url + path, timeout=15)
+            out[path] = {"GET_status": r.status_code,
+                         "preview": _short(r.text, 200)}
+        except requests.RequestException as e:
+            out[path] = {"error": str(e)}
+    return out
+
+
 # ─────────────────────────────────────────────────────────────
 # Reporting
 # ─────────────────────────────────────────────────────────────
@@ -1056,6 +1519,9 @@ def main() -> int:
     p.add_argument("--raw", action="store_true", help="Dump raw SSE lines live to stdout")
     p.add_argument("--no-verify", action="store_true", help="Disable TLS verify")
     p.add_argument("--no-probes", action="store_true", help="Skip side probes")
+    p.add_argument("--no-advanced", action="store_true", help="Skip advanced probes (thinking, metadata, vision, headers)")
+    p.add_argument("--thinking-model", default=None,
+                   help="Model id to use for thinking probes (auto-detect if omitted)")
     p.add_argument("--out", default="streaming_lab_results.json", help="JSON results file")
     p.add_argument("--raw-dir", default="raw_sse", help="Directory for per-test SSE dumps")
     args = p.parse_args()
@@ -1159,12 +1625,138 @@ def main() -> int:
         flag = r.get("usage_emitted_without_include_usage")
         print(f"  include_usage_isol:   HTTP {r.get('status'):<4} usage_without_flag={flag}")
 
+    advanced: dict[str, Any] = {}
+    if not args.no_probes and not args.no_advanced:
+        print()
+        print("=" * 78)
+        print("ADVANCED PROBES (thinking, metadata, headers, vision, native fields)")
+        print("=" * 78)
+
+        # Auto-pick a thinking model if the user didn't specify one
+        thinking_model = args.thinking_model
+        if thinking_model is None:
+            try:
+                all_models = client.list_models()
+                candidates = [
+                    m for m in all_models
+                    if any(t in m.lower() for t in ("thinking", "o1", "o3", "reasoner", "deep-think"))
+                ]
+                if candidates:
+                    thinking_model = candidates[0]
+            except Exception:
+                pass
+        print(f"  thinking probe model: {thinking_model or '(none auto-detected — using --model)'}")
+
+        # 1. Thinking strategies
+        print()
+        print("  -- Thinking / reasoning extraction --")
+        advanced["thinking_strategies"] = probe_thinking_strategies(client, model, thinking_model)
+        for label, rec in advanced["thinking_strategies"]["strategies"].items():
+            status = rec.get("status")
+            hits = rec.get("thinking_field_hits") or []
+            usage_extras = rec.get("usage_extra_keys") or []
+            delta_keys = rec.get("delta_keys_seen") or []
+            tchunks = rec.get("thinking_chunks_count")
+            line = f"    [{label:<36}] HTTP {status}"
+            if rec.get("error_preview"):
+                line += f"  ERR: {rec['error_preview'][:120]}"
+            else:
+                if hits:
+                    line += f"  thinking_fields={[h['path'] for h in hits]}"
+                if usage_extras:
+                    line += f"  usage_extras={usage_extras}"
+                if tchunks:
+                    line += f"  stream_thinking_chunks={tchunks}"
+                if delta_keys:
+                    line += f"  delta_keys={delta_keys}"
+            print(line)
+
+        # 2. Model metadata
+        print()
+        print("  -- Model metadata extraction --")
+        advanced["model_metadata"] = probe_model_metadata(client)
+        meta = advanced["model_metadata"]
+        print(f"    list HTTP {meta.get('list_status')}  models={meta.get('model_count')}")
+        keys = meta.get("all_observed_model_keys") or []
+        print(f"    keys observed across all models: {keys}")
+        cap_hits = meta.get("capability_field_hits") or {}
+        if cap_hits:
+            print(f"    CAPABILITY-SHAPED FIELDS FOUND:")
+            for path, ids in cap_hits.items():
+                print(f"      {path}  (in {len(ids)} models)")
+        else:
+            print(f"    no context_window/max_token/capability fields found in /models")
+        print(f"    retrieve HTTP {meta.get('retrieve_status')} for {meta.get('retrieve_first_id')}")
+        if meta.get("retrieve_unknown_keys"):
+            print(f"    retrieve unknown keys: {meta['retrieve_unknown_keys']}")
+
+        # 3. Response headers
+        print()
+        print("  -- Response header inspection --")
+        advanced["response_headers"] = probe_response_headers(client, model)
+        h = advanced["response_headers"]
+        for category in ("rate_limit", "request_id", "served_by",
+                         "anthropic_passthrough", "sourcegraph_specific", "cache_headers"):
+            v = h.get(category) or {}
+            if v:
+                print(f"    {category}: {v}")
+            else:
+                print(f"    {category}: (none)")
+
+        # 4. Vision input
+        print()
+        print("  -- Vision (image input) --")
+        advanced["vision"] = probe_vision_input(client, model)
+        v = advanced["vision"]
+        print(f"    HTTP {v.get('status')}  {v.get('preview', v.get('error', ''))[:200]}")
+
+        # 5. Anthropic-native + extra OpenAI fields
+        print()
+        print("  -- Anthropic-native + extra OpenAI fields --")
+        advanced["native_fields"] = probe_anthropic_native_fields(client, model)
+        for label, rec in advanced["native_fields"].items():
+            if label.startswith("_"):
+                continue
+            status = rec.get("status")
+            extra = ""
+            if rec.get("unknown_keys"):
+                extra += f"  unknown_keys={rec['unknown_keys'][:5]}"
+            if rec.get("preview"):
+                extra += f"  preview={rec['preview'][:120]}"
+            if rec.get("choices_count"):
+                extra += f"  choices={rec['choices_count']}"
+            if rec.get("content_preview"):
+                extra += f"  content={rec['content_preview'][:80]!r}"
+            print(f"    [{label:<32}] HTTP {status}{extra}")
+        print(f"    seed deterministic: {advanced['native_fields'].get('_seed_deterministic')}")
+
+        # 6. Prompt-cache hit verification
+        print()
+        print("  -- Prompt-cache hit verification (2 identical calls) --")
+        advanced["cache_hit"] = probe_cache_hit_verification(client, model)
+        for label in ("first_call", "second_call"):
+            rec = advanced["cache_hit"].get(label, {})
+            print(f"    {label:<12}: HTTP {rec.get('status')}  "
+                  f"cache_read={rec.get('cache_read')}  "
+                  f"cache_create={rec.get('cache_create')}  "
+                  f"usage={rec.get('usage')}")
+        print(f"    cache hit observed on 2nd call: {advanced['cache_hit'].get('_cache_hit_observed')}")
+
+        # 7. Endpoint discovery
+        print()
+        print("  -- Undocumented endpoint discovery --")
+        advanced["endpoint_discovery"] = probe_endpoint_discovery(client)
+        for path, rec in advanced["endpoint_discovery"].items():
+            print(f"    {path:<32} GET {rec.get('GET_status', rec.get('error', '?'))}  "
+                  f"{rec.get('preview', '')[:120]}")
+
     out_path = Path(args.out)
     out_path.write_text(json.dumps({
         "model": model,
         "url": args.url,
         "outcomes": [o.to_dict() for o in outcomes],
         "probes": probes,
+        "advanced": advanced,
     }, indent=2))
     print()
     print(f"Full structured results: {out_path.resolve()}")
