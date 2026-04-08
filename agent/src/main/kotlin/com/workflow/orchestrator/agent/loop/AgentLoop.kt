@@ -216,10 +216,13 @@ class AgentLoop(
      */
     private val fallbackManager: ModelFallbackManager? = null,
     /**
-     * Factory to create a new LlmBrain for a given model ID.
-     * Used by the fallback manager to switch models mid-loop.
+     * Factory to create a new LlmBrain for a given model ID, with an optional reason
+     * string used by the factory to write a recycle marker file into api-debug/.
+     * Used by:
+     *   - the model fallback manager to switch models mid-loop (reason describes the switch)
+     *   - same-tier brain recycling on stream/timeout errors (reason describes the error)
      */
-    private val brainFactory: (suspend (modelId: String) -> LlmBrain)? = null,
+    private val brainFactory: (suspend (modelId: String, reason: String?) -> LlmBrain)? = null,
     /**
      * Callback fired when the loop switches to a different model.
      * Used by the UI to update the model chip and show a status message.
@@ -266,6 +269,18 @@ class AgentLoop(
         private const val MAX_API_RETRIES = 5
         /** Timeout/network errors get fewer retries — the server is likely down. */
         private const val MAX_TIMEOUT_RETRIES = 3
+        /**
+         * Max number of same-model brain recycles before escalating to a different
+         * model tier (L2 escalation handled in commit 3). A recycle = throw away the
+         * OpenAiCompatBrain (and its OkHttpClient + ConnectionPool + activeCall ref)
+         * and rebuild it with the same model id, so the next request gets a fresh
+         * TCP socket and dispatcher state. Fixes broken keep-alive sockets that
+         * OkHttp can't detect (corporate proxy RST injection, etc.).
+         *
+         * 3 is a "feels right" balance: enough to absorb transient blips, fast
+         * enough that real degradations escalate within ~30 seconds.
+         */
+        private const val MAX_SAME_TIER_RECYCLES = 3
         private const val MAX_CONTEXT_OVERFLOW_RETRIES = 2
         /** Max times to compact context and retry after timeout retries are exhausted. */
         private const val MAX_COMPACTION_RETRIES = 2
@@ -381,6 +396,12 @@ class AgentLoop(
         var contextOverflowRetries = 0
         var pendingEscalation = false
         var compactionRetries = 0
+        /**
+         * Same-model brain recycles in the current tier. Reset to 0 on any successful
+         * API call OR when L2 tier escalation switches to a different model.
+         * Bounded by [MAX_SAME_TIER_RECYCLES].
+         */
+        var sameTierRecycles = 0
 
         while (!cancelled.get() && iteration < maxIterations) {
             iteration++
@@ -448,13 +469,13 @@ class AgentLoop(
                 val maxRetries = if (isTimeoutError) MAX_TIMEOUT_RETRIES else MAX_API_RETRIES
                 if (apiResult.type in RETRYABLE_ERRORS && apiRetryCount < maxRetries) {
                     apiRetryCount++
-                    // Smart model fallback on timeout/network errors
+                    // L1: Smart model fallback on timeout/network errors (when fallback is enabled)
                     if (fallbackManager != null && brainFactory != null && apiResult.type in TIMEOUT_ERRORS) {
                         val oldModel = brain.modelId
                         if (pendingEscalation) {
                             // Escalation back to primary failed
                             val revertModel = fallbackManager.onEscalationFailed()
-                            brain = brainFactory.invoke(revertModel)
+                            brain = brainFactory.invoke(revertModel, "Fallback escalation failed — reverting from $oldModel to $revertModel")
                             onModelSwitch?.invoke(oldModel, revertModel, "Escalation failed — reverting")
                             LOG.info("[Loop] Escalation failed, reverting: $oldModel → $revertModel")
                             pendingEscalation = false
@@ -462,11 +483,33 @@ class AgentLoop(
                             // Normal fallback — advance down the chain
                             val nextModel = fallbackManager.onNetworkError()
                             if (nextModel != null) {
-                                brain = brainFactory.invoke(nextModel)
+                                brain = brainFactory.invoke(nextModel, "Network error on $oldModel: ${apiResult.type.name} — falling back to $nextModel")
                                 onModelSwitch?.invoke(oldModel, nextModel, "Network error — falling back")
                                 LOG.info("[Loop] Model fallback: $oldModel → $nextModel")
                             }
                         }
+                    }
+                    // L1 (alt): Same-model brain recycle when fallback is NOT engaged.
+                    // Throws away the OpenAiCompatBrain (and its OkHttpClient + ConnectionPool +
+                    // activeCall ref) and rebuilds it with the SAME model id. Fixes broken
+                    // sockets / dead TCP state that OkHttp can't detect (e.g. corporate proxy
+                    // RST injection mid-stream). Conversation context is unaffected — we only
+                    // recycle the network plumbing, not the message history.
+                    //
+                    // Skipped if fallback already engaged above (model id changed). Bounded by
+                    // MAX_SAME_TIER_RECYCLES — beyond that, the issue likely isn't socket-level
+                    // and L2 tier escalation (commit 3) takes over.
+                    else if (brainFactory != null && apiResult.type in TIMEOUT_ERRORS && sameTierRecycles < MAX_SAME_TIER_RECYCLES) {
+                        sameTierRecycles++
+                        val sameModel = brain.modelId
+                        val reason = "Same-tier recycle #$sameTierRecycles on ${apiResult.type.name}: ${apiResult.message.take(120)}"
+                        LOG.warn("[Loop] Recycling brain ($sameTierRecycles/$MAX_SAME_TIER_RECYCLES) on ${apiResult.type} — model unchanged: ${sameModel.substringAfterLast("::")}")
+                        onDebugLog?.invoke("warn", "recycle", "Brain recycled (#$sameTierRecycles) — fresh OkHttp pool", mapOf(
+                            "errorType" to apiResult.type.name,
+                            "model" to sameModel,
+                            "recycleCount" to sameTierRecycles
+                        ))
+                        brain = brainFactory.invoke(sameModel, reason)
                     }
                     // Use server-provided retry delay if available (ported from Cline's retry.ts),
                     // otherwise fall back to exponential backoff
@@ -508,6 +551,7 @@ class AgentLoop(
             apiRetryCount = 0
             contextOverflowRetries = 0
             compactionRetries = 0
+            sameTierRecycles = 0  // recycle budget refills on every successful call
             pendingEscalation = false // if we were escalating, it succeeded
 
             // Smart model escalation: try primary model after cooldown
@@ -515,7 +559,7 @@ class AgentLoop(
                 val escalationModel = fallbackManager.onIterationSuccess()
                 if (escalationModel != null) {
                     val oldModel = brain.modelId
-                    brain = brainFactory.invoke(escalationModel)
+                    brain = brainFactory.invoke(escalationModel, "Fallback cooldown elapsed — escalating from $oldModel to $escalationModel")
                     onModelSwitch?.invoke(oldModel, escalationModel, "Escalating back")
                     LOG.info("[Loop] Model escalation: $oldModel → $escalationModel")
                     pendingEscalation = true

@@ -593,24 +593,63 @@ class AgentService(private val project: Project) : Disposable {
                 } else null
                 val compactOnTimeoutExhaustion = strategy == "context_compaction"
 
-                val brainFactory: (suspend (String) -> LlmBrain)? = if (fallbackManager != null) {
-                    val fbConnections = ConnectionSettings.getInstance()
-                    val fbUrl = fbConnections.state.sourcegraphUrl.trimEnd('/')
-                    val fbCredentialStore = CredentialStore()
-                    val fbTokenProvider = { fbCredentialStore.getToken(ServiceType.SOURCEGRAPH) }
-                    ;{ modelId: String ->
-                        OpenAiCompatBrain(
-                            sourcegraphUrl = fbUrl,
-                            tokenProvider = fbTokenProvider,
-                            model = modelId
-                        ).also { newBrain ->
-                            newBrain.setApiDebugDir(sessionDebugDir)
-                            // Inherit the shared counter so fallback brains continue numbering
-                            // from where the previous brain left off — no overwrites.
-                            newBrain.setSharedApiCallCounter(sharedApiCounter)
-                        }
+                // Counter for recycle marker filenames (recycle-001.txt, recycle-002.txt, ...).
+                // Increments every time the factory is invoked, regardless of reason
+                // (model fallback OR same-tier recycle).
+                val recycleMarkerCounter = java.util.concurrent.atomic.AtomicInteger(0)
+
+                // brainFactory is now ALWAYS built — even when model fallback is disabled.
+                // Used by AgentLoop for both:
+                //   - Model fallback (when fallbackManager != null and an alternate tier is available)
+                //   - Same-tier brain recycling on stream/timeout errors (always available now,
+                //     fixes broken socket / dead ConnectionPool / stale activeCall ref)
+                val fbConnections = ConnectionSettings.getInstance()
+                val fbUrl = fbConnections.state.sourcegraphUrl.trimEnd('/')
+                val fbCredentialStore = CredentialStore()
+                val fbTokenProvider = { fbCredentialStore.getToken(ServiceType.SOURCEGRAPH) }
+                val brainFactory: suspend (String, String?) -> LlmBrain = { modelId: String, reason: String? ->
+                    val newBrain = OpenAiCompatBrain(
+                        sourcegraphUrl = fbUrl,
+                        tokenProvider = fbTokenProvider,
+                        model = modelId
+                    ).also { b ->
+                        b.setApiDebugDir(sessionDebugDir)
+                        // Inherit the shared API call counter so call-NNN-*.txt filenames
+                        // stay monotonic across the new brain's calls.
+                        b.setSharedApiCallCounter(sharedApiCounter)
                     }
-                } else null
+                    // Update the cancel-button reference so user-initiated cancel hits the
+                    // live brain. Without this, "Stop" would cancel the now-discarded brain.
+                    brainRef = newBrain
+
+                    // Write a recycle marker file into api-debug/ so the directory listing
+                    // tells the recovery story: "after call NNN, the brain was recycled
+                    // because <reason>; the next call comes from a fresh OkHttpClient".
+                    try {
+                        val recycleIdx = recycleMarkerCounter.incrementAndGet()
+                        val lastCallNum = sharedApiCounter.get()
+                        val markerFile = java.io.File(
+                            sessionDebugDir,
+                            "api-debug/recycle-${String.format("%03d", recycleIdx)}.txt"
+                        )
+                        markerFile.parentFile.mkdirs()
+                        markerFile.writeText(buildString {
+                            appendLine("=== Brain Recycle #$recycleIdx === ${java.time.Instant.now()} ===")
+                            appendLine("Model:        $modelId")
+                            appendLine("After call #: $lastCallNum")
+                            appendLine("Reason:       ${reason ?: "(unspecified)"}")
+                            appendLine()
+                            appendLine("The previous OpenAiCompatBrain (and its OkHttpClient + ConnectionPool +")
+                            appendLine("activeCall ref) was discarded. The fresh brain shares the session's API")
+                            appendLine("call counter, so the next call dump will be call-${String.format("%03d", lastCallNum + 1)}-request.txt")
+                        })
+                        log.info("[Agent] Brain recycled (#$recycleIdx) — model=$modelId, after call #$lastCallNum, reason: ${reason?.take(120)}")
+                    } catch (e: Exception) {
+                        log.debug("[Agent] Failed to write recycle marker: ${e.message}")
+                    }
+
+                    newBrain
+                }
 
                 // Build context manager
                 val ctx = contextManager ?: ContextManager(

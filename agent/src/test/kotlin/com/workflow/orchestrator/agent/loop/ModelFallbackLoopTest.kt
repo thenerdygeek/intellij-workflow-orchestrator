@@ -133,8 +133,10 @@ class ModelFallbackLoopTest {
         // Track model switch callback invocations
         val modelSwitches = mutableListOf<Triple<String, String, String>>()
 
-        // Brain factory: returns the appropriate brain based on model ID
-        val brainFactory: suspend (String) -> LlmBrain = { modelId ->
+        // Brain factory: returns the appropriate brain based on model ID.
+        // Second arg (reason) is unused by the test — it's just diagnostic context
+        // for the recycle marker file in production.
+        val brainFactory: suspend (String, String?) -> LlmBrain = { modelId, _ ->
             when (modelId) {
                 "model-primary" -> primaryBrain
                 "model-fallback1" -> fallbackBrain
@@ -195,7 +197,7 @@ class ModelFallbackLoopTest {
 
         val modelSwitches = mutableListOf<Triple<String, String, String>>()
 
-        val brainFactory: suspend (String) -> LlmBrain = { modelId ->
+        val brainFactory: suspend (String, String?) -> LlmBrain = { modelId, _ ->
             when (modelId) {
                 "model-primary" -> primaryBrain
                 "model-fallback1" -> fallbackBrain
