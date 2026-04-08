@@ -68,16 +68,7 @@ class CodeQualityConfigurable(private val project: Project) : SearchableConfigur
                         }
                     }
                     button("Auto-detect") {
-                        // Detect sonar.projectKey from pom.xml via Maven API
-                        val detected = try {
-                            val mavenManager = org.jetbrains.idea.maven.project.MavenProjectsManager.getInstance(project)
-                            if (mavenManager.isMavenizedProject) {
-                                val rootProject = mavenManager.rootProjects.firstOrNull()
-                                rootProject?.properties?.getProperty("sonar.projectKey")
-                                    ?: rootProject?.let { "${it.mavenId.groupId}:${it.mavenId.artifactId}" }
-                            } else null
-                        } catch (_: Exception) { null }
-
+                        val detected = project.getService(com.workflow.orchestrator.sonar.service.SonarKeyDetector::class.java).detect()
                         if (detected != null) {
                             projectKeyField.component.text = detected
                         } else {

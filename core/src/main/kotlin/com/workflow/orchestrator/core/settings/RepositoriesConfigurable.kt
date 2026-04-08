@@ -234,9 +234,16 @@ class RepositoriesConfigurable(
         ApplicationManager.getApplication().executeOnPooledThread {
             val resolver = RepoContextResolver.getInstance(project)
             val detected = resolver.autoDetectRepos()
+
+            // Also run the orchestrator to fill docker tag, sonar key, bamboo plan key, etc.
+            val orchestrator = project.getService(
+                com.workflow.orchestrator.core.autodetect.AutoDetectOrchestrator::class.java
+            )
+            val orchestratorResult = kotlinx.coroutines.runBlocking { orchestrator.detectAll() }
+
             invokeLater {
-                if (detected.isEmpty()) {
-                    repoStatusLabel.text = "No repositories detected from git remotes"
+                if (detected.isEmpty() && !orchestratorResult.anyFilled) {
+                    repoStatusLabel.text = "No repositories or project keys detected"
                     return@invokeLater
                 }
                 var added = 0
@@ -254,11 +261,10 @@ class RepositoriesConfigurable(
                     }
                 }
                 refreshRepoTable()
-                repoStatusLabel.text = if (added > 0) {
-                    "Added $added new repo(s) from ${detected.size} detected"
-                } else {
-                    "All ${detected.size} detected repos already configured"
-                }
+                val parts = mutableListOf<String>()
+                if (added > 0) parts.add("Added $added repo(s)")
+                if (orchestratorResult.anyFilled) parts.add("Filled: ${orchestratorResult.filledFields.joinToString(", ")}")
+                repoStatusLabel.text = if (parts.isNotEmpty()) parts.joinToString(" · ") else "Nothing new to detect"
             }
         }
     }

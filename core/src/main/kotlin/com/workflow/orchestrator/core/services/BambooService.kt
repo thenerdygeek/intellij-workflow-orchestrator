@@ -64,6 +64,17 @@ interface BambooService {
     /** Search plans by name or key. */
     suspend fun searchPlans(query: String): ToolResult<List<PlanData>>
 
+    /**
+     * Auto-detects the Bamboo plan key associated with a git repository by
+     * fetching all plans, parsing each plan's bamboo-specs YAML for repository
+     * URLs, and matching against the given git remote URL.
+     *
+     * @param gitRemoteUrl the git remote URL to match against (SSH or HTTPS)
+     * @return ToolResult with the detected plan key on success, or isError=true
+     *         when the URL is blank, no plans match, or multiple plans match
+     */
+    suspend fun autoDetectPlan(gitRemoteUrl: String): ToolResult<String>
+
     /** List branches for a plan. */
     suspend fun getPlanBranches(planKey: String, repoName: String? = null): ToolResult<List<PlanBranchData>>
 
