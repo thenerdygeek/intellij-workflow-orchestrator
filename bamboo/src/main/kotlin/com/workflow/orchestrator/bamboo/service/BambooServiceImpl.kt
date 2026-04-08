@@ -40,8 +40,12 @@ class BambooServiceImpl(private val project: Project) : BambooService {
     @Volatile private var cachedClient: BambooApiClient? = null
     @Volatile private var cachedBaseUrl: String? = null
 
+    /** Test-only override: when set, [client] returns this instead of building from settings. */
+    @Volatile internal var testClientOverride: BambooApiClient? = null
+
     private val client: BambooApiClient?
         get() {
+            testClientOverride?.let { return it }
             val url = settings.connections.bambooUrl.orEmpty().trimEnd('/')
             if (url.isBlank()) return null
             if (url != cachedBaseUrl || cachedClient == null) {
@@ -772,6 +776,34 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                     hint = "Check Bamboo connection in Settings."
                 )
             }
+        }
+    }
+
+    override suspend fun autoDetectPlan(gitRemoteUrl: String): ToolResult<String> {
+        if (gitRemoteUrl.isBlank()) {
+            return ToolResult(
+                data = "",
+                summary = "No git remote URL provided",
+                isError = true
+            )
+        }
+        val api = client ?: return ToolResult(
+            data = "",
+            summary = "Bamboo not configured. Cannot auto-detect plan.",
+            isError = true,
+            hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+        val planDetection = PlanDetectionService(api)
+        return when (val result = planDetection.autoDetect(gitRemoteUrl)) {
+            is com.workflow.orchestrator.core.model.ApiResult.Success -> ToolResult(
+                data = result.data,
+                summary = "Auto-detected Bamboo plan: ${result.data}"
+            )
+            is com.workflow.orchestrator.core.model.ApiResult.Error -> ToolResult(
+                data = "",
+                summary = result.message,
+                isError = true
+            )
         }
     }
 
