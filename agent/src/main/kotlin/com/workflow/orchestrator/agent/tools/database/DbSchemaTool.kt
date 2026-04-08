@@ -123,7 +123,10 @@ class DbSchemaTool : AgentTool {
                     tokenEstimate = TokenEstimator.estimate(content)
                 )
             },
-            onFailure = { e -> error("Schema inspection failed on '$summaryProfileLabel': ${e.message}") }
+            onFailure = { e ->
+                val hint = DatabaseConnectionManager.connectionErrorHint(e, profile.dbType)
+                error("Schema inspection failed on '$summaryProfileLabel': ${e.message}$hint")
+            }
         )
     }
 

@@ -278,6 +278,55 @@ object DatabaseConnectionManager {
 
     // ----- private -----
 
+    /**
+     * Maps a JDBC exception to a short, LLM-friendly recovery hint.
+     *
+     * Covers the five most common failure categories so the agent can
+     * suggest the right next step rather than just surfacing a raw driver
+     * message.
+     */
+    fun connectionErrorHint(e: Throwable, dbType: DbType): String {
+        val msg = (e.message ?: e.javaClass.simpleName).lowercase()
+        return when {
+            // Unreachable host / network
+            msg.contains("connection refused") ||
+                msg.contains("communications link failure") ||
+                msg.contains("the tcp/ip connection") ||
+                msg.contains("connect timed out") ||
+                msg.contains("unable to connect") ->
+                " — The database server appears unreachable. " +
+                    "Verify it is running and the host/port are correct in Settings → Agent → Database Profiles."
+
+            // Authentication
+            msg.contains("password authentication failed") ||
+                msg.contains("access denied for user") ||
+                msg.contains("login failed for user") ->
+                " — Authentication failed. " +
+                    "Update credentials in Settings → Tools → Workflow Orchestrator → Agent → Database Profiles."
+
+            // Wrong database name
+            msg.contains("does not exist") && (msg.contains("database") || msg.contains("catalog")) ||
+                msg.contains("unknown database") ||
+                msg.contains("cannot open database") ->
+                " — Database not found. Call db_list_databases(profile=\"...\") to see available databases."
+
+            // Wrong table / relation
+            msg.contains("relation") && msg.contains("does not exist") ||
+                msg.contains("table") && (msg.contains("doesn't exist") || msg.contains("does not exist")) ||
+                msg.contains("invalid object name") ->
+                " — Table not found. Call db_schema(profile=\"...\") to inspect available tables first."
+
+            // Statement timeout
+            msg.contains("statement timeout") ||
+                msg.contains("query timeout") ||
+                msg.contains("canceling statement") ->
+                " — Query timed out (${DEFAULT_TIMEOUT_SECONDS}s limit). " +
+                    "Add a WHERE clause or LIMIT to reduce the result set."
+
+            else -> ""
+        }
+    }
+
     private fun openConnection(profile: DatabaseProfile, jdbcUrl: String, password: String): Connection {
         val props = Properties().apply {
             put("user", profile.username)
@@ -290,6 +339,17 @@ object DatabaseConnectionManager {
                 put("useSSL", "false")
                 put("allowPublicKeyRetrieval", "true")
             }
+        }
+
+        // Set a connect timeout matching the test-connection flow (10 s).
+        // Without this, an unreachable host causes the agent to hang for the
+        // OS TCP timeout (1–2 min) before the tool returns an error.
+        // Note: MySQL uses milliseconds for connectTimeout; all others use seconds.
+        when (profile.dbType) {
+            DbType.POSTGRESQL -> props.put("connectTimeout", "10")
+            DbType.MYSQL      -> props.put("connectTimeout", "10000")   // ms
+            DbType.MSSQL      -> props.put("loginTimeout",   "10")
+            else              -> Unit
         }
 
         return if (profile.dbType == DbType.GENERIC || profile.dbType.driverClass.isEmpty()) {

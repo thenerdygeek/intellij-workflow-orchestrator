@@ -100,7 +100,8 @@ class DbQueryTool : AgentTool {
                 )
             },
             onFailure = { e ->
-                error("Query failed on '${profile.id}${database?.let { "/$it" } ?: ""}': ${e.message}")
+                val hint = DatabaseConnectionManager.connectionErrorHint(e, profile.dbType)
+                error("Query failed on '${profile.id}${database?.let { "/$it" } ?: ""}': ${e.message}$hint")
             }
         )
     }

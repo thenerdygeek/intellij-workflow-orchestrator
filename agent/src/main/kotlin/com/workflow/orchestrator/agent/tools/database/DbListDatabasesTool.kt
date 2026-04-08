@@ -100,7 +100,8 @@ class DbListDatabasesTool : AgentTool {
                 )
             },
             onFailure = { e ->
-                error("Failed to list databases on '${profile.id}': ${e.message}")
+                val hint = DatabaseConnectionManager.connectionErrorHint(e, profile.dbType)
+                error("Failed to list databases on '${profile.id}': ${e.message}$hint")
             }
         )
     }
