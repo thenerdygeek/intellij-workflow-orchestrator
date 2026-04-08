@@ -357,6 +357,11 @@
         <tabProvider implementation="com.workflow.orchestrator.agent.ui.HistoryTabProvider"/>
     </extensions>
 
+    <applicationListeners>
+        <listener class="com.workflow.orchestrator.core.autodetect.AutoDetectFileListener"
+                  topic="com.intellij.openapi.vfs.newvfs.BulkFileListener"/>
+    </applicationListeners>
+
     <actions>
         <action
             id="Workflow.GenerateCommitMessage"
