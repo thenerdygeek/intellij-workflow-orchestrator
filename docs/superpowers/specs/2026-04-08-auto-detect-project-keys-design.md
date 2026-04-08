@@ -93,18 +93,16 @@ Both methods use the same lookup chain: `properties["sonar.projectKey"]` → `${
 
 The existing git-remote regex extracts `(projectKey, repoSlug)`. We add a small helper that maps the same projectKey value into the bamboo project key field on `RepoConfig`. One-line change in the existing `parseRemoteUrl()` consumer path. No regex changes.
 
-#### Modified: `PlanDetectionService` (`:bamboo`)
+#### Modified: `BambooService` (`:core` interface) + `BambooServiceImpl` (`:bamboo`)
 
-Add a thin wrapper:
+Per CLAUDE.md's "Agent-Exposable Service Architecture" rules, plan auto-detection is exposed as a method on the unified core service interface so the orchestrator (and any future agent tool) can call it without depending on `:bamboo`:
 
 ```kotlin
-suspend fun autoDetectIfMissing(): String? {
-    if (settings.bambooPlanKey.isNotBlank()) return null
-    return autoDetect(currentGitRemoteUrl())
-}
+// In :core/services/BambooService.kt
+suspend fun autoDetectPlan(gitRemoteUrl: String): ToolResult<String>
 ```
 
-So the orchestrator can call it without re-implementing the "skip if already set" check.
+The implementation in `BambooServiceImpl` constructs `PlanDetectionService(client)` inline and wraps the existing `autoDetect(gitRemoteUrl)` result as a `ToolResult<String>`. The orchestrator iterates over `GitRepositoryManager.repositories`, matches each to a `RepoConfig` via `PluginSettings.getRepoForPath`, and calls `BambooService.autoDetectPlan(remoteUrl)` once per repo. The "skip if already set" check lives in the orchestrator, not in the service method, so the service stays a thin pass-through.
 
 #### Modified: `CodeQualityConfigurable` (`:sonar`)
 
@@ -139,7 +137,7 @@ The auto-detect orchestrator must populate per-repo values when repos are config
 
 1. **`detectFromBambooSpecs()`** — for each `RepoConfig` with a non-blank `localVcsRootPath`, parse `<repoRoot>/bamboo-specs/src/main/java/**/*.java` and write `DOCKER_TAG_NAME` → `repo.dockerTagKey` and `PLAN_KEY` → `repo.bambooPlanKey`.
 2. **`detectSonarKey()`** — for each `RepoConfig` with a non-blank `localVcsRootPath`, call `SonarKeyDetector.detectForPath(repoRoot)` and write to `repo.sonarProjectKey`.
-3. **`detectBambooPlan()`** — iterate over `GitRepositoryManager.repositories`, match each git repo to a `RepoConfig` by `localVcsRootPath` (via `PluginSettings.getRepoForPath`), then call `PlanDetectionService.autoDetectIfMissing(repo.bambooPlanKey, gitRemoteUrl)` and write to `repo.bambooPlanKey`.
+3. **`detectBambooPlan()`** — iterate over `GitRepositoryManager.repositories`, match each git repo to a `RepoConfig` by `localVcsRootPath` (via `PluginSettings.getRepoForPath`). For each repo with a blank `bambooPlanKey`, call `BambooService.autoDetectPlan(gitRemoteUrl)` and write the resulting key to `repo.bambooPlanKey`.
 
 **Fallback for no-repo projects:** when `PluginSettings.repos` is empty, the orchestrator behaves as before — it uses `project.basePath` as a synthetic single repo and writes to global `PluginSettings.State` fields directly.
 
@@ -175,7 +173,7 @@ Subsequent triggers are silent — they just update fields. No popups, no progre
 - Missing `bamboo-specs/` → `parseConstants()` returns `emptyMap()`.
 - Missing `pom.xml` or no Maven project → `SonarKeyDetector.detect()` returns `null`.
 - Missing `.git/config` → already handled by `RepoContextResolver` today.
-- Bamboo creds absent → `PlanDetectionService.autoDetectIfMissing()` returns `null` early.
+- Bamboo creds absent → `BambooService.autoDetectPlan()` returns a `ToolResult` with `isError=true`; the orchestrator skips it silently.
 
 ## Threading
 
@@ -239,10 +237,10 @@ In `runIde` sandbox, verify:
 - `core/src/test/testData/auto-detect-project/` (fixture tree)
 
 **Modified:**
-- `core/src/main/resources/META-INF/plugin.xml` — register `AutoDetectOrchestrator` service + `WorkflowAutoDetectStartupActivity`
-- `core/src/main/kotlin/.../RepoContextResolver.kt` — derive bamboo project key from same regex match
-- `core/src/main/kotlin/.../RepositoriesConfigurable.kt` — wire "Auto-Detect" button to `AutoDetectOrchestrator.detectAll()`
-- `bamboo/src/main/kotlin/.../PlanDetectionService.kt` — add `autoDetectIfMissing()` wrapper
+- `src/main/resources/META-INF/plugin.xml` — register `AutoDetectOrchestrator` service + `SonarKeyDetector` service + `WorkflowAutoDetectStartupActivity` + `AutoDetectFileListener`
+- `core/src/main/kotlin/com/workflow/orchestrator/core/services/BambooService.kt` — add `autoDetectPlan(gitRemoteUrl: String): ToolResult<String>` interface method
+- `bamboo/src/main/kotlin/com/workflow/orchestrator/bamboo/service/BambooServiceImpl.kt` — implement `autoDetectPlan` (delegates to `PlanDetectionService(client).autoDetect`)
+- `core/src/main/kotlin/.../RepositoriesConfigurable.kt` — wire "Auto-Detect" button to also call `AutoDetectOrchestrator.detectAll()` after `autoDetectRepos()`
 - `sonar/src/main/kotlin/.../CodeQualityConfigurable.kt` — replace inlined Maven lookup with `SonarKeyDetector.detect()` call
 
 ## Open Risks

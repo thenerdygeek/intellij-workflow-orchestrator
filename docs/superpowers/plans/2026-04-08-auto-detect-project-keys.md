@@ -29,13 +29,14 @@
 | `core/src/test/kotlin/com/workflow/orchestrator/core/autodetect/AutoDetectIntegrationTest.kt` | `:core` | End-to-end with fixture project tree |
 | `core/src/test/testData/auto-detect-project/` | `:core` | Fixture: `.git/config`, `pom.xml`, `bamboo-specs/.../PlanProperties.java` |
 | `sonar/src/test/kotlin/com/workflow/orchestrator/sonar/service/SonarKeyDetectorTest.kt` | `:sonar` | Maven detector unit tests |
-| `bamboo/src/test/kotlin/com/workflow/orchestrator/bamboo/service/PlanDetectionServiceAutoDetectIfMissingTest.kt` | `:bamboo` | Test for the new wrapper |
+| `bamboo/src/test/kotlin/com/workflow/orchestrator/bamboo/service/BambooServiceImplAutoDetectPlanTest.kt` | `:bamboo` | Test for the new `autoDetectPlan` method |
 
 **Modified files:**
 
 | File | Change |
 |---|---|
-| `bamboo/src/main/kotlin/com/workflow/orchestrator/bamboo/service/PlanDetectionService.kt` | Add `autoDetectIfMissing(project: Project)` wrapper |
+| `core/src/main/kotlin/com/workflow/orchestrator/core/services/BambooService.kt` | Add `autoDetectPlan(gitRemoteUrl: String): ToolResult<String>` interface method |
+| `bamboo/src/main/kotlin/com/workflow/orchestrator/bamboo/service/BambooServiceImpl.kt` | Implement `autoDetectPlan` (delegates to `PlanDetectionService(client).autoDetect`) |
 | `sonar/src/main/kotlin/com/workflow/orchestrator/sonar/settings/CodeQualityConfigurable.kt` | Replace inlined Maven snippet (lines 70-89) with `SonarKeyDetector.detect()` call |
 | `core/src/main/kotlin/com/workflow/orchestrator/core/settings/RepositoriesConfigurable.kt` | After `autoDetectRepos()`, also call `AutoDetectOrchestrator.detectAll()` |
 | `src/main/resources/META-INF/plugin.xml` | Register `AutoDetectOrchestrator`, `SonarKeyDetector`, `WorkflowAutoDetectStartupActivity`, `AutoDetectFileListener` |
@@ -526,113 +527,173 @@ orchestrator. Behavior is unchanged."
 
 ---
 
-## Phase 2: Service Wrappers
+## Phase 2: Core Service Layer
 
-### Task 3: PlanDetectionService.autoDetectIfMissing wrapper
+### Task 3: BambooService.autoDetectPlan (core interface + impl)
+
+This task adds plan auto-detection to the unified core service layer per CLAUDE.md's "Agent-Exposable Service Architecture" rules. The orchestrator (Task 5) calls `BambooService.autoDetectPlan()` directly via `project.getService(BambooService::class.java)` — no reflection, no `kotlin-reflect` dependency, no `:core` → `:bamboo` import.
 
 **Files:**
-- Modify: `bamboo/src/main/kotlin/com/workflow/orchestrator/bamboo/service/PlanDetectionService.kt`
-- Test: `bamboo/src/test/kotlin/com/workflow/orchestrator/bamboo/service/PlanDetectionServiceAutoDetectIfMissingTest.kt`
+- Modify: `core/src/main/kotlin/com/workflow/orchestrator/core/services/BambooService.kt` (add interface method)
+- Modify: `bamboo/src/main/kotlin/com/workflow/orchestrator/bamboo/service/BambooServiceImpl.kt` (add implementation)
+- Test: `bamboo/src/test/kotlin/com/workflow/orchestrator/bamboo/service/BambooServiceImplAutoDetectPlanTest.kt`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `bamboo/src/test/kotlin/com/workflow/orchestrator/bamboo/service/PlanDetectionServiceAutoDetectIfMissingTest.kt`:
+Create `bamboo/src/test/kotlin/com/workflow/orchestrator/bamboo/service/BambooServiceImplAutoDetectPlanTest.kt`:
 
 ```kotlin
 package com.workflow.orchestrator.bamboo.service
 
+import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.bamboo.api.BambooApiClient
 import com.workflow.orchestrator.bamboo.api.dto.BambooPlanDto
 import com.workflow.orchestrator.core.api.ApiResult
 import io.mockk.coEvery
+import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-class PlanDetectionServiceAutoDetectIfMissingTest {
+class BambooServiceImplAutoDetectPlanTest {
 
+    private val project = mockk<Project>(relaxed = true)
     private val apiClient = mockk<BambooApiClient>()
-    private val service = PlanDetectionService(apiClient)
 
-    @Test
-    fun `returns null when plan key already set`() = runTest {
-        val result = service.autoDetectIfMissing(
-            currentPlanKey = "ALREADY-SET",
-            gitRemoteUrl = "https://bitbucket.org/acme/repo.git"
-        )
-        assertNull(result)
+    private fun makeService(): BambooServiceImpl {
+        // Construct BambooServiceImpl with the apiClient injected. The exact
+        // constructor shape may differ — adapt to whatever existing tests use.
+        // If BambooServiceImpl is a project service, use a TestFixture or
+        // a thin test factory. The PlanDetectionServiceTest pattern uses
+        // direct constructor injection which we can mirror here.
+        return BambooServiceImpl(project).also {
+            // Inject the mocked client via reflection or a test-only setter
+            // (existing tests in :bamboo will show the pattern)
+            it.testOverrideClient(apiClient)
+        }
     }
 
     @Test
-    fun `returns null when git remote url is blank`() = runTest {
-        val result = service.autoDetectIfMissing(
-            currentPlanKey = "",
-            gitRemoteUrl = ""
-        )
-        assertNull(result)
+    fun `returns error ToolResult when git remote url is blank`() = runTest {
+        val service = makeService()
+        val result = service.autoDetectPlan("")
+        assertTrue(result.isError)
+        assertEquals("", result.data)
     }
 
     @Test
-    fun `delegates to autoDetect when plan key is empty`() = runTest {
+    fun `returns success ToolResult when single plan matches`() = runTest {
+        val plan = BambooPlanDto(key = "PROJ-MYPLAN", name = "My Plan")
+        coEvery { apiClient.getPlans() } returns ApiResult.Success(listOf(plan))
+        coEvery { apiClient.getPlanSpecs("PROJ-MYPLAN") } returns ApiResult.Success(
+            "specs:\n  url: https://bitbucket.org/acme/repo.git"
+        )
+
+        val service = makeService()
+        val result = service.autoDetectPlan("https://bitbucket.org/acme/repo.git")
+
+        assertFalse(result.isError)
+        assertEquals("PROJ-MYPLAN", result.data)
+        assertTrue(result.summary.contains("PROJ-MYPLAN"))
+    }
+
+    @Test
+    fun `returns error ToolResult when no plan matches`() = runTest {
         coEvery { apiClient.getPlans() } returns ApiResult.Success(emptyList())
-        val result = service.autoDetectIfMissing(
-            currentPlanKey = "",
-            gitRemoteUrl = "https://bitbucket.org/acme/repo.git"
-        )
-        // No matching plan -> returns null (failure case from autoDetect)
-        assertNull(result)
+        val service = makeService()
+        val result = service.autoDetectPlan("https://bitbucket.org/acme/repo.git")
+        assertTrue(result.isError)
+        assertEquals("", result.data)
     }
 }
 ```
+
+> **Note on `BambooServiceImpl` test construction:** The exact constructor / DI pattern depends on how existing `BambooServiceImpl` tests are wired. Before writing this test, read `bamboo/src/test/kotlin/com/workflow/orchestrator/bamboo/service/` for an existing `BambooServiceImplTest` (or similar) and mirror its setup. If no such test exists, the simplest pattern is:
+> 1. Add a package-private/internal `testOverrideClient(client: BambooApiClient)` setter to `BambooServiceImpl` that overrides the cached client field
+> 2. Or extract `PlanDetectionService` construction into a virtual method that tests can override
+>
+> Pick whichever pattern matches the codebase's existing testing style. The test above uses option 1 as a placeholder.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-./gradlew :bamboo:test --tests "com.workflow.orchestrator.bamboo.service.PlanDetectionServiceAutoDetectIfMissingTest"
+./gradlew :bamboo:test --tests "com.workflow.orchestrator.bamboo.service.BambooServiceImplAutoDetectPlanTest"
 ```
 
-Expected: FAIL with "Unresolved reference: autoDetectIfMissing"
+Expected: FAIL with "Unresolved reference: autoDetectPlan" (and possibly `testOverrideClient`).
 
-- [ ] **Step 3: Add the wrapper**
+- [ ] **Step 3: Add the method to the BambooService interface**
 
-Modify `bamboo/src/main/kotlin/com/workflow/orchestrator/bamboo/service/PlanDetectionService.kt`. Add this method to the class (after the existing `autoDetect` method):
+Modify `core/src/main/kotlin/com/workflow/orchestrator/core/services/BambooService.kt`. Add this method declaration to the interface (place it near `getPlans()` and `searchPlans()` for grouping):
 
 ```kotlin
 /**
- * Convenience wrapper for the auto-detect orchestrator. Skips detection when
- * a plan key is already set or no git remote is available. Returns the
- * detected plan key on success, null otherwise (silent — no error).
+ * Auto-detects the Bamboo plan key associated with a git repository by
+ * fetching all plans, parsing each plan's bamboo-specs YAML for repository
+ * URLs, and matching against the given git remote URL.
+ *
+ * @param gitRemoteUrl the git remote URL to match against (SSH or HTTPS)
+ * @return ToolResult with the detected plan key on success, or isError=true
+ *         when the URL is blank, no plans match, or multiple plans match
  */
-suspend fun autoDetectIfMissing(currentPlanKey: String, gitRemoteUrl: String): String? {
-    if (currentPlanKey.isNotBlank()) return null
-    if (gitRemoteUrl.isBlank()) return null
-    return when (val result = autoDetect(gitRemoteUrl)) {
-        is com.workflow.orchestrator.core.api.ApiResult.Success -> result.data
-        is com.workflow.orchestrator.core.api.ApiResult.Error -> null
+suspend fun autoDetectPlan(gitRemoteUrl: String): ToolResult<String>
+```
+
+- [ ] **Step 4: Implement in BambooServiceImpl**
+
+Modify `bamboo/src/main/kotlin/com/workflow/orchestrator/bamboo/service/BambooServiceImpl.kt`. Add this method to the class (place it near other plan-related methods like `getPlans()` and `searchPlans()`):
+
+```kotlin
+override suspend fun autoDetectPlan(gitRemoteUrl: String): ToolResult<String> {
+    if (gitRemoteUrl.isBlank()) {
+        return ToolResult(
+            data = "",
+            summary = "No git remote URL provided",
+            isError = true
+        )
+    }
+    val planDetection = PlanDetectionService(client)
+    return when (val result = planDetection.autoDetect(gitRemoteUrl)) {
+        is com.workflow.orchestrator.core.api.ApiResult.Success -> ToolResult(
+            data = result.data,
+            summary = "Auto-detected Bamboo plan: ${result.data}"
+        )
+        is com.workflow.orchestrator.core.api.ApiResult.Error -> ToolResult(
+            data = "",
+            summary = result.message,
+            isError = true
+        )
     }
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+> **Note on `client` access:** `BambooServiceImpl` already exposes its `BambooApiClient` as an internal/private property (per the explore agent's report, lines 43-58). If the field name is different from `client`, adapt the code above. If it's truly `private` and the test cannot inject a mock, change it to `internal` or add a constructor parameter — whichever matches the existing pattern in `:bamboo`.
+
+- [ ] **Step 5: Run test to verify it passes**
 
 ```bash
-./gradlew :bamboo:test --tests "com.workflow.orchestrator.bamboo.service.PlanDetectionServiceAutoDetectIfMissingTest"
+./gradlew :bamboo:test --tests "com.workflow.orchestrator.bamboo.service.BambooServiceImplAutoDetectPlanTest"
+./gradlew :bamboo:test :core:compileKotlin
 ```
 
-Expected: PASS, all 3 tests green.
+Expected: All 3 new tests PASS. Full bamboo test suite still passes. Core compiles cleanly.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add bamboo/src/main/kotlin/com/workflow/orchestrator/bamboo/service/PlanDetectionService.kt \
-        bamboo/src/test/kotlin/com/workflow/orchestrator/bamboo/service/PlanDetectionServiceAutoDetectIfMissingTest.kt
-git commit -m "feat(bamboo): add autoDetectIfMissing wrapper to PlanDetectionService
+git add core/src/main/kotlin/com/workflow/orchestrator/core/services/BambooService.kt \
+        bamboo/src/main/kotlin/com/workflow/orchestrator/bamboo/service/BambooServiceImpl.kt \
+        bamboo/src/test/kotlin/com/workflow/orchestrator/bamboo/service/BambooServiceImplAutoDetectPlanTest.kt
+git commit -m "feat(bamboo): add autoDetectPlan to BambooService core interface
 
-Thin convenience wrapper for the auto-detect orchestrator: skips when
-plan key already set or git remote blank, returns null on detection
-failure (silent — failures are non-fatal in auto-detect context)."
+Wraps PlanDetectionService.autoDetect as a ToolResult-returning method
+on the unified core service interface, per CLAUDE.md's Agent-Exposable
+Service Architecture rules. Enables the auto-detect orchestrator (and
+future agent tools) to detect Bamboo plans without reflection or
+direct :bamboo dependencies."
 ```
 
 ---
@@ -934,6 +995,7 @@ import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
+import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.sonar.service.SonarKeyDetector
@@ -1046,14 +1108,16 @@ suspend fun detectBambooPlan(filled: MutableList<String>) {
     val settings = PluginSettings.getInstance(project)
     val repos = settings.getRepos()
     val gitRepos = GitRepositoryManager.getInstance(project).repositories
+    val bambooService = project.getService(BambooService::class.java) ?: return
 
     if (repos.isEmpty()) {
         // Fallback: single global plan key from first git repo
         val state = settings.state
         if (state.bambooPlanKey.isNotBlank()) return
         val remoteUrl = gitRepos.firstOrNull()?.remotes?.firstOrNull()?.firstUrl ?: return
-        val detected = invokeAutoDetectIfMissing("", remoteUrl) ?: return
-        state.bambooPlanKey = detected
+        val result = bambooService.autoDetectPlan(remoteUrl)
+        if (result.isError || result.data.isBlank()) return
+        state.bambooPlanKey = result.data
         filled += "global.bambooPlanKey"
         return
     }
@@ -1064,28 +1128,10 @@ suspend fun detectBambooPlan(filled: MutableList<String>) {
         val repoConfig = settings.getRepoForPath(rootPath) ?: continue
         if (repoConfig.bambooPlanKey.isNotBlank()) continue
         val remoteUrl = gitRepo.remotes.firstOrNull()?.firstUrl ?: continue
-        val detected = invokeAutoDetectIfMissing(repoConfig.bambooPlanKey, remoteUrl) ?: continue
-        repoConfig.bambooPlanKey = detected
+        val result = bambooService.autoDetectPlan(remoteUrl)
+        if (result.isError || result.data.isBlank()) continue
+        repoConfig.bambooPlanKey = result.data
         filled += "${repoLabel(repoConfig)}.bambooPlanKey"
-    }
-}
-
-/** Reflection wrapper to call PlanDetectionService without :core depending on :bamboo. */
-private fun invokeAutoDetectIfMissing(currentPlanKey: String, gitRemoteUrl: String): String? {
-    return try {
-        val planServiceClass = Class.forName("com.workflow.orchestrator.bamboo.service.PlanDetectionService")
-        val planService = project.getService(planServiceClass) ?: return null
-        val method = planServiceClass.getMethod("autoDetectIfMissing", String::class.java, String::class.java)
-        // The method is suspend; reflective call expects a Continuation. Use the
-        // kotlin.coroutines.jvm.internal helper or wrap with kotlinx.coroutines.runBlocking.
-        kotlinx.coroutines.runBlocking {
-            val callable = planServiceClass.kotlin.members.firstOrNull { it.name == "autoDetectIfMissing" }
-                ?: return@runBlocking null
-            callable.callSuspend(planService, currentPlanKey, gitRemoteUrl) as? String
-        }
-    } catch (e: Exception) {
-        log.warn("[AutoDetect] Failed to invoke PlanDetectionService.autoDetectIfMissing reflectively", e)
-        null
     }
 }
 
@@ -1184,11 +1230,11 @@ companion object {
 }
 ```
 
-> **Note on `:core` -> `:bamboo` reflection:** The dependency rule (`:core` cannot depend on feature modules) forces us to use reflection for the bamboo plan service. The reflective `callSuspend` call (from `kotlin-reflect`) handles the suspend signature; if `kotlin-reflect` isn't already on the `:core` classpath, add it as an `implementation` dependency in `core/build.gradle.kts`. If a future task adds `BambooService` to the unified service layer in `:core`, this reflection can be replaced with a direct call.
+> **Note on direct `BambooService` call:** Task 3 added `BambooService.autoDetectPlan(gitRemoteUrl)` to the unified core service interface. The orchestrator calls it directly via `project.getService(BambooService::class.java)` — no reflection, no `kotlin-reflect` dependency, no `:core` → `:bamboo` import. The dependency direction is preserved because the interface lives in `:core` and only the implementation lives in `:bamboo`.
 
 > **Note on `detectGitDerivable`:** Currently a no-op because `RepoContextResolver.autoDetectRepos()` already populates `RepoConfig` entries with the git-derived fields, and that path is owned by `RepositoriesConfigurable`. We keep the method as a hook so the trigger wiring (file listener for `.git/config`) has a place to call.
 
-> **Note on `runBlocking` in `runBlockingPlan` and `invokeAutoDetectIfMissing`:** Acceptable because `detectAll()` runs on `Dispatchers.IO`, never on the EDT. The brief block is needed to bridge the suspend `detectBambooPlan()` into the synchronous `runDetector` helper and to bridge the reflective suspend call.
+> **Note on `runBlocking` in `runBlockingPlan`:** Acceptable because `detectAll()` runs on `Dispatchers.IO`, never on the EDT. The brief block is needed to bridge the suspend `detectBambooPlan()` into the synchronous `runDetector` helper.
 
 > **Companion-object visibility:** `applyBambooSpecsToState`, `applyBambooSpecsToRepo`, and `mirrorPrimaryToGlobal` are `internal` companion methods so the tests in the same module can call them statically without constructing a real `Project`. The instance methods `detectFromBambooSpecs`, `detectSonarKey`, etc. delegate to these.
 
@@ -1792,7 +1838,7 @@ scenarios."
 - [x] Goal 5 (manual buttons still work): Tasks 2 (sonar), 8 (repositories)
 - [x] **Goal 6 (multi-repo per-repo writes for sonar / docker tag / bamboo plan):** Task 2 (`SonarKeyDetector.detectForPath`), Task 5 (orchestrator iterates over `getRepos()`, writes to each `RepoConfig`, mirrors primary to global), Task 9 (multi-repo fixture + tests)
 - [x] SonarKeyDetector extraction + `detectForPath`: Task 2
-- [x] PlanDetectionService.autoDetectIfMissing: Task 3
+- [x] BambooService.autoDetectPlan added to core interface + impl: Task 3
 - [x] One-time notification: Task 5
 - [x] BambooSpecsParser tests: Task 1
 - [x] AutoDetectOrchestrator tests (single-repo + multi-repo): Tasks 4, 5
@@ -1809,7 +1855,7 @@ scenarios."
 - `AutoDetectOrchestrator.applyBambooSpecsToState(State, Map, String, MutableList): Unit` — Task 5 defines as internal companion, Tasks 5 + 9 test.
 - `AutoDetectOrchestrator.applyBambooSpecsToRepo(RepoConfig, Map, MutableList): Unit` — Task 5 defines as internal companion, Tasks 5 + 9 test.
 - `AutoDetectOrchestrator.mirrorPrimaryToGlobal(State, RepoConfig, MutableList): Unit` — Task 5 defines as internal companion, Tasks 5 + 9 test.
-- `PlanDetectionService.autoDetectIfMissing(currentPlanKey: String, gitRemoteUrl: String): String?` — Task 3 defines as suspend, Task 5 calls via `callSuspend` reflection.
+- `BambooService.autoDetectPlan(gitRemoteUrl: String): ToolResult<String>` — Task 3 adds to `:core` interface and implements in `BambooServiceImpl`. Task 5 calls directly via `project.getService(BambooService::class.java)`. No reflection.
 - `SonarKeyDetector.detect(): String?` — Task 2 defines, Task 2 step 5 uses, Task 5 uses for no-repo fallback.
 - `SonarKeyDetector.detectForPath(repoRootPath: String): String?` — Task 2 defines, Task 5 uses for per-repo iteration.
 
