@@ -9,6 +9,7 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.services.BambooService
+import com.workflow.orchestrator.core.services.SonarKeyDetectorService
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoConfig
 import git4idea.repo.GitRepositoryManager
@@ -18,6 +19,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.nio.file.Paths
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -41,22 +44,25 @@ class AutoDetectOrchestrator(private val project: Project) : Disposable {
     private val log = logger<AutoDetectOrchestrator>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val firstSweepNotified = AtomicBoolean(false)
+    private val detectionMutex = Mutex()
 
     init {
         scope.launch {
             project.getService(EventBus::class.java).events.collect { event ->
                 if (event is WorkflowEvent.BranchChanged) {
                     log.info("[AutoDetect] BranchChanged → re-running branch-sensitive detectors")
-                    val filled = mutableListOf<String>()
-                    try {
-                        detectFromBambooSpecs(filled)
-                    } catch (e: Exception) {
-                        log.warn("[AutoDetect] bamboo-specs detector failed on branch change", e)
-                    }
-                    try {
-                        detectBambooPlan(filled)
-                    } catch (e: Exception) {
-                        log.warn("[AutoDetect] bamboo-plan detector failed on branch change", e)
+                    detectionMutex.withLock {
+                        val filled = mutableListOf<String>()
+                        try {
+                            detectFromBambooSpecs(filled)
+                        } catch (e: Exception) {
+                            log.warn("[AutoDetect] bamboo-specs detector failed on branch change", e)
+                        }
+                        try {
+                            detectBambooPlan(filled)
+                        } catch (e: Exception) {
+                            log.warn("[AutoDetect] bamboo-plan detector failed on branch change", e)
+                        }
                     }
                 }
             }
@@ -64,36 +70,38 @@ class AutoDetectOrchestrator(private val project: Project) : Disposable {
     }
 
     suspend fun detectAll(): AutoDetectResult = coroutineScope {
-        log.info("[AutoDetect] Running full sweep")
-        val filled = mutableListOf<String>()
-        val errors = mutableListOf<String>()
+        detectionMutex.withLock {
+            log.info("[AutoDetect] Running full sweep")
+            val filled = mutableListOf<String>()
+            val errors = mutableListOf<String>()
 
-        runDetector("bamboo-specs", filled, errors) { detectFromBambooSpecs(it) }
-        runDetector("git-remote", filled, errors) { detectGitDerivable(it) }
-        runDetector("sonar-key", filled, errors) { detectSonarKey(it) }
+            runDetector("bamboo-specs", filled, errors) { detectFromBambooSpecs(it) }
+            runDetector("git-remote", filled, errors) { detectGitDerivable(it) }
+            runDetector("sonar-key", filled, errors) { detectSonarKey(it) }
 
-        // Suspend detector — call directly with try/catch
-        try {
-            detectBambooPlan(filled)
-        } catch (e: Exception) {
-            log.warn("[AutoDetect] Detector 'bamboo-plan' failed", e)
-            errors.add("bamboo-plan: ${e.message ?: "unknown"}")
-        }
-
-        // After per-repo writes, mirror primary repo values to global as fallback
-        val settings = PluginSettings.getInstance(project)
-        val primary = settings.getPrimaryRepo()
-        if (primary != null) {
-            runDetector("mirror-primary", filled, errors) {
-                mirrorPrimaryToGlobal(settings.state, primary, it)
+            // Suspend detector — call directly with try/catch
+            try {
+                detectBambooPlan(filled)
+            } catch (e: Exception) {
+                log.warn("[AutoDetect] Detector 'bamboo-plan' failed", e)
+                errors.add("bamboo-plan: ${e.message ?: "unknown"}")
             }
-        }
 
-        val result = AutoDetectResult(filledFields = filled, errors = errors)
-        if (result.anyFilled && firstSweepNotified.compareAndSet(false, true)) {
-            showNotification(result)
+            // After per-repo writes, mirror primary repo values to global as fallback
+            val settings = PluginSettings.getInstance(project)
+            val primary = settings.getPrimaryRepo()
+            if (primary != null) {
+                runDetector("mirror-primary", filled, errors) {
+                    mirrorPrimaryToGlobal(settings.state, primary, it)
+                }
+            }
+
+            val result = AutoDetectResult(filledFields = filled, errors = errors)
+            if (result.anyFilled && firstSweepNotified.compareAndSet(false, true)) {
+                showNotification(result)
+            }
+            result
         }
-        result
     }
 
     private inline fun runDetector(
@@ -190,14 +198,11 @@ class AutoDetectOrchestrator(private val project: Project) : Disposable {
         }
     }
 
-    private fun repoLabel(repo: RepoConfig): String =
-        repo.name?.takeIf { it.isNotBlank() } ?: repo.bitbucketRepoSlug?.takeIf { it.isNotBlank() } ?: "unnamed"
-
     private fun showNotification(result: AutoDetectResult) {
         val msg = "Auto-detected project keys: ${result.filledFields.joinToString(", ")}. " +
                   "Review in Settings → Tools → Workflow Orchestrator → Repositories."
         NotificationGroupManager.getInstance()
-            .getNotificationGroup("Workflow Orchestrator")
+            .getNotificationGroup("workflow.autodetect")
             .createNotification(msg, NotificationType.INFORMATION)
             .notify(project)
     }
@@ -210,6 +215,12 @@ class AutoDetectOrchestrator(private val project: Project) : Disposable {
         /** Returns `detected` only when `current` is null/blank AND `detected` is non-blank. */
         fun fillIfEmpty(current: String?, detected: String?): String? =
             if (current.isNullOrBlank() && !detected.isNullOrBlank()) detected else current
+
+        /** Returns a human-readable label for [repo]: name, slug, or "unnamed". */
+        internal fun repoLabel(repo: RepoConfig): String =
+            repo.name?.takeIf { it.isNotBlank() }
+                ?: repo.bitbucketRepoSlug?.takeIf { it.isNotBlank() }
+                ?: "unnamed"
 
         /** Visible for testing. Writes constants into a state object via fill-only-empty. */
         internal fun applyBambooSpecsToState(
@@ -236,8 +247,7 @@ class AutoDetectOrchestrator(private val project: Project) : Disposable {
             constants: Map<String, String>,
             filled: MutableList<String>
         ) {
-            val label = repo.name?.takeIf { it.isNotBlank() }
-                ?: repo.bitbucketRepoSlug?.takeIf { it.isNotBlank() } ?: "unnamed"
+            val label = repoLabel(repo)
             val newDocker = fillIfEmpty(repo.dockerTagKey, constants["DOCKER_TAG_NAME"])
             if (newDocker != repo.dockerTagKey && !newDocker.isNullOrBlank()) {
                 repo.dockerTagKey = newDocker

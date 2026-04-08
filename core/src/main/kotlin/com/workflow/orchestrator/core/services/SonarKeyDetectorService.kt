@@ -1,4 +1,4 @@
-package com.workflow.orchestrator.core.autodetect
+package com.workflow.orchestrator.core.services
 
 /**
  * Core-side interface for Sonar project-key detection.

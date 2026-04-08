@@ -3,7 +3,7 @@ package com.workflow.orchestrator.sonar.service
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
-import com.workflow.orchestrator.core.autodetect.SonarKeyDetectorService
+import com.workflow.orchestrator.core.services.SonarKeyDetectorService
 import org.jetbrains.idea.maven.project.MavenProject
 import org.jetbrains.idea.maven.project.MavenProjectsManager
 import java.nio.file.Paths

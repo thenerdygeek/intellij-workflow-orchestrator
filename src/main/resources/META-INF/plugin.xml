@@ -103,7 +103,7 @@
         <notificationGroup id="workflow.quality" displayType="BALLOON"/>
         <notificationGroup id="workflow.queue" displayType="BALLOON"/>
         <notificationGroup id="workflow.automation" displayType="BALLOON"/>
-        <notificationGroup id="Workflow Orchestrator"
+        <notificationGroup id="workflow.autodetect"
                            displayType="BALLOON"
                            isLogByDefault="false"/>
 
@@ -176,7 +176,7 @@
         <projectService
             serviceImplementation="com.workflow.orchestrator.sonar.service.SonarDataService"/>
         <projectService
-            serviceInterface="com.workflow.orchestrator.core.autodetect.SonarKeyDetectorService"
+            serviceInterface="com.workflow.orchestrator.core.services.SonarKeyDetectorService"
             serviceImplementation="com.workflow.orchestrator.sonar.service.SonarKeyDetector"/>
         <!-- SonarQube Editor Integration -->
         <codeInsight.lineMarkerProvider language="JAVA"
