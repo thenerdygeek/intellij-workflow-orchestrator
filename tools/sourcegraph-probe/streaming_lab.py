@@ -621,6 +621,42 @@ SCENARIOS: list[Scenario] = [
         require_text_content=True,
         finish_reason_in={"stop", "end_turn", "length"},
     ),
+
+    # ── XML large content streaming (Cline edit_file pattern) ────────────────
+    # Mode B only is meaningful for these — Mode A would need native tools.
+    # These simulate what the agent produces when writing/editing a file.
+    Scenario(
+        name="xml_write_small_file",
+        description="Mode B: XML write_to_file with ~50 lines — Cline edit_file baseline",
+        user_prompt=(
+            "Use write_to_file to create src/model/UserProfile.kt with a complete Kotlin "
+            "data class containing 8 fields: id (UUID), name, email, age, role (enum: "
+            "ADMIN/USER/GUEST), createdAt, updatedAt, isActive. Include package declaration, "
+            "imports, KDoc comment on the class, and a companion object factory method. "
+            "Aim for ~50 lines of real, runnable Kotlin."
+        ),
+        min_tools=1, max_tools=1,
+        expected_tool_names={"write_to_file"},
+        require_text_content=False,
+        max_output_tokens=2048,
+    ),
+    Scenario(
+        name="xml_write_large_file",
+        description="Mode B: XML write_to_file with ~200 lines — Cline edit_file stress test",
+        user_prompt=(
+            "Use write_to_file to create src/repo/UserRepository.kt with a complete Kotlin "
+            "implementation of a UserRepository interface and an InMemoryUserRepository. "
+            "Include: the Repository<T, ID> generic interface, UserRepository interface extending "
+            "it with custom queries (findByEmail, findByRole, findActive), InMemoryUserRepository "
+            "with a MutableMap backing store implementing all methods, thread-safety via "
+            "ReentrantReadWriteLock, full KDoc on every method, and a companion factory. "
+            "Aim for ~200 lines of real, production-quality Kotlin."
+        ),
+        min_tools=1, max_tools=1,
+        expected_tool_names={"write_to_file"},
+        require_text_content=False,
+        max_output_tokens=6144,
+    ),
 ]
 
 
@@ -2605,6 +2641,459 @@ def _is_valid_json(s: str) -> bool:
         return False
 
 
+def probe_sse_keepalive(client: SourcegraphClient, model: str) -> dict:
+    """Detect whether the gateway sends SSE keep-alive comment lines during streaming.
+
+    SSE keep-alive lines are bare comment lines: ': ' or ': keep-alive' with no
+    'data:' prefix. They are valid SSE and OkHttp resets its read timeout on
+    EVERY byte received — including these comments. If the gateway sends them
+    during model 'thinking' pauses, the agent's 120s read timeout is effectively
+    never triggered regardless of how long generation takes.
+
+    If NOT present: a 30s+ pre-generation silence WILL hit the read timeout,
+    which is the root cause of the agent's timeout errors on long conversations.
+    """
+    # Use a long-ish prompt to encourage a real thinking pause before generation
+    body = {
+        "model": model, "max_tokens": 64, "temperature": 0, "stream": True,
+        "messages": [{"role": "user", "content": "Reply with one word: yes"}],
+    }
+    out: dict[str, Any] = {
+        "keepalive_lines": [],
+        "data_lines": 0,
+        "empty_lines": 0,
+        "other_lines": 0,
+    }
+    try:
+        r = client.post_chat(body, stream=True)
+        out["status"] = r.status_code
+        if r.status_code != 200:
+            out["verdict"] = "HTTP_ERROR"
+            return out
+
+        start = time.monotonic()
+        # Use iter_lines with keep_blank_lines to see ALL raw SSE lines including comments
+        for raw in r.iter_lines(decode_unicode=True, chunk_size=1):
+            if raw is None:
+                continue
+            raw = raw.rstrip("\r")
+            ts = round((time.monotonic() - start) * 1000)
+
+            if raw == "" or raw is None:
+                out["empty_lines"] += 1
+            elif raw.startswith("data:"):
+                out["data_lines"] += 1
+            elif raw.startswith(":"):
+                # SSE comment — this is a keep-alive line
+                out["keepalive_lines"].append({"ts_ms": ts, "line": raw[:80]})
+            else:
+                out["other_lines"] += 1
+
+        saw_keepalive = len(out["keepalive_lines"]) > 0
+        out["keepalive_count"] = len(out["keepalive_lines"])
+        out["verdict"] = "KEEPALIVE_PRESENT" if saw_keepalive else "NO_KEEPALIVE"
+        out["timeout_risk"] = (
+            "LOW (keep-alive resets OkHttp read timeout)"
+            if saw_keepalive else
+            "HIGH (no keep-alive — silent pauses >120s will kill the stream)"
+        )
+    except requests.RequestException as e:
+        out["verdict"] = "TRANSPORT_ERROR"
+        out["error"] = str(e)
+    return out
+
+
+def probe_pregeneration_silence(client: SourcegraphClient, model: str) -> dict:
+    """Measure the silence between sending a request and receiving the first SSE byte.
+
+    This is DIFFERENT from inter-chunk gap:
+      - Pre-generation silence = model 'thinking' before writing the first token
+      - Inter-chunk gap = pause mid-generation between tokens
+
+    For the agent, the relevant scenario is a large system prompt (11 sections,
+    ~8K tokens) followed by a complex task. The model may be silent for 10-40s
+    before the first token arrives. During this silence, no bytes are received,
+    so OkHttp's read timeout counts down — keep-alive lines are the only way
+    to prevent a timeout here.
+
+    We test 3 prompt sizes to model the agent's real workload:
+      - tiny:   'Reply: ok'           (baseline, fast)
+      - medium: system prompt ~2K + question
+      - large:  system prompt ~8K + complex question (mimics agent turn 1)
+    """
+    out: dict[str, Any] = {"runs": []}
+
+    filler_2k = ("This is background context for the task. " * 50).strip()   # ~2K chars
+    filler_8k = ("This is background context for the task. " * 200).strip()  # ~8K chars
+
+    cases = [
+        ("tiny",   [{"role": "user", "content": "Reply with one word: ok"}]),
+        ("medium", [{"role": "user", "content": filler_2k + "\n\nWhat is 2+2? One word."}]),
+        ("large",  [{"role": "user", "content": filler_8k + "\n\nList 3 Kotlin keywords. One per line."}]),
+    ]
+
+    for label, messages in cases:
+        body = {
+            "model": model, "max_tokens": 64, "temperature": 0, "stream": True,
+            "messages": messages,
+        }
+        rec: dict[str, Any] = {"label": label, "prompt_chars": sum(len(m["content"]) for m in messages)}
+        try:
+            start = time.monotonic()
+            r = client.post_chat(body, stream=True)
+            rec["status"] = r.status_code
+            if r.status_code != 200:
+                rec["verdict"] = "HTTP_ERROR"
+                out["runs"].append(rec)
+                continue
+
+            first_byte_ms: float | None = None
+            first_data_ms: float | None = None
+            chunks = 0
+            for raw in r.iter_lines(decode_unicode=True, chunk_size=1):
+                if raw is None:
+                    continue
+                elapsed = (time.monotonic() - start) * 1000
+                if first_byte_ms is None:
+                    first_byte_ms = elapsed
+                raw = raw.rstrip("\r")
+                if raw.startswith("data:") and raw.strip() != "data: [DONE]":
+                    if first_data_ms is None:
+                        first_data_ms = elapsed
+                    chunks += 1
+                    if chunks >= 3:
+                        # Drain the rest without blocking
+                        try:
+                            for _ in r.iter_lines(decode_unicode=True, chunk_size=1):
+                                pass
+                        except Exception:
+                            pass
+                        break
+
+            rec["first_byte_ms"] = round(first_byte_ms or 0)
+            rec["first_data_ms"] = round(first_data_ms or 0)
+            rec["keepalive_gap_ms"] = round((first_data_ms or 0) - (first_byte_ms or 0))
+            rec["verdict"] = "OK"
+            # Flag risk: if silence > 30s, likely to hit read timeout on slow tasks
+            silence = rec["first_byte_ms"]
+            rec["timeout_risk"] = (
+                "CRITICAL (>30s silence before first byte)"  if silence > 30_000 else
+                "HIGH (>10s silence — monitor on complex tasks)" if silence > 10_000 else
+                "MEDIUM (>5s silence)"                        if silence > 5_000  else
+                "LOW"
+            )
+        except requests.RequestException as e:
+            rec["verdict"] = "TRANSPORT_ERROR"
+            rec["error"] = str(e)
+        out["runs"].append(rec)
+
+    # Overall assessment
+    large_run = next((r for r in out["runs"] if r["label"] == "large"), {})
+    out["large_prompt_first_byte_ms"] = large_run.get("first_byte_ms")
+    out["verdict"] = large_run.get("timeout_risk", "UNKNOWN")
+    return out
+
+
+def probe_truncated_tool_call(client: SourcegraphClient, model: str) -> dict:
+    """Test what the gateway returns when max_tokens cuts off mid-tool-call.
+
+    Cline's parser handles this via partial: true — it knows the tool call is
+    incomplete and doesn't execute it. We need to verify:
+      1. Does finish_reason='length' arrive correctly?
+      2. Does the partial tool call delta/XML arrive before truncation?
+      3. Is the SSE stream terminated cleanly ([DONE] arrives)?
+      4. For Mode A (native): is the partial JSON argument readable?
+      5. For Mode B (XML): does the partial <content> block arrive?
+
+    We force truncation by setting max_tokens very low while asking for a tool
+    call that requires large arguments.
+    """
+    out: dict[str, Any] = {}
+
+    # Mode A — native function calling, force truncation inside arguments JSON
+    body_a = {
+        "model": model,
+        "max_tokens": 40,   # Tiny — will cut off mid-argument
+        "temperature": 0, "stream": True,
+        "tools": NATIVE_TOOLS,
+        "messages": [{"role": "user",
+                       "content": "Use search_code with a very detailed regex pattern "
+                                  "that matches any Kotlin data class with at least 5 fields. "
+                                  "Just call the tool."}],
+    }
+
+    # Mode B — XML tool call, force truncation inside <content> block
+    body_b = {
+        "model": model,
+        "max_tokens": 60,   # Tiny — will cut off mid-XML
+        "temperature": 0, "stream": True,
+        "messages": [{"role": "user",
+                       "content": XML_TOOL_INSTRUCTIONS + "\n\nUse search_code with a "
+                                  "comprehensive regex pattern to find all Kotlin suspend "
+                                  "functions that take more than 3 parameters. Just the tool."}],
+    }
+
+    for label, body in [("mode_a_native", body_a), ("mode_b_xml", body_b)]:
+        rec: dict[str, Any] = {}
+        try:
+            r = client.post_chat(body, stream=True)
+            rec["status"] = r.status_code
+            if r.status_code != 200:
+                rec["verdict"] = "HTTP_ERROR"
+                out[label] = rec
+                continue
+
+            finish_reason = None
+            saw_done = False
+            tool_delta_count = 0
+            content_chunks: list[str] = []
+            partial_args = ""
+
+            for line in iter_sse_lines(r):
+                if line.strip() == "data: [DONE]":
+                    saw_done = True
+                    continue
+                payload = extract_sse_data(line)
+                if not payload:
+                    continue
+                try:
+                    ch = json.loads(payload)
+                    for choice in ch.get("choices", []):
+                        fr = choice.get("finish_reason")
+                        if fr:
+                            finish_reason = fr
+                        delta = choice.get("delta") or {}
+                        if delta.get("content"):
+                            content_chunks.append(delta["content"])
+                        for tc in (delta.get("tool_calls") or []):
+                            tool_delta_count += 1
+                            args_frag = (tc.get("function") or {}).get("arguments", "")
+                            partial_args += args_frag
+                except json.JSONDecodeError:
+                    pass
+
+            accumulated_content = "".join(content_chunks)
+            rec["finish_reason"] = finish_reason
+            rec["saw_done"] = saw_done
+            rec["tool_delta_count"] = tool_delta_count
+            rec["partial_args"] = partial_args[:200]
+            rec["partial_args_valid_json"] = _is_valid_json(partial_args)
+            rec["content_preview"] = accumulated_content[:200]
+            rec["content_length"] = len(accumulated_content)
+
+            # Assess what happened
+            if finish_reason == "length":
+                rec["truncation_detected"] = True
+                if label == "mode_a_native":
+                    if tool_delta_count > 0 and not _is_valid_json(partial_args):
+                        rec["verdict"] = "TRUNCATED_MID_ARGS_PARTIAL_JSON_UNUSABLE"
+                    elif tool_delta_count > 0:
+                        rec["verdict"] = "TRUNCATED_BUT_ARGS_COMPLETE"
+                    else:
+                        rec["verdict"] = "TRUNCATED_BEFORE_TOOL_CALL_STARTED"
+                else:  # Mode B XML
+                    has_open_tag = any(f"<{t}>" in accumulated_content
+                                       for t in ("read_file", "search_code", "list_directory"))
+                    has_close_tag = any(f"</{t}>" in accumulated_content
+                                        for t in ("read_file", "search_code", "list_directory"))
+                    rec["has_open_xml_tag"] = has_open_tag
+                    rec["has_close_xml_tag"] = has_close_tag
+                    if has_open_tag and not has_close_tag:
+                        rec["verdict"] = "TRUNCATED_MID_XML_PARTIAL_TOOL_CLINE_HANDLES"
+                    elif has_open_tag and has_close_tag:
+                        rec["verdict"] = "XML_COMPLETE_BEFORE_TRUNCATION"
+                    else:
+                        rec["verdict"] = "TRUNCATED_BEFORE_XML_STARTED"
+            else:
+                rec["truncation_detected"] = False
+                rec["verdict"] = f"NOT_TRUNCATED (finish={finish_reason}) — increase max_tokens or simplify prompt"
+
+        except requests.RequestException as e:
+            rec["verdict"] = "TRANSPORT_ERROR"
+            rec["error"] = str(e)
+        out[label] = rec
+
+    return out
+
+
+def probe_xml_large_content_streaming(client: SourcegraphClient, model: str) -> dict:
+    """Test Mode B (XML tool tags) streaming a large <content> block — the Cline edit_file case.
+
+    When the agent uses Cline's XML format to write/edit a file, the response looks like:
+        <write_to_file>
+        <path>src/Foo.kt</path>
+        <content>
+        ... 500 lines of code ...
+        </content>
+        </write_to_file>
+
+    The entire code block arrives as text_delta SSE chunks. This probe verifies:
+      1. Does the stream stay alive for the full content?
+      2. What are the inter-chunk gaps inside the <content> block?
+      3. Does </content> arrive cleanly at the end (no truncation)?
+      4. Is the content between tags correctly extractable?
+      5. Does the gateway corrupt the XML mid-stream (e.g. inject \\r into tag names)?
+    """
+    prompt_small = (
+        XML_TOOL_INSTRUCTIONS.replace(
+            "read_file", "write_to_file"
+        ).replace(
+            "Read the contents of a file", "Write content to a file"
+        ) +
+        "\n\nWrite a Kotlin data class named `UserProfile` with 8 fields "
+        "(id, name, email, age, role, createdAt, updatedAt, isActive) using "
+        "the write_to_file tool. Path: src/model/UserProfile.kt. "
+        "Write complete, runnable Kotlin code in the content parameter. "
+        "Include the package declaration, imports, and KDoc comment."
+    )
+
+    # We use a custom XML instruction that includes write_to_file
+    WRITE_TOOL_INSTRUCTIONS = """\
+You have access to a tool called write_to_file. Use it by emitting:
+
+<write_to_file>
+  <path>FILE_PATH</path>
+  <content>
+FILE_CONTENT_HERE
+  </content>
+</write_to_file>
+
+Rules: Always close every tag. Put the complete file content between <content> and </content>.
+"""
+
+    prompts = {
+        "small_50_lines": (
+            WRITE_TOOL_INSTRUCTIONS +
+            "\n\nWrite a complete Kotlin data class UserProfile with 8 fields. "
+            "Include package, imports, KDoc. Path: src/model/UserProfile.kt. "
+            "Write ~50 lines of real Kotlin code."
+        ),
+        "medium_150_lines": (
+            WRITE_TOOL_INSTRUCTIONS +
+            "\n\nWrite a complete Kotlin Repository class for UserProfile with "
+            "CRUD operations (create, findById, findAll, update, delete), "
+            "an in-memory implementation using MutableMap, and a factory companion object. "
+            "Path: src/repo/UserProfileRepository.kt. Write ~150 lines of real Kotlin."
+        ),
+    }
+
+    out: dict[str, Any] = {}
+
+    for label, prompt in prompts.items():
+        body = {
+            "model": model,
+            "max_tokens": 4096 if "medium" in label else 2048,
+            "temperature": 0.1, "stream": True,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        rec: dict[str, Any] = {}
+        try:
+            r = client.post_chat(body, stream=True)
+            rec["status"] = r.status_code
+            if r.status_code != 200:
+                rec["verdict"] = "HTTP_ERROR"
+                out[label] = rec
+                continue
+
+            start = time.monotonic()
+            content_buf: list[str] = []
+            finish_reason = None
+            saw_done = False
+            chunks = 0
+            last_chunk_ts: float | None = None
+            max_gap_ms: float = 0.0
+            inside_content_tag = False
+            content_start_ts: float | None = None
+            content_end_ts: float | None = None
+
+            for line in iter_sse_lines(r):
+                if line.strip() == "data: [DONE]":
+                    saw_done = True
+                    continue
+                payload = extract_sse_data(line)
+                if not payload:
+                    continue
+                ts = (time.monotonic() - start) * 1000
+                if last_chunk_ts is not None:
+                    gap = ts - last_chunk_ts
+                    if gap > max_gap_ms:
+                        max_gap_ms = gap
+                last_chunk_ts = ts
+                chunks += 1
+                try:
+                    ch = json.loads(payload)
+                    for choice in ch.get("choices", []):
+                        fr = choice.get("finish_reason")
+                        if fr:
+                            finish_reason = fr
+                        piece = (choice.get("delta") or {}).get("content") or ""
+                        if piece:
+                            content_buf.append(piece)
+                            accumulated = "".join(content_buf)
+                            if not inside_content_tag and "<content>" in accumulated:
+                                inside_content_tag = True
+                                content_start_ts = ts
+                            if inside_content_tag and "</content>" in accumulated:
+                                inside_content_tag = False
+                                content_end_ts = ts
+                except json.JSONDecodeError:
+                    pass
+
+            full_content = "".join(content_buf)
+
+            # Extract content between <content> and </content>
+            extracted_code = ""
+            c_start = full_content.find("<content>")
+            c_end = full_content.rfind("</content>")   # lastIndexOf — Cline's approach
+            if c_start != -1 and c_end != -1:
+                extracted_code = full_content[c_start + len("<content>"):c_end].strip()
+
+            has_open_tag = "<write_to_file>" in full_content
+            has_close_tag = "</write_to_file>" in full_content
+            has_content_open = "<content>" in full_content
+            has_content_close = "</content>" in full_content
+
+            rec["finish_reason"] = finish_reason
+            rec["saw_done"] = saw_done
+            rec["chunks"] = chunks
+            rec["total_ms"] = round((time.monotonic() - start) * 1000)
+            rec["max_gap_ms"] = round(max_gap_ms)
+            rec["full_response_chars"] = len(full_content)
+            rec["extracted_code_lines"] = extracted_code.count("\n") + 1 if extracted_code else 0
+            rec["extracted_code_chars"] = len(extracted_code)
+            rec["has_open_tag"] = has_open_tag
+            rec["has_close_tag"] = has_close_tag
+            rec["has_content_open"] = has_content_open
+            rec["has_content_close"] = has_content_close
+            rec["content_streaming_ms"] = (
+                round(content_end_ts - content_start_ts)
+                if content_start_ts and content_end_ts else None
+            )
+
+            # Check for corruption: tag names should never contain \r
+            has_cr_in_tags = "\r" in full_content and any(
+                f"\r</{t}>" in full_content or f"<{t}\r" in full_content
+                for t in ("write_to_file", "content", "path")
+            )
+            rec["xml_corruption_detected"] = has_cr_in_tags
+
+            if has_open_tag and has_close_tag and has_content_open and has_content_close:
+                rec["verdict"] = "COMPLETE_XML"
+            elif has_open_tag and has_content_open and not has_content_close:
+                rec["verdict"] = "TRUNCATED_INSIDE_CONTENT"
+            elif has_open_tag and not has_content_open:
+                rec["verdict"] = "TRUNCATED_BEFORE_CONTENT"
+            else:
+                rec["verdict"] = f"UNEXPECTED (finish={finish_reason})"
+
+        except requests.RequestException as e:
+            rec["verdict"] = "TRANSPORT_ERROR"
+            rec["error"] = str(e)
+        out[label] = rec
+
+    return out
+
+
 # ─────────────────────────────────────────────────────────────
 # Reporting
 # ─────────────────────────────────────────────────────────────
@@ -3065,9 +3554,112 @@ def analyze_results(results_path: Path) -> int:
         recs.append(("MEDIUM", "Add token estimation fallback when usage chunk is absent",
                      f"include_usage unreliable: {iur_verdict}"))
 
+    # Keep-alive / pre-generation silence
+    ka = probes.get("sse_keepalive", {})
+    pgs = probes.get("pregeneration_silence", {})
+    if ka.get("verdict") == "NO_KEEPALIVE":
+        large_ms = (pgs.get("large_prompt_first_byte_ms") or 0)
+        if large_ms > 10_000:
+            recs.append(("CRITICAL",
+                         "Gateway sends NO keep-alive AND pre-generation silence is long",
+                         f"Large prompt takes {large_ms}ms before first byte with no keep-alive bytes. "
+                         f"Read timeout WILL fire. Increase read timeout or add client-side heartbeat."))
+        else:
+            recs.append(("MEDIUM",
+                         "Gateway sends no SSE keep-alive lines",
+                         "Silent pauses mid-generation could trigger read timeout. "
+                         "Monitor max inter-chunk gaps in streaming_code_500_lines results."))
+
+    # Cline XML viability
+    xlc = probes.get("xml_large_content_streaming", {})
+    all_xml_ok = all(
+        xlc.get(k, {}).get("verdict") == "COMPLETE_XML"
+        for k in ("small_50_lines", "medium_150_lines")
+        if xlc.get(k)
+    )
+    if xlc and all_xml_ok:
+        recs.append(("INFO",
+                     "Cline XML write_to_file streaming verified working",
+                     "Both small and medium <content> blocks arrived complete. "
+                     "Cline port for edit_file/write_to_file is viable."))
+    elif xlc:
+        recs.append(("HIGH",
+                     "XML <content> block incomplete — Cline port needs partial:true handling",
+                     "Some XML write_to_file scenarios were truncated. "
+                     "Port Cline's partial:true detection before executing truncated tool calls."))
+
     for priority, title, detail in recs:
         print(f"  [{priority}] {title}")
         print(f"          {detail}")
+
+    # ── 6. SSE keep-alive & timeout risk ──────────────────────────────────
+    ka = probes.get("sse_keepalive", {})
+    pgs = probes.get("pregeneration_silence", {})
+    if ka or pgs:
+        print()
+        print("=" * 78)
+        print("6. SSE KEEP-ALIVE & TIMEOUT RISK")
+        print("=" * 78)
+
+        if ka:
+            print(f"  Keep-alive lines:  {ka.get('verdict')}  (count={ka.get('keepalive_count')})")
+            print(f"  Timeout risk:      {ka.get('timeout_risk')}")
+            if ka.get("verdict") == "NO_KEEPALIVE":
+                print("  => Agent MUST re-enable streaming carefully: silent pauses during")
+                print("     model thinking will hit the read timeout with no keep-alive bytes.")
+
+        if pgs:
+            print()
+            print("  Pre-generation silence (before first SSE byte):")
+            for run in pgs.get("runs", []):
+                print(f"    [{run['label']:<8}] {run.get('first_byte_ms')}ms  {run.get('timeout_risk')}")
+            large_ms = pgs.get("large_prompt_first_byte_ms", 0) or 0
+            if large_ms > 10_000:
+                print(f"  => RISK: Large prompt takes {large_ms}ms before first byte.")
+                print("     With no keep-alive, this silence triggers the read timeout.")
+            elif large_ms:
+                print(f"  => OK: Large prompt starts streaming in {large_ms}ms.")
+
+    # ── 7. Cline XML write_to_file streaming ──────────────────────────────
+    xlc = probes.get("xml_large_content_streaming", {})
+    ttc = probes.get("truncated_tool_call", {})
+    if xlc or ttc:
+        print()
+        print("=" * 78)
+        print("7. CLINE XML TOOL CALL STREAMING (write_to_file / edit_file)")
+        print("=" * 78)
+
+        if xlc:
+            for label in ("small_50_lines", "medium_150_lines"):
+                rec = xlc.get(label, {})
+                if rec:
+                    print(f"  {label}: {rec.get('verdict')}  "
+                          f"lines={rec.get('extracted_code_lines')}  "
+                          f"max_gap={rec.get('max_gap_ms')}ms  "
+                          f"corruption={rec.get('xml_corruption_detected')}")
+            all_complete = all(
+                xlc.get(k, {}).get("verdict") == "COMPLETE_XML"
+                for k in ("small_50_lines", "medium_150_lines")
+            )
+            if all_complete:
+                print("  => XML streaming works: <content> blocks arrive complete, no corruption.")
+                print("     Cline port viable for write_to_file / edit_file.")
+            else:
+                problems = [k for k in ("small_50_lines", "medium_150_lines")
+                            if xlc.get(k, {}).get("verdict") != "COMPLETE_XML"]
+                print(f"  => PROBLEMS in: {problems} — Cline port may need truncation recovery.")
+
+        if ttc:
+            print()
+            print("  Truncation behavior (max_tokens cuts mid-tool-call):")
+            for label in ("mode_a_native", "mode_b_xml"):
+                rec = ttc.get(label, {})
+                print(f"    {label}: finish={rec.get('finish_reason')}  "
+                      f"verdict={rec.get('verdict')}")
+            mode_b = ttc.get("mode_b_xml", {})
+            if "CLINE_HANDLES" in (mode_b.get("verdict") or ""):
+                print("  => Cline's partial:true handling is needed for Mode B truncation.")
+                print("     The open <tag> arrives but </tag> never comes — must detect and skip.")
 
     print()
     print("  Files for further investigation:")
@@ -3305,6 +3897,61 @@ def main() -> int:
             rec = pia.get(key, {})
             print(f"  {key}: verdict={rec.get('verdict')}  assembled={rec.get('assembled_count')}/{rec.get('expected_count')}  "
                   f"concat_bug={rec.get('concat_json_bug_detected')}  finish={rec.get('finish_reason')}")
+
+        print()
+        print("  -- SSE keep-alive detection (timeout prevention) --")
+        probes["sse_keepalive"] = probe_sse_keepalive(client, model)
+        ka = probes["sse_keepalive"]
+        print(f"  verdict:        {ka.get('verdict')}")
+        print(f"  timeout_risk:   {ka.get('timeout_risk')}")
+        print(f"  keepalive_count: {ka.get('keepalive_count')}  data_lines={ka.get('data_lines')}")
+        for kl in (ka.get("keepalive_lines") or [])[:3]:
+            print(f"    {kl.get('ts_ms')}ms  {kl.get('line')!r}")
+
+        print()
+        print("  -- Pre-generation silence (timeout risk before first byte) --")
+        probes["pregeneration_silence"] = probe_pregeneration_silence(client, model)
+        pgs = probes["pregeneration_silence"]
+        print(f"  overall verdict: {pgs.get('verdict')}")
+        print(f"  large_prompt_first_byte_ms: {pgs.get('large_prompt_first_byte_ms')}")
+        for run in pgs.get("runs", []):
+            print(f"    [{run['label']:<8}] prompt={run.get('prompt_chars')}chars  "
+                  f"first_byte={run.get('first_byte_ms')}ms  first_data={run.get('first_data_ms')}ms  "
+                  f"risk={run.get('timeout_risk')}")
+
+        print()
+        print("  -- Truncated tool call (max_tokens cuts off mid-call) --")
+        probes["truncated_tool_call"] = probe_truncated_tool_call(client, model)
+        ttc = probes["truncated_tool_call"]
+        for label in ("mode_a_native", "mode_b_xml"):
+            rec = ttc.get(label, {})
+            print(f"  {label:<16}: finish={rec.get('finish_reason')}  done={rec.get('saw_done')}  "
+                  f"verdict={rec.get('verdict')}")
+            if label == "mode_a_native":
+                print(f"    tool_deltas={rec.get('tool_delta_count')}  "
+                      f"partial_args_valid_json={rec.get('partial_args_valid_json')}  "
+                      f"partial={rec.get('partial_args', '')[:60]!r}")
+            else:
+                print(f"    has_open={rec.get('has_open_xml_tag')}  "
+                      f"has_close={rec.get('has_close_xml_tag')}  "
+                      f"content={rec.get('content_preview', '')[:60]!r}")
+
+        print()
+        print("  -- XML large content streaming (Cline write_to_file / edit_file pattern) --")
+        probes["xml_large_content_streaming"] = probe_xml_large_content_streaming(client, model)
+        xlc = probes["xml_large_content_streaming"]
+        for label in ("small_50_lines", "medium_150_lines"):
+            rec = xlc.get(label, {})
+            print(f"  {label:<18}: verdict={rec.get('verdict')}  "
+                  f"code_lines={rec.get('extracted_code_lines')}  "
+                  f"code_chars={rec.get('extracted_code_chars')}  "
+                  f"max_gap={rec.get('max_gap_ms')}ms  "
+                  f"total={rec.get('total_ms')}ms  "
+                  f"corruption={rec.get('xml_corruption_detected')}")
+            print(f"    tags: open={rec.get('has_open_tag')} close={rec.get('has_close_tag')} "
+                  f"content_open={rec.get('has_content_open')} content_close={rec.get('has_content_close')}")
+            if rec.get("content_streaming_ms"):
+                print(f"    content streamed in {rec['content_streaming_ms']}ms")
 
     advanced: dict[str, Any] = {}
     if not args.no_probes and not args.no_advanced:
