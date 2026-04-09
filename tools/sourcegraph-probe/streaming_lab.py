@@ -66,6 +66,7 @@ Useful flags:
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import re
@@ -74,6 +75,12 @@ import time
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Callable, Iterator
+
+# Force UTF-8 output on Windows (charmap codec can't handle Unicode in SSE responses)
+if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+if sys.stderr.encoding and sys.stderr.encoding.lower() not in ("utf-8", "utf8"):
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 try:
     import requests
@@ -661,7 +668,7 @@ def run_scenario(
             outcome.transport_error = f"HTTP {resp.status_code}: {err_body[:300]}"
             raw_lines.append(f"!! HTTP {resp.status_code}")
             raw_lines.append(err_body)
-            raw_path.write_text("\n".join(raw_lines))
+            raw_path.write_text("\n".join(raw_lines), encoding="utf-8")
             return outcome
 
         for line in iter_sse_lines(resp):
@@ -721,7 +728,7 @@ def run_scenario(
         raw_lines.append(f"# total: {outcome.total_time_ms:.0f}ms, "
                          f"chunks: {outcome.sse_chunks}, "
                          f"finish_reason: {outcome.finish_reason}")
-        raw_path.write_text("\n".join(raw_lines))
+        raw_path.write_text("\n".join(raw_lines), encoding="utf-8")
 
     outcome.final_content = "".join(content_buf)
 
@@ -1428,7 +1435,7 @@ def probe_endpoint_discovery(client: SourcegraphClient) -> dict:
 def print_outcome(o: RunOutcome) -> None:
     head_status = "PASS" if o.all_pass else "FAIL"
     print()
-    print("─" * 78)
+    print("-" * 78)
     print(f"[{head_status}] scenario={o.scenario}  mode={o.mode}  ({o.passed_count} pass / {o.failed_count} fail)")
     print(f"        {o.description}")
     if o.transport_error:
@@ -1453,7 +1460,7 @@ def print_outcome(o: RunOutcome) -> None:
             print(f"          - {w}")
     print(f"        assertions:")
     for a in o.assertions:
-        marker = "✓" if a.passed else "✗"
+        marker = "PASS" if a.passed else "FAIL"
         print(f"          {marker} {a.name:<32}  {a.reason}")
     print(f"        raw SSE: {o.raw_sse_path}")
 
