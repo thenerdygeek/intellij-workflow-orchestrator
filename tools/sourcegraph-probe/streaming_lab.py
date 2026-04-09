@@ -319,6 +319,31 @@ SCENARIOS: list[Scenario] = [
         require_text_content=True,
         finish_reason_in={"stop", "end_turn", "length"},
     ),
+    Scenario(
+        name="large_arg",
+        description="tool arg with a long value — tests streaming delta assembly at size",
+        user_prompt=(
+            "Call `search_code` with this pattern (copy it exactly, every character): "
+            "`^(public|private|protected|internal)\\s+(suspend\\s+)?(fun|class|object|interface)"
+            "\\s+[A-Z][a-zA-Z0-9_]*(<[^>]+>)?\\s*(\\([^)]*\\))?\\s*(:\\s*[A-Z][a-zA-Z0-9_<>, ?*]+)?\\s*\\{`"
+            " and no include filter. Just the tool call."
+        ),
+        min_tools=1, max_tools=1,
+        expected_tool_names={"search_code"},
+        must_include_arg_keys={"search_code": {"pattern"}},
+    ),
+    Scenario(
+        name="tool_then_parallel",
+        description="text reasoning, then parallel tool calls — interleaving + parallel combined",
+        user_prompt=(
+            "In 1 sentence explain your plan. Then in the SAME response call BOTH "
+            "`read_file` for `src/A.kt` AND `list_directory` for `src/` in parallel."
+        ),
+        min_tools=2, max_tools=2,
+        expected_tool_names={"read_file", "list_directory"},
+        require_text_content=True,
+        finish_reason_in={"tool_calls", "stop"},
+    ),
 ]
 
 
@@ -894,7 +919,9 @@ def _short(text: str, n: int = 200) -> str:
 
 
 def probe_tool_choice_variants(client: SourcegraphClient, model: str) -> dict:
-    """tool_choice: auto / none / forced function — does the gateway accept any?"""
+    """tool_choice: auto / none / forced function — accepted AND actually honored?
+    HTTP 200 alone is not enough; we parse the response to check whether the
+    directive was silently ignored."""
     out = {}
     for label, tc in [
         ("auto",   "auto"),
@@ -904,13 +931,36 @@ def probe_tool_choice_variants(client: SourcegraphClient, model: str) -> dict:
         body = {
             "model": model, "max_tokens": 64, "temperature": 0,
             "tools": NATIVE_TOOLS, "tool_choice": tc,
-            "messages": [{"role": "user", "content": "Pick a file. Use the tool if you have one."}],
+            "messages": [{"role": "user", "content": "Read the file src/main.kt using the read_file tool."}],
         }
         try:
             r = client.post_chat(body, stream=False)
-            out[label] = {"status": r.status_code, "preview": _short(r.text)}
+            entry: dict = {"status": r.status_code, "preview": _short(r.text)}
+            if r.status_code == 200:
+                try:
+                    resp = r.json()
+                    msg = (resp.get("choices") or [{}])[0].get("message", {})
+                    has_tool_calls = bool(msg.get("tool_calls"))
+                    finish = (resp.get("choices") or [{}])[0].get("finish_reason")
+                    entry["has_tool_calls"] = has_tool_calls
+                    entry["finish_reason"] = finish
+                    # Determine if the directive was honored
+                    if label == "forced":
+                        entry["honored"] = has_tool_calls
+                        entry["verdict"] = "HONORED" if has_tool_calls else "SILENTLY_IGNORED"
+                    elif label == "none":
+                        entry["honored"] = not has_tool_calls
+                        entry["verdict"] = "HONORED" if not has_tool_calls else "SILENTLY_IGNORED"
+                    else:  # auto
+                        entry["honored"] = True  # auto doesn't enforce a specific outcome
+                        entry["verdict"] = "ACCEPTED"
+                except Exception:
+                    entry["verdict"] = "PARSE_ERROR"
+            else:
+                entry["verdict"] = "REJECTED"
+            out[label] = entry
         except requests.RequestException as e:
-            out[label] = {"status": 0, "error": str(e)}
+            out[label] = {"status": 0, "error": str(e), "verdict": "TRANSPORT_ERROR"}
     return out
 
 
@@ -1030,6 +1080,179 @@ def probe_include_usage_isolation(client: SourcegraphClient, model: str) -> dict
         return {"status": 200, "usage_emitted_without_include_usage": saw_usage}
     except requests.RequestException as e:
         return {"status": 0, "error": str(e)}
+
+
+def probe_tool_result_formats(client: SourcegraphClient, model: str) -> dict:
+    """Since role:tool gives HTTP 400, test every alternative format for delivering
+    tool results. The goal is to find what actually works so the plugin can use it."""
+    base = {"model": model, "max_tokens": 64, "temperature": 0, "tools": NATIVE_TOOLS}
+
+    def run(label: str, messages: list) -> dict:
+        try:
+            r = client.post_chat({**base, "messages": messages}, stream=False)
+            entry: dict = {"status": r.status_code}
+            if r.status_code == 200:
+                try:
+                    resp = r.json()
+                    msg = (resp.get("choices") or [{}])[0].get("message", {})
+                    entry["content"] = (msg.get("content") or "")[:160]
+                    entry["has_tool_calls"] = bool(msg.get("tool_calls"))
+                    entry["finish_reason"] = (resp.get("choices") or [{}])[0].get("finish_reason")
+                    entry["verdict"] = "WORKS"
+                except Exception:
+                    entry["verdict"] = "PARSE_ERROR"
+            else:
+                entry["error"] = _short(r.text, 200)
+                entry["verdict"] = "REJECTED"
+        except requests.RequestException as e:
+            entry = {"status": 0, "error": str(e), "verdict": "TRANSPORT_ERROR"}
+        return entry
+
+    TOOL_CALLS_BLOCK = [{"id": "call_1", "type": "function",
+                          "function": {"name": "read_file", "arguments": '{"path":"README.md"}'}}]
+    out = {}
+
+    # A: Standard OpenAI — role:tool with tool_call_id (known 400 from side probe)
+    out["A_tool_role_null_content"] = run("A", [
+        {"role": "user", "content": "Read README.md"},
+        {"role": "assistant", "content": None, "tool_calls": TOOL_CALLS_BLOCK},
+        {"role": "tool", "tool_call_id": "call_1", "content": "class Foo { fun bar() = 42 }"},
+        {"role": "user", "content": "Summarize the file."},
+    ])
+
+    # B: assistant empty-string content instead of null (some gateways reject null)
+    out["B_tool_role_empty_content"] = run("B", [
+        {"role": "user", "content": "Read README.md"},
+        {"role": "assistant", "content": "", "tool_calls": TOOL_CALLS_BLOCK},
+        {"role": "tool", "tool_call_id": "call_1", "content": "class Foo { fun bar() = 42 }"},
+        {"role": "user", "content": "Summarize the file."},
+    ])
+
+    # C: No tool role at all — assistant text + user carries the result
+    out["C_user_msg_carries_result"] = run("C", [
+        {"role": "user", "content": "Read README.md"},
+        {"role": "assistant", "content": "I'll read that file now.", "tool_calls": TOOL_CALLS_BLOCK},
+        {"role": "user", "content": "Tool result for read_file(path='README.md'):\nclass Foo { fun bar() = 42 }\n\nSummarize the file."},
+    ])
+
+    # D: Omit tool_calls from assistant entirely — pure conversational fallback
+    out["D_pure_conversational"] = run("D", [
+        {"role": "user", "content": "Read README.md and summarize it."},
+        {"role": "assistant", "content": "Here is the content of README.md:\nclass Foo { fun bar() = 42 }"},
+        {"role": "user", "content": "Give me a one-sentence summary."},
+    ])
+
+    # E: role:tool but WITHOUT tool_call_id field
+    out["E_tool_role_no_call_id"] = run("E", [
+        {"role": "user", "content": "Read README.md"},
+        {"role": "assistant", "content": None, "tool_calls": TOOL_CALLS_BLOCK},
+        {"role": "tool", "content": "class Foo { fun bar() = 42 }"},
+        {"role": "user", "content": "Summarize the file."},
+    ])
+
+    # F: function role (legacy OpenAI format)
+    out["F_function_role"] = run("F", [
+        {"role": "user", "content": "Read README.md"},
+        {"role": "assistant", "content": None, "function_call": {"name": "read_file", "arguments": '{"path":"README.md"}'}},
+        {"role": "function", "name": "read_file", "content": "class Foo { fun bar() = 42 }"},
+        {"role": "user", "content": "Summarize the file."},
+    ])
+
+    working = [k for k, v in out.items() if v.get("verdict") == "WORKS"]
+    out["_working_formats"] = working
+    out["_recommended"] = working[0] if working else None
+    return out
+
+
+def probe_multi_turn_tool_use(client: SourcegraphClient, model: str) -> dict:
+    """Full 2-turn tool call round-trip: user → model tool call → tool result → model text.
+    This is the core agent loop. Tests the complete flow our plugin depends on."""
+    out: dict = {}
+
+    # Step 1: Get the model to actually call a tool
+    step1 = {
+        "model": model, "max_tokens": 128, "temperature": 0,
+        "tools": NATIVE_TOOLS,
+        "messages": [{"role": "user", "content":
+                       "Use the read_file tool to read src/main/kotlin/Foo.kt. "
+                       "Just call the tool, do not explain."}],
+    }
+    try:
+        r1 = client.post_chat(step1, stream=False)
+        out["step1_status"] = r1.status_code
+        if r1.status_code != 200:
+            out["step1_error"] = _short(r1.text, 300)
+            out["verdict"] = "STEP1_HTTP_ERROR"
+            return out
+
+        resp1 = _decode_json(r1)
+        msg1 = (resp1.get("choices") or [{}])[0].get("message", {})
+        tool_calls = msg1.get("tool_calls") or []
+        out["step1_tool_calls_count"] = len(tool_calls)
+
+        if not tool_calls:
+            out["step1_content_preview"] = (msg1.get("content") or "")[:200]
+            out["verdict"] = "STEP1_NO_TOOL_CALL_RETURNED"
+            return out
+
+        tc = tool_calls[0]
+        call_id = tc.get("id", "call_1")
+        out["step1_tool_name"] = tc.get("function", {}).get("name")
+        out["step1_call_id"] = call_id
+
+        FAKE_RESULT = "class Foo {\n    fun bar(): Int = 42\n}\n"
+
+        # Step 2a: Standard OpenAI tool role
+        step2a = {
+            "model": model, "max_tokens": 64, "temperature": 0,
+            "tools": NATIVE_TOOLS,
+            "messages": [
+                {"role": "user", "content": "Use the read_file tool to read src/main/kotlin/Foo.kt."},
+                {"role": "assistant", "content": msg1.get("content"), "tool_calls": tool_calls},
+                {"role": "tool", "tool_call_id": call_id, "content": FAKE_RESULT},
+                {"role": "user", "content": "What does the file contain?"},
+            ],
+        }
+        r2a = client.post_chat(step2a, stream=False)
+        out["step2a_tool_role_status"] = r2a.status_code
+        if r2a.status_code == 200:
+            resp2a = _decode_json(r2a)
+            msg2a = (resp2a.get("choices") or [{}])[0].get("message", {})
+            out["step2a_content"] = (msg2a.get("content") or "")[:200]
+            out["step2a_verdict"] = "TOOL_ROLE_WORKS"
+        else:
+            out["step2a_error"] = _short(r2a.text, 200)
+            out["step2a_verdict"] = "TOOL_ROLE_REJECTED"
+
+            # Step 2b: Fallback — user message carries the tool result
+            step2b = {
+                "model": model, "max_tokens": 64, "temperature": 0,
+                "tools": NATIVE_TOOLS,
+                "messages": [
+                    {"role": "user", "content": "Use the read_file tool to read src/main/kotlin/Foo.kt."},
+                    {"role": "assistant", "content": "Reading the file now.", "tool_calls": tool_calls},
+                    {"role": "user", "content":
+                     f"Tool result for {out['step1_tool_name']}:\n{FAKE_RESULT}\nWhat does the file contain?"},
+                ],
+            }
+            r2b = client.post_chat(step2b, stream=False)
+            out["step2b_user_msg_status"] = r2b.status_code
+            if r2b.status_code == 200:
+                resp2b = _decode_json(r2b)
+                msg2b = (resp2b.get("choices") or [{}])[0].get("message", {})
+                out["step2b_content"] = (msg2b.get("content") or "")[:200]
+                out["step2b_verdict"] = "USER_MSG_FALLBACK_WORKS"
+            else:
+                out["step2b_error"] = _short(r2b.text, 200)
+                out["step2b_verdict"] = "BOTH_FORMATS_FAILED"
+
+        out["verdict"] = out.get("step2a_verdict") or out.get("step2b_verdict", "UNKNOWN")
+
+    except requests.RequestException as e:
+        out["verdict"] = "TRANSPORT_ERROR"
+        out["error"] = str(e)
+
+    return out
 
 
 # ═════════════════════════════════════════════════════════════
@@ -1605,32 +1828,66 @@ def main() -> int:
         print("=" * 78)
         probes["tool_choice_variants"] = probe_tool_choice_variants(client, model)
         for label, r in probes["tool_choice_variants"].items():
-            print(f"  tool_choice[{label:<6}]: HTTP {r.get('status'):<4} {r.get('preview', r.get('error', ''))[:160]}")
+            verdict = r.get("verdict", "?")
+            has_tc = r.get("has_tool_calls")
+            fin = r.get("finish_reason", "")
+            detail = f"verdict={verdict}  has_tool_calls={has_tc}  finish={fin}"
+            print(f"  tool_choice[{label:<6}]: HTTP {r.get('status'):<4} {detail}")
 
         probes["cache_control"] = probe_cache_control(client, model)
         c = probes["cache_control"]
-        print(f"  cache_control:        HTTP {c.get('status'):<4} usage={c.get('usage')}")
+        usage = c.get("usage") or {}
+        cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens", "?")
+        verdict_c = "CACHE_SILENTLY_STRIPPED" if cached == 0 else ("CACHE_ACTIVE" if cached else "UNKNOWN")
+        print(f"  cache_control:        HTTP {c.get('status'):<4} cached_tokens={cached}  verdict={verdict_c}")
 
         probes["max_tokens"] = probe_max_tokens(client, model)
         for n, r in probes["max_tokens"].items():
-            print(f"  max_tokens[{n:>5}]:    HTTP {r.get('status'):<4} {r.get('preview', '')[:120]}")
+            print(f"  max_tokens[{n:>5}]:    HTTP {r.get('status'):<4} {r.get('preview', '')[:80]}")
 
         probes["response_format_json"] = probe_response_format_json(client, model)
         r = probes["response_format_json"]
-        print(f"  response_format_json: HTTP {r.get('status'):<4} {r.get('preview', '')[:120]}")
+        print(f"  response_format_json: HTTP {r.get('status'):<4} {r.get('preview', '')[:100]}")
 
         probes["system_role"] = probe_system_role(client, model)
         r = probes["system_role"]
-        print(f"  system_role:          HTTP {r.get('status'):<4} {r.get('preview', '')[:120]}")
+        sys_verdict = "REJECTED_USE_TOP_LEVEL_SYSTEM" if r.get("status") == 400 else "ACCEPTED"
+        print(f"  system_role:          HTTP {r.get('status'):<4} verdict={sys_verdict}")
 
         probes["tool_role"] = probe_tool_role(client, model)
         r = probes["tool_role"]
-        print(f"  tool_role:            HTTP {r.get('status'):<4} {r.get('preview', '')[:120]}")
+        tool_role_verdict = "REJECTED_NEED_ALTERNATIVE" if r.get("status") == 400 else "ACCEPTED"
+        print(f"  tool_role:            HTTP {r.get('status'):<4} verdict={tool_role_verdict}")
 
         probes["include_usage_isolation"] = probe_include_usage_isolation(client, model)
         r = probes["include_usage_isolation"]
         flag = r.get("usage_emitted_without_include_usage")
         print(f"  include_usage_isol:   HTTP {r.get('status'):<4} usage_without_flag={flag}")
+
+        print()
+        print("  -- Tool result format discovery (CRITICAL for multi-turn agent) --")
+        probes["tool_result_formats"] = probe_tool_result_formats(client, model)
+        trf = probes["tool_result_formats"]
+        for fmt_label in ("A_tool_role_null_content", "B_tool_role_empty_content",
+                          "C_user_msg_carries_result", "D_pure_conversational",
+                          "E_tool_role_no_call_id", "F_function_role"):
+            rec = trf.get(fmt_label, {})
+            verdict = rec.get("verdict", "?")
+            content = rec.get("content", "")[:60]
+            print(f"  {fmt_label:<30}: HTTP {rec.get('status', '?'):<4} verdict={verdict}  content={content!r}")
+        print(f"  working_formats: {trf.get('_working_formats')}")
+        print(f"  recommended:     {trf.get('_recommended')}")
+
+        print()
+        print("  -- Multi-turn tool use round-trip (complete agent loop) --")
+        probes["multi_turn_tool_use"] = probe_multi_turn_tool_use(client, model)
+        mtu = probes["multi_turn_tool_use"]
+        print(f"  step1: HTTP {mtu.get('step1_status')}  tool_calls={mtu.get('step1_tool_calls_count')}  tool={mtu.get('step1_tool_name')}")
+        if mtu.get("step2a_tool_role_status"):
+            print(f"  step2a (tool_role):    HTTP {mtu.get('step2a_tool_role_status')}  verdict={mtu.get('step2a_verdict')}")
+        if mtu.get("step2b_user_msg_status"):
+            print(f"  step2b (user_msg):     HTTP {mtu.get('step2b_user_msg_status')}  verdict={mtu.get('step2b_verdict')}")
+        print(f"  OVERALL VERDICT: {mtu.get('verdict')}")
 
     advanced: dict[str, Any] = {}
     if not args.no_probes and not args.no_advanced:
@@ -1663,17 +1920,22 @@ def main() -> int:
             hits = rec.get("thinking_field_hits") or []
             usage_extras = rec.get("usage_extra_keys") or []
             delta_keys = rec.get("delta_keys_seen") or []
-            tchunks = rec.get("thinking_chunks_count")
+            tchunks = rec.get("thinking_chunks_count") or 0
             line = f"    [{label:<36}] HTTP {status}"
             if rec.get("error_preview"):
                 line += f"  ERR: {rec['error_preview'][:120]}"
-            else:
-                if hits:
-                    line += f"  thinking_fields={[h['path'] for h in hits]}"
+            elif status == 200:
+                thinking_active = bool(hits) or tchunks > 0
+                if thinking_active:
+                    if hits:
+                        line += f"  thinking_fields={[h['path'] for h in hits]}"
+                    if tchunks:
+                        line += f"  stream_thinking_chunks={tchunks}"
+                    line += "  verdict=THINKING_ACTIVE"
+                else:
+                    line += "  verdict=THINKING_SILENTLY_DROPPED"
                 if usage_extras:
                     line += f"  usage_extras={usage_extras}"
-                if tchunks:
-                    line += f"  stream_thinking_chunks={tchunks}"
                 if delta_keys:
                     line += f"  delta_keys={delta_keys}"
             print(line)
@@ -1715,7 +1977,15 @@ def main() -> int:
         print("  -- Vision (image input) --")
         advanced["vision"] = probe_vision_input(client, model)
         v = advanced["vision"]
-        print(f"    HTTP {v.get('status')}  {v.get('preview', v.get('error', ''))[:200]}")
+        preview = v.get("preview", v.get("error", ""))
+        # Detect silent image stripping: gateway accepts (200) but model says no image
+        no_image_phrases = ("don't see any image", "no image", "didn't receive", "cannot see",
+                            "can't see", "no picture", "not see an image")
+        silently_stripped = (v.get("status") == 200 and
+                             any(p in preview.lower() for p in no_image_phrases))
+        vision_verdict = ("IMAGE_SILENTLY_STRIPPED" if silently_stripped
+                          else ("VISION_WORKS" if v.get("status") == 200 else "REJECTED"))
+        print(f"    HTTP {v.get('status')}  verdict={vision_verdict}  {preview[:160]}")
 
         # 5. Anthropic-native + extra OpenAI fields
         print()
@@ -1757,6 +2027,73 @@ def main() -> int:
             print(f"    {path:<32} GET {rec.get('GET_status', rec.get('error', '?'))}  "
                   f"{rec.get('preview', '')[:120]}")
 
+    # Gateway limitations summary
+    if probes or advanced:
+        print()
+        print("=" * 78)
+        print("GATEWAY LIMITATIONS SUMMARY")
+        print("=" * 78)
+        limitations = []
+        workarounds = []
+
+        sys_r = probes.get("system_role", {})
+        if sys_r.get("status") == 400:
+            limitations.append("CRITICAL: system role in messages array rejected (HTTP 400)")
+            workarounds.append("  -> Use top-level 'system' field in request body instead")
+
+        tool_r = probes.get("tool_role", {})
+        if tool_r.get("status") == 400:
+            limitations.append("CRITICAL: tool role messages rejected (HTTP 400) — multi-turn tool use broken")
+            rec = (probes.get("tool_result_formats") or {}).get("_recommended")
+            if rec:
+                workarounds.append(f"  -> Use format '{rec}' for tool results (see tool_result_formats probe)")
+            else:
+                workarounds.append("  -> No working format found; agent cannot do multi-turn tool calls")
+
+        mtu = probes.get("multi_turn_tool_use", {})
+        if mtu.get("verdict") and "FAILED" in mtu.get("verdict", ""):
+            limitations.append(f"CRITICAL: multi-turn tool use failed: {mtu.get('verdict')}")
+
+        tc = probes.get("tool_choice_variants", {})
+        silently_ignored = [k for k, v in tc.items() if v.get("verdict") == "SILENTLY_IGNORED"]
+        if silently_ignored:
+            limitations.append(f"WARNING: tool_choice silently ignored for: {silently_ignored}")
+            workarounds.append("  -> Do not rely on tool_choice; use prompt instructions instead")
+
+        cache_usage = ((probes.get("cache_control") or {}).get("usage") or {})
+        cached_tok = (cache_usage.get("prompt_tokens_details") or {}).get("cached_tokens", None)
+        if cached_tok == 0:
+            limitations.append("WARNING: cache_control stripped — prompt caching not available")
+
+        adv_think = (advanced.get("thinking_strategies") or {}).get("strategies") or {}
+        all_dropped = all(
+            v.get("status") == 200 and not (v.get("thinking_field_hits") or v.get("thinking_chunks_count"))
+            for v in adv_think.values() if v.get("status") == 200
+        )
+        if all_dropped and adv_think:
+            limitations.append("INFO: all thinking/reasoning strategies silently dropped by gateway")
+
+        adv_vis = advanced.get("vision", {})
+        if adv_vis.get("status") == 200:
+            preview = adv_vis.get("preview", "")
+            if any(p in preview.lower() for p in ("don't see any image", "no image", "cannot see")):
+                limitations.append("INFO: vision input silently stripped — images not forwarded to model")
+
+        rf = probes.get("response_format_json", {})
+        if rf.get("status") == 400:
+            limitations.append("INFO: response_format (json_object) not supported")
+
+        if not limitations:
+            print("  No critical limitations detected.")
+        else:
+            for item in limitations:
+                print(f"  {item}")
+        if workarounds:
+            print()
+            print("  Workarounds:")
+            for w in workarounds:
+                print(f"  {w}")
+
     out_path = Path(args.out)
     out_path.write_text(json.dumps({
         "model": model,
@@ -1764,7 +2101,7 @@ def main() -> int:
         "outcomes": [o.to_dict() for o in outcomes],
         "probes": probes,
         "advanced": advanced,
-    }, indent=2))
+    }, indent=2), encoding="utf-8")
     print()
     print(f"Full structured results: {out_path.resolve()}")
     print(f"Per-test raw SSE dumps:  {raw_dir.resolve()}")
