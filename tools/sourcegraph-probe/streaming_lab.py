@@ -617,7 +617,8 @@ class Assertion:
 class RunOutcome:
     scenario: str
     mode: str
-    description: str
+    description: str          # mode description (e.g. "native function calling")
+    scenario_description: str = ""   # human-readable scenario purpose
     request_body_size: int = 0
 
     http_status: int = 0
@@ -925,6 +926,7 @@ def run_scenario(
         scenario=scenario.name,
         mode=mode,
         description=description,
+        scenario_description=scenario.description,
         request_body_size=len(body_str),
         raw_sse_path=str(raw_path),
     )
@@ -2581,7 +2583,9 @@ def print_outcome(o: RunOutcome) -> None:
     print()
     print("-" * 78)
     print(f"[{head_status}] scenario={o.scenario}  mode={o.mode}  ({o.passed_count} pass / {o.failed_count} fail)")
-    print(f"        {o.description}")
+    if o.scenario_description:
+        print(f"        what: {o.scenario_description}")
+    print(f"        how:  {o.description}")
     if o.transport_error:
         print(f"        TRANSPORT ERROR: {o.transport_error}")
     print(f"        ttfb={o.time_to_first_byte_ms:.0f}ms  total={o.total_time_ms:.0f}ms  "
