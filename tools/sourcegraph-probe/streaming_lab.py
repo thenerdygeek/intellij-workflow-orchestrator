@@ -58,16 +58,37 @@ USAGE
     pip install requests
     python3 streaming_lab.py --url https://sourcegraph.example.com --token sgp_xxx
 
+    # Windows (CMD):
+    py -3 streaming_lab.py --url https://sourcegraph.example.com --token sgp_xxx
+    py -3 streaming_lab.py --url ... --token ... > lab_output.txt 2>&1
+
+    # Windows (PowerShell):
+    python streaming_lab.py --url ... --token ... | Tee-Object lab_output.txt
+
+    # macOS / Linux:
+    python3 streaming_lab.py --url ... --token ... | tee lab_output.txt
+
 Useful flags:
     --model anthropic::2024-10-22::claude-sonnet-4-20250514
     --only A                    only run native function calling
     --scenario parallel_2       only run one scenario (use --list to see names)
     --list                      print all scenario names and exit
     --raw                       also dump every SSE line live to stdout
+    --verbose-streaming         print per-chunk timing metrics inline
     --no-probes                 skip side probes
-    --no-verify                 disable TLS verify (self-signed)
+    --no-verify                 disable TLS verify (self-signed certs)
     --out streaming_lab_results.json
     --raw-dir raw_sse           directory for per-test SSE dumps
+    --analyze results.json      re-analyze existing results without re-running
+
+Find large inter-chunk gaps in raw SSE files:
+    # PowerShell (forward slashes work in PowerShell):
+    Select-String -Pattern "^\\s+\\d+\\.\\d+ms" raw_sse/streaming_code_500_lines_A.txt |
+      ForEach-Object { $_.Line }
+
+    # macOS/Linux/Git Bash:
+    awk '/ms/ { if (prev && $1+0 - prev > 5000) print "GAP " $1+0-prev "ms"; prev=$1+0 }' \
+      raw_sse/streaming_code_500_lines_A.txt
 """
 
 from __future__ import annotations
@@ -83,11 +104,19 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-# Force UTF-8 output on Windows (charmap codec can't handle Unicode in SSE responses)
-if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-if sys.stderr.encoding and sys.stderr.encoding.lower() not in ("utf-8", "utf8"):
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+# Force UTF-8 output on Windows (charmap codec can't handle Unicode in SSE responses).
+# Wrapped in try/except because sys.stdout.buffer does not exist in IDLE, PyCharm
+# integrated console, or when stdout is redirected to a non-binary stream on Windows.
+try:
+    if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+except AttributeError:
+    pass  # no .buffer — already a TextIOWrapper or non-standard stream; leave as-is
+try:
+    if sys.stderr.encoding and sys.stderr.encoding.lower() not in ("utf-8", "utf8"):
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+except AttributeError:
+    pass
 
 try:
     import requests
@@ -770,6 +799,8 @@ def iter_sse_lines(resp: requests.Response) -> Iterator[str]:
 
 
 def extract_sse_data(line: str) -> str | None:
+    # Strip \r so Windows proxies injecting \r\n don't corrupt the payload
+    line = line.rstrip("\r")
     if not line.startswith("data:"):
         return None
     payload = line[5:].lstrip()
@@ -959,7 +990,7 @@ def run_scenario(
             outcome.transport_error = f"HTTP {resp.status_code}: {err_body[:300]}"
             raw_lines.append(f"!! HTTP {resp.status_code}")
             raw_lines.append(err_body)
-            raw_path.write_text("\n".join(raw_lines), encoding="utf-8")
+            raw_path.write_text("\n".join(raw_lines), encoding="utf-8", newline="\n")
             return outcome
 
         for line in iter_sse_lines(resp):
@@ -1050,7 +1081,7 @@ def run_scenario(
                          f"throughput: {outcome.throughput_chars_per_sec:.0f}chars/s, "
                          f"finish_reason: {outcome.finish_reason}, "
                          f"done_sentinel: {outcome.saw_done_sentinel}")
-        raw_path.write_text("\n".join(raw_lines), encoding="utf-8")
+        raw_path.write_text("\n".join(raw_lines), encoding="utf-8", newline="\n")
 
         # Verbose streaming output
         if verbose_streaming and outcome.inter_chunk_gaps_ms:
@@ -2693,7 +2724,7 @@ def analyze_results(results_path: Path) -> int:
         print(f"ERROR: {results_path} not found. Run the lab first.")
         return 2
 
-    with results_path.open(encoding="utf-8") as f:
+    with results_path.open(encoding="utf-8", newline="") as f:
         data = json.load(f)
 
     model = data.get("model", "unknown")
@@ -3487,7 +3518,7 @@ def main() -> int:
         "outcomes": [o.to_dict() for o in outcomes],
         "probes": probes,
         "advanced": advanced,
-    }, indent=2), encoding="utf-8")
+    }, indent=2), encoding="utf-8", newline="\n")
     print()
     print(f"Full structured results: {out_path}")
     print(f"Per-test raw SSE dumps:  {raw_dir}/")
