@@ -100,6 +100,30 @@ CHAT_PATH = "/.api/llm/chat/completions"
 MODELS_PATH = "/.api/llm/models"
 
 
+def _mask_url(url: str) -> str:
+    """Mask the hostname of a URL for safe printing/logging.
+    https://internal.corp.example.com/foo  ->  https://***.****.com/foo
+    Keeps the scheme and path so context is clear without leaking the hostname.
+    """
+    if not url:
+        return "<no-url>"
+    try:
+        from urllib.parse import urlparse, urlunparse
+        parsed = urlparse(url)
+        host = parsed.hostname or ""
+        parts = host.split(".")
+        # Mask all parts except the TLD — keep .com/.net/.io visible for context
+        masked_parts = ["***"] * max(len(parts) - 1, 1) + ([parts[-1]] if len(parts) > 1 else [])
+        masked_host = ".".join(masked_parts)
+        if parsed.port:
+            masked_host = f"{masked_host}:{parsed.port}"
+        masked = urlunparse((parsed.scheme, masked_host, parsed.path,
+                             parsed.params, "", ""))
+        return masked
+    except Exception:
+        return "***"
+
+
 # ─────────────────────────────────────────────────────────────
 # Tool definitions used by Mode A (native function calling).
 # Same tools are described in prose for Modes B and C.
@@ -2679,7 +2703,7 @@ def analyze_results(results_path: Path) -> int:
     print("DEEP ANALYSIS REPORT")
     print("=" * 78)
     print(f"  model: {model}")
-    print(f"  url:   {url}")
+    print(f"  url:   {url}")   # already masked when saved
     print(f"  outcomes: {len(outcomes)}")
 
     # ── 1. Streaming health ─────────────────────────────────────────────────
@@ -3074,7 +3098,7 @@ def main() -> int:
         model = anthropic[0]
 
     print(f"# model:    {model}")
-    print(f"# url:      {args.url}")
+    print(f"# url:      {_mask_url(args.url)}")
 
     modes = args.only or ["A", "B", "C"]
     scenarios = SCENARIOS
@@ -3086,7 +3110,7 @@ def main() -> int:
             return 2
 
     raw_dir = Path(args.raw_dir)
-    print(f"# raw_dir:  {raw_dir.resolve()}")
+    print(f"# raw_dir:  {raw_dir}")
     print(f"# scenarios: {[s.name for s in scenarios]}")
     print(f"# modes:    {modes}")
 
@@ -3455,14 +3479,14 @@ def main() -> int:
     out_path = Path(args.out)
     out_path.write_text(json.dumps({
         "model": model,
-        "url": args.url,
+        "url": _mask_url(args.url),
         "outcomes": [o.to_dict() for o in outcomes],
         "probes": probes,
         "advanced": advanced,
     }, indent=2), encoding="utf-8")
     print()
-    print(f"Full structured results: {out_path.resolve()}")
-    print(f"Per-test raw SSE dumps:  {raw_dir.resolve()}")
+    print(f"Full structured results: {out_path}")
+    print(f"Per-test raw SSE dumps:  {raw_dir}/")
 
     # Auto-run deep analysis after all tests complete
     print()
