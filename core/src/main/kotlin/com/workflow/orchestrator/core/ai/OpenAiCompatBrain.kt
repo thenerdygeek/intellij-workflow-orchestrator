@@ -75,6 +75,10 @@ class OpenAiCompatBrain(
 
     override fun estimateTokens(text: String): Int = TokenEstimator.estimate(text)
 
+    override fun interruptStream() {
+        client.shouldInterruptStream = true
+    }
+
     override fun cancelActiveRequest() = client.cancelActiveRequest()
 
     /**

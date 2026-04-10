@@ -41,6 +41,9 @@ interface LlmBrain {
     /** The model identifier being used. */
     val modelId: String
 
+    /** Signal the active stream to stop cooperatively. */
+    fun interruptStream() {}
+
     /** Known tool names for XML parser. */
     val toolNameSet: Set<String> get() = emptySet()
 
