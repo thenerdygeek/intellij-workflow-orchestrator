@@ -23,6 +23,8 @@ import kotlinx.coroutines.launch
 class AutoDetectFileListener : BulkFileListener {
 
     private val log = logger<AutoDetectFileListener>()
+    // applicationListener has the same lifetime as the IDE session itself,
+    // so an ad-hoc scope here is acceptable — it won't outlive the process.
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @Volatile private var bambooSpecsJob: Job? = null

@@ -168,7 +168,12 @@ Actions and their parameters:
 
         val result = withTimeoutOrNull<CoverageRunResult>(timeoutSeconds * 1000) {
             suspendCancellableCoroutine { continuation ->
-                continuation.invokeOnCancellation { buildConnRef.get()?.disconnect() }
+                continuation.invokeOnCancellation {
+                    // Kill the coverage process and disconnect the bus watcher on agent stop or timeout.
+                    // Without this the coverage JVM keeps running and blocks subsequent runs.
+                    processHandlerRef.get()?.destroyProcess()
+                    buildConnRef.get()?.disconnect()
+                }
                 invokeLater {
                     try {
                         val env = com.intellij.execution.runners.ExecutionEnvironmentBuilder

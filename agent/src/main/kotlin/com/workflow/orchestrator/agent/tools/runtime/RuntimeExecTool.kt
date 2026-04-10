@@ -642,9 +642,17 @@ description optional: for approval dialog on run_tests, compile_module.
 
         val processHandlerRef = AtomicReference<ProcessHandler?>(null)
         val descriptorRef = AtomicReference<RunContentDescriptor?>(null)
+        val buildConnectionRef = AtomicReference<com.intellij.util.messages.MessageBusConnection?>(null)
 
         val result = withTimeoutOrNull(timeoutSeconds * 1000) {
             suspendCancellableCoroutine { continuation ->
+                // Kill the spawned process and disconnect the bus watcher when the agent is
+                // stopped or when withTimeoutOrNull fires — prevents orphaned JUnit processes
+                // that block subsequent runs with "initialization error".
+                continuation.invokeOnCancellation {
+                    processHandlerRef.get()?.destroyProcess()
+                    buildConnectionRef.get()?.disconnect()
+                }
                 com.intellij.openapi.application.invokeLater {
                     try {
                         val executor = DefaultRunExecutor.getRunExecutorInstance()
@@ -683,6 +691,7 @@ description optional: for approval dialog on run_tests, compile_module.
                         // Additionally subscribes to CompilationStatusListener to capture error
                         // counts for richer error messages.
                         val buildConnection = project.messageBus.connect()
+                        buildConnectionRef.set(buildConnection)  // expose for invokeOnCancellation
                         val compilationErrors = java.util.concurrent.atomic.AtomicReference<String?>(null)
 
                         // Secondary: capture compilation error details
@@ -924,9 +933,10 @@ description optional: for approval dialog on run_tests, compile_module.
             }
 
             settings.isTemporary = true
-            runManager.addConfiguration(settings)
-            runManager.selectedConfiguration = settings
-
+            // Do NOT add to RunManager and do NOT overwrite selectedConfiguration.
+            // ExecutionEnvironmentBuilder doesn't require the config to be registered,
+            // and stealing the user's selected config causes "initialization error" on
+            // the next manual run after the agent is stopped.
             settings
         } catch (_: Exception) { null }
     }

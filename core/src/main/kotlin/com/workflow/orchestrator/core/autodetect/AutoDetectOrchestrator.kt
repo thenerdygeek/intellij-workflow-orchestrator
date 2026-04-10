@@ -14,10 +14,7 @@ import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoConfig
 import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -40,10 +37,11 @@ import java.util.concurrent.atomic.AtomicBoolean
  * implements that interface and is registered in plugin.xml under the interface name.
  */
 @Service(Service.Level.PROJECT)
-class AutoDetectOrchestrator(private val project: Project) : Disposable {
+class AutoDetectOrchestrator(private val project: Project, private val cs: CoroutineScope) : Disposable {
 
     private val log = logger<AutoDetectOrchestrator>()
-    internal val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // cs is service-injected: supervisor-scoped, cancelled on project/plugin dispose
+    internal val scope: CoroutineScope get() = cs
     private val firstSweepNotified = AtomicBoolean(false)
     private val detectionMutex = Mutex()
 
@@ -233,7 +231,7 @@ class AutoDetectOrchestrator(private val project: Project) : Disposable {
     }
 
     override fun dispose() {
-        scope.cancel()
+        // cs is cancelled automatically by the IntelliJ service lifecycle
     }
 
     companion object {

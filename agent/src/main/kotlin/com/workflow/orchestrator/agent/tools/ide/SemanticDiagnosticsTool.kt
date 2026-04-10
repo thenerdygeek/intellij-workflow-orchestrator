@@ -21,6 +21,13 @@ class SemanticDiagnosticsTool : AgentTool {
     companion object {
         /** Lines of buffer around the edited range to include in diagnostics. */
         private const val EDIT_LINE_BUFFER = 5
+
+        /**
+         * Matches plain Java/Kotlin identifier references and qualified names
+         * (e.g. "MyClass", "com.example.Service", "myMethod").
+         * Filters out file paths, URLs, property placeholders like "${key}", etc.
+         */
+        private val IDENTIFIER_RE = Regex("""[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)*""")
     }
 
     override val name = "diagnostics"
@@ -84,13 +91,45 @@ class SemanticDiagnosticsTool : AgentTool {
                 val unresolvedSeen = mutableSetOf<String>()
                 psiFile.accept(object : PsiRecursiveElementWalkingVisitor() {
                     override fun visitElement(element: PsiElement) {
-                        super.visitElement(element)
+                        // Don't descend into comments — @link/@see/@param refs are advisory, not errors.
+                        if (element is PsiComment) return
+
+                        // Don't descend into string literal values — plugins register soft references on
+                        // string content (Spring bean names, property keys, @Value placeholders, etc.) that
+                        // return resolve()=null but are never compilation errors.
+                        if (element is PsiLiteralExpression && element.value is String) return
+
+                        // Kotlin string templates: avoid by simple name check since we can't import KT PSI.
+                        val simpleName = element.javaClass.simpleName
+                        if (simpleName == "KtStringTemplateExpression" ||
+                            simpleName == "KtLiteralStringTemplateEntry") return
+
+                        super.visitElement(element)  // recurse into children
+
                         for (ref in element.references) {
-                            if (ref.resolve() == null) {
+                            // isSoft = advisory reference (Spring, Hibernate, file paths, etc.) —
+                            // these are not compilation errors even when unresolved.
+                            if (ref.isSoft) continue
+
+                            // PsiPolyVariantReference covers overloaded methods and other multi-target
+                            // references. resolve() always returns null for them; use multiResolve().
+                            val resolved = if (ref is PsiPolyVariantReference) {
+                                ref.multiResolve(false).isNotEmpty()
+                            } else {
+                                ref.resolve() != null
+                            }
+                            if (!resolved) {
                                 val text = ref.canonicalText.take(60)
-                                if (text.isNotBlank() && text !in unresolvedSeen && !text.startsWith("kotlin.") && !text.startsWith("java.lang.")) {
+                                // Only report plain identifier/qualified-name references, not paths or URLs.
+                                if (text.isNotBlank()
+                                    && IDENTIFIER_RE.matches(text)
+                                    && text !in unresolvedSeen
+                                    && !text.startsWith("kotlin.")
+                                    && !text.startsWith("java.lang.")
+                                ) {
                                     unresolvedSeen.add(text)
-                                    val line = psiFile.viewProvider.document?.getLineNumber(element.textOffset)?.plus(1) ?: 0
+                                    val line = psiFile.viewProvider.document
+                                        ?.getLineNumber(element.textOffset)?.plus(1) ?: 0
                                     allProblems.add(line to "Unresolved reference '$text'")
                                 }
                             }

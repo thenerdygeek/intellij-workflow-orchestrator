@@ -315,9 +315,6 @@
         <fileEditorProvider
             implementation="com.workflow.orchestrator.agent.testing.ToolTestingEditorProvider"/>
 
-        <!-- Jira Ticket Reference TODO Pattern -->
-        <todoIndexPattern pattern="\b[A-Z][A-Z0-9]+-\d+\b" caseSensitive="true"/>
-
         <!-- Commit Dialog: Jira Time Tracking -->
         <checkinHandlerFactory
             implementation="com.workflow.orchestrator.jira.vcs.TimeTrackingCheckinHandlerFactory"/>
