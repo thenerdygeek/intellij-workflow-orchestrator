@@ -79,4 +79,38 @@ class XmlToolDefinitionBuilderTest {
         // Should include usage example
         assertTrue(xml.contains("tool_usage_instructions"))
     }
+
+    @Test
+    fun `escapes XML special characters in descriptions`() {
+        val tools = listOf(
+            ToolDefinition(
+                type = "function",
+                function = FunctionDefinition(
+                    name = "edit_file",
+                    description = "Replace old_string -> new_string in a file (use < and > for generics)",
+                    parameters = FunctionParameters(
+                        properties = mapOf(
+                            "path" to ParameterProperty(
+                                type = "string",
+                                description = "File path (e.g., src/List<String>.kt)"
+                            )
+                        ),
+                        required = listOf("path")
+                    )
+                )
+            )
+        )
+
+        val xml = XmlToolDefinitionBuilder.build(tools)
+
+        // < and > in descriptions must be escaped to &lt; and &gt;
+        assertTrue(xml.contains("&lt;"), "< should be escaped in tool description, got: $xml")
+        assertTrue(xml.contains("&gt;"), "> should be escaped in tool description, got: $xml")
+        assertFalse(
+            xml.contains("old_string -> new_string in a file (use < and"),
+            "Raw < should not appear in description XML"
+        )
+        // Parameter descriptions should also be escaped
+        assertTrue(xml.contains("List&lt;String&gt;"), "Param description should escape generics")
+    }
 }
