@@ -211,4 +211,269 @@ $lines
         assertEquals("fun bar() = 41", toolBlock.params["old_string"])
         assertEquals("fun bar() = 42", toolBlock.params["new_string"])
     }
+
+    @Test
+    fun `multiple edit_file calls with new_string are not merged`() {
+        val text = """I'll fix both files.
+
+<edit_file>
+<path>A.kt</path>
+<new_string>fun a() = 1</new_string>
+</edit_file>
+
+Now the second file.
+
+<edit_file>
+<path>B.kt</path>
+<new_string>fun b() = 2</new_string>
+</edit_file>"""
+
+        val blocks = AssistantMessageParser.parse(text, toolNames, paramNames)
+
+        // Must produce 4 blocks: text, tool, text, tool — NOT 2 (with merged tools)
+        assertEquals(4, blocks.size)
+
+        val tool1 = blocks[1] as ToolUseContent
+        assertEquals("edit_file", tool1.name)
+        assertEquals("A.kt", tool1.params["path"])
+        assertEquals("fun a() = 1", tool1.params["new_string"])
+        assertFalse(tool1.partial)
+
+        val tool2 = blocks[3] as ToolUseContent
+        assertEquals("edit_file", tool2.name)
+        assertEquals("B.kt", tool2.params["path"])
+        assertEquals("fun b() = 2", tool2.params["new_string"])
+        assertFalse(tool2.partial)
+    }
+
+    @Test
+    fun `multiple create_file calls with content param are not merged`() {
+        val text = """<create_file>
+<path>A.html</path>
+<content><html><body>Page A</body></html></content>
+</create_file>
+
+<create_file>
+<path>B.html</path>
+<content><html><body>Page B</body></html></content>
+</create_file>"""
+
+        val blocks = AssistantMessageParser.parse(text, toolNames, paramNames)
+
+        val tools = blocks.filterIsInstance<ToolUseContent>()
+        assertEquals(2, tools.size)
+        assertEquals("A.html", tools[0].params["path"])
+        assertTrue(tools[0].params["content"]!!.contains("Page A"))
+        assertFalse(tools[0].params["content"]!!.contains("Page B"), "First tool should NOT contain second tool's content")
+        assertEquals("B.html", tools[1].params["path"])
+        assertTrue(tools[1].params["content"]!!.contains("Page B"))
+    }
+
+    // ── Real-world agent scenarios ─────────────────────────────────
+
+    @Test
+    fun `edit_file with old_string and new_string followed by read_file`() {
+        val text = """<edit_file>
+<path>Foo.kt</path>
+<old_string>fun old() = 1</old_string>
+<new_string>fun new() = 2</new_string>
+</edit_file>
+
+<read_file>
+<path>Bar.kt</path>
+</read_file>"""
+
+        val blocks = AssistantMessageParser.parse(text, toolNames, paramNames)
+        val tools = blocks.filterIsInstance<ToolUseContent>()
+        assertEquals(2, tools.size)
+        assertEquals("edit_file", tools[0].name)
+        assertEquals("fun old() = 1", tools[0].params["old_string"])
+        assertEquals("fun new() = 2", tools[0].params["new_string"])
+        assertEquals("read_file", tools[1].name)
+        assertEquals("Bar.kt", tools[1].params["path"])
+    }
+
+    @Test
+    fun `three consecutive edit_file calls with code-carrying params`() {
+        val text = """<edit_file>
+<path>A.kt</path>
+<old_string>val x = 1</old_string>
+<new_string>val x = 10</new_string>
+</edit_file>
+
+<edit_file>
+<path>B.kt</path>
+<old_string>val y = 2</old_string>
+<new_string>val y = 20</new_string>
+</edit_file>
+
+<edit_file>
+<path>C.kt</path>
+<old_string>val z = 3</old_string>
+<new_string>val z = 30</new_string>
+</edit_file>"""
+
+        val blocks = AssistantMessageParser.parse(text, toolNames, paramNames)
+        val tools = blocks.filterIsInstance<ToolUseContent>()
+        assertEquals(3, tools.size)
+        assertEquals("A.kt", tools[0].params["path"])
+        assertEquals("val x = 10", tools[0].params["new_string"])
+        assertEquals("B.kt", tools[1].params["path"])
+        assertEquals("val y = 20", tools[1].params["new_string"])
+        assertEquals("C.kt", tools[2].params["path"])
+        assertEquals("val z = 30", tools[2].params["new_string"])
+    }
+
+    @Test
+    fun `create_file with HTML content does not eat next tool`() {
+        val text = """<create_file>
+<path>page.html</path>
+<content><!DOCTYPE html>
+<html>
+<head><title>Test</title></head>
+<body>
+<div class="container">
+  <p>Hello world</p>
+</div>
+</body>
+</html></content>
+</create_file>
+
+<run_command>
+<command>open page.html</command>
+</run_command>"""
+
+        val blocks = AssistantMessageParser.parse(text, toolNames, paramNames)
+        val tools = blocks.filterIsInstance<ToolUseContent>()
+        assertEquals(2, tools.size)
+        assertEquals("create_file", tools[0].name)
+        assertTrue(tools[0].params["content"]!!.contains("<div"))
+        assertTrue(tools[0].params["content"]!!.contains("</html>"))
+        assertEquals("run_command", tools[1].name)
+        assertEquals("open page.html", tools[1].params["command"])
+    }
+
+    @Test
+    fun `mixed tool types in realistic agent response`() {
+        val text = """Let me investigate and fix the issue.
+
+<read_file>
+<path>src/Main.kt</path>
+</read_file>
+
+I see the bug. The function returns null instead of empty list.
+
+<edit_file>
+<path>src/Main.kt</path>
+<old_string>return null</old_string>
+<new_string>return emptyList()</new_string>
+</edit_file>
+
+Now let me run the tests to verify.
+
+<run_command>
+<command>./gradlew test</command>
+</run_command>"""
+
+        val blocks = AssistantMessageParser.parse(text, toolNames, paramNames)
+
+        assertEquals(6, blocks.size)
+        assertTrue(blocks[0] is TextContent)
+        assertTrue((blocks[0] as TextContent).content.contains("investigate"))
+
+        val tool1 = blocks[1] as ToolUseContent
+        assertEquals("read_file", tool1.name)
+
+        assertTrue(blocks[2] is TextContent)
+        assertTrue((blocks[2] as TextContent).content.contains("bug"))
+
+        val tool2 = blocks[3] as ToolUseContent
+        assertEquals("edit_file", tool2.name)
+        assertEquals("return null", tool2.params["old_string"])
+        assertEquals("return emptyList()", tool2.params["new_string"])
+
+        assertTrue(blocks[4] is TextContent)
+        assertTrue((blocks[4] as TextContent).content.contains("tests"))
+
+        val tool3 = blocks[5] as ToolUseContent
+        assertEquals("run_command", tool3.name)
+        assertEquals("./gradlew test", tool3.params["command"])
+    }
+
+    @Test
+    fun `edit_file with code containing closing tag lookalikes`() {
+        // Code contains </new_string> as a string literal — parser must not be fooled
+        val text = """<edit_file>
+<path>Parser.kt</path>
+<new_string>val closeTag = "</new_string>"
+println(closeTag)</new_string>
+</edit_file>"""
+
+        val blocks = AssistantMessageParser.parse(text, toolNames, paramNames)
+        val tools = blocks.filterIsInstance<ToolUseContent>()
+        assertEquals(1, tools.size)
+        assertTrue(tools[0].params["new_string"]!!.contains("closeTag"))
+    }
+
+    @Test
+    fun `partial second tool call during streaming`() {
+        // Stream mid-way: first tool done, second still streaming
+        val text = """<read_file>
+<path>A.kt</path>
+</read_file>
+
+<edit_file>
+<path>B.kt</path>
+<new_string>fun bar() {
+    // still typing"""
+
+        val blocks = AssistantMessageParser.parse(text, toolNames, paramNames)
+
+        val tools = blocks.filterIsInstance<ToolUseContent>()
+        assertEquals(2, tools.size)
+        assertFalse(tools[0].partial, "First tool should be complete")
+        assertTrue(tools[1].partial, "Second tool should be partial")
+        assertEquals("B.kt", tools[1].params["path"])
+        assertTrue(tools[1].params["new_string"]!!.contains("still typing"))
+    }
+
+    @Test
+    fun `five read_file calls in parallel (no code-carrying params)`() {
+        val text = (1..5).joinToString("\n\n") { i ->
+            "<read_file>\n<path>file$i.kt</path>\n</read_file>"
+        }
+
+        val blocks = AssistantMessageParser.parse(text, toolNames, paramNames)
+        val tools = blocks.filterIsInstance<ToolUseContent>()
+        assertEquals(5, tools.size)
+        tools.forEachIndexed { i, tool ->
+            assertEquals("file${i + 1}.kt", tool.params["path"])
+            assertFalse(tool.partial)
+        }
+    }
+
+    @Test
+    fun `edit_file where new_string contains tool-like XML tags`() {
+        // The code being inserted contains XML that looks like tool tags
+        val text = """<edit_file>
+<path>Template.kt</path>
+<new_string>val template = ""${'"'}
+<read_file>
+<path>example.txt</path>
+</read_file>
+""${'"'}.trimIndent()</new_string>
+</edit_file>
+
+<read_file>
+<path>other.kt</path>
+</read_file>"""
+
+        val blocks = AssistantMessageParser.parse(text, toolNames, paramNames)
+        val tools = blocks.filterIsInstance<ToolUseContent>()
+        assertEquals(2, tools.size)
+        assertEquals("edit_file", tools[0].name)
+        assertTrue(tools[0].params["new_string"]!!.contains("<read_file>"))
+        assertEquals("read_file", tools[1].name)
+        assertEquals("other.kt", tools[1].params["path"])
+    }
 }
