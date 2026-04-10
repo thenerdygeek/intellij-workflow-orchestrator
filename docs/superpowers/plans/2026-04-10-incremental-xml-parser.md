@@ -840,9 +840,37 @@ In `sendMessage()`, replace the existing XML fallback block with the same `Assis
                             }
 ```
 
-- [ ] **Step 3: Update OpenAiCompatBrain to pass tool names**
+- [ ] **Step 3: Add toolNameSet/paramNameSet to LlmBrain interface**
 
-In `OpenAiCompatBrain`, update `chatStream()` and `chat()` to pass tool names:
+In `LlmBrain.kt`, add properties with defaults so existing implementations don't break:
+
+```kotlin
+    /** Known tool names for XML parser (used when xmlToolMode=true). */
+    val toolNameSet: Set<String> get() = emptySet()
+
+    /** Known param names for XML parser (used when xmlToolMode=true). */
+    val paramNameSet: Set<String> get() = emptySet()
+```
+
+- [ ] **Step 4: Update OpenAiCompatBrain to pass tool names**
+
+In `OpenAiCompatBrain`, add override properties and update `chatStream()`/`chat()` to pass tool names:
+
+```kotlin
+class OpenAiCompatBrain(
+    sourcegraphUrl: String,
+    tokenProvider: () -> String?,
+    private val model: String,
+    connectTimeoutSeconds: Long = 30,
+    readTimeoutSeconds: Long = 180,
+    httpClientOverride: OkHttpClient? = null,
+    override val xmlToolMode: Boolean = false,
+    override val toolNameSet: Set<String> = emptySet(),
+    override val paramNameSet: Set<String> = emptySet()
+) : LlmBrain {
+```
+
+Update `chatStream()`:
 
 ```kotlin
     override suspend fun chatStream(
@@ -862,32 +890,19 @@ In `OpenAiCompatBrain`, update `chatStream()` and `chat()` to pass tool names:
     }
 ```
 
-Add `toolNameSet` and `paramNameSet` as constructor parameters to `OpenAiCompatBrain`:
+Update `chat()` similarly to pass `knownToolNames` and `knownParamNames`.
 
-```kotlin
-class OpenAiCompatBrain(
-    sourcegraphUrl: String,
-    tokenProvider: () -> String?,
-    private val model: String,
-    connectTimeoutSeconds: Long = 30,
-    readTimeoutSeconds: Long = 180,
-    httpClientOverride: OkHttpClient? = null,
-    override val xmlToolMode: Boolean = false,
-    val toolNameSet: Set<String> = emptySet(),
-    val paramNameSet: Set<String> = emptySet()
-) : LlmBrain {
-```
-
-- [ ] **Step 4: Build and run all core tests**
+- [ ] **Step 5: Build and run all core tests**
 
 Run: `./gradlew :core:test`
 Expected: All tests PASSED (existing streaming tests may need updates — see Task 5)
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add core/src/main/kotlin/com/workflow/orchestrator/core/ai/SourcegraphChatClient.kt \
-        core/src/main/kotlin/com/workflow/orchestrator/core/ai/OpenAiCompatBrain.kt
+        core/src/main/kotlin/com/workflow/orchestrator/core/ai/OpenAiCompatBrain.kt \
+        core/src/main/kotlin/com/workflow/orchestrator/core/ai/LlmBrain.kt
 git commit -m "feat(xml-parser): wire AssistantMessageParser into streaming + non-streaming paths
 
 Replaces old XmlToolCallParser post-processing with new Cline-style
@@ -1112,8 +1127,11 @@ Replace the entire `// XML tag suppression state` block and the `onChunk` lambda
 ```kotlin
             // Block-based streaming presentation (Cline port)
             // Accumulates text, re-parses on every chunk, sends only TextContent to UI.
+            // Tool/param names fetched from brain (updated by AgentService when deferred tools load).
             val accumulatedText = StringBuilder()
             var lastPresentedTextLength = 0
+            val currentToolNames = brain.toolNameSet
+            val currentParamNames = brain.paramNameSet
 
             val apiResult = brain.chatStream(
                 messages = contextManager.getMessages(),
@@ -1128,8 +1146,8 @@ Replace the entire `// XML tag suppression state` block and the `onChunk` lambda
                     // Re-parse full accumulated text
                     val blocks = AssistantMessageParser.parse(
                         accumulatedText.toString(),
-                        brain.toolNameSet,
-                        brain.paramNameSet
+                        currentToolNames,
+                        currentParamNames
                     )
 
                     // Extract visible text (TextContent blocks only)
@@ -1218,22 +1236,37 @@ Remove the old `useXmlToolMode` checkbox.
 
 In `PluginSettings.kt`, remove the `useXmlToolMode` field. In `AgentService.kt`, remove all references to `useXmlToolMode` — XML mode is always on now.
 
-- [ ] **Step 4: Build and verify**
+- [ ] **Step 4: Remove xmlToolMode from LlmBrain and OpenAiCompatBrain**
+
+In `LlmBrain.kt`, remove the `xmlToolMode` property entirely.
+
+In `OpenAiCompatBrain.kt`:
+- Remove `override val xmlToolMode` from constructor
+- Change `chatStream()` to always pass `tools = null` (XML is always on)
+- Change `chat()` to always pass `tools = null`
+
+In `AgentService.kt`:
+- Remove `xmlToolMode = xmlMode` from both brain construction sites (primary at ~203 and brainFactory at ~625)
+- Remove the `val xmlMode = ...` line
+
+In `AgentController.kt`:
+- Remove the `useXmlToolMode` check in the `ask_followup_question` callback — always skip `appendStreamToken()` since XML is always on
+
+- [ ] **Step 5: Build and verify**
 
 Run: `./gradlew :core:compileKotlin :agent:compileKotlin`
 Expected: BUILD SUCCESSFUL
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add agent/src/main/kotlin/com/workflow/orchestrator/agent/settings/AgentSettings.kt \
-        agent/src/main/kotlin/com/workflow/orchestrator/agent/settings/AgentAdvancedConfigurable.kt \
-        core/src/main/kotlin/com/workflow/orchestrator/core/settings/PluginSettings.kt \
-        agent/src/main/kotlin/com/workflow/orchestrator/agent/AgentService.kt
-git commit -m "feat(xml-parser): add toolExecutionMode setting, remove useXmlToolMode
+git add -A
+git commit -m "feat(xml-parser): add toolExecutionMode setting, remove xmlToolMode entirely
 
 New setting: accumulate (default) or stream_interrupt (Cline-style).
-Removes useXmlToolMode — XML mode is always on now."
+Removes xmlToolMode from LlmBrain, OpenAiCompatBrain, PluginSettings,
+AgentService, and AgentController. XML mode is now the only path —
+brain always sends tools=null (definitions in system prompt)."
 ```
 
 ---
@@ -1275,7 +1308,7 @@ In `AgentLoop`, add a `toolExecutionMode` parameter:
     private val toolExecutionMode: String = "accumulate",  // "accumulate" or "stream_interrupt"
 ```
 
-In the `onChunk` lambda, after parsing blocks, check for newly completed tool blocks:
+In the `onChunk` lambda (inside Task 7's block-based presentation code), after parsing blocks, check for newly completed tool blocks and interrupt:
 
 ```kotlin
                     // Stream-interrupt: if a tool block just completed, interrupt stream
@@ -1283,15 +1316,13 @@ In the `onChunk` lambda, after parsing blocks, check for newly completed tool bl
                         val completedTool = blocks.filterIsInstance<ToolUseContent>()
                             .firstOrNull { !it.partial }
                         if (completedTool != null) {
-                            // Signal the SSE reader to stop
-                            (brain as? com.workflow.orchestrator.core.ai.OpenAiCompatBrain)
-                                ?.let { /* access client's shouldInterruptStream */ }
-                            // The stream will terminate, apiResult will return
+                            brain.interruptStream()
+                            // The SSE reader will break out, chatStream() returns
                         }
                     }
 ```
 
-Note: The stream-interrupt wiring between AgentLoop and SourcegraphChatClient requires exposing the interrupt flag. Add a `interruptStream()` method to `OpenAiCompatBrain`:
+Add a `interruptStream()` method to `OpenAiCompatBrain`:
 
 ```kotlin
     fun interruptStream() {
