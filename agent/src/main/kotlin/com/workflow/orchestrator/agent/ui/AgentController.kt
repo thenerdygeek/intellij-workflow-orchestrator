@@ -142,6 +142,11 @@ class AgentController(
         mentionContextBuilder.mentionSearchProvider = provider
     }
 
+    /** Push a chat-animations toggle change from Settings to the dashboard (and mirrors). */
+    fun setChatAnimationsEnabled(enabled: Boolean) {
+        dashboard.setChatAnimationsEnabled(enabled)
+    }
+
     init {
         wireCallbacks()
         // Register the push callback used by RenderArtifactTool → ArtifactResultRegistry
