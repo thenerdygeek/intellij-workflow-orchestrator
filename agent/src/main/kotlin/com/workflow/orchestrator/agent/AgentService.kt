@@ -155,6 +155,22 @@ class AgentService(private val project: Project) : Disposable {
      *
      * Subsequent calls return the cached instance.
      */
+    /**
+     * Return current memory stats for the TopBar indicator.
+     * Pair of (coreChars, archivalCount). Returns null if memory is not yet initialized.
+     * Best-effort, safe to call from any thread.
+     */
+    fun getMemoryStats(): Pair<Int, Int>? {
+        return try {
+            val core = coreMemory ?: return null
+            val archival = archivalMemory ?: return null
+            core.totalChars() to archival.size()
+        } catch (e: Exception) {
+            log.warn("[AgentService] Failed to read memory stats (non-fatal): ${e.message}")
+            null
+        }
+    }
+
     private suspend fun ensureAutoMemory(): AutoMemoryManager? {
         autoMemoryManager?.let { return it }
 

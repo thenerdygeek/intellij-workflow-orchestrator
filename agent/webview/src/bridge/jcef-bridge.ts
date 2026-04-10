@@ -166,6 +166,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   updateTokenBudget(used: number, max: number) {
     stores?.getChatStore().updateTokenBudget(used, max);
   },
+  updateMemoryStats(coreChars: number, archivalCount: number) {
+    stores?.getChatStore().updateMemoryStats(coreChars, archivalCount);
+  },
   setModelName(name: string) {
     stores?.getChatStore().setModelName(name);
   },

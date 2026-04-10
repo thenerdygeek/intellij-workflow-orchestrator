@@ -792,6 +792,10 @@ class AgentCefPanel(
         callJs("updateTokenBudget($used,$max)")
     }
 
+    fun updateMemoryStats(coreChars: Int, archivalCount: Int) {
+        callJs("updateMemoryStats($coreChars,$archivalCount)")
+    }
+
     fun setModelName(name: String) {
         callJs("setModelName(${JsEscape.toJsString(name)})")
     }
