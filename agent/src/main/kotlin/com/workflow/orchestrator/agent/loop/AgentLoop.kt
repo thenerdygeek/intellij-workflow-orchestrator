@@ -465,12 +465,51 @@ class AgentLoop(
             contextManager.setToolDefinitionTokens(
                 TokenEstimator.estimateToolDefinitions(currentToolDefs)
             )
+
+            // XML tag suppression state (reset per API call)
+            // When xmlToolMode is active, suppress <tool>...</tool> blocks from the visible
+            // chat output so users see reasoning text but not raw XML.
+            var insideXmlTool = false
+            val xmlTagBuffer = StringBuilder()
+
             val apiResult = brain.chatStream(
                 messages = contextManager.getMessages(),
                 tools = currentToolDefs,
                 maxTokens = maxOutputTokens,
                 onChunk = { chunk ->
-                    chunk.choices.firstOrNull()?.delta?.content?.let { onStreamChunk(it) }
+                    val text = chunk.choices.firstOrNull()?.delta?.content ?: return@chatStream
+                    if (!brain.xmlToolMode) {
+                        onStreamChunk(text)
+                        return@chatStream
+                    }
+                    // Filter XML tool tags from visible output
+                    for (char in text) {
+                        xmlTagBuffer.append(char)
+                        val buf = xmlTagBuffer.toString()
+                        if (!insideXmlTool && buf.endsWith("<tool>")) {
+                            insideXmlTool = true
+                            // Emit text accumulated before "<tool>" (minus the tag itself)
+                            val before = buf.dropLast("<tool>".length)
+                            if (before.isNotEmpty()) onStreamChunk(before)
+                            xmlTagBuffer.clear()
+                        } else if (insideXmlTool && buf.endsWith("</tool>")) {
+                            insideXmlTool = false
+                            xmlTagBuffer.clear()
+                        } else if (!insideXmlTool && xmlTagBuffer.length > 10) {
+                            // Flush buffer when not near a tag boundary
+                            val toFlush = xmlTagBuffer.substring(0, xmlTagBuffer.length - 6)
+                            onStreamChunk(toFlush)
+                            xmlTagBuffer.delete(0, xmlTagBuffer.length - 6)
+                        }
+                    }
+                    // Flush remaining buffer if not inside a tool tag and not near boundary
+                    if (!insideXmlTool && xmlTagBuffer.length > 6) {
+                        val safe = xmlTagBuffer.substring(0, xmlTagBuffer.length - 6)
+                        if (safe.isNotEmpty()) {
+                            onStreamChunk(safe)
+                            xmlTagBuffer.delete(0, safe.length)
+                        }
+                    }
                 }
             )
 
