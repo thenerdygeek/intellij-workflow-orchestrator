@@ -197,18 +197,16 @@ class AgentService(private val project: Project) : Disposable {
             }
         }
 
-        val xmlMode = PluginSettings.getInstance(project).state.useXmlToolMode
         val allToolNames = registry.getActiveTools().keys
         val allParamNames = registry.getActiveTools().values
             .flatMap { it.parameters.properties.keys }
             .toSet()
-        log.info("[Agent] Creating brain with model: $modelId at $sgUrl (xmlToolMode=$xmlMode, tools=${allToolNames.size}, params=${allParamNames.size})")
+        log.info("[Agent] Creating brain with model: $modelId at $sgUrl (tools=${allToolNames.size}, params=${allParamNames.size})")
 
         return OpenAiCompatBrain(
             sourcegraphUrl = sgUrl,
             tokenProvider = tokenProvider,
             model = modelId,
-            xmlToolMode = xmlMode,
             toolNameSet = allToolNames,
             paramNameSet = allParamNames
         )
@@ -624,7 +622,6 @@ class AgentService(private val project: Project) : Disposable {
                 val fbUrl = fbConnections.state.sourcegraphUrl.trimEnd('/')
                 val fbCredentialStore = CredentialStore()
                 val fbTokenProvider = { fbCredentialStore.getToken(ServiceType.SOURCEGRAPH) }
-                val fbXmlMode = PluginSettings.getInstance(project).state.useXmlToolMode
                 val fbToolNames = registry.getActiveTools().keys
                 val fbParamNames = registry.getActiveTools().values
                     .flatMap { it.parameters.properties.keys }
@@ -634,7 +631,6 @@ class AgentService(private val project: Project) : Disposable {
                         sourcegraphUrl = fbUrl,
                         tokenProvider = fbTokenProvider,
                         model = modelId,
-                        xmlToolMode = fbXmlMode,
                         toolNameSet = fbToolNames,
                         paramNameSet = fbParamNames
                     ).also { b ->
@@ -729,9 +725,9 @@ class AgentService(private val project: Project) : Disposable {
                 // Act mode: remove plan_mode_respond, keep act_mode_respond + write tools + enable_plan_mode.
                 // Re-reads planModeActive on each call so enable_plan_mode tool takes effect mid-session.
                 //
-                // When xmlToolMode is active, also rebuilds the system prompt with updated
-                // XML tool definitions — critical because the LLM only sees tools via the
-                // system prompt in XML mode (tools: null in API request).
+                // Also rebuilds the system prompt with updated tool definitions —
+                // critical because the LLM only sees tools via the system prompt
+                // (tools: null in API request, XML mode is always on).
                 val hasSkills = availableSkills != null
                 var lastXmlToolDefsHash = 0
                 val toolDefinitionProvider: () -> List<com.workflow.orchestrator.core.ai.dto.ToolDefinition> = {
@@ -748,14 +744,12 @@ class AgentService(private val project: Project) : Disposable {
                         }
                         .map { AgentTool.injectTaskProgress(it.toToolDefinition()) }
 
-                    // Update system prompt XML when tool set changes (plan mode switch, deferred tool load)
-                    if (brain.xmlToolMode) {
-                        val defsHash = defs.map { it.function.name }.hashCode()
-                        if (defsHash != lastXmlToolDefsHash) {
-                            lastXmlToolDefsHash = defsHash
-                            val markdown = com.workflow.orchestrator.core.ai.ToolPromptBuilder.build(defs)
-                            ctx.setSystemPrompt(systemPromptBuilder(markdown))
-                        }
+                    // Update system prompt when tool set changes (plan mode switch, deferred tool load)
+                    val defsHash = defs.map { it.function.name }.hashCode()
+                    if (defsHash != lastXmlToolDefsHash) {
+                        lastXmlToolDefsHash = defsHash
+                        val markdown = com.workflow.orchestrator.core.ai.ToolPromptBuilder.build(defs)
+                        ctx.setSystemPrompt(systemPromptBuilder(markdown))
                     }
 
                     defs

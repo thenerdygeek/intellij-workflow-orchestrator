@@ -41,12 +41,9 @@ interface LlmBrain {
     /** The model identifier being used. */
     val modelId: String
 
-    /** When true, tools are defined as XML in the system prompt, not via tools: [] */
-    val xmlToolMode: Boolean get() = false
-
-    /** Known tool names for XML parser (used when xmlToolMode=true). */
+    /** Known tool names for XML parser. */
     val toolNameSet: Set<String> get() = emptySet()
 
-    /** Known param names for XML parser (used when xmlToolMode=true). */
+    /** Known param names for XML parser. */
     val paramNameSet: Set<String> get() = emptySet()
 }
