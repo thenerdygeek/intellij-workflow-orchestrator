@@ -40,4 +40,7 @@ interface LlmBrain {
 
     /** The model identifier being used. */
     val modelId: String
+
+    /** When true, tools are defined as XML in the system prompt, not via tools: [] */
+    val xmlToolMode: Boolean get() = false
 }
