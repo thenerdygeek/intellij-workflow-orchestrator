@@ -36,6 +36,12 @@ export default defineConfig(({ mode }) => ({
           if (id.includes('chart.js')) return 'chartjs'
           if (id.includes('diff2html')) return 'diff2html'
           if (id.includes('recharts')) return 'recharts'
+          if (id.includes('lucide-react')) return 'lucide'
+          if (id.includes('node_modules/d3')) return 'd3'
+          if (id.includes('cobe')) return 'cobe'
+          if (id.includes('motion')) return 'motion'
+          if (id.includes('roughjs')) return 'roughjs'
+          if (id.includes('react-simple-maps') || id.includes('topojson')) return 'maps'
         },
       },
     },
