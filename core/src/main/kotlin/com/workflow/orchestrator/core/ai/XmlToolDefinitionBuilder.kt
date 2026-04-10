@@ -41,7 +41,7 @@ object XmlToolDefinitionBuilder {
         for (tool in tools) {
             sb.appendLine("  <tool>")
             sb.appendLine("    <tool_name>${tool.function.name}</tool_name>")
-            sb.appendLine("    <description>${tool.function.description}</description>")
+            sb.appendLine("    <description>${escapeXml(tool.function.description)}</description>")
 
             val params = tool.function.parameters
             if (params.properties.isNotEmpty()) {
@@ -51,7 +51,7 @@ object XmlToolDefinitionBuilder {
                 for ((name, prop) in params.properties) {
                     val isRequired = name in requiredSet
                     sb.appendLine("      <parameter name=\"$name\" type=\"${prop.type}\" required=\"$isRequired\">")
-                    sb.appendLine("        ${prop.description}")
+                    sb.appendLine("        ${escapeXml(prop.description)}")
                     sb.appendLine("      </parameter>")
                 }
                 sb.appendLine("    </parameters>")
@@ -64,6 +64,9 @@ object XmlToolDefinitionBuilder {
         sb.appendLine(USAGE_INSTRUCTIONS)
         return sb.toString()
     }
+
+    private fun escapeXml(text: String): String =
+        text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     private val USAGE_INSTRUCTIONS = """
 <tool_usage_instructions>
