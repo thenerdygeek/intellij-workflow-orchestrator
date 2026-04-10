@@ -60,9 +60,15 @@ function remarkCodeMeta() {
 function createMarkdownComponents(isStreaming: boolean): any {
   return {
   code({ className, children, node, ...props }: any) {
-    const isBlock = className?.startsWith('language-');
+    // Detect block code: react-markdown renders fenced code as <pre><code>,
+    // with className="language-xxx" when a language is specified. A bare ```
+    // fence (no language) still renders as <pre><code> but without className.
+    // We detect block by checking for language- prefix OR parent <pre> tag.
+    const hasLanguage = className?.startsWith('language-');
+    const isBlock = hasLanguage || node?.tagName === 'code' && node?.parent?.tagName === 'pre'
+      || (typeof children === 'string' && children.includes('\n'));
     if (isBlock) {
-      const language = className?.replace('language-', '') ?? '';
+      const language = hasLanguage ? (className?.replace('language-', '') ?? '') : '';
       const codeString = String(children).replace(/\n$/, '');
       // Extract meta string from the AST node (set by remarkCodeMeta plugin)
       const meta: string | undefined = node?.properties?.['data-meta'] ?? node?.data?.meta ?? props['data-meta'];
@@ -101,8 +107,8 @@ function createMarkdownComponents(isStreaming: boolean): any {
           return <InteractiveHtml htmlContent={codeString} />;
       }
 
-      // Default: Shiki CodeBlock
-      return <CodeBlock code={codeString} language={language} isStreaming={isStreaming} meta={meta} />;
+      // Default: Shiki CodeBlock (language defaults to 'code' for bare fences)
+      return <CodeBlock code={codeString} language={language || 'code'} isStreaming={isStreaming} meta={meta} />;
     }
     return (
       <code
@@ -112,6 +118,13 @@ function createMarkdownComponents(isStreaming: boolean): any {
         {children}
       </code>
     );
+  },
+
+  // Override <pre> to prevent double-wrapping: react-markdown renders fenced code
+  // as <pre><code>…</code></pre>, but our code() component already returns a
+  // fully-wrapped CodeBlock/RichBlock. Rendering a bare <pre> avoids nesting.
+  pre({ children }: any) {
+    return <>{children}</>;
   },
 
   a({ href, children, ...props }: any) {
