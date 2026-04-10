@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.settings
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.project.Project
 import com.intellij.ui.dsl.builder.*
+import com.workflow.orchestrator.agent.ui.AgentControllerRegistry
 import com.workflow.orchestrator.core.settings.PluginSettings
 import javax.swing.JComponent
 
@@ -127,6 +128,10 @@ class AgentAdvancedConfigurable(
         agentSettings.state.smartWorkingIndicator = smartWorkingIndicator
         agentSettings.state.powershellEnabled = powershellEnabled
         agentSettings.state.chatAnimationsEnabled = chatAnimationsEnabled
+
+        // Push the animation toggle to the live webview (and any mirror panels)
+        AgentControllerRegistry.getInstance(project).controller
+            ?.setChatAnimationsEnabled(chatAnimationsEnabled)
     }
 
     override fun reset() {
