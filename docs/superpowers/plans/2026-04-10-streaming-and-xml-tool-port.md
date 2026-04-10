@@ -10,7 +10,77 @@
 
 **Branch:** `feature/streaming-xml-port` in worktree `.worktrees/streaming-xml-port`
 
-**Lab results:** `docs/Result_1/streaming_lab_results.json` — all decisions confirmed.
+---
+
+## Background: Why This Work Is Needed
+
+The AI agent has two critical bugs caused by the Sourcegraph LLM gateway's behavior:
+
+### Bug 1: Read timeouts on long conversations
+
+`OpenAiCompatBrain.chatStream()` at `core/.../OpenAiCompatBrain.kt:56-82` does NOT actually stream. It calls the non-streaming `sendMessage()` and fakes a single SSE chunk for the UI. As conversation context grows over multiple turns, the LLM takes longer to generate a complete response. Eventually the 120s OkHttp read timeout fires. Users work around this by opening a new conversation (resetting context), but this loses all session state.
+
+The real streaming path (`SourcegraphChatClient.sendMessageStream()` at lines 273-461) is fully implemented but never called. It was disabled because of two bugs that have since been mitigated by code written after the disable.
+
+### Bug 2: Parallel tool calls silently lost
+
+The Sourcegraph gateway has a **concatenated JSON bug** in native function calling. When the model requests multiple parallel tool calls, the gateway merges all tool call JSON objects into a single SSE delta at index 0: `{"path":"A.kt"}{"path":"B.kt"}`. The existing workaround at `SourcegraphChatClient.kt:390` splits on `}{` but only recovers the **first** tool call — all others are silently dropped.
+
+This means if the agent requests 3 parallel `read_file` calls, only 1 executes. Research scope (up to 5 concurrent sub-agent tools), multi-file exploration, and any parallel operation are silently degraded.
+
+---
+
+## Lab Findings (Key Numbers)
+
+A diagnostic Python script (`tools/sourcegraph-probe/streaming_lab.py`) probed the gateway with 25 scenarios x 3 modes + 20 probes. Results were analyzed on 2026-04-10. The raw results JSON is on the `main` branch at `docs/Result_1/streaming_lab_results.json` (not in this worktree).
+
+### Streaming viability
+
+| Metric | Value | Implication |
+|---|---|---|
+| TTFB ratio (streaming vs non-streaming) | **0.23** | Streaming gets first byte at 23% of non-streaming total time — prevents 120s timeout |
+| Pre-generation silence (8K prompt) | **1764ms** | Well under timeout, but production prompts are 50-150K tokens — silence at that scale is unknown |
+| SSE keepalive | **NONE** | Gateway sends no keepalive bytes during model thinking |
+| `[DONE]` sentinel | **NEVER SENT** | Must terminate on socket close, not `[DONE]` |
+| Usage chunk | **ALWAYS EMITTED** (5/5 runs) | Token tracking works in streaming mode |
+| Max inter-chunk gap (500-line output) | **1213ms** | Well under 120s — no mid-stream timeout risk |
+| Streaming reliability | **5/5 functionally complete** | Labeled "FLAKY" only because `[DONE]` absent — content and usage always arrived |
+
+### Tool call modes
+
+| Mode | Description | Pass Rate | Parallel Works? |
+|---|---|---|---|
+| A (Native function calling) | `tools: [...]` + `delta.tool_calls` | **17/25** | **NO** — concat JSON bug at all counts (2,3,4,5) |
+| B (XML tags in text) | Tool defs in system prompt, `<tool>` in response | **22/25** | **YES** — all counts work |
+| C (JSON in code block) | Fenced JSON | **15/25** | Yes but worse overall |
+
+### Gateway constraints (confirmed)
+
+| Feature | Status | Impact on Implementation |
+|---|---|---|
+| `role: tool` | **HTTP 400** | Already handled — `sanitizeMessages()` converts to user msg with `"TOOL RESULT:\n"` prefix |
+| `role: system` in messages | **HTTP 400** | Already handled — converted to `<system_instructions>` in user msg |
+| Anthropic `tool_result` content blocks | **HTTP 500** | Do NOT use Cline's exact Anthropic format for tool results |
+| `tool_choice` | **Silently ignored** | Don't rely on it |
+| `[DONE]` SSE sentinel | **Never sent** | Terminate on socket close (existing code already does this) |
+| `stream_options.include_usage` | **Works** (usage emitted even without) | Request it explicitly as defensive measure |
+| Native parallel tool calls | **BROKEN** (concat JSON bug) | Can NOT be fixed client-side — this is why we need XML mode |
+| `cache_control: ephemeral` | **Silently ignored** (cached_tokens always 0) | Don't add prompt caching logic |
+| Thinking/reasoning params | **All 8 strategies silently dropped** | Don't add thinking model support |
+| Vision/image input | **Silently stripped** | Don't build image features |
+| `max_tokens` up to 64K+ | **Works** | No hard cap despite spec claiming 8K |
+
+---
+
+## Do NOT Do These Things
+
+These look reasonable but are confirmed broken by the lab:
+
+1. **Do NOT use Anthropic `tool_result` content blocks** (`{"type": "tool_result", "tool_use_id": "..."}` in user messages) — returns HTTP 500. Keep the existing `"TOOL RESULT:\n..."` plain text format.
+2. **Do NOT try to fix native parallel tool calls** — the concatenated JSON bug is in the Sourcegraph gateway, not our client code. The `}{` splitting workaround is the best we can do with native mode. XML mode sidesteps the problem entirely.
+3. **Do NOT remove the `ToolCallBuilder` / `}{` workaround** — the `useXmlToolMode` settings toggle means the native path must still work as a fallback.
+4. **Do NOT add `[DONE]` handling logic** — the gateway never sends it. The existing code correctly falls through to `readLine() == null` (socket close).
+5. **Do NOT add `role: tool` messages** — the gateway rejects them. `sanitizeMessages()` already converts them to user messages, and this conversion must stay.
 
 ---
 
