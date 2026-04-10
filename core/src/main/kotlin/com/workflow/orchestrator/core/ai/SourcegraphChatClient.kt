@@ -286,7 +286,8 @@ class SourcegraphChatClient(
                 toolChoice = null,
                 temperature = temperature,
                 maxTokens = maxTokens,
-                stream = true
+                stream = true,
+                streamOptions = StreamOptions(includeUsage = true)
             )
 
             val jsonBody = json.encodeToString(request)

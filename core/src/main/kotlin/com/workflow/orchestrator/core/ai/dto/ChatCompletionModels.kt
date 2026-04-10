@@ -5,6 +5,11 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 
 @Serializable
+data class StreamOptions(
+    @SerialName("include_usage") val includeUsage: Boolean = true
+)
+
+@Serializable
 data class ChatCompletionRequest(
     val model: String,
     val messages: List<ChatMessage>,
@@ -12,7 +17,8 @@ data class ChatCompletionRequest(
     @SerialName("tool_choice") val toolChoice: JsonElement? = null, // JsonPrimitive("auto") or {"type":"function","function":{"name":"..."}}
     val temperature: Double = 0.0,
     @SerialName("max_tokens") val maxTokens: Int? = null,
-    val stream: Boolean = false
+    val stream: Boolean = false,
+    @SerialName("stream_options") val streamOptions: StreamOptions? = null
 )
 
 @Serializable
