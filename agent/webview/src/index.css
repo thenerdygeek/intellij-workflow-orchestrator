@@ -40,6 +40,15 @@ code, pre, .font-mono {
   font-family: var(--font-mono);
 }
 
+/* Fix sub-pixel gaps between Unicode box-drawing characters (─ │ ┌ ┐ etc.)
+   in code blocks. Browsers don't guarantee glyph edges touch in monospace
+   fonts; text-stroke expands each glyph's stroke into the gap, and
+   geometricPrecision forces sub-pixel-accurate glyph positioning. */
+pre code {
+  -webkit-text-stroke: 0.25px currentColor;
+  text-rendering: geometricPrecision;
+}
+
 /* ============================================================
    SCROLLBAR — themed, slim, unobtrusive
    Uses IDE theme variables for seamless dark/light integration.

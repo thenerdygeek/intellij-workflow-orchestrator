@@ -190,7 +190,7 @@ export const CodeBlock = memo(function CodeBlock({
               {lines.map((_, i) => (
                 <div
                   key={i}
-                  className="font-[var(--font-mono,'JetBrains_Mono',monospace)] text-[11px] leading-[1.6] text-[var(--fg-muted)]/40"
+                  className="font-[var(--font-mono,'JetBrains_Mono',monospace)] text-[11px] leading-[1.3] text-[var(--fg-muted)]/40"
                 >
                   {i + 1}
                 </div>
@@ -198,7 +198,7 @@ export const CodeBlock = memo(function CodeBlock({
             </div>
           )}
           <div
-            className="min-w-0 flex-1 overflow-x-auto p-3 [&_pre]:!m-0 [&_pre]:!bg-transparent [&_pre]:!p-0 [&_code]:font-[var(--font-mono,'JetBrains_Mono',monospace)] [&_code]:text-[12px] [&_code]:leading-[1.6]"
+            className="min-w-0 flex-1 overflow-x-auto p-3 [&_pre]:!m-0 [&_pre]:!bg-transparent [&_pre]:!p-0 [&_code]:font-[var(--font-mono,'JetBrains_Mono',monospace)] [&_code]:text-[12px] [&_code]:leading-[1.3]"
             dangerouslySetInnerHTML={{ __html: html }}
           />
         </div>
