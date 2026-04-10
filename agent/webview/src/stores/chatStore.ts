@@ -120,7 +120,7 @@ interface ChatState {
   appendToken(token: string): void;
   endStream(): void;
   addToolCall(toolCallId: string, name: string, args: string, status: ToolCallStatus): void;
-  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string, diff?: string): void;
+  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string, diff?: string, toolCallId?: string): void;
   finalizeToolChain(): void;
   addDiff(diff: EditDiff): void;
   addDiffExplanation(title: string, diffSource: string): void;
@@ -407,29 +407,36 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string, diff?: string) {
+  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string, diff?: string, toolCallId?: string) {
     set(state => {
       const newMap = new Map(state.activeToolCalls);
-      // Find the first RUNNING tool call with this name (for parallel calls,
-      // results arrive in order, so the first RUNNING one is the correct target)
+      // Prefer exact ID match — this is the only reliable way to target a
+      // specific tool call when multiple calls to the same tool run in parallel.
+      // Without an ID, results arriving out of order would overwrite the wrong
+      // slot. Fall back to first-RUNNING-by-name only when no ID was provided
+      // (legacy callers) or the ID is unknown to the store.
       let targetKey: string | null = null;
-      for (const [key, tc] of newMap) {
-        if (tc.name === name && tc.status === 'RUNNING') {
-          targetKey = key;
-          break;  // first RUNNING match, not last
-        }
-      }
-      // Fallback: if no RUNNING match, find any match with this name (last one)
-      if (!targetKey) {
+      if (toolCallId && newMap.has(toolCallId)) {
+        targetKey = toolCallId;
+      } else {
         for (const [key, tc] of newMap) {
-          if (tc.name === name) targetKey = key;
+          if (tc.name === name && tc.status === 'RUNNING') {
+            targetKey = key;
+            break;
+          }
+        }
+        // Fallback: any match with this name (last one)
+        if (!targetKey) {
+          for (const [key, tc] of newMap) {
+            if (tc.name === name) targetKey = key;
+          }
         }
       }
       if (targetKey) {
         const existing = newMap.get(targetKey)!;
         newMap.set(targetKey, { ...existing, status, result, output, durationMs, ...(diff ? { diff } : {}) });
       } else {
-        const id = nextId('tc');
+        const id = toolCallId || nextId('tc');
         newMap.set(id, { id, name, args: '', status, result, output, durationMs, ...(diff ? { diff } : {}) });
       }
       return { activeToolCalls: newMap };

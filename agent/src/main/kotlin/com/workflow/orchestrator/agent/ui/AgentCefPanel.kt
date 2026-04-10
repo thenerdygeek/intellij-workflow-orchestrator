@@ -680,12 +680,13 @@ class AgentCefPanel(
         status: RichStreamingPanel.ToolCallStatus,
         result: String = "", durationMs: Long = 0,
         toolName: String = "", output: String? = null,
-        diff: String? = null
+        diff: String? = null,
+        toolCallId: String = ""
     ) {
         val statusStr = if (status == RichStreamingPanel.ToolCallStatus.FAILED) "ERROR" else "COMPLETED"
         val outputArg = if (output != null) JsEscape.toJsString(output) else "null"
         val diffArg = if (diff != null) JsEscape.toJsString(diff) else "null"
-        callJs("updateToolResult(${JsEscape.toJsString(result)},$durationMs,${JsEscape.toJsString(toolName)},${JsEscape.toJsString(statusStr)},$outputArg,$diffArg)")
+        callJs("updateToolResult(${JsEscape.toJsString(result)},$durationMs,${JsEscape.toJsString(toolName)},${JsEscape.toJsString(statusStr)},$outputArg,$diffArg,${JsEscape.toJsString(toolCallId)})")
     }
 
     fun appendToolOutput(toolCallId: String, chunk: String) {
