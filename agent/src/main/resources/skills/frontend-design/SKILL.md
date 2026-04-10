@@ -275,29 +275,33 @@ export default function GlobeView() {
 
 Scope variables: `ComposableMap`, `Geographies`, `Geography`, `Marker`, `MapLine`, `ZoomableGroup`, `Graticule`, `Sphere`
 
+**IMPORTANT: The sandbox has NO network access.** Do NOT use CDN URLs for TopoJSON data — fetches will silently fail. For maps, use `Marker` placement on a `ComposableMap` with `Graticule` for the grid, or inline simplified geo data directly in the source.
+
 ```jsx
-const geoUrl = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json"
+// Marker-based map (no external data needed)
+export default function ServerLocations() {
+  const servers = [
+    { name: 'US-West', coords: [-122.41, 37.78], status: 'healthy' },
+    { name: 'EU-West', coords: [-0.13, 51.51], status: 'healthy' },
+    { name: 'AP-East', coords: [139.69, 35.68], status: 'warning' },
+  ]
 
-<ComposableMap>
-  <Geographies geography={geoUrl}>
-    {({ geographies }) =>
-      geographies.map(geo => (
-        <Geography
-          key={geo.rsSVGPath}
-          geography={geo}
-          fill="var(--fg-muted)"
-          stroke="var(--border)"
-        />
-      ))
-    }
-  </Geographies>
-  <Marker coordinates={[-122.41, 37.78]}>
-    <circle r={4} fill="var(--accent)" />
-  </Marker>
-</ComposableMap>
+  return (
+    <ComposableMap projection="geoNaturalEarth1" height={300}>
+      <Graticule stroke="var(--border)" strokeWidth={0.3} />
+      <Sphere stroke="var(--border)" strokeWidth={0.5} fill="var(--code-bg)" />
+      {servers.map(s => (
+        <Marker key={s.name} coordinates={s.coords}>
+          <circle r={6} fill={s.status === 'healthy' ? 'var(--success)' : 'var(--warning)'} />
+          <text y={-10} textAnchor="middle" fill="var(--fg-muted)" fontSize={10}>
+            {s.name}
+          </text>
+        </Marker>
+      ))}
+    </ComposableMap>
+  )
+}
 ```
-
-Note: react-simple-maps needs a TopoJSON data source. For offline use, inline the geo data directly in the artifact source rather than fetching from a URL.
 
 ### Hand-drawn Graphics (roughjs)
 
