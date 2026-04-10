@@ -392,6 +392,9 @@ class AgentController(
             }
         }
 
+        // Sync chat animation setting
+        dashboard.setChatAnimationsEnabled(AgentSettings.getInstance(project).state.chatAnimationsEnabled)
+
         // Set model name from settings
         val model = AgentSettings.getInstance(project).state.sourcegraphChatModel
         if (!model.isNullOrBlank()) {

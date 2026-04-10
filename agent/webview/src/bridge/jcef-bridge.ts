@@ -264,6 +264,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
       console.error('Failed to apply visualization settings:', e);
     }
   },
+  setChatAnimationsEnabled(enabled: boolean) {
+    stores?.getSettingsStore().setChatAnimationsEnabled(enabled);
+  },
   setDebugLogVisible(visible: boolean) {
     stores?.getChatStore().setDebugLogVisible(visible);
   },
