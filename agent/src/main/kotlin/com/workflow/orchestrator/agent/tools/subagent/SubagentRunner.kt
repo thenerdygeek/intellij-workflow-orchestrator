@@ -123,6 +123,7 @@ class SubagentRunner(
                                 latestToolCall = preview,
                                 toolStartName = progress.toolName,
                                 toolStartArgs = progress.args,
+                                toolCallId = progress.toolCallId,
                                 stats = stats.snapshot()
                             ))
                         }
@@ -133,6 +134,7 @@ class SubagentRunner(
                                 toolCompleteResult = progress.result,
                                 toolCompleteDurationMs = progress.durationMs,
                                 toolCompleteIsError = progress.isError,
+                                toolCallId = progress.toolCallId,
                                 stats = stats.snapshot()
                             ))
                         }
