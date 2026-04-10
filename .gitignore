@@ -47,6 +47,9 @@ __pycache__/
 # Test/lab result artifacts
 docs/Result_*/
 
+# Superpowers plans (ephemeral dev artifacts)
+docs/superpowers/plans/
+
 # Vite
 agent/webview/.vite/
 agent/webview/tsconfig.tsbuildinfo
