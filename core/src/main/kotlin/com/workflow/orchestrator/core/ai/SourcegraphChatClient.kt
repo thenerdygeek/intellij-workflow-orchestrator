@@ -421,17 +421,51 @@ class SourcegraphChatClient(
                     log.info("[Agent:API] Final valid tool calls: ${toolCalls?.size ?: 0}, finishReason=$finishReason")
                 }
 
+                // --- XML tool call fallback (Cline Mode B) ---
+                // If no native tool calls were assembled but the text content contains
+                // <tool> tags, parse them. This handles the case where tools were
+                // defined in the system prompt as XML schemas (not via tools: []).
+                val xmlParsed = if (toolCalls == null || toolCalls.isEmpty()) {
+                    val text = contentBuilder.toString()
+                    if (text.contains("<tool>")) {
+                        val parsed = XmlToolCallParser.parse(text)
+                        if (parsed.toolCalls.isNotEmpty()) {
+                            log.info("[Agent:API] Extracted ${parsed.toolCalls.size} tool call(s) from XML in text content")
+                            parsed
+                        } else null
+                    } else null
+                } else null
+
+                val finalToolCalls = toolCalls ?: xmlParsed?.toolCalls?.ifEmpty { null }
+                var finalContent = if (xmlParsed != null) {
+                    xmlParsed.textContent.ifBlank { null }
+                } else {
+                    contentBuilder.toString().ifBlank { null }
+                }
+                val finalFinishReason = if (finalToolCalls != null && finishReason == "stop") {
+                    "tool_calls" // Upgrade finish reason when XML tools found
+                } else {
+                    finishReason
+                }
+
+                // Signal truncation when XML tool call was cut off by max_tokens.
+                // AgentLoop can detect this marker and retry with higher maxTokens.
+                if (xmlParsed?.hasPartial == true && finalToolCalls.isNullOrEmpty()) {
+                    log.warn("[Agent:API] XML tool call truncated by max_tokens — signaling for retry")
+                    finalContent = (finalContent ?: "") + "\n\n[TOOL_CALL_TRUNCATED: The tool call was cut off by the output limit. Please retry with the same tool call.]"
+                }
+
                 val finalMessage = ChatMessage(
                     role = role,
-                    content = contentBuilder.toString().ifBlank { null },
-                    toolCalls = toolCalls
+                    content = finalContent,
+                    toolCalls = finalToolCalls
                 )
 
                 activeCall.set(null)
 
                 val streamResponse = ChatCompletionResponse(
                     id = "stream-${System.nanoTime()}",
-                    choices = listOf(Choice(index = 0, message = finalMessage, finishReason = finishReason)),
+                    choices = listOf(Choice(index = 0, message = finalMessage, finishReason = finalFinishReason)),
                     usage = streamUsage
                 )
                 dumpApiResponse(streamResponse)
