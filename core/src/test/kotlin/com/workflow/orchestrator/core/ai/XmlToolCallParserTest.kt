@@ -206,4 +206,43 @@ $lines
         assertNotEquals(result.toolCalls[0].id, result.toolCalls[1].id, "IDs should be unique")
         assertTrue(result.toolCalls[0].id.startsWith("xmltool_"))
     }
+
+    @Test
+    fun `preserves text between two tool calls`() {
+        val text = """<tool>
+  <name>read_file</name>
+  <args><path>A.kt</path></args>
+</tool>
+
+Now let me also check the second file.
+
+<tool>
+  <name>read_file</name>
+  <args><path>B.kt</path></args>
+</tool>"""
+
+        val result = XmlToolCallParser.parse(text)
+
+        assertEquals(2, result.toolCalls.size)
+        assertTrue(result.toolCalls[0].function.arguments.contains("A.kt"))
+        assertTrue(result.toolCalls[1].function.arguments.contains("B.kt"))
+        assertTrue(
+            result.textContent.contains("Now let me also check the second file."),
+            "Text between tools should be preserved, got: '${result.textContent}'"
+        )
+    }
+
+    @Test
+    fun `handles empty args block`() {
+        val text = """<tool>
+  <name>think</name>
+  <args></args>
+</tool>"""
+
+        val result = XmlToolCallParser.parse(text)
+
+        assertEquals(1, result.toolCalls.size)
+        assertEquals("think", result.toolCalls[0].function.name)
+        assertEquals("{}", result.toolCalls[0].function.arguments)
+    }
 }
