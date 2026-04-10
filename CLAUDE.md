@@ -259,6 +259,7 @@ Read-only, filters by role, skips tool messages. Backed by existing SessionStore
 - Empty states: "No [entity] [state]." + action link
 - Settings: 4 pages under Tools > Workflow Orchestrator: General, Workflow, CI/CD, AI & Advanced
 - Onboarding: GotItTooltip on first encounter, collapsible setup dialog (no modal at startup)
+- Streaming text: 5-layer pipeline (StreamBatcher → bridge → PresentationBuffer → BlurTextStream → MarkdownRenderer). Gated by `chatAnimationsEnabled` setting in AI & Advanced.
 
 ## Documentation Maintenance
 
