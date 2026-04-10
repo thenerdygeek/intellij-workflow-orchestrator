@@ -478,11 +478,12 @@ class AgentDashboardPanel(
 
     fun updateLastToolCall(
         status: RichStreamingPanel.ToolCallStatus, result: String = "", durationMs: Long = 0,
-        toolName: String = "", output: String? = null, diff: String? = null
+        toolName: String = "", output: String? = null, diff: String? = null,
+        toolCallId: String = ""
     ) {
-        cefPanel?.updateLastToolCall(status, result, durationMs, toolName, output, diff)
+        cefPanel?.updateLastToolCall(status, result, durationMs, toolName, output, diff, toolCallId)
             ?: fallbackPanel?.updateLastToolCall(status, result, durationMs)
-        broadcast { it.updateLastToolCall(status, result, durationMs, toolName, output, diff) }
+        broadcast { it.updateLastToolCall(status, result, durationMs, toolName, output, diff, toolCallId) }
     }
 
     fun appendToolOutput(toolCallId: String, chunk: String) {
