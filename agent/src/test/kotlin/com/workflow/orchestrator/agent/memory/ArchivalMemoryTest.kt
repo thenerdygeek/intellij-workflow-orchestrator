@@ -143,4 +143,28 @@ class ArchivalMemoryTest {
             assertEquals(1, results.size)
         }
     }
+
+    @Nested
+    inner class ClearTests {
+        @Test
+        fun `clear removes all entries`() {
+            memory.insert("first", listOf("a"))
+            memory.insert("second", listOf("b"))
+            assertEquals(2, memory.size())
+
+            memory.clear()
+
+            assertEquals(0, memory.size())
+            assertTrue(memory.all().isEmpty())
+        }
+
+        @Test
+        fun `clear persists across reloads`() {
+            memory.insert("will be cleared", listOf("temp"))
+            memory.clear()
+
+            val reloaded = ArchivalMemory(storageFile)
+            assertEquals(0, reloaded.size())
+        }
+    }
 }

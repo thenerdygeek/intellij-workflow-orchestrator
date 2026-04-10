@@ -145,6 +145,14 @@ class ArchivalMemory(private val storageFile: File) {
     }
 
     /**
+     * Remove all entries. Used by settings page "Clear Archival Memory" button.
+     */
+    fun clear() {
+        entries.clear()
+        persist()
+    }
+
+    /**
      * Get all entries (for debugging/export).
      */
     fun all(): List<ArchivalEntry> = entries.toList()
