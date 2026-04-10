@@ -875,7 +875,8 @@ class AgentService(private val project: Project) : Disposable {
                         } catch (e: Exception) {
                             log.warn("AgentService: checkpoint save failed (non-fatal)", e)
                         }
-                    }
+                    },
+                    toolExecutionMode = agentSettings.state.toolExecutionMode ?: "accumulate"
                 )
 
                 // I4: Set activeTask atomically after both loop and job are available
