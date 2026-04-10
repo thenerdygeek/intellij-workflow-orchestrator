@@ -1,10 +1,12 @@
 package com.workflow.orchestrator.agent.ui
 
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
 import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.hooks.HookEvent
 import com.workflow.orchestrator.agent.hooks.HookResult
@@ -46,7 +48,7 @@ import kotlinx.serialization.json.jsonPrimitive
 class AgentController(
     private val project: Project,
     private val dashboard: AgentDashboardPanel
-) {
+) : Disposable {
     companion object {
         private val LOG = Logger.getInstance(AgentController::class.java)
 
@@ -151,6 +153,7 @@ class AgentController(
     }
 
     init {
+        Disposer.register(this, streamBatcher)
         wireCallbacks()
     }
 
@@ -1795,13 +1798,12 @@ class AgentController(
         """{"id":"${cp.id}","description":"$escapedDesc","timestamp":${cp.createdAt}}"""
     }
 
-    fun dispose() {
+    override fun dispose() {
         LOG.info("AgentController.dispose")
         if (currentJob?.isActive == true) {
             service.cancelCurrentTask()
         }
         clearActiveLoopState()
-        streamBatcher.dispose()
         phraseTimerJob?.cancel()
         phraseTimerJob = null
         contextManager = null

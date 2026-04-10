@@ -25,10 +25,6 @@ class StreamBatcher(
         isCoalesce = true
     }
 
-    fun start() {
-        if (!disposed.get()) timer.start()
-    }
-
     fun stop() {
         timer.stop()
     }
@@ -37,8 +33,12 @@ class StreamBatcher(
         synchronized(lock) {
             buffer.append(chunk)
         }
-        if (!timer.isRunning && !disposed.get()) {
-            timer.start()
+        if (!disposed.get()) {
+            invokeLater {
+                if (!timer.isRunning && !disposed.get()) {
+                    timer.start()
+                }
+            }
         }
     }
 
