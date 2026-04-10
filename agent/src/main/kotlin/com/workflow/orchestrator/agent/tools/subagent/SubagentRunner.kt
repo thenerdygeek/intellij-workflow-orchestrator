@@ -39,7 +39,8 @@ class SubagentRunner(
     private val planMode: Boolean,
     private val contextBudget: Int,
     private val maxOutputTokens: Int? = null,
-    private val apiDebugDir: File? = null
+    private val apiDebugDir: File? = null,
+    private val toolExecutionMode: String = "accumulate"
 ) {
     private val abortRequested = AtomicBoolean(false)
 
@@ -148,6 +149,7 @@ class SubagentRunner(
                         onProgress(SubagentProgressUpdate(stats = stats.snapshot()))
                     }
                 },
+                toolExecutionMode = toolExecutionMode,
                 // Gap 2 fix: scope XML parser tool/param names to this sub-agent's
                 // own tool set, not the main agent's brain.toolNameSet fallback.
                 toolNameProvider = { tools.keys },
