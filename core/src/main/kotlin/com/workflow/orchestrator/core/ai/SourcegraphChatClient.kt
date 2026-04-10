@@ -542,6 +542,31 @@ class SourcegraphChatClient(
                         response.isSuccessful -> {
                             val parsed = json.decodeFromString<ChatCompletionResponse>(body)
                             log.debug("[Agent:API] Response: ${parsed.usage?.totalTokens} tokens")
+
+                            // --- XML tool call fallback for non-streaming path ---
+                            // Covers the zero-delta fallback (sendMessageStream calls sendMessage)
+                            // when xmlToolMode=true: model responds with <tool> tags in text.
+                            val choice = parsed.choices.firstOrNull()
+                            if (choice != null && choice.message.toolCalls.isNullOrEmpty()) {
+                                val content = choice.message.content
+                                if (content != null && content.contains("<tool>")) {
+                                    val xmlParsed = XmlToolCallParser.parse(content)
+                                    if (xmlParsed.toolCalls.isNotEmpty()) {
+                                        log.info("[Agent:API] Extracted ${xmlParsed.toolCalls.size} XML tool call(s) from non-streaming response")
+                                        val updatedMessage = choice.message.copy(
+                                            content = xmlParsed.textContent.ifBlank { null },
+                                            toolCalls = xmlParsed.toolCalls
+                                        )
+                                        val updatedFinishReason = if (choice.finishReason == "stop") "tool_calls" else choice.finishReason
+                                        val updatedResponse = parsed.copy(
+                                            choices = listOf(choice.copy(message = updatedMessage, finishReason = updatedFinishReason))
+                                        )
+                                        dumpApiResponse(updatedResponse)
+                                        return@withContext ApiResult.Success(updatedResponse)
+                                    }
+                                }
+                            }
+
                             dumpApiResponse(parsed)
                             ApiResult.Success(parsed)
                         }
