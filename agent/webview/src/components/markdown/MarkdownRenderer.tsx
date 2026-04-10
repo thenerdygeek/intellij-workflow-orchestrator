@@ -38,6 +38,108 @@ function closeOpenFences(text: string): string {
 }
 
 /**
+ * Unicode character class pattern for box-drawing, block elements, and
+ * common ASCII-art connector characters that signal monospace layout.
+ *
+ * Ranges covered:
+ *   U+2500–U+257F  Box Drawing
+ *   U+2580–U+259F  Block Elements
+ *   U+2190–U+21FF  Arrows (─→ ──▶ etc.)
+ *   U+25A0–U+25FF  Geometric Shapes (▲▼◆●○ etc.)
+ *   U+2580–U+259F  Block elements (█░▒▓)
+ *
+ * A line is considered "ASCII art" if it contains 2+ of these characters
+ * (avoids false positives on single arrows in prose like "A → B").
+ */
+const ASCII_ART_CHAR_RE = /[\u2500-\u257F\u2580-\u259F\u2190-\u21FF\u25A0-\u25FF]/g;
+
+function isAsciiArtLine(line: string): boolean {
+  const matches = line.match(ASCII_ART_CHAR_RE);
+  return matches !== null && matches.length >= 2;
+}
+
+/**
+ * Pre-process markdown to wrap unfenced ASCII art in <pre> tags.
+ *
+ * LLMs frequently emit box-drawing diagrams, trees, and ASCII charts as
+ * plain text (no code fences). Markdown collapses these into `<p>` tags
+ * with a proportional font, destroying all alignment.
+ *
+ * This function scans for runs of consecutive lines containing box-drawing
+ * characters that are NOT already inside a code fence, and wraps them in
+ * raw `<pre class="ascii-art">` tags. Since rehypeRaw is enabled, these
+ * render as monospace preformatted text that blends naturally into the
+ * message — no CodeBlock chrome (no header, no copy/apply buttons).
+ */
+function autoFenceAsciiArt(text: string): string {
+  const lines = text.split('\n');
+  const result: string[] = [];
+  let inFence = false;
+  let inHtmlPre = false;
+  let artBuffer: string[] = [];
+
+  const flushArtBuffer = () => {
+    if (artBuffer.length > 0) {
+      // Wrap each line in a div with overflow:hidden — the xterm.js technique.
+      // FiraCode Nerd Font's box-drawing glyphs extend beyond the line box
+      // (intentionally, for terminal seamless rendering). In CSS, this causes
+      // overlap between adjacent rows on Retina displays. Per-row clipping
+      // prevents the bleed while keeping the glyph edges flush.
+      result.push('<pre class="ascii-art">');
+      for (const artLine of artBuffer) {
+        // Escape < and > in content to prevent HTML injection, but preserve the text
+        const safe = artLine.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        result.push(`<div class="ascii-row">${safe}</div>`);
+      }
+      result.push('</pre>');
+      artBuffer = [];
+    }
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+
+    // Track code fence state — don't touch content already inside fences
+    if (line.trimStart().startsWith('```')) {
+      flushArtBuffer();
+      inFence = !inFence;
+      result.push(line);
+      continue;
+    }
+
+    // Track raw <pre> blocks we emitted — don't re-process them
+    if (line.includes('<pre class="ascii-art">')) {
+      inHtmlPre = true;
+      result.push(line);
+      continue;
+    }
+    if (line.includes('</pre>') && inHtmlPre) {
+      inHtmlPre = false;
+      result.push(line);
+      continue;
+    }
+
+    if (inFence || inHtmlPre) {
+      result.push(line);
+      continue;
+    }
+
+    if (isAsciiArtLine(line)) {
+      artBuffer.push(line);
+    } else {
+      // Non-art line — flush any buffered art, then emit normally
+      flushArtBuffer();
+      result.push(line);
+    }
+  }
+
+  // Flush any trailing art block
+  flushArtBuffer();
+
+  return result.join('\n');
+}
+
+/**
  * Remark plugin to preserve code fence meta strings through the AST.
  * react-markdown doesn't pass meta by default; this plugin attaches it
  * as `data.meta` on the code node so it survives through to rehype.
@@ -123,7 +225,15 @@ function createMarkdownComponents(isStreaming: boolean): any {
   // Override <pre> to prevent double-wrapping: react-markdown renders fenced code
   // as <pre><code>…</code></pre>, but our code() component already returns a
   // fully-wrapped CodeBlock/RichBlock. Rendering a bare <pre> avoids nesting.
-  pre({ children }: any) {
+  // However, preserve <pre class="ascii-art"> blocks from the auto-fencer.
+  pre({ children, className, ...props }: any) {
+    if (className === 'ascii-art') {
+      return (
+        <pre className="ascii-art" {...props}>
+          {children}
+        </pre>
+      );
+    }
     return <>{children}</>;
   },
 
@@ -242,7 +352,9 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
   isStreaming = false,
 }: MarkdownRendererProps) {
   const processedContent = useMemo(() => {
-    return isStreaming ? closeOpenFences(content) : content;
+    let text = autoFenceAsciiArt(content);
+    if (isStreaming) text = closeOpenFences(text);
+    return text;
   }, [content, isStreaming]);
 
   const components = useMemo(() => createMarkdownComponents(isStreaming), [isStreaming]);

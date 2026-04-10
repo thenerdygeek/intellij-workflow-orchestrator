@@ -25,9 +25,28 @@
   --radius: 0.375rem;
 }
 
+/* FiraCode Nerd Font — subsetted to Latin + box-drawing + block elements +
+   arrows + geometric shapes + math operators + Powerline (340KB total).
+   Full Nerd Font is 2.2MB; subsetting strips ~10K unused icon glyphs.
+   License: SIL OFL 1.1 (same as JetBrains Mono). */
+@font-face {
+  font-family: 'FiraCode NF';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/FiraCodeNerdFont-Regular-subset.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'FiraCode NF';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/FiraCodeNerdFont-Bold-subset.woff2') format('woff2');
+}
+
 :root {
   --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'JetBrains Mono', Menlo, Consolas, 'Courier New', monospace;
+  --font-mono: 'FiraCode NF', 'FiraCode Nerd Font', 'JetBrains Mono', Menlo, Consolas, 'Courier New', monospace;
 }
 
 body {
@@ -40,13 +59,39 @@ code, pre, .font-mono {
   font-family: var(--font-mono);
 }
 
-/* Fix sub-pixel gaps between Unicode box-drawing characters (─ │ ┌ ┐ etc.)
-   in code blocks. Browsers don't guarantee glyph edges touch in monospace
-   fonts; text-stroke expands each glyph's stroke into the gap, and
-   geometricPrecision forces sub-pixel-accurate glyph positioning. */
-pre code {
-  -webkit-text-stroke: 0.25px currentColor;
-  text-rendering: geometricPrecision;
+/* Auto-detected ASCII art blocks — rendered as inline <pre> without
+   CodeBlock chrome. Blends naturally into the message flow while
+   preserving monospace alignment for box-drawing diagrams/trees/tables.
+
+   line-height: 1 is THE critical property — it makes the line box
+   height equal the font-size so vertical box-drawing glyphs (│ ├ └)
+   connect seamlessly across rows. This is the same technique xterm.js
+   and VS Code terminal use. The outer margin provides breathing room
+   so the block doesn't feel cramped in the message flow. */
+pre.ascii-art {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: normal;
+  font-kerning: none;
+  font-variant-ligatures: none;
+  letter-spacing: 0;
+  white-space: pre;
+  color: var(--fg, #cbd5e1);
+  margin: 0.75rem 0;
+  padding: 0.5rem 0;
+  background: transparent;
+  border: none;
+  overflow-x: auto;
+}
+
+/* Per-row clipping — the xterm.js technique. FiraCode Nerd Font's
+   box-drawing glyphs intentionally extend beyond the em-square for
+   seamless terminal rendering. In CSS this causes overlap on Retina
+   displays. Each row is clipped to its line-height so glyphs don't
+   bleed into adjacent rows, while edges remain flush at the clip boundary. */
+pre.ascii-art .ascii-row {
+  overflow: hidden;
+  white-space: pre;
 }
 
 /* ============================================================
