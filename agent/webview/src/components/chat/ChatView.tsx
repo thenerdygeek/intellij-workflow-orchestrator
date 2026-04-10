@@ -1,6 +1,7 @@
 import { memo, useCallback, useRef, useEffect, useState } from 'react';
 import { useChatStore } from '@/stores/chatStore';
 import { AgentMessage } from './AgentMessage';
+import { StreamingMessage } from './StreamingMessage';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ToolCallChain } from '@/components/agent/ToolCallChain';
 import { SubAgentView } from '@/components/agent/SubAgentView';
@@ -19,7 +20,6 @@ import {
 import { ScrollButton } from '@/components/ui/prompt-kit/scroll-button';
 import { Loader } from '@/components/ui/prompt-kit/loader';
 import { TextShimmer } from '@/components/ui/prompt-kit/text-shimmer';
-import type { Message } from '@/bridge/types';
 
 const WORKING_PHRASES = [
   // Dev life — the daily struggle
@@ -359,16 +359,6 @@ export const ChatView = memo(function ChatView() {
   // Convert tool calls map to sorted array (preserves insertion order)
   const toolCallsArray = Array.from(activeToolCalls.values());
 
-  // Stream placeholder message for rendering
-  const streamPlaceholder: Message | null = activeStream
-    ? {
-        id: '__streaming__',
-        role: 'agent',
-        content: activeStream.text,
-        timestamp: Date.now(),
-      }
-    : null;
-
   // Show working indicator for the entire ReAct loop — from user message until final response
   const showWorkingIndicator = busy;
 
@@ -427,13 +417,8 @@ export const ChatView = memo(function ChatView() {
         )}
 
         {/* Streaming message — right after tool calls for natural conversation flow */}
-        {streamPlaceholder && (
-          <AgentMessage
-            key="__streaming__"
-            message={streamPlaceholder}
-            isStreaming={activeStream?.isStreaming ?? false}
-            streamText={activeStream?.text}
-          />
+        {activeStream && (
+          <StreamingMessage />
         )}
 
         {/* Tool call approval — immediately after tool calls / streaming text */}
