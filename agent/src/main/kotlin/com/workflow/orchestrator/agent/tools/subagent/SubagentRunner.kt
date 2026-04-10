@@ -10,6 +10,7 @@ import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.OpenAiCompatBrain
+import com.workflow.orchestrator.core.ai.ToolPromptBuilder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import java.io.File
@@ -76,20 +77,22 @@ class SubagentRunner(
                 brain.resetApiCallCounter()
             }
 
-            // 1. Create fresh context manager with budget
-            val contextManager = ContextManager(maxInputTokens = contextBudget)
-            contextManager.setSystemPrompt(systemPrompt)
+            // 1. Build tool definitions and compose system prompt with XML tool defs
+            val toolDefinitions = tools.values.map { it.toToolDefinition() }
+            val toolDefsMarkdown = ToolPromptBuilder.build(toolDefinitions)
+            val composedSystemPrompt = "$systemPrompt\n\n====\n\n$toolDefsMarkdown"
 
-            // 2. Report initial "running" status
+            // 2. Create fresh context manager with budget
+            val contextManager = ContextManager(maxInputTokens = contextBudget)
+            contextManager.setSystemPrompt(composedSystemPrompt)
+
+            // 3. Report initial "running" status
             onProgress(SubagentProgressUpdate(status = "running", stats = stats.snapshot()))
 
-            // 3. Check abort before proceeding
+            // 4. Check abort before proceeding
             if (abortRequested.get()) {
                 return cancelledResult(stats)
             }
-
-            // 4. Build tool definitions from the tools map
-            val toolDefinitions = tools.values.map { it.toToolDefinition() }
 
             // 5. Create AgentLoop with callbacks
             // Capture coroutine scope to bridge non-suspend AgentLoop callbacks

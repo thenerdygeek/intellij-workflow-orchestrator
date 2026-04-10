@@ -62,6 +62,8 @@ class SubagentRunnerTest {
         private var callIndex = 0
         var cancelled = false
             private set
+        var lastMessages: List<ChatMessage> = emptyList()
+            private set
 
         override suspend fun chat(
             messages: List<ChatMessage>,
@@ -78,6 +80,7 @@ class SubagentRunnerTest {
             maxTokens: Int?,
             onChunk: suspend (StreamChunk) -> Unit
         ): ApiResult<ChatCompletionResponse> {
+            lastMessages = messages
             if (callIndex >= responses.size) {
                 return ApiResult.Error(ErrorType.SERVER_ERROR, "No more scripted responses")
             }
@@ -350,6 +353,57 @@ class SubagentRunnerTest {
 
             assertTrue(statuses.contains("running"), "Should have 'running' status")
             assertTrue(statuses.contains("failed"), "Should have 'failed' status")
+        }
+    }
+
+    @Nested
+    inner class XmlToolDefinitionTests {
+
+        @Test
+        fun `system prompt includes XML tool definitions`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"Done."}"""
+                ))
+            ))
+
+            val runner = createRunner(brain)
+            runner.run("Do something") {}
+
+            val systemMessage = brain.lastMessages.first()
+            val content = systemMessage.content ?: ""
+            assertTrue(content.contains("# Tool Use Format"),
+                "System prompt should contain XML tool format header")
+            assertTrue(content.contains("<read_file>"),
+                "System prompt should contain XML usage example for read_file")
+            assertTrue(content.contains("<attempt_completion>"),
+                "System prompt should contain XML usage example for attempt_completion")
+        }
+
+        @Test
+        fun `system prompt preserves original config prompt`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"Done."}"""
+                ))
+            ))
+
+            val customPrompt = "You are a specialized code reviewer"
+            val runner = SubagentRunner(
+                brain = brain,
+                tools = buildTools(),
+                systemPrompt = customPrompt,
+                project = project,
+                maxIterations = 50,
+                planMode = false,
+                contextBudget = 50_000
+            )
+            runner.run("Review this code") {}
+
+            val systemMessage = brain.lastMessages.first()
+            val content = systemMessage.content ?: ""
+            assertTrue(content.contains(customPrompt),
+                "System prompt should still contain the original config prompt text")
         }
     }
 }
