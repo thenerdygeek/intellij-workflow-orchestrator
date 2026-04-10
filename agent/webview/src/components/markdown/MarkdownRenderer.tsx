@@ -38,24 +38,22 @@ function closeOpenFences(text: string): string {
 }
 
 /**
- * Unicode character class pattern for box-drawing, block elements, and
- * common ASCII-art connector characters that signal monospace layout.
+ * Unicode character class pattern for box-drawing and block elements ONLY.
+ * Narrow scope to avoid false positives on arrows (→ ←) and geometric
+ * shapes (● ▲ ■) that frequently appear in regular prose.
  *
  * Ranges covered:
- *   U+2500–U+257F  Box Drawing
- *   U+2580–U+259F  Block Elements
- *   U+2190–U+21FF  Arrows (─→ ──▶ etc.)
- *   U+25A0–U+25FF  Geometric Shapes (▲▼◆●○ etc.)
- *   U+2580–U+259F  Block elements (█░▒▓)
+ *   U+2500–U+257F  Box Drawing (─ │ ┌ ┐ └ ┘ ├ ┤ ┬ ┴ ┼ etc.)
+ *   U+2580–U+259F  Block Elements (█ ░ ▒ ▓ ▀ ▄ etc.)
  *
- * A line is considered "ASCII art" if it contains 2+ of these characters
- * (avoids false positives on single arrows in prose like "A → B").
+ * A line needs 3+ matches to be considered ASCII art — avoids
+ * false positives on prose with occasional box chars like "see ├── below".
  */
-const ASCII_ART_CHAR_RE = /[\u2500-\u257F\u2580-\u259F\u2190-\u21FF\u25A0-\u25FF]/g;
+const ASCII_ART_CHAR_RE = /[\u2500-\u257F\u2580-\u259F]/g;
 
 function isAsciiArtLine(line: string): boolean {
   const matches = line.match(ASCII_ART_CHAR_RE);
-  return matches !== null && matches.length >= 2;
+  return matches !== null && matches.length >= 3;
 }
 
 /**
