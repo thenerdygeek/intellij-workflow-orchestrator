@@ -1,10 +1,12 @@
 package com.workflow.orchestrator.agent.ui
 
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
 import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.tools.ArtifactRenderResult
 import com.workflow.orchestrator.agent.tools.builtin.ArtifactResultRegistry
@@ -48,7 +50,7 @@ import kotlinx.serialization.json.jsonPrimitive
 class AgentController(
     private val project: Project,
     private val dashboard: AgentDashboardPanel
-) {
+) : Disposable {
     companion object {
         private val LOG = Logger.getInstance(AgentController::class.java)
 
@@ -153,6 +155,7 @@ class AgentController(
     }
 
     init {
+        Disposer.register(this, streamBatcher)
         wireCallbacks()
         // Register the push callback used by RenderArtifactTool → ArtifactResultRegistry
         // to forward interactive artifacts into the webview. The tool drives the full
@@ -1858,13 +1861,12 @@ class AgentController(
         }
     }
 
-    fun dispose() {
+    override fun dispose() {
         LOG.info("AgentController.dispose")
         if (currentJob?.isActive == true) {
             service.cancelCurrentTask()
         }
         clearActiveLoopState()
-        streamBatcher.dispose()
         phraseTimerJob?.cancel()
         phraseTimerJob = null
         contextManager = null
