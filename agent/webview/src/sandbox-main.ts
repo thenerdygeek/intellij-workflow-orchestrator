@@ -10,6 +10,34 @@ import React, { useState, useEffect, useCallback, useMemo, useRef, Fragment } fr
 import { createRoot, type Root } from 'react-dom/client'
 import { Runner } from 'react-runner'
 
+// ── Visualization Libraries (available to LLM-generated artifacts) ──
+
+import * as LucideIcons from 'lucide-react'
+
+import {
+  BarChart, Bar, LineChart, Line, AreaChart, Area, PieChart, Pie, Cell,
+  XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend,
+  ResponsiveContainer, RadialBarChart, RadialBar, ComposedChart,
+  Scatter, ScatterChart, Treemap, FunnelChart, Funnel, RadarChart,
+  Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, LabelList,
+} from 'recharts'
+
+import * as d3 from 'd3'
+
+import createGlobe from 'cobe'
+
+import {
+  motion, AnimatePresence, useMotionValue, useTransform, useSpring,
+  useInView, useScroll, useAnimation,
+} from 'motion/react'
+
+import rough from 'roughjs'
+
+import {
+  ComposableMap, Geographies, Geography, Marker, Line as MapLine,
+  ZoomableGroup, Graticule, Sphere,
+} from 'react-simple-maps'
+
 // ── UI Primitive Components ──
 
 const h = React.createElement
@@ -253,7 +281,13 @@ function renderComponent(source: string, scope: Record<string, unknown>) {
         get colors() { return { ...bridgeState.colors } },
         get projectName() { return bridgeState.projectName },
       },
-      // UI Primitives
+
+      // ── Lucide Icons (all 1500+ icons as individual scope vars) ──
+      // Spread first so that UI primitives, Recharts, and other libraries
+      // override colliding names (e.g. Badge, BarChart, PieChart, Radar, Funnel)
+      ...LucideIcons,
+
+      // UI Primitives (after LucideIcons so our Badge/Tooltip win)
       Card, CardHeader, CardTitle, CardDescription, CardContent,
       Badge,
       Tabs, TabsList, TabsTrigger, TabsContent,
@@ -261,6 +295,31 @@ function renderComponent(source: string, scope: Record<string, unknown>) {
       Separator,
       Accordion, AccordionItem,
       Tooltip,
+
+      // ── Recharts (after LucideIcons to win name collisions) ──
+      BarChart, Bar, LineChart, Line, AreaChart, Area, PieChart, Pie, Cell,
+      XAxis, YAxis, CartesianGrid, RechartsTooltip, Legend,
+      ResponsiveContainer, RadialBarChart, RadialBar, ComposedChart,
+      Scatter, ScatterChart, Treemap, FunnelChart, Funnel, RadarChart,
+      Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, LabelList,
+
+      // ── D3 ──
+      d3,
+
+      // ── Globe ──
+      createGlobe,
+
+      // ── Animation (motion/react) ──
+      motion, AnimatePresence, useMotionValue, useTransform, useSpring,
+      useInView, useScroll, useAnimation,
+
+      // ── Hand-drawn graphics ──
+      rough,
+
+      // ── Geographic maps ──
+      ComposableMap, Geographies, Geography, Marker, MapLine,
+      ZoomableGroup, Graticule, Sphere,
+
       // User-provided scope (libraries)
       ...scope,
     }
