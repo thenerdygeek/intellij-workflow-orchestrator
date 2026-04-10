@@ -26,7 +26,9 @@ class OpenAiCompatBrain(
     connectTimeoutSeconds: Long = 30,
     readTimeoutSeconds: Long = 180,  // Increased for NO_KEEPALIVE safety on large prompts
     httpClientOverride: OkHttpClient? = null,
-    override val xmlToolMode: Boolean = false
+    override val xmlToolMode: Boolean = false,
+    override val toolNameSet: Set<String> = emptySet(),
+    override val paramNameSet: Set<String> = emptySet()
 ) : LlmBrain {
 
     private val client = SourcegraphChatClient(
@@ -50,7 +52,9 @@ class OpenAiCompatBrain(
             messages = messages,
             tools = if (xmlToolMode) null else tools,  // XML mode: tools in prompt, not request
             maxTokens = maxTokens,
-            toolChoice = toolChoice // SourcegraphChatClient will ignore this
+            toolChoice = toolChoice, // SourcegraphChatClient will ignore this
+            knownToolNames = toolNameSet,
+            knownParamNames = paramNameSet
         )
     }
 
@@ -64,7 +68,9 @@ class OpenAiCompatBrain(
             messages = messages,
             tools = if (xmlToolMode) null else tools,  // XML mode: tools in prompt, not request
             maxTokens = maxTokens,
-            onChunk = onChunk
+            onChunk = onChunk,
+            knownToolNames = toolNameSet,
+            knownParamNames = paramNameSet
         )
     }
 
