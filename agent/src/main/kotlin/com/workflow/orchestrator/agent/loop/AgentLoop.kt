@@ -2,6 +2,9 @@ package com.workflow.orchestrator.agent.loop
 
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.core.ai.AssistantMessageParser
+import com.workflow.orchestrator.core.ai.TextContent
+import com.workflow.orchestrator.core.ai.ToolUseContent
 import com.workflow.orchestrator.agent.api.dto.ToolCall
 import com.workflow.orchestrator.agent.api.dto.ToolDefinition
 import com.workflow.orchestrator.agent.hooks.HookEvent
@@ -466,11 +469,13 @@ class AgentLoop(
                 TokenEstimator.estimateToolDefinitions(currentToolDefs)
             )
 
-            // XML tag suppression state (reset per API call)
-            // When xmlToolMode is active, suppress <tool>...</tool> blocks from the visible
-            // chat output so users see reasoning text but not raw XML.
-            var insideXmlTool = false
-            val xmlTagBuffer = StringBuilder()
+            // Block-based streaming presentation (Cline port)
+            // Accumulates text, re-parses on every chunk, sends only TextContent to UI.
+            // Tool/param names fetched from brain (updated by AgentService when deferred tools load).
+            val accumulatedText = StringBuilder()
+            var lastPresentedTextLength = 0
+            val currentToolNames = brain.toolNameSet
+            val currentParamNames = brain.paramNameSet
 
             val apiResult = brain.chatStream(
                 messages = contextManager.getMessages(),
@@ -478,46 +483,30 @@ class AgentLoop(
                 maxTokens = maxOutputTokens,
                 onChunk = { chunk ->
                     val text = chunk.choices.firstOrNull()?.delta?.content ?: return@chatStream
-                    if (!brain.xmlToolMode) {
-                        onStreamChunk(text)
-                        return@chatStream
-                    }
-                    // Filter XML tool tags from visible output
-                    for (char in text) {
-                        xmlTagBuffer.append(char)
-                        val buf = xmlTagBuffer.toString()
-                        if (!insideXmlTool && buf.endsWith("<tool>")) {
-                            insideXmlTool = true
-                            // Emit text accumulated before "<tool>" (minus the tag itself)
-                            val before = buf.dropLast("<tool>".length)
-                            if (before.isNotEmpty()) onStreamChunk(before)
-                            xmlTagBuffer.clear()
-                        } else if (insideXmlTool && buf.endsWith("</tool>")) {
-                            insideXmlTool = false
-                            xmlTagBuffer.clear()
-                        } else if (!insideXmlTool && xmlTagBuffer.length > 10) {
-                            // Flush buffer when not near a tag boundary
-                            val toFlush = xmlTagBuffer.substring(0, xmlTagBuffer.length - 6)
-                            onStreamChunk(toFlush)
-                            xmlTagBuffer.delete(0, xmlTagBuffer.length - 6)
-                        }
-                    }
-                    // Flush remaining buffer if not inside a tool tag and not near boundary
-                    if (!insideXmlTool && xmlTagBuffer.length > 6) {
-                        val safe = xmlTagBuffer.substring(0, xmlTagBuffer.length - 6)
-                        if (safe.isNotEmpty()) {
-                            onStreamChunk(safe)
-                            xmlTagBuffer.delete(0, safe.length)
-                        }
+
+                    // Always accumulate
+                    accumulatedText.append(text)
+
+                    // Re-parse full accumulated text
+                    val blocks = AssistantMessageParser.parse(
+                        accumulatedText.toString(),
+                        currentToolNames,
+                        currentParamNames
+                    )
+
+                    // Extract visible text (TextContent blocks only)
+                    val visibleText = blocks.filterIsInstance<TextContent>()
+                        .joinToString("") { it.content }
+
+                    // Only send NEW text to UI (delta since last presentation)
+                    val stripped = AssistantMessageParser.stripPartialTag(visibleText)
+                    if (stripped.length > lastPresentedTextLength) {
+                        val delta = stripped.substring(lastPresentedTextLength)
+                        onStreamChunk(delta)
+                        lastPresentedTextLength = stripped.length
                     }
                 }
             )
-
-            // Final flush of any remaining buffer content after stream ends
-            if (brain.xmlToolMode && !insideXmlTool && xmlTagBuffer.isNotEmpty()) {
-                onStreamChunk(xmlTagBuffer.toString())
-                xmlTagBuffer.clear()
-            }
 
             // Stage 2: Handle API errors with retry for transient failures
             if (apiResult is ApiResult.Error) {
