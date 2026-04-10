@@ -29,6 +29,7 @@ import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.memory.ArchivalMemory
 import com.workflow.orchestrator.agent.memory.ConversationRecall
 import com.workflow.orchestrator.agent.memory.CoreMemory
+import com.workflow.orchestrator.agent.memory.auto.AutoMemoryManager
 import com.workflow.orchestrator.agent.observability.AgentFileLogger
 import com.workflow.orchestrator.agent.observability.SessionMetrics
 import com.workflow.orchestrator.agent.tools.builtin.*
@@ -91,6 +92,7 @@ class AgentService(private val project: Project) : Disposable {
     private var coreMemory: CoreMemory? = null
     private var archivalMemory: ArchivalMemory? = null
     private var conversationRecall: ConversationRecall? = null
+    private var autoMemoryManager: AutoMemoryManager? = null
     private lateinit var agentDir: java.io.File
 
     /**
@@ -142,6 +144,62 @@ class AgentService(private val project: Project) : Disposable {
             log.info("[AgentService] Loaded ${configs.size} dynamic agent config(s): ${configs.keys.toList()}")
         }
         com.intellij.openapi.util.Disposer.register(this, configLoader)
+    }
+
+    // ── Auto Memory ────────────────────────────────────────────────────────
+
+    /**
+     * Lazily initialize AutoMemoryManager on first use.
+     * Needs a SourcegraphChatClient configured with a cheap model (Haiku) for extraction.
+     * Returns null if Sourcegraph is not configured or no cheap model is available.
+     *
+     * Subsequent calls return the cached instance.
+     */
+    private suspend fun ensureAutoMemory(): AutoMemoryManager? {
+        autoMemoryManager?.let { return it }
+
+        val core = coreMemory ?: return null
+        val archival = archivalMemory ?: return null
+
+        try {
+            val connections = ConnectionSettings.getInstance()
+            val sgUrl = connections.state.sourcegraphUrl.trimEnd('/')
+            if (sgUrl.isBlank()) {
+                log.info("[AgentService] AutoMemoryManager disabled: no Sourcegraph URL configured")
+                return null
+            }
+
+            val credentialStore = CredentialStore()
+            val tokenProvider = { credentialStore.getToken(ServiceType.SOURCEGRAPH) }
+
+            // First, a bootstrap client with no model just to fetch the model list
+            val bootstrapClient = SourcegraphChatClient(baseUrl = sgUrl, tokenProvider = tokenProvider, model = "")
+            val models = ModelCache.getModels(bootstrapClient)
+            val cheapModel = ModelCache.pickCheapest(models)
+            if (cheapModel == null) {
+                log.info("[AgentService] AutoMemoryManager disabled: no cheap model available")
+                return null
+            }
+
+            // Build a dedicated client baked with the cheap model ID
+            val extractionClient = SourcegraphChatClient(
+                baseUrl = sgUrl,
+                tokenProvider = tokenProvider,
+                model = cheapModel.id
+            )
+
+            val mgr = AutoMemoryManager(
+                coreMemory = core,
+                archivalMemory = archival,
+                client = extractionClient
+            )
+            autoMemoryManager = mgr
+            log.info("[AgentService] AutoMemoryManager initialized with model: ${cheapModel.modelName}")
+            return mgr
+        } catch (e: Exception) {
+            log.warn("[AgentService] Failed to initialize AutoMemoryManager (non-fatal): ${e.message}")
+            return null
+        }
     }
 
     // ── Brain ──────────────────────────────────────────────────────────────
@@ -697,6 +755,14 @@ class AgentService(private val project: Project) : Disposable {
                 // Build deferred catalog for system prompt injection (grouped by category)
                 val deferredCatalog = registry.getDeferredCatalogGrouped()
 
+                // AUTO-MEMORY: Retrieve relevant archival memories for prompt injection (best-effort)
+                val recalledMemoryXml: String? = try {
+                    ensureAutoMemory()?.onSessionStart(task)
+                } catch (e: Exception) {
+                    log.warn("[AgentService] Auto-memory retrieval failed (non-fatal)", e)
+                    null
+                }
+
                 // Build system prompt — XML tool definitions added dynamically below
                 val systemPromptBuilder = { toolDefsMarkdown: String? ->
                     SystemPrompt.build(
@@ -709,7 +775,8 @@ class AgentService(private val project: Project) : Disposable {
                         taskProgress = ctx.getTaskProgress(),
                         deferredToolCatalog = deferredCatalog,
                         coreMemoryXml = coreMemory?.compile(),
-                        toolDefinitionsMarkdown = toolDefsMarkdown
+                        toolDefinitionsMarkdown = toolDefsMarkdown,
+                        recalledMemoryXml = recalledMemoryXml
                     )
                 }
                 // Set initial system prompt (XML defs added on first toolDefinitionProvider call)
@@ -965,6 +1032,20 @@ class AgentService(private val project: Project) : Disposable {
                         )
                     } catch (e: Exception) {
                         log.warn("AgentService: TASK_COMPLETE hook failed (non-fatal)", e)
+                    }
+                }
+
+                // AUTO-MEMORY: Extract insights from completed session — fire-and-forget on agent scope
+                // Uses cheap LLM (Haiku) to distill insights from conversation into core + archival memory.
+                if (result is LoopResult.Completed || result is LoopResult.SessionHandoff) {
+                    scope.launch {
+                        try {
+                            val mgr = ensureAutoMemory() ?: return@launch
+                            val messages = sessionStore.loadMessages(sid)
+                            mgr.onSessionComplete(sid, messages)
+                        } catch (e: Exception) {
+                            log.warn("[AgentService] Auto-memory extraction failed (non-fatal)", e)
+                        }
                     }
                 }
 

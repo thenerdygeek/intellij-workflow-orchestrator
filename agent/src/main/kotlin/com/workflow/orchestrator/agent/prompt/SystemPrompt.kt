@@ -41,7 +41,9 @@ object SystemPrompt {
         /** Compiled core memory XML (Letta pattern: always in prompt if non-empty). */
         coreMemoryXml: String? = null,
         /** Markdown tool definitions for Cline-style XML format (tools defined in prompt). */
-        toolDefinitionsMarkdown: String? = null
+        toolDefinitionsMarkdown: String? = null,
+        /** Auto-retrieved archival memory entries relevant to the user's task. */
+        recalledMemoryXml: String? = null
     ): String = buildString {
 
         // 1. AGENT ROLE
@@ -101,6 +103,12 @@ object SystemPrompt {
 
         // 10b. CORE MEMORY DATA (Letta pattern: always in prompt if non-empty)
         coreMemoryXml?.let {
+            append(SECTION_SEP)
+            append(it)
+        }
+
+        // 10c. RECALLED MEMORY (auto-retrieved archival entries relevant to this task)
+        recalledMemoryXml?.let {
             append(SECTION_SEP)
             append(it)
         }
@@ -428,72 +436,28 @@ Accomplish the user's task iteratively: analyze, break into steps, execute with 
 
     /**
      * Section 10: Memory
-     * Explains the 3-tier memory system so the LLM knows when and how to use it.
+     * Explains the hybrid memory system (system-managed + manual override tools).
      */
     private fun memory(): String = """MEMORY
 
-You have a 3-tier persistent memory system. Use it proactively — don't wait to be asked.
+You have a persistent memory system with both automatic and manual components.
 
-## Tier 1: Core Memory (always in prompt)
-Shown in <core_memory> on every turn. EXPENSIVE — every byte costs tokens on every call. Only store facts you need constantly.
+## Automatic Memory (system-managed)
+The system automatically:
+- Extracts insights after completed sessions — corrections, patterns, project state, decisions, error resolutions
+- Retrieves relevant memories from past sessions at task start (shown in <recalled_memory> if present)
 
-**Blocks and what belongs in each:**
-- **user**: Role, expertise, preferences, how they like to work. Example: "Senior backend dev, prefers Kotlin idioms over Java-style, wants terse explanations"
-- **project**: Active goals, key decisions, deadlines, blockers. Convert relative dates to absolute ("by Thursday" → "by 2026-04-10"). Example: "Migrating auth to OAuth2, deadline April 15, blocked on CORS config"
-- **patterns**: Project-specific conventions that aren't in code comments or docs. Example: "All services return ToolResult<T>, DTOs in core/model/"
+You do NOT need to proactively call memory tools during normal tasks. The system handles this. Focus on the task.
 
-Tools: core_memory_read, core_memory_append, core_memory_replace
-- **Replace stale entries** — don't append duplicates. Use core_memory_replace to update.
-- **Remove outdated facts** proactively. If a project goal is done, remove it.
-- **Keep each block under 500 chars.** If it's getting long, move detail to archival.
+## Manual Memory Tools (available as override)
+If you explicitly want to save something the system wouldn't catch, or if the user says "remember this":
+- **core_memory_append / core_memory_replace** — persistent working memory (user/project/patterns blocks, shown in <core_memory>). Use sparingly — every byte costs tokens on every call.
+- **archival_memory_insert** — long-term searchable knowledge with tags. Use for things you want to save right now, not at session end.
+- **archival_memory_search** — keyword search over archival store. Use when you need past context beyond what's in <recalled_memory>.
+- **conversation_search** — search past session transcripts.
 
-**When to save to core memory:**
-- When the user corrects your approach ("don't do X", "always use Y") → update patterns
-- When the user confirms a non-obvious approach worked ("yes exactly", "perfect") → update patterns
-- When you learn about the user's role or preferences → update user
-- When a project decision or deadline is established → update project
-- If the user explicitly says "remember this" → save immediately to the best-fitting block
-
-## Tier 2: Archival Memory (search on demand)
-Long-term knowledge base — NOT in prompt unless you search. Use for anything worth remembering but not needed every turn.
-
-Tools: archival_memory_insert (with tags), archival_memory_search (keyword + tag filter)
-
-**What to store (with example tags):**
-- Error resolutions: stack trace → fix mapping (tags: 'error,spring,cors')
-- API behaviors and gotchas discovered during work (tags: 'api,sonar,gotcha')
-- User feedback that's specific to a domain (tags: 'feedback,testing')
-- Configuration patterns that worked (tags: 'config,docker,bamboo')
-- External references: URLs, dashboard locations, ticket boards (tags: 'reference,grafana')
-- Decisions and their reasoning: why approach A was chosen over B (tags: 'decision,architecture')
-
-**Structure entries as:** fact/rule, then WHY (the reason), then HOW TO APPLY (when this kicks in).
-
-**When to save to archival:**
-- After resolving a non-trivial error → store the resolution with tags
-- When you discover an API behavior or gotcha → store it
-- When the user shares context about external systems (Jira boards, dashboards, deploy processes)
-- After a significant code review finding or architecture decision
-
-## Tier 3: Conversation Recall (search past sessions)
-Transcripts of past sessions — searchable by keyword.
-
-Tool: conversation_search
-- When the user references prior-session work ("remember when we...", "like last time")
-- When you need to recall what approach was tried and why it failed
-
-## Proactive Memory Behavior
-- **Session start**: Search archival memory for context relevant to the user's request BEFORE diving into code.
-- **After corrections**: When the user says "no, not that" or "stop doing X", save to core_memory patterns block immediately. Include WHY so you can judge edge cases.
-- **After confirmations**: When the user accepts a non-obvious approach, save it too. Record from success AND failure — if you only save corrections, you'll drift away from validated approaches.
-- **Before acting on memory**: Verify it's still current. A memory that names a file, function, or config may be stale. Check the actual code before recommending. "Memory says X exists" ≠ "X exists now."
-
-## What NOT to Store
-- Code patterns visible in the current codebase (just read the code)
-- Git history or who-changed-what (use git log/blame)
-- Debugging solutions where the fix is already in the committed code
-- Ephemeral task details only useful in the current session
-- Information already in project documentation or CLAUDE.md equivalent"""
+## Using Recalled Memory
+If <recalled_memory> is present, it contains relevant entries from past sessions. Treat it as context — verify against current code before acting on it (memories can be stale)."""
 
     /**
      * Section 11: User Instructions
