@@ -332,6 +332,39 @@ All paths:
 | `conversation_search` | Recall | Search past session transcripts |
 | `save_memory` | Legacy | Save markdown memory file |
 
+### Auto-Memory System (Event-Driven)
+
+Memory management is primarily system-driven, not LLM-driven. Two triggers:
+
+| Trigger | When | Mechanism | Cost |
+|---------|------|-----------|------|
+| Session-end extraction | After completed sessions (4+ messages) | Cheap LLM (Haiku) distills insights from full conversation | ~$0.001/session |
+| Session-start retrieval | Before first LLM call | Keyword extraction + archival search | Zero (no LLM) |
+
+Session-end extraction catches everything in one pass: user corrections, confirmations, patterns, project state, decisions, error resolutions, references. The full conversation provides better context than mid-session pattern matching, so there is no regex-based real-time detection.
+
+**Key files:**
+- `memory/auto/AutoMemoryManager.kt` — orchestrator (`onSessionComplete`, `onSessionStart`)
+- `memory/auto/MemoryExtractor.kt` — cheap LLM call for structured JSON extraction
+- `memory/auto/RelevanceRetriever.kt` — keyword-based archival search for prompt injection
+- `memory/auto/ExtractionPrompts.kt` — prompt template for extraction calls
+- `memory/auto/ExtractionModels.kt` — data classes (ExtractionResult, CoreMemoryUpdate, ArchivalInsert)
+
+**Lifecycle:** `AutoMemoryManager` is lazily initialized in `AgentService.ensureAutoMemory()`. Uses `ModelCache.pickCheapest()` (Haiku) for extraction calls. A dedicated `SourcegraphChatClient` is constructed with the cheap model baked into the client (separate from the main brain's client). All extraction is best-effort — failures logged, never thrown. Gated by `AgentSettings.state.autoMemoryEnabled` (default true). LLM memory tools remain available as manual overrides.
+
+**System prompt:** `<recalled_memory>` section injected after `<core_memory>` when relevant archival entries found. The memory prompt section (`SystemPrompt.memory()`) explains system-managed memory and lists manual tools as overrides.
+
+### Memory Management UI
+
+**Settings page:** Tools → Workflow Orchestrator → AI Agent → Memory (`AgentMemoryConfigurable`)
+- Toggle auto-memory extraction on/off
+- View and edit core memory blocks (user, project, patterns) as editable text areas — saved on Apply
+- View archival memory entry count
+- Clear core memory / archival memory / all memory (each with confirmation dialog)
+- Reloads memory from disk each time the page is opened, so it always reflects the latest state written by the agent
+
+**TopBar indicator:** Small badge in the agent chat TopBar showing `◆ {coreKB} | {archivalCount}` — core memory character count (displayed as N below 1000, X.XK at/above 1000) and archival entry count. Click opens the Settings dialog. Stats pushed from `AgentController.pushMemoryStats()` at task start and on completion; values are snapshotted at those points and eventually consistent with background auto-memory writes.
+
 - `think` tool: no-op reasoning pause, proven 54% improvement on complex tasks (Anthropic data)
 
 ## Interactive Debugging
