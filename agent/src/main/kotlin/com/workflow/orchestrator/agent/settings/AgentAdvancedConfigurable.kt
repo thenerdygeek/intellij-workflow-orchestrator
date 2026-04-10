@@ -59,6 +59,14 @@ class AgentAdvancedConfigurable(
                 }
             }
 
+            group("Tool Calling") {
+                row {
+                    checkBox("Use XML tool format instead of native function calling")
+                        .bindSelected(pluginSettings.state::useXmlToolMode)
+                        .comment("Fixes parallel tool calls. Disable to fall back to native function calling.")
+                }
+            }
+
             group("Network") {
                 row("HTTP connect timeout (seconds):") {
                     intTextField(1..300)
