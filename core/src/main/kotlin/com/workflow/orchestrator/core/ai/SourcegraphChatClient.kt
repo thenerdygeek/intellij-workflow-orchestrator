@@ -546,8 +546,11 @@ class SourcegraphChatClient(
                             // --- XML tool call fallback for non-streaming path ---
                             // Covers the zero-delta fallback (sendMessageStream calls sendMessage)
                             // when xmlToolMode=true: model responds with <tool> tags in text.
+                            // Only attempt XML parsing when no tools were in the request (XML mode
+                            // indicator) — prevents false positives when the LLM discusses XML formats.
                             val choice = parsed.choices.firstOrNull()
-                            if (choice != null && choice.message.toolCalls.isNullOrEmpty()) {
+                            val requestHadNoTools = tools.isNullOrEmpty()
+                            if (requestHadNoTools && choice != null && choice.message.toolCalls.isNullOrEmpty()) {
                                 val content = choice.message.content
                                 if (content != null && content.contains("<tool>")) {
                                     val xmlParsed = XmlToolCallParser.parse(content)

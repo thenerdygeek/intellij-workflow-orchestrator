@@ -694,40 +694,37 @@ class AgentService(private val project: Project) : Disposable {
                 // Build deferred catalog for system prompt injection (grouped by category)
                 val deferredCatalog = registry.getDeferredCatalogGrouped()
 
-                // Build initial XML tool definitions for system prompt (when xmlToolMode active).
-                // Uses the pre-filter tool list; plan mode filtering happens dynamically
-                // in toolDefinitionProvider below.
-                val initialToolDefsXml = if (brain.xmlToolMode) {
-                    val initialDefs = registry.getActiveTools().values
-                        .map { com.workflow.orchestrator.agent.tools.AgentTool.injectTaskProgress(it.toToolDefinition()) }
-                    com.workflow.orchestrator.core.ai.XmlToolDefinitionBuilder.build(initialDefs)
-                } else null
+                // Build system prompt — XML tool definitions added dynamically below
+                val systemPromptBuilder = { toolDefsXml: String? ->
+                    SystemPrompt.build(
+                        projectName = projectName,
+                        projectPath = projectPath,
+                        planModeEnabled = planModeActive.get(),
+                        additionalContext = projectInstructions,
+                        availableSkills = availableSkills,
+                        activeSkillContent = ctx.getActiveSkill(),
+                        taskProgress = ctx.getTaskProgress(),
+                        deferredToolCatalog = deferredCatalog,
+                        coreMemoryXml = coreMemory?.compile(),
+                        toolDefinitionsXml = toolDefsXml
+                    )
+                }
+                // Set initial system prompt (XML defs added on first toolDefinitionProvider call)
+                ctx.setSystemPrompt(systemPromptBuilder(null))
 
-                val systemPrompt = SystemPrompt.build(
-                    projectName = projectName,
-                    projectPath = projectPath,
-                    planModeEnabled = planModeActive.get(),
-                    additionalContext = projectInstructions,
-                    availableSkills = availableSkills,
-                    activeSkillContent = ctx.getActiveSkill(),
-                    taskProgress = ctx.getTaskProgress(),
-                    deferredToolCatalog = deferredCatalog,
-                    coreMemoryXml = coreMemory?.compile(),
-                    toolDefinitionsXml = initialToolDefsXml
-                )
-                ctx.setSystemPrompt(systemPrompt)
-
-                // Build tool definitions dynamically — uses getActiveTools() which grows
-                // as tool_search activates deferred tools during the session.
+                // Build tool definitions dynamically — called on each loop iteration.
                 // Plan mode: remove write tools + act_mode_respond + enable_plan_mode, keep plan_mode_respond.
                 // Act mode: remove plan_mode_respond, keep act_mode_respond + write tools + enable_plan_mode.
                 // Re-reads planModeActive on each call so enable_plan_mode tool takes effect mid-session.
-
-                // Dynamic tool definition provider — called on each loop iteration
+                //
+                // When xmlToolMode is active, also rebuilds the system prompt with updated
+                // XML tool definitions — critical because the LLM only sees tools via the
+                // system prompt in XML mode (tools: null in API request).
                 val hasSkills = availableSkills != null
+                var lastXmlToolDefsHash = 0
                 val toolDefinitionProvider: () -> List<com.workflow.orchestrator.core.ai.dto.ToolDefinition> = {
                     val isPlanMode = planModeActive.get()
-                    registry.getActiveTools().values
+                    val defs = registry.getActiveTools().values
                         .filter { tool ->
                             // Port of Cline's contextRequirements: omit use_skill when no skills available
                             if (tool.name == "use_skill" && !hasSkills) return@filter false
@@ -738,6 +735,18 @@ class AgentService(private val project: Project) : Disposable {
                             }
                         }
                         .map { AgentTool.injectTaskProgress(it.toToolDefinition()) }
+
+                    // Update system prompt XML when tool set changes (plan mode switch, deferred tool load)
+                    if (brain.xmlToolMode) {
+                        val defsHash = defs.map { it.function.name }.hashCode()
+                        if (defsHash != lastXmlToolDefsHash) {
+                            lastXmlToolDefsHash = defsHash
+                            val xml = com.workflow.orchestrator.core.ai.XmlToolDefinitionBuilder.build(defs)
+                            ctx.setSystemPrompt(systemPromptBuilder(xml))
+                        }
+                    }
+
+                    defs
                 }
 
                 // Wire sub-agent progress callback and settings for this task execution
