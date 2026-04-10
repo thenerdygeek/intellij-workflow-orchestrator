@@ -125,7 +125,7 @@ object XmlToolCallParser {
      * All other tags use `indexOf` from current position to avoid
      * mis-matching when a short tag (e.g. `<path>`) appears inside code.
      */
-    private val CODE_CARRYING_TAGS = setOf("content", "new_string", "diff", "code")
+    private val CODE_CARRYING_TAGS = setOf("content", "new_string", "old_string", "diff", "code")
 
     /**
      * Parse `<args>` child elements into a JSON string.
