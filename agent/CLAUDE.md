@@ -552,7 +552,24 @@ agent/webview/
 - `bridge/globals.d.ts` — TypeScript declarations for Kotlin-injected window globals
 - `stores/chatStore.ts` — Primary state: messages, streaming, plans, questions, tool calls
 - `stores/themeStore.ts` — IDE theme variables synced from Kotlin
-- `stores/settingsStore.ts` — Visualization settings (enabled, maxHeight, etc.)
+- `stores/settingsStore.ts` — Visualization + animation settings (chatAnimationsEnabled, etc.)
+
+## Streaming Text Pipeline
+
+Five-layer smoothing pipeline from SSE to rendered text:
+
+1. **StreamBatcher** (Kotlin, `agent/ui/StreamBatcher.kt`): 16ms EDT timer coalesces rapid chunks into single bridge calls (~5000 → ~300 per response). Disposer-registered lifecycle.
+2. **JCEF Bridge**: `appendToken()` unchanged API, receives larger batched payloads
+3. **PresentationBuffer** (`hooks/usePresentationBuffer.ts`): Adaptive-rate character queue. Base ~150 chars/sec, speeds up with queue depth, fast drain on stream end.
+4. **StreamingMessage** (`components/chat/StreamingMessage.tsx`): Three-zone renderer:
+   - Zone 1: Completed blocks → MarkdownRenderer (progressive, each block parsed once)
+   - Zone 2: Current block settled text (graduated from animation)
+   - Zone 3: Trailing ~15 chars → BlurTextStream (`<m.span>` per char, opacity+transform+blur(2px))
+5. **BlurTextStream** (`components/chat/BlurTextStream.tsx`): Per-character `motion/react` animation with graduation (animated node count constant at ~15)
+
+**Block splitting:** `useBlockSplitter` (`hooks/useBlockSplitter.ts`) detects completed markdown blocks (blank lines, closed code fences) and splits text so Zone 1 gets immutable blocks and Zone 2+3 get the in-progress tail.
+
+**Settings:** `AgentSettings.chatAnimationsEnabled` (default: true, respects `prefers-reduced-motion`). Synced to webview via `setChatAnimationsEnabled()` bridge call, cached + broadcast to mirror panels. When disabled, PresentationBuffer dumps chunks immediately, no `<m.span>` created.
 
 **Visualization popout:** `AgentVisualizationTab.kt` provides `FileEditor` + `FileEditorProvider` + `LightVirtualFile` for opening visualizations (mermaid, chart, flow, etc.) in IDE editor tabs.
 
