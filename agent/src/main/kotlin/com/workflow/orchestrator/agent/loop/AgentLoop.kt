@@ -245,7 +245,9 @@ class AgentLoop(
      * When true, compact context and retry when timeout/network retries are exhausted
      * (instead of failing). Limited to [MAX_COMPACTION_RETRIES] attempts.
      */
-    private val compactOnTimeoutExhaustion: Boolean = false
+    private val compactOnTimeoutExhaustion: Boolean = false,
+    /** Tool execution mode: "accumulate" (default) or "stream_interrupt" (Cline-style). */
+    private val toolExecutionMode: String = "accumulate"
 ) {
     private val cancelled = AtomicBoolean(false)
     private var totalTokensUsed = 0
@@ -504,6 +506,15 @@ class AgentLoop(
                         val delta = stripped.substring(lastPresentedTextLength)
                         onStreamChunk(delta)
                         lastPresentedTextLength = stripped.length
+                    }
+
+                    // Stream-interrupt: if a tool block just completed, interrupt stream
+                    if (toolExecutionMode == "stream_interrupt") {
+                        val completedTool = blocks.filterIsInstance<ToolUseContent>()
+                            .firstOrNull { !it.partial }
+                        if (completedTool != null) {
+                            brain.interruptStream()
+                        }
                     }
                 }
             )

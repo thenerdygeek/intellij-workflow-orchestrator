@@ -66,6 +66,9 @@ class SourcegraphChatClient(
         activeCall.getAndSet(null)?.cancel()
     }
 
+    /** Set by AgentLoop to cooperatively interrupt the SSE stream mid-response. */
+    @Volatile var shouldInterruptStream = false
+
     companion object {
         /** Sourcegraph API path for chat completions (from OpenAPI spec). */
         const val CHAT_COMPLETIONS_PATH = "/.api/llm/chat/completions"
@@ -335,6 +338,10 @@ class SourcegraphChatClient(
                 var line = reader.readLine()
                 while (line != null) {
                     coroutineContext.ensureActive()
+                    if (shouldInterruptStream) {
+                        log.info("[Agent:API] Stream interrupted by caller (mid-stream tool execution)")
+                        break
+                    }
 
                     if (line.startsWith("data: ") && line != "data: [DONE]") {
                         val chunkJson = line.removePrefix("data: ")
@@ -368,6 +375,7 @@ class SourcegraphChatClient(
                     }
                     line = reader.readLine()
                 }
+                shouldInterruptStream = false  // Reset for next call
 
                 // Detect streaming drop: Sourcegraph occasionally sends finish_reason=tool_calls
                 // but omits the tool_call deltas entirely, leaving us with content-only "Using tools."
