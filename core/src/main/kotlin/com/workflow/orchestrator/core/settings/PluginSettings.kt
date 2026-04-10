@@ -113,6 +113,9 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var tagHistoryMaxEntries by property(5)
         var bambooBuildVariableName by string("dockerTagsAsJson")
 
+        // AI agent
+        var useXmlToolMode by property(true)  // Default ON — XML fixes parallel tool calls
+
         // Sprint dashboard view preferences
         var sprintSortBy by string("Default")
 
