@@ -241,7 +241,11 @@ class AgentLoop(
      */
     private val compactOnTimeoutExhaustion: Boolean = false,
     /** Tool execution mode: "accumulate" (default) or "stream_interrupt" (Cline-style). */
-    private val toolExecutionMode: String = "accumulate"
+    private val toolExecutionMode: String = "accumulate",
+    /** Dynamic provider for known tool names (re-read from registry each iteration for deferred tools). */
+    private val toolNameProvider: (() -> Set<String>)? = null,
+    /** Dynamic provider for known param names (re-read from registry each iteration for deferred tools). */
+    private val paramNameProvider: (() -> Set<String>)? = null
 ) {
     private val cancelled = AtomicBoolean(false)
     private var totalTokensUsed = 0
@@ -467,11 +471,11 @@ class AgentLoop(
 
             // Block-based streaming presentation (Cline port)
             // Accumulates text, re-parses on every chunk, sends only TextContent to UI.
-            // Tool/param names fetched from brain (updated by AgentService when deferred tools load).
+            // Tool/param names read from providers (updated when deferred tools load via request_tools).
             val accumulatedText = StringBuilder()
             var lastPresentedTextLength = 0
-            val currentToolNames = brain.toolNameSet
-            val currentParamNames = brain.paramNameSet
+            val currentToolNames = toolNameProvider?.invoke() ?: brain.toolNameSet
+            val currentParamNames = paramNameProvider?.invoke() ?: brain.paramNameSet
 
             val apiResult = brain.chatStream(
                 messages = contextManager.getMessages(),
@@ -492,7 +496,7 @@ class AgentLoop(
 
                     // Extract visible text (TextContent blocks only)
                     val visibleText = blocks.filterIsInstance<TextContent>()
-                        .joinToString("") { it.content }
+                        .joinToString("\n\n") { it.content }
 
                     // Only send NEW text to UI (delta since last presentation)
                     val stripped = AssistantMessageParser.stripPartialTag(visibleText)
