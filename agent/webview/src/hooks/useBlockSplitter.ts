@@ -1,16 +1,20 @@
 import { useMemo } from 'react';
 
 interface BlockSplit {
-  /** Completed blocks — structurally closed, safe for markdown parsing. */
-  completedBlocks: string;
+  /** Array of completed, structurally-closed markdown blocks. Append-only: existing entries never change. */
+  completedBlocks: string[];
   /** Current in-progress block — not yet closed, rendered as plain text. */
   currentBlock: string;
 }
 
 /**
- * Splits streaming text into completed markdown blocks and the current
- * in-progress block. A block is "complete" when followed by a blank line,
- * a closing code fence, or another block-level element.
+ * Splits streaming text into an array of completed markdown blocks plus the
+ * current in-progress block. A block is "complete" when followed by a blank
+ * line or a closing code fence.
+ *
+ * The returned `completedBlocks` is append-only — existing entries never
+ * change as more text arrives, so consumers can use the index as a stable key
+ * for per-block animation without re-triggering on append.
  *
  * This is a lightweight boundary scanner, not a full markdown parser.
  */
@@ -18,61 +22,45 @@ export function useBlockSplitter(text: string): BlockSplit {
   return useMemo(() => splitBlocks(text), [text]);
 }
 
-/** Find the last safe split point in the text. */
 export function splitBlocks(text: string): BlockSplit {
   if (text.length === 0) {
-    return { completedBlocks: '', currentBlock: '' };
+    return { completedBlocks: [], currentBlock: '' };
   }
 
-  // Track code fence state to avoid splitting inside fenced blocks
-  let inCodeFence = false;
-  let lastSafeSplit = 0;
+  const blocks: string[] = [];
   const lines = text.split('\n');
+  let inCodeFence = false;
+  let blockStart = 0;
   let charIndex = 0;
+
+  const emitBlockEndingAt = (endIndex: number) => {
+    const block = text.slice(blockStart, endIndex);
+    if (block.trim().length > 0) {
+      blocks.push(block);
+    }
+    blockStart = endIndex;
+  };
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
     const trimmed = line.trimStart();
 
-    // Detect code fence boundaries
     if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) {
       inCodeFence = !inCodeFence;
-      // If we just closed a code fence, the end of this line is a safe split
+      // Closing fence — emit the block (which includes the fence pair)
       if (!inCodeFence) {
-        lastSafeSplit = charIndex + line.length + 1; // +1 for \n
+        emitBlockEndingAt(charIndex + line.length + 1); // +1 for \n
       }
-    } else if (!inCodeFence) {
-      // Outside code fences: blank lines are safe split points
-      if (trimmed === '' && i > 0) {
-        lastSafeSplit = charIndex + line.length + 1;
-      }
+    } else if (!inCodeFence && trimmed === '' && i > 0) {
+      // Blank line outside a fence — emit the paragraph/block before it
+      emitBlockEndingAt(charIndex + line.length + 1);
     }
 
-    charIndex += line.length + 1; // +1 for \n
-  }
-
-  // If we're inside a code fence, don't split — the whole thing is in-progress
-  if (inCodeFence) {
-    // Find the opening fence and split before it
-    const fenceMatch = text.match(/^([\s\S]*?\n)(```|~~~)/m);
-    if (fenceMatch && fenceMatch.index !== undefined && fenceMatch[1]) {
-      const splitAt = fenceMatch.index + fenceMatch[1].length;
-      if (splitAt > 0 && text.slice(0, splitAt).trim().length > 0) {
-        return {
-          completedBlocks: text.slice(0, splitAt),
-          currentBlock: text.slice(splitAt),
-        };
-      }
-    }
-    return { completedBlocks: '', currentBlock: text };
-  }
-
-  if (lastSafeSplit === 0) {
-    return { completedBlocks: '', currentBlock: text };
+    charIndex += line.length + 1;
   }
 
   return {
-    completedBlocks: text.slice(0, lastSafeSplit),
-    currentBlock: text.slice(lastSafeSplit),
+    completedBlocks: blocks,
+    currentBlock: text.slice(blockStart),
   };
 }
