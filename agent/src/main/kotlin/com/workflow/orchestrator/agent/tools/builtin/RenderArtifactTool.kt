@@ -14,19 +14,25 @@ class RenderArtifactTool : AgentTool {
     override val name = "render_artifact"
     override val description = """Render an interactive React component in the chat as a visual artifact. Use alongside your text response when a visualization would help the user understand architecture, flows, hierarchies, or data comparisons.
 
-The component renders in a sandboxed iframe with:
-- bridge.navigateToFile(path, line) — click to open file in IDE
-- bridge.isDark, bridge.colors — theme-aware rendering
-- Lucide React icons (FileCode, GitBranch, Database, Shield, Zap, Server, etc.)
-- Recharts (BarChart, PieChart, LineChart, AreaChart, Tooltip, Legend, etc.)
-- React hooks (useState, useEffect, useCallback, useMemo, useRef)
+The component renders in a sandboxed iframe with these scope variables (use directly — NOT as imports, NOT as props):
+
+React: React, useState, useEffect, useCallback, useMemo, useRef, Fragment
+Bridge: bridge.navigateToFile(path, line), bridge.isDark, bridge.colors, bridge.projectName
+UI: Card, CardHeader, CardTitle, CardDescription, CardContent, Badge, Tabs, TabsList, TabsTrigger, TabsContent, Progress, Separator, Accordion, AccordionItem, Tooltip
+Recharts: BarChart, Bar, LineChart, Line, AreaChart, Area, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, RechartsTooltip, Legend, ResponsiveContainer, RadialBarChart, RadialBar, ComposedChart, Scatter, ScatterChart, Treemap, FunnelChart, Funnel, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, LabelList
+Icons: All Lucide icons by name (Globe, FileCode, Server, Shield, Zap, Database, GitBranch, etc.)
+Animation: motion, AnimatePresence, useMotionValue, useTransform, useSpring, useInView, useScroll, useAnimation
+D3: d3 (full d3 namespace — d3.scaleLinear, d3.arc, d3.geoPath, etc.)
+Globe: createGlobe (cobe library — renders globe on canvas)
+Maps: ComposableMap, Geographies, Geography, Marker, MapLine, ZoomableGroup, Graticule, Sphere
+Hand-drawn: rough (roughjs — rough.canvas(canvasEl).rectangle(...))
 
 Use when: 3+ entities with relationships, multi-step flows, data comparisons as charts, or user explicitly asked for a visual.
 Do NOT use when: short text answers, fewer than 3 items, yes/no questions, or text is sufficient.
 
-The source must export a default function component. bridge, useState, useEffect, and other scope variables are available directly (NOT as props — do not destructure from function params). All data must be inline.
+The source must export a default function component. All scope variables are available directly (do NOT write import statements — they cause errors). All data must be inline. Use Tailwind CSS classes, not inline styles.
 
-Before calling render_artifact, load the frontend-design skill via use_skill("frontend-design") for component APIs and design guidelines. Use Tailwind CSS classes (not inline styles). Available UI components (scope variables): Card, CardHeader, CardTitle, CardDescription, CardContent, Badge, Tabs, TabsList, TabsTrigger, TabsContent, Progress, Separator, Accordion, AccordionItem, Tooltip."""
+Before calling render_artifact, load the frontend-design skill via use_skill("frontend-design") for component APIs and design guidelines."""
 
     override val parameters = FunctionParameters(
         properties = mapOf(
