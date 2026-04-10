@@ -5,6 +5,7 @@ import { ThinkingView } from '@/components/agent/ThinkingView';
 import { CompletionCard } from '@/components/agent/CompletionCard';
 import { EditDiffView } from '@/components/agent/EditDiffView';
 import { DiffHtml } from '@/components/rich/DiffHtml';
+import { ChartView } from '@/components/rich/ChartView';
 import {
   Message as PkMessage,
   MessageAvatar,
@@ -154,6 +155,9 @@ export const AgentMessage = memo(function AgentMessage({
             {parsed.message}
           </div>
         );
+      }
+      if (parsed.type === 'chart' && parsed.config) {
+        return <ChartView source={parsed.config} />;
       }
       // Diff explanation from generate_explanation tool
       if (parsed.type === 'diff-explanation' && parsed.diffSource) {
