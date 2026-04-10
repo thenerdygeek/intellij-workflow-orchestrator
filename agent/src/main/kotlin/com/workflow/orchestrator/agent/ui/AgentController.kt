@@ -281,10 +281,16 @@ class AgentController(
                     }
                     dashboard.showQuestions(wizardJson)
                 } else {
-                    // Questions WITHOUT options → show as agent message,
-                    // user types their answer freely in the chat input
-                    dashboard.appendStreamToken(question)
-                    dashboard.flushStreamBuffer()
+                    // Questions WITHOUT options → user types their answer freely in the chat input.
+                    // In XML tool mode, the question text was already streamed to the UI as part
+                    // of the LLM's text content (before the <tool> block was parsed). Only append
+                    // the question as a separate message in native mode where tool calls are
+                    // separate from text content.
+                    val xmlMode = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).state.useXmlToolMode
+                    if (!xmlMode) {
+                        dashboard.appendStreamToken(question)
+                        dashboard.flushStreamBuffer()
+                    }
                     dashboard.setBusy(false)
                     dashboard.setInputLocked(false)
                     dashboard.focusInput()
