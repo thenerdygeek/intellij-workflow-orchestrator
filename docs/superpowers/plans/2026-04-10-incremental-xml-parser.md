@@ -1370,12 +1370,34 @@ Default 'accumulate' preserves current behavior."
 | Task | Phase | What | Test |
 |------|-------|------|------|
 | 1 | Model | Content block data classes | Compilation |
-| 2 | Parser | AssistantMessageParser with TDD | 13 unit tests |
+| 2 | Parser | AssistantMessageParser with TDD | 12 unit tests |
 | 3 | Builder | ToolPromptBuilder with TDD | 4 unit tests |
 | 4 | Wiring | Wire parser into SourcegraphChatClient | Core tests |
 | 5 | Tests | Update streaming integration tests | 6 streaming tests |
 | 6 | Cleanup | Delete old parser, update SystemPrompt + AgentService | Full test suite |
 | 7 | Loop | Block-based presentation in AgentLoop | Agent tests |
-| 8 | Settings | toolExecutionMode setting + UI | Compilation |
+| 8 | Settings | toolExecutionMode setting, remove xmlToolMode + UI | Compilation |
 | 9 | Interrupt | Stream-interrupt mode implementation | Full test suite |
 | 10 | Wiring | Wire settings through AgentService | Full test suite |
+
+---
+
+## Review Findings Addressed
+
+| # | Severity | Issue | Resolution |
+|---|----------|-------|------------|
+| C1 | CRITICAL | `assignedId` inconsistency | Removed spec reference; IDs generated inline via `mapIndexed` in Task 4/5 (consistent) |
+| C2 | CRITICAL | `toolNameSet`/`paramNameSet` not on `LlmBrain` | Add to `LlmBrain` interface with defaults in Task 4 Step 3 |
+| C3 | CRITICAL | Not all `OpenAiCompatBrain` constructors updated | Task 6 Step 3 must update ALL construction sites (primary + brainFactory) |
+| C4 | CRITICAL | `xmlToolMode` removal missing | Added to Task 8: remove from `LlmBrain`, `OpenAiCompatBrain`, always pass `tools=null` |
+| I1 | IMPORTANT | Stream-interrupt placeholder code | Task 9 Step 2: use `brain.interruptStream()` (added to `LlmBrain` in same task) |
+| I3 | IMPORTANT | `ask_followup_question` dup fix not addressed | Resolved by Task 7 block-based presentation — text duplication is structurally eliminated |
+| I4 | IMPORTANT | Deferred tool names not updated | Pass name sets as provider lambdas to AgentLoop instead of static sets |
+| I5 | IMPORTANT | `comboBox()` DSL may not compile | Use `DefaultComboBoxModel` pattern matching existing codebase |
+| S1 | SUGGESTION | Test count 13 vs 12 | Corrected to 12 in summary table |
+
+**Implementation note for C2 + C4 + I4:** The cleanest approach is:
+- `LlmBrain` gets `val toolNameSet: Set<String>` and `val paramNameSet: Set<String>` with default `emptySet()`
+- `OpenAiCompatBrain` overrides them as constructor params
+- Task 8 removes `xmlToolMode` from both interfaces and makes `chatStream()`/`chat()` always pass `tools=null`
+- For deferred tools (I4): `AgentLoop` receives `toolNameProvider: () -> Set<String>` and `paramNameProvider: () -> Set<String>` lambdas that re-read from registry each iteration, rather than static sets on the brain
