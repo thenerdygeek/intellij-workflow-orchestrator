@@ -39,7 +39,9 @@ object SystemPrompt {
         /** Deferred tools available via tool_search, grouped by category. */
         deferredToolCatalog: Map<String, List<String>>? = null,
         /** Compiled core memory XML (Letta pattern: always in prompt if non-empty). */
-        coreMemoryXml: String? = null
+        coreMemoryXml: String? = null,
+        /** XML tool definitions for Mode B (tools defined in prompt, not via API tools param). */
+        toolDefinitionsXml: String? = null
     ): String = buildString {
 
         // 1. AGENT ROLE
@@ -73,6 +75,14 @@ object SystemPrompt {
         deferredToolCatalog(deferredToolCatalog)?.let {
             append(SECTION_SEP)
             append(it)
+        }
+
+        // 6c. XML TOOL DEFINITIONS (only when xmlToolMode active)
+        if (toolDefinitionsXml != null) {
+            append(SECTION_SEP)
+            append("# Tool Definitions\n\n")
+            append("You have access to the following tools. To use a tool, output XML as shown below.\n\n")
+            append(toolDefinitionsXml)
         }
 
         // 7. RULES
