@@ -149,13 +149,6 @@ class AgentService(private val project: Project) : Disposable {
     // ── Auto Memory ────────────────────────────────────────────────────────
 
     /**
-     * Lazily initialize AutoMemoryManager on first use.
-     * Needs a SourcegraphChatClient configured with a cheap model (Haiku) for extraction.
-     * Returns null if Sourcegraph is not configured or no cheap model is available.
-     *
-     * Subsequent calls return the cached instance.
-     */
-    /**
      * Return current memory stats for the TopBar indicator.
      * Pair of (coreChars, archivalCount). Returns null if memory is not yet initialized.
      * Best-effort, safe to call from any thread.
@@ -171,6 +164,13 @@ class AgentService(private val project: Project) : Disposable {
         }
     }
 
+    /**
+     * Lazily initialize AutoMemoryManager on first use.
+     * Needs a SourcegraphChatClient configured with a cheap model (Haiku) for extraction.
+     * Returns null if Sourcegraph is not configured or no cheap model is available.
+     *
+     * Subsequent calls return the cached instance.
+     */
     private suspend fun ensureAutoMemory(): AutoMemoryManager? {
         autoMemoryManager?.let { return it }
 
