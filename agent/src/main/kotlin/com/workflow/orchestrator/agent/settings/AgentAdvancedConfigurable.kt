@@ -2,10 +2,7 @@ package com.workflow.orchestrator.agent.settings
 
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.project.Project
-import com.intellij.ui.dsl.builder.bindIntText
-import com.intellij.ui.dsl.builder.bindSelected
-import com.intellij.ui.dsl.builder.bindText
-import com.intellij.ui.dsl.builder.panel
+import com.intellij.ui.dsl.builder.*
 import com.workflow.orchestrator.core.settings.PluginSettings
 import javax.swing.JComponent
 
@@ -60,10 +57,14 @@ class AgentAdvancedConfigurable(
             }
 
             group("Tool Calling") {
-                row {
-                    checkBox("Use XML tool format instead of native function calling")
-                        .bindSelected(pluginSettings.state::useXmlToolMode)
-                        .comment("Fixes parallel tool calls. Disable to fall back to native function calling.")
+                row("Tool execution mode:") {
+                    comboBox(listOf("accumulate", "stream_interrupt"))
+                        .bindItem(
+                            { agentSettings.state.toolExecutionMode },
+                            { agentSettings.state.toolExecutionMode = it ?: "accumulate" }
+                        )
+                        .comment("accumulate: execute all tools after response completes (default). " +
+                            "stream_interrupt: execute each tool as soon as it appears (Cline-style).")
                 }
             }
 
