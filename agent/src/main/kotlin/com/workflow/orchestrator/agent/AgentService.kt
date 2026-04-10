@@ -622,17 +622,18 @@ class AgentService(private val project: Project) : Disposable {
                 val fbUrl = fbConnections.state.sourcegraphUrl.trimEnd('/')
                 val fbCredentialStore = CredentialStore()
                 val fbTokenProvider = { fbCredentialStore.getToken(ServiceType.SOURCEGRAPH) }
-                val fbToolNames = registry.getActiveTools().keys
-                val fbParamNames = registry.getActiveTools().values
-                    .flatMap { it.parameters.properties.keys }
-                    .toSet()
                 val brainFactory: suspend (String, String?) -> LlmBrain = { modelId: String, reason: String? ->
+                    // Compute tool names lazily so deferred tools loaded via request_tools are included
+                    val currentToolNames = registry.getActiveTools().keys
+                    val currentParamNames = registry.getActiveTools().values
+                        .flatMap { it.parameters.properties.keys }
+                        .toSet()
                     val newBrain = OpenAiCompatBrain(
                         sourcegraphUrl = fbUrl,
                         tokenProvider = fbTokenProvider,
                         model = modelId,
-                        toolNameSet = fbToolNames,
-                        paramNameSet = fbParamNames
+                        toolNameSet = currentToolNames,
+                        paramNameSet = currentParamNames
                     ).also { b ->
                         b.setApiDebugDir(sessionDebugDir)
                         // Inherit the shared API call counter so call-NNN-*.txt filenames
@@ -876,7 +877,9 @@ class AgentService(private val project: Project) : Disposable {
                             log.warn("AgentService: checkpoint save failed (non-fatal)", e)
                         }
                     },
-                    toolExecutionMode = agentSettings.state.toolExecutionMode ?: "accumulate"
+                    toolExecutionMode = agentSettings.state.toolExecutionMode ?: "accumulate",
+                    toolNameProvider = { registry.getActiveTools().keys },
+                    paramNameProvider = { registry.getActiveTools().values.flatMap { it.parameters.properties.keys }.toSet() }
                 )
 
                 // I4: Set activeTask atomically after both loop and job are available
