@@ -147,6 +147,12 @@ class SubagentRunner(
                     scope.launch {
                         onProgress(SubagentProgressUpdate(stats = stats.snapshot()))
                     }
+                },
+                // Gap 2 fix: scope XML parser tool/param names to this sub-agent's
+                // own tool set, not the main agent's brain.toolNameSet fallback.
+                toolNameProvider = { tools.keys },
+                paramNameProvider = {
+                    tools.values.flatMap { it.parameters.properties.keys }.toSet()
                 }
             )
 

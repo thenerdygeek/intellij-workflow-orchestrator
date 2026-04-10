@@ -56,9 +56,13 @@ class SubagentRunnerTest {
      * Same pattern as SpawnAgentToolTest.SequenceBrain.
      */
     private class SequenceBrain(
-        private val responses: List<ApiResult<ChatCompletionResponse>>
+        private val responses: List<ApiResult<ChatCompletionResponse>>,
+        toolNames: Set<String> = emptySet(),
+        paramNames: Set<String> = emptySet()
     ) : LlmBrain {
         override val modelId: String = "test-subagent-brain"
+        override val toolNameSet: Set<String> = toolNames
+        override val paramNameSet: Set<String> = paramNames
         private var callIndex = 0
         var cancelled = false
             private set
@@ -378,6 +382,56 @@ class SubagentRunnerTest {
                 "System prompt should contain XML usage example for read_file")
             assertTrue(content.contains("<attempt_completion>"),
                 "System prompt should contain XML usage example for attempt_completion")
+        }
+
+        @Test
+        fun `XML parser receives sub-agent tool names not main agent tool set`() = runTest {
+            // Brain with toolNameSet simulating main agent's full set (includes jira, bamboo)
+            val mainAgentToolNames = setOf(
+                "read_file", "edit_file", "run_command", "search_code",
+                "think", "attempt_completion", "jira", "bamboo_builds"
+            )
+            val mainAgentParamNames = setOf(
+                "path", "content", "query", "command", "result", "action"
+            )
+
+            val brain = SequenceBrain(
+                responses = listOf(
+                    ApiResult.Success(toolCallResponse(
+                        "attempt_completion" to """{"result":"Done."}"""
+                    ))
+                ),
+                toolNames = mainAgentToolNames,
+                paramNames = mainAgentParamNames
+            )
+
+            // Sub-agent only has 3 tools
+            val subTools = mapOf(
+                "read_file" to stubTool("read_file"),
+                "search_code" to stubTool("search_code"),
+                "attempt_completion" to AttemptCompletionTool()
+            )
+
+            val runner = SubagentRunner(
+                brain = brain,
+                tools = subTools,
+                systemPrompt = "You are a research agent.",
+                project = project,
+                maxIterations = 10,
+                planMode = false,
+                contextBudget = 50_000
+            )
+
+            runner.run("Research task") {}
+
+            val systemContent = brain.lastMessages.first().content ?: ""
+            // System prompt should only contain sub-agent tools, not main-agent-only tools
+            assertFalse(systemContent.contains("<jira>"),
+                "System prompt should NOT contain main-agent-only tools like <jira>")
+            assertFalse(systemContent.contains("<bamboo_builds>"),
+                "System prompt should NOT contain main-agent-only tools like <bamboo_builds>")
+            assertTrue(systemContent.contains("<read_file>"),
+                "System prompt SHOULD contain sub-agent tool <read_file>")
         }
 
         @Test
