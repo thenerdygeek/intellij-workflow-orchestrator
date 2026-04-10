@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.settings
 
+import com.intellij.openapi.options.ConfigurationException
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogPanel
@@ -29,12 +30,15 @@ class AgentMemoryConfigurable(
     private val settings = AgentSettings.getInstance(project)
     private var dialogPanel: DialogPanel? = null
 
-    // Lazy-loaded memory instances for display and mutation
     private val agentDir by lazy {
         ProjectIdentifier.agentDir(project.basePath ?: System.getProperty("user.home"))
     }
-    private val coreMemory by lazy { CoreMemory.forProject(agentDir) }
-    private val archivalMemory by lazy { ArchivalMemory.forProject(agentDir) }
+
+    // Memory instances are re-read from disk on createComponent()/reset() so that
+    // background auto-memory extractions aren't silently overwritten by a stale
+    // in-memory copy held by this settings page.
+    private var coreMemory: CoreMemory? = null
+    private var archivalMemory: ArchivalMemory? = null
 
     // Mutable UI copies
     private var autoMemoryEnabled = settings.state.autoMemoryEnabled
@@ -46,6 +50,7 @@ class AgentMemoryConfigurable(
     override fun getDisplayName(): String = "Memory"
 
     override fun createComponent(): JComponent {
+        reloadMemoryInstances()
         loadCurrentMemory()
 
         val innerPanel = panel {
@@ -92,6 +97,10 @@ class AgentMemoryConfigurable(
                 row {
                     button("Clear Core Memory") {
                         if (confirmClear("core memory")) {
+                            // Flush pending UI state (e.g. autoMemoryEnabled toggle) before
+                            // mutating properties and calling reset(), otherwise reset() will
+                            // revert the pending toggle.
+                            dialogPanel?.apply()
                             clearCoreMemory()
                             loadCurrentMemory()
                             dialogPanel?.reset()
@@ -102,12 +111,15 @@ class AgentMemoryConfigurable(
 
             group("Archival Memory") {
                 row {
-                    comment("Long-term searchable knowledge store (${archivalMemory.size()} entries)")
+                    comment(
+                        "Long-term searchable knowledge store (${archivalMemory!!.size()} entries at open). " +
+                            "Close and reopen to refresh count."
+                    )
                 }
                 row {
                     button("Clear Archival Memory") {
-                        if (confirmClear("archival memory (${archivalMemory.size()} entries)")) {
-                            archivalMemory.clear()
+                        if (confirmClear("archival memory (${archivalMemory!!.size()} entries)")) {
+                            archivalMemory!!.clear()
                         }
                     }
                 }
@@ -117,8 +129,10 @@ class AgentMemoryConfigurable(
                 row {
                     button("Clear All Memory") {
                         if (confirmClear("ALL memory (core + archival)")) {
+                            // Flush pending UI state before reset() wipes it.
+                            dialogPanel?.apply()
                             clearCoreMemory()
-                            archivalMemory.clear()
+                            archivalMemory!!.clear()
                             loadCurrentMemory()
                             dialogPanel?.reset()
                         }
@@ -136,22 +150,30 @@ class AgentMemoryConfigurable(
     override fun isModified(): Boolean {
         dialogPanel?.apply()
         return autoMemoryEnabled != settings.state.autoMemoryEnabled ||
-            userBlock != (coreMemory.read("user") ?: "") ||
-            projectBlock != (coreMemory.read("project") ?: "") ||
-            patternsBlock != (coreMemory.read("patterns") ?: "")
+            userBlock != (coreMemory!!.read("user") ?: "") ||
+            projectBlock != (coreMemory!!.read("project") ?: "") ||
+            patternsBlock != (coreMemory!!.read("patterns") ?: "")
     }
 
     override fun apply() {
         dialogPanel?.apply()
         settings.state.autoMemoryEnabled = autoMemoryEnabled
 
-        // Apply core memory edits — setBlock replaces the whole block
-        applyCoreBlock("user", userBlock)
-        applyCoreBlock("project", projectBlock)
-        applyCoreBlock("patterns", patternsBlock)
+        try {
+            // Apply core memory edits — setBlock replaces the whole block
+            applyCoreBlock("user", userBlock)
+            applyCoreBlock("project", projectBlock)
+            applyCoreBlock("patterns", patternsBlock)
+        } catch (e: Exception) {
+            throw ConfigurationException(
+                "Failed to save core memory: ${e.message}",
+                "Memory Save Error"
+            )
+        }
     }
 
     override fun reset() {
+        reloadMemoryInstances()
         autoMemoryEnabled = settings.state.autoMemoryEnabled
         loadCurrentMemory()
         dialogPanel?.reset()
@@ -161,23 +183,28 @@ class AgentMemoryConfigurable(
         dialogPanel = null
     }
 
+    private fun reloadMemoryInstances() {
+        coreMemory = CoreMemory.forProject(agentDir)
+        archivalMemory = ArchivalMemory.forProject(agentDir)
+    }
+
     private fun loadCurrentMemory() {
-        userBlock = coreMemory.read("user") ?: ""
-        projectBlock = coreMemory.read("project") ?: ""
-        patternsBlock = coreMemory.read("patterns") ?: ""
+        userBlock = coreMemory!!.read("user") ?: ""
+        projectBlock = coreMemory!!.read("project") ?: ""
+        patternsBlock = coreMemory!!.read("patterns") ?: ""
     }
 
     private fun applyCoreBlock(label: String, newValue: String) {
-        val current = coreMemory.read(label) ?: ""
+        val current = coreMemory!!.read(label) ?: ""
         if (newValue != current) {
-            coreMemory.setBlock(label, newValue)
+            coreMemory!!.setBlock(label, newValue)
         }
     }
 
     private fun clearCoreMemory() {
-        coreMemory.setBlock("user", "")
-        coreMemory.setBlock("project", "")
-        coreMemory.setBlock("patterns", "")
+        coreMemory!!.setBlock("user", "")
+        coreMemory!!.setBlock("project", "")
+        coreMemory!!.setBlock("patterns", "")
     }
 
     private fun confirmClear(what: String): Boolean {
