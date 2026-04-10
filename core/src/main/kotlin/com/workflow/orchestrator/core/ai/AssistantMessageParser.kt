@@ -89,7 +89,15 @@ object AssistantMessageParser {
 
                 val closeIdx = if (useLastIndexOf) {
                     // For code-carrying params, use lastIndexOf to handle XML in code
-                    text.lastIndexOf(closeTag)
+                    // (e.g., <content><html></html></content> — indexOf would stop at </html>
+                    //  which isn't a real closing tag for the param).
+                    // Scope to the current tool's closing tag boundary to prevent merging
+                    // multiple tool calls that use the same code-carrying param
+                    // (e.g., two edit_file calls each with <new_string>).
+                    val toolCloseTag = "</${currentToolUse!!.name}>"
+                    val toolEndIdx = text.indexOf(toolCloseTag, currentParamValueStart)
+                    val searchEnd = if (toolEndIdx >= 0) toolEndIdx else text.lastIndex
+                    text.lastIndexOf(closeTag, searchEnd)
                 } else {
                     text.indexOf(closeTag, currentParamValueStart)
                 }
