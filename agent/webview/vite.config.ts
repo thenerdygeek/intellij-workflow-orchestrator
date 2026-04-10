@@ -10,6 +10,12 @@ export default defineConfig(({ mode }) => ({
       '@': resolve(__dirname, 'src'),
     },
   },
+  server: {
+    // Allow sandboxed iframes (origin "null") to load scripts during development.
+    // Needed because artifact-sandbox.html runs in sandbox="allow-scripts" which
+    // sets origin to null, and module scripts always use CORS mode.
+    cors: true,
+  },
   build: {
     outDir: '../src/main/resources/webview/dist',
     emptyOutDir: true,

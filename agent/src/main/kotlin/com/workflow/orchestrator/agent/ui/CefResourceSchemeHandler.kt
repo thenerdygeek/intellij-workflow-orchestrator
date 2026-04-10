@@ -74,6 +74,12 @@ class CefResourceSchemeHandler : CefResourceHandler {
         response.mimeType = mimeType
         response.status = statusCode
         responseLength.set(this.responseLength)
+
+        // CORS: Allow sandboxed iframes (origin "null") to load scripts/styles.
+        // Safe because we only serve bundled static assets from the plugin JAR,
+        // and CSP connect-src:'none' prevents any outbound network requests.
+        response.setHeaderByName("Access-Control-Allow-Origin", "*", true)
+
         if (mimeType == "text/html") {
             response.setHeaderByName(
                 "Content-Security-Policy",
@@ -83,7 +89,7 @@ class CefResourceSchemeHandler : CefResourceHandler {
                     "img-src 'self' data: blob: $SCHEME://$AUTHORITY; " +
                     "font-src 'self' $SCHEME://$AUTHORITY; " +
                     "connect-src 'none'; " +
-                    "frame-src 'none';",
+                    "frame-src 'self' $SCHEME://$AUTHORITY;",
                 true
             )
         }

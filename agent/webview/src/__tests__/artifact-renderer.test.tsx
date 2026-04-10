@@ -4,13 +4,13 @@
  *
  * Key scenarios:
  * 1. Iframe renders with correct sandbox attribute (allow-scripts only)
- * 2. Loading state is shown initially (isLoading=true passed to RichBlock)
+ * 2. isLoading=false always passed to RichBlock (iframe handles own loading overlay)
  * 3. Same-origin is NOT allowed (security)
  * 4. Accepts source and title props without errors
  *
- * RichBlock conditionally hides children during loading, so we mock it
- * to always render children — this lets us test ArtifactRenderer's own
- * output (iframe, title, sandbox attributes) in isolation.
+ * RichBlock conditionally hides children during loading. ArtifactRenderer
+ * always passes isLoading=false so the iframe stays in the DOM and can
+ * initialize the sandbox (preventing the ready-message deadlock).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
@@ -53,13 +53,15 @@ describe('ArtifactRenderer', () => {
     expect(iframe?.getAttribute('sandbox')).toBe('allow-scripts');
   });
 
-  it('shows loading state initially', () => {
+  it('always passes isLoading=false to RichBlock (iframe handles its own loading)', () => {
     render(<ArtifactRenderer source={SAMPLE_SOURCE} title="Test" />);
 
-    // ArtifactRenderer starts with isLoading=true and passes it to RichBlock
+    // ArtifactRenderer now always passes isLoading=false to RichBlock so the
+    // iframe is always rendered in the DOM (preventing the deadlock where the
+    // iframe was hidden by the loading skeleton and could never send 'ready').
     expect(richBlockProps.length).toBeGreaterThan(0);
     const lastProps = richBlockProps[richBlockProps.length - 1];
-    expect(lastProps.isLoading).toBe(true);
+    expect(lastProps.isLoading).toBe(false);
   });
 
   it('does not allow same-origin', () => {

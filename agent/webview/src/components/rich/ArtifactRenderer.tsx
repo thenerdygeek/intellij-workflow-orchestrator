@@ -154,7 +154,7 @@ export function ArtifactRenderer({ source, title }: ArtifactRendererProps) {
     <RichBlock
       type="artifact"
       source={source}
-      isLoading={isLoading}
+      isLoading={false}
       error={error}
       onRetry={handleRetry}
     >
@@ -163,18 +163,31 @@ export function ArtifactRenderer({ source, title }: ArtifactRendererProps) {
           {title}
         </div>
       )}
-      <iframe
-        ref={iframeRef}
-        src={SANDBOX_URL}
-        sandbox="allow-scripts"
-        title="Interactive artifact"
-        className="w-full border-0"
-        style={{
-          height: `${iframeHeight}px`,
-          transition: 'height 200ms ease-out',
-          background: 'transparent',
-        }}
-      />
+      <div className="relative" style={{ minHeight: isLoading ? 120 : undefined }}>
+        {/* Loading overlay — shown on top of the iframe while sandbox initializes */}
+        {isLoading && (
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-[var(--code-bg)]">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="animate-spin" style={{ color: 'var(--fg-muted)' }}>
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+            </svg>
+            <span className="text-xs text-[var(--fg-muted)]">Loading interactive content…</span>
+          </div>
+        )}
+        {/* Iframe ALWAYS in DOM so sandbox can initialize and send 'ready' */}
+        <iframe
+          ref={iframeRef}
+          src={SANDBOX_URL}
+          sandbox="allow-scripts"
+          title="Interactive artifact"
+          className="w-full border-0"
+          style={{
+            height: `${iframeHeight}px`,
+            transition: 'height 200ms ease-out',
+            background: 'transparent',
+            opacity: isLoading ? 0 : 1,
+          }}
+        />
+      </div>
     </RichBlock>
   );
 }

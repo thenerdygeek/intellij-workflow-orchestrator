@@ -49,6 +49,7 @@ import { ChartView } from './components/rich/ChartView';
 import { DiffHtml } from './components/rich/DiffHtml';
 import { ImageView } from './components/rich/ImageView';
 import { InteractiveHtml } from './components/rich/InteractiveHtml';
+import { ArtifactRenderer } from './components/rich/ArtifactRenderer';
 import { MathBlock } from './components/rich/MathBlock';
 import { useChatStore } from './stores/chatStore';
 import { useThemeStore } from './stores/themeStore';
@@ -348,6 +349,44 @@ function ComponentsTab() {
       {/* ── Interactive HTML ── */}
       <Section title="Interactive HTML" description="Custom HTML/CSS/JS in a sandboxed iframe with injected theme CSS variables.">
         <InteractiveHtml htmlContent={mockInteractiveHtml} height={180} />
+      </Section>
+
+      {/* ── Artifact (React Sandbox) ── */}
+      <Section title="Artifact (React Sandbox)" description="React component rendered via react-runner in sandboxed iframe. Tests the ArtifactRenderer deadlock fix.">
+        <ArtifactRenderer
+          title="Module Dependencies"
+          source={`
+const App = () => {
+  const [count, setCount] = useState(0);
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Artifact Sandbox Test</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Badge variant="success">Rendered</Badge>
+            <span className="text-xs" style={{ color: 'var(--fg-muted)' }}>
+              If you see this, the deadlock fix works
+            </span>
+          </div>
+          <Progress value={65} variant="default" />
+          <button
+            className="rounded px-3 py-1 text-xs font-medium"
+            style={{ background: 'var(--accent)', color: '#fff' }}
+            onClick={() => setCount(c => c + 1)}
+          >
+            Clicked {count} times
+          </button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+};
+export default App;
+`}
+        />
       </Section>
 
       {/* ── Data Table ── */}
