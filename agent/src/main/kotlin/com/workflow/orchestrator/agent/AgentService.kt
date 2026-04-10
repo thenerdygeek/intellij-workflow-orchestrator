@@ -756,12 +756,14 @@ class AgentService(private val project: Project) : Disposable {
                 val deferredCatalog = registry.getDeferredCatalogGrouped()
 
                 // AUTO-MEMORY: Retrieve relevant archival memories for prompt injection (best-effort)
-                val recalledMemoryXml: String? = try {
-                    ensureAutoMemory()?.onSessionStart(task)
-                } catch (e: Exception) {
-                    log.warn("[AgentService] Auto-memory retrieval failed (non-fatal)", e)
-                    null
-                }
+                val recalledMemoryXml: String? = if (AgentSettings.getInstance(project).state.autoMemoryEnabled) {
+                    try {
+                        ensureAutoMemory()?.onSessionStart(task)
+                    } catch (e: Exception) {
+                        log.warn("[AgentService] Auto-memory retrieval failed (non-fatal)", e)
+                        null
+                    }
+                } else null
 
                 // Build system prompt — XML tool definitions added dynamically below
                 val systemPromptBuilder = { toolDefsMarkdown: String? ->
@@ -1037,7 +1039,8 @@ class AgentService(private val project: Project) : Disposable {
 
                 // AUTO-MEMORY: Extract insights from completed session — fire-and-forget on agent scope
                 // Uses cheap LLM (Haiku) to distill insights from conversation into core + archival memory.
-                if (result is LoopResult.Completed || result is LoopResult.SessionHandoff) {
+                val autoMemoryEnabled = AgentSettings.getInstance(project).state.autoMemoryEnabled
+                if (autoMemoryEnabled && (result is LoopResult.Completed || result is LoopResult.SessionHandoff)) {
                     scope.launch {
                         try {
                             val mgr = ensureAutoMemory() ?: return@launch
