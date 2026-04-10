@@ -4,6 +4,7 @@ import type {
   SessionStatus,
 } from './types';
 import { preloadDiff2Html } from '../components/rich/DiffHtml';
+import { updateChartById } from '../components/rich/chartUtils';
 
 // Zustand store accessors — set by initBridge() after stores are created
 type StoreAccessors = {
@@ -197,20 +198,7 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     stores?.getChatStore().addChart(chartConfigJson);
   },
   updateChart(id: string, dataJson: string) {
-    const registry = (window as any).__chartRegistry as Map<string, any> | undefined;
-    const chart = registry?.get(id);
-    if (chart && chart.canvas?.isConnected) {
-      try {
-        const update = JSON.parse(dataJson);
-        if (update.data) {
-          Object.assign(chart.data, update.data);
-        }
-        if (update.options) {
-          Object.assign(chart.options, update.options);
-        }
-        chart.update('active');
-      } catch { /* ignore malformed JSON */ }
-    }
+    updateChartById(id, dataJson);
   },
   appendAnsiOutput(text: string) {
     stores?.getChatStore().addAnsiOutput(text);
