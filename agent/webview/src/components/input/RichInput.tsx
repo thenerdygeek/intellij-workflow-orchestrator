@@ -208,6 +208,17 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
           const prefix = mentionType === 'skill' ? '/' : mentionType === 'ticket' ? '#' : '@';
           text += `${prefix}${node.dataset.mentionLabel}`;
         }
+      } else if (node instanceof HTMLElement) {
+        const tag = node.tagName;
+        if (tag === 'BR') {
+          // <br> = explicit line break
+          text += '\n';
+        } else {
+          // Block-level elements (<div>, <p>) created by contentEditable for each line
+          // Prepend \n unless this is the very first content
+          if (text.length > 0) text += '\n';
+          text += node.textContent ?? '';
+        }
       } else {
         text += node.textContent ?? '';
       }
