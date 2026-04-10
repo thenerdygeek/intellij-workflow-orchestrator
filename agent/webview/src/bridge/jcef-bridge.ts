@@ -271,7 +271,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     try {
       const entry = JSON.parse(entryJson);
       stores?.getChatStore().addDebugLogEntry(entry);
-    } catch { /* ignore malformed JSON */ }
+    } catch (e) {
+      console.warn('[bridge] addDebugLogEntry: malformed JSON', e);
+    }
   },
   appendToolOutput(toolCallId: string, chunk: string) {
     stores?.getChatStore().appendToolOutput(toolCallId, chunk);
@@ -285,13 +287,17 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     try {
       const checkpoints = JSON.parse(json);
       stores?.getChatStore().updateCheckpoints(checkpoints);
-    } catch { /* ignore malformed JSON */ }
+    } catch (e) {
+      console.warn('[bridge] updateCheckpoints: malformed JSON', e);
+    }
   },
   notifyRollback(json: string) {
     try {
       const rollback = JSON.parse(json);
       stores?.getChatStore().applyRollback(rollback);
-    } catch { /* ignore malformed JSON */ }
+    } catch (e) {
+      console.warn('[bridge] notifyRollback: malformed JSON', e);
+    }
   },
   setSmartWorkingPhrase(phrase: string) {
     stores?.getChatStore().setSmartWorkingPhrase(phrase);

@@ -1018,7 +1018,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           artifact: { title, source },
         }],
       }));
-    } catch { /* malformed payload, skip */ }
+    } catch (e) {
+      console.warn('[chatStore] addArtifact: malformed payload', e);
+    }
   },
 
   // ── Sub-Agent Actions ──
