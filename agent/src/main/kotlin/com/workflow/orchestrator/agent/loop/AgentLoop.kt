@@ -507,6 +507,12 @@ class AgentLoop(
                 }
             )
 
+            // Final flush of any remaining buffer content after stream ends
+            if (brain.xmlToolMode && !insideXmlTool && xmlTagBuffer.isNotEmpty()) {
+                onStreamChunk(xmlTagBuffer.toString())
+                xmlTagBuffer.clear()
+            }
+
             // Stage 2: Handle API errors with retry for transient failures
             if (apiResult is ApiResult.Error) {
                 // Context overflow detection (from Cline)
