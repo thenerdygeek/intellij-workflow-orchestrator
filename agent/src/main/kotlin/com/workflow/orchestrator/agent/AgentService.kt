@@ -196,12 +196,14 @@ class AgentService(private val project: Project) : Disposable {
             }
         }
 
-        log.info("[Agent] Creating brain with model: $modelId at $sgUrl")
+        val xmlMode = PluginSettings.getInstance(project).state.useXmlToolMode
+        log.info("[Agent] Creating brain with model: $modelId at $sgUrl (xmlToolMode=$xmlMode)")
 
         return OpenAiCompatBrain(
             sourcegraphUrl = sgUrl,
             tokenProvider = tokenProvider,
-            model = modelId
+            model = modelId,
+            xmlToolMode = xmlMode
         )
     }
 
@@ -610,11 +612,13 @@ class AgentService(private val project: Project) : Disposable {
                 val fbUrl = fbConnections.state.sourcegraphUrl.trimEnd('/')
                 val fbCredentialStore = CredentialStore()
                 val fbTokenProvider = { fbCredentialStore.getToken(ServiceType.SOURCEGRAPH) }
+                val fbXmlMode = PluginSettings.getInstance(project).state.useXmlToolMode
                 val brainFactory: suspend (String, String?) -> LlmBrain = { modelId: String, reason: String? ->
                     val newBrain = OpenAiCompatBrain(
                         sourcegraphUrl = fbUrl,
                         tokenProvider = fbTokenProvider,
-                        model = modelId
+                        model = modelId,
+                        xmlToolMode = fbXmlMode
                     ).also { b ->
                         b.setApiDebugDir(sessionDebugDir)
                         // Inherit the shared API call counter so call-NNN-*.txt filenames
