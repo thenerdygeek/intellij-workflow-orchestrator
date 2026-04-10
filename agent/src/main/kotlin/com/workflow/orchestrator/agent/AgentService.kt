@@ -197,13 +197,19 @@ class AgentService(private val project: Project) : Disposable {
         }
 
         val xmlMode = PluginSettings.getInstance(project).state.useXmlToolMode
-        log.info("[Agent] Creating brain with model: $modelId at $sgUrl (xmlToolMode=$xmlMode)")
+        val allToolNames = registry.getActiveTools().keys
+        val allParamNames = registry.getActiveTools().values
+            .flatMap { it.parameters.properties.keys }
+            .toSet()
+        log.info("[Agent] Creating brain with model: $modelId at $sgUrl (xmlToolMode=$xmlMode, tools=${allToolNames.size}, params=${allParamNames.size})")
 
         return OpenAiCompatBrain(
             sourcegraphUrl = sgUrl,
             tokenProvider = tokenProvider,
             model = modelId,
-            xmlToolMode = xmlMode
+            xmlToolMode = xmlMode,
+            toolNameSet = allToolNames,
+            paramNameSet = allParamNames
         )
     }
 
@@ -613,12 +619,18 @@ class AgentService(private val project: Project) : Disposable {
                 val fbCredentialStore = CredentialStore()
                 val fbTokenProvider = { fbCredentialStore.getToken(ServiceType.SOURCEGRAPH) }
                 val fbXmlMode = PluginSettings.getInstance(project).state.useXmlToolMode
+                val fbToolNames = registry.getActiveTools().keys
+                val fbParamNames = registry.getActiveTools().values
+                    .flatMap { it.parameters.properties.keys }
+                    .toSet()
                 val brainFactory: suspend (String, String?) -> LlmBrain = { modelId: String, reason: String? ->
                     val newBrain = OpenAiCompatBrain(
                         sourcegraphUrl = fbUrl,
                         tokenProvider = fbTokenProvider,
                         model = modelId,
-                        xmlToolMode = fbXmlMode
+                        xmlToolMode = fbXmlMode,
+                        toolNameSet = fbToolNames,
+                        paramNameSet = fbParamNames
                     ).also { b ->
                         b.setApiDebugDir(sessionDebugDir)
                         // Inherit the shared API call counter so call-NNN-*.txt filenames
@@ -689,7 +701,7 @@ class AgentService(private val project: Project) : Disposable {
                 val deferredCatalog = registry.getDeferredCatalogGrouped()
 
                 // Build system prompt — XML tool definitions added dynamically below
-                val systemPromptBuilder = { toolDefsXml: String? ->
+                val systemPromptBuilder = { toolDefsMarkdown: String? ->
                     SystemPrompt.build(
                         projectName = projectName,
                         projectPath = projectPath,
@@ -700,7 +712,7 @@ class AgentService(private val project: Project) : Disposable {
                         taskProgress = ctx.getTaskProgress(),
                         deferredToolCatalog = deferredCatalog,
                         coreMemoryXml = coreMemory?.compile(),
-                        toolDefinitionsXml = toolDefsXml
+                        toolDefinitionsMarkdown = toolDefsMarkdown
                     )
                 }
                 // Set initial system prompt (XML defs added on first toolDefinitionProvider call)
@@ -735,8 +747,8 @@ class AgentService(private val project: Project) : Disposable {
                         val defsHash = defs.map { it.function.name }.hashCode()
                         if (defsHash != lastXmlToolDefsHash) {
                             lastXmlToolDefsHash = defsHash
-                            val xml = com.workflow.orchestrator.core.ai.XmlToolDefinitionBuilder.build(defs)
-                            ctx.setSystemPrompt(systemPromptBuilder(xml))
+                            val markdown = com.workflow.orchestrator.core.ai.ToolPromptBuilder.build(defs)
+                            ctx.setSystemPrompt(systemPromptBuilder(markdown))
                         }
                     }
 
