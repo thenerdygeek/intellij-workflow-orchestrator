@@ -52,6 +52,8 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
          * - "stream_interrupt": execute each tool as soon as it appears (Cline-style, responsive)
          */
         var toolExecutionMode by string("accumulate")
+        /** Enable blur/fade animations on streaming text in the chat UI. */
+        var chatAnimationsEnabled by property(true)
     }
 
     companion object {

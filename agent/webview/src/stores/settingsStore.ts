@@ -25,13 +25,21 @@ const defaultVisualizations: Record<VisualizationType, VisualizationConfig> = {
 
 interface SettingsState {
   visualizations: Record<VisualizationType, VisualizationConfig>;
+  chatAnimationsEnabled: boolean;
   updateVisualization(type: VisualizationType, config: Partial<VisualizationConfig>): void;
+  setChatAnimationsEnabled(enabled: boolean): void;
   resetVisualization(type: VisualizationType): void;
   resetAll(): void;
 }
 
 export const useSettingsStore = create<SettingsState>((set) => ({
   visualizations: { ...defaultVisualizations },
+
+  chatAnimationsEnabled: !(window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false),
+
+  setChatAnimationsEnabled(enabled: boolean) {
+    set({ chatAnimationsEnabled: enabled });
+  },
 
   updateVisualization(type: VisualizationType, config: Partial<VisualizationConfig>) {
     set(state => ({

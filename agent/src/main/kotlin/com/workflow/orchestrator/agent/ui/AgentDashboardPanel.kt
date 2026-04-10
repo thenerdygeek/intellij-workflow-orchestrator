@@ -542,6 +542,10 @@ class AgentDashboardPanel(
         runOnEdt { cefPanel?.setRalphLoop(enabled) }
     }
 
+    fun setChatAnimationsEnabled(enabled: Boolean) {
+        runOnEdt { cefPanel?.setChatAnimationsEnabled(enabled) }
+    }
+
     // ── Sub-Agent boundary card delegation ──
 
     fun spawnSubAgent(agentId: String, label: String) {

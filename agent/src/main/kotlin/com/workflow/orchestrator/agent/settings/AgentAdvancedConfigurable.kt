@@ -27,6 +27,7 @@ class AgentAdvancedConfigurable(
     private var showDebugLog = agentSettings.state.showDebugLog
     private var smartWorkingIndicator = agentSettings.state.smartWorkingIndicator
     private var powershellEnabled = agentSettings.state.powershellEnabled
+    private var chatAnimationsEnabled = agentSettings.state.chatAnimationsEnabled
 
     override fun getId(): String = "workflow.orchestrator.agent.advanced"
     override fun getDisplayName(): String = "Advanced"
@@ -53,6 +54,11 @@ class AgentAdvancedConfigurable(
                         .comment(
                             "When disabled, the agent cannot use PowerShell — only bash and cmd are available"
                         )
+                }
+                row {
+                    checkBox("Enable chat animations")
+                        .bindSelected(::chatAnimationsEnabled)
+                        .comment("Adds smooth blur/fade-in effects to streaming text. Disable for reduced motion.")
                 }
             }
 
@@ -120,12 +126,14 @@ class AgentAdvancedConfigurable(
         agentSettings.state.showDebugLog = showDebugLog
         agentSettings.state.smartWorkingIndicator = smartWorkingIndicator
         agentSettings.state.powershellEnabled = powershellEnabled
+        agentSettings.state.chatAnimationsEnabled = chatAnimationsEnabled
     }
 
     override fun reset() {
         showDebugLog = agentSettings.state.showDebugLog
         smartWorkingIndicator = agentSettings.state.smartWorkingIndicator
         powershellEnabled = agentSettings.state.powershellEnabled
+        chatAnimationsEnabled = agentSettings.state.chatAnimationsEnabled
         dialogPanel?.reset()
     }
 
