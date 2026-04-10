@@ -66,19 +66,20 @@ export function ThinkingView({ content, isStreaming }: ThinkingViewProps) {
       className="group/thinking mb-2"
     >
       <div role="region" aria-label="Agent reasoning">
-        <ReasoningTrigger
-          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[12px] transition-colors hover:bg-[var(--hover-overlay)]"
-          aria-label={`${open ? 'Collapse' : 'Expand'} reasoning`}
-        >
-          <Brain className="size-3 shrink-0" style={{ color: 'var(--fg-muted)' }} />
-          <span style={{ color: 'var(--fg-secondary)' }}>
-            {isStreaming ? (
-              <TextShimmer duration={2} spread={30}>{label}</TextShimmer>
-            ) : (
-              label
-            )}
-          </span>
-          <span className="flex-1" />
+        <div className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[12px] transition-colors hover:bg-[var(--hover-overlay)]">
+          <ReasoningTrigger
+            className="flex flex-1 items-center gap-2"
+            aria-label={`${open ? 'Collapse' : 'Expand'} reasoning`}
+          >
+            <Brain className="size-3 shrink-0" style={{ color: 'var(--fg-muted)' }} />
+            <span style={{ color: 'var(--fg-secondary)' }}>
+              {isStreaming ? (
+                <TextShimmer duration={2} spread={30}>{label}</TextShimmer>
+              ) : (
+                label
+              )}
+            </span>
+          </ReasoningTrigger>
           {!isStreaming && content && (
             <CopyButton
               text={content}
@@ -87,7 +88,7 @@ export function ThinkingView({ content, isStreaming }: ThinkingViewProps) {
               className="opacity-0 group-hover/thinking:opacity-100"
             />
           )}
-        </ReasoningTrigger>
+        </div>
 
         <ReasoningContent
           className="transition-all duration-300 ease-in-out"

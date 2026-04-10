@@ -1088,11 +1088,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const msg = messages[idx];
       if (msg && msg.subAgent) {
         const subAgent = { ...msg.subAgent };
+        const resolvedStatus: ToolCallStatus =
+          data.status === 'COMPLETED' ? 'COMPLETED'
+            : data.status === 'ERROR' ? 'ERROR'
+              : 'RUNNING';
         const toolCall: ToolCall = {
           id: nextId('satool'),
           name: data.toolName || 'unknown',
-          args: data.toolArgs || '{}',
-          status: 'RUNNING'
+          args: data.toolArgs || data.args || '{}',
+          status: resolvedStatus,
+          durationMs: data.durationMs,
+          result: data.result,
         };
         subAgent.activeToolChain = [...(subAgent.activeToolChain || []), toolCall];
         messages[idx] = { ...msg, subAgent };

@@ -368,6 +368,9 @@ export function DiffHtml({ diffSource, onAcceptHunk, onRejectHunk }: DiffHtmlPro
         .diff-container .d2h-code-linenumber { color: var(--fg-muted, #555) !important; background: transparent !important; border-color: var(--border) !important; }
         .diff-container .d2h-cntx .d2h-code-side-line,
         .diff-container .d2h-cntx .d2h-code-line { background: transparent !important; color: var(--fg) !important; }
+        /* Word-level change highlights — override diff2html's bright defaults */
+        .diff-container .d2h-del del { background: var(--diff-rem-bg, rgba(244,71,71,0.25)) !important; color: var(--diff-rem-fg, #fca5a5) !important; text-decoration: none !important; border-radius: 2px; }
+        .diff-container .d2h-ins ins { background: var(--diff-add-bg, rgba(106,153,85,0.25)) !important; color: var(--diff-add-fg, #86efac) !important; text-decoration: none !important; border-radius: 2px; }
         .diff-container td { border-color: var(--border, #333) !important; }
         .diff-container .d2h-diff-table { border-collapse: collapse; }
       `}</style>
