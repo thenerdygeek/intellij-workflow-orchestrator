@@ -42,6 +42,10 @@ __pycache__/
 
 # Temporary snapshots
 /flow-snapshot.md
+/CHANGELOG.md
+
+# Test/lab result artifacts
+docs/Result_*/
 
 # Vite
 agent/webview/.vite/
