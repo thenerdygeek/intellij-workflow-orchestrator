@@ -130,6 +130,11 @@ class AgentController(
     /** Last LLM stream text snippet — gives Haiku context about what the agent is thinking. */
     @Volatile private var lastStreamSnippet: String = ""
 
+    /** Coalesces rapid-fire stream chunks into ~16ms batched bridge dispatches. */
+    private val streamBatcher = StreamBatcher(
+        onFlush = { batched -> dashboard.appendStreamToken(batched) }
+    )
+
     /** Resolves @file, @folder, @symbol, @tool, /skill, #ticket mentions into rich context for the LLM. */
     private val mentionContextBuilder = MentionContextBuilder(project)
 
@@ -275,6 +280,8 @@ class AgentController(
         // The tool blocks on pendingQuestions deferred. When the user sends a message,
         // executeTask() intercepts it and resolves the deferred directly.
         com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.showSimpleQuestionCallback = { question, optionsJson ->
+            // Drain stream batcher before UI flush so buffered tokens appear before the question
+            streamBatcher.flush()
             invokeLater {
                 // Flush any in-progress stream + finalize tool chain so the question
                 // appears AFTER prior tool calls, not mixed in
@@ -855,9 +862,7 @@ class AgentController(
     private fun onStreamChunk(chunk: String) {
         // Capture a rolling snippet of the LLM's output for Haiku phrase context
         lastStreamSnippet = (lastStreamSnippet + chunk).takeLast(150)
-        invokeLater {
-            dashboard.appendStreamToken(chunk)
-        }
+        streamBatcher.append(chunk)
     }
 
     /**
@@ -1134,6 +1139,9 @@ class AgentController(
 
         val durationMs = System.currentTimeMillis() - taskStartTime
 
+        // Drain the stream batcher before UI flush so no buffered tokens are lost
+        streamBatcher.flush()
+
         invokeLater {
             // Flush any remaining stream content
             dashboard.flushStreamBuffer()
@@ -1280,6 +1288,7 @@ class AgentController(
         userInputChannel = null
         loopWaitingForInput = false
         steeringQueue.clear()
+        streamBatcher.clear()
     }
 
     fun newChat() {
@@ -1855,6 +1864,7 @@ class AgentController(
             service.cancelCurrentTask()
         }
         clearActiveLoopState()
+        streamBatcher.dispose()
         phraseTimerJob?.cancel()
         phraseTimerJob = null
         contextManager = null
