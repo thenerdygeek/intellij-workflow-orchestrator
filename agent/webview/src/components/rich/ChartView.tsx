@@ -1,28 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { RichBlock } from './RichBlock';
 import { useThemeStore } from '@/stores/themeStore';
+import { chartRegistry, updateChartById, removeChartFromRegistry, deepMergeChartConfig } from './chartUtils';
 
-// ── Chart instance registry for incremental updates ──
-
-const chartRegistry = new Map<string, any>();
-(window as any).__chartRegistry = chartRegistry;
-
-// Global function callable from Kotlin via JCEF to push incremental chart data updates
+// Global function callable from Kotlin via JCEF — delegates to shared utility
 (window as any).updateChart = (id: string, json: string) => {
-  const chart = chartRegistry.get(id);
-  if (chart && chart.canvas?.isConnected) {
-    try {
-      const update = JSON.parse(json);
-      if (update.data) {
-        Object.assign(chart.data, update.data);
-        chart.update('active');
-      }
-      if (update.options) {
-        Object.assign(chart.options, update.options);
-        chart.update('active');
-      }
-    } catch { /* ignore malformed JSON */ }
-  }
+  updateChartById(id, json);
 };
 
 // ── Singleton lazy-load for Chart.js ──
@@ -121,8 +104,9 @@ export function ChartView({ source }: ChartViewProps) {
       const canvas = canvasRef.current;
       if (!canvas) return;
 
-      // Destroy previous chart instance
+      // Destroy previous chart instance — clean registry BEFORE nulling ref
       if (chartRef.current) {
+        removeChartFromRegistry(chartRef.current);
         chartRef.current.destroy();
         chartRef.current = null;
       }
@@ -141,12 +125,14 @@ export function ChartView({ source }: ChartViewProps) {
       if (config.action === 'update' && chartId) {
         const existing = chartRegistry.get(chartId);
         if (existing && existing.canvas?.isConnected) {
-          // Merge new data into existing chart
+          // Deep-merge new data into existing chart (preserves nested structures)
           if (config.data) {
-            Object.assign(existing.data, config.data);
+            const merged = deepMergeChartConfig(existing.data, config.data as Record<string, unknown>);
+            Object.assign(existing.data, merged);
           }
           if (config.options) {
-            Object.assign(existing.options, config.options);
+            const merged = deepMergeChartConfig(existing.options, config.options as Record<string, unknown>);
+            Object.assign(existing.options, merged);
           }
           existing.update('active');
           setIsReady(true);
@@ -162,6 +148,13 @@ export function ChartView({ source }: ChartViewProps) {
       m.Chart.defaults.color = fgMuted;
       m.Chart.defaults.borderColor = gridColor;
 
+      // Build theme defaults, then deep-merge user config on top
+      const userOptions = (config.options ?? {}) as Record<string, unknown>;
+      const userPlugins = (userOptions.plugins ?? {}) as Record<string, unknown>;
+      const userLegend = (userPlugins.legend ?? {}) as Record<string, unknown>;
+      const userLegendLabels = (userLegend.labels ?? {}) as Record<string, unknown>;
+      const userTitle = (userPlugins.title ?? {}) as Record<string, unknown>;
+
       const chartConfig = {
         ...config,
         options: {
@@ -171,52 +164,27 @@ export function ChartView({ source }: ChartViewProps) {
             duration: 800,
             easing: 'easeOutQuart' as const,
           },
-          plugins: {
-            legend: {
-              labels: { color: fg },
-            },
-            title: {
-              color: fg,
-            },
-            ...(config.options as Record<string, unknown>)?.plugins as Record<string, unknown> ?? {},
-          },
-          scales: applyScaleColors(
-            (config.options as Record<string, unknown>)?.scales as Record<string, unknown> | undefined,
-            fg,
-            gridColor,
-          ),
-          ...(config.options as Record<string, unknown> ?? {}),
+          ...userOptions,
         },
       };
 
-      // Re-apply plugins/scales after spread (spread of config.options above would overwrite them)
       const finalOptions = chartConfig.options as Record<string, unknown>;
       finalOptions.plugins = {
-        ...(config.options as Record<string, unknown>)?.plugins as Record<string, unknown> ?? {},
+        ...userPlugins,
         legend: {
-          labels: { color: fg },
-          ...((config.options as Record<string, unknown>)?.plugins as Record<string, unknown>)?.legend as Record<string, unknown> ?? {},
+          ...userLegend,
+          labels: { color: fg, ...userLegendLabels },
         },
         title: {
           color: fg,
-          ...((config.options as Record<string, unknown>)?.plugins as Record<string, unknown>)?.title as Record<string, unknown> ?? {},
+          ...userTitle,
         },
       };
       finalOptions.scales = applyScaleColors(
-        (config.options as Record<string, unknown>)?.scales as Record<string, unknown> | undefined,
+        userOptions.scales as Record<string, unknown> | undefined,
         fg,
         gridColor,
       );
-
-      // If previous chart had an ID, remove it from registry before creating new
-      if (chartRef.current) {
-        for (const [key, val] of chartRegistry) {
-          if (val === chartRef.current) {
-            chartRegistry.delete(key);
-            break;
-          }
-        }
-      }
 
       chartRef.current = new m.Chart(canvas, chartConfig as ConstructorParameters<typeof m.Chart>[1]);
 
@@ -238,13 +206,7 @@ export function ChartView({ source }: ChartViewProps) {
 
     return () => {
       if (chartRef.current) {
-        // Remove from registry on unmount
-        for (const [key, val] of chartRegistry) {
-          if (val === chartRef.current) {
-            chartRegistry.delete(key);
-            break;
-          }
-        }
+        removeChartFromRegistry(chartRef.current);
         chartRef.current.destroy();
         chartRef.current = null;
       }
@@ -274,7 +236,10 @@ export function ChartView({ source }: ChartViewProps) {
         type: (parsed.type as string) ?? 'chart',
         title: ((parsed.options as any)?.plugins?.title?.text as string) ?? null,
       };
-    } catch { return { type: 'chart', title: null }; }
+    } catch (e) {
+      console.warn('[chart] Failed to parse chart meta from source', e);
+      return { type: 'chart', title: null };
+    }
   })();
 
   return (
