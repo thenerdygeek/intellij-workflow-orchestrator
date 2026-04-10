@@ -563,14 +563,23 @@ class AgentDashboardPanel(
         broadcast(replay = false) { it.updateSubAgentIteration(agentId, iteration) }
     }
 
-    fun addSubAgentToolCall(agentId: String, toolName: String, toolArgs: String) {
-        runOnEdt { cefPanel?.addSubAgentToolCall(agentId, toolName, toolArgs) }
-        broadcast(replay = false) { it.addSubAgentToolCall(agentId, toolName, toolArgs) }
+    fun addSubAgentToolCall(agentId: String, toolCallId: String, toolName: String, toolArgs: String) {
+        runOnEdt { cefPanel?.addSubAgentToolCall(agentId, toolCallId, toolName, toolArgs) }
+        broadcast(replay = false) { it.addSubAgentToolCall(agentId, toolCallId, toolName, toolArgs) }
     }
 
-    fun updateSubAgentToolCall(agentId: String, toolName: String, result: String, durationMs: Long, isError: Boolean) {
-        runOnEdt { cefPanel?.updateSubAgentToolCall(agentId, toolName, result, durationMs, isError) }
-        broadcast(replay = false) { it.updateSubAgentToolCall(agentId, toolName, result, durationMs, isError) }
+    fun updateSubAgentToolCall(
+        agentId: String,
+        toolCallId: String,
+        toolName: String,
+        result: String,
+        durationMs: Long,
+        isError: Boolean
+    ) {
+        runOnEdt { cefPanel?.updateSubAgentToolCall(agentId, toolCallId, toolName, result, durationMs, isError) }
+        broadcast(replay = false) {
+            it.updateSubAgentToolCall(agentId, toolCallId, toolName, result, durationMs, isError)
+        }
     }
 
     fun updateSubAgentMessage(agentId: String, textContent: String) {

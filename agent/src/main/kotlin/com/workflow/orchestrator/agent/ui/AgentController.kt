@@ -89,6 +89,21 @@ class AgentController(
      * Pending approval deferred — the agent loop suspends on this while
      * waiting for the user to approve/deny a write tool execution.
      * Completed by the JCEF approval card callbacks.
+     *
+     * **Concurrency invariant:** only one approval gate is ever pending at
+     * a time, because:
+     *  1. Within a single orchestrator session, `AgentLoop.executeToolCalls`
+     *     walks `toolCalls` sequentially — each `approvalGate.invoke(...)`
+     *     call fully `await()`s before the next iteration runs.
+     *  2. Subagents spawned via [SpawnAgentTool] → [SubagentRunner] construct
+     *     their `AgentLoop` **without** an `approvalGate`, so parallel
+     *     research subagents never touch this field.
+     *
+     * If this invariant is ever violated (e.g. someone wires `approvalGate =
+     * ::approvalGate` into `SubagentRunner`) the reentry will be caught by
+     * the guarded log warning in [approvalGate]. Before restoring that
+     * wiring, convert this field to a `ConcurrentHashMap<String,
+     * CompletableDeferred<ApprovalResult>>` keyed by toolCallId.
      */
     private var pendingApproval: CompletableDeferred<ApprovalResult>? = null
 
@@ -869,6 +884,22 @@ class AgentController(
      */
     private suspend fun approvalGate(toolName: String, args: String, riskLevel: String): ApprovalResult {
         val deferred = CompletableDeferred<ApprovalResult>()
+        // Defensive reentry guard — see the invariant described on [pendingApproval].
+        // If a second approvalGate call arrives while the first is still waiting,
+        // cancel the previous deferred so the old await() throws instead of hanging
+        // forever (a race we would otherwise have no way to detect). This should
+        // never fire under the current architecture; a warning here is the signal
+        // that someone plumbed the approval gate into a parallel worker.
+        val stale = pendingApproval
+        if (stale != null && !stale.isCompleted) {
+            LOG.warn(
+                "AgentController: approvalGate re-entered while a prior approval " +
+                    "(tool='${pendingApprovalToolName}') was still pending — " +
+                    "cancelling the stale deferred. New tool='$toolName'. " +
+                    "This indicates a concurrency bug — see pendingApproval docs."
+            )
+            stale.cancel(CancellationException("approvalGate re-entered"))
+        }
         pendingApproval = deferred
         pendingApprovalToolName = toolName
 
@@ -931,8 +962,12 @@ class AgentController(
         return try {
             deferred.await()
         } finally {
-            pendingApproval = null
-            pendingApprovalToolName = null
+            // Only clear the slot if we still own it — if a reentrant caller
+            // replaced our deferred while we were suspended, leave its entry alone.
+            if (pendingApproval === deferred) {
+                pendingApproval = null
+                pendingApprovalToolName = null
+            }
         }
     }
 
@@ -984,14 +1019,23 @@ class AgentController(
                 }
                 else -> {
                     // Tool starting — add a RUNNING tool chip to the subagent's chain.
-                    // Use raw toolName so the matching key in updateSubAgentToolCall works.
+                    // The toolCallId from [ToolCallProgress] is threaded through so the
+                    // webview can key parallel tool calls by exact ID instead of relying
+                    // on a first-RUNNING-by-name lookup (which would swap results for
+                    // parallel calls to the same tool — e.g. concurrent read_files).
                     update.toolStartName?.let { name ->
-                        dashboard.addSubAgentToolCall(agentId, name, update.toolStartArgs ?: "")
+                        dashboard.addSubAgentToolCall(
+                            agentId,
+                            update.toolCallId,
+                            name,
+                            update.toolStartArgs ?: ""
+                        )
                     }
                     // Tool completing — flip the matching RUNNING chip to COMPLETED/ERROR.
                     update.toolCompleteName?.let { name ->
                         dashboard.updateSubAgentToolCall(
                             agentId,
+                            update.toolCallId,
                             name,
                             update.toolCompleteResult ?: "",
                             update.toolCompleteDurationMs,

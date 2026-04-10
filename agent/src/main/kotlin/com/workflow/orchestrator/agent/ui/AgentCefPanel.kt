@@ -813,9 +813,10 @@ class AgentCefPanel(
         callJs("updateSubAgentIteration(${JsEscape.toJsString(payload)})")
     }
 
-    fun addSubAgentToolCall(agentId: String, toolName: String, toolArgs: String) {
+    fun addSubAgentToolCall(agentId: String, toolCallId: String, toolName: String, toolArgs: String) {
         val payload = buildJsonObject {
             put("agentId", agentId)
+            put("toolCallId", toolCallId)
             put("toolName", toolName)
             put("toolArgs", toolArgs)
         }.toString()
@@ -823,11 +824,12 @@ class AgentCefPanel(
     }
 
     fun updateSubAgentToolCall(
-        agentId: String, toolName: String, result: String,
+        agentId: String, toolCallId: String, toolName: String, result: String,
         durationMs: Long, isError: Boolean
     ) {
         val payload = buildJsonObject {
             put("agentId", agentId)
+            put("toolCallId", toolCallId)
             put("toolName", toolName)
             put("toolResult", result.take(2000))   // guard against huge results in the payload
             put("toolDurationMs", durationMs)
