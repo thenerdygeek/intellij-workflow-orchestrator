@@ -56,8 +56,9 @@ class SourcegraphChatClientStreamTest {
 
         val result = client.sendMessageStream(
             messages = listOf(ChatMessage(role = "user", content = "Hi")),
-            tools = null
-        ) { /* no-op chunk handler */ }
+            tools = null,
+            onChunk = { /* no-op chunk handler */ }
+        )
 
         assertTrue(result.isSuccess)
         val response = (result as ApiResult.Success).data
@@ -82,8 +83,9 @@ class SourcegraphChatClientStreamTest {
         val chunks = mutableListOf<StreamChunk>()
         client.sendMessageStream(
             messages = listOf(ChatMessage(role = "user", content = "Hi")),
-            tools = null
-        ) { chunk -> chunks.add(chunk) }
+            tools = null,
+            onChunk = { chunk -> chunks.add(chunk) }
+        )
 
         assertEquals(3, chunks.size)
         assertEquals("A", chunks[0].choices.first().delta.content)
@@ -114,8 +116,9 @@ class SourcegraphChatClientStreamTest {
                     properties = mapOf("path" to ParameterProperty(type = "string", description = "File path")),
                     required = listOf("path")
                 )
-            )))
-        ) { /* no-op */ }
+            ))),
+            onChunk = { /* no-op */ }
+        )
 
         assertTrue(result.isSuccess)
         val response = (result as ApiResult.Success).data
@@ -135,8 +138,9 @@ class SourcegraphChatClientStreamTest {
 
         val result = client.sendMessageStream(
             messages = listOf(ChatMessage(role = "user", content = "Hi")),
-            tools = null
-        ) { /* should not be called */ }
+            tools = null,
+            onChunk = { /* should not be called */ }
+        )
 
         assertTrue(result is ApiResult.Error)
         assertEquals(ErrorType.RATE_LIMITED, (result as ApiResult.Error).type)
@@ -148,8 +152,9 @@ class SourcegraphChatClientStreamTest {
 
         val result = client.sendMessageStream(
             messages = listOf(ChatMessage(role = "user", content = "Hi")),
-            tools = null
-        ) { /* should not be called */ }
+            tools = null,
+            onChunk = { /* should not be called */ }
+        )
 
         assertTrue(result is ApiResult.Error)
         assertEquals(ErrorType.AUTH_FAILED, (result as ApiResult.Error).type)
@@ -171,8 +176,9 @@ class SourcegraphChatClientStreamTest {
         val chunks = mutableListOf<StreamChunk>()
         val result = client.sendMessageStream(
             messages = listOf(ChatMessage(role = "user", content = "Hi")),
-            tools = null
-        ) { chunk -> chunks.add(chunk) }
+            tools = null,
+            onChunk = { chunk -> chunks.add(chunk) }
+        )
 
         assertTrue(result.isSuccess)
         val response = (result as ApiResult.Success).data
@@ -199,8 +205,9 @@ class SourcegraphChatClientStreamTest {
 
         client.sendMessageStream(
             messages = listOf(ChatMessage(role = "user", content = "Hi")),
-            tools = null
-        ) { /* no-op */ }
+            tools = null,
+            onChunk = { /* no-op */ }
+        )
 
         val request = server.takeRequest()
         assertEquals("POST", request.method)
@@ -223,8 +230,9 @@ class SourcegraphChatClientStreamTest {
 
         val result = client.sendMessageStream(
             messages = listOf(ChatMessage(role = "user", content = "Read files")),
-            tools = null
-        ) { /* no-op */ }
+            tools = null,
+            onChunk = { /* no-op */ }
+        )
 
         assertTrue(result.isSuccess)
         val toolCalls = (result as ApiResult.Success).data.choices.first().message.toolCalls
@@ -240,8 +248,9 @@ class SourcegraphChatClientStreamTest {
 
         val result = client.sendMessageStream(
             messages = listOf(ChatMessage(role = "user", content = "Hi")),
-            tools = null
-        ) { /* should not be called */ }
+            tools = null,
+            onChunk = { /* should not be called */ }
+        )
 
         assertTrue(result is ApiResult.Error)
         assertEquals(ErrorType.SERVER_ERROR, (result as ApiResult.Error).type)

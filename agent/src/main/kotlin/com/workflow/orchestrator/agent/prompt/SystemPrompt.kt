@@ -40,8 +40,8 @@ object SystemPrompt {
         deferredToolCatalog: Map<String, List<String>>? = null,
         /** Compiled core memory XML (Letta pattern: always in prompt if non-empty). */
         coreMemoryXml: String? = null,
-        /** XML tool definitions for Mode B (tools defined in prompt, not via API tools param). */
-        toolDefinitionsXml: String? = null
+        /** Markdown tool definitions for Cline-style XML format (tools defined in prompt). */
+        toolDefinitionsMarkdown: String? = null
     ): String = buildString {
 
         // 1. AGENT ROLE
@@ -77,12 +77,10 @@ object SystemPrompt {
             append(it)
         }
 
-        // 6c. XML TOOL DEFINITIONS (only when xmlToolMode active)
-        if (toolDefinitionsXml != null) {
+        // 6c. TOOL DEFINITIONS (when XML tool mode active)
+        if (toolDefinitionsMarkdown != null) {
             append(SECTION_SEP)
-            append("# Tool Definitions\n\n")
-            append("You have access to the following tools. To use a tool, output XML as shown below.\n\n")
-            append(toolDefinitionsXml)
+            append(toolDefinitionsMarkdown)
         }
 
         // 7. RULES
