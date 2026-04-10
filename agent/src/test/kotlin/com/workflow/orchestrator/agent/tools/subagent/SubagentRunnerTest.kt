@@ -361,6 +361,54 @@ class SubagentRunnerTest {
     }
 
     @Nested
+    inner class ToolExecutionModeTests {
+
+        @Test
+        fun `runner accepts toolExecutionMode parameter`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"Done with stream_interrupt mode."}"""
+                ))
+            ))
+
+            val runner = SubagentRunner(
+                brain = brain,
+                tools = buildTools(),
+                systemPrompt = "You are a test sub-agent.",
+                project = project,
+                maxIterations = 50,
+                planMode = false,
+                contextBudget = 50_000,
+                toolExecutionMode = "stream_interrupt"
+            )
+
+            val result = runner.run("Quick task") {}
+
+            assertEquals(SubagentRunStatus.COMPLETED, result.status)
+            assertNotNull(result.result)
+            assertTrue(result.result!!.contains("Done with stream_interrupt mode"))
+        }
+
+        @Test
+        fun `runner defaults to accumulate mode`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"Done with default mode."}"""
+                ))
+            ))
+
+            // Use createRunner helper which does NOT pass toolExecutionMode
+            val runner = createRunner(brain)
+
+            val result = runner.run("Quick task") {}
+
+            assertEquals(SubagentRunStatus.COMPLETED, result.status)
+            assertNotNull(result.result)
+            assertTrue(result.result!!.contains("Done with default mode"))
+        }
+    }
+
+    @Nested
     inner class XmlToolDefinitionTests {
 
         @Test

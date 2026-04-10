@@ -756,6 +756,7 @@ class AgentService(private val project: Project) : Disposable {
                     spawnAgentTool.contextBudget = agentSettings.state.maxInputTokens
                     spawnAgentTool.maxOutputTokens = agentSettings.state.maxOutputTokens
                     spawnAgentTool.sessionDebugDir = sessionDebugDir
+                    spawnAgentTool.toolExecutionMode = agentSettings.state.toolExecutionMode ?: "accumulate"
                     spawnAgentTool.onSubagentProgress = if (onSubagentProgress != null) {
                         { agentId, update -> onSubagentProgress(agentId, update) }
                     } else null
