@@ -173,6 +173,151 @@ Settings, Wrench, Bug, TestTube, Play, Pause, RotateCcw, RefreshCw,
 Plus, Minus, X, Check, Copy, Download, Upload, Trash2, Edit, Star
 ```
 
+### D3 (Full Namespace)
+
+The full `d3` library is available as a single scope variable. Useful for custom SVG visualizations, scales, geo projections, hierarchies, and force layouts.
+
+```jsx
+// Custom SVG arc chart
+const arc = d3.arc().innerRadius(40).outerRadius(80)
+const pie = d3.pie().value(d => d.value)
+
+// Color scales
+const color = d3.scaleOrdinal(d3.schemeCategory10)
+
+// Geo projections (for maps)
+const projection = d3.geoNaturalEarth1()
+const pathGenerator = d3.geoPath(projection)
+```
+
+### Animation (motion/react)
+
+Scope variables: `motion`, `AnimatePresence`, `useMotionValue`, `useTransform`, `useSpring`, `useInView`, `useScroll`, `useAnimation`
+
+```jsx
+// Animated card entrance
+<motion.div
+  initial={{ opacity: 0, y: 20 }}
+  animate={{ opacity: 1, y: 0 }}
+  transition={{ duration: 0.5 }}
+>
+  <Card>...</Card>
+</motion.div>
+
+// Staggered list animation
+{items.map((item, i) => (
+  <motion.div
+    key={item.id}
+    initial={{ opacity: 0, x: -20 }}
+    animate={{ opacity: 1, x: 0 }}
+    transition={{ delay: i * 0.1 }}
+  >
+    ...
+  </motion.div>
+))}
+
+// AnimatePresence for mount/unmount
+<AnimatePresence>
+  {selected && (
+    <motion.div
+      key="detail"
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.95 }}
+    >
+      ...
+    </motion.div>
+  )}
+</AnimatePresence>
+```
+
+### Globe (cobe)
+
+`createGlobe` renders an interactive 3D globe on a canvas element. Useful for showing geographic distribution, server locations, or global reach.
+
+```jsx
+export default function GlobeView() {
+  const canvasRef = useRef(null)
+
+  useEffect(() => {
+    let phi = 0
+    const globe = createGlobe(canvasRef.current, {
+      devicePixelRatio: 2,
+      width: 400,
+      height: 400,
+      phi: 0,
+      theta: 0.3,
+      dark: bridge.isDark ? 1 : 0,
+      diffuse: 1.2,
+      mapSamples: 16000,
+      mapBrightness: bridge.isDark ? 2 : 6,
+      baseColor: bridge.isDark ? [0.3, 0.3, 0.3] : [1, 1, 1],
+      markerColor: [0.39, 0.4, 0.95],
+      glowColor: bridge.isDark ? [0.1, 0.1, 0.2] : [1, 1, 1],
+      markers: [
+        { location: [37.78, -122.41], size: 0.07 },
+        { location: [51.51, -0.13], size: 0.05 },
+        { location: [35.68, 139.69], size: 0.06 },
+      ],
+      onRender(state) {
+        state.phi = phi
+        phi += 0.005
+      },
+    })
+    return () => globe.destroy()
+  }, [])
+
+  return <canvas ref={canvasRef} width={400} height={400} className="mx-auto" />
+}
+```
+
+### Geographic Maps (react-simple-maps)
+
+Scope variables: `ComposableMap`, `Geographies`, `Geography`, `Marker`, `MapLine`, `ZoomableGroup`, `Graticule`, `Sphere`
+
+```jsx
+const geoUrl = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json"
+
+<ComposableMap>
+  <Geographies geography={geoUrl}>
+    {({ geographies }) =>
+      geographies.map(geo => (
+        <Geography
+          key={geo.rsSVGPath}
+          geography={geo}
+          fill="var(--fg-muted)"
+          stroke="var(--border)"
+        />
+      ))
+    }
+  </Geographies>
+  <Marker coordinates={[-122.41, 37.78]}>
+    <circle r={4} fill="var(--accent)" />
+  </Marker>
+</ComposableMap>
+```
+
+Note: react-simple-maps needs a TopoJSON data source. For offline use, inline the geo data directly in the artifact source rather than fetching from a URL.
+
+### Hand-drawn Graphics (roughjs)
+
+`rough` provides a sketchy, hand-drawn rendering style on canvas or SVG. Useful for informal diagrams, wireframes, or whiteboard-style visuals.
+
+```jsx
+export default function SketchDiagram() {
+  const canvasRef = useRef(null)
+
+  useEffect(() => {
+    const rc = rough.canvas(canvasRef.current)
+    rc.rectangle(10, 10, 200, 80, { roughness: 1.5, fill: 'var(--accent)', fillStyle: 'hachure' })
+    rc.circle(300, 50, 60, { roughness: 2, stroke: 'var(--success)' })
+    rc.line(210, 50, 270, 50, { roughness: 1.5 })
+  }, [])
+
+  return <canvas ref={canvasRef} width={400} height={100} />
+}
+```
+
 ### Important
 
 These are scope variables -- use directly, NOT as imports, NOT as props. Writing `import { useState } from 'react'` will cause a transpile error. Writing `export default function App({ bridge })` will shadow the scope variable. The correct pattern is:
