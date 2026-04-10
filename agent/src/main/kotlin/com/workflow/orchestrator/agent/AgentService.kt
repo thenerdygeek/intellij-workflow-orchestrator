@@ -688,6 +688,15 @@ class AgentService(private val project: Project) : Disposable {
                 // Build deferred catalog for system prompt injection (grouped by category)
                 val deferredCatalog = registry.getDeferredCatalogGrouped()
 
+                // Build initial XML tool definitions for system prompt (when xmlToolMode active).
+                // Uses the pre-filter tool list; plan mode filtering happens dynamically
+                // in toolDefinitionProvider below.
+                val initialToolDefsXml = if (brain.xmlToolMode) {
+                    val initialDefs = registry.getActiveTools().values
+                        .map { com.workflow.orchestrator.agent.tools.AgentTool.injectTaskProgress(it.toToolDefinition()) }
+                    com.workflow.orchestrator.core.ai.XmlToolDefinitionBuilder.build(initialDefs)
+                } else null
+
                 val systemPrompt = SystemPrompt.build(
                     projectName = projectName,
                     projectPath = projectPath,
@@ -697,7 +706,8 @@ class AgentService(private val project: Project) : Disposable {
                     activeSkillContent = ctx.getActiveSkill(),
                     taskProgress = ctx.getTaskProgress(),
                     deferredToolCatalog = deferredCatalog,
-                    coreMemoryXml = coreMemory?.compile()
+                    coreMemoryXml = coreMemory?.compile(),
+                    toolDefinitionsXml = initialToolDefsXml
                 )
                 ctx.setSystemPrompt(systemPrompt)
 
