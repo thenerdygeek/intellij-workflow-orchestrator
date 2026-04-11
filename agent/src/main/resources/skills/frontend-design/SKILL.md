@@ -18,7 +18,7 @@ Pause and run through three design decisions before touching JSX:
 2. **Pick an aesthetic direction:**
    - **Clean minimal** -- lots of whitespace, subtle borders, one accent color. Best for: architecture overviews, simple lists.
    - **Data-dense dashboard** -- compact cards, progress bars, badges, multiple metrics at once. Best for: build status, coverage reports, sprint summaries.
-   - **Visual / diagrammatic** -- connected nodes, flow arrows, layered diagrams. Best for: data flow, sequence diagrams, dependency graphs.
+   - **Visual / diagrammatic** -- connected nodes, flow arrows, layered diagrams. Best for: data flow, sequence diagrams, state machines, dependency graphs, architecture diagrams, pipelines. **Use `ReactFlowCanvas` for these -- NOT a grid of cards.** See the "Node/Edge Graphs" section below for the canonical pattern.
 
 3. **What is the interaction model?** Click a card to navigate to the file in the IDE? Hover for tooltip details? Tabs to switch views? Accordion to collapse sections? Selected state to highlight the active item? Decide before writing.
 
@@ -321,6 +321,124 @@ export default function SketchDiagram() {
   return <canvas ref={canvasRef} width={400} height={100} />
 }
 ```
+
+### Node/Edge Graphs (React Flow / @xyflow/react)
+
+Scope variables: `ReactFlowCanvas`, `Background`, `Controls`, `MiniMap`, `Handle`, `Position`, `MarkerType`, `useNodesState`, `useEdgesState`, `useReactFlow`, `addEdge`, `applyNodeChanges`, `applyEdgeChanges`, `ReactFlowProvider`, and the `ReactFlow` namespace.
+
+**When to use:** anything with *relationships between entities* -- flow diagrams, state machines, pipelines, sequence diagrams, dependency graphs, architecture diagrams, service topology, "how X connects to Y". If the user asks for a "flow", "diagram", or "graph", this is the primitive -- do NOT fall back to a card grid.
+
+**Layout direction:** set `sourcePosition` / `targetPosition` per node.
+- Left-to-right flow: `Position.Right` / `Position.Left`
+- Top-to-bottom flow: `Position.Bottom` / `Position.Top`
+
+**Sizing:** the parent div of `ReactFlowCanvas` MUST have an explicit height (`h-64`, `h-80`, `h-96`). Without a sized container, nothing renders.
+
+**Custom node content:** put JSX (icons, multi-line labels) in `data.label`. When you do, set the node's top-level `style` to `{ background: 'transparent', border: 'none', padding: 0, width: 'auto' }` so your inner JSX owns the appearance.
+
+**Edges:** `animated: true` + `markerEnd: { type: MarkerType.ArrowClosed }` + `style: { stroke: 'var(--accent)', strokeWidth: 2 }` for directional animated edges. Use `strokeDasharray: '4 4'` + `var(--error)` stroke for alternate/cancel/error paths. Color edges with the same semantic palette as nodes.
+
+```jsx
+export default function BuildPipelineFlow() {
+  const [nodes, , onNodesChange] = useNodesState([
+    {
+      id: 'src',
+      position: { x: 0, y: 80 },
+      data: {
+        label: (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-[var(--border)] bg-[var(--bg-card)] text-[var(--fg)] text-xs font-semibold">
+            <GitBranch size={14} style={{ color: 'var(--accent)' }} />
+            Source
+          </div>
+        ),
+      },
+      sourcePosition: Position.Right,
+      targetPosition: Position.Left,
+      style: { background: 'transparent', border: 'none', padding: 0, width: 'auto' },
+    },
+    {
+      id: 'build',
+      position: { x: 220, y: 80 },
+      data: {
+        label: (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-[var(--border)] bg-[var(--bg-card)] text-[var(--fg)] text-xs font-semibold">
+            <Package size={14} style={{ color: 'var(--success)' }} />
+            Build
+          </div>
+        ),
+      },
+      sourcePosition: Position.Right,
+      targetPosition: Position.Left,
+      style: { background: 'transparent', border: 'none', padding: 0, width: 'auto' },
+    },
+    {
+      id: 'deploy',
+      position: { x: 440, y: 80 },
+      data: {
+        label: (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-[var(--border)] bg-[var(--bg-card)] text-[var(--fg)] text-xs font-semibold">
+            <Server size={14} style={{ color: 'var(--warning)' }} />
+            Deploy
+          </div>
+        ),
+      },
+      sourcePosition: Position.Right,
+      targetPosition: Position.Left,
+      style: { background: 'transparent', border: 'none', padding: 0, width: 'auto' },
+    },
+  ])
+
+  const [edges, , onEdgesChange] = useEdgesState([
+    {
+      id: 'e1',
+      source: 'src',
+      target: 'build',
+      animated: true,
+      markerEnd: { type: MarkerType.ArrowClosed },
+      style: { stroke: 'var(--accent)', strokeWidth: 2 },
+    },
+    {
+      id: 'e2',
+      source: 'build',
+      target: 'deploy',
+      animated: true,
+      markerEnd: { type: MarkerType.ArrowClosed },
+      style: { stroke: 'var(--success)', strokeWidth: 2 },
+    },
+  ])
+
+  return (
+    <Card className="bg-[var(--bg-card)] border-[var(--border)]">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-semibold text-[var(--fg)]">Build Pipeline</CardTitle>
+        <CardDescription className="text-xs text-[var(--fg-muted)]">
+          Source to production
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="h-64 w-full rounded-md border border-[var(--border)] bg-[var(--bg)]">
+          <ReactFlowCanvas
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            fitView
+            fitViewOptions={{ padding: 0.2 }}
+            nodesDraggable={false}
+            nodesConnectable={false}
+            proOptions={{ hideAttribution: true }}
+          >
+            <Background gap={14} size={1} color="var(--border)" />
+            <Controls showInteractive={false} />
+          </ReactFlowCanvas>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+```
+
+**Anti-patterns for flows:** Do NOT render flows as vertical `<Card>` stacks, `Accordion` sections, or grids -- those are for lists and comparisons, not for entities with directional relationships. Even for only 2-3 steps, `ReactFlowCanvas` is the right primitive because it renders actual arrows, not implied order.
 
 ### Important
 

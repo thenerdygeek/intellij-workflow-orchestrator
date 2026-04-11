@@ -64,6 +64,7 @@ import * as RadixSeparator from '@radix-ui/react-separator'
 
 import * as dateFns from 'date-fns'
 import * as XYFlow from '@xyflow/react'
+import '@xyflow/react/dist/style.css'
 import * as ReactTable from '@tanstack/react-table'
 import { colord, extend as colordExtend } from 'colord'
 
