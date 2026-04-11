@@ -28,6 +28,7 @@ class AutoMemoryManagerTest {
     @TempDir lateinit var tempDir: Path
     private lateinit var coreMemory: CoreMemory
     private lateinit var archival: ArchivalMemory
+    private lateinit var extractionLog: ExtractionLog
     private val client = mockk<SourcegraphChatClient>()
     private lateinit var manager: AutoMemoryManager
 
@@ -35,10 +36,12 @@ class AutoMemoryManagerTest {
     fun setUp() {
         coreMemory = CoreMemory(tempDir.resolve("core-memory.json").toFile())
         archival = ArchivalMemory(tempDir.resolve("archival/store.json").toFile())
+        extractionLog = ExtractionLog(tempDir.resolve("extraction-log.jsonl").toFile())
         manager = AutoMemoryManager(
             coreMemory = coreMemory,
             archivalMemory = archival,
-            client = client
+            client = client,
+            extractionLog = extractionLog
         )
     }
 
@@ -275,6 +278,47 @@ class AutoMemoryManagerTest {
             val results = archival.search("insight")
             assertEquals(1, results.size)
             assertTrue(results[0].entry.tags.contains("auto"))
+        }
+    }
+
+    @Nested
+    inner class AuditLog {
+
+        @Test
+        fun `records successful extractions to log`() = runTest {
+            val extractionJson = """{"core_memory_updates":[{"block":"user","action":"append","content":"Backend dev"}],"archival_inserts":[]}"""
+            mockLlmResponse(extractionJson)
+
+            val messages = listOf(
+                ChatMessage(role = "user", content = "Fix the authentication bug in UserService"),
+                ChatMessage(role = "assistant", content = "I'll investigate"),
+                ChatMessage(role = "user", content = "The issue is with Optional unwrapping"),
+                ChatMessage(role = "assistant", content = "Fixed")
+            )
+
+            manager.onSessionComplete("session-1", messages)
+
+            val entries = extractionLog.loadRecent(10)
+            assertEquals(1, entries.size)
+            assertEquals("session-1", entries[0].sessionId)
+            assertEquals("Backend dev", entries[0].coreUpdates[0].content)
+        }
+
+        @Test
+        fun `does not record when extraction produces no updates`() = runTest {
+            val extractionJson = """{"core_memory_updates":[],"archival_inserts":[]}"""
+            mockLlmResponse(extractionJson)
+
+            val messages = listOf(
+                ChatMessage(role = "user", content = "Fix the authentication bug in UserService"),
+                ChatMessage(role = "assistant", content = "I'll investigate"),
+                ChatMessage(role = "user", content = "The issue is with Optional unwrapping"),
+                ChatMessage(role = "assistant", content = "Fixed")
+            )
+
+            manager.onSessionComplete("session-1", messages)
+
+            assertTrue(extractionLog.loadRecent(10).isEmpty())
         }
     }
 

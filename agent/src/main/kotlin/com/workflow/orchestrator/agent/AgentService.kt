@@ -30,6 +30,7 @@ import com.workflow.orchestrator.agent.memory.ArchivalMemory
 import com.workflow.orchestrator.agent.memory.ConversationRecall
 import com.workflow.orchestrator.agent.memory.CoreMemory
 import com.workflow.orchestrator.agent.memory.auto.AutoMemoryManager
+import com.workflow.orchestrator.agent.memory.auto.ExtractionLog
 import com.workflow.orchestrator.agent.observability.AgentFileLogger
 import com.workflow.orchestrator.agent.observability.SessionMetrics
 import com.workflow.orchestrator.agent.tools.builtin.*
@@ -169,6 +170,16 @@ class AgentService(private val project: Project) : Disposable {
     }
 
     /**
+     * Public accessor for the extraction log, used by the Memory settings page.
+     * Returns a fresh instance each call rather than caching — cheap (only reads
+     * JSONL when loadRecent is called) and avoids stale-cache issues between the
+     * live AutoMemoryManager instance and the settings page.
+     */
+    fun getExtractionLog(): ExtractionLog {
+        return ExtractionLog.forProject(agentDir)
+    }
+
+    /**
      * Reload core + archival memory from disk. Called by the Memory settings page
      * after the user saves edits, so the next task sees the latest state instead
      * of the agent's cached snapshot. Fixes data-loss bug C1.
@@ -244,11 +255,14 @@ class AgentService(private val project: Project) : Disposable {
                     }
                 }
 
+                val extractionLog = ExtractionLog.forProject(agentDir)
+
                 val mgr = AutoMemoryManager(
                     coreMemory = core,
                     archivalMemory = archival,
                     client = extractionClient,
-                    pathExists = pathChecker
+                    pathExists = pathChecker,
+                    extractionLog = extractionLog
                 )
                 autoMemoryManager = mgr
                 log.info("[AgentService] AutoMemoryManager initialized with model: ${cheapModel.modelName}")

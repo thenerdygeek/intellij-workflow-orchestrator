@@ -22,7 +22,8 @@ class AutoMemoryManager(
     private val coreMemory: CoreMemory,
     private val archivalMemory: ArchivalMemory,
     client: SourcegraphChatClient,
-    pathExists: (String) -> Boolean = { true }
+    pathExists: (String) -> Boolean = { true },
+    private val extractionLog: ExtractionLog? = null
 ) {
     private val log = Logger.getInstance(AutoMemoryManager::class.java)
     private val extractor = MemoryExtractor(client)
@@ -77,7 +78,7 @@ class AutoMemoryManager(
             val currentCore = buildCoreMemoryMap()
             val result = extractor.extractFromSession(messages, currentCore) ?: return
 
-            applyExtractionResult(result, source = "session-end/$sessionId")
+            applyExtractionResult(result, source = "session-end/$sessionId", sessionId = sessionId)
         } catch (e: Exception) {
             log.warn("[AutoMemory] Session-end extraction failed for $sessionId (non-fatal)", e)
         }
@@ -96,9 +97,11 @@ class AutoMemoryManager(
         }
     }
 
-    private fun applyExtractionResult(result: ExtractionResult, source: String) {
+    private fun applyExtractionResult(result: ExtractionResult, source: String, sessionId: String) {
         var coreUpdates = 0
         var archivalInserts = 0
+        val appliedCoreUpdates = mutableListOf<CoreMemoryUpdate>()
+        val appliedArchivalInserts = mutableListOf<ArchivalInsert>()
 
         for (update in result.coreMemoryUpdates) {
             // I2 fix: whitelist check prevents LLM hallucinated block names from
@@ -112,6 +115,7 @@ class AutoMemoryManager(
                     UpdateAction.APPEND -> {
                         coreMemory.append(update.block, update.content)
                         coreUpdates++
+                        appliedCoreUpdates.add(update)
                     }
                     UpdateAction.REPLACE -> {
                         val oldContent = update.oldContent
@@ -119,6 +123,7 @@ class AutoMemoryManager(
                             // Use fuzzy match — Haiku cannot produce exact strings reliably
                             coreMemory.replaceFlexible(update.block, oldContent, update.content)
                             coreUpdates++
+                            appliedCoreUpdates.add(update)
                         } else {
                             log.warn("[AutoMemory] Replace without old_content for block '${update.block}', skipping")
                         }
@@ -138,6 +143,7 @@ class AutoMemoryManager(
                 val tags = insert.tags.ifEmpty { listOf("auto") }
                 archivalMemory.insert(insert.content, tags)
                 archivalInserts++
+                appliedArchivalInserts.add(insert.copy(tags = tags))
             } catch (e: Exception) {
                 log.warn("[AutoMemory] Failed to insert archival entry: ${e.message}")
             }
@@ -145,6 +151,12 @@ class AutoMemoryManager(
 
         if (coreUpdates > 0 || archivalInserts > 0) {
             log.info("[AutoMemory] Applied from $source: $coreUpdates core updates, $archivalInserts archival inserts")
+            // Record to audit log for settings-page visibility
+            try {
+                extractionLog?.record(sessionId, source, appliedCoreUpdates, appliedArchivalInserts)
+            } catch (e: Exception) {
+                log.warn("[AutoMemory] Failed to record extraction log: ${e.message}")
+            }
         }
     }
 
