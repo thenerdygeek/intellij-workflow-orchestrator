@@ -1,5 +1,5 @@
 import { memo, useMemo } from 'react';
-import Markdown from 'react-markdown';
+import { Streamdown, useIsCodeFenceIncomplete } from 'streamdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { visit } from 'unist-util-visit';
@@ -23,32 +23,13 @@ interface MarkdownRendererProps {
   isStreaming?: boolean;
 }
 
-function hasOpenCodeFence(text: string): boolean {
-  const fencePattern = /^```/gm;
-  const matches = text.match(fencePattern);
-  if (!matches) return false;
-  return matches.length % 2 !== 0;
-}
+/* ─────────────────────────────────────────────────────────────────────────────
+ * ASCII-art preprocessor (kept from the previous implementation).
+ * LLMs frequently emit box-drawing diagrams as plain text; without this pass
+ * markdown would collapse them into proportional-font <p> tags and destroy
+ * the alignment.
+ * ──────────────────────────────────────────────────────────────────────────── */
 
-function closeOpenFences(text: string): string {
-  if (hasOpenCodeFence(text)) {
-    return text + '\n```';
-  }
-  return text;
-}
-
-/**
- * Unicode character class pattern for box-drawing and block elements ONLY.
- * Narrow scope to avoid false positives on arrows (→ ←) and geometric
- * shapes (● ▲ ■) that frequently appear in regular prose.
- *
- * Ranges covered:
- *   U+2500–U+257F  Box Drawing (─ │ ┌ ┐ └ ┘ ├ ┤ ┬ ┴ ┼ etc.)
- *   U+2580–U+259F  Block Elements (█ ░ ▒ ▓ ▀ ▄ etc.)
- *
- * A line needs 3+ matches to be considered ASCII art — avoids
- * false positives on prose with occasional box chars like "see ├── below".
- */
 const ASCII_ART_CHAR_RE = /[\u2500-\u257F\u2580-\u259F]/g;
 
 function isAsciiArtLine(line: string): boolean {
@@ -56,19 +37,6 @@ function isAsciiArtLine(line: string): boolean {
   return matches !== null && matches.length >= 3;
 }
 
-/**
- * Pre-process markdown to wrap unfenced ASCII art in <pre> tags.
- *
- * LLMs frequently emit box-drawing diagrams, trees, and ASCII charts as
- * plain text (no code fences). Markdown collapses these into `<p>` tags
- * with a proportional font, destroying all alignment.
- *
- * This function scans for runs of consecutive lines containing box-drawing
- * characters that are NOT already inside a code fence, and wraps them in
- * raw `<pre class="ascii-art">` tags. Since rehypeRaw is enabled, these
- * render as monospace preformatted text that blends naturally into the
- * message — no CodeBlock chrome (no header, no copy/apply buttons).
- */
 function autoFenceAsciiArt(text: string): string {
   const lines = text.split('\n');
   const result: string[] = [];
@@ -78,14 +46,8 @@ function autoFenceAsciiArt(text: string): string {
 
   const flushArtBuffer = () => {
     if (artBuffer.length > 0) {
-      // Wrap each line in a div with overflow:hidden — the xterm.js technique.
-      // FiraCode Nerd Font's box-drawing glyphs extend beyond the line box
-      // (intentionally, for terminal seamless rendering). In CSS, this causes
-      // overlap between adjacent rows on Retina displays. Per-row clipping
-      // prevents the bleed while keeping the glyph edges flush.
       result.push('<pre class="ascii-art">');
       for (const artLine of artBuffer) {
-        // Escape < and > in content to prevent HTML injection, but preserve the text
         const safe = artLine.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         result.push(`<div class="ascii-row">${safe}</div>`);
       }
@@ -96,16 +58,12 @@ function autoFenceAsciiArt(text: string): string {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
-
-    // Track code fence state — don't touch content already inside fences
     if (line.trimStart().startsWith('```')) {
       flushArtBuffer();
       inFence = !inFence;
       result.push(line);
       continue;
     }
-
-    // Track raw <pre> blocks we emitted — don't re-process them
     if (line.includes('<pre class="ascii-art">')) {
       inHtmlPre = true;
       result.push(line);
@@ -116,39 +74,31 @@ function autoFenceAsciiArt(text: string): string {
       result.push(line);
       continue;
     }
-
     if (inFence || inHtmlPre) {
       result.push(line);
       continue;
     }
-
     if (isAsciiArtLine(line)) {
       artBuffer.push(line);
     } else {
-      // Non-art line — flush any buffered art, then emit normally
       flushArtBuffer();
       result.push(line);
     }
   }
-
-  // Flush any trailing art block
   flushArtBuffer();
-
   return result.join('\n');
 }
 
-/**
- * Remark plugin to preserve code fence meta strings through the AST.
- * react-markdown doesn't pass meta by default; this plugin attaches it
- * as `data.meta` on the code node so it survives through to rehype.
- */
+/* ─────────────────────────────────────────────────────────────────────────────
+ * remark plugin to preserve code fence meta strings (e.g. highlight={1,3-5})
+ * through the AST so the CodeBlock can apply line decorations.
+ * ──────────────────────────────────────────────────────────────────────────── */
 function remarkCodeMeta() {
   return (tree: any) => {
     visit(tree, 'code', (node: any) => {
       if (node.meta) {
         node.data = node.data || {};
         node.data.meta = node.meta;
-        // Also set hProperties so it appears on the HTML element
         node.data.hProperties = node.data.hProperties || {};
         node.data.hProperties['data-meta'] = node.meta;
       }
@@ -156,221 +106,251 @@ function remarkCodeMeta() {
   };
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Module-scope plugin arrays and component map.
+ *
+ * MUST stay at module scope so Streamdown's per-block React.memo doesn't
+ * defeat itself on every render. Streamdown 2.x CHANGELOG documents this
+ * exact bug mode with inline literals for linkSafety — same trap applies
+ * to any inline `components` / `remarkPlugins` / `rehypePlugins` prop.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+const REMARK_PLUGINS = [remarkGfm, remarkCodeMeta] as const;
+const REHYPE_PLUGINS = [rehypeRaw] as const;
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
-function createMarkdownComponents(isStreaming: boolean): any {
-  return {
-  code({ className, children, node, ...props }: any) {
-    // Detect block code: react-markdown renders fenced code as <pre><code>,
-    // with className="language-xxx" when a language is specified. A bare ```
-    // fence (no language) still renders as <pre><code> but without className.
-    // We detect block by checking for language- prefix OR parent <pre> tag.
-    const hasLanguage = className?.startsWith('language-');
-    const isBlock = hasLanguage || node?.tagName === 'code' && node?.parent?.tagName === 'pre'
-      || (typeof children === 'string' && children.includes('\n'));
-    if (isBlock) {
-      const language = hasLanguage ? (className?.replace('language-', '') ?? '') : '';
-      const codeString = String(children).replace(/\n$/, '');
-      // Extract meta string from the AST node (set by remarkCodeMeta plugin)
-      const meta: string | undefined = node?.properties?.['data-meta'] ?? node?.data?.meta ?? props['data-meta'];
 
-      // Route special code fence languages to rich components
-      switch (language) {
-        case 'mermaid':
-          return <MermaidDiagram source={codeString} />;
-        case 'chart':
-          return <ChartView source={codeString} />;
-        case 'flow':
-          return <FlowDiagram source={codeString} />;
-        case 'math':
-          return <MathBlock latex={codeString} displayMode={true} />;
-        case 'diff':
-        case 'patch':
-          return <DiffHtml diffSource={codeString} />;
-        case 'ansi':
-          return <AnsiOutput text={codeString} />;
-        case 'table':
-          return <DataTable tableSource={codeString} />;
-        case 'output':
-          return <CollapsibleOutput outputSource={codeString} />;
-        case 'progress':
-          return <ProgressView progressSource={codeString} />;
-        case 'timeline':
-          return <TimelineView timelineSource={codeString} />;
-        case 'image':
-          return <ImageView imageSource={codeString} />;
-        case 'react':
-        case 'artifact':
-          return <ArtifactRenderer source={codeString} />;
-        case 'html-interactive':
-        case 'visualization':
-        case 'viz':
-          return <InteractiveHtml htmlContent={codeString} />;
-      }
+/**
+ * CustomPre: the `pre` override. Streamdown wraps fenced code in <pre><code>.
+ * We return a Fragment to unwrap the <pre> so our custom `code` override
+ * gets to render either CodeBlock (Shiki) or the streaming-code-plain
+ * fallback, based on useIsCodeFenceIncomplete() for the currently-last block.
+ *
+ * The one exception is the ASCII-art <pre class="ascii-art"> emitted by
+ * autoFenceAsciiArt — pass those through unchanged.
+ */
+function CustomPre({ children, className, ...props }: any) {
+  if (className === 'ascii-art') {
+    return (
+      <pre className="ascii-art" {...props}>
+        {children}
+      </pre>
+    );
+  }
+  return <>{children}</>;
+}
 
-      // Default: Shiki CodeBlock (language defaults to 'code' for bare fences)
-      return <CodeBlock code={codeString} language={language || 'code'} isStreaming={isStreaming} meta={meta} />;
+/**
+ * CodeNode: the `code` override.
+ *
+ * If we're inside an incomplete code fence (the last block of a streaming
+ * message, fence not yet closed), skip Shiki entirely and render plain
+ * monospace via .streaming-code-plain. Shiki is ~7x slower than Prism and
+ * ~44x slower than highlight.js; running it on every token for an unclosed
+ * fence wrecks the streaming feel. This is the pattern from Vercel's
+ * Streamdown docs and assistant-ui.
+ */
+function CodeNode({ className, children, node, ...props }: any) {
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const isIncomplete = useIsCodeFenceIncomplete();
+
+  const hasLanguage = className?.startsWith('language-');
+  const isBlock =
+    hasLanguage ||
+    (node?.tagName === 'code' && node?.parent?.tagName === 'pre') ||
+    (typeof children === 'string' && children.includes('\n'));
+
+  if (isBlock) {
+    const language = hasLanguage ? (className?.replace('language-', '') ?? '') : '';
+    const codeString = String(children).replace(/\n$/, '');
+    const meta: string | undefined =
+      node?.properties?.['data-meta'] ?? node?.data?.meta ?? props['data-meta'];
+
+    // Streaming-aware fallback for the currently-open fence.
+    if (isIncomplete) {
+      return <pre className="streaming-code-plain">{codeString}</pre>;
     }
-    return (
-      <code
-        className="rounded bg-[var(--code-bg)] px-1 py-0.5 font-[var(--font-mono,'JetBrains_Mono',monospace)] text-[12px]"
-        {...props}
-      >
-        {children}
-      </code>
-    );
-  },
 
-  // Override <pre> to prevent double-wrapping: react-markdown renders fenced code
-  // as <pre><code>…</code></pre>, but our code() component already returns a
-  // fully-wrapped CodeBlock/RichBlock. Rendering a bare <pre> avoids nesting.
-  // However, preserve <pre class="ascii-art"> blocks from the auto-fencer.
-  pre({ children, className, ...props }: any) {
-    if (className === 'ascii-art') {
-      return (
-        <pre className="ascii-art" {...props}>
-          {children}
-        </pre>
-      );
+    // Route special languages to rich components (unchanged from before).
+    switch (language) {
+      case 'mermaid':
+        return <MermaidDiagram source={codeString} />;
+      case 'chart':
+        return <ChartView source={codeString} />;
+      case 'flow':
+        return <FlowDiagram source={codeString} />;
+      case 'math':
+        return <MathBlock latex={codeString} displayMode={true} />;
+      case 'diff':
+      case 'patch':
+        return <DiffHtml diffSource={codeString} />;
+      case 'ansi':
+        return <AnsiOutput text={codeString} />;
+      case 'table':
+        return <DataTable tableSource={codeString} />;
+      case 'output':
+        return <CollapsibleOutput outputSource={codeString} />;
+      case 'progress':
+        return <ProgressView progressSource={codeString} />;
+      case 'timeline':
+        return <TimelineView timelineSource={codeString} />;
+      case 'image':
+        return <ImageView imageSource={codeString} />;
+      case 'react':
+      case 'artifact':
+        return <ArtifactRenderer source={codeString} />;
+      case 'html-interactive':
+      case 'visualization':
+      case 'viz':
+        return <InteractiveHtml htmlContent={codeString} />;
     }
-    return <>{children}</>;
-  },
 
-  a({ href, children, ...props }: any) {
-    return (
-      <a
-        href={href}
-        className="text-[var(--link)] underline decoration-[var(--link)]/30 hover:decoration-[var(--link)]"
-        onClick={(e: React.MouseEvent) => {
-          e.preventDefault();
-          if (href) {
-            (window as any)._navigateToFile?.(href);
-          }
-        }}
-        {...props}
-      >
+    return <CodeBlock code={codeString} language={language || 'code'} isStreaming={false} meta={meta} />;
+  }
+
+  return (
+    <code
+      className="rounded bg-[var(--code-bg)] px-1 py-0.5 font-[var(--font-mono,'JetBrains_Mono',monospace)] text-[12px]"
+      {...props}
+    >
+      {children}
+    </code>
+  );
+}
+
+function AnchorNode({ href, children, ...props }: any) {
+  return (
+    <a
+      href={href}
+      className="text-[var(--link)] underline decoration-[var(--link)]/30 hover:decoration-[var(--link)]"
+      onClick={(e: React.MouseEvent) => {
+        e.preventDefault();
+        if (href) {
+          (window as any)._navigateToFile?.(href);
+        }
+      }}
+      {...props}
+    >
+      {children}
+    </a>
+  );
+}
+
+function TableNode({ children, ...props }: any) {
+  return (
+    <div className="my-2 overflow-x-auto rounded border border-[var(--border)]">
+      <table className="w-full text-[12px]" {...props}>
         {children}
-      </a>
-    );
-  },
+      </table>
+    </div>
+  );
+}
 
-  table({ children, ...props }: any) {
-    return (
-      <div className="my-2 overflow-x-auto rounded border border-[var(--border)]">
-        <table className="w-full text-[12px]" {...props}>
-          {children}
-        </table>
-      </div>
-    );
-  },
+function ThNode({ children, ...props }: any) {
+  return (
+    <th
+      className="border-b border-[var(--border)] bg-[var(--toolbar-bg)] px-3 py-1.5 text-left text-[11px] font-semibold text-[var(--fg-secondary)]"
+      {...props}
+    >
+      {children}
+    </th>
+  );
+}
 
-  th({ children, ...props }: any) {
-    return (
-      <th
-        className="border-b border-[var(--border)] bg-[var(--toolbar-bg)] px-3 py-1.5 text-left text-[11px] font-semibold text-[var(--fg-secondary)]"
-        {...props}
-      >
-        {children}
-      </th>
-    );
-  },
+function TdNode({ children, ...props }: any) {
+  return (
+    <td className="border-b border-[var(--divider-subtle)] px-3 py-1.5" {...props}>
+      {children}
+    </td>
+  );
+}
 
-  td({ children, ...props }: any) {
-    return (
-      <td
-        className="border-b border-[var(--divider-subtle)] px-3 py-1.5"
-        {...props}
-      >
-        {children}
-      </td>
-    );
-  },
+function BlockquoteNode({ children, ...props }: any) {
+  return (
+    <blockquote
+      className="my-2 border-l-2 border-[var(--accent,#6366f1)] pl-3 text-[var(--fg-secondary)] italic"
+      {...props}
+    >
+      {children}
+    </blockquote>
+  );
+}
 
-  blockquote({ children, ...props }: any) {
-    return (
-      <blockquote
-        className="my-2 border-l-2 border-[var(--accent,#6366f1)] pl-3 text-[var(--fg-secondary)] italic"
-        {...props}
-      >
-        {children}
-      </blockquote>
-    );
-  },
+function HrNode(props: any) {
+  return <hr className="my-3 border-[var(--divider-subtle)]" {...props} />;
+}
 
-  hr(props: any) {
-    return (
-      <hr
-        className="my-3 border-[var(--divider-subtle)]"
-        {...props}
-      />
-    );
-  },
+function UlNode({ children, ...props }: any) {
+  return (
+    <ul className="my-1 ml-4 list-disc space-y-0.5" {...props}>
+      {children}
+    </ul>
+  );
+}
 
-  ul({ children, ...props }: any) {
-    return (
-      <ul className="my-1 ml-4 list-disc space-y-0.5" {...props}>
-        {children}
-      </ul>
-    );
-  },
+function OlNode({ children, ...props }: any) {
+  return (
+    <ol className="my-1 ml-4 list-decimal space-y-0.5" {...props}>
+      {children}
+    </ol>
+  );
+}
 
-  ol({ children, ...props }: any) {
-    return (
-      <ol className="my-1 ml-4 list-decimal space-y-0.5" {...props}>
-        {children}
-      </ol>
-    );
-  },
-
-  p({ children, ...props }: any) {
-    if (typeof children === 'string' && children.includes('$')) {
-      const parts = children.split(/(\$[^$]+\$)/g);
-      return (
-        <p className="my-1.5" {...props}>
-          {parts.map((part: string, i: number) => {
-            if (part.startsWith('$') && part.endsWith('$') && part.length > 2) {
-              return <MathBlock key={i} latex={part.slice(1, -1)} displayMode={false} />;
-            }
-            return <span key={i}>{part}</span>;
-          })}
-        </p>
-      );
-    }
+function PNode({ children, ...props }: any) {
+  if (typeof children === 'string' && children.includes('$')) {
+    const parts = children.split(/(\$[^$]+\$)/g);
     return (
       <p className="my-1.5" {...props}>
-        {children}
+        {parts.map((part: string, i: number) => {
+          if (part.startsWith('$') && part.endsWith('$') && part.length > 2) {
+            return <MathBlock key={i} latex={part.slice(1, -1)} displayMode={false} />;
+          }
+          return <span key={i}>{part}</span>;
+        })}
       </p>
     );
-  },
-};
+  }
+  return (
+    <p className="my-1.5" {...props}>
+      {children}
+    </p>
+  );
 }
+
+const COMPONENTS = {
+  code: CodeNode,
+  pre: CustomPre,
+  a: AnchorNode,
+  table: TableNode,
+  th: ThNode,
+  td: TdNode,
+  blockquote: BlockquoteNode,
+  hr: HrNode,
+  ul: UlNode,
+  ol: OlNode,
+  p: PNode,
+} as const;
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 export const MarkdownRenderer = memo(function MarkdownRenderer({
   content,
   isStreaming = false,
 }: MarkdownRendererProps) {
-  const processedContent = useMemo(() => {
-    let text = autoFenceAsciiArt(content);
-    if (isStreaming) text = closeOpenFences(text);
-    return text;
-  }, [content, isStreaming]);
-
-  const components = useMemo(() => createMarkdownComponents(isStreaming), [isStreaming]);
+  const processedContent = useMemo(() => autoFenceAsciiArt(content), [content]);
 
   return (
     <div className="markdown-body text-[13px] leading-relaxed">
-      <Markdown
-        remarkPlugins={[remarkGfm, remarkCodeMeta]}
-        rehypePlugins={[rehypeRaw]}
-        components={components}
+      <Streamdown
+        mode={isStreaming ? 'streaming' : 'static'}
+        isAnimating={isStreaming}
+        caret={isStreaming ? 'block' : undefined}
+        parseIncompleteMarkdown
+        components={COMPONENTS as any}
+        remarkPlugins={REMARK_PLUGINS as unknown as any[]}
+        rehypePlugins={REHYPE_PLUGINS as unknown as any[]}
       >
         {processedContent}
-      </Markdown>
-      {isStreaming && hasOpenCodeFence(content) && (
-        <div className="relative my-2 rounded-md border border-[var(--border)] bg-[var(--code-bg)] overflow-hidden p-3">
-          <span className="block h-3 w-24 animate-pulse rounded bg-[var(--fg-muted)]/20" />
-        </div>
-      )}
+      </Streamdown>
     </div>
   );
 });
