@@ -815,10 +815,6 @@ class AgentCefPanel(
         callJs("setRalphLoop(${if (enabled) "true" else "false"})")
     }
 
-    fun setChatAnimationsEnabled(enabled: Boolean) {
-        callJs("setChatAnimationsEnabled(${if (enabled) "true" else "false"})")
-    }
-
     // ── Sub-Agent boundary card bridge methods ──
 
     fun spawnSubAgent(agentId: String, label: String) {

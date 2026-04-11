@@ -61,7 +61,6 @@ class AgentDashboardPanel(
     @Volatile private var cachedSkillsJson: String? = null
     @Volatile private var cachedPlanMode: Boolean = false
     @Volatile private var cachedDebugLogVisible: Boolean = false
-    @Volatile private var cachedChatAnimationsEnabled: Boolean = true
     @Volatile private var cachedBusy: Boolean = false
     @Volatile private var cachedInputLocked: Boolean = false
 
@@ -86,7 +85,6 @@ class AgentDashboardPanel(
         cachedSkillsJson?.let { panel.updateSkillsList(it) }
         if (cachedPlanMode) panel.setPlanMode(true)
         if (cachedDebugLogVisible) panel.setDebugLogVisible(true)
-        if (!cachedChatAnimationsEnabled) panel.setChatAnimationsEnabled(false)
         if (cachedBusy) panel.setBusy(true)
         if (cachedInputLocked) panel.setInputLocked(true)
         // Replay chat content log
@@ -547,12 +545,6 @@ class AgentDashboardPanel(
 
     fun setRalphLoop(enabled: Boolean) {
         runOnEdt { cefPanel?.setRalphLoop(enabled) }
-    }
-
-    fun setChatAnimationsEnabled(enabled: Boolean) {
-        cachedChatAnimationsEnabled = enabled
-        runOnEdt { cefPanel?.setChatAnimationsEnabled(enabled) }
-        broadcast(replay = false) { it.setChatAnimationsEnabled(enabled) }
     }
 
     // ── Sub-Agent boundary card delegation ──

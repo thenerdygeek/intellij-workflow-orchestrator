@@ -164,11 +164,6 @@ class AgentController(
         mentionContextBuilder.mentionSearchProvider = provider
     }
 
-    /** Push a chat-animations toggle change from Settings to the dashboard (and mirrors). */
-    fun setChatAnimationsEnabled(enabled: Boolean) {
-        dashboard.setChatAnimationsEnabled(enabled)
-    }
-
     init {
         Disposer.register(this, streamBatcher)
         wireCallbacks()
@@ -421,9 +416,6 @@ class AgentController(
                 LOG.warn("AgentController: subagent $agentId not found in running agents")
             }
         }
-
-        // Sync chat animation setting
-        dashboard.setChatAnimationsEnabled(AgentSettings.getInstance(project).state.chatAnimationsEnabled)
 
         // Set model name from settings
         val model = AgentSettings.getInstance(project).state.sourcegraphChatModel

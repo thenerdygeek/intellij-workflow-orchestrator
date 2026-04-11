@@ -3,7 +3,6 @@ package com.workflow.orchestrator.agent.settings
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.project.Project
 import com.intellij.ui.dsl.builder.*
-import com.workflow.orchestrator.agent.ui.AgentControllerRegistry
 import com.workflow.orchestrator.core.settings.PluginSettings
 import javax.swing.JComponent
 
@@ -28,7 +27,6 @@ class AgentAdvancedConfigurable(
     private var showDebugLog = agentSettings.state.showDebugLog
     private var smartWorkingIndicator = agentSettings.state.smartWorkingIndicator
     private var powershellEnabled = agentSettings.state.powershellEnabled
-    private var chatAnimationsEnabled = agentSettings.state.chatAnimationsEnabled
 
     override fun getId(): String = "workflow.orchestrator.agent.advanced"
     override fun getDisplayName(): String = "Advanced"
@@ -55,11 +53,6 @@ class AgentAdvancedConfigurable(
                         .comment(
                             "When disabled, the agent cannot use PowerShell — only bash and cmd are available"
                         )
-                }
-                row {
-                    checkBox("Enable chat animations")
-                        .bindSelected(::chatAnimationsEnabled)
-                        .comment("Adds smooth blur/fade-in effects to streaming text. Disable for reduced motion.")
                 }
             }
 
@@ -127,18 +120,12 @@ class AgentAdvancedConfigurable(
         agentSettings.state.showDebugLog = showDebugLog
         agentSettings.state.smartWorkingIndicator = smartWorkingIndicator
         agentSettings.state.powershellEnabled = powershellEnabled
-        agentSettings.state.chatAnimationsEnabled = chatAnimationsEnabled
-
-        // Push the animation toggle to the live webview (and any mirror panels)
-        AgentControllerRegistry.getInstance(project).controller
-            ?.setChatAnimationsEnabled(chatAnimationsEnabled)
     }
 
     override fun reset() {
         showDebugLog = agentSettings.state.showDebugLog
         smartWorkingIndicator = agentSettings.state.smartWorkingIndicator
         powershellEnabled = agentSettings.state.powershellEnabled
-        chatAnimationsEnabled = agentSettings.state.chatAnimationsEnabled
         dialogPanel?.reset()
     }
 
