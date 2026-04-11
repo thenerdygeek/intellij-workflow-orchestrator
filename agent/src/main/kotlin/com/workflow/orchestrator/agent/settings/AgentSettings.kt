@@ -46,6 +46,12 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
          * - "context_compaction": compact context and retry with the same model
          */
         var networkErrorStrategy by string("none")
+        /**
+         * Tool execution mode:
+         * - "accumulate": execute all tools after response completes (default, safe)
+         * - "stream_interrupt": execute each tool as soon as it appears (Cline-style, responsive)
+         */
+        var toolExecutionMode by string("accumulate")
     }
 
     companion object {

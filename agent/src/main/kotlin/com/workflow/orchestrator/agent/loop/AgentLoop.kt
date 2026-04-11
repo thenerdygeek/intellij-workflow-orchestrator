@@ -2,6 +2,9 @@ package com.workflow.orchestrator.agent.loop
 
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.core.ai.AssistantMessageParser
+import com.workflow.orchestrator.core.ai.TextContent
+import com.workflow.orchestrator.core.ai.ToolUseContent
 import com.workflow.orchestrator.agent.api.dto.ToolCall
 import com.workflow.orchestrator.agent.api.dto.ToolDefinition
 import com.workflow.orchestrator.agent.hooks.HookEvent
@@ -236,7 +239,13 @@ class AgentLoop(
      * When true, compact context and retry when timeout/network retries are exhausted
      * (instead of failing). Limited to [MAX_COMPACTION_RETRIES] attempts.
      */
-    private val compactOnTimeoutExhaustion: Boolean = false
+    private val compactOnTimeoutExhaustion: Boolean = false,
+    /** Tool execution mode: "accumulate" (default) or "stream_interrupt" (Cline-style). */
+    private val toolExecutionMode: String = "accumulate",
+    /** Dynamic provider for known tool names (re-read from registry each iteration for deferred tools). */
+    private val toolNameProvider: (() -> Set<String>)? = null,
+    /** Dynamic provider for known param names (re-read from registry each iteration for deferred tools). */
+    private val paramNameProvider: (() -> Set<String>)? = null
 ) {
     private val cancelled = AtomicBoolean(false)
     private var totalTokensUsed = 0
@@ -459,12 +468,52 @@ class AgentLoop(
             contextManager.setToolDefinitionTokens(
                 TokenEstimator.estimateToolDefinitions(currentToolDefs)
             )
+
+            // Block-based streaming presentation (Cline port)
+            // Accumulates text, re-parses on every chunk, sends only TextContent to UI.
+            // Tool/param names read from providers (updated when deferred tools load via request_tools).
+            val accumulatedText = StringBuilder()
+            var lastPresentedTextLength = 0
+            val currentToolNames = toolNameProvider?.invoke() ?: brain.toolNameSet
+            val currentParamNames = paramNameProvider?.invoke() ?: brain.paramNameSet
+
             val apiResult = brain.chatStream(
                 messages = contextManager.getMessages(),
                 tools = currentToolDefs,
                 maxTokens = maxOutputTokens,
                 onChunk = { chunk ->
-                    chunk.choices.firstOrNull()?.delta?.content?.let { onStreamChunk(it) }
+                    val text = chunk.choices.firstOrNull()?.delta?.content ?: return@chatStream
+
+                    // Always accumulate
+                    accumulatedText.append(text)
+
+                    // Re-parse full accumulated text
+                    val blocks = AssistantMessageParser.parse(
+                        accumulatedText.toString(),
+                        currentToolNames,
+                        currentParamNames
+                    )
+
+                    // Extract visible text (TextContent blocks only)
+                    val visibleText = blocks.filterIsInstance<TextContent>()
+                        .joinToString("\n\n") { it.content }
+
+                    // Only send NEW text to UI (delta since last presentation)
+                    val stripped = AssistantMessageParser.stripPartialTag(visibleText)
+                    if (stripped.length > lastPresentedTextLength) {
+                        val delta = stripped.substring(lastPresentedTextLength)
+                        onStreamChunk(delta)
+                        lastPresentedTextLength = stripped.length
+                    }
+
+                    // Stream-interrupt: if a tool block just completed, interrupt stream
+                    if (toolExecutionMode == "stream_interrupt") {
+                        val completedTool = blocks.filterIsInstance<ToolUseContent>()
+                            .firstOrNull { !it.partial }
+                        if (completedTool != null) {
+                            brain.interruptStream()
+                        }
+                    }
                 }
             )
 

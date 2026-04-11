@@ -149,4 +149,72 @@ class SourcegraphChatClientStreamTest {
         assertEquals(1, toolCalls!!.size) // Only first recovered from concat bug
         assertTrue(toolCalls[0].function.arguments.contains("A.kt"))
     }
+
+    @Test
+    fun `parses XML tool calls from text content when no native tools in request`() = runTest {
+        val xmlContent = "Let me read that.\n\n<read_file>\n<path>Foo.kt</path>\n</read_file>"
+        val escapedContent = xmlContent.replace("\"", "\\\"").replace("\n", "\\n")
+        val chunk1 = """{"id":"c1","choices":[{"index":0,"delta":{"role":"assistant","content":"$escapedContent"},"finish_reason":"stop"}]}"""
+        val usageChunk = """{"id":"c1","choices":[],"usage":{"prompt_tokens":200,"completion_tokens":30,"total_tokens":230}}"""
+
+        server.enqueue(sseResponse(chunk1, usageChunk))
+
+        // Create client with known tool names for the new parser
+        val xmlClient = SourcegraphChatClient(
+            baseUrl = server.url("/").toString(),
+            tokenProvider = { "test-token" },
+            model = "test-model",
+            httpClientOverride = OkHttpClient.Builder().build()
+        )
+
+        val result = xmlClient.sendMessageStream(
+            messages = listOf(ChatMessage(role = "user", content = "read Foo.kt")),
+            tools = null,
+            onChunk = {},
+            knownToolNames = setOf("read_file"),
+            knownParamNames = setOf("path")
+        )
+
+        assertInstanceOf(ApiResult.Success::class.java, result)
+        val response = (result as ApiResult.Success).data
+        assertEquals("tool_calls", response.choices.first().finishReason)
+        val toolCalls = response.choices.first().message.toolCalls
+        assertNotNull(toolCalls)
+        assertEquals(1, toolCalls!!.size)
+        assertEquals("read_file", toolCalls[0].function.name)
+        assertTrue(toolCalls[0].function.arguments.contains("Foo.kt"))
+        assertEquals("Let me read that.", response.choices.first().message.content?.trim())
+    }
+
+    @Test
+    fun `parses multiple parallel XML tool calls`() = runTest {
+        val xmlContent = "Reading both.\n\n<read_file>\n<path>A.kt</path>\n</read_file>\n\n<read_file>\n<path>B.kt</path>\n</read_file>"
+        val escapedContent = xmlContent.replace("\"", "\\\"").replace("\n", "\\n")
+        val chunk = """{"id":"c1","choices":[{"index":0,"delta":{"role":"assistant","content":"$escapedContent"},"finish_reason":"stop"}]}"""
+        val usageChunk = """{"id":"c1","choices":[],"usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150}}"""
+
+        server.enqueue(sseResponse(chunk, usageChunk))
+
+        val xmlClient = SourcegraphChatClient(
+            baseUrl = server.url("/").toString(),
+            tokenProvider = { "test-token" },
+            model = "test-model",
+            httpClientOverride = OkHttpClient.Builder().build()
+        )
+
+        val result = xmlClient.sendMessageStream(
+            messages = listOf(ChatMessage(role = "user", content = "read both")),
+            tools = null,
+            onChunk = {},
+            knownToolNames = setOf("read_file"),
+            knownParamNames = setOf("path")
+        )
+
+        assertInstanceOf(ApiResult.Success::class.java, result)
+        val toolCalls = (result as ApiResult.Success).data.choices.first().message.toolCalls
+        assertNotNull(toolCalls)
+        assertEquals(2, toolCalls!!.size)
+        assertTrue(toolCalls[0].function.arguments.contains("A.kt"))
+        assertTrue(toolCalls[1].function.arguments.contains("B.kt"))
+    }
 }

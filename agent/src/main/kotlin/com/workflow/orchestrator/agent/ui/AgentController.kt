@@ -300,10 +300,9 @@ class AgentController(
                     }
                     dashboard.showQuestions(wizardJson)
                 } else {
-                    // Questions WITHOUT options → show as agent message,
-                    // user types their answer freely in the chat input
-                    dashboard.appendStreamToken(question)
-                    dashboard.flushStreamBuffer()
+                    // Questions WITHOUT options → user types their answer freely in the chat input.
+                    // In XML mode (always on), the question text was already streamed to the UI
+                    // as part of the LLM's text content (before the tool block was parsed).
                     dashboard.setBusy(false)
                     dashboard.setInputLocked(false)
                     dashboard.focusInput()

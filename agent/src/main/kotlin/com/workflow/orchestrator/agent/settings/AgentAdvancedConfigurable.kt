@@ -2,10 +2,7 @@ package com.workflow.orchestrator.agent.settings
 
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.project.Project
-import com.intellij.ui.dsl.builder.bindIntText
-import com.intellij.ui.dsl.builder.bindSelected
-import com.intellij.ui.dsl.builder.bindText
-import com.intellij.ui.dsl.builder.panel
+import com.intellij.ui.dsl.builder.*
 import com.workflow.orchestrator.core.settings.PluginSettings
 import javax.swing.JComponent
 
@@ -56,6 +53,18 @@ class AgentAdvancedConfigurable(
                         .comment(
                             "When disabled, the agent cannot use PowerShell — only bash and cmd are available"
                         )
+                }
+            }
+
+            group("Tool Calling") {
+                row("Tool execution mode:") {
+                    comboBox(listOf("accumulate", "stream_interrupt"))
+                        .bindItem(
+                            { agentSettings.state.toolExecutionMode },
+                            { agentSettings.state.toolExecutionMode = it ?: "accumulate" }
+                        )
+                        .comment("accumulate: execute all tools after response completes (default). " +
+                            "stream_interrupt: execute each tool as soon as it appears (Cline-style).")
                 }
             }
 

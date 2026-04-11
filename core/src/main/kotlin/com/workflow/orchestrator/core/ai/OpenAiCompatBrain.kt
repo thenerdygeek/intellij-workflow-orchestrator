@@ -25,7 +25,9 @@ class OpenAiCompatBrain(
     private val model: String,
     connectTimeoutSeconds: Long = 30,
     readTimeoutSeconds: Long = 180,  // Increased for NO_KEEPALIVE safety on large prompts
-    httpClientOverride: OkHttpClient? = null
+    httpClientOverride: OkHttpClient? = null,
+    override val toolNameSet: Set<String> = emptySet(),
+    override val paramNameSet: Set<String> = emptySet()
 ) : LlmBrain {
 
     private val client = SourcegraphChatClient(
@@ -47,9 +49,11 @@ class OpenAiCompatBrain(
     ): ApiResult<ChatCompletionResponse> {
         return client.sendMessage(
             messages = messages,
-            tools = tools,
+            tools = null,  // XML mode always on: tools defined in system prompt
             maxTokens = maxTokens,
-            toolChoice = toolChoice // SourcegraphChatClient will ignore this
+            toolChoice = toolChoice, // SourcegraphChatClient will ignore this
+            knownToolNames = toolNameSet,
+            knownParamNames = paramNameSet
         )
     }
 
@@ -61,13 +65,19 @@ class OpenAiCompatBrain(
     ): ApiResult<ChatCompletionResponse> {
         return client.sendMessageStream(
             messages = messages,
-            tools = tools,
+            tools = null,  // XML mode always on: tools defined in system prompt
             maxTokens = maxTokens,
-            onChunk = onChunk
+            onChunk = onChunk,
+            knownToolNames = toolNameSet,
+            knownParamNames = paramNameSet
         )
     }
 
     override fun estimateTokens(text: String): Int = TokenEstimator.estimate(text)
+
+    override fun interruptStream() {
+        client.shouldInterruptStream = true
+    }
 
     override fun cancelActiveRequest() = client.cancelActiveRequest()
 
