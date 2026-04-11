@@ -8,8 +8,14 @@ package com.workflow.orchestrator.agent.memory.auto
  */
 object ExtractionPrompts {
 
-    /** Max conversation lines to include in extraction prompt. */
-    private const val MAX_CONVERSATION_LINES = 40
+    /** Number of initial lines to preserve (goal context). */
+    private const val KEEP_FIRST_LINES = 5
+
+    /** Number of recent lines to preserve (current state). */
+    private const val KEEP_LAST_LINES = 35
+
+    /** Total max preserved lines when truncating. */
+    internal const val MAX_CONVERSATION_LINES = KEEP_FIRST_LINES + KEEP_LAST_LINES
 
     /** Max characters per conversation line. */
     private const val MAX_LINE_LENGTH = 300
@@ -34,8 +40,17 @@ object ExtractionPrompts {
         conversationLines: List<String>,
         currentCoreMemory: Map<String, String>
     ): String {
-        val truncated = conversationLines
-            .takeLast(MAX_CONVERSATION_LINES)
+        // Preserve first N (goal context) + last M (current state) for long sessions.
+        // Short sessions (<= MAX_CONVERSATION_LINES) use all messages verbatim.
+        val preserved = if (conversationLines.size <= MAX_CONVERSATION_LINES) {
+            conversationLines
+        } else {
+            val firstPart = conversationLines.take(KEEP_FIRST_LINES)
+            val lastPart = conversationLines.takeLast(KEEP_LAST_LINES)
+            val omittedCount = conversationLines.size - MAX_CONVERSATION_LINES
+            firstPart + listOf("... [$omittedCount messages omitted] ...") + lastPart
+        }
+        val truncated = preserved
             .map { it.take(MAX_LINE_LENGTH) }
             .joinToString("\n")
 

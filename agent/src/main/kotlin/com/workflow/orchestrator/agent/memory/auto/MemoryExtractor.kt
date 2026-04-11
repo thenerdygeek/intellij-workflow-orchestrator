@@ -36,8 +36,8 @@ class MemoryExtractor(
         if (messages.isEmpty()) return null
 
         // M9 fix: log when truncation occurs so long-session debugging has a signal.
-        // ExtractionPrompts.sessionEndPrompt takes the last MAX_CONVERSATION_LINES (40).
-        if (messages.size > 40) {
+        // ExtractionPrompts.sessionEndPrompt preserves first 5 + last 35 lines of long conversations.
+        if (messages.size > ExtractionPrompts.MAX_CONVERSATION_LINES) {
             log.debug("[AutoMemory] Truncating ${messages.size} messages for extraction")
         }
 

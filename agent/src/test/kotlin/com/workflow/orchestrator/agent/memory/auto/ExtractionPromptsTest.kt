@@ -48,4 +48,38 @@ class ExtractionPromptsTest {
         assertTrue(sys.length < 500, "System message should be short for cheap model")
         assertTrue(sys.contains("JSON"))
     }
+
+    @Test
+    fun `session end prompt preserves first and last messages for long sessions`() {
+        // Simulate a long session: initial goal + many middle messages + final state
+        val messages = buildList {
+            add("user: INITIAL GOAL — fix the authentication bug")
+            add("assistant: Let me investigate")
+            repeat(50) { add("assistant: middle message $it that should be dropped") }
+            add("user: Actually it was a CORS issue, not auth")
+            add("assistant: Understood, updating fix")
+        }
+
+        val prompt = ExtractionPrompts.sessionEndPrompt(messages, emptyMap())
+
+        // First message (the goal) should be preserved
+        assertTrue(prompt.contains("INITIAL GOAL"), "Goal from first message should be preserved")
+        // Last message should be preserved
+        assertTrue(
+            prompt.contains("Updating fix") || prompt.contains("CORS issue"),
+            "Recent state from last messages should be preserved"
+        )
+        // Middle messages should be dropped. With 54 total messages and first 5 + last 35
+        // preserved, the dropped indices are 5..18 which correspond to "middle message 3"
+        // through "middle message 16". "middle message 10" is solidly in the dropped range.
+        assertFalse(
+            prompt.contains("middle message 10"),
+            "Middle messages should be dropped"
+        )
+        // There should be an omission marker
+        assertTrue(
+            prompt.contains("omitted") || prompt.contains("..."),
+            "Prompt should indicate omitted messages"
+        )
+    }
 }
