@@ -9,8 +9,10 @@ import com.workflow.orchestrator.core.model.ErrorType
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
+import io.mockk.slot
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -114,6 +116,53 @@ class MemoryExtractorTest {
 
             // Verify no LLM call was made
             coVerify(exactly = 0) { client.sendMessage(any(), any(), any(), any(), any()) }
+        }
+
+        @Test
+        fun `redacts credentials before sending to extraction LLM`() = runTest {
+            // I3 fix: capture the outgoing messages so we can assert on their content
+            val capturedSlot = slot<List<ChatMessage>>()
+            coEvery {
+                client.sendMessage(capture(capturedSlot), any(), any(), any(), any())
+            } returns ApiResult.Success(
+                ChatCompletionResponse(
+                    id = "test",
+                    choices = listOf(
+                        Choice(
+                            index = 0,
+                            message = ChatMessage(
+                                role = "assistant",
+                                content = "{\"core_memory_updates\":[],\"archival_inserts\":[]}"
+                            ),
+                            finishReason = "stop"
+                        )
+                    )
+                )
+            )
+
+            val messages = listOf(
+                ChatMessage(
+                    role = "user",
+                    content = "Here's the key:\n-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA1234567890abcdef\n-----END RSA PRIVATE KEY-----"
+                ),
+                ChatMessage(role = "assistant", content = "got it")
+            )
+
+            extractor.extractFromSession(messages, emptyMap())
+
+            val promptContent = capturedSlot.captured.firstOrNull()?.content ?: ""
+            assertFalse(
+                promptContent.contains("-----BEGIN RSA PRIVATE KEY-----"),
+                "Raw PEM private key should not be sent to extraction LLM"
+            )
+            assertFalse(
+                promptContent.contains("MIIEpAIBAAKCAQEA1234567890abcdef"),
+                "Raw PEM body should not be sent to extraction LLM"
+            )
+            assertTrue(
+                promptContent.contains("REDACTED"),
+                "Credential should be replaced with a REDACTED marker"
+            )
         }
     }
 

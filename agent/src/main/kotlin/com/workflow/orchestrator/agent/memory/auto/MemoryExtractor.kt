@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.memory.auto
 
 import com.intellij.openapi.diagnostic.Logger
+import com.workflow.orchestrator.agent.security.CredentialRedactor
 import com.workflow.orchestrator.core.ai.SourcegraphChatClient
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
 import com.workflow.orchestrator.core.model.ApiResult
@@ -34,9 +35,18 @@ class MemoryExtractor(
     ): ExtractionResult? {
         if (messages.isEmpty()) return null
 
+        // M9 fix: log when truncation occurs so long-session debugging has a signal.
+        // ExtractionPrompts.sessionEndPrompt takes the last MAX_CONVERSATION_LINES (40).
+        if (messages.size > 40) {
+            log.debug("[AutoMemory] Truncating ${messages.size} messages for extraction")
+        }
+
         val conversationLines = messages.mapNotNull { msg ->
             val content = msg.content ?: return@mapNotNull null
-            "${msg.role}: $content"
+            // I3 fix: redact credentials before sending to extraction LLM. Defends against
+            // secrets leaked in tool output being persisted to memory or re-injected in prompts.
+            val redacted = CredentialRedactor.redact(content)
+            "${msg.role}: $redacted"
         }
         if (conversationLines.isEmpty()) return null
 
