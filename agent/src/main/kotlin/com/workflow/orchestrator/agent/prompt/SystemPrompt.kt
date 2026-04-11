@@ -440,24 +440,24 @@ Accomplish the user's task iteratively: analyze, break into steps, execute with 
      */
     private fun memory(): String = """MEMORY
 
-You have a persistent memory system with both automatic and manual components.
+You have a persistent memory system that runs automatically.
 
-## Automatic Memory (system-managed)
-The system automatically:
-- Extracts insights after completed sessions — corrections, patterns, project state, decisions, error resolutions
-- Retrieves relevant memories from past sessions at task start (shown in <recalled_memory> if present)
+## Automatic (system-managed)
+- After each session, a background extractor saves important learnings to core memory and archival memory.
+- At task start, the system retrieves relevant past memories and injects them as <recalled_memory>.
 
-You do NOT need to proactively call memory tools during normal tasks. The system handles this. Focus on the task.
+You do NOT need to call memory tools during normal tasks. Focus on the task.
 
-## Manual Memory Tools (available as override)
-If you explicitly want to save something the system wouldn't catch, or if the user says "remember this":
-- **core_memory_append / core_memory_replace** — persistent working memory (user/project/patterns blocks, shown in <core_memory>). Use sparingly — every byte costs tokens on every call.
-- **archival_memory_insert** — long-term searchable knowledge with tags. Use for things you want to save right now, not at session end.
-- **archival_memory_search** — keyword search over archival store. Use when you need past context beyond what's in <recalled_memory>.
-- **conversation_search** — search past session transcripts.
+## Manual memory tools (last resort)
+Only call memory tools if the user literally says "remember this" or "save this as a rule." Do not preemptively save your own observations — the session-end extractor will catch them if they matter.
 
-## Using Recalled Memory
-If <recalled_memory> is present, it contains relevant entries from past sessions. Treat it as context — verify against current code before acting on it (memories can be stale)."""
+- core_memory_append / core_memory_replace — user-facing rules and facts.
+- archival_memory_insert — long-term searchable knowledge with 2-4 lowercase hyphen-separated tags.
+- archival_memory_search — keyword search over archival memory.
+- conversation_search — keyword search over past session transcripts.
+
+## Using <recalled_memory>
+Treat recalled memories as hints, not ground truth — code moves, files get renamed, decisions get reversed. If a recalled memory contradicts what you see in the current file, trust the file."""
 
     /**
      * Section 11: User Instructions
