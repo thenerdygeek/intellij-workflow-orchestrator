@@ -130,7 +130,14 @@ const REHYPE_PLUGINS = [rehypeRaw] as const;
  * autoFenceAsciiArt — pass those through unchanged.
  */
 function CustomPre({ children, className, ...props }: any) {
-  if (className === 'ascii-art') {
+  // rehype may hand us `className` as either a string or an array of classes
+  // (HAST spec uses array form; some adapters stringify, some don't).
+  // Accept both shapes so the ASCII-art passthrough stays reliable across
+  // Streamdown / react-markdown / unified adapter versions.
+  const classes = Array.isArray(className)
+    ? className
+    : (className ?? '').split(/\s+/).filter(Boolean);
+  if (classes.includes('ascii-art')) {
     return (
       <pre className="ascii-art" {...props}>
         {children}
@@ -154,17 +161,27 @@ function CodeNode({ className, children, node, ...props }: any) {
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const isIncomplete = useIsCodeFenceIncomplete();
 
+  // Fenced code blocks always get `className="language-<lang>"` (or
+  // `language-` for bare fences) from the markdown parser, so that is the
+  // only reliable "is this a block?" signal. Removed the old
+  // `node.parent?.tagName === 'pre'` check — HAST doesn't carry parent
+  // back-pointers by default and the check was dead in Streamdown's
+  // adapter. The newline fallback stays as defense-in-depth for plugins
+  // that inject code without a language class.
   const hasLanguage = className?.startsWith('language-');
   const isBlock =
-    hasLanguage ||
-    (node?.tagName === 'code' && node?.parent?.tagName === 'pre') ||
-    (typeof children === 'string' && children.includes('\n'));
+    hasLanguage || (typeof children === 'string' && children.includes('\n'));
 
   if (isBlock) {
     const language = hasLanguage ? (className?.replace('language-', '') ?? '') : '';
     const codeString = String(children).replace(/\n$/, '');
+    // Defense-in-depth across HAST adapters: remarkCodeMeta writes
+    // `data.hProperties['data-meta']`, which Streamdown's HAST→JSX adapter
+    // normalizes to `node.properties['data-meta']` OR `props['data-meta']`
+    // depending on version. Keep both paths so `highlight={…}` meta survives
+    // a library bump. Do not remove without re-verifying line highlights.
     const meta: string | undefined =
-      node?.properties?.['data-meta'] ?? node?.data?.meta ?? props['data-meta'];
+      node?.properties?.['data-meta'] ?? node?.properties?.dataMeta ?? props['data-meta'];
 
     // Streaming-aware fallback for the currently-open fence.
     if (isIncomplete) {
