@@ -82,11 +82,17 @@ describe('StreamingMessage — real-time markdown', () => {
     const plainPre = container.querySelector('pre.streaming-code-plain');
     expect(plainPre).toBeNull();
 
-    // CodeBlock wraps the Shiki output in a specific container; the existing
-    // CodeBlock component renders a <pre> with shiki classes after useShiki
-    // resolves. We assert the data-lang attribute we set on the code node.
-    const codeNode = container.querySelector('code[class*="language-python"], pre[data-lang="python"]');
-    expect(codeNode).not.toBeNull();
+    // Once the fence closes, CodeNode routes to CodeBlock instead of the
+    // streaming-code-plain fallback. Shiki's async highlighter never
+    // resolves inside jsdom (no worker/WASM plumbing), so we can't look
+    // for the final `<code class="language-python">` token tree. The
+    // reliably-observable contract is that CodeBlock mounted: its header
+    // renders a language label chip ("python") that neither
+    // streaming-code-plain nor the inline-`code` path ever produces.
+    const languageLabel = Array.from(container.querySelectorAll('span')).find(
+      el => el.textContent === 'python',
+    );
+    expect(languageLabel).toBeDefined();
   });
 
   it('shows a block caret while streaming and hides it when done', () => {
