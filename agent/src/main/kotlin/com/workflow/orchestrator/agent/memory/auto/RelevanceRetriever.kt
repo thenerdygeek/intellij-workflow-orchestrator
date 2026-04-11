@@ -35,7 +35,7 @@ class RelevanceRetriever(
          * Avoids matching URLs (no `http://`) and common prose word patterns.
          */
         private val FILE_PATH_PATTERN = Regex(
-            """(?<![a-zA-Z])(?:[a-zA-Z0-9_\-.]+/)+[a-zA-Z0-9_\-]+\.[a-zA-Z0-9]+\b"""
+            """(?<![a-zA-Z:/.])(?:[a-zA-Z0-9_\-.]+/)+[a-zA-Z0-9_\-]+\.[a-zA-Z0-9]+\b"""
         )
 
         /** Extract file-path-looking substrings from content. */

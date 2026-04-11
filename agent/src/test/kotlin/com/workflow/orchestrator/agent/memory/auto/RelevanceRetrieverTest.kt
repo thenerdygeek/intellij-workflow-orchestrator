@@ -182,5 +182,23 @@ class RelevanceRetrieverTest {
             // Without a path predicate, all entries pass through
             assertNotNull(result)
         }
+
+        @Test
+        fun `preserves entries whose only path-like token is a URL fragment`() {
+            archival.insert(
+                "User's Jira board: https://jira.corp/secure/RapidBoard.jspa?rapidView=812",
+                listOf("jira", "dashboard")
+            )
+
+            // Strict predicate: no file paths exist. URL extraction must be suppressed,
+            // so the entry should still surface.
+            val pathExists: (String) -> Boolean = { _ -> false }
+            val retriever = RelevanceRetriever(archival, pathExists)
+
+            val result = retriever.retrieveForMessage("jira dashboard")
+
+            assertNotNull(result)
+            assertTrue(result!!.contains("RapidBoard"))
+        }
     }
 }
