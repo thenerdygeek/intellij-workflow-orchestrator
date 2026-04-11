@@ -40,9 +40,10 @@ class ExtractionPromptsTest {
             emptyMap(),
             TEST_DATE
         )
-        assertTrue(prompt.contains("correction"))
-        assertTrue(prompt.contains("pattern"))
-        assertTrue(prompt.contains("decision"))
+        // New 3-category structure
+        assertTrue(prompt.contains("User rules and corrections"))
+        assertTrue(prompt.contains("User & project facts"))
+        assertTrue(prompt.contains("error") || prompt.contains("fix mapping"))
     }
 
     @Test
@@ -94,5 +95,63 @@ class ExtractionPromptsTest {
             "2026-04-11"
         )
         assertTrue(prompt.contains("Today's date is 2026-04-11"))
+    }
+
+    @Test
+    fun `prompt inverts anchor to default zero items`() {
+        val prompt = ExtractionPrompts.sessionEndPrompt(
+            listOf("user: test", "assistant: ok"),
+            emptyMap(),
+            "2026-04-11"
+        )
+        // Inverted anchoring is the core Haiku calibration fix
+        assertTrue(prompt.contains("Default to saving nothing") || prompt.contains("0 items is the normal answer"))
+        assertTrue(prompt.contains("suspicious") || prompt.contains("3 items"))
+    }
+
+    @Test
+    fun `prompt includes SAVE and SKIP examples`() {
+        val prompt = ExtractionPrompts.sessionEndPrompt(
+            listOf("user: test", "assistant: ok"),
+            emptyMap(),
+            "2026-04-11"
+        )
+        assertTrue(prompt.contains("SKIP examples"))
+        assertTrue(prompt.contains("SAVE examples"))
+        // Specific example markers
+        assertTrue(prompt.contains("pom.xml") || prompt.contains("visible in"))
+    }
+
+    @Test
+    fun `prompt locks tag format to lowercase hyphen separated`() {
+        val prompt = ExtractionPrompts.sessionEndPrompt(
+            listOf("user: test", "assistant: ok"),
+            emptyMap(),
+            "2026-04-11"
+        )
+        assertTrue(prompt.contains("hyphen-separated") || prompt.contains("hyphen"))
+        assertTrue(prompt.contains("lowercase"))
+    }
+
+    @Test
+    fun `prompt softens old_content exact match to approximately`() {
+        val prompt = ExtractionPrompts.sessionEndPrompt(
+            listOf("user: test", "assistant: ok"),
+            emptyMap(),
+            "2026-04-11"
+        )
+        // The foot-gun fix: tell Haiku approximate is fine
+        assertFalse(prompt.contains("matching existing text exactly"))
+        assertTrue(prompt.contains("approximately") || prompt.contains("approximate"))
+    }
+
+    @Test
+    fun `prompt instructs never invent reasons`() {
+        val prompt = ExtractionPrompts.sessionEndPrompt(
+            listOf("user: test", "assistant: ok"),
+            emptyMap(),
+            "2026-04-11"
+        )
+        assertTrue(prompt.contains("never invent") || prompt.contains("ONLY if the user stated"))
     }
 }
