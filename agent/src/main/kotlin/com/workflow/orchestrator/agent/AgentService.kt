@@ -62,6 +62,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.io.File
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -226,10 +227,28 @@ class AgentService(private val project: Project) : Disposable {
                     model = cheapModel.id
                 )
 
+                // Path checker for staleness filtering of recalled archival entries.
+                // If an entry mentions file paths that no longer exist (renamed/moved/deleted),
+                // the retriever will suppress it so we don't inject stale guidance into the prompt.
+                val basePath = project.basePath
+                val pathChecker: (String) -> Boolean = { path ->
+                    try {
+                        if (basePath != null) {
+                            val abs = if (File(path).isAbsolute) File(path) else File(basePath, path)
+                            abs.exists()
+                        } else {
+                            true  // No base path — can't verify, assume fresh
+                        }
+                    } catch (_: Exception) {
+                        true  // On error, don't filter
+                    }
+                }
+
                 val mgr = AutoMemoryManager(
                     coreMemory = core,
                     archivalMemory = archival,
-                    client = extractionClient
+                    client = extractionClient,
+                    pathExists = pathChecker
                 )
                 autoMemoryManager = mgr
                 log.info("[AgentService] AutoMemoryManager initialized with model: ${cheapModel.modelName}")

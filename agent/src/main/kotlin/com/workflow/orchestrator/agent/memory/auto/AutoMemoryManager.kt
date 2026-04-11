@@ -21,11 +21,12 @@ import com.workflow.orchestrator.core.ai.dto.ChatMessage
 class AutoMemoryManager(
     private val coreMemory: CoreMemory,
     private val archivalMemory: ArchivalMemory,
-    client: SourcegraphChatClient
+    client: SourcegraphChatClient,
+    pathExists: (String) -> Boolean = { true }
 ) {
     private val log = Logger.getInstance(AutoMemoryManager::class.java)
     private val extractor = MemoryExtractor(client)
-    private val retriever = RelevanceRetriever(archivalMemory)
+    private val retriever = RelevanceRetriever(archivalMemory, pathExists)
 
     companion object {
         /** Minimum substantive user turns to warrant extraction. */

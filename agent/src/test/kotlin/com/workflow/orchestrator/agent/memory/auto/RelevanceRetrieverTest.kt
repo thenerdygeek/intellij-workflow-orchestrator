@@ -113,4 +113,74 @@ class RelevanceRetrieverTest {
             assertTrue(result.endsWith("</recalled_memory>"))
         }
     }
+
+    @Nested
+    inner class StalenessFilter {
+
+        @Test
+        fun `suppresses entries mentioning non-existent files`() {
+            archival.insert(
+                "Fix: update src/main/kotlin/com/example/OldService.kt to use new API",
+                listOf("fix", "api")
+            )
+
+            // All paths in the entry don't exist
+            val pathExists: (String) -> Boolean = { _ -> false }
+            val retriever = RelevanceRetriever(archival, pathExists)
+
+            val result = retriever.retrieveForMessage("Use new API")
+
+            // Should not include the entry because its referenced path is gone
+            assertNull(result)
+        }
+
+        @Test
+        fun `preserves entries with no file path mentions`() {
+            archival.insert(
+                "Deploy via Bamboo PROJ-DEPLOY-PROD, not the CI plan",
+                listOf("deploy", "bamboo")
+            )
+
+            val pathExists: (String) -> Boolean = { _ -> false }  // Doesn't matter — no paths
+            val retriever = RelevanceRetriever(archival, pathExists)
+
+            val result = retriever.retrieveForMessage("deploy bamboo")
+
+            assertNotNull(result)
+            assertTrue(result!!.contains("Bamboo"))
+        }
+
+        @Test
+        fun `preserves entries when at least one mentioned path exists`() {
+            archival.insert(
+                "Both src/main/kotlin/UserService.kt and src/main/kotlin/OldService.kt have null check issues",
+                listOf("fix", "npe")
+            )
+
+            val pathExists: (String) -> Boolean = { path ->
+                path.contains("UserService")  // One of the two paths still exists
+            }
+            val retriever = RelevanceRetriever(archival, pathExists)
+
+            val result = retriever.retrieveForMessage("null check")
+
+            assertNotNull(result)
+        }
+
+        @Test
+        fun `default path predicate allows all entries (backward compat)`() {
+            archival.insert(
+                "Fix: update src/main/kotlin/NonExistent.kt",
+                listOf("fix")
+            )
+
+            // Use single-arg constructor (default predicate = always true)
+            val retriever = RelevanceRetriever(archival)
+
+            val result = retriever.retrieveForMessage("Fix update")
+
+            // Without a path predicate, all entries pass through
+            assertNotNull(result)
+        }
+    }
 }

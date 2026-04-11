@@ -9,7 +9,17 @@ import com.workflow.orchestrator.agent.memory.ArchivalMemory
  * No LLM call — uses the existing ArchivalMemory.search() with keyword extraction.
  * Results are formatted as XML for system prompt injection.
  */
-class RelevanceRetriever(private val archival: ArchivalMemory) {
+class RelevanceRetriever(
+    private val archival: ArchivalMemory,
+    /**
+     * Predicate for path existence. Called when a recalled entry mentions file
+     * paths — if ALL mentioned paths fail this check, the entry is suppressed
+     * as stale. Defaults to always-true (no staleness filter).
+     *
+     * Wired by AgentService to use `File(projectBasePath, relativePath).exists()`.
+     */
+    private val pathExists: (String) -> Boolean = { true }
+) {
 
     companion object {
         /** Max entries to retrieve. */
@@ -17,6 +27,21 @@ class RelevanceRetriever(private val archival: ArchivalMemory) {
 
         /** Max total characters in the recalled memory section. */
         private const val MAX_CHARS = 3000
+
+        /**
+         * Regex matching common file-path patterns in archival content.
+         * Matches paths with at least one slash and a file extension (e.g.
+         * `src/main/kotlin/UserService.kt`, `agent/webview/tsconfig.json`).
+         * Avoids matching URLs (no `http://`) and common prose word patterns.
+         */
+        private val FILE_PATH_PATTERN = Regex(
+            """(?<![a-zA-Z])(?:[a-zA-Z0-9_\-.]+/)+[a-zA-Z0-9_\-]+\.[a-zA-Z0-9]+\b"""
+        )
+
+        /** Extract file-path-looking substrings from content. */
+        internal fun extractPaths(content: String): List<String> {
+            return FILE_PATH_PATTERN.findAll(content).map { it.value }.toList()
+        }
 
         /**
          * Minimum keyword length to include. Set to 2 so meaningful short identifiers
@@ -83,7 +108,20 @@ class RelevanceRetriever(private val archival: ArchivalMemory) {
         // trackUsage=false: session-start retrieval is system-managed and should not
         // distort the Codex-style usage-based decay signal, and avoids a disk persist
         // on every new task start.
-        val results = archival.search(query, limit = MAX_RESULTS, trackUsage = false)
+        val rawResults = archival.search(query, limit = MAX_RESULTS, trackUsage = false)
+        if (rawResults.isEmpty()) return null
+
+        // Staleness filter: drop entries where ALL mentioned paths are missing.
+        // Entries with NO path mentions pass through unchanged (can't be stale
+        // by file-existence if they don't reference any files).
+        val results = rawResults.filter { result ->
+            val paths = extractPaths(result.entry.content)
+            if (paths.isEmpty()) {
+                true  // No paths = can't be stale by file-existence
+            } else {
+                paths.any { pathExists(it) }  // At least one mentioned path still exists
+            }
+        }
         if (results.isEmpty()) return null
 
         val entries = mutableListOf<String>()
