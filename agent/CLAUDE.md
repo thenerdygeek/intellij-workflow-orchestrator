@@ -332,61 +332,36 @@ All paths:
 | `conversation_search` | Recall | Search past session transcripts |
 | `save_memory` | Legacy | Save markdown memory file |
 
-### Auto-Memory System (Event-Driven)
+### Auto-Memory System (Retrieval-Only)
 
-Memory management is primarily system-driven, not LLM-driven. Two triggers:
+Memory is user-managed, not system-extracted. There is one automatic trigger:
 
 | Trigger | When | Mechanism | Cost |
 |---------|------|-----------|------|
-| Session-end extraction | After substantive sessions (≥ 2 non-trivial user turns) | Cheap LLM (Haiku) distills insights from full conversation | ~$0.001/session |
-| Session-start retrieval | Before first LLM call | Keyword extraction + archival search | Zero (no LLM) |
+| Session-start retrieval | Before first LLM call | Keyword extraction + archival search + staleness filter | Zero (no LLM) |
 
-Session-end extraction targets three categories: user rules/corrections, user/project facts not visible in code, and non-obvious error→fix mappings. Default is to save nothing; see "Auto-Memory Hardening" below for the anchoring rationale.
+There is NO automatic session-end extraction. Users populate memory manually via the memory tools (`core_memory_append`, `archival_memory_insert`, etc.) or by editing the Memory settings page directly. This avoids the silent-poisoning risk where a cheap extractor saves misread facts that the user never sees or approves.
 
 **Key files:**
-- `memory/auto/AutoMemoryManager.kt` — orchestrator (`onSessionComplete`, `onSessionStart`)
-- `memory/auto/MemoryExtractor.kt` — cheap LLM call for structured JSON extraction
-- `memory/auto/RelevanceRetriever.kt` — keyword-based archival search for prompt injection
-- `memory/auto/ExtractionPrompts.kt` — prompt template for extraction calls
-- `memory/auto/ExtractionModels.kt` — data classes (ExtractionResult, CoreMemoryUpdate, ArchivalInsert)
+- `memory/auto/AutoMemoryManager.kt` — retrieval-only wrapper around `RelevanceRetriever`
+- `memory/auto/RelevanceRetriever.kt` — keyword-based archival search with staleness filter for prompt injection
 
-**Lifecycle:** `AutoMemoryManager` is lazily initialized in `AgentService.ensureAutoMemory()`. Uses `ModelCache.pickCheapest()` (Haiku) for extraction calls. A dedicated `SourcegraphChatClient` is constructed with the cheap model baked into the client (separate from the main brain's client). All extraction is best-effort — failures logged, never thrown. Gated by `AgentSettings.state.autoMemoryEnabled` (default true). LLM memory tools remain available as manual overrides.
+**Lifecycle:** `AutoMemoryManager` is lazily initialized in `AgentService.ensureAutoMemory()`. No LLM client is required. Gated by `AgentSettings.state.autoMemoryEnabled` (default true — disabling turns off the `<recalled_memory>` injection).
 
-**System prompt:** `<recalled_memory>` section injected after `<core_memory>` when relevant archival entries found. The memory prompt section (`SystemPrompt.memory()`) explains system-managed memory and lists manual tools as overrides.
+**Staleness filter:** `RelevanceRetriever` takes an injected `pathExists: (String) -> Boolean` predicate. If a recalled archival entry mentions file paths AND all mentioned paths are missing under `project.basePath`, the entry is suppressed. The path-extraction regex excludes URL fragments so URL-only archival entries (Jira board links, etc.) pass through untouched.
 
-#### Auto-Memory Hardening (Haiku-optimized)
-
-The extraction prompt and manager were hardened based on a senior review of Claude-Code-style memory systems:
-
-**Prompt changes (`ExtractionPrompts.kt`):**
-- **Inverted anchoring:** "Default to saving nothing. 0 items is the normal answer. More than 3 is suspicious." Kills the "save 2-5 items" compliance pull that was producing confabulated extractions.
-- **3 categories, not 9:** user rules/corrections → patterns block; user & project facts → user/project blocks; non-obvious error→fix mappings → archival. Haiku can hold 3 categories in mind; 9 it can't.
-- **SAVE and SKIP examples:** teach by contrast, not by rule. Includes "Spring Boot 3.2 → skip, visible in pom.xml" style concrete exclusions.
-- **currentDate header:** `LocalDate.now()` plumbed from `AutoMemoryManager` → `MemoryExtractor` → `ExtractionPrompts` so "convert relative dates to absolute" actually works.
-- **Tag format locked:** `2-4 lowercase hyphen-separated` prevents tag-bucket fragmentation in archival search.
-- **`old_content` softened:** from "exactly matching" to "approximately matching" — the strict match is enforced in code (`CoreMemory.replaceFlexible`), not in the prompt.
-
-**Code-layer fixes:**
-- **`CoreMemory.replaceFlexible(label, approxOld, new)`** — whitespace/case/punctuation-tolerant matching. Picks the tightest matching candidate to preserve surrounding context in multi-sentence blocks. Haiku can't produce exact strings reliably.
-- **Session-quality gate** — counts substantive user turns (≥ 2 turns, each ≥ 15 chars, excluding trivial greetings like "hi"/"ok"/"thanks"). Replaces the naive `messages.size < 4` gate.
-- **Staleness filter in `RelevanceRetriever`** — injected `pathExists: (String) -> Boolean` predicate. If a recalled entry mentions file paths AND all mentioned paths are missing, the entry is suppressed. Regex excludes URL fragments so URL-only archival entries (Jira board links, etc.) pass through untouched.
-- **`ExtractionLog`** — JSONL-backed audit log at `~/.workflow-orchestrator/{proj}/agent/extraction-log.jsonl`. Every successful extraction records `{timestamp, sessionId, source, coreUpdates[], archivalInserts[]}`. Cap 500 entries, oldest trimmed via cross-platform atomic move. Surfaced in the Memory settings page as "Recent Extractions" — non-negotiable for debugging what the extractor is actually doing in production.
-
-**Main agent `SystemPrompt` memory section:**
-- "Last resort" framing for manual memory tools: "Only call memory tools if the user literally says 'remember this'. Do not preemptively save your own observations."
-- One-sentence staleness hint: "If a recalled memory contradicts what you see in the current file, trust the file."
-- Dropped the per-turn verification checklist — the extraction/retrieval layer is the right place for staleness fixes, not the main agent's system prompt.
+**System prompt:** `<recalled_memory>` section injected after `<core_memory>` when relevant archival entries are found. `SystemPrompt.memory()` tells the agent to treat manual memory tools as a last resort ("only when the user literally says 'remember this'") and to trust the file over recalled memory on contradiction.
 
 ### Memory Management UI
 
 **Settings page:** Tools → Workflow Orchestrator → AI Agent → Memory (`AgentMemoryConfigurable`)
-- Toggle auto-memory extraction on/off
+- Toggle retrieval on/off
 - View and edit core memory blocks (user, project, patterns) as editable text areas — saved on Apply
 - View archival memory entry count
 - Clear core memory / archival memory / all memory (each with confirmation dialog)
-- Reloads memory from disk each time the page is opened, so it always reflects the latest state written by the agent
+- Reloads memory from disk each time the page is opened, so it always reflects the latest state on disk
 
-**TopBar indicator:** Small badge in the agent chat TopBar showing `◆ {coreKB} | {archivalCount}` — core memory character count (displayed as N below 1000, X.XK at/above 1000) and archival entry count. Click opens the Settings dialog. Stats pushed from `AgentController.pushMemoryStats()` at task start and on completion; values are snapshotted at those points and eventually consistent with background auto-memory writes.
+**TopBar indicator:** Small badge in the agent chat TopBar showing `◆ {coreKB} | {archivalCount}` — core memory character count (displayed as N below 1000, X.XK at/above 1000) and archival entry count. Click opens the Settings dialog. Stats pushed from `AgentController.pushMemoryStats()` at task start and on completion.
 
 - `think` tool: no-op reasoning pause, proven 54% improvement on complex tasks (Anthropic data)
 
