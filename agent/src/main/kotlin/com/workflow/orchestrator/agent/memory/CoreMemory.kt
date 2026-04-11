@@ -75,11 +75,13 @@ class CoreMemory(private val storageFile: File) {
      * Read the value of a named block.
      * Port of Letta: agent reads core memory to decide what to update.
      */
+    @Synchronized
     fun read(label: String): String? = blocks[label]?.value
 
     /**
      * Read all blocks as a map.
      */
+    @Synchronized
     fun readAll(): Map<String, MemoryBlock> = blocks.toMap()
 
     /**
@@ -91,6 +93,7 @@ class CoreMemory(private val storageFile: File) {
      * @return the new block value after append
      * @throws IllegalArgumentException if block is read-only or would exceed limit
      */
+    @Synchronized
     fun append(label: String, content: String): String {
         val block = blocks.getOrPut(label) {
             MemoryBlock(value = "", limit = DEFAULT_BLOCK_LIMIT)
@@ -116,6 +119,7 @@ class CoreMemory(private val storageFile: File) {
      * @return the new block value after replacement
      * @throws IllegalArgumentException if block not found, read-only, or match count != 1
      */
+    @Synchronized
     fun replace(label: String, oldContent: String, newContent: String): String {
         val block = blocks[label]
             ?: throw IllegalArgumentException("Block '$label' not found")
@@ -141,19 +145,33 @@ class CoreMemory(private val storageFile: File) {
     /**
      * Set a block directly (used for initialization, not exposed as tool).
      */
+    @Synchronized
     fun setBlock(label: String, value: String, limit: Int = DEFAULT_BLOCK_LIMIT, readOnly: Boolean = false) {
         blocks[label] = MemoryBlock(value = value, limit = limit, readOnly = readOnly)
         persist()
     }
 
     /**
+     * Reload state from disk, discarding in-memory changes.
+     * Used by the settings page after external writes to ensure the next
+     * system prompt build sees the latest state.
+     */
+    @Synchronized
+    fun reload() {
+        load()
+        seedDefaultBlocks()
+    }
+
+    /**
      * Check if core memory is empty (no blocks or all empty).
      */
+    @Synchronized
     fun isEmpty(): Boolean = blocks.isEmpty() || blocks.values.all { it.value.isBlank() }
 
     /**
      * Total character count across all blocks.
      */
+    @Synchronized
     fun totalChars(): Int = blocks.values.sumOf { it.value.length }
 
     // ---- System prompt compilation (ported from Letta's Memory.compile()) ----
@@ -166,6 +184,7 @@ class CoreMemory(private val storageFile: File) {
      *
      * @return XML string, or null if memory is empty
      */
+    @Synchronized
     fun compile(): String? {
         if (isEmpty()) return null
 
