@@ -556,14 +556,18 @@ agent/webview/
 
 ## Streaming Text Pipeline
 
-Two-layer pipeline from SSE chunk to rendered markdown:
+Two-layer pipeline from SSE chunk to rendered markdown, with a **unified streaming-message model** on the React side so finalized and in-flight renders share the same component tree (no flash on stream end):
 
 1. **StreamBatcher** (Kotlin, `agent/ui/StreamBatcher.kt`): 16ms EDT timer coalesces rapid chunks into single bridge calls (~5000 → ~300 per response). Disposer-registered lifecycle. This is the only smoothing layer — coalescing is needed to keep JCEF bridge call overhead bounded, not to smooth the user-facing animation.
-2. **JCEF Bridge + React**: `appendToken()` accumulates into `chatStore.activeStream.text`. `StreamingMessage` (`components/chat/StreamingMessage.tsx`) renders a single `<MarkdownRenderer>` against the live text. `MarkdownRenderer` wraps Vercel's `streamdown` which handles per-block memoization, speculative close (`remend`) of incomplete markdown constructs, and a GPU-cheap block caret while streaming.
+2. **JCEF Bridge + React**: `appendToken()` creates a placeholder `Message` in `chatStore.messages` on the **first** token and points `activeStream.messageId` at it. Subsequent tokens update that specific message's `content` in place via `messages.map(...)`. `endStream()` just clears `activeStream` — the message is already in `messages` with its full content. `ChatView` renders every agent message through the same `AgentMessage` component, passing `isStreaming={activeStream?.messageId === msg.id}`. `MarkdownRenderer` wraps Vercel's `streamdown` which handles per-block memoization, speculative close (`remend`) of incomplete markdown constructs, and a GPU-cheap block caret while streaming.
+
+**Why this shape.** An earlier iteration had a dedicated `StreamingMessage.tsx` component that rendered the in-flight stream through a bare `<div>` wrapper, while finalized messages used `AgentMessage`'s full `PkMessage` wrapper (avatar, "Agent" label, 85% max-width bubble, padding, entrance animation). On stream end the message was pushed into `messages` and the render path swapped — the DOM structure changed and the user saw a visible flash/reformat. The unified model makes there be only one render path, so there is no transition to flash through. Regression tests in `agent/webview/src/__tests__/streaming-markdown.test.tsx` lock this in via DOM element identity and a React effect mount-counter.
 
 **Incomplete code fences** render as plain `<pre class="streaming-code-plain">` until the fence closes; once closed they swap to the Shiki-backed `CodeBlock`. This is gated by `streamdown`'s `useIsCodeFenceIncomplete()` hook, which tracks whether the currently-last block still has an open fence.
 
 **Module-scope invariant.** `MarkdownRenderer.tsx` declares `COMPONENTS`, `REMARK_PLUGINS`, and `REHYPE_PLUGINS` at module scope. Inline literals defeat Streamdown's per-block `React.memo` and cause every token to re-render every block — this bug mode is documented in the Streamdown 2.x changelog for `linkSafety`.
+
+**In-place token update invariant.** `appendToken` uses `messages.map(m => m.id === current.messageId ? { ...m, content: newText } : m)` so only the streaming message's object reference changes per token. Non-streaming messages keep identity-stable references, and `AgentMessage`'s `React.memo` skips re-rendering them on every token. This is covered by `chat-store-streaming.test.ts` ("non-streaming messages keep the SAME object reference across token updates").
 
 **What we removed (from the earlier 5-layer pipeline):**
 - `usePresentationBuffer` — RAF character drip. Released chars slower than the LLM's actual stream rate, creating growing visible latency. Streamdown + the Kotlin batcher give real-time rendering without drift.

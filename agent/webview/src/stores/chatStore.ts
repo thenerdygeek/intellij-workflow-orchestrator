@@ -69,7 +69,26 @@ interface Toast {
 interface ChatState {
   // State
   messages: Message[];
-  activeStream: { text: string; isStreaming: boolean } | null;
+  /**
+   * Pointer to the currently-streaming agent message.
+   *
+   * `messageId` identifies a real `Message` in the `messages` array that the
+   * token stream is being written into. The streaming and finalized states
+   * render through the **same** `AgentMessage` component so the DOM structure
+   * doesn't change when streaming ends — no reflow, no reposition, no flash.
+   *
+   * - `text` mirrors that message's `content` (kept in sync for cheap reads).
+   * - `isStreaming` toggles the caret on the target message.
+   *
+   * Lifecycle:
+   * - Created by `appendToken` on the first token of a new stream. The
+   *   placeholder message is appended to `messages` at the same time.
+   * - Updated in-place by subsequent `appendToken` calls via
+   *   `messages.map(...)` — stable React key, no remount.
+   * - Cleared by `endStream`, `addToolCall`, `showApproval`, `completeSession`,
+   *   `startSession`, `clearChat`. The underlying message stays in `messages`.
+   */
+  activeStream: { messageId: string; text: string; isStreaming: boolean } | null;
   activeToolCalls: Map<string, ToolCall>;  // key = unique tool call ID
   plan: Plan | null;
   planCommentCount: number;
@@ -346,79 +365,117 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   appendToken(token: string) {
     set(state => {
-      const isFirstToken = state.activeStream == null;
-      const stream = state.activeStream ?? { text: '', isStreaming: true };
+      const current = state.activeStream;
 
-      // Auto-finalize the tool chain when the first token of a new text response arrives.
-      // Inject as a toolchain message so it renders in the correct position.
-      // Merge any buffered streamed tool output into each tool call, then drop
-      // the corresponding toolOutputStreams entries so we don't leak them.
-      if (isFirstToken && state.activeToolCalls.size > 0) {
-        const streams = state.toolOutputStreams;
-        const tools = Array.from(state.activeToolCalls.values()).map(tc => {
-          const s = streams[tc.id];
-          if (s && !tc.output) return { ...tc, output: s };
-          return tc;
-        });
-        const chainMsg: Message = { id: nextId('tc-chain'), role: 'system', content: '', timestamp: Date.now(), toolChain: tools };
+      // ── First token of a new stream ──
+      // Create the placeholder `Message` in the `messages` array NOW, and point
+      // `activeStream.messageId` at it. Subsequent tokens update that specific
+      // message's `content` in place (stable React key → no remount → no DOM
+      // flash on stream end). See the field doc on `activeStream` for rationale.
+      if (current == null) {
+        // Drain any pending active tool calls into a toolchain message FIRST so
+        // the chat flow stays chronological: prior tools → streaming text →
+        // next tool chain. Merge any buffered stream output into each tool
+        // call, then drop the corresponding toolOutputStreams entries.
+        let messages = state.messages;
+        let activeToolCalls = state.activeToolCalls;
+        let toolOutputStreams = state.toolOutputStreams;
+
+        if (state.activeToolCalls.size > 0) {
+          const streams = state.toolOutputStreams;
+          const tools = Array.from(state.activeToolCalls.values()).map(tc => {
+            const s = streams[tc.id];
+            if (s && !tc.output) return { ...tc, output: s };
+            return tc;
+          });
+          const chainMsg: Message = {
+            id: nextId('tc-chain'),
+            role: 'system',
+            content: '',
+            timestamp: Date.now(),
+            toolChain: tools,
+          };
+          messages = [...messages, chainMsg];
+          activeToolCalls = new Map();
+          toolOutputStreams = {};
+        }
+
+        const messageId = nextId('msg');
+        const placeholder: Message = {
+          id: messageId,
+          role: 'agent',
+          content: token,
+          timestamp: Date.now(),
+        };
+
         return {
-          activeStream: { text: token, isStreaming: true },
-          messages: [...state.messages, chainMsg],
-          activeToolCalls: new Map(),
-          toolOutputStreams: {},
+          messages: [...messages, placeholder],
+          activeStream: { messageId, text: token, isStreaming: true },
+          activeToolCalls,
+          toolOutputStreams,
         };
       }
 
+      // ── Subsequent token — update the streaming message in place ──
+      // Same `messageId` (React key stays stable), so the `AgentMessage`
+      // component instance reconciles in place and passes new `content` to
+      // Streamdown. Streamdown's per-block memoization takes it from there.
+      const newText = current.text + token;
       return {
-        activeStream: {
-          text: stream.text + token,
-          isStreaming: true,
-        },
+        activeStream: { ...current, text: newText },
+        messages: state.messages.map(m =>
+          m.id === current.messageId ? { ...m, content: newText } : m
+        ),
       };
     });
   },
 
   endStream() {
     const state = get();
-    const stream = state.activeStream;
     const shouldClearPlan = state.planCompletedPendingClear;
-
-    if (stream && stream.text.length > 0) {
-      const message: Message = {
-        id: nextId('msg'),
-        role: 'agent',
-        content: stream.text,
-        timestamp: Date.now(),
-      };
-      set({
-        messages: [...state.messages, message],
-        activeStream: null,
-        ...(shouldClearPlan ? { plan: null, planCompletedPendingClear: false } : {}),
-      });
-    } else {
-      set({
-        activeStream: null,
-        ...(shouldClearPlan ? { plan: null, planCompletedPendingClear: false } : {}),
-      });
-    }
+    // The streaming message is already in `messages` with its full content —
+    // created lazily by `appendToken` and updated in place on every token.
+    // Finalizing the stream is now just flipping the caret off by clearing
+    // `activeStream`. No new message push, no array insertion, no remount.
+    set({
+      activeStream: null,
+      ...(shouldClearPlan ? { plan: null, planCompletedPendingClear: false } : {}),
+    });
   },
 
   addToolCall(toolCallId: string, name: string, args: string, status: ToolCallStatus) {
     set(state => {
       // Use the LLM-assigned tool call ID so streaming output (keyed by the same ID) resolves correctly.
       // Fall back to a generated ID for legacy callers that don't supply one.
-      const id = toolCallId || nextId('tc');
+      let id = toolCallId || nextId('tc');
       const newMap = new Map(state.activeToolCalls);
+
+      // Defense-in-depth against synthesized-ID collisions (see Bug 1 on
+      // feature/streaming-xml-port). If the incoming ID already exists in the
+      // map AND belongs to a different tool, the Kotlin caller has a scope bug
+      // — don't silently overwrite, because that erases the previous tool's
+      // UI card. Derive a fresh unique key and log a loud warning so the root
+      // cause surfaces. Same-name same-id is a legitimate update.
+      const existing = newMap.get(id);
+      if (existing && existing.name !== name) {
+        const dupKey = `${id}__dup-${nextId('col')}`;
+        console.warn(
+          `[chatStore] addToolCall: id collision — "${id}" already bound to ` +
+          `"${existing.name}" (status=${existing.status}). Incoming call "${name}" ` +
+          `rekeyed to "${dupKey}". This indicates a Kotlin-side ID scope bug.`
+        );
+        id = dupKey;
+      }
+
       newMap.set(id, { id, name, args, status });
 
-      // Auto-finalize any active stream — ensures text appears in messages before tool calls.
-      // Without this, text stays in activeStream (rendered at the bottom) while tool calls
-      // render above it, causing text to "accumulate at the bottom."
-      const stream = state.activeStream;
-      if (stream && stream.text.length > 0) {
-        const message: Message = { id: nextId('msg'), role: 'agent', content: stream.text, timestamp: Date.now() };
+      // Auto-finalize any active stream — ensures text appears in messages
+      // before tool calls. Under the new streaming-message model the text is
+      // ALREADY in `messages` (created lazily by `appendToken`), so all we
+      // need to do here is clear `activeStream` to turn off the caret on that
+      // message. Do NOT push a new message — that would duplicate the text.
+      if (state.activeStream != null) {
         return {
-          messages: [...state.messages, message],
           activeStream: null,
           activeToolCalls: newMap,
         };
@@ -845,21 +902,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
         diffContent,
       };
 
-      // Auto-finalize stream + tool chain so approval card appears after all prior content.
-      const stream = state.activeStream;
+      // Auto-finalize the tool chain so the approval card appears after all
+      // prior content. The streaming message (if any) is already in `messages`
+      // under the new model — just clear `activeStream` to stop the caret.
+      // Tool calls still need to be drained from `activeToolCalls` into a
+      // `tc-chain` system message so they render in the right order below the
+      // finalized streaming text.
+      const hadStream = state.activeStream != null;
       const tools = Array.from(state.activeToolCalls.values());
       const newMessages = [...state.messages];
 
-      if (stream && stream.text.length > 0) {
-        newMessages.push({ id: nextId('msg'), role: 'agent', content: stream.text, timestamp: Date.now() });
-      }
       if (tools.length > 0) {
-        newMessages.push({ id: nextId('tc-chain'), role: 'system', content: '', timestamp: Date.now(), toolChain: tools });
+        newMessages.push({
+          id: nextId('tc-chain'),
+          role: 'system',
+          content: '',
+          timestamp: Date.now(),
+          toolChain: tools,
+        });
       }
 
       return {
         pendingApproval: approval,
-        ...(stream && stream.text.length > 0 ? { activeStream: null } : {}),
+        ...(hadStream ? { activeStream: null } : {}),
         ...(tools.length > 0 ? { activeToolCalls: new Map(), toolOutputStreams: {} } : {}),
         ...(newMessages.length !== state.messages.length ? { messages: newMessages } : {}),
       };
