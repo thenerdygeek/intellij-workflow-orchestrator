@@ -51,6 +51,7 @@ class ArchivalMemory(private val storageFile: File) {
      * @param tags categorization tags (e.g., ["error_resolution", "spring", "cors"])
      * @return the created entry ID
      */
+    @Synchronized
     fun insert(content: String, tags: List<String> = emptyList()): String {
         // Evict oldest if at capacity (spec: cap 5000, oldest evicted)
         while (entries.size >= MAX_ENTRIES) {
@@ -85,9 +86,19 @@ class ArchivalMemory(private val storageFile: File) {
      * @param query search query (split into keywords)
      * @param tags optional tag filter (entries must have at least one matching tag)
      * @param limit max results (default 10)
+     * @param trackUsage if true (default) increments usage_count/last_usage on matched entries
+     *                   and persists to disk. Callers that perform background/auto searches
+     *                   (e.g. `RelevanceRetriever`) should pass `false` to avoid constant disk
+     *                   writes and usage-count inflation on non-user-visible searches.
      * @return matched entries sorted by relevance score descending
      */
-    fun search(query: String, tags: List<String>? = null, limit: Int = 10): List<SearchResult> {
+    @Synchronized
+    fun search(
+        query: String,
+        tags: List<String>? = null,
+        limit: Int = 10,
+        trackUsage: Boolean = true
+    ): List<SearchResult> {
         val keywords = query.lowercase().split("\\s+".toRegex()).filter { it.isNotBlank() }
         if (keywords.isEmpty() && tags.isNullOrEmpty()) return emptyList()
 
@@ -115,13 +126,15 @@ class ArchivalMemory(private val storageFile: File) {
             .sortedByDescending { it.score }
             .take(limit)
 
-        // Record usage on matched entries (Codex pattern)
-        val now = Instant.now().epochSecond
-        for (result in scored) {
-            result.entry.usageCount++
-            result.entry.lastUsage = now
+        // Record usage on matched entries only if tracking is enabled (Codex pattern)
+        if (trackUsage) {
+            val now = Instant.now().epochSecond
+            for (result in scored) {
+                result.entry.usageCount++
+                result.entry.lastUsage = now
+            }
+            if (scored.isNotEmpty()) persist()
         }
-        if (scored.isNotEmpty()) persist()
 
         return scored
     }
@@ -132,6 +145,7 @@ class ArchivalMemory(private val storageFile: File) {
      * Port of Codex's prune_stage1_outputs_for_retention.
      * Retention metric: COALESCE(lastUsage, createdAt).
      */
+    @Synchronized
     fun prune(maxUnusedDays: Long = DEFAULT_MAX_UNUSED_DAYS): Int {
         val cutoff = Instant.now().epochSecond - (maxUnusedDays * 86400)
         val before = entries.size
@@ -145,13 +159,33 @@ class ArchivalMemory(private val storageFile: File) {
     }
 
     /**
+     * Reload state from disk, discarding in-memory changes.
+     * Used by the settings page after external writes.
+     */
+    @Synchronized
+    fun reload() {
+        load()
+    }
+
+    /**
+     * Remove all entries. Used by settings page "Clear Archival Memory" button.
+     */
+    @Synchronized
+    fun clear() {
+        entries.clear()
+        persist()
+    }
+
+    /**
      * Get all entries (for debugging/export).
      */
+    @Synchronized
     fun all(): List<ArchivalEntry> = entries.toList()
 
     /**
      * Entry count.
      */
+    @Synchronized
     fun size(): Int = entries.size
 
     // ---- Persistence ----

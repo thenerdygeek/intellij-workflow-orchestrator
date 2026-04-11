@@ -163,4 +163,42 @@ class CoreMemoryTest {
             assertEquals(seedCount + 2, all.size)
         }
     }
+
+    @Nested
+    inner class ReloadTests {
+
+        @Test
+        fun `reload picks up external changes to the JSON file`() {
+            memory.append("user", "original content")
+
+            // Simulate another process writing to the same file
+            val otherInstance = CoreMemory(storageFile)
+            otherInstance.append("user", "external addition")
+
+            // Original instance still sees stale data
+            assertEquals("original content", memory.read("user"))
+
+            // After reload, it sees the external change
+            memory.reload()
+            assertEquals("original content\nexternal addition", memory.read("user"))
+        }
+
+        @Test
+        fun `reload on missing file leaves empty state`() {
+            memory.append("project", "something")
+            storageFile.delete()
+
+            memory.reload()
+            assertTrue(memory.read("project").isNullOrBlank())
+        }
+
+        @Test
+        fun `reload preserves default block seeding`() {
+            memory.reload()
+            // Default blocks user/project/patterns should still exist
+            assertNotNull(memory.readAll()["user"])
+            assertNotNull(memory.readAll()["project"])
+            assertNotNull(memory.readAll()["patterns"])
+        }
+    }
 }
