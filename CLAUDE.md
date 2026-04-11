@@ -225,30 +225,20 @@ global from `~/.workflow-orchestrator/skills/`. Each skill is a directory with `
 
 ## Agent Memory System
 
-Three-tier memory ported from Letta/MemGPT pattern with file-based storage (no external dependencies):
+Three-tier storage (Letta/MemGPT pattern) with event-driven triggers ported from best-practice research:
 
-**Tier 1 — Core Memory** (`core-memory.json`): Named blocks always injected as `<core_memory>` in system prompt.
-Agent self-edits via `core_memory_read/append/replace` tools. Per-block character limits (5K default).
-Persisted as JSON, loaded at session start.
+**Storage (existing):**
+- **Tier 1 — Core Memory** (`core-memory.json`): Named blocks always injected as `<core_memory>` in system prompt.
+- **Tier 2 — Archival Memory** (`archival/store.json`): JSON store with tag-boosted keyword search.
+- **Tier 3 — Conversation Recall**: Keyword search across JSONL session transcripts.
 
-**Tier 2 — Archival Memory** (`archival/store.json`): JSON store with tag-boosted keyword search (3x tag boost).
-Insert via `archival_memory_insert`, search via `archival_memory_search`. Codex-style usage tracking
-(usage_count, last_usage) with decay-based pruning (30-day window). Cap: 5000 entries.
+**Triggers (event-driven, system-managed via `AutoMemoryManager`):**
+- **Session-end extraction**: After completed sessions, cheap LLM (Haiku) extracts insights → core + archival.
+- **Session-start retrieval**: Keywords from first message → archival search → `<recalled_memory>` in prompt.
 
-**Tier 3 — Conversation Recall**: Keyword search across JSONL session transcripts via `conversation_search`.
-Read-only, filters by role, skips tool messages. Backed by existing SessionStore.
+**User control:** Settings page (Tools → Workflow Orchestrator → AI Agent → Memory) for view/edit/clear. TopBar indicator shows memory usage with click-through to settings. `autoMemoryEnabled` toggle (default on) in settings.
 
-**Legacy — save_memory**: Markdown file persistence to `agent/memory/` directory.
-
-| Tool | Tier | Description |
-|------|------|-------------|
-| `core_memory_read` | Core | Read memory blocks (all or by label) |
-| `core_memory_append` | Core | Append to a named block |
-| `core_memory_replace` | Core | Find-and-replace in a block |
-| `archival_memory_insert` | Archival | Store knowledge with tags |
-| `archival_memory_search` | Archival | Keyword search with tag boost |
-| `conversation_search` | Recall | Search past session transcripts |
-| `save_memory` | Legacy | Save markdown memory file |
+LLM memory tools (`core_memory_read/append/replace`, `archival_memory_insert/search`, `conversation_search`) remain available as manual overrides. Key class: `AutoMemoryManager` in `agent/src/main/kotlin/com/workflow/orchestrator/agent/memory/auto/`.
 
 ## UX Constraints
 

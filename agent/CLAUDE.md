@@ -332,6 +332,37 @@ All paths:
 | `conversation_search` | Recall | Search past session transcripts |
 | `save_memory` | Legacy | Save markdown memory file |
 
+### Auto-Memory System (Retrieval-Only)
+
+Memory is user-managed, not system-extracted. There is one automatic trigger:
+
+| Trigger | When | Mechanism | Cost |
+|---------|------|-----------|------|
+| Session-start retrieval | Before first LLM call | Keyword extraction + archival search + staleness filter | Zero (no LLM) |
+
+There is NO automatic session-end extraction. Users populate memory manually via the memory tools (`core_memory_append`, `archival_memory_insert`, etc.) or by editing the Memory settings page directly. This avoids the silent-poisoning risk where a cheap extractor saves misread facts that the user never sees or approves.
+
+**Key files:**
+- `memory/auto/AutoMemoryManager.kt` — retrieval-only wrapper around `RelevanceRetriever`
+- `memory/auto/RelevanceRetriever.kt` — keyword-based archival search with staleness filter for prompt injection
+
+**Lifecycle:** `AutoMemoryManager` is lazily initialized in `AgentService.ensureAutoMemory()`. No LLM client is required. Gated by `AgentSettings.state.autoMemoryEnabled` (default true — disabling turns off the `<recalled_memory>` injection).
+
+**Staleness filter:** `RelevanceRetriever` takes an injected `pathExists: (String) -> Boolean` predicate. If a recalled archival entry mentions file paths AND all mentioned paths are missing under `project.basePath`, the entry is suppressed. The path-extraction regex excludes URL fragments so URL-only archival entries (Jira board links, etc.) pass through untouched.
+
+**System prompt:** `<recalled_memory>` section injected after `<core_memory>` when relevant archival entries are found. `SystemPrompt.memory()` tells the agent to treat manual memory tools as a last resort ("only when the user literally says 'remember this'") and to trust the file over recalled memory on contradiction.
+
+### Memory Management UI
+
+**Settings page:** Tools → Workflow Orchestrator → AI Agent → Memory (`AgentMemoryConfigurable`)
+- Toggle retrieval on/off
+- View and edit core memory blocks (user, project, patterns) as editable text areas — saved on Apply
+- View archival memory entry count
+- Clear core memory / archival memory / all memory (each with confirmation dialog)
+- Reloads memory from disk each time the page is opened, so it always reflects the latest state on disk
+
+**TopBar indicator:** Small badge in the agent chat TopBar showing `◆ {coreKB} | {archivalCount}` — core memory character count (displayed as N below 1000, X.XK at/above 1000) and archival entry count. Click opens the Settings dialog. Stats pushed from `AgentController.pushMemoryStats()` at task start and on completion.
+
 - `think` tool: no-op reasoning pause, proven 54% improvement on complex tasks (Anthropic data)
 
 ## Interactive Debugging
