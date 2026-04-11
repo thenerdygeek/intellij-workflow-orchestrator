@@ -90,15 +90,26 @@ describe('StreamingMessage — real-time markdown', () => {
   });
 
   it('shows a block caret while streaming and hides it when done', () => {
-    // Streaming: caret is present
+    // Streamdown renders the caret as a CSS `::after` pseudo-element on its
+    // root div, populated via a `--streamdown-caret` CSS custom property in
+    // the inline `style` attribute. jsdom can't compute pseudo-elements, so
+    // we assert against the CSS variable on the style attribute — that is
+    // the actual observable contract. Source:
+    // `node_modules/streamdown/dist/chunk-*.js` — the root div gets
+    // `style={"--streamdown-caret": "..."}` only when caret+isAnimating are
+    // set and the last block is not an incomplete code fence.
+
+    // Streaming: the CSS variable is set on a descendant div
     setActiveStream('Thinking...', true);
     const { rerender, container } = render(<StreamingMessage />);
-    expect(container.querySelector('[data-streamdown-caret]')).not.toBeNull();
+    const streamingRoot = container.querySelector('div[style*="--streamdown-caret"]');
+    expect(streamingRoot).not.toBeNull();
 
-    // Done: caret is gone
+    // Done: the CSS variable is not set anywhere
     setActiveStream('Thinking...', false);
     rerender(<StreamingMessage />);
-    expect(container.querySelector('[data-streamdown-caret]')).toBeNull();
+    const staticRoot = container.querySelector('div[style*="--streamdown-caret"]');
+    expect(staticRoot).toBeNull();
   });
 
   it('never mounts motion/react per-character animated spans', () => {
