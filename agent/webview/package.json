@@ -61,6 +61,7 @@
     "remark-gfm": "^4.0.0",
     "roughjs": "^4.6.6",
     "shiki": "^3.2.1",
+    "streamdown": "^2.5.0",
     "sucrase": "^3.35.1",
     "tailwind-merge": "^3.5.0",
     "tailwindcss-animate": "^1.0.7",
