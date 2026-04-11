@@ -88,7 +88,8 @@ class AutoMemoryManager(
                     UpdateAction.REPLACE -> {
                         val oldContent = update.oldContent
                         if (oldContent != null) {
-                            coreMemory.replace(update.block, oldContent, update.content)
+                            // Use fuzzy match — Haiku cannot produce exact strings reliably
+                            coreMemory.replaceFlexible(update.block, oldContent, update.content)
                             coreUpdates++
                         } else {
                             log.warn("[AutoMemory] Replace without old_content for block '${update.block}', skipping")

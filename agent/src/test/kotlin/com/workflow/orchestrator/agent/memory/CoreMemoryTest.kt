@@ -87,6 +87,54 @@ class CoreMemoryTest {
     }
 
     @Nested
+    inner class ReplaceFlexibleTests {
+
+        @Test
+        fun `replaceFlexible matches despite case differences`() {
+            memory.append("project", "Auth migration in progress")
+            memory.replaceFlexible("project", "auth migration in progress", "Auth migration complete")
+            assertEquals("Auth migration complete", memory.read("project"))
+        }
+
+        @Test
+        fun `replaceFlexible matches despite trailing punctuation`() {
+            memory.append("project", "Deploy via Bamboo PROJ-DEPLOY-PROD")
+            memory.replaceFlexible("project", "Deploy via Bamboo PROJ-DEPLOY-PROD.", "Deploy via Bamboo PROJ-DEPLOY-STAGING")
+            assertEquals("Deploy via Bamboo PROJ-DEPLOY-STAGING", memory.read("project"))
+        }
+
+        @Test
+        fun `replaceFlexible matches despite whitespace differences`() {
+            memory.append("patterns", "Always use ToolResult for services")
+            memory.replaceFlexible("patterns", "Always  use ToolResult\tfor services", "Always return ToolResult from services")
+            assertEquals("Always return ToolResult from services", memory.read("patterns"))
+        }
+
+        @Test
+        fun `replaceFlexible throws when no approximate match found`() {
+            memory.append("user", "Backend developer")
+            assertThrows(IllegalArgumentException::class.java) {
+                memory.replaceFlexible("user", "Frontend developer", "Full-stack developer")
+            }
+        }
+
+        @Test
+        fun `replaceFlexible prefers longer matches over shorter`() {
+            memory.append("patterns", "Use ToolResult. Use strict null checks. Use ToolResult for API boundaries.")
+            // "Use ToolResult" appears twice but "Use ToolResult for API boundaries" is the intended target
+            memory.replaceFlexible(
+                "patterns",
+                "use toolresult for api boundaries",
+                "Use ToolResult everywhere"
+            )
+            val value = memory.read("patterns")!!
+            assertTrue(value.contains("Use ToolResult everywhere"))
+            // The first "Use ToolResult" should be preserved
+            assertTrue(value.contains("Use ToolResult. Use strict null checks."))
+        }
+    }
+
+    @Nested
     inner class CompileTests {
         @Test
         fun `compile returns null when empty`() {

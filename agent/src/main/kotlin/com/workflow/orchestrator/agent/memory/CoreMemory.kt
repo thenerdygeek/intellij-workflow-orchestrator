@@ -143,6 +143,71 @@ class CoreMemory(private val storageFile: File) {
     }
 
     /**
+     * Replace content in a block using fuzzy matching on the old content.
+     *
+     * Haiku often produces `old_content` that differs from the stored text in
+     * whitespace, case, or trailing punctuation. This method normalizes both
+     * the stored block and the requested old_content, finds the tightest
+     * matching candidate (shortest line/sentence whose normalized form still
+     * contains the normalized target), and delegates to strict [replace] with
+     * the exact stored text so we never over-replace surrounding context.
+     *
+     * @throws IllegalArgumentException if no approximate match found, block
+     *         not found, or block is read-only.
+     */
+    @Synchronized
+    fun replaceFlexible(label: String, approximateOld: String, newContent: String): String {
+        val block = blocks[label]
+            ?: throw IllegalArgumentException("Block '$label' not found")
+        require(!block.readOnly) { "Block '$label' is read-only" }
+
+        // Normalize: lowercase, collapse whitespace runs to single space, strip
+        // leading/trailing whitespace and punctuation.
+        val normalizedTarget = normalizeForMatching(approximateOld)
+        if (normalizedTarget.isEmpty()) {
+            throw IllegalArgumentException("approximateOld is empty after normalization")
+        }
+
+        // Search for the tightest (shortest) substring of `block.value` whose
+        // normalized form still contains the normalized target. Picking the
+        // shortest candidate avoids replacing surrounding text outside the
+        // target (e.g. choosing "Use ToolResult for API boundaries." rather
+        // than the whole paragraph that contains it).
+        val candidates = extractCandidateSubstrings(block.value)
+        val best = candidates
+            .filter { candidate -> normalizeForMatching(candidate).contains(normalizedTarget) }
+            .minByOrNull { it.length }
+            ?: throw IllegalArgumentException(
+                "No approximate match for old_content in block '$label'. " +
+                    "Tried to match: '${approximateOld.take(80)}'"
+            )
+
+        // Delegate to the strict replace with the exact stored text
+        return replace(label, best, newContent)
+    }
+
+    /** Normalize text for fuzzy matching: lowercase, collapse whitespace, trim punctuation. */
+    private fun normalizeForMatching(text: String): String {
+        return text
+            .lowercase()
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .trimEnd('.', ',', '!', '?', ';', ':')
+    }
+
+    /** Extract candidate substrings from a block value. Splits on newlines AND sentence boundaries so we can match mid-paragraph. */
+    private fun extractCandidateSubstrings(value: String): List<String> {
+        // Each line is a candidate
+        val lines = value.split('\n').filter { it.isNotBlank() }
+        // Each sentence within a line is also a candidate (Haiku may match a single sentence inside a multi-sentence line)
+        val sentences = lines.flatMap { line ->
+            line.split(Regex("(?<=[.!?])\\s+")).filter { it.isNotBlank() }
+        }
+        // And the whole line concatenations
+        return (lines + sentences).distinct()
+    }
+
+    /**
      * Set a block directly (used for initialization, not exposed as tool).
      */
     @Synchronized

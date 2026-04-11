@@ -162,6 +162,23 @@ class AutoMemoryManagerTest {
     }
 
     @Nested
+    inner class FuzzyReplace {
+
+        @Test
+        fun `applies replace with whitespace-tolerant matching`() = runTest {
+            coreMemory.append("project", "Auth migration in progress")
+
+            val extractionJson = """{"core_memory_updates":[{"block":"project","action":"replace","content":"Auth migration complete","old_content":"auth   migration in progress"}],"archival_inserts":[]}"""
+            mockLlmResponse(extractionJson)
+
+            val messages = (1..5).map { ChatMessage(role = if (it % 2 == 1) "user" else "assistant", content = "substantive message content number $it for this integration test") }
+            manager.onSessionComplete("session-1", messages)
+
+            assertEquals("Auth migration complete", coreMemory.read("project"))
+        }
+    }
+
+    @Nested
     inner class BlockWhitelist {
 
         @Test
