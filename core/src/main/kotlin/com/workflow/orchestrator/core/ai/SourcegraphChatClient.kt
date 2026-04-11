@@ -77,24 +77,10 @@ class SourcegraphChatClient(
         const val MODELS_PATH = "/.api/llm/models"
 
         /**
-         * Process-wide counter for synthesizing XML tool call IDs.
-         *
-         * **Why process-wide, not per-response.** XML-mode tool call IDs must be
-         * unique across the entire webview session, not just per-response. The
-         * JS chatStore's `activeToolCalls: Map<String, ToolCall>` is keyed by
-         * these IDs and spans many API calls. A per-response counter (which the
-         * previous `idx + 1` was) collides across turns: turn 1 glob = `xmltool_1`,
-         * turn 2 first read_file = `xmltool_1` → `newMap.set("xmltool_1", readFile)`
-         * silently overwrites the glob in the store and the glob UI card
-         * disappears. See design spec
-         * `docs/superpowers/specs/2026-04-10-incremental-xml-parser-design.md`
-         * section "Tool Call ID Generation" — this is what the spec always said
-         * to do; the implementation regressed.
-         *
-         * **Why companion-object, not instance field.** A model-fallback mid-session
-         * constructs a new `SourcegraphChatClient`, but the webview's tool call
-         * map survives. Instance-scoping would reintroduce the same collision
-         * at fallback boundaries. Companion scope makes it process-wide.
+         * Monotonic counter for XML-synthesized tool call IDs. Must be
+         * process-wide (not per-response, not per-instance): the webview's
+         * tool call map is keyed by these IDs and survives both cross-turn
+         * LLM calls and client recreation on model fallback.
          */
         private val xmlToolIdCounter = AtomicInteger(0)
     }
@@ -287,6 +273,23 @@ class SourcegraphChatClient(
     }
 
     /**
+     * Convert parsed XML tool-use blocks into [ToolCall] DTOs, assigning each
+     * one a fresh id from the process-wide [xmlToolIdCounter]. Used by both
+     * the streaming and non-streaming paths when the model replies in Cline's
+     * XML tool format instead of native function calls.
+     */
+    private fun xmlBlocksToToolCalls(blocks: List<ToolUseContent>): List<ToolCall> =
+        blocks.map { block ->
+            val argsJson = kotlinx.serialization.json.buildJsonObject {
+                block.params.forEach { (k, v) -> put(k, kotlinx.serialization.json.JsonPrimitive(v)) }
+            }.toString()
+            ToolCall(
+                id = "xmltool_${xmlToolIdCounter.incrementAndGet()}",
+                function = FunctionCall(name = block.name, arguments = argsJson)
+            )
+        }
+
+    /**
      * Send a streaming chat completion request. Each SSE chunk is emitted via [onChunk]
      * for real-time UI updates. The accumulated response is returned as a single
      * [ChatCompletionResponse] when the stream completes.
@@ -467,18 +470,7 @@ class SourcegraphChatClient(
                 val finalToolCalls = toolCalls ?: parsedBlocks
                     ?.filterIsInstance<ToolUseContent>()
                     ?.filter { !it.partial }
-                    ?.map { block ->
-                        val argsJson = kotlinx.serialization.json.buildJsonObject {
-                            block.params.forEach { (k, v) -> put(k, kotlinx.serialization.json.JsonPrimitive(v)) }
-                        }.toString()
-                        // Process-wide counter — see xmlToolIdCounter docs on why this
-                        // CANNOT be a per-response `idx + 1`. Cross-turn collision would
-                        // overwrite previous tool calls in the JS chatStore map.
-                        ToolCall(
-                            id = "xmltool_${xmlToolIdCounter.incrementAndGet()}",
-                            function = FunctionCall(name = block.name, arguments = argsJson)
-                        )
-                    }
+                    ?.let(::xmlBlocksToToolCalls)
                     ?.ifEmpty { null }
 
                 val textOnlyContent = if (parsedBlocks != null) {
@@ -605,16 +597,7 @@ class SourcegraphChatClient(
                                         log.info("[Agent:API] Extracted ${xmlToolCalls.size} XML tool call(s) from non-streaming response")
                                         val textOnly = parsedBlocks.filterIsInstance<TextContent>()
                                             .joinToString("\n\n") { it.content }.ifBlank { null }
-                                        val toolCallDtos = xmlToolCalls.map { block ->
-                                            val argsJson = kotlinx.serialization.json.buildJsonObject {
-                                                block.params.forEach { (k, v) -> put(k, kotlinx.serialization.json.JsonPrimitive(v)) }
-                                            }.toString()
-                                            // Process-wide counter — see xmlToolIdCounter docs.
-                                            ToolCall(
-                                                id = "xmltool_${xmlToolIdCounter.incrementAndGet()}",
-                                                function = FunctionCall(name = block.name, arguments = argsJson)
-                                            )
-                                        }
+                                        val toolCallDtos = xmlBlocksToToolCalls(xmlToolCalls)
                                         val updatedMsg = choice.message.copy(content = textOnly, toolCalls = toolCallDtos)
                                         val updatedFr = if (choice.finishReason == "stop") "tool_calls" else choice.finishReason
                                         val updatedResp = parsed.copy(choices = listOf(choice.copy(message = updatedMsg, finishReason = updatedFr)))

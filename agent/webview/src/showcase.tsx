@@ -201,11 +201,7 @@ function ComponentsTab() {
           <AgentMessage key={msg.id} message={msg} />
         ))}
         <SubLabel text="Streaming message:" />
-        <AgentMessage
-          message={mockStreamingMessage}
-          isStreaming={true}
-          streamText={mockStreamingMessage.content}
-        />
+        <AgentMessage message={mockStreamingMessage} isStreaming={true} />
       </Section>
 
       {/* ── Tool Calls ── */}

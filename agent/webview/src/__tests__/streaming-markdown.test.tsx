@@ -1,25 +1,16 @@
 /**
- * Scenario tests for streaming markdown rendering (Streamdown integration).
+ * Scenario tests for streaming markdown rendering through `AgentMessage`.
  *
- * These contracts come from the refactor brief, not from the implementation.
- * They describe the user-facing behavior we want:
- *
+ * Contracts:
  * 1. Paragraphs appear as HTML immediately during streaming (no plain-text
  *    zone, no character drip).
  * 2. Incomplete code fences render as plain monospace during streaming, then
  *    swap to Shiki-highlighted code once the fence closes.
  * 3. A single block caret element appears during streaming.
  * 4. No per-character motion/react animation is ever mounted.
- *
- * **Architecture note.** Earlier in this branch there was a dedicated
- * `StreamingMessage` component that rendered the stream through a different
- * wrapper than `AgentMessage` used for finalized messages. Switching wrappers
- * on stream end caused a visible reflow/flash (DOM structure changed). The
- * unified model renders ALL agent messages — streaming or finalized — through
- * `AgentMessage` with an `isStreaming` flag, so the DOM is stable across the
- * transition. These tests therefore mount `AgentMessage` directly with a
- * synthetic `Message` and `isStreaming={true}`, which is the canonical way
- * the UI now renders an in-progress stream.
+ * 5. The streaming→finalized transition preserves the same outer wrapper,
+ *    the same DOM `Element` references, and fires zero mount/unmount cycles
+ *    — so the user sees no flash/reflow at stream end.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
@@ -132,7 +123,7 @@ describe('AgentMessage — real-time streaming markdown', () => {
     expect(staticRoot).toBeNull();
   });
 
-  it('never mounts motion/react per-character animated spans', () => {
+  it('does not mount motion/react per-character animated spans', () => {
     const { container } = render(
       <AgentMessage
         message={streamingMessage('Streaming text with multiple words.')}
@@ -140,22 +131,18 @@ describe('AgentMessage — real-time streaming markdown', () => {
       />,
     );
 
-    // The deleted `BlurTextStream` used motion's <m.span> with an inline
-    // filter/transform style. Assert no element has that marker.
+    // A `filter`/`transform` inline style on a span would indicate a
+    // per-character motion/react animation — Streamdown's block caret is
+    // a CSS pseudo-element and does not leave that marker.
     const animatedSpans = container.querySelectorAll('span[style*="filter"]');
     expect(animatedSpans.length).toBe(0);
   });
 
-  it('renders through the SAME wrapper when streaming and finalized (structural landmarks present in both states)', () => {
-    // Direct regression test for the streaming flash bug. Under the old
-    // model, `StreamingMessage` rendered a bare div, then on stream end
-    // the message was pushed into `messages` and rendered by `AgentMessage`
-    // with a COMPLETELY different wrapper (avatar, 85% max-width bubble,
-    // "Agent" label, padding, entrance animation). The user saw a flash.
-    //
-    // Under the unified model the same `AgentMessage` component renders
-    // both states. Toggling `isStreaming` must leave every structural
-    // landmark intact.
+  it('streaming and finalized share the same structural landmarks (avatar, "Agent" label, constrained bubble)', () => {
+    // These three landmarks are the cheapest observable signal that both
+    // states render through the same `AgentMessage` wrapper. Any render
+    // path that skips the avatar or the bubble constraint during streaming
+    // would cause a reflow/flash at stream end.
     const msg = streamingMessage('Hello, world.');
 
     const { container, rerender } = render(
@@ -181,17 +168,12 @@ describe('AgentMessage — real-time streaming markdown', () => {
     expect(finalBubble, 'Constrained bubble should still exist when finalized').not.toBeNull();
   });
 
-  it('REGRESSION Bug 2: stream→finalized transition does NOT remount the DOM (same element reference)', () => {
-    // The strongest contract for "no flash": the actual DOM `Element`
-    // object that renders the message must be the IDENTICAL reference
-    // before and after the `isStreaming` flag flip. If React unmounts and
-    // remounts the subtree (because the renderer swapped components, or
-    // because the React key changed), `querySelector` returns a NEW
-    // element object — the old one is detached and garbage-collected.
-    //
-    // Object identity (`===`) is the reliable jsdom-compatible way to
-    // detect a remount. A deep-equality comparison would pass even on a
-    // remount because the new element has the same content.
+  it('stream→finalized transition preserves DOM element identity (no remount)', () => {
+    // If toggling `isStreaming` ever caused React to unmount and recreate
+    // the subtree, `querySelector` would return a different `Element`
+    // instance after `rerender`. Object identity (`===`) is what catches
+    // that — a deep-equality check would pass on a remount because the
+    // new element has the same content.
     const msg = streamingMessage('Hello, world.');
 
     const { container, rerender } = render(
@@ -207,20 +189,15 @@ describe('AgentMessage — real-time streaming markdown', () => {
     const afterBubble = container.querySelector('.max-w-\\[85\\%\\]');
     const afterAvatar = container.querySelector('[class*="bg-[var(--accent"]');
 
-    // ── The core no-remount assertion ──
-    // Same Element instance. If these fail, React is tearing down the
-    // subtree on the transition and the user will see a visible flash.
     expect(afterBubble, 'bubble element identity must be preserved across isStreaming transition').toBe(beforeBubble);
     expect(afterAvatar, 'avatar element identity must be preserved across isStreaming transition').toBe(beforeAvatar);
   });
 
-  it('REGRESSION Bug 2: stream→finalized transition fires exactly 1 mount and 0 unmounts', () => {
-    // Complementary proof via React effect lifecycle. Wrap `AgentMessage`
-    // in a tiny component whose `useEffect` bumps a mount counter on mount
-    // and a cleanup counter on unmount. A remount fires both — the cleanup
-    // from the old instance AND the effect from the new one. An in-place
-    // re-render (the goal) fires neither after the initial mount, because
-    // the effect has no dependencies that change.
+  it('stream→finalized transition fires exactly 1 mount and 0 unmounts', () => {
+    // Complementary framework-level proof for the no-remount contract.
+    // A `useEffect` with empty deps fires its body on mount and its
+    // cleanup on unmount — a remount triggers both (old cleanup + new
+    // body). In-place re-render triggers neither after the initial mount.
     let mountCount = 0;
     let unmountCount = 0;
 

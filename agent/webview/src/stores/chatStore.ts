@@ -70,25 +70,12 @@ interface ChatState {
   // State
   messages: Message[];
   /**
-   * Pointer to the currently-streaming agent message.
-   *
-   * `messageId` identifies a real `Message` in the `messages` array that the
-   * token stream is being written into. The streaming and finalized states
-   * render through the **same** `AgentMessage` component so the DOM structure
-   * doesn't change when streaming ends — no reflow, no reposition, no flash.
-   *
-   * - `text` mirrors that message's `content` (kept in sync for cheap reads).
-   * - `isStreaming` toggles the caret on the target message.
-   *
-   * Lifecycle:
-   * - Created by `appendToken` on the first token of a new stream. The
-   *   placeholder message is appended to `messages` at the same time.
-   * - Updated in-place by subsequent `appendToken` calls via
-   *   `messages.map(...)` — stable React key, no remount.
-   * - Cleared by `endStream`, `addToolCall`, `showApproval`, `completeSession`,
-   *   `startSession`, `clearChat`. The underlying message stays in `messages`.
+   * Id of the `Message` currently being written by the token stream, or `null`
+   * if no stream is active. The streaming message lives in `messages` like any
+   * other, updated in place via `appendToken`; this field just points at it so
+   * `ChatView` can toggle the caret on the right message.
    */
-  activeStream: { messageId: string; text: string; isStreaming: boolean } | null;
+  activeStream: { messageId: string } | null;
   activeToolCalls: Map<string, ToolCall>;  // key = unique tool call ID
   plan: Plan | null;
   planCommentCount: number;
@@ -364,19 +351,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   appendToken(token: string) {
+    // Defensive no-op: Kotlin StreamBatcher may flush an empty coalesced chunk
+    // on a timer boundary. Returning the same state object avoids thrashing
+    // React.memo on every message for a non-event.
+    if (token.length === 0) return;
+
     set(state => {
       const current = state.activeStream;
 
-      // ── First token of a new stream ──
-      // Create the placeholder `Message` in the `messages` array NOW, and point
-      // `activeStream.messageId` at it. Subsequent tokens update that specific
-      // message's `content` in place (stable React key → no remount → no DOM
-      // flash on stream end). See the field doc on `activeStream` for rationale.
       if (current == null) {
-        // Drain any pending active tool calls into a toolchain message FIRST so
-        // the chat flow stays chronological: prior tools → streaming text →
-        // next tool chain. Merge any buffered stream output into each tool
-        // call, then drop the corresponding toolOutputStreams entries.
+        // First token of a new stream. Drain any leftover active tool calls
+        // into a `tc-chain` system message so the chat flow stays
+        // chronological: prior tools → streaming text → next tool chain.
         let messages = state.messages;
         let activeToolCalls = state.activeToolCalls;
         let toolOutputStreams = state.toolOutputStreams;
@@ -410,21 +396,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
         return {
           messages: [...messages, placeholder],
-          activeStream: { messageId, text: token, isStreaming: true },
+          activeStream: { messageId },
           activeToolCalls,
           toolOutputStreams,
         };
       }
 
-      // ── Subsequent token — update the streaming message in place ──
-      // Same `messageId` (React key stays stable), so the `AgentMessage`
-      // component instance reconciles in place and passes new `content` to
-      // Streamdown. Streamdown's per-block memoization takes it from there.
-      const newText = current.text + token;
+      // Subsequent tokens update the existing placeholder in place. Keeping
+      // the same message id lets React.memo skip every other message (we
+      // return `m` by reference for non-matching items) so rendering stays
+      // O(1) in the streaming message per token.
       return {
-        activeStream: { ...current, text: newText },
         messages: state.messages.map(m =>
-          m.id === current.messageId ? { ...m, content: newText } : m
+          m.id === current.messageId ? { ...m, content: m.content + token } : m
         ),
       };
     });
@@ -433,10 +417,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   endStream() {
     const state = get();
     const shouldClearPlan = state.planCompletedPendingClear;
-    // The streaming message is already in `messages` with its full content —
-    // created lazily by `appendToken` and updated in place on every token.
-    // Finalizing the stream is now just flipping the caret off by clearing
-    // `activeStream`. No new message push, no array insertion, no remount.
     set({
       activeStream: null,
       ...(shouldClearPlan ? { plan: null, planCompletedPendingClear: false } : {}),
@@ -450,12 +430,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       let id = toolCallId || nextId('tc');
       const newMap = new Map(state.activeToolCalls);
 
-      // Defense-in-depth against synthesized-ID collisions (see Bug 1 on
-      // feature/streaming-xml-port). If the incoming ID already exists in the
-      // map AND belongs to a different tool, the Kotlin caller has a scope bug
-      // — don't silently overwrite, because that erases the previous tool's
-      // UI card. Derive a fresh unique key and log a loud warning so the root
-      // cause surfaces. Same-name same-id is a legitimate update.
+      // Same id + different tool name = a Kotlin-side id scope bug. Rekey
+      // the incoming entry instead of silently overwriting, so the previous
+      // tool's UI card survives and the root cause surfaces in the log.
+      // Same id + same name is a legitimate status update, not a collision.
       const existing = newMap.get(id);
       if (existing && existing.name !== name) {
         const dupKey = `${id}__dup-${nextId('col')}`;
@@ -469,11 +447,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       newMap.set(id, { id, name, args, status });
 
-      // Auto-finalize any active stream — ensures text appears in messages
-      // before tool calls. Under the new streaming-message model the text is
-      // ALREADY in `messages` (created lazily by `appendToken`), so all we
-      // need to do here is clear `activeStream` to turn off the caret on that
-      // message. Do NOT push a new message — that would duplicate the text.
+      // Clear the streaming caret on any in-flight message so the tool call
+      // below it renders as the next visual item. The message text itself
+      // already lives in `messages` and stays put.
       if (state.activeStream != null) {
         return {
           activeStream: null,
@@ -902,12 +878,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         diffContent,
       };
 
-      // Auto-finalize the tool chain so the approval card appears after all
-      // prior content. The streaming message (if any) is already in `messages`
-      // under the new model — just clear `activeStream` to stop the caret.
-      // Tool calls still need to be drained from `activeToolCalls` into a
-      // `tc-chain` system message so they render in the right order below the
-      // finalized streaming text.
+      // Drain any active tool chain into a `tc-chain` system message and
+      // clear the streaming caret so the approval card renders below all
+      // prior content.
       const hadStream = state.activeStream != null;
       const tools = Array.from(state.activeToolCalls.values());
       const newMessages = [...state.messages];
