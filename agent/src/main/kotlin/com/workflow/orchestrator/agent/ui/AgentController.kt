@@ -201,6 +201,7 @@ class AgentController(
             },
             onRequestFocusIde = { /* No-op: focus returns to IDE naturally */ },
             onOpenSettings = ::openSettings,
+            onOpenMemorySettings = ::openMemorySettings,
             onOpenToolsPanel = ::showToolsPanel
         )
         panel.setCefMentionCallbacks(::executeTaskWithMentions)
@@ -422,6 +423,11 @@ class AgentController(
         if (!model.isNullOrBlank()) {
             dashboard.setModelName(model)
         }
+
+        // Push initial memory stats so the TopBar indicator shows from first paint,
+        // even before the user sends any task. (Review M2.) callJs buffers when the
+        // webview hasn't loaded yet, so this will fire on first paint.
+        pushMemoryStats()
 
         // Fetch available models from Sourcegraph and populate the dropdown
         loadModelList()
@@ -774,6 +780,9 @@ class AgentController(
         // Input is NOT locked — user can always type (Cline behavior)
         taskStartTime = System.currentTimeMillis()
 
+        // Push current memory stats to the TopBar indicator at task start.
+        pushMemoryStats()
+
         // Create context manager on first message, reuse on subsequent turns
         val isFirstMessage = contextManager == null
         if (isFirstMessage) {
@@ -1057,6 +1066,20 @@ class AgentController(
     }
 
     /**
+     * Push current agent memory stats (core memory chars + archival entry count) to
+     * the TopBar indicator. Best-effort — logs and continues on failure. Safe to call
+     * from any thread (switches to EDT internally via invokeLater).
+     */
+    private fun pushMemoryStats() {
+        try {
+            val stats = service.getMemoryStats() ?: return
+            invokeLater { dashboard.updateMemoryStats(stats.first, stats.second) }
+        } catch (e: Exception) {
+            LOG.warn("[AgentController] Failed to push memory stats (non-fatal)", e)
+        }
+    }
+
+    /**
      * Token usage callback — agent loop reports per-call token counts after each API call.
      * The first argument is the current prompt token count (how full the context window is),
      * NOT a cumulative total. The progress bar shows "promptTokens / maxInputTokens".
@@ -1296,6 +1319,12 @@ class AgentController(
             loopWaitingForInput = false
             // Clear any orphaned steering messages that were queued after the last drain
             steeringQueue.clear()
+
+            // Refresh memory stats in TopBar after task completion.
+            // Note: auto-memory extraction runs asynchronously in AgentService after
+            // completion, so this reflects pre-extraction state. A subsequent task
+            // start will pick up any newly-written entries.
+            pushMemoryStats()
         }
     }
 
@@ -1676,6 +1705,18 @@ class AgentController(
         ShowSettingsUtil.getInstance().showSettingsDialog(
             project,
             "Workflow Orchestrator"
+        )
+    }
+
+    /**
+     * Route the TopBar memory indicator click directly to the Memory sub-page,
+     * skipping the top-level "Workflow Orchestrator" page. Fixes first-time UX
+     * where IntelliJ would otherwise show the General page by default. (Review M1.)
+     */
+    private fun openMemorySettings() {
+        ShowSettingsUtil.getInstance().showSettingsDialog(
+            project,
+            com.workflow.orchestrator.agent.settings.AgentMemoryConfigurable::class.java
         )
     }
 

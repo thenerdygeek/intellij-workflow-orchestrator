@@ -12,6 +12,7 @@ declare global {
     _requestUndo?: () => void;
     _requestViewTrace?: () => void;
     _openSettings?: () => void;
+    _openMemorySettings?: () => void;
     _openToolsPanel?: () => void;
     _changeModel?: (modelId: string) => void;
     _togglePlanMode?: (enabled: boolean) => void;

@@ -129,6 +129,7 @@ class AgentDashboardPanel(
         onActivateSkill: (String) -> Unit,
         onRequestFocusIde: () -> Unit,
         onOpenSettings: () -> Unit,
+        onOpenMemorySettings: () -> Unit = {},
         onOpenToolsPanel: () -> Unit
     ) {
         cefPanel?.onCancelTask = onCancel
@@ -140,6 +141,7 @@ class AgentDashboardPanel(
         cefPanel?.onActivateSkill = onActivateSkill
         cefPanel?.onRequestFocusIde = onRequestFocusIde
         cefPanel?.onOpenSettings = onOpenSettings
+        cefPanel?.onOpenMemorySettings = onOpenMemorySettings
         cefPanel?.onOpenToolsPanel = onOpenToolsPanel
     }
 
@@ -166,6 +168,15 @@ class AgentDashboardPanel(
     fun updateProgress(step: String, tokensUsed: Int, maxTokens: Int) {
         runOnEdt { cefPanel?.updateTokenBudget(tokensUsed, maxTokens) }
         broadcast(replay = false) { it.updateProgress(step, tokensUsed, maxTokens) }
+    }
+
+    /**
+     * Push current memory stats (core memory total chars + archival entry count) to the
+     * TopBar memory indicator in the chat UI. Clicking the indicator opens Settings.
+     */
+    fun updateMemoryStats(coreChars: Int, archivalCount: Int) {
+        runOnEdt { cefPanel?.updateMemoryStats(coreChars, archivalCount) }
+        broadcast(replay = false) { it.updateMemoryStats(coreChars, archivalCount) }
     }
 
     fun setModelName(name: String) {
