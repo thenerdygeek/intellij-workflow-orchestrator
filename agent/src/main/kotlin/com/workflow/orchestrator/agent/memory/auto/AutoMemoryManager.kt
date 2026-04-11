@@ -30,6 +30,9 @@ class AutoMemoryManager(
     companion object {
         /** Minimum conversation messages to warrant extraction (skip trivial sessions). */
         private const val MIN_MESSAGES_FOR_EXTRACTION = 4
+
+        /** Valid core memory block names. Unknown blocks are ignored to prevent LLM hallucination. */
+        private val ALLOWED_BLOCKS = setOf("user", "project", "patterns")
     }
 
     /**
@@ -70,6 +73,12 @@ class AutoMemoryManager(
         var archivalInserts = 0
 
         for (update in result.coreMemoryUpdates) {
+            // I2 fix: whitelist check prevents LLM hallucinated block names from
+            // creating invisible orphan blocks that consume prompt tokens
+            if (update.block !in ALLOWED_BLOCKS) {
+                log.info("[AutoMemory] Ignoring update for unknown block '${update.block}' from $source")
+                continue
+            }
             try {
                 when (update.action) {
                     UpdateAction.APPEND -> {
@@ -87,13 +96,18 @@ class AutoMemoryManager(
                     }
                 }
             } catch (e: IllegalArgumentException) {
-                log.info("[AutoMemory] Skipped core update for '${update.block}': ${e.message}")
+                // I7 fix: elevated from INFO to WARN. Block-limit rejections mean
+                // auto-memory is silently capped — users should see this in the log.
+                log.warn("[AutoMemory] Block '${update.block}' rejected update (likely at size limit): ${e.message}")
             }
         }
 
         for (insert in result.archivalInserts) {
             try {
-                archivalMemory.insert(insert.content, insert.tags)
+                // M3 fix: ensure tagless entries remain searchable (tag boost requires tags).
+                // LLM may return empty tags despite prompt asking for 2-4.
+                val tags = insert.tags.ifEmpty { listOf("auto") }
+                archivalMemory.insert(insert.content, tags)
                 archivalInserts++
             } catch (e: Exception) {
                 log.warn("[AutoMemory] Failed to insert archival entry: ${e.message}")

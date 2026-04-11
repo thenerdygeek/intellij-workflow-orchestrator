@@ -13,6 +13,7 @@ import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -157,6 +158,50 @@ class AutoMemoryManagerTest {
 
             // Should not crash, original content preserved
             assertEquals("Some other content", coreMemory.read("project"))
+        }
+    }
+
+    @Nested
+    inner class BlockWhitelist {
+
+        @Test
+        fun `ignores updates for unknown block names`() = runTest {
+            val extractionJson = """{"core_memory_updates":[{"block":"goals","action":"append","content":"Ship by Q2"}],"archival_inserts":[]}"""
+            mockLlmResponse(extractionJson)
+
+            val messages = (1..5).map { ChatMessage(role = if (it % 2 == 1) "user" else "assistant", content = "msg $it") }
+            manager.onSessionComplete("session-1", messages)
+
+            // "goals" is not in the whitelist, so nothing should be saved
+            assertFalse(coreMemory.readAll().containsKey("goals"))
+        }
+
+        @Test
+        fun `still accepts valid blocks user project patterns`() = runTest {
+            val extractionJson = """{"core_memory_updates":[{"block":"patterns","action":"append","content":"TDD always"}],"archival_inserts":[]}"""
+            mockLlmResponse(extractionJson)
+
+            val messages = (1..5).map { ChatMessage(role = if (it % 2 == 1) "user" else "assistant", content = "msg $it") }
+            manager.onSessionComplete("session-1", messages)
+
+            assertEquals("TDD always", coreMemory.read("patterns"))
+        }
+    }
+
+    @Nested
+    inner class DefaultTags {
+
+        @Test
+        fun `tagless archival inserts get auto tag`() = runTest {
+            val extractionJson = """{"core_memory_updates":[],"archival_inserts":[{"content":"Some insight","tags":[]}]}"""
+            mockLlmResponse(extractionJson)
+
+            val messages = (1..5).map { ChatMessage(role = if (it % 2 == 1) "user" else "assistant", content = "msg $it") }
+            manager.onSessionComplete("session-1", messages)
+
+            val results = archival.search("insight")
+            assertEquals(1, results.size)
+            assertTrue(results[0].entry.tags.contains("auto"))
         }
     }
 
