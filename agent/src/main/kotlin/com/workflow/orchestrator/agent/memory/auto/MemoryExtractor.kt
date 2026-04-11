@@ -6,6 +6,7 @@ import com.workflow.orchestrator.core.ai.SourcegraphChatClient
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
 import com.workflow.orchestrator.core.model.ApiResult
 import kotlinx.serialization.json.Json
+import java.time.LocalDate
 
 /**
  * Makes lightweight LLM calls to extract structured memory from conversations.
@@ -50,7 +51,11 @@ class MemoryExtractor(
         }
         if (conversationLines.isEmpty()) return null
 
-        val prompt = ExtractionPrompts.sessionEndPrompt(conversationLines, currentCoreMemory)
+        val prompt = ExtractionPrompts.sessionEndPrompt(
+            conversationLines,
+            currentCoreMemory,
+            LocalDate.now().toString()
+        )
         val fullPrompt = "${ExtractionPrompts.EXTRACTION_SYSTEM_MESSAGE}\n\n$prompt"
 
         val response = client.sendMessage(

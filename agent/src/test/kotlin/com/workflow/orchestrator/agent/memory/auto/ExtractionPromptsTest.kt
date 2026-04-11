@@ -5,6 +5,8 @@ import org.junit.jupiter.api.Test
 
 class ExtractionPromptsTest {
 
+    private val TEST_DATE = "2026-04-11"
+
     @Test
     fun `session end prompt includes conversation snippet`() {
         val messages = listOf(
@@ -14,7 +16,7 @@ class ExtractionPromptsTest {
         )
         val coreMemory = mapOf("user" to "Backend developer", "project" to "", "patterns" to "")
 
-        val prompt = ExtractionPrompts.sessionEndPrompt(messages, coreMemory)
+        val prompt = ExtractionPrompts.sessionEndPrompt(messages, coreMemory, TEST_DATE)
 
         assertTrue(prompt.contains("CORS error"))
         assertTrue(prompt.contains("don't add wildcard"))
@@ -26,7 +28,7 @@ class ExtractionPromptsTest {
     @Test
     fun `session end prompt truncates long conversations`() {
         val messages = (1..100).map { "user: Message number $it with some content padding here" }
-        val prompt = ExtractionPrompts.sessionEndPrompt(messages, emptyMap())
+        val prompt = ExtractionPrompts.sessionEndPrompt(messages, emptyMap(), TEST_DATE)
 
         assertTrue(prompt.length < 15_000, "Prompt should be bounded, got ${prompt.length}")
     }
@@ -35,7 +37,8 @@ class ExtractionPromptsTest {
     fun `session end prompt explains what to extract`() {
         val prompt = ExtractionPrompts.sessionEndPrompt(
             listOf("user: Fix the bug", "assistant: Done"),
-            emptyMap()
+            emptyMap(),
+            TEST_DATE
         )
         assertTrue(prompt.contains("correction"))
         assertTrue(prompt.contains("pattern"))
@@ -60,7 +63,7 @@ class ExtractionPromptsTest {
             add("assistant: Understood, updating fix")
         }
 
-        val prompt = ExtractionPrompts.sessionEndPrompt(messages, emptyMap())
+        val prompt = ExtractionPrompts.sessionEndPrompt(messages, emptyMap(), TEST_DATE)
 
         // First message (the goal) should be preserved
         assertTrue(prompt.contains("INITIAL GOAL"), "Goal from first message should be preserved")
@@ -81,5 +84,15 @@ class ExtractionPromptsTest {
             prompt.contains("omitted") || prompt.contains("..."),
             "Prompt should indicate omitted messages"
         )
+    }
+
+    @Test
+    fun `prompt includes current date header`() {
+        val prompt = ExtractionPrompts.sessionEndPrompt(
+            listOf("user: test"),
+            emptyMap(),
+            "2026-04-11"
+        )
+        assertTrue(prompt.contains("Today's date is 2026-04-11"))
     }
 }

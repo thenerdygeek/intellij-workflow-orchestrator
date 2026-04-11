@@ -35,10 +35,14 @@ object ExtractionPrompts {
      *
      * @param conversationLines role-prefixed conversation lines ("user: ...", "assistant: ...")
      * @param currentCoreMemory current core memory blocks (label -> value)
+     * @param currentDate today's date (ISO YYYY-MM-DD), used so the LLM can convert
+     *   relative dates ("tomorrow", "next week") into absolute calendar dates when
+     *   extracting project state.
      */
     fun sessionEndPrompt(
         conversationLines: List<String>,
-        currentCoreMemory: Map<String, String>
+        currentCoreMemory: Map<String, String>,
+        currentDate: String
     ): String {
         // Preserve first N (goal context) + last M (current state) for long sessions.
         // Short sessions (<= MAX_CONVERSATION_LINES) use all messages verbatim.
@@ -62,7 +66,9 @@ object ExtractionPrompts {
             "  (empty)"
         }
 
-        return """Analyze this completed session and extract learnings worth remembering across future sessions.
+        return """Today's date is $currentDate.
+
+Analyze this completed session and extract learnings worth remembering across future sessions.
 
 CURRENT CORE MEMORY (do not duplicate what's already here):
 $coreMemorySection
