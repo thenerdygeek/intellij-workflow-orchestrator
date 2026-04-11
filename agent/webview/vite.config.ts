@@ -29,8 +29,11 @@ export default defineConfig(({ mode }) => ({
       },
       output: {
         manualChunks(id) {
-          // Viz libraries get predictable chunk names for debugging
-          // These are installed in later tasks (15-17)
+          // Viz libraries get predictable chunk names for debugging AND to
+          // deduplicate between the main entry and the sandbox entry — without
+          // these rules, large libraries like d3 would be duplicated into
+          // both bundles since Vite's default shared-chunk heuristic is
+          // conservative with dynamic-lookup scoped imports.
           if (id.includes('mermaid') || id.includes('dagre')) return 'mermaid'
           if (id.includes('katex')) return 'katex'
           if (id.includes('chart.js')) return 'chartjs'
@@ -42,6 +45,16 @@ export default defineConfig(({ mode }) => ({
           if (id.includes('motion')) return 'motion'
           if (id.includes('roughjs')) return 'roughjs'
           if (id.includes('react-simple-maps') || id.includes('topojson')) return 'maps'
+          // New sandbox libs (Tier A expansion): split into their own chunks
+          // so the sandbox iframe only pays for them on first artifact render.
+          if (id.includes('@xyflow/react') || id.includes('@reactflow/')) return 'xyflow'
+          if (id.includes('@tanstack/react-table')) return 'react-table'
+          if (id.includes('node_modules/date-fns')) return 'date-fns'
+          if (id.includes('node_modules/colord')) return 'colord'
+          // Radix primitives — group all of them into a single chunk to avoid
+          // dozens of tiny per-primitive chunks. Radix shares internal
+          // dependencies (react-compose-refs, react-context, etc.) heavily.
+          if (id.includes('@radix-ui/')) return 'radix'
         },
       },
     },

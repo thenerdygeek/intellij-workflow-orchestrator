@@ -394,7 +394,7 @@ export const ChatView = memo(function ChatView() {
           if (msg.artifact) {
             return (
               <ErrorBoundary key={msg.id}>
-                <ArtifactRenderer source={msg.artifact.source} title={msg.artifact.title} />
+                <ArtifactRenderer source={msg.artifact.source} title={msg.artifact.title} renderId={msg.artifact.renderId} />
               </ErrorBoundary>
             );
           }

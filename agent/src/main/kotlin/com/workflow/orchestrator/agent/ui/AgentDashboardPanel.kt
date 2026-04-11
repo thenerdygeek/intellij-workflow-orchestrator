@@ -392,6 +392,10 @@ class AgentDashboardPanel(
         cefPanel?.onKillToolCall = onKill
     }
 
+    fun setCefArtifactResultCallback(onResult: (String) -> Unit) {
+        cefPanel?.onArtifactResult = onResult
+    }
+
     fun setCefEditorTabCallback(onOpen: (String) -> Unit) {
         cefPanel?.onOpenInEditorTab = onOpen
     }
@@ -574,9 +578,9 @@ class AgentDashboardPanel(
         broadcast(replay = false) { it.completeSubAgent(agentId, textContent, tokensUsed, isError) }
     }
 
-    fun renderArtifact(title: String, source: String) {
-        runOnEdt { cefPanel?.renderArtifact(title, source) }
-        broadcast(replay = false) { it.renderArtifact(title, source) }
+    fun renderArtifact(title: String, source: String, renderId: String) {
+        runOnEdt { cefPanel?.renderArtifact(title, source, renderId) }
+        broadcast(replay = false) { it.renderArtifact(title, source, renderId) }
     }
 
     fun setCefKillSubAgentCallback(onKill: (String) -> Unit) {

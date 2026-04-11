@@ -100,6 +100,7 @@ class AgentCefPanel(
     private var cancelSteeringQuery: JBCefJSQuery? = null
     private var retryLastTaskQuery: JBCefJSQuery? = null
     private var processInputQuery: JBCefJSQuery? = null
+    private var artifactResultQuery: JBCefJSQuery? = null
     var mentionSearchProvider: MentionSearchProvider? = null
     var onSendMessageWithMentions: ((String, String) -> Unit)? = null  // (text, mentionsJson)
     @Volatile private var pageLoaded = false
@@ -188,6 +189,15 @@ class AgentCefPanel(
     var onRevertCheckpoint: ((String) -> Unit)? = null
     /** Callback when user clicks "Cancel" on a queued steering message. Param: steeringId. */
     var onCancelSteering: ((String) -> Unit)? = null
+    /**
+     * Callback fired when the sandbox iframe reports an artifact render outcome back
+     * to Kotlin via the `_reportArtifactResult` JS→Kotlin bridge. Param is the raw
+     * JSON string from the bridge, containing at minimum `{ renderId, status }` plus
+     * optional `phase`, `message`, `missingSymbols`, `line`, `heightPx`. Wired by
+     * [AgentController] to [ArtifactResultRegistry.reportResult] so the
+     * `render_artifact` tool's suspended coroutine resumes with a structured result.
+     */
+    var onArtifactResult: ((String) -> Unit)? = null
 
     init {
         Disposer.register(parentDisposable) { scope.cancel() }
@@ -397,6 +407,7 @@ class AgentCefPanel(
         cancelSteeringQuery = registerQuery(b) { steeringId -> onCancelSteering?.invoke(steeringId); JBCefJSQuery.Response("ok") }
         retryLastTaskQuery = registerQuery(b) { _ -> onRetryLastTask?.invoke(); JBCefJSQuery.Response("ok") }
         processInputQuery = registerQuery(b) { input -> onProcessInputResolved?.invoke(input); JBCefJSQuery.Response("ok") }
+        artifactResultQuery = registerQuery(b) { json -> onArtifactResult?.invoke(json); JBCefJSQuery.Response("ok") }
 
         // Wait for page load before executing JS
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
@@ -585,6 +596,13 @@ class AgentCefPanel(
                     retryLastTaskQuery?.let { q ->
                         val retryJs = q.inject("''")
                         js("window._retryLastTask = function() { $retryJs }")
+                    }
+                    artifactResultQuery?.let { q ->
+                        // Receives a JSON string { renderId, status, ... } from the
+                        // ArtifactRenderer after the sandbox iframe postback. The
+                        // JS side stringifies the payload before invoking.
+                        val artifactJs = q.inject("json")
+                        js("window._reportArtifactResult = function(json) { $artifactJs }")
                     }
                     // Set pageLoaded AFTER bridges are injected
                     pageLoaded = true
@@ -849,10 +867,11 @@ class AgentCefPanel(
         callJs("completeSubAgent(${JsEscape.toJsString(payload)})")
     }
 
-    fun renderArtifact(title: String, source: String) {
+    fun renderArtifact(title: String, source: String, renderId: String) {
         val payload = buildJsonObject {
             put("title", title)
             put("source", source)
+            put("renderId", renderId)
         }.toString()
         callJs("renderArtifact(${JsEscape.toJsString(payload)})")
     }

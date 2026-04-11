@@ -13,7 +13,6 @@ import com.workflow.orchestrator.agent.hooks.HookType
 import com.workflow.orchestrator.agent.security.CommandSafetyAnalyzer
 import com.workflow.orchestrator.agent.security.CommandRisk
 import com.workflow.orchestrator.agent.tools.AgentTool
-import com.workflow.orchestrator.agent.tools.ArtifactPayload
 import com.workflow.orchestrator.agent.tools.truncateOutput
 import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.TokenEstimator
@@ -185,11 +184,6 @@ class AgentLoop(
      * context usage, active plan, active ticket.
      */
     val environmentDetailsProvider: (() -> String?)? = null,
-    /**
-     * Optional callback fired when a tool result contains an interactive artifact.
-     * Used by the UI to render React artifacts in the chat (e.g. charts, visualizations).
-     */
-    private val onArtifactRendered: ((ArtifactPayload) -> Unit)? = null,
     /**
      * Thread-safe queue of user messages sent while the agent is actively running.
      * Drained at the start of each loop iteration (between compaction and LLM call).
@@ -1029,8 +1023,10 @@ class AgentLoop(
                 )
             )
 
-            // Artifact rendering: push interactive React artifacts to the chat UI
-            toolResult.artifact?.let { onArtifactRendered?.invoke(it) }
+            // Artifact rendering is now driven inside RenderArtifactTool via
+            // ArtifactResultRegistry — the tool awaits the sandbox round-trip before
+            // returning, so the LLM sees the real render outcome (incl. missing
+            // symbols / runtime errors) instead of the previous fire-and-forget path.
 
             // Track last tool name for consecutive-call guards
             lastToolName = toolName

@@ -2,16 +2,28 @@ package com.workflow.orchestrator.agent.tools.builtin
 
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.tools.WorkerType
+import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
 class RenderArtifactToolTest {
     private val project = mockk<Project>(relaxed = true)
     private val tool = RenderArtifactTool()
+
+    // Fresh registry per test with no push callback — renderAndAwait will return
+    // Skipped, so the tool falls through to the legacy optimistic success path
+    // that these tests exercise.
+    private val registry = ArtifactResultRegistry()
+
+    @BeforeEach
+    fun stubRegistry() {
+        every { project.getService(ArtifactResultRegistry::class.java) } returns registry
+    }
 
     @Test
     fun `tool name is render_artifact`() {

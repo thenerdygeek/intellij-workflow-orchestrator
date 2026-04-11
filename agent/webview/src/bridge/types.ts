@@ -262,6 +262,17 @@ export type VisualizationType = 'mermaid' | 'chart' | 'flow' | 'math' | 'diff' |
 export interface ArtifactState {
     title: string;
     source: string;
+    /**
+     * Correlation id for the async render round-trip.
+     * Generated Kotlin-side by `RenderArtifactTool`, echoed through
+     * the sandbox iframe, and used to resolve the suspended tool call
+     * via `kotlinBridge.reportArtifactResult(...)`.
+     *
+     * Always populated when the artifact originates from a `render_artifact`
+     * tool call. Absent for inline ```artifact``` markdown fences rendered
+     * by `MarkdownRenderer`, which have no backing suspended tool call.
+     */
+    renderId?: string;
 }
 
 export interface VisualizationConfig {

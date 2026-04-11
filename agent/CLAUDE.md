@@ -218,6 +218,36 @@ Four structural patterns integrated from the Ralph Loop technique for improved r
 - **Plan editor tab** — Full-screen `FileEditor` with `JBCefBrowser`, clickable file links, comment textareas. Opens alongside plan card.
 - **Question wizard** — `ask_questions` renders inline wizard with single/multi-select options, back/skip/next navigation, "Chat about this" (JCEF textarea), summary page with edit-any-question.
 - **Tools panel** — Categorized tool checkboxes with 4-tab detail view (Description, Parameters, Schema, Example).
+- **Interactive artifacts** — `render_artifact` renders an LLM-generated React component in a sandboxed iframe (`react-runner` via `agent/webview/src/sandbox-main.ts`). Sandbox exposes a fixed scope of shadcn-compatible primitives, viz libraries, and utilities. See `RenderArtifactTool.SCOPE_HINT` and the `sandbox-main.ts` `fullScope` object for the canonical list (kept in sync by hand). Summary of what's available:
+  - **React hooks**: `useState`, `useEffect`, `useCallback`, `useMemo`, `useRef`, `useReducer`, `useLayoutEffect`, `useId`, `useTransition`, `Fragment`
+  - **UI primitives (shadcn-compatible, Radix-backed)**: Card family, Badge, Button, Alert family, Skeleton, Separator, ScrollArea, Tabs, Accordion, Breadcrumb, Dialog, Sheet, Popover, HoverCard, DropdownMenu, Tooltip, Select, Switch, Checkbox, Slider, Toggle, Avatar, Input, Label, Textarea, Progress
+  - **Charts**: Recharts (all chart types + polar primitives)
+  - **Icons**: All Lucide icons by name
+  - **Animation**: motion/react (`motion`, `AnimatePresence`, `useMotionValue`, `useTransform`, `useSpring`, `useInView`, `useScroll`, `useAnimation`)
+  - **Viz**: d3 (full namespace), cobe `createGlobe`, roughjs, react-simple-maps
+  - **Node-edge graphs**: `@xyflow/react` (React Flow) — `ReactFlowCanvas`, `Background`, `Controls`, `MiniMap`, `Handle`, hooks
+  - **Headless tables**: `@tanstack/react-table` — `useReactTable`, row models, `flexRender`, `createColumnHelper`
+  - **Date/time**: `date-fns` — `format`, `formatDistance`, `parseISO`, `addDays`, etc.
+  - **Color**: `colord` for color manipulation
+  - **Bridge**: `bridge.navigateToFile(path, line)`, `bridge.isDark`, `bridge.colors`, `bridge.projectName`
+
+  The sandbox uses Tailwind Play CDN with the CSS variables declared in `artifact-sandbox.html` (`--bg`, `--fg`, `--fg-muted`, `--border`, `--code-bg`, `--hover-overlay`, `--accent`, `--success`, `--warning`, `--error`) — primitives are styled against these, not the main app's shadcn theme variables. Sandbox bundle is ~50 KB gz base + shared Radix/xyflow/react-table/date-fns chunks (cached after first load).
+
+## Interactive Artifact Pipeline (Self-Repair Loop)
+
+`render_artifact` is **not** fire-and-forget — the tool suspends until the sandbox iframe reports the actual render outcome, so the LLM sees missing-symbol / runtime errors as tool results and can self-correct on the next ReAct iteration. This closes the "LLM references a shadcn symbol not in the bundled scope → silent chat-UI error → no feedback → infinite retry" loop.
+
+**Correlation.** Each `render_artifact` call generates a UUID `renderId` that threads through the whole chain: `RenderArtifactTool` → `ArtifactResultRegistry` → `AgentCefPanel.renderArtifact(title, source, renderId)` → `chatStore.addArtifact` → `<ArtifactRenderer renderId=.../>` → iframe `postMessage({type:'render', ..., renderId})` → iframe echoes in `{type:'rendered'|'error', ..., renderId}` → `ArtifactRenderer.reportToKotlin` → `kotlinBridge.reportArtifactResult` → `window._reportArtifactResult` JCEF bridge → `AgentController.parseAndDispatchArtifactResult` → `ArtifactResultRegistry.reportResult(renderId, result)` → the suspended `CompletableDeferred` in `renderAndAwait` completes → tool returns a structured `ToolResult`.
+
+**Key components:**
+- **`ArtifactResultRegistry`** (`@Service(Service.Level.PROJECT)` in `tools/builtin/`) — owns `ConcurrentHashMap<String, CompletableDeferred<ArtifactRenderResult>>` keyed by renderId. `renderAndAwait(payload, timeout=30s)` registers a deferred, invokes the push callback, and suspends on `deferred.await()` under `withTimeoutOrNull`. Push callback is set by `AgentController.init` and cleared in `dispose`.
+- **`ArtifactRenderResult`** (sealed class in `tools/AgentTool.kt`) — `Success(heightPx)`, `RenderError(phase, message, missingSymbols, line)`, `Timeout(timeoutMillis)`, `Skipped(reason)`. The LLM sees structured content reflecting the actual outcome.
+- **Missing-symbol extraction** (`extractMissingSymbols` in `sandbox-main.ts`) — regex-parses three common V8 ReferenceError/TypeError phrasings to produce `missingSymbols: string[]` in the error payload. This is the primary signal for self-repair: `RenderArtifactTool` includes the list verbatim plus `SCOPE_HINT` in the failure tool result so the LLM has everything it needs to rewrite the component on the next turn.
+- **`_reportArtifactResult`** JCEF JS→Kotlin bridge, registered in `AgentCefPanel` alongside other `JBCefJSQuery`s. Forwards the JSON payload to `AgentController.parseAndDispatchArtifactResult`, which never throws (malformed payloads are dropped with a warning).
+
+**Exactly-once reporting.** `ArtifactRenderer` holds a `reportedRef` to ensure each render round-trip fires exactly one Kotlin report. Reset on source/renderId change for a fresh slot. Kotlin side is also idempotent on unknown renderId (late postbacks after timeout are no-ops). Stale iframe messages (from a previous render still in flight when props change) are rejected by an `isForCurrentRender` guard that compares `data.renderId` to the current closure.
+
+**Inline markdown fences.** The `MarkdownRenderer` path (```artifact``` code fence in LLM text) renders via the same `ArtifactRenderer` component but without a renderId — the component renders locally and does not report back to Kotlin (no suspended tool call to resolve).
 
 ## Plan Persistence (Three Layers)
 

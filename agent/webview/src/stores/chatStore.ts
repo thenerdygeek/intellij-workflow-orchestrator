@@ -1007,7 +1007,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   // ── Artifact Actions ──
   addArtifact(payload: string) {
     try {
-      const { title, source } = JSON.parse(payload);
+      const { title, source, renderId } = JSON.parse(payload);
+      if (!renderId || typeof renderId !== 'string') {
+        console.warn('[chatStore] addArtifact: payload missing renderId', payload);
+        return;
+      }
       const msgId = nextId('artifact');
       set((state) => ({
         messages: [...state.messages, {
@@ -1015,7 +1019,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           role: 'system' as MessageRole,
           content: `artifact:${title}`,
           timestamp: Date.now(),
-          artifact: { title, source },
+          artifact: { title, source, renderId },
         }],
       }));
     } catch (e) {

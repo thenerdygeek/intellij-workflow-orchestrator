@@ -6,6 +6,8 @@ import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.AgentService
+import com.workflow.orchestrator.agent.tools.ArtifactRenderResult
+import com.workflow.orchestrator.agent.tools.builtin.ArtifactResultRegistry
 import com.workflow.orchestrator.agent.hooks.HookEvent
 import com.workflow.orchestrator.agent.hooks.HookResult
 import com.workflow.orchestrator.agent.hooks.HookType
@@ -142,6 +144,16 @@ class AgentController(
 
     init {
         wireCallbacks()
+        // Register the push callback used by RenderArtifactTool → ArtifactResultRegistry
+        // to forward interactive artifacts into the webview. The tool drives the full
+        // async render round-trip through the registry; this callback is the only
+        // outbound hop (Kotlin → webview). The result postback comes back via the
+        // _reportArtifactResult JCEF bridge registered in AgentCefPanel.
+        ArtifactResultRegistry.getInstance(project).setPushCallback { payload ->
+            invokeLater {
+                dashboard.renderArtifact(payload.title, payload.source, payload.renderId)
+            }
+        }
     }
 
     // ═══════════════════════════════════════════════════
@@ -211,6 +223,13 @@ class AgentController(
         dashboard.setCefKillCallback { toolCallId ->
             LOG.info("AgentController: kill requested for tool call $toolCallId")
             ProcessRegistry.kill(toolCallId)
+        }
+
+        // Artifact render-result callback — sandbox iframe posts render outcome back
+        // to Kotlin. Decode the JSON into an ArtifactRenderResult and hand off to the
+        // ArtifactResultRegistry so the suspended render_artifact tool call resumes.
+        dashboard.setCefArtifactResultCallback { json ->
+            parseAndDispatchArtifactResult(json)
         }
 
         // Approval gate callbacks — user responds to approval cards for write tools
@@ -805,11 +824,6 @@ class AgentController(
             approvalGate = ::approvalGate,
             onCheckpointSaved = ::onCheckpointSaved,
             onSubagentProgress = ::onSubagentProgress,
-            onArtifactRendered = { payload ->
-                invokeLater {
-                    dashboard.renderArtifact(payload.title, payload.source)
-                }
-            },
             onTokenUpdate = ::onTokenUpdate,
             onDebugLog = if (debugEnabled) { level, event, detail, meta ->
                 dashboard.pushDebugLogEntry(level, event, detail, meta)
@@ -1779,6 +1793,55 @@ class AgentController(
         """{"id":"${cp.id}","description":"$escapedDesc","timestamp":${cp.createdAt}}"""
     }
 
+    /**
+     * Parse a render-outcome JSON payload from the webview and forward the decoded
+     * result to [ArtifactResultRegistry] so the corresponding suspended
+     * `render_artifact` tool call resumes.
+     *
+     * Payload shape (from `ArtifactRenderer` / `sandbox-main.ts`):
+     * ```
+     * { "renderId": "...", "status": "success" | "error",
+     *   "heightPx": <int?>,
+     *   "phase": "render" | "transpile" | "runtime" | "init",
+     *   "message": "...",
+     *   "missingSymbols": ["Foo", "Bar"],
+     *   "line": <int?> }
+     * ```
+     *
+     * Malformed payloads are dropped with a warning — never throw here, the JCEF
+     * bridge runs on the EDT and a throw would propagate into browser land.
+     */
+    private fun parseAndDispatchArtifactResult(rawJson: String) {
+        try {
+            val obj = Json.parseToJsonElement(rawJson).jsonObject
+            val renderId = obj["renderId"]?.jsonPrimitive?.content ?: run {
+                LOG.warn("artifact result missing renderId: $rawJson")
+                return
+            }
+            val status = obj["status"]?.jsonPrimitive?.content ?: "error"
+            val result: ArtifactRenderResult = if (status == "success") {
+                val height = obj["heightPx"]?.jsonPrimitive?.content?.toIntOrNull()
+                ArtifactRenderResult.Success(heightPx = height)
+            } else {
+                val phase = obj["phase"]?.jsonPrimitive?.content ?: "runtime"
+                val message = obj["message"]?.jsonPrimitive?.content ?: "Unknown render error"
+                val missing = obj["missingSymbols"]?.jsonArray
+                    ?.mapNotNull { it.jsonPrimitive.content.takeIf { s -> s.isNotBlank() } }
+                    ?: emptyList()
+                val line = obj["line"]?.jsonPrimitive?.content?.toIntOrNull()
+                ArtifactRenderResult.RenderError(
+                    phase = phase,
+                    message = message,
+                    missingSymbols = missing,
+                    line = line,
+                )
+            }
+            ArtifactResultRegistry.getInstance(project).reportResult(renderId, result)
+        } catch (e: Exception) {
+            LOG.warn("failed to parse artifact result JSON: $rawJson", e)
+        }
+    }
+
     fun dispose() {
         LOG.info("AgentController.dispose")
         if (currentJob?.isActive == true) {
@@ -1793,5 +1856,10 @@ class AgentController(
         pendingApproval?.cancel()
         pendingApproval = null
         pendingApprovalToolName = null
+        // Drop the artifact push callback so the registry cannot invoke a
+        // stale dashboard reference if a render fires in the window between
+        // this dispose and a new controller installing its own callback.
+        // Matches the "remove listener on tear-down" pattern used elsewhere.
+        ArtifactResultRegistry.getInstance(project).setPushCallback(null)
     }
 }

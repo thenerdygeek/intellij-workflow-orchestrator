@@ -447,6 +447,26 @@ export const kotlinBridge = {
     callKotlin('_sendMessageWithMentions', payload);
   },
   retryLastTask(): void { callKotlin('_retryLastTask'); },
+  /**
+   * Report the outcome of an artifact render round-trip back to Kotlin so the
+   * suspended `render_artifact` tool call can resume with a structured result.
+   * Called by `ArtifactRenderer` after the sandbox iframe posts `rendered` or `error`.
+   *
+   * Payload shape:
+   *   { renderId, status: "success" | "error",
+   *     heightPx?, phase?, message?, missingSymbols?, line? }
+   */
+  reportArtifactResult(payload: {
+    renderId: string;
+    status: 'success' | 'error';
+    heightPx?: number;
+    phase?: string;
+    message?: string;
+    missingSymbols?: string[];
+    line?: number;
+  }): void {
+    callKotlin('_reportArtifactResult', JSON.stringify(payload));
+  },
 };
 
 // ═══ Editor Tab Popout ═══
