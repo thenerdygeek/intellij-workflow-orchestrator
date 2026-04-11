@@ -66,6 +66,14 @@ data class SubagentProgressUpdate(
     val toolCompleteDurationMs: Long = 0L,
     val toolCompleteIsError: Boolean = false,
     /**
+     * Unique tool-call ID (from [com.workflow.orchestrator.agent.loop.ToolCallProgress.toolCallId]).
+     * Threaded through to the webview so parallel tool calls to the same tool
+     * (e.g. two concurrent `read_file`s) can be updated by exact ID rather than
+     * by name-based reverse RUNNING lookup. Empty string when the ID is not
+     * known (legacy callers, some tests).
+     */
+    val toolCallId: String = "",
+    /**
      * Human-readable label for the subagent (e.g. "Search for X (explorer)").
      * Set on the FIRST event for a given agentId so the UI can render the card title;
      * may be null on subsequent events. The agentId (passed alongside this update) is

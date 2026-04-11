@@ -480,11 +480,12 @@ class AgentDashboardPanel(
 
     fun updateLastToolCall(
         status: RichStreamingPanel.ToolCallStatus, result: String = "", durationMs: Long = 0,
-        toolName: String = "", output: String? = null, diff: String? = null
+        toolName: String = "", output: String? = null, diff: String? = null,
+        toolCallId: String = ""
     ) {
-        cefPanel?.updateLastToolCall(status, result, durationMs, toolName, output, diff)
+        cefPanel?.updateLastToolCall(status, result, durationMs, toolName, output, diff, toolCallId)
             ?: fallbackPanel?.updateLastToolCall(status, result, durationMs)
-        broadcast { it.updateLastToolCall(status, result, durationMs, toolName, output, diff) }
+        broadcast { it.updateLastToolCall(status, result, durationMs, toolName, output, diff, toolCallId) }
     }
 
     fun appendToolOutput(toolCallId: String, chunk: String) {
@@ -558,14 +559,23 @@ class AgentDashboardPanel(
         broadcast(replay = false) { it.updateSubAgentIteration(agentId, iteration) }
     }
 
-    fun addSubAgentToolCall(agentId: String, toolName: String, toolArgs: String) {
-        runOnEdt { cefPanel?.addSubAgentToolCall(agentId, toolName, toolArgs) }
-        broadcast(replay = false) { it.addSubAgentToolCall(agentId, toolName, toolArgs) }
+    fun addSubAgentToolCall(agentId: String, toolCallId: String, toolName: String, toolArgs: String) {
+        runOnEdt { cefPanel?.addSubAgentToolCall(agentId, toolCallId, toolName, toolArgs) }
+        broadcast(replay = false) { it.addSubAgentToolCall(agentId, toolCallId, toolName, toolArgs) }
     }
 
-    fun updateSubAgentToolCall(agentId: String, toolName: String, result: String, durationMs: Long, isError: Boolean) {
-        runOnEdt { cefPanel?.updateSubAgentToolCall(agentId, toolName, result, durationMs, isError) }
-        broadcast(replay = false) { it.updateSubAgentToolCall(agentId, toolName, result, durationMs, isError) }
+    fun updateSubAgentToolCall(
+        agentId: String,
+        toolCallId: String,
+        toolName: String,
+        result: String,
+        durationMs: Long,
+        isError: Boolean
+    ) {
+        runOnEdt { cefPanel?.updateSubAgentToolCall(agentId, toolCallId, toolName, result, durationMs, isError) }
+        broadcast(replay = false) {
+            it.updateSubAgentToolCall(agentId, toolCallId, toolName, result, durationMs, isError)
+        }
     }
 
     fun updateSubAgentMessage(agentId: String, textContent: String) {

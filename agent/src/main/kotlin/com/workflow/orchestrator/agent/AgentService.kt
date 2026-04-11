@@ -196,12 +196,18 @@ class AgentService(private val project: Project) : Disposable {
             }
         }
 
-        log.info("[Agent] Creating brain with model: $modelId at $sgUrl")
+        val allToolNames = registry.getActiveTools().keys
+        val allParamNames = registry.getActiveTools().values
+            .flatMap { it.parameters.properties.keys }
+            .toSet()
+        log.info("[Agent] Creating brain with model: $modelId at $sgUrl (tools=${allToolNames.size}, params=${allParamNames.size})")
 
         return OpenAiCompatBrain(
             sourcegraphUrl = sgUrl,
             tokenProvider = tokenProvider,
-            model = modelId
+            model = modelId,
+            toolNameSet = allToolNames,
+            paramNameSet = allParamNames
         )
     }
 
@@ -611,10 +617,17 @@ class AgentService(private val project: Project) : Disposable {
                 val fbCredentialStore = CredentialStore()
                 val fbTokenProvider = { fbCredentialStore.getToken(ServiceType.SOURCEGRAPH) }
                 val brainFactory: suspend (String, String?) -> LlmBrain = { modelId: String, reason: String? ->
+                    // Compute tool names lazily so deferred tools loaded via request_tools are included
+                    val currentToolNames = registry.getActiveTools().keys
+                    val currentParamNames = registry.getActiveTools().values
+                        .flatMap { it.parameters.properties.keys }
+                        .toSet()
                     val newBrain = OpenAiCompatBrain(
                         sourcegraphUrl = fbUrl,
                         tokenProvider = fbTokenProvider,
-                        model = modelId
+                        model = modelId,
+                        toolNameSet = currentToolNames,
+                        paramNameSet = currentParamNames
                     ).also { b ->
                         b.setApiDebugDir(sessionDebugDir)
                         // Inherit the shared API call counter so call-NNN-*.txt filenames
@@ -684,30 +697,37 @@ class AgentService(private val project: Project) : Disposable {
                 // Build deferred catalog for system prompt injection (grouped by category)
                 val deferredCatalog = registry.getDeferredCatalogGrouped()
 
-                val systemPrompt = SystemPrompt.build(
-                    projectName = projectName,
-                    projectPath = projectPath,
-                    planModeEnabled = planModeActive.get(),
-                    additionalContext = projectInstructions,
-                    availableSkills = availableSkills,
-                    activeSkillContent = ctx.getActiveSkill(),
-                    taskProgress = ctx.getTaskProgress(),
-                    deferredToolCatalog = deferredCatalog,
-                    coreMemoryXml = coreMemory?.compile()
-                )
-                ctx.setSystemPrompt(systemPrompt)
+                // Build system prompt — XML tool definitions added dynamically below
+                val systemPromptBuilder = { toolDefsMarkdown: String? ->
+                    SystemPrompt.build(
+                        projectName = projectName,
+                        projectPath = projectPath,
+                        planModeEnabled = planModeActive.get(),
+                        additionalContext = projectInstructions,
+                        availableSkills = availableSkills,
+                        activeSkillContent = ctx.getActiveSkill(),
+                        taskProgress = ctx.getTaskProgress(),
+                        deferredToolCatalog = deferredCatalog,
+                        coreMemoryXml = coreMemory?.compile(),
+                        toolDefinitionsMarkdown = toolDefsMarkdown
+                    )
+                }
+                // Set initial system prompt (XML defs added on first toolDefinitionProvider call)
+                ctx.setSystemPrompt(systemPromptBuilder(null))
 
-                // Build tool definitions dynamically — uses getActiveTools() which grows
-                // as tool_search activates deferred tools during the session.
+                // Build tool definitions dynamically — called on each loop iteration.
                 // Plan mode: remove write tools + act_mode_respond + enable_plan_mode, keep plan_mode_respond.
                 // Act mode: remove plan_mode_respond, keep act_mode_respond + write tools + enable_plan_mode.
                 // Re-reads planModeActive on each call so enable_plan_mode tool takes effect mid-session.
-
-                // Dynamic tool definition provider — called on each loop iteration
+                //
+                // Also rebuilds the system prompt with updated tool definitions —
+                // critical because the LLM only sees tools via the system prompt
+                // (tools: null in API request, XML mode is always on).
                 val hasSkills = availableSkills != null
+                var lastXmlToolDefsHash = 0
                 val toolDefinitionProvider: () -> List<com.workflow.orchestrator.core.ai.dto.ToolDefinition> = {
                     val isPlanMode = planModeActive.get()
-                    registry.getActiveTools().values
+                    val defs = registry.getActiveTools().values
                         .filter { tool ->
                             // Port of Cline's contextRequirements: omit use_skill when no skills available
                             if (tool.name == "use_skill" && !hasSkills) return@filter false
@@ -718,6 +738,16 @@ class AgentService(private val project: Project) : Disposable {
                             }
                         }
                         .map { AgentTool.injectTaskProgress(it.toToolDefinition()) }
+
+                    // Update system prompt when tool set changes (plan mode switch, deferred tool load)
+                    val defsHash = defs.map { it.function.name }.hashCode()
+                    if (defsHash != lastXmlToolDefsHash) {
+                        lastXmlToolDefsHash = defsHash
+                        val markdown = com.workflow.orchestrator.core.ai.ToolPromptBuilder.build(defs)
+                        ctx.setSystemPrompt(systemPromptBuilder(markdown))
+                    }
+
+                    defs
                 }
 
                 // Wire sub-agent progress callback and settings for this task execution
@@ -726,6 +756,7 @@ class AgentService(private val project: Project) : Disposable {
                     spawnAgentTool.contextBudget = agentSettings.state.maxInputTokens
                     spawnAgentTool.maxOutputTokens = agentSettings.state.maxOutputTokens
                     spawnAgentTool.sessionDebugDir = sessionDebugDir
+                    spawnAgentTool.toolExecutionMode = agentSettings.state.toolExecutionMode ?: "accumulate"
                     spawnAgentTool.onSubagentProgress = if (onSubagentProgress != null) {
                         { agentId, update -> onSubagentProgress(agentId, update) }
                     } else null
@@ -839,7 +870,10 @@ class AgentService(private val project: Project) : Disposable {
                         } catch (e: Exception) {
                             log.warn("AgentService: checkpoint save failed (non-fatal)", e)
                         }
-                    }
+                    },
+                    toolExecutionMode = agentSettings.state.toolExecutionMode ?: "accumulate",
+                    toolNameProvider = { registry.getActiveTools().keys },
+                    paramNameProvider = { registry.getActiveTools().values.flatMap { it.parameters.properties.keys }.toSet() }
                 )
 
                 // I4: Set activeTask atomically after both loop and job are available

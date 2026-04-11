@@ -56,11 +56,17 @@ class SubagentRunnerTest {
      * Same pattern as SpawnAgentToolTest.SequenceBrain.
      */
     private class SequenceBrain(
-        private val responses: List<ApiResult<ChatCompletionResponse>>
+        private val responses: List<ApiResult<ChatCompletionResponse>>,
+        toolNames: Set<String> = emptySet(),
+        paramNames: Set<String> = emptySet()
     ) : LlmBrain {
         override val modelId: String = "test-subagent-brain"
+        override val toolNameSet: Set<String> = toolNames
+        override val paramNameSet: Set<String> = paramNames
         private var callIndex = 0
         var cancelled = false
+            private set
+        var lastMessages: List<ChatMessage> = emptyList()
             private set
 
         override suspend fun chat(
@@ -78,6 +84,7 @@ class SubagentRunnerTest {
             maxTokens: Int?,
             onChunk: suspend (StreamChunk) -> Unit
         ): ApiResult<ChatCompletionResponse> {
+            lastMessages = messages
             if (callIndex >= responses.size) {
                 return ApiResult.Error(ErrorType.SERVER_ERROR, "No more scripted responses")
             }
@@ -350,6 +357,155 @@ class SubagentRunnerTest {
 
             assertTrue(statuses.contains("running"), "Should have 'running' status")
             assertTrue(statuses.contains("failed"), "Should have 'failed' status")
+        }
+    }
+
+    @Nested
+    inner class ToolExecutionModeTests {
+
+        @Test
+        fun `runner accepts toolExecutionMode parameter`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"Done with stream_interrupt mode."}"""
+                ))
+            ))
+
+            val runner = SubagentRunner(
+                brain = brain,
+                tools = buildTools(),
+                systemPrompt = "You are a test sub-agent.",
+                project = project,
+                maxIterations = 50,
+                planMode = false,
+                contextBudget = 50_000,
+                toolExecutionMode = "stream_interrupt"
+            )
+
+            val result = runner.run("Quick task") {}
+
+            assertEquals(SubagentRunStatus.COMPLETED, result.status)
+            assertNotNull(result.result)
+            assertTrue(result.result!!.contains("Done with stream_interrupt mode"))
+        }
+
+        @Test
+        fun `runner defaults to accumulate mode`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"Done with default mode."}"""
+                ))
+            ))
+
+            // Use createRunner helper which does NOT pass toolExecutionMode
+            val runner = createRunner(brain)
+
+            val result = runner.run("Quick task") {}
+
+            assertEquals(SubagentRunStatus.COMPLETED, result.status)
+            assertNotNull(result.result)
+            assertTrue(result.result!!.contains("Done with default mode"))
+        }
+    }
+
+    @Nested
+    inner class XmlToolDefinitionTests {
+
+        @Test
+        fun `system prompt includes XML tool definitions`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"Done."}"""
+                ))
+            ))
+
+            val runner = createRunner(brain)
+            runner.run("Do something") {}
+
+            val systemMessage = brain.lastMessages.first()
+            val content = systemMessage.content ?: ""
+            assertTrue(content.contains("# Tool Use Format"),
+                "System prompt should contain XML tool format header")
+            assertTrue(content.contains("<read_file>"),
+                "System prompt should contain XML usage example for read_file")
+            assertTrue(content.contains("<attempt_completion>"),
+                "System prompt should contain XML usage example for attempt_completion")
+        }
+
+        @Test
+        fun `XML parser receives sub-agent tool names not main agent tool set`() = runTest {
+            // Brain with toolNameSet simulating main agent's full set (includes jira, bamboo)
+            val mainAgentToolNames = setOf(
+                "read_file", "edit_file", "run_command", "search_code",
+                "think", "attempt_completion", "jira", "bamboo_builds"
+            )
+            val mainAgentParamNames = setOf(
+                "path", "content", "query", "command", "result", "action"
+            )
+
+            val brain = SequenceBrain(
+                responses = listOf(
+                    ApiResult.Success(toolCallResponse(
+                        "attempt_completion" to """{"result":"Done."}"""
+                    ))
+                ),
+                toolNames = mainAgentToolNames,
+                paramNames = mainAgentParamNames
+            )
+
+            // Sub-agent only has 3 tools
+            val subTools = mapOf(
+                "read_file" to stubTool("read_file"),
+                "search_code" to stubTool("search_code"),
+                "attempt_completion" to AttemptCompletionTool()
+            )
+
+            val runner = SubagentRunner(
+                brain = brain,
+                tools = subTools,
+                systemPrompt = "You are a research agent.",
+                project = project,
+                maxIterations = 10,
+                planMode = false,
+                contextBudget = 50_000
+            )
+
+            runner.run("Research task") {}
+
+            val systemContent = brain.lastMessages.first().content ?: ""
+            // System prompt should only contain sub-agent tools, not main-agent-only tools
+            assertFalse(systemContent.contains("<jira>"),
+                "System prompt should NOT contain main-agent-only tools like <jira>")
+            assertFalse(systemContent.contains("<bamboo_builds>"),
+                "System prompt should NOT contain main-agent-only tools like <bamboo_builds>")
+            assertTrue(systemContent.contains("<read_file>"),
+                "System prompt SHOULD contain sub-agent tool <read_file>")
+        }
+
+        @Test
+        fun `system prompt preserves original config prompt`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"Done."}"""
+                ))
+            ))
+
+            val customPrompt = "You are a specialized code reviewer"
+            val runner = SubagentRunner(
+                brain = brain,
+                tools = buildTools(),
+                systemPrompt = customPrompt,
+                project = project,
+                maxIterations = 50,
+                planMode = false,
+                contextBudget = 50_000
+            )
+            runner.run("Review this code") {}
+
+            val systemMessage = brain.lastMessages.first()
+            val content = systemMessage.content ?: ""
+            assertTrue(content.contains(customPrompt),
+                "System prompt should still contain the original config prompt text")
         }
     }
 }

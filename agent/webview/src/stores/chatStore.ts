@@ -69,7 +69,13 @@ interface Toast {
 interface ChatState {
   // State
   messages: Message[];
-  activeStream: { text: string; isStreaming: boolean } | null;
+  /**
+   * Id of the `Message` currently being written by the token stream, or `null`
+   * if no stream is active. The streaming message lives in `messages` like any
+   * other, updated in place via `appendToken`; this field just points at it so
+   * `ChatView` can toggle the caret on the right message.
+   */
+  activeStream: { messageId: string } | null;
   activeToolCalls: Map<string, ToolCall>;  // key = unique tool call ID
   plan: Plan | null;
   planCommentCount: number;
@@ -120,7 +126,7 @@ interface ChatState {
   appendToken(token: string): void;
   endStream(): void;
   addToolCall(toolCallId: string, name: string, args: string, status: ToolCallStatus): void;
-  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string, diff?: string): void;
+  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string, diff?: string, toolCallId?: string): void;
   finalizeToolChain(): void;
   addDiff(diff: EditDiff): void;
   addDiffExplanation(title: string, diffSource: string): void;
@@ -275,6 +281,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: [firstMessage],
       activeStream: null,
       activeToolCalls: new Map(),
+      // Reset tool output streams alongside activeToolCalls — they are keyed by
+      // the same tool call IDs and would otherwise leak across sessions.
+      toolOutputStreams: {},
       plan: null,
       planCompletedPendingClear: false,
       questions: null,
@@ -299,9 +308,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   completeSession(info: SessionInfo) {
-    // Finalize any remaining active tool calls as a toolchain message
+    // Finalize any remaining active tool calls as a toolchain message,
+    // merging any buffered stream output into each tool call first so it
+    // survives past the toolOutputStreams reset.
     const state = get();
-    const remaining = Array.from(state.activeToolCalls.values());
+    const streams = state.toolOutputStreams;
+    const remaining = Array.from(state.activeToolCalls.values()).map(tc => {
+      const stream = streams[tc.id];
+      if (stream && !tc.output) return { ...tc, output: stream };
+      return tc;
+    });
     const messages = remaining.length > 0
       ? [...state.messages, { id: nextId('tc-chain'), role: 'system' as const, content: '', timestamp: Date.now(), toolChain: remaining }]
       : state.messages;
@@ -311,6 +327,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       steeringMode: false,
       activeStream: null,
       activeToolCalls: new Map(),
+      // Drop all tool output streams — the map was keyed by the now-cleared
+      // tool call IDs and would otherwise leak for the rest of the app's life.
+      toolOutputStreams: {},
       messages,
       queuedSteeringMessages: [],
       // Clear completed plan on session end (no more messages will arrive to trigger deferred clear)
@@ -332,72 +351,107 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   appendToken(token: string) {
-    set(state => {
-      const isFirstToken = state.activeStream == null;
-      const stream = state.activeStream ?? { text: '', isStreaming: true };
+    // Defensive no-op: Kotlin StreamBatcher may flush an empty coalesced chunk
+    // on a timer boundary. Returning the same state object avoids thrashing
+    // React.memo on every message for a non-event.
+    if (token.length === 0) return;
 
-      // Auto-finalize the tool chain when the first token of a new text response arrives.
-      // Inject as a toolchain message so it renders in the correct position.
-      if (isFirstToken && state.activeToolCalls.size > 0) {
-        const tools = Array.from(state.activeToolCalls.values());
-        const chainMsg: Message = { id: nextId('tc-chain'), role: 'system', content: '', timestamp: Date.now(), toolChain: tools };
+    set(state => {
+      const current = state.activeStream;
+
+      if (current == null) {
+        // First token of a new stream. Drain any leftover active tool calls
+        // into a `tc-chain` system message so the chat flow stays
+        // chronological: prior tools → streaming text → next tool chain.
+        let messages = state.messages;
+        let activeToolCalls = state.activeToolCalls;
+        let toolOutputStreams = state.toolOutputStreams;
+
+        if (state.activeToolCalls.size > 0) {
+          const streams = state.toolOutputStreams;
+          const tools = Array.from(state.activeToolCalls.values()).map(tc => {
+            const s = streams[tc.id];
+            if (s && !tc.output) return { ...tc, output: s };
+            return tc;
+          });
+          const chainMsg: Message = {
+            id: nextId('tc-chain'),
+            role: 'system',
+            content: '',
+            timestamp: Date.now(),
+            toolChain: tools,
+          };
+          messages = [...messages, chainMsg];
+          activeToolCalls = new Map();
+          toolOutputStreams = {};
+        }
+
+        const messageId = nextId('msg');
+        const placeholder: Message = {
+          id: messageId,
+          role: 'agent',
+          content: token,
+          timestamp: Date.now(),
+        };
+
         return {
-          activeStream: { text: token, isStreaming: true },
-          messages: [...state.messages, chainMsg],
-          activeToolCalls: new Map(),
+          messages: [...messages, placeholder],
+          activeStream: { messageId },
+          activeToolCalls,
+          toolOutputStreams,
         };
       }
 
+      // Subsequent tokens update the existing placeholder in place. Keeping
+      // the same message id lets React.memo skip every other message (we
+      // return `m` by reference for non-matching items) so rendering stays
+      // O(1) in the streaming message per token.
       return {
-        activeStream: {
-          text: stream.text + token,
-          isStreaming: true,
-        },
+        messages: state.messages.map(m =>
+          m.id === current.messageId ? { ...m, content: m.content + token } : m
+        ),
       };
     });
   },
 
   endStream() {
     const state = get();
-    const stream = state.activeStream;
     const shouldClearPlan = state.planCompletedPendingClear;
-
-    if (stream && stream.text.length > 0) {
-      const message: Message = {
-        id: nextId('msg'),
-        role: 'agent',
-        content: stream.text,
-        timestamp: Date.now(),
-      };
-      set({
-        messages: [...state.messages, message],
-        activeStream: null,
-        ...(shouldClearPlan ? { plan: null, planCompletedPendingClear: false } : {}),
-      });
-    } else {
-      set({
-        activeStream: null,
-        ...(shouldClearPlan ? { plan: null, planCompletedPendingClear: false } : {}),
-      });
-    }
+    set({
+      activeStream: null,
+      ...(shouldClearPlan ? { plan: null, planCompletedPendingClear: false } : {}),
+    });
   },
 
   addToolCall(toolCallId: string, name: string, args: string, status: ToolCallStatus) {
     set(state => {
       // Use the LLM-assigned tool call ID so streaming output (keyed by the same ID) resolves correctly.
       // Fall back to a generated ID for legacy callers that don't supply one.
-      const id = toolCallId || nextId('tc');
+      let id = toolCallId || nextId('tc');
       const newMap = new Map(state.activeToolCalls);
+
+      // Same id + different tool name = a Kotlin-side id scope bug. Rekey
+      // the incoming entry instead of silently overwriting, so the previous
+      // tool's UI card survives and the root cause surfaces in the log.
+      // Same id + same name is a legitimate status update, not a collision.
+      const existing = newMap.get(id);
+      if (existing && existing.name !== name) {
+        const dupKey = `${id}__dup-${nextId('col')}`;
+        console.warn(
+          `[chatStore] addToolCall: id collision — "${id}" already bound to ` +
+          `"${existing.name}" (status=${existing.status}). Incoming call "${name}" ` +
+          `rekeyed to "${dupKey}". This indicates a Kotlin-side ID scope bug.`
+        );
+        id = dupKey;
+      }
+
       newMap.set(id, { id, name, args, status });
 
-      // Auto-finalize any active stream — ensures text appears in messages before tool calls.
-      // Without this, text stays in activeStream (rendered at the bottom) while tool calls
-      // render above it, causing text to "accumulate at the bottom."
-      const stream = state.activeStream;
-      if (stream && stream.text.length > 0) {
-        const message: Message = { id: nextId('msg'), role: 'agent', content: stream.text, timestamp: Date.now() };
+      // Clear the streaming caret on any in-flight message so the tool call
+      // below it renders as the next visual item. The message text itself
+      // already lives in `messages` and stays put.
+      if (state.activeStream != null) {
         return {
-          messages: [...state.messages, message],
           activeStream: null,
           activeToolCalls: newMap,
         };
@@ -407,29 +461,36 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string, diff?: string) {
+  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string, diff?: string, toolCallId?: string) {
     set(state => {
       const newMap = new Map(state.activeToolCalls);
-      // Find the first RUNNING tool call with this name (for parallel calls,
-      // results arrive in order, so the first RUNNING one is the correct target)
+      // Prefer exact ID match — this is the only reliable way to target a
+      // specific tool call when multiple calls to the same tool run in parallel.
+      // Without an ID, results arriving out of order would overwrite the wrong
+      // slot. Fall back to first-RUNNING-by-name only when no ID was provided
+      // (legacy callers) or the ID is unknown to the store.
       let targetKey: string | null = null;
-      for (const [key, tc] of newMap) {
-        if (tc.name === name && tc.status === 'RUNNING') {
-          targetKey = key;
-          break;  // first RUNNING match, not last
-        }
-      }
-      // Fallback: if no RUNNING match, find any match with this name (last one)
-      if (!targetKey) {
+      if (toolCallId && newMap.has(toolCallId)) {
+        targetKey = toolCallId;
+      } else {
         for (const [key, tc] of newMap) {
-          if (tc.name === name) targetKey = key;
+          if (tc.name === name && tc.status === 'RUNNING') {
+            targetKey = key;
+            break;
+          }
+        }
+        // Fallback: any match with this name (last one)
+        if (!targetKey) {
+          for (const [key, tc] of newMap) {
+            if (tc.name === name) targetKey = key;
+          }
         }
       }
       if (targetKey) {
         const existing = newMap.get(targetKey)!;
         newMap.set(targetKey, { ...existing, status, result, output, durationMs, ...(diff ? { diff } : {}) });
       } else {
-        const id = nextId('tc');
+        const id = toolCallId || nextId('tc');
         newMap.set(id, { id, name, args: '', status, result, output, durationMs, ...(diff ? { diff } : {}) });
       }
       return { activeToolCalls: newMap };
@@ -517,6 +578,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: [],
       activeStream: null,
       activeToolCalls: new Map(),
+      // Drop tool output streams in lockstep with activeToolCalls.
+      toolOutputStreams: {},
       plan: null,
       planCompletedPendingClear: false,
       questions: null,
@@ -815,21 +878,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
         diffContent,
       };
 
-      // Auto-finalize stream + tool chain so approval card appears after all prior content.
-      const stream = state.activeStream;
+      // Drain any active tool chain into a `tc-chain` system message and
+      // clear the streaming caret so the approval card renders below all
+      // prior content.
+      const hadStream = state.activeStream != null;
       const tools = Array.from(state.activeToolCalls.values());
       const newMessages = [...state.messages];
 
-      if (stream && stream.text.length > 0) {
-        newMessages.push({ id: nextId('msg'), role: 'agent', content: stream.text, timestamp: Date.now() });
-      }
       if (tools.length > 0) {
-        newMessages.push({ id: nextId('tc-chain'), role: 'system', content: '', timestamp: Date.now(), toolChain: tools });
+        newMessages.push({
+          id: nextId('tc-chain'),
+          role: 'system',
+          content: '',
+          timestamp: Date.now(),
+          toolChain: tools,
+        });
       }
 
       return {
         pendingApproval: approval,
-        ...(stream && stream.text.length > 0 ? { activeStream: null } : {}),
+        ...(hadStream ? { activeStream: null } : {}),
         ...(tools.length > 0 ? { activeToolCalls: new Map(), toolOutputStreams: {} } : {}),
         ...(newMessages.length !== state.messages.length ? { messages: newMessages } : {}),
       };
@@ -1096,8 +1164,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
           data.status === 'COMPLETED' ? 'COMPLETED'
             : data.status === 'ERROR' ? 'ERROR'
               : 'RUNNING';
+        // Prefer the Kotlin-assigned tool call ID so the later update event
+        // can target this exact chip by ID. Parallel tool calls to the same
+        // tool would otherwise collide on the name-based reverse lookup.
+        const toolCallId: string = (typeof data.toolCallId === 'string' && data.toolCallId.length > 0)
+          ? data.toolCallId
+          : nextId('satool');
         const toolCall: ToolCall = {
-          id: nextId('satool'),
+          id: toolCallId,
           name: data.toolName || 'unknown',
           args: data.toolArgs || data.args || '{}',
           status: resolvedStatus,
@@ -1120,13 +1194,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (msg && msg.subAgent) {
         const subAgent = { ...msg.subAgent };
         const toolChain = [...(subAgent.activeToolChain || [])];
-        // Manual reverse search (ES2022 compat — no findLastIndex)
+        // Prefer exact ID match so parallel tool calls to the same tool
+        // name (e.g. two concurrent read_files) can't swap results.
+        // Fall back to reverse "first RUNNING by name" lookup only when
+        // no toolCallId was provided or it is unknown to this chain
+        // (legacy senders, malformed payloads).
         let toolIdx = -1;
-        for (let i = toolChain.length - 1; i >= 0; i--) {
-          const item = toolChain[i];
-          if (item && item.status === 'RUNNING' && item.name === data.toolName) {
-            toolIdx = i;
-            break;
+        const incomingId: string | undefined =
+          typeof data.toolCallId === 'string' && data.toolCallId.length > 0
+            ? data.toolCallId
+            : undefined;
+        if (incomingId) {
+          toolIdx = toolChain.findIndex(tc => tc.id === incomingId);
+        }
+        if (toolIdx === -1) {
+          // Manual reverse search (ES2022 compat — no findLastIndex)
+          for (let i = toolChain.length - 1; i >= 0; i--) {
+            const item = toolChain[i];
+            if (item && item.status === 'RUNNING' && item.name === data.toolName) {
+              toolIdx = i;
+              break;
+            }
           }
         }
         if (toolIdx !== -1) {

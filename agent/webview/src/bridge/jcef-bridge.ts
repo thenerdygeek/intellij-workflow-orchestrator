@@ -71,9 +71,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   appendToolCall(toolCallId: string, toolName: string, args: string, status: string) {
     stores?.getChatStore().addToolCall(toolCallId, toolName, args, status as ToolCallStatus);
   },
-  updateToolResult(result: string, durationMs: number, toolName: string, status?: string, output?: string | null, diff?: string | null) {
+  updateToolResult(result: string, durationMs: number, toolName: string, status?: string, output?: string | null, diff?: string | null, toolCallId?: string) {
     const resolvedStatus = (status === 'ERROR' ? 'ERROR' : 'COMPLETED') as ToolCallStatus;
-    stores?.getChatStore().updateToolCall(toolName, resolvedStatus, result, durationMs, output ?? undefined, diff ?? undefined);
+    stores?.getChatStore().updateToolCall(toolName, resolvedStatus, result, durationMs, output ?? undefined, diff ?? undefined, toolCallId ?? undefined);
   },
   finalizeToolChain() {
     stores?.getChatStore().finalizeToolChain();

@@ -128,16 +128,14 @@ function UserContent({ content, mentions }: { content: string; mentions?: Mentio
 interface AgentMessageProps {
   message: Message;
   isStreaming?: boolean;
-  streamText?: string;
 }
 
 export const AgentMessage = memo(function AgentMessage({
   message,
   isStreaming = false,
-  streamText,
 }: AgentMessageProps) {
   const isUser = message.role === 'user';
-  const content = isStreaming ? (streamText ?? message.content) : message.content;
+  const content = message.content;
 
   // System messages: thinking blocks and status lines
   if (message.role === 'system') {

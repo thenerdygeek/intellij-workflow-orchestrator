@@ -66,12 +66,23 @@ class SourcegraphChatClient(
         activeCall.getAndSet(null)?.cancel()
     }
 
+    /** Set by AgentLoop to cooperatively interrupt the SSE stream mid-response. */
+    @Volatile var shouldInterruptStream = false
+
     companion object {
         /** Sourcegraph API path for chat completions (from OpenAPI spec). */
         const val CHAT_COMPLETIONS_PATH = "/.api/llm/chat/completions"
 
         /** Sourcegraph API path for listing available models. */
         const val MODELS_PATH = "/.api/llm/models"
+
+        /**
+         * Monotonic counter for XML-synthesized tool call IDs. Must be
+         * process-wide (not per-response, not per-instance): the webview's
+         * tool call map is keyed by these IDs and survives both cross-turn
+         * LLM calls and client recreation on model fallback.
+         */
+        private val xmlToolIdCounter = AtomicInteger(0)
     }
 
     // Uses longer read timeout (120s) than default (30s) because LLM calls are slow.
@@ -262,6 +273,23 @@ class SourcegraphChatClient(
     }
 
     /**
+     * Convert parsed XML tool-use blocks into [ToolCall] DTOs, assigning each
+     * one a fresh id from the process-wide [xmlToolIdCounter]. Used by both
+     * the streaming and non-streaming paths when the model replies in Cline's
+     * XML tool format instead of native function calls.
+     */
+    private fun xmlBlocksToToolCalls(blocks: List<ToolUseContent>): List<ToolCall> =
+        blocks.map { block ->
+            val argsJson = kotlinx.serialization.json.buildJsonObject {
+                block.params.forEach { (k, v) -> put(k, kotlinx.serialization.json.JsonPrimitive(v)) }
+            }.toString()
+            ToolCall(
+                id = "xmltool_${xmlToolIdCounter.incrementAndGet()}",
+                function = FunctionCall(name = block.name, arguments = argsJson)
+            )
+        }
+
+    /**
      * Send a streaming chat completion request. Each SSE chunk is emitted via [onChunk]
      * for real-time UI updates. The accumulated response is returned as a single
      * [ChatCompletionResponse] when the stream completes.
@@ -275,7 +303,9 @@ class SourcegraphChatClient(
         tools: List<ToolDefinition>?,
         maxTokens: Int? = null,
         temperature: Double = 0.0,
-        onChunk: suspend (StreamChunk) -> Unit
+        onChunk: suspend (StreamChunk) -> Unit,
+        knownToolNames: Set<String> = emptySet(),
+        knownParamNames: Set<String> = emptySet()
     ): ApiResult<ChatCompletionResponse> = withContext(Dispatchers.IO) {
         try {
             val sanitized = sanitizeMessages(messages)
@@ -286,7 +316,8 @@ class SourcegraphChatClient(
                 toolChoice = null,
                 temperature = temperature,
                 maxTokens = maxTokens,
-                stream = true
+                stream = true,
+                streamOptions = StreamOptions(includeUsage = true)
             )
 
             val jsonBody = json.encodeToString(request)
@@ -332,6 +363,10 @@ class SourcegraphChatClient(
                 var line = reader.readLine()
                 while (line != null) {
                     coroutineContext.ensureActive()
+                    if (shouldInterruptStream) {
+                        log.info("[Agent:API] Stream interrupted by caller (mid-stream tool execution)")
+                        break
+                    }
 
                     if (line.startsWith("data: ") && line != "data: [DONE]") {
                         val chunkJson = line.removePrefix("data: ")
@@ -365,6 +400,7 @@ class SourcegraphChatClient(
                     }
                     line = reader.readLine()
                 }
+                shouldInterruptStream = false  // Reset for next call
 
                 // Detect streaming drop: Sourcegraph occasionally sends finish_reason=tool_calls
                 // but omits the tool_call deltas entirely, leaving us with content-only "Using tools."
@@ -375,7 +411,9 @@ class SourcegraphChatClient(
                         messages = messages,
                         tools = tools,
                         maxTokens = maxTokens,
-                        temperature = temperature
+                        temperature = temperature,
+                        knownToolNames = knownToolNames,
+                        knownParamNames = knownParamNames
                     )
                 }
 
@@ -420,17 +458,53 @@ class SourcegraphChatClient(
                     log.info("[Agent:API] Final valid tool calls: ${toolCalls?.size ?: 0}, finishReason=$finishReason")
                 }
 
+                // --- Parse content blocks via AssistantMessageParser ---
+                // Re-parse the full accumulated text to extract tool calls.
+                // In accumulate mode, this happens once at stream end.
+                val rawText = contentBuilder.toString()
+                val parsedBlocks = if (toolCalls == null || toolCalls.isEmpty()) {
+                    AssistantMessageParser.parse(rawText, knownToolNames, knownParamNames)
+                        .takeIf { blocks -> blocks.any { it is ToolUseContent } }
+                } else null
+
+                val finalToolCalls = toolCalls ?: parsedBlocks
+                    ?.filterIsInstance<ToolUseContent>()
+                    ?.filter { !it.partial }
+                    ?.let(::xmlBlocksToToolCalls)
+                    ?.ifEmpty { null }
+
+                val textOnlyContent = if (parsedBlocks != null) {
+                    parsedBlocks.filterIsInstance<TextContent>()
+                        .joinToString("\n\n") { it.content }
+                        .ifBlank { null }
+                } else {
+                    rawText.ifBlank { null }
+                }
+
+                val finalFinishReason = if (finalToolCalls != null && finishReason == "stop") {
+                    "tool_calls"
+                } else {
+                    finishReason
+                }
+
+                // Signal truncation for partial tool calls
+                var finalContent = textOnlyContent
+                if (parsedBlocks?.any { it is ToolUseContent && it.partial } == true && finalToolCalls.isNullOrEmpty()) {
+                    log.warn("[Agent:API] XML tool call truncated — signaling for retry")
+                    finalContent = (finalContent ?: "") + "\n\n[TOOL_CALL_TRUNCATED]"
+                }
+
                 val finalMessage = ChatMessage(
                     role = role,
-                    content = contentBuilder.toString().ifBlank { null },
-                    toolCalls = toolCalls
+                    content = finalContent,
+                    toolCalls = finalToolCalls
                 )
 
                 activeCall.set(null)
 
                 val streamResponse = ChatCompletionResponse(
                     id = "stream-${System.nanoTime()}",
-                    choices = listOf(Choice(index = 0, message = finalMessage, finishReason = finishReason)),
+                    choices = listOf(Choice(index = 0, message = finalMessage, finishReason = finalFinishReason)),
                     usage = streamUsage
                 )
                 dumpApiResponse(streamResponse)
@@ -472,7 +546,9 @@ class SourcegraphChatClient(
         tools: List<ToolDefinition>?,
         maxTokens: Int? = null,
         temperature: Double = 0.0,
-        toolChoice: JsonElement? = null // Accepted but not sent — not in Sourcegraph API spec
+        toolChoice: JsonElement? = null, // Accepted but not sent — not in Sourcegraph API spec
+        knownToolNames: Set<String> = emptySet(),
+        knownParamNames: Set<String> = emptySet()
     ): ApiResult<ChatCompletionResponse> = withContext(Dispatchers.IO) {
         try {
             val sanitized = sanitizeMessages(messages)
@@ -507,6 +583,30 @@ class SourcegraphChatClient(
                         response.isSuccessful -> {
                             val parsed = json.decodeFromString<ChatCompletionResponse>(body)
                             log.debug("[Agent:API] Response: ${parsed.usage?.totalTokens} tokens")
+
+                            // --- XML tool call fallback for non-streaming path ---
+                            val choice = parsed.choices.firstOrNull()
+                            val requestHadNoTools = tools.isNullOrEmpty()
+                            if (requestHadNoTools && choice != null && choice.message.toolCalls.isNullOrEmpty()) {
+                                val content = choice.message.content
+                                if (content != null) {
+                                    val parsedBlocks = AssistantMessageParser.parse(content, knownToolNames, knownParamNames)
+                                    val xmlToolCalls = parsedBlocks.filterIsInstance<ToolUseContent>()
+                                        .filter { !it.partial }
+                                    if (xmlToolCalls.isNotEmpty()) {
+                                        log.info("[Agent:API] Extracted ${xmlToolCalls.size} XML tool call(s) from non-streaming response")
+                                        val textOnly = parsedBlocks.filterIsInstance<TextContent>()
+                                            .joinToString("\n\n") { it.content }.ifBlank { null }
+                                        val toolCallDtos = xmlBlocksToToolCalls(xmlToolCalls)
+                                        val updatedMsg = choice.message.copy(content = textOnly, toolCalls = toolCallDtos)
+                                        val updatedFr = if (choice.finishReason == "stop") "tool_calls" else choice.finishReason
+                                        val updatedResp = parsed.copy(choices = listOf(choice.copy(message = updatedMsg, finishReason = updatedFr)))
+                                        dumpApiResponse(updatedResp)
+                                        return@withContext ApiResult.Success(updatedResp)
+                                    }
+                                }
+                            }
+
                             dumpApiResponse(parsed)
                             ApiResult.Success(parsed)
                         }

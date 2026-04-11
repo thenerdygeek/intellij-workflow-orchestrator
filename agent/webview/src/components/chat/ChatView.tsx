@@ -19,7 +19,6 @@ import {
 import { ScrollButton } from '@/components/ui/prompt-kit/scroll-button';
 import { Loader } from '@/components/ui/prompt-kit/loader';
 import { TextShimmer } from '@/components/ui/prompt-kit/text-shimmer';
-import type { Message } from '@/bridge/types';
 
 const WORKING_PHRASES = [
   // Dev life — the daily struggle
@@ -323,14 +322,14 @@ export const ChatView = memo(function ChatView() {
   const handleDeny = useCallback(() => resolveApproval('deny'), [resolveApproval]);
   const handleAllowForSession = useCallback(() => resolveApproval('allowForSession'), [resolveApproval]);
 
-  // When streaming ends, scroll to the TOP of the last agent message if it's taller than the viewport.
-  // This lets the user read a long response (like an implementation plan) from the beginning.
+  // When streaming ends, scroll to the TOP of the last agent message if it's
+  // taller than the viewport — lets the user read a long response from the
+  // beginning instead of landing at the end.
+  const isStreaming = activeStream != null;
   useEffect(() => {
-    const isStreaming = activeStream?.isStreaming ?? false;
     if (wasStreamingRef.current && !isStreaming && lastAgentMsgRef.current) {
       const el = lastAgentMsgRef.current;
       const viewportHeight = el.closest('[role="log"]')?.clientHeight ?? window.innerHeight;
-      // Only scroll to top if the message is taller than 60% of the viewport
       if (el.offsetHeight > viewportHeight * 0.6) {
         requestAnimationFrame(() => {
           el.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -338,7 +337,7 @@ export const ChatView = memo(function ChatView() {
       }
     }
     wasStreamingRef.current = isStreaming;
-  }, [activeStream?.isStreaming]);
+  }, [isStreaming]);
 
   // Auto-scroll to approval gate when it appears
   useEffect(() => {
@@ -358,16 +357,6 @@ export const ChatView = memo(function ChatView() {
 
   // Convert tool calls map to sorted array (preserves insertion order)
   const toolCallsArray = Array.from(activeToolCalls.values());
-
-  // Stream placeholder message for rendering
-  const streamPlaceholder: Message | null = activeStream
-    ? {
-        id: '__streaming__',
-        role: 'agent',
-        content: activeStream.text,
-        timestamp: Date.now(),
-      }
-    : null;
 
   // Show working indicator for the entire ReAct loop — from user message until final response
   const showWorkingIndicator = busy;
@@ -409,31 +398,24 @@ export const ChatView = memo(function ChatView() {
           }
           // Attach ref to the last agent message for scroll-to-top on stream end
           const isLastAgent = msg.role === 'agent' && i === messages.length - 1;
+          const isStreamingMsg = activeStream?.messageId === msg.id;
           return (
             <ErrorBoundary key={msg.id}>
               <div
                 ref={isLastAgent ? lastAgentMsgRef : undefined}
                 style={{ animationDelay: `${Math.min(i * 40, 200)}ms` }}
               >
-                <AgentMessage message={msg} />
+                <AgentMessage message={msg} isStreaming={isStreamingMsg} />
               </div>
             </ErrorBoundary>
           );
         })}
 
-        {/* Active (in-progress) tool calls */}
+        {/* Active tool calls — rendered below the streaming message (which
+            lives in `messages` above) so tool chips always appear after the
+            agent text that introduced them. */}
         {toolCallsArray.length > 0 && (
           <ToolCallChain toolCalls={toolCallsArray} />
-        )}
-
-        {/* Streaming message — right after tool calls for natural conversation flow */}
-        {streamPlaceholder && (
-          <AgentMessage
-            key="__streaming__"
-            message={streamPlaceholder}
-            isStreaming={activeStream?.isStreaming ?? false}
-            streamText={activeStream?.text}
-          />
         )}
 
         {/* Tool call approval — immediately after tool calls / streaming text */}

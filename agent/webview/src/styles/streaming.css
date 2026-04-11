@@ -1,0 +1,81 @@
+/*
+ * Streaming markdown styles.
+ *
+ * - .agent-message: containment hints so the rich-content container doesn't
+ *   force a full-page reflow on every token arrival. content-visibility:auto
+ *   skips layout/paint when the element is off-screen; contain-intrinsic-size
+ *   gives the skipped element a placeholder box so scrollbars stay stable.
+ * - .streaming-code-plain: fallback for incomplete code fences mid-stream.
+ *   Matches the Shiki CodeBlock chrome so the visual swap to highlighted
+ *   code on fence close is minimal.
+ * - [data-streamdown-caret]: single-element caret indicator. Steps-2 blink
+ *   keyframe runs on the compositor thread and is GPU-cheap even under CEF
+ *   off-screen rendering (opacity only, no filter, no transform).
+ */
+.agent-message {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 200px;
+  contain: layout paint style;
+}
+
+.streaming-code-plain {
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 12px;
+  background: var(--code-bg);
+  color: var(--fg);
+  padding: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  white-space: pre;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+
+@keyframes caret-blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+[data-streamdown-caret] {
+  display: inline-block;
+  animation: caret-blink 1s steps(2) infinite;
+  color: var(--fg-muted);
+  margin-left: 2px;
+}
+
+/*
+ * Per-word fade-in for streaming markdown.
+ *
+ * The `rehypeWordFade` plugin wraps every word in `<span class="sd-word">`
+ * so CSS can fade new words in as they arrive. Only `opacity` is animated
+ * because it's the one property that stays cheap in JCEF's off-screen
+ * compositor — `filter` and `backdrop-filter` run on the CPU per frame
+ * and tanked the earlier `BlurTextStream` pipeline.
+ *
+ * The animation fires on element MOUNT only. New word spans (just-arrived
+ * tokens inside the streaming message) animate; previously-mounted word
+ * spans do not re-animate on subsequent token updates, because React's
+ * reconciliation keeps their DOM nodes identity-stable. This is what makes
+ * the effect feel like individual words appearing rather than the whole
+ * paragraph flickering on every token.
+ *
+ * `animation-fill-mode: both` holds the final `opacity: 1` state after the
+ * animation finishes and applies the initial `opacity: 0` state before the
+ * animation starts, so there is no flash in either direction.
+ */
+@keyframes sd-word-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.sd-word {
+  animation: sd-word-fade-in 180ms ease-out both;
+}
+
+/*
+ * Respect user preference: if the OS reports reduced-motion, skip the fade
+ * entirely. The text still renders instantly; only the animation is dropped.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .sd-word { animation: none; }
+}
