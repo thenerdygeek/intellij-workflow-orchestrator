@@ -28,11 +28,37 @@ class AutoMemoryManager(
     private val retriever = RelevanceRetriever(archivalMemory)
 
     companion object {
-        /** Minimum conversation messages to warrant extraction (skip trivial sessions). */
-        private const val MIN_MESSAGES_FOR_EXTRACTION = 4
+        /** Minimum substantive user turns to warrant extraction. */
+        private const val MIN_USER_TURNS = 2
+
+        /** Minimum character length for a user message to count as substantive. */
+        private const val MIN_USER_TURN_LENGTH = 15
+
+        /** Trivial greetings/acknowledgments to exclude from substantive count. */
+        private val TRIVIAL_USER_MESSAGES = setOf(
+            "hi", "hello", "hey", "ok", "okay", "thanks", "thank you", "bye", "goodbye",
+            "cool", "nice", "yes", "no", "yep", "nope", "got it", "sure", "alright"
+        )
 
         /** Valid core memory block names. Unknown blocks are ignored to prevent LLM hallucination. */
         private val ALLOWED_BLOCKS = setOf("user", "project", "patterns")
+    }
+
+    /**
+     * Check if a session is worth extracting memory from.
+     * Tighter than a simple message count — looks at substantive user turns only.
+     * A session must contain at least [MIN_USER_TURNS] user messages whose content is
+     * at least [MIN_USER_TURN_LENGTH] characters and is not a trivial greeting/ack.
+     */
+    private fun isWorthExtracting(messages: List<ChatMessage>): Boolean {
+        val substantiveUserTurns = messages.count { msg ->
+            val content = msg.content
+            msg.role == "user"
+                && content != null
+                && content.length >= MIN_USER_TURN_LENGTH
+                && content.lowercase().trim().trimEnd('.', '!', '?') !in TRIVIAL_USER_MESSAGES
+        }
+        return substantiveUserTurns >= MIN_USER_TURNS
     }
 
     /**
@@ -40,8 +66,9 @@ class AutoMemoryManager(
      * Makes a cheap LLM call to extract insights into memory.
      */
     suspend fun onSessionComplete(sessionId: String, messages: List<ChatMessage>) {
-        if (messages.size < MIN_MESSAGES_FOR_EXTRACTION) {
-            log.info("[AutoMemory] Skipping extraction for short session $sessionId (${messages.size} messages)")
+        if (!isWorthExtracting(messages)) {
+            val userTurns = messages.count { it.role == "user" }
+            log.info("[AutoMemory] Skipping extraction for trivial session $sessionId ($userTurns user turns, insufficient substance)")
             return
         }
 

@@ -68,9 +68,9 @@ class AutoMemoryManagerTest {
             mockLlmResponse(extractionJson)
 
             val messages = listOf(
-                ChatMessage(role = "user", content = "Fix the null pointer"),
+                ChatMessage(role = "user", content = "Fix the null pointer in UserService"),
                 ChatMessage(role = "assistant", content = "Found it"),
-                ChatMessage(role = "user", content = "Great"),
+                ChatMessage(role = "user", content = "The issue is in getEmail when Optional is empty"),
                 ChatMessage(role = "assistant", content = "Fixed")
             )
 
@@ -87,7 +87,12 @@ class AutoMemoryManagerTest {
                 client.sendMessage(any(), any(), any(), any(), any())
             } returns ApiResult.Error(ErrorType.SERVER_ERROR, "500")
 
-            val messages = (1..5).map { ChatMessage(role = if (it % 2 == 1) "user" else "assistant", content = "msg $it") }
+            val messages = listOf(
+                ChatMessage(role = "user", content = "Fix the authentication bug in UserService"),
+                ChatMessage(role = "assistant", content = "I'll investigate"),
+                ChatMessage(role = "user", content = "The issue is with Optional unwrapping"),
+                ChatMessage(role = "assistant", content = "Fixed")
+            )
 
             // Should not throw
             manager.onSessionComplete("session-1", messages)
@@ -102,8 +107,59 @@ class AutoMemoryManagerTest {
 
             manager.onSessionComplete("session-1", messages)
 
-            // Client should NOT be called — conversation too short (< 4 messages)
+            // Client should NOT be called — trivial single-turn session
             coVerify(exactly = 0) { client.sendMessage(any(), any(), any(), any(), any()) }
+        }
+    }
+
+    @Nested
+    inner class SessionQualityGate {
+
+        @Test
+        fun `skips extraction when fewer than 2 user turns`() = runTest {
+            // 10 total messages but only 1 from the user
+            val messages = buildList {
+                add(ChatMessage(role = "user", content = "fix the null pointer in UserService"))
+                repeat(9) { add(ChatMessage(role = "assistant", content = "tool call $it")) }
+            }
+
+            manager.onSessionComplete("session-1", messages)
+
+            // No LLM call should fire
+            coVerify(exactly = 0) { client.sendMessage(any(), any(), any(), any(), any()) }
+        }
+
+        @Test
+        fun `skips extraction when user turns are trivial greetings`() = runTest {
+            val messages = listOf(
+                ChatMessage(role = "user", content = "hi"),
+                ChatMessage(role = "assistant", content = "Hello! How can I help?"),
+                ChatMessage(role = "user", content = "ok thanks"),
+                ChatMessage(role = "assistant", content = "You're welcome"),
+                ChatMessage(role = "user", content = "bye"),
+                ChatMessage(role = "assistant", content = "Goodbye")
+            )
+
+            manager.onSessionComplete("session-1", messages)
+
+            // No LLM call — all user turns are trivial
+            coVerify(exactly = 0) { client.sendMessage(any(), any(), any(), any(), any()) }
+        }
+
+        @Test
+        fun `extracts when 2+ user turns have substantive content`() = runTest {
+            mockLlmResponse("""{"core_memory_updates":[],"archival_inserts":[]}""")
+
+            val messages = listOf(
+                ChatMessage(role = "user", content = "Fix the null pointer in UserService"),
+                ChatMessage(role = "assistant", content = "I'll check it"),
+                ChatMessage(role = "user", content = "The issue is in getEmail — it returns null when Optional is empty"),
+                ChatMessage(role = "assistant", content = "Fixed")
+            )
+
+            manager.onSessionComplete("session-1", messages)
+
+            coVerify(exactly = 1) { client.sendMessage(any(), any(), any(), any(), any()) }
         }
     }
 
@@ -138,7 +194,7 @@ class AutoMemoryManagerTest {
             val extractionJson = """{"core_memory_updates":[{"block":"project","action":"replace","content":"Auth migration complete","old_content":"Auth migration in progress"}],"archival_inserts":[]}"""
             mockLlmResponse(extractionJson)
 
-            val messages = (1..5).map { ChatMessage(role = if (it % 2 == 1) "user" else "assistant", content = "msg $it") }
+            val messages = substantiveConversation()
 
             manager.onSessionComplete("session-1", messages)
 
@@ -152,7 +208,7 @@ class AutoMemoryManagerTest {
             val extractionJson = """{"core_memory_updates":[{"block":"project","action":"replace","content":"New content","old_content":"Nonexistent old content"}],"archival_inserts":[]}"""
             mockLlmResponse(extractionJson)
 
-            val messages = (1..5).map { ChatMessage(role = if (it % 2 == 1) "user" else "assistant", content = "msg $it") }
+            val messages = substantiveConversation()
 
             manager.onSessionComplete("session-1", messages)
 
@@ -186,7 +242,7 @@ class AutoMemoryManagerTest {
             val extractionJson = """{"core_memory_updates":[{"block":"goals","action":"append","content":"Ship by Q2"}],"archival_inserts":[]}"""
             mockLlmResponse(extractionJson)
 
-            val messages = (1..5).map { ChatMessage(role = if (it % 2 == 1) "user" else "assistant", content = "msg $it") }
+            val messages = substantiveConversation()
             manager.onSessionComplete("session-1", messages)
 
             // "goals" is not in the whitelist, so nothing should be saved
@@ -198,7 +254,7 @@ class AutoMemoryManagerTest {
             val extractionJson = """{"core_memory_updates":[{"block":"patterns","action":"append","content":"TDD always"}],"archival_inserts":[]}"""
             mockLlmResponse(extractionJson)
 
-            val messages = (1..5).map { ChatMessage(role = if (it % 2 == 1) "user" else "assistant", content = "msg $it") }
+            val messages = substantiveConversation()
             manager.onSessionComplete("session-1", messages)
 
             assertEquals("TDD always", coreMemory.read("patterns"))
@@ -213,7 +269,7 @@ class AutoMemoryManagerTest {
             val extractionJson = """{"core_memory_updates":[],"archival_inserts":[{"content":"Some insight","tags":[]}]}"""
             mockLlmResponse(extractionJson)
 
-            val messages = (1..5).map { ChatMessage(role = if (it % 2 == 1) "user" else "assistant", content = "msg $it") }
+            val messages = substantiveConversation()
             manager.onSessionComplete("session-1", messages)
 
             val results = archival.search("insight")
@@ -221,6 +277,17 @@ class AutoMemoryManagerTest {
             assertTrue(results[0].entry.tags.contains("auto"))
         }
     }
+
+    /**
+     * Build a conversation that passes the session-quality gate (2+ substantive user turns).
+     * Use in tests where the LLM extraction path is expected to fire.
+     */
+    private fun substantiveConversation(): List<ChatMessage> = listOf(
+        ChatMessage(role = "user", content = "Refactor the authentication module to use Spring Security"),
+        ChatMessage(role = "assistant", content = "I'll start by reviewing the current auth code"),
+        ChatMessage(role = "user", content = "Make sure to preserve the existing session cookie behavior"),
+        ChatMessage(role = "assistant", content = "Understood, keeping cookies intact")
+    )
 
     private fun mockLlmResponse(content: String) {
         val response = ChatCompletionResponse(
