@@ -60,6 +60,8 @@ import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -93,6 +95,7 @@ class AgentService(private val project: Project) : Disposable {
     private var archivalMemory: ArchivalMemory? = null
     private var conversationRecall: ConversationRecall? = null
     private var autoMemoryManager: AutoMemoryManager? = null
+    private val autoMemoryInitMutex = Mutex()
     private lateinit var agentDir: java.io.File
 
     /**
@@ -186,49 +189,55 @@ class AgentService(private val project: Project) : Disposable {
      * Subsequent calls return the cached instance.
      */
     private suspend fun ensureAutoMemory(): AutoMemoryManager? {
+        // Fast path: already cached — no lock needed
         autoMemoryManager?.let { return it }
 
-        val core = coreMemory ?: return null
-        val archival = archivalMemory ?: return null
+        return autoMemoryInitMutex.withLock {
+            // Double-check after acquiring lock — another coroutine may have initialized while we waited
+            autoMemoryManager?.let { return@withLock it }
 
-        try {
-            val connections = ConnectionSettings.getInstance()
-            val sgUrl = connections.state.sourcegraphUrl.trimEnd('/')
-            if (sgUrl.isBlank()) {
-                log.info("[AgentService] AutoMemoryManager disabled: no Sourcegraph URL configured")
-                return null
+            val core = coreMemory ?: return@withLock null
+            val archival = archivalMemory ?: return@withLock null
+
+            try {
+                val connections = ConnectionSettings.getInstance()
+                val sgUrl = connections.state.sourcegraphUrl.trimEnd('/')
+                if (sgUrl.isBlank()) {
+                    log.info("[AgentService] AutoMemoryManager disabled: no Sourcegraph URL configured")
+                    return@withLock null
+                }
+
+                val credentialStore = CredentialStore()
+                val tokenProvider = { credentialStore.getToken(ServiceType.SOURCEGRAPH) }
+
+                // First, a bootstrap client with no model just to fetch the model list
+                val bootstrapClient = SourcegraphChatClient(baseUrl = sgUrl, tokenProvider = tokenProvider, model = "")
+                val models = ModelCache.getModels(bootstrapClient)
+                val cheapModel = ModelCache.pickCheapest(models)
+                if (cheapModel == null) {
+                    log.info("[AgentService] AutoMemoryManager disabled: no cheap model available")
+                    return@withLock null
+                }
+
+                // Build a dedicated client baked with the cheap model ID
+                val extractionClient = SourcegraphChatClient(
+                    baseUrl = sgUrl,
+                    tokenProvider = tokenProvider,
+                    model = cheapModel.id
+                )
+
+                val mgr = AutoMemoryManager(
+                    coreMemory = core,
+                    archivalMemory = archival,
+                    client = extractionClient
+                )
+                autoMemoryManager = mgr
+                log.info("[AgentService] AutoMemoryManager initialized with model: ${cheapModel.modelName}")
+                mgr
+            } catch (e: Exception) {
+                log.warn("[AgentService] Failed to initialize AutoMemoryManager (non-fatal): ${e.message}")
+                null
             }
-
-            val credentialStore = CredentialStore()
-            val tokenProvider = { credentialStore.getToken(ServiceType.SOURCEGRAPH) }
-
-            // First, a bootstrap client with no model just to fetch the model list
-            val bootstrapClient = SourcegraphChatClient(baseUrl = sgUrl, tokenProvider = tokenProvider, model = "")
-            val models = ModelCache.getModels(bootstrapClient)
-            val cheapModel = ModelCache.pickCheapest(models)
-            if (cheapModel == null) {
-                log.info("[AgentService] AutoMemoryManager disabled: no cheap model available")
-                return null
-            }
-
-            // Build a dedicated client baked with the cheap model ID
-            val extractionClient = SourcegraphChatClient(
-                baseUrl = sgUrl,
-                tokenProvider = tokenProvider,
-                model = cheapModel.id
-            )
-
-            val mgr = AutoMemoryManager(
-                coreMemory = core,
-                archivalMemory = archival,
-                client = extractionClient
-            )
-            autoMemoryManager = mgr
-            log.info("[AgentService] AutoMemoryManager initialized with model: ${cheapModel.modelName}")
-            return mgr
-        } catch (e: Exception) {
-            log.warn("[AgentService] Failed to initialize AutoMemoryManager (non-fatal): ${e.message}")
-            return null
         }
     }
 
