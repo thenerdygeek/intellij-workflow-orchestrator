@@ -113,14 +113,12 @@ class AgentMemoryConfigurable(
 
             group("Archival Memory") {
                 row {
-                    comment(
-                        "Long-term searchable knowledge store (${archivalMemory!!.size()} entries at open). " +
-                            "Close and reopen to refresh count."
-                    )
+                    comment("Long-term searchable knowledge store.")
                 }
                 row {
-                    button("Clear Archival Memory") {
-                        if (confirmClear("archival memory (${archivalMemory!!.size()} entries)")) {
+                    button("Clear Archival Memory (${archivalMemory!!.size()} entries)") {
+                        if (confirmClear("archival memory")) {
+                            dialogPanel?.apply()
                             archivalMemory!!.clear()
                         }
                     }
@@ -150,11 +148,12 @@ class AgentMemoryConfigurable(
     }
 
     override fun isModified(): Boolean {
-        dialogPanel?.apply()
-        return autoMemoryEnabled != settings.state.autoMemoryEnabled ||
-            userBlock != (coreMemory!!.read("user") ?: "") ||
-            projectBlock != (coreMemory!!.read("project") ?: "") ||
-            patternsBlock != (coreMemory!!.read("patterns") ?: "")
+        // Use the panel's built-in dirty tracking. It detects changes to bound
+        // widgets (checkbox, text areas) without mutating our backing properties.
+        // DialogPanel compares live widget values against the mutable backing
+        // fields (autoMemoryEnabled, userBlock, etc.) that we initialize from
+        // disk in createComponent()/reset().
+        return dialogPanel?.isModified() ?: false
     }
 
     override fun apply() {

@@ -36,7 +36,7 @@ class RelevanceRetrieverTest {
 
         @Test
         fun `returns empty for very short messages`() {
-            val keywords = RelevanceRetriever.extractKeywords("hi")
+            val keywords = RelevanceRetriever.extractKeywords("a")
             assertTrue(keywords.isEmpty())
         }
 
@@ -44,6 +44,16 @@ class RelevanceRetrieverTest {
         fun `deduplicates keywords`() {
             val keywords = RelevanceRetriever.extractKeywords("error error error in config config")
             assertEquals(keywords.size, keywords.toSet().size)
+        }
+
+        @Test
+        fun `allows meaningful short identifiers like ci and pr`() {
+            val keywords = RelevanceRetriever.extractKeywords("Fix the CI pipeline for PR merges")
+            assertTrue(keywords.contains("ci"), "ci should be preserved")
+            assertTrue(keywords.contains("pr"), "pr should be preserved")
+            assertTrue(keywords.contains("pipeline"))
+            assertFalse(keywords.contains("to"), "to is a stop word")
+            assertFalse(keywords.contains("is"), "is is a stop word")
         }
     }
 

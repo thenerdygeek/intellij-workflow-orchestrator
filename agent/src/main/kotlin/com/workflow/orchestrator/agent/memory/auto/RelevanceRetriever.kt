@@ -18,10 +18,24 @@ class RelevanceRetriever(private val archival: ArchivalMemory) {
         /** Max total characters in the recalled memory section. */
         private const val MAX_CHARS = 3000
 
-        /** Minimum keyword length to include. */
-        private const val MIN_KEYWORD_LENGTH = 3
+        /**
+         * Minimum keyword length to include. Set to 2 so meaningful short identifiers
+         * like "ci", "pr", "db", "ui", "id" are preserved. The SHORT_STOP_WORDS list
+         * below excludes the handful of 2-char English words that aren't useful for search.
+         */
+        private const val MIN_KEYWORD_LENGTH = 2
 
-        /** Common English stop words to exclude from keyword extraction. */
+        /** 2-char English words to exclude even though they meet MIN_KEYWORD_LENGTH. */
+        private val SHORT_STOP_WORDS = setOf(
+            "is", "be", "to", "of", "in", "on", "at", "by", "an", "or",
+            "if", "it", "my", "we", "me", "so", "no", "do", "as", "am", "us"
+        )
+
+        /**
+         * Common English stop words (length >= 3) to exclude from keyword extraction.
+         * NOTE: English-only. If the plugin is ever localized, this list will need
+         * per-locale variants or a smarter tokenizer.
+         */
         private val STOP_WORDS = setOf(
             "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
             "have", "has", "had", "do", "does", "did", "will", "would", "could",
@@ -46,7 +60,11 @@ class RelevanceRetriever(private val archival: ArchivalMemory) {
         fun extractKeywords(message: String): List<String> {
             return message.lowercase()
                 .split(Regex("[^a-z0-9]+"))
-                .filter { it.length >= MIN_KEYWORD_LENGTH && it !in STOP_WORDS }
+                .filter {
+                    it.length >= MIN_KEYWORD_LENGTH &&
+                        it !in STOP_WORDS &&
+                        it !in SHORT_STOP_WORDS
+                }
                 .distinct()
         }
     }
