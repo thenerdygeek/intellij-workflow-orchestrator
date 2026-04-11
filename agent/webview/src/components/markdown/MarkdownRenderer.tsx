@@ -2,7 +2,7 @@ import { memo, useMemo } from 'react';
 import { Streamdown, useIsCodeFenceIncomplete } from 'streamdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
-import { visit } from 'unist-util-visit';
+import { visit, SKIP } from 'unist-util-visit';
 import { CodeBlock } from '@/components/markdown/CodeBlock';
 import { MermaidDiagram } from '@/components/rich/MermaidDiagram';
 import { ChartView } from '@/components/rich/ChartView';
@@ -107,6 +107,66 @@ function remarkCodeMeta() {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * rehypeWordFade: wrap each word in `<span class="sd-word">` so CSS can fade
+ * new words in as they stream. Whitespace between words stays as plain text
+ * so copy/paste retains natural spacing.
+ *
+ * Skipped subtrees: `<code>`, `<pre>`, and any span that's already an
+ * `sd-word` (the plugin is idempotent if Streamdown ever re-runs it on the
+ * same tree). Skipping code preserves syntax-highlighting integrity and
+ * avoids animating code that's already visually noisy.
+ *
+ * Animation mechanics: CSS `animation` fires once on element mount, so only
+ * NEWLY mounted word spans fade in — existing spans (words already in the
+ * DOM from a previous token) don't re-animate. React reconciliation handles
+ * append-only streaming correctly because the word spans' positions are
+ * stable as new words are added at the end of a block.
+ * ──────────────────────────────────────────────────────────────────────────── */
+function rehypeWordFade() {
+  return (tree: any) => {
+    visit(tree, (node: any, index: number | undefined, parent: any) => {
+      if (node.type === 'element') {
+        if (node.tagName === 'code' || node.tagName === 'pre') return SKIP;
+        if (node.tagName === 'span' && hasClass(node, 'sd-word')) return SKIP;
+        return;
+      }
+      if (node.type !== 'text') return;
+      if (index === undefined || parent == null) return;
+
+      const text = node.value as string;
+      if (!text || !text.trim()) return;
+
+      // Split on whitespace boundaries, keeping the whitespace so we can
+      // reinsert it as plain text nodes between the word spans.
+      const tokens = text.split(/(\s+)/).filter(t => t.length > 0);
+      const newChildren: any[] = tokens.map(token =>
+        /^\s+$/.test(token)
+          ? { type: 'text', value: token }
+          : {
+              type: 'element',
+              tagName: 'span',
+              properties: { className: ['sd-word'] },
+              children: [{ type: 'text', value: token }],
+            }
+      );
+
+      parent.children.splice(index, 1, ...newChildren);
+      // SKIP so we don't descend into the just-inserted nodes (which would
+      // re-match the text-node branch and loop). The index advance keeps
+      // traversal moving past the insertions.
+      return [SKIP, index + newChildren.length];
+    });
+  };
+}
+
+function hasClass(node: any, cls: string): boolean {
+  const c = node.properties?.className;
+  if (Array.isArray(c)) return c.includes(cls);
+  if (typeof c === 'string') return c.split(/\s+/).includes(cls);
+  return false;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * Module-scope plugin arrays and component map.
  *
  * MUST stay at module scope so Streamdown's per-block React.memo doesn't
@@ -116,7 +176,7 @@ function remarkCodeMeta() {
  * ──────────────────────────────────────────────────────────────────────────── */
 
 const REMARK_PLUGINS = [remarkGfm, remarkCodeMeta] as const;
-const REHYPE_PLUGINS = [rehypeRaw] as const;
+const REHYPE_PLUGINS = [rehypeRaw, rehypeWordFade] as const;
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 

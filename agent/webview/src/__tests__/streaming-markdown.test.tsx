@@ -51,9 +51,15 @@ describe('AgentMessage — real-time streaming markdown', () => {
   });
 
   it('renders a paragraph immediately as HTML during streaming', () => {
-    render(<AgentMessage message={streamingMessage('Here is a thought.')} isStreaming />);
-    const p = screen.getByText('Here is a thought.');
-    expect(p.tagName.toLowerCase()).toBe('p');
+    // Text content is split into per-word `sd-word` spans by rehypeWordFade,
+    // so match on the `<p>` element's concatenated textContent rather than
+    // RTL's `getByText` (which requires a single literal text node).
+    const { container } = render(
+      <AgentMessage message={streamingMessage('Here is a thought.')} isStreaming />,
+    );
+    const p = container.querySelector('p');
+    expect(p).not.toBeNull();
+    expect(p?.textContent).toBe('Here is a thought.');
   });
 
   it('renders an incomplete code fence as plain monospace, not highlighted', () => {
@@ -61,8 +67,10 @@ describe('AgentMessage — real-time streaming markdown', () => {
       <AgentMessage message={streamingMessage(INCOMPLETE_MARKDOWN)} isStreaming />,
     );
 
-    // The paragraph before the fence is HTML
-    expect(screen.getByText('Here is a Python snippet:')).toBeInTheDocument();
+    // The paragraph before the fence is HTML — `textContent` normalizes the
+    // per-word span split introduced by `rehypeWordFade`.
+    const firstP = container.querySelector('p');
+    expect(firstP?.textContent).toBe('Here is a Python snippet:');
 
     // The fence body renders inside a <pre class="streaming-code-plain">.
     // It MUST NOT render as a Shiki-highlighted CodeBlock with .shiki class.
@@ -223,5 +231,93 @@ describe('AgentMessage — real-time streaming markdown', () => {
     rerender(<MountTracker isStreaming />);
     expect(mountCount, 'finalized→streaming must not remount').toBe(1);
     expect(unmountCount).toBe(0);
+  });
+
+  // ── Per-word fade-in (rehypeWordFade) ──
+  //
+  // The `rehypeWordFade` plugin wraps each word in `<span class="sd-word">`
+  // so CSS `@keyframes sd-word-fade-in` can animate newly-arrived words in
+  // as they stream. These tests lock in the plugin's shape so a future
+  // refactor can't silently regress the animation contract.
+
+  it('wraps each word in a paragraph in <span class="sd-word">', () => {
+    const { container } = render(
+      <AgentMessage message={streamingMessage('Hello streaming world.')} isStreaming />,
+    );
+    const wordSpans = container.querySelectorAll('span.sd-word');
+    // Four words: "Hello", "streaming", "world.". Trailing period stays attached.
+    const words = Array.from(wordSpans).map(s => s.textContent);
+    expect(words).toEqual(['Hello', 'streaming', 'world.']);
+  });
+
+  it('preserves whitespace as plain text nodes between word spans so copy-paste is natural', () => {
+    const { container } = render(
+      <AgentMessage message={streamingMessage('one two three')} isStreaming />,
+    );
+    // The paragraph's textContent must still read as the original string
+    // with spaces — not concatenated word content. If whitespace were lost
+    // or folded, copy-paste would produce "onetwothree".
+    const p = container.querySelector('p');
+    expect(p?.textContent).toBe('one two three');
+  });
+
+  it('does NOT wrap words inside fenced code blocks', () => {
+    const code = 'Before code\n\n```python\ndef foo(): return 42\n```\n\nAfter code';
+    const { container } = render(
+      <AgentMessage message={streamingMessage(code)} isStreaming={false} />,
+    );
+    // Words outside the code block should be wrapped.
+    const paragraphWords = Array.from(container.querySelectorAll('p span.sd-word'))
+      .map(s => s.textContent);
+    expect(paragraphWords).toContain('Before');
+    expect(paragraphWords).toContain('After');
+
+    // Words INSIDE <code>/<pre> must not be wrapped — Python keywords and
+    // identifiers must remain plain text so syntax highlighting sees them.
+    const codeSpans = container.querySelectorAll('pre span.sd-word, code span.sd-word');
+    expect(codeSpans.length).toBe(0);
+  });
+
+  it('does NOT wrap words inside inline code spans', () => {
+    const { container } = render(
+      <AgentMessage
+        message={streamingMessage('Call the `doSomething` function now.')}
+        isStreaming={false}
+      />,
+    );
+    // The inline code's content should not be wrapped.
+    const inlineCode = container.querySelector('code');
+    expect(inlineCode?.textContent).toBe('doSomething');
+    expect(inlineCode?.querySelectorAll('span.sd-word').length).toBe(0);
+
+    // But the surrounding paragraph text IS wrapped.
+    const paragraphWords = Array.from(container.querySelectorAll('p > span.sd-word'))
+      .map(s => s.textContent);
+    expect(paragraphWords).toContain('Call');
+    expect(paragraphWords).toContain('function');
+    expect(paragraphWords).toContain('now.');
+  });
+
+  it('wraps words inside emphasis and strong without nesting sd-word inside sd-word', () => {
+    const { container } = render(
+      <AgentMessage
+        message={streamingMessage('This *is really* important.')}
+        isStreaming={false}
+      />,
+    );
+    const em = container.querySelector('em');
+    expect(em).not.toBeNull();
+    // "is" and "really" inside the em should each be an sd-word span.
+    const emWords = Array.from(em!.querySelectorAll('span.sd-word')).map(s => s.textContent);
+    expect(emWords).toEqual(['is', 'really']);
+
+    // No span.sd-word should contain another span.sd-word.
+    const allWordSpans = container.querySelectorAll('span.sd-word');
+    for (const span of allWordSpans) {
+      expect(
+        span.querySelector('span.sd-word'),
+        'sd-word spans must not nest',
+      ).toBeNull();
+    }
   });
 });
