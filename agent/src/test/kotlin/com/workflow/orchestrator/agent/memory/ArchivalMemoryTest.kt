@@ -167,4 +167,65 @@ class ArchivalMemoryTest {
             assertEquals(0, reloaded.size())
         }
     }
+
+    @Nested
+    inner class ReloadTests {
+
+        @Test
+        fun `reload picks up external insertions`() {
+            memory.insert("original", listOf("a"))
+
+            val otherInstance = ArchivalMemory(storageFile)
+            otherInstance.insert("external", listOf("b"))
+
+            assertEquals(1, memory.size())
+            memory.reload()
+            assertEquals(2, memory.size())
+        }
+
+        @Test
+        fun `reload on missing file leaves empty state`() {
+            memory.insert("will disappear", listOf("temp"))
+            storageFile.delete()
+
+            memory.reload()
+            assertEquals(0, memory.size())
+        }
+    }
+
+    @Nested
+    inner class TrackUsageParam {
+
+        @Test
+        fun `search with trackUsage false does not increment usage`() {
+            val id = memory.insert("error resolution for CORS", listOf("cors", "error"))
+
+            memory.search("CORS", trackUsage = false)
+
+            val entry = memory.all().first { it.id == id }
+            assertEquals(0, entry.usageCount)
+            assertNull(entry.lastUsage)
+        }
+
+        @Test
+        fun `search with trackUsage true still increments usage by default`() {
+            val id = memory.insert("error resolution for CORS", listOf("cors", "error"))
+
+            memory.search("CORS")  // default trackUsage = true
+
+            val entry = memory.all().first { it.id == id }
+            assertEquals(1, entry.usageCount)
+            assertNotNull(entry.lastUsage)
+        }
+
+        @Test
+        fun `search with trackUsage false does not persist to disk`() {
+            memory.insert("error resolution", listOf("error"))
+            val sizeBefore = storageFile.length()
+
+            memory.search("error", trackUsage = false)
+
+            assertEquals(sizeBefore, storageFile.length())
+        }
+    }
 }
