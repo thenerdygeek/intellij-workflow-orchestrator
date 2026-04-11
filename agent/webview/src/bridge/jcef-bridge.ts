@@ -439,6 +439,7 @@ export const kotlinBridge = {
   activateSkill(name: string): void { callKotlin('_activateSkill', name); },
   requestFocusIde(): void { callKotlin('_requestFocusIde'); },
   openSettings(): void { callKotlin('_openSettings'); },
+  openMemorySettings(): void { callKotlin('_openMemorySettings'); },
   openToolsPanel(): void { callKotlin('_openToolsPanel'); },
   viewInEditor(): void { callKotlin('_viewInEditor'); },
   killToolCall(toolCallId: string): void { callKotlin('_killToolCall', toolCallId); },

@@ -129,6 +129,7 @@ class AgentDashboardPanel(
         onActivateSkill: (String) -> Unit,
         onRequestFocusIde: () -> Unit,
         onOpenSettings: () -> Unit,
+        onOpenMemorySettings: () -> Unit = {},
         onOpenToolsPanel: () -> Unit
     ) {
         cefPanel?.onCancelTask = onCancel
@@ -140,6 +141,7 @@ class AgentDashboardPanel(
         cefPanel?.onActivateSkill = onActivateSkill
         cefPanel?.onRequestFocusIde = onRequestFocusIde
         cefPanel?.onOpenSettings = onOpenSettings
+        cefPanel?.onOpenMemorySettings = onOpenMemorySettings
         cefPanel?.onOpenToolsPanel = onOpenToolsPanel
     }
 

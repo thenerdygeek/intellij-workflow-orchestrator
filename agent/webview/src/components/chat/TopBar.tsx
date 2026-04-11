@@ -106,10 +106,10 @@ export const TopBar = memo(function TopBar() {
           </span>
         )}
 
-        {/* Memory stats indicator — click to open settings */}
+        {/* Memory stats indicator — click to open Memory sub-page */}
         {memoryStats && (memoryStats.coreChars > 0 || memoryStats.archivalCount > 0) && (
           <button
-            onClick={() => kotlinBridge.openSettings()}
+            onClick={() => kotlinBridge.openMemorySettings()}
             className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs opacity-50 hover:opacity-90 transition-opacity"
             style={{
               color: 'var(--fg-secondary, #9ca3af)',

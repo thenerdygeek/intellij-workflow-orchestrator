@@ -79,6 +79,7 @@ class AgentCefPanel(
     private var activateSkillQuery: JBCefJSQuery? = null
     private var requestFocusIdeQuery: JBCefJSQuery? = null
     private var openSettingsQuery: JBCefJSQuery? = null
+    private var openMemorySettingsQuery: JBCefJSQuery? = null
     private var openToolsPanelQuery: JBCefJSQuery? = null
     private var searchMentionsQuery: JBCefJSQuery? = null
     private var searchTicketsQuery: JBCefJSQuery? = null
@@ -154,6 +155,8 @@ class AgentCefPanel(
     var onActivateSkill: ((String) -> Unit)? = null
     var onRequestFocusIde: (() -> Unit)? = null
     var onOpenSettings: (() -> Unit)? = null
+    /** Callback when user clicks the memory stats indicator in the TopBar — routes to Memory sub-page. */
+    var onOpenMemorySettings: (() -> Unit)? = null
     var onOpenToolsPanel: (() -> Unit)? = null
     /** Callback when user clicks "Open in Tab" on a visualization. Params: type, content JSON payload. */
     var onOpenInEditorTab: ((String) -> Unit)? = null
@@ -297,6 +300,7 @@ class AgentCefPanel(
         activateSkillQuery = registerQuery(b) { name -> onActivateSkill?.invoke(name); JBCefJSQuery.Response("ok") }
         requestFocusIdeQuery = registerQuery(b) { _ -> onRequestFocusIde?.invoke(); JBCefJSQuery.Response("ok") }
         openSettingsQuery = registerQuery(b) { _ -> onOpenSettings?.invoke(); JBCefJSQuery.Response("ok") }
+        openMemorySettingsQuery = registerQuery(b) { _ -> onOpenMemorySettings?.invoke(); JBCefJSQuery.Response("ok") }
         openToolsPanelQuery = registerQuery(b) { _ -> onOpenToolsPanel?.invoke(); JBCefJSQuery.Response("ok") }
         searchMentionsQuery = registerQuery(b) { data ->
             // data format: "type:query" e.g. "file:Login" or "categories:"
@@ -511,6 +515,10 @@ class AgentCefPanel(
                     openSettingsQuery?.let { q ->
                         val settingsJs = q.inject("'settings'")
                         js("window._openSettings = function() { $settingsJs }")
+                    }
+                    openMemorySettingsQuery?.let { q ->
+                        val memSettingsJs = q.inject("'memorySettings'")
+                        js("window._openMemorySettings = function() { $memSettingsJs }")
                     }
                     openToolsPanelQuery?.let { q ->
                         val toolsJs = q.inject("'tools'")
