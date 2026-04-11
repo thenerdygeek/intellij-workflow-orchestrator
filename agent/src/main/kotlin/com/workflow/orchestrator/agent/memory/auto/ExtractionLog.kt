@@ -4,6 +4,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.time.Instant
 
 /**
@@ -102,7 +104,12 @@ class ExtractionLog(private val logFile: File) {
                 val keep = lines.takeLast(MAX_ENTRIES)
                 val tempFile = File(logFile.parent, "${logFile.name}.tmp")
                 tempFile.writeText(keep.joinToString("\n") + "\n")
-                tempFile.renameTo(logFile)
+                Files.move(
+                    tempFile.toPath(),
+                    logFile.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE
+                )
             }
         } catch (_: Exception) {
             // Best-effort — trim failure is non-fatal
