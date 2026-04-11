@@ -44,6 +44,7 @@ class SpawnAgentTool(
     var contextBudget: Int = DEFAULT_CONTEXT_BUDGET,
     var maxOutputTokens: Int? = null,
     var sessionDebugDir: java.io.File? = null,
+    var toolExecutionMode: String = "accumulate",
     var onSubagentProgress: (suspend (String, SubagentProgressUpdate) -> Unit)? = null,
     private val configLoader: AgentConfigLoader? = null
 ) : AgentTool {
@@ -257,7 +258,8 @@ Tips:
             planMode = planMode,
             contextBudget = contextBudget,
             maxOutputTokens = maxOutputTokens,
-            apiDebugDir = subagentDebugDir(description)
+            apiDebugDir = subagentDebugDir(description),
+            toolExecutionMode = toolExecutionMode
         )
 
         val agentId = generateAgentId()
@@ -344,7 +346,8 @@ Tips:
                         planMode = true, // read-only agents are always plan mode
                         contextBudget = contextBudget,
                         maxOutputTokens = maxOutputTokens,
-                        apiDebugDir = subagentDebugDir("${description}-${idx + 1}")
+                        apiDebugDir = subagentDebugDir("${description}-${idx + 1}"),
+                        toolExecutionMode = toolExecutionMode
                     )
 
                     val childAgentId = generateAgentId()
