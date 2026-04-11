@@ -322,14 +322,14 @@ export const ChatView = memo(function ChatView() {
   const handleDeny = useCallback(() => resolveApproval('deny'), [resolveApproval]);
   const handleAllowForSession = useCallback(() => resolveApproval('allowForSession'), [resolveApproval]);
 
-  // When streaming ends, scroll to the TOP of the last agent message if it's taller than the viewport.
-  // This lets the user read a long response (like an implementation plan) from the beginning.
+  // When streaming ends, scroll to the TOP of the last agent message if it's
+  // taller than the viewport — lets the user read a long response from the
+  // beginning instead of landing at the end.
+  const isStreaming = activeStream != null;
   useEffect(() => {
-    const isStreaming = activeStream?.isStreaming ?? false;
     if (wasStreamingRef.current && !isStreaming && lastAgentMsgRef.current) {
       const el = lastAgentMsgRef.current;
       const viewportHeight = el.closest('[role="log"]')?.clientHeight ?? window.innerHeight;
-      // Only scroll to top if the message is taller than 60% of the viewport
       if (el.offsetHeight > viewportHeight * 0.6) {
         requestAnimationFrame(() => {
           el.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -337,7 +337,7 @@ export const ChatView = memo(function ChatView() {
       }
     }
     wasStreamingRef.current = isStreaming;
-  }, [activeStream?.isStreaming]);
+  }, [isStreaming]);
 
   // Auto-scroll to approval gate when it appears
   useEffect(() => {
@@ -398,12 +398,6 @@ export const ChatView = memo(function ChatView() {
           }
           // Attach ref to the last agent message for scroll-to-top on stream end
           const isLastAgent = msg.role === 'agent' && i === messages.length - 1;
-          // Is this the currently-streaming message? Under the unified
-          // streaming model, the streaming text lives as a real `Message` in
-          // this array and is updated in place on every token. We render
-          // through the same `AgentMessage` component whether streaming or
-          // finalized so the DOM structure never changes — no flash, no
-          // reposition on stream end. See `activeStream` doc in chatStore.
           const isStreamingMsg = activeStream?.messageId === msg.id;
           return (
             <ErrorBoundary key={msg.id}>
@@ -417,9 +411,9 @@ export const ChatView = memo(function ChatView() {
           );
         })}
 
-        {/* Active (in-progress) tool calls — appear BELOW the streaming
-            message (which lives in `messages` above) because they arrive
-            chronologically after the text that introduces them. */}
+        {/* Active tool calls — rendered below the streaming message (which
+            lives in `messages` above) so tool chips always appear after the
+            agent text that introduced them. */}
         {toolCallsArray.length > 0 && (
           <ToolCallChain toolCalls={toolCallsArray} />
         )}
