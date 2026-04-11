@@ -75,6 +75,28 @@ class SourcegraphChatClient(
 
         /** Sourcegraph API path for listing available models. */
         const val MODELS_PATH = "/.api/llm/models"
+
+        /**
+         * Process-wide counter for synthesizing XML tool call IDs.
+         *
+         * **Why process-wide, not per-response.** XML-mode tool call IDs must be
+         * unique across the entire webview session, not just per-response. The
+         * JS chatStore's `activeToolCalls: Map<String, ToolCall>` is keyed by
+         * these IDs and spans many API calls. A per-response counter (which the
+         * previous `idx + 1` was) collides across turns: turn 1 glob = `xmltool_1`,
+         * turn 2 first read_file = `xmltool_1` → `newMap.set("xmltool_1", readFile)`
+         * silently overwrites the glob in the store and the glob UI card
+         * disappears. See design spec
+         * `docs/superpowers/specs/2026-04-10-incremental-xml-parser-design.md`
+         * section "Tool Call ID Generation" — this is what the spec always said
+         * to do; the implementation regressed.
+         *
+         * **Why companion-object, not instance field.** A model-fallback mid-session
+         * constructs a new `SourcegraphChatClient`, but the webview's tool call
+         * map survives. Instance-scoping would reintroduce the same collision
+         * at fallback boundaries. Companion scope makes it process-wide.
+         */
+        private val xmlToolIdCounter = AtomicInteger(0)
     }
 
     // Uses longer read timeout (120s) than default (30s) because LLM calls are slow.
@@ -445,12 +467,15 @@ class SourcegraphChatClient(
                 val finalToolCalls = toolCalls ?: parsedBlocks
                     ?.filterIsInstance<ToolUseContent>()
                     ?.filter { !it.partial }
-                    ?.mapIndexed { idx, block ->
+                    ?.map { block ->
                         val argsJson = kotlinx.serialization.json.buildJsonObject {
                             block.params.forEach { (k, v) -> put(k, kotlinx.serialization.json.JsonPrimitive(v)) }
                         }.toString()
+                        // Process-wide counter — see xmlToolIdCounter docs on why this
+                        // CANNOT be a per-response `idx + 1`. Cross-turn collision would
+                        // overwrite previous tool calls in the JS chatStore map.
                         ToolCall(
-                            id = "xmltool_${idx + 1}",
+                            id = "xmltool_${xmlToolIdCounter.incrementAndGet()}",
                             function = FunctionCall(name = block.name, arguments = argsJson)
                         )
                     }
@@ -580,11 +605,15 @@ class SourcegraphChatClient(
                                         log.info("[Agent:API] Extracted ${xmlToolCalls.size} XML tool call(s) from non-streaming response")
                                         val textOnly = parsedBlocks.filterIsInstance<TextContent>()
                                             .joinToString("\n\n") { it.content }.ifBlank { null }
-                                        val toolCallDtos = xmlToolCalls.mapIndexed { idx, block ->
+                                        val toolCallDtos = xmlToolCalls.map { block ->
                                             val argsJson = kotlinx.serialization.json.buildJsonObject {
                                                 block.params.forEach { (k, v) -> put(k, kotlinx.serialization.json.JsonPrimitive(v)) }
                                             }.toString()
-                                            ToolCall(id = "xmltool_${idx + 1}", function = FunctionCall(name = block.name, arguments = argsJson))
+                                            // Process-wide counter — see xmlToolIdCounter docs.
+                                            ToolCall(
+                                                id = "xmltool_${xmlToolIdCounter.incrementAndGet()}",
+                                                function = FunctionCall(name = block.name, arguments = argsJson)
+                                            )
                                         }
                                         val updatedMsg = choice.message.copy(content = textOnly, toolCalls = toolCallDtos)
                                         val updatedFr = if (choice.finishReason == "stop") "tool_calls" else choice.finishReason

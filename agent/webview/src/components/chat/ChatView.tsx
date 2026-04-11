@@ -1,7 +1,6 @@
 import { memo, useCallback, useRef, useEffect, useState } from 'react';
 import { useChatStore } from '@/stores/chatStore';
 import { AgentMessage } from './AgentMessage';
-import { StreamingMessage } from './StreamingMessage';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ToolCallChain } from '@/components/agent/ToolCallChain';
 import { SubAgentView } from '@/components/agent/SubAgentView';
@@ -399,26 +398,30 @@ export const ChatView = memo(function ChatView() {
           }
           // Attach ref to the last agent message for scroll-to-top on stream end
           const isLastAgent = msg.role === 'agent' && i === messages.length - 1;
+          // Is this the currently-streaming message? Under the unified
+          // streaming model, the streaming text lives as a real `Message` in
+          // this array and is updated in place on every token. We render
+          // through the same `AgentMessage` component whether streaming or
+          // finalized so the DOM structure never changes — no flash, no
+          // reposition on stream end. See `activeStream` doc in chatStore.
+          const isStreamingMsg = activeStream?.messageId === msg.id;
           return (
             <ErrorBoundary key={msg.id}>
               <div
                 ref={isLastAgent ? lastAgentMsgRef : undefined}
                 style={{ animationDelay: `${Math.min(i * 40, 200)}ms` }}
               >
-                <AgentMessage message={msg} />
+                <AgentMessage message={msg} isStreaming={isStreamingMsg} />
               </div>
             </ErrorBoundary>
           );
         })}
 
-        {/* Active (in-progress) tool calls */}
+        {/* Active (in-progress) tool calls — appear BELOW the streaming
+            message (which lives in `messages` above) because they arrive
+            chronologically after the text that introduces them. */}
         {toolCallsArray.length > 0 && (
           <ToolCallChain toolCalls={toolCallsArray} />
-        )}
-
-        {/* Streaming message — right after tool calls for natural conversation flow */}
-        {activeStream && (
-          <StreamingMessage />
         )}
 
         {/* Tool call approval — immediately after tool calls / streaming text */}
