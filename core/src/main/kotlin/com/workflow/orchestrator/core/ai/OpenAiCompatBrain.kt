@@ -24,7 +24,7 @@ class OpenAiCompatBrain(
     tokenProvider: () -> String?,
     private val model: String,
     connectTimeoutSeconds: Long = 30,
-    readTimeoutSeconds: Long = 120,
+    readTimeoutSeconds: Long = 180,  // Increased for NO_KEEPALIVE safety on large prompts
     httpClientOverride: OkHttpClient? = null
 ) : LlmBrain {
 
@@ -59,26 +59,12 @@ class OpenAiCompatBrain(
         maxTokens: Int?,
         onChunk: suspend (StreamChunk) -> Unit
     ): ApiResult<ChatCompletionResponse> {
-        // TEMPORARY: Use non-streaming to debug tool call truncation and token tracking.
-        // Streaming drops tool_call deltas and doesn't report usage, causing:
-        //   1. Truncated/missing tool calls
-        //   2. Token tracking never updating (contextManager.updateTokens never called)
-        // Non-streaming gives complete tool calls and accurate usage in every response.
-        val result = client.sendMessage(
+        return client.sendMessageStream(
             messages = messages,
             tools = tools,
-            maxTokens = maxTokens
+            maxTokens = maxTokens,
+            onChunk = onChunk
         )
-        // Emit the full response as a single chunk so the UI still receives content
-        if (result is ApiResult.Success) {
-            val content = result.data.choices.firstOrNull()?.message?.content
-            if (content != null) {
-                onChunk(StreamChunk(
-                    choices = listOf(StreamChoice(delta = StreamDelta(content = content)))
-                ))
-            }
-        }
-        return result
     }
 
     override fun estimateTokens(text: String): Int = TokenEstimator.estimate(text)
