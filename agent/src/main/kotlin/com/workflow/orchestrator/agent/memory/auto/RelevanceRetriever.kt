@@ -62,7 +62,10 @@ class RelevanceRetriever(private val archival: ArchivalMemory) {
         if (keywords.isEmpty()) return null
 
         val query = keywords.joinToString(" ")
-        val results = archival.search(query, limit = MAX_RESULTS)
+        // trackUsage=false: session-start retrieval is system-managed and should not
+        // distort the Codex-style usage-based decay signal, and avoids a disk persist
+        // on every new task start.
+        val results = archival.search(query, limit = MAX_RESULTS, trackUsage = false)
         if (results.isEmpty()) return null
 
         val entries = mutableListOf<String>()

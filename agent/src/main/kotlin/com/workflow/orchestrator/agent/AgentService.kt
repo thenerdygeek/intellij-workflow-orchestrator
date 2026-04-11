@@ -1080,11 +1080,14 @@ class AgentService(private val project: Project) : Disposable {
                 // Uses cheap LLM (Haiku) to distill insights from conversation into core + archival memory.
                 val autoMemoryEnabled = AgentSettings.getInstance(project).state.autoMemoryEnabled
                 if (autoMemoryEnabled && (result is LoopResult.Completed || result is LoopResult.SessionHandoff)) {
+                    // Snapshot messages from the live context BEFORE launching, so extraction
+                    // doesn't re-read from disk (avoids coupling to checkpoint-order invariants
+                    // and saves a JSONL parse pass).
+                    val finalMessages = ctx.exportMessages()
                     scope.launch {
                         try {
                             val mgr = ensureAutoMemory() ?: return@launch
-                            val messages = sessionStore.loadMessages(sid)
-                            mgr.onSessionComplete(sid, messages)
+                            mgr.onSessionComplete(sid, finalMessages)
                         } catch (e: Exception) {
                             log.warn("[AgentService] Auto-memory extraction failed (non-fatal)", e)
                         }
