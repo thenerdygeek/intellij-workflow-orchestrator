@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.settings
 
+import com.intellij.openapi.components.service
 import com.intellij.openapi.options.ConfigurationException
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.project.Project
@@ -10,6 +11,7 @@ import com.intellij.ui.dsl.builder.bindText
 import com.intellij.ui.dsl.builder.columns
 import com.intellij.ui.dsl.builder.panel
 import com.intellij.ui.dsl.builder.rows
+import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.memory.ArchivalMemory
 import com.workflow.orchestrator.agent.memory.CoreMemory
 import com.workflow.orchestrator.core.util.ProjectIdentifier
@@ -169,6 +171,15 @@ class AgentMemoryConfigurable(
                 "Failed to save core memory: ${e.message}",
                 "Memory Save Error"
             )
+        }
+
+        // CRITICAL (C1 fix): tell the live AgentService instance to reload from disk
+        // so it sees our edits on the next task start. Without this, the agent's cached
+        // instance would overwrite our changes on the next memory tool call.
+        try {
+            project.service<AgentService>().reloadMemoryFromDisk()
+        } catch (e: Exception) {
+            // Non-fatal — settings saved to disk; agent catches up on next plugin restart
         }
     }
 

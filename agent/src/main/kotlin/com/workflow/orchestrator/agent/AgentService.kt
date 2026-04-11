@@ -165,6 +165,20 @@ class AgentService(private val project: Project) : Disposable {
     }
 
     /**
+     * Reload core + archival memory from disk. Called by the Memory settings page
+     * after the user saves edits, so the next task sees the latest state instead
+     * of the agent's cached snapshot. Fixes data-loss bug C1.
+     */
+    fun reloadMemoryFromDisk() {
+        try {
+            coreMemory?.reload()
+            archivalMemory?.reload()
+        } catch (e: Exception) {
+            log.warn("[AgentService] Failed to reload memory from disk (non-fatal): ${e.message}")
+        }
+    }
+
+    /**
      * Lazily initialize AutoMemoryManager on first use.
      * Needs a SourcegraphChatClient configured with a cheap model (Haiku) for extraction.
      * Returns null if Sourcegraph is not configured or no cheap model is available.
