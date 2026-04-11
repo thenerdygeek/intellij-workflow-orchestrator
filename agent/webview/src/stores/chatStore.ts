@@ -120,7 +120,7 @@ interface ChatState {
   appendToken(token: string): void;
   endStream(): void;
   addToolCall(toolCallId: string, name: string, args: string, status: ToolCallStatus): void;
-  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string, diff?: string): void;
+  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string, diff?: string, toolCallId?: string): void;
   finalizeToolChain(): void;
   addDiff(diff: EditDiff): void;
   addDiffExplanation(title: string, diffSource: string): void;
@@ -275,6 +275,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: [firstMessage],
       activeStream: null,
       activeToolCalls: new Map(),
+      // Reset tool output streams alongside activeToolCalls — they are keyed by
+      // the same tool call IDs and would otherwise leak across sessions.
+      toolOutputStreams: {},
       plan: null,
       planCompletedPendingClear: false,
       questions: null,
@@ -299,9 +302,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   completeSession(info: SessionInfo) {
-    // Finalize any remaining active tool calls as a toolchain message
+    // Finalize any remaining active tool calls as a toolchain message,
+    // merging any buffered stream output into each tool call first so it
+    // survives past the toolOutputStreams reset.
     const state = get();
-    const remaining = Array.from(state.activeToolCalls.values());
+    const streams = state.toolOutputStreams;
+    const remaining = Array.from(state.activeToolCalls.values()).map(tc => {
+      const stream = streams[tc.id];
+      if (stream && !tc.output) return { ...tc, output: stream };
+      return tc;
+    });
     const messages = remaining.length > 0
       ? [...state.messages, { id: nextId('tc-chain'), role: 'system' as const, content: '', timestamp: Date.now(), toolChain: remaining }]
       : state.messages;
@@ -311,6 +321,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       steeringMode: false,
       activeStream: null,
       activeToolCalls: new Map(),
+      // Drop all tool output streams — the map was keyed by the now-cleared
+      // tool call IDs and would otherwise leak for the rest of the app's life.
+      toolOutputStreams: {},
       messages,
       queuedSteeringMessages: [],
       // Clear completed plan on session end (no more messages will arrive to trigger deferred clear)
@@ -338,13 +351,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       // Auto-finalize the tool chain when the first token of a new text response arrives.
       // Inject as a toolchain message so it renders in the correct position.
+      // Merge any buffered streamed tool output into each tool call, then drop
+      // the corresponding toolOutputStreams entries so we don't leak them.
       if (isFirstToken && state.activeToolCalls.size > 0) {
-        const tools = Array.from(state.activeToolCalls.values());
+        const streams = state.toolOutputStreams;
+        const tools = Array.from(state.activeToolCalls.values()).map(tc => {
+          const s = streams[tc.id];
+          if (s && !tc.output) return { ...tc, output: s };
+          return tc;
+        });
         const chainMsg: Message = { id: nextId('tc-chain'), role: 'system', content: '', timestamp: Date.now(), toolChain: tools };
         return {
           activeStream: { text: token, isStreaming: true },
           messages: [...state.messages, chainMsg],
           activeToolCalls: new Map(),
+          toolOutputStreams: {},
         };
       }
 
@@ -407,29 +428,36 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string, diff?: string) {
+  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string, diff?: string, toolCallId?: string) {
     set(state => {
       const newMap = new Map(state.activeToolCalls);
-      // Find the first RUNNING tool call with this name (for parallel calls,
-      // results arrive in order, so the first RUNNING one is the correct target)
+      // Prefer exact ID match — this is the only reliable way to target a
+      // specific tool call when multiple calls to the same tool run in parallel.
+      // Without an ID, results arriving out of order would overwrite the wrong
+      // slot. Fall back to first-RUNNING-by-name only when no ID was provided
+      // (legacy callers) or the ID is unknown to the store.
       let targetKey: string | null = null;
-      for (const [key, tc] of newMap) {
-        if (tc.name === name && tc.status === 'RUNNING') {
-          targetKey = key;
-          break;  // first RUNNING match, not last
-        }
-      }
-      // Fallback: if no RUNNING match, find any match with this name (last one)
-      if (!targetKey) {
+      if (toolCallId && newMap.has(toolCallId)) {
+        targetKey = toolCallId;
+      } else {
         for (const [key, tc] of newMap) {
-          if (tc.name === name) targetKey = key;
+          if (tc.name === name && tc.status === 'RUNNING') {
+            targetKey = key;
+            break;
+          }
+        }
+        // Fallback: any match with this name (last one)
+        if (!targetKey) {
+          for (const [key, tc] of newMap) {
+            if (tc.name === name) targetKey = key;
+          }
         }
       }
       if (targetKey) {
         const existing = newMap.get(targetKey)!;
         newMap.set(targetKey, { ...existing, status, result, output, durationMs, ...(diff ? { diff } : {}) });
       } else {
-        const id = nextId('tc');
+        const id = toolCallId || nextId('tc');
         newMap.set(id, { id, name, args: '', status, result, output, durationMs, ...(diff ? { diff } : {}) });
       }
       return { activeToolCalls: newMap };
@@ -517,6 +545,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: [],
       activeStream: null,
       activeToolCalls: new Map(),
+      // Drop tool output streams in lockstep with activeToolCalls.
+      toolOutputStreams: {},
       plan: null,
       planCompletedPendingClear: false,
       questions: null,
@@ -1096,8 +1126,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
           data.status === 'COMPLETED' ? 'COMPLETED'
             : data.status === 'ERROR' ? 'ERROR'
               : 'RUNNING';
+        // Prefer the Kotlin-assigned tool call ID so the later update event
+        // can target this exact chip by ID. Parallel tool calls to the same
+        // tool would otherwise collide on the name-based reverse lookup.
+        const toolCallId: string = (typeof data.toolCallId === 'string' && data.toolCallId.length > 0)
+          ? data.toolCallId
+          : nextId('satool');
         const toolCall: ToolCall = {
-          id: nextId('satool'),
+          id: toolCallId,
           name: data.toolName || 'unknown',
           args: data.toolArgs || data.args || '{}',
           status: resolvedStatus,
@@ -1120,13 +1156,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (msg && msg.subAgent) {
         const subAgent = { ...msg.subAgent };
         const toolChain = [...(subAgent.activeToolChain || [])];
-        // Manual reverse search (ES2022 compat — no findLastIndex)
+        // Prefer exact ID match so parallel tool calls to the same tool
+        // name (e.g. two concurrent read_files) can't swap results.
+        // Fall back to reverse "first RUNNING by name" lookup only when
+        // no toolCallId was provided or it is unknown to this chain
+        // (legacy senders, malformed payloads).
         let toolIdx = -1;
-        for (let i = toolChain.length - 1; i >= 0; i--) {
-          const item = toolChain[i];
-          if (item && item.status === 'RUNNING' && item.name === data.toolName) {
-            toolIdx = i;
-            break;
+        const incomingId: string | undefined =
+          typeof data.toolCallId === 'string' && data.toolCallId.length > 0
+            ? data.toolCallId
+            : undefined;
+        if (incomingId) {
+          toolIdx = toolChain.findIndex(tc => tc.id === incomingId);
+        }
+        if (toolIdx === -1) {
+          // Manual reverse search (ES2022 compat — no findLastIndex)
+          for (let i = toolChain.length - 1; i >= 0; i--) {
+            const item = toolChain[i];
+            if (item && item.status === 'RUNNING' && item.name === data.toolName) {
+              toolIdx = i;
+              break;
+            }
           }
         }
         if (toolIdx !== -1) {

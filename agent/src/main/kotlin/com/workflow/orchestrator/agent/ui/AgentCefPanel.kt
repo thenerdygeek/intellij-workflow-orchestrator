@@ -680,12 +680,13 @@ class AgentCefPanel(
         status: RichStreamingPanel.ToolCallStatus,
         result: String = "", durationMs: Long = 0,
         toolName: String = "", output: String? = null,
-        diff: String? = null
+        diff: String? = null,
+        toolCallId: String = ""
     ) {
         val statusStr = if (status == RichStreamingPanel.ToolCallStatus.FAILED) "ERROR" else "COMPLETED"
         val outputArg = if (output != null) JsEscape.toJsString(output) else "null"
         val diffArg = if (diff != null) JsEscape.toJsString(diff) else "null"
-        callJs("updateToolResult(${JsEscape.toJsString(result)},$durationMs,${JsEscape.toJsString(toolName)},${JsEscape.toJsString(statusStr)},$outputArg,$diffArg)")
+        callJs("updateToolResult(${JsEscape.toJsString(result)},$durationMs,${JsEscape.toJsString(toolName)},${JsEscape.toJsString(statusStr)},$outputArg,$diffArg,${JsEscape.toJsString(toolCallId)})")
     }
 
     fun appendToolOutput(toolCallId: String, chunk: String) {
@@ -826,9 +827,10 @@ class AgentCefPanel(
         callJs("updateSubAgentIteration(${JsEscape.toJsString(payload)})")
     }
 
-    fun addSubAgentToolCall(agentId: String, toolName: String, toolArgs: String) {
+    fun addSubAgentToolCall(agentId: String, toolCallId: String, toolName: String, toolArgs: String) {
         val payload = buildJsonObject {
             put("agentId", agentId)
+            put("toolCallId", toolCallId)
             put("toolName", toolName)
             put("toolArgs", toolArgs)
         }.toString()
@@ -836,11 +838,12 @@ class AgentCefPanel(
     }
 
     fun updateSubAgentToolCall(
-        agentId: String, toolName: String, result: String,
+        agentId: String, toolCallId: String, toolName: String, result: String,
         durationMs: Long, isError: Boolean
     ) {
         val payload = buildJsonObject {
             put("agentId", agentId)
+            put("toolCallId", toolCallId)
             put("toolName", toolName)
             put("toolResult", result.take(2000))   // guard against huge results in the payload
             put("toolDurationMs", durationMs)

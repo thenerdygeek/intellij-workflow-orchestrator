@@ -552,7 +552,24 @@ agent/webview/
 - `bridge/globals.d.ts` — TypeScript declarations for Kotlin-injected window globals
 - `stores/chatStore.ts` — Primary state: messages, streaming, plans, questions, tool calls
 - `stores/themeStore.ts` — IDE theme variables synced from Kotlin
-- `stores/settingsStore.ts` — Visualization settings (enabled, maxHeight, etc.)
+- `stores/settingsStore.ts` — Visualization settings (per-type expanded/collapsed + max-height)
+
+## Streaming Text Pipeline
+
+Two-layer pipeline from SSE chunk to rendered markdown:
+
+1. **StreamBatcher** (Kotlin, `agent/ui/StreamBatcher.kt`): 16ms EDT timer coalesces rapid chunks into single bridge calls (~5000 → ~300 per response). Disposer-registered lifecycle. This is the only smoothing layer — coalescing is needed to keep JCEF bridge call overhead bounded, not to smooth the user-facing animation.
+2. **JCEF Bridge + React**: `appendToken()` accumulates into `chatStore.activeStream.text`. `StreamingMessage` (`components/chat/StreamingMessage.tsx`) renders a single `<MarkdownRenderer>` against the live text. `MarkdownRenderer` wraps Vercel's `streamdown` which handles per-block memoization, speculative close (`remend`) of incomplete markdown constructs, and a GPU-cheap block caret while streaming.
+
+**Incomplete code fences** render as plain `<pre class="streaming-code-plain">` until the fence closes; once closed they swap to the Shiki-backed `CodeBlock`. This is gated by `streamdown`'s `useIsCodeFenceIncomplete()` hook, which tracks whether the currently-last block still has an open fence.
+
+**Module-scope invariant.** `MarkdownRenderer.tsx` declares `COMPONENTS`, `REMARK_PLUGINS`, and `REHYPE_PLUGINS` at module scope. Inline literals defeat Streamdown's per-block `React.memo` and cause every token to re-render every block — this bug mode is documented in the Streamdown 2.x changelog for `linkSafety`.
+
+**What we removed (from the earlier 5-layer pipeline):**
+- `usePresentationBuffer` — RAF character drip. Released chars slower than the LLM's actual stream rate, creating growing visible latency. Streamdown + the Kotlin batcher give real-time rendering without drift.
+- `BlurTextStream` — `motion/react` per-char animation with `filter: blur(2px)`. Under CEF off-screen rendering (which JCEF uses), there is no GPU-accelerated compositing, so `filter: blur()` runs on the CPU every frame. This was the dominant cost of the old pipeline.
+- `useBlockSplitter` — ad-hoc blank-line + closed-fence scanner. Streamdown's `parseMarkdownIntoBlocks` (via `marked.lexer`) is GFM-aware and handles HTML, math, tables, and footnotes correctly.
+- `chatAnimationsEnabled` — the setting and its full bridge plumbing (webview `settingsStore`, `jcef-bridge`, Kotlin `AgentSettings`, `AgentAdvancedConfigurable`, `AgentDashboardPanel`, `AgentCefPanel`, `AgentController`) were removed. If motion comes back in the future, it should be a new setting with a clear purpose (e.g., `streamdownWordFadeEnabled`) rather than a reanimated legacy flag.
 
 **Visualization popout:** `AgentVisualizationTab.kt` provides `FileEditor` + `FileEditorProvider` + `LightVirtualFile` for opening visualizations (mermaid, chart, flow, etc.) in IDE editor tabs.
 
