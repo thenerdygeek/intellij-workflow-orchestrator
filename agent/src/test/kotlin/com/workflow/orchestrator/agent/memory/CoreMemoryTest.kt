@@ -119,7 +119,7 @@ class CoreMemoryTest {
         }
 
         @Test
-        fun `replaceFlexible prefers longer matches over shorter`() {
+        fun `replaceFlexible prefers tightest match to preserve surrounding context`() {
             memory.append("patterns", "Use ToolResult. Use strict null checks. Use ToolResult for API boundaries.")
             // "Use ToolResult" appears twice but "Use ToolResult for API boundaries" is the intended target
             memory.replaceFlexible(

@@ -10,11 +10,11 @@ import com.workflow.orchestrator.core.ai.dto.ChatMessage
  * Orchestrates event-driven memory management.
  *
  * Two trigger points:
- * 1. Session end — cheap LLM call extracts insights from conversation -> core + archival memory.
- *    Single pass catches everything: corrections, confirmations, patterns, decisions,
- *    references, error resolutions.
- * 2. Session start — keyword search retrieves relevant archival entries for prompt injection.
- *    No LLM call, zero cost.
+ * 1. Session end — cheap Haiku LLM extracts three categories (user rules/corrections,
+ *    user/project facts not in code, non-obvious error→fix mappings) with aggressive
+ *    default-nothing anchoring, then writes to core + archival memory.
+ * 2. Session start — keyword search retrieves relevant archival entries for
+ *    `<recalled_memory>` prompt injection. No LLM call, zero cost.
  *
  * All extraction is best-effort — failures are logged, never thrown.
  */

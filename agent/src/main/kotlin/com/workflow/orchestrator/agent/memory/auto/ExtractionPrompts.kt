@@ -28,10 +28,10 @@ object ExtractionPrompts {
     /**
      * Build prompt for session-end extraction.
      *
-     * This single prompt catches everything: corrections, confirmations,
-     * patterns, decisions, references, error resolutions. No need for
-     * real-time detection — one pass over the full conversation is more
-     * accurate than regex mid-session.
+     * Extracts three categories from completed sessions: user rules/corrections,
+     * user/project facts not in code, and non-obvious error→fix mappings. The
+     * prompt is heavily anchored toward "save nothing" as the default answer to
+     * suppress confabulated extractions from a cheap model.
      *
      * @param conversationLines role-prefixed conversation lines ("user: ...", "assistant: ...")
      * @param currentCoreMemory current core memory blocks (label -> value)
