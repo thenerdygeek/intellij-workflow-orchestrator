@@ -30,7 +30,6 @@ import com.workflow.orchestrator.agent.memory.ArchivalMemory
 import com.workflow.orchestrator.agent.memory.ConversationRecall
 import com.workflow.orchestrator.agent.memory.CoreMemory
 import com.workflow.orchestrator.agent.memory.auto.AutoMemoryManager
-import com.workflow.orchestrator.agent.memory.auto.ExtractionLog
 import com.workflow.orchestrator.agent.observability.AgentFileLogger
 import com.workflow.orchestrator.agent.observability.SessionMetrics
 import com.workflow.orchestrator.agent.tools.builtin.*
@@ -170,16 +169,6 @@ class AgentService(private val project: Project) : Disposable {
     }
 
     /**
-     * Public accessor for the extraction log, used by the Memory settings page.
-     * Returns a fresh instance each call rather than caching — cheap (only reads
-     * JSONL when loadRecent is called) and avoids stale-cache issues between the
-     * live AutoMemoryManager instance and the settings page.
-     */
-    fun getExtractionLog(): ExtractionLog {
-        return ExtractionLog.forProject(agentDir)
-    }
-
-    /**
      * Reload core + archival memory from disk. Called by the Memory settings page
      * after the user saves edits, so the next task sees the latest state instead
      * of the agent's cached snapshot. Fixes data-loss bug C1.
@@ -194,9 +183,8 @@ class AgentService(private val project: Project) : Disposable {
     }
 
     /**
-     * Lazily initialize AutoMemoryManager on first use.
-     * Needs a SourcegraphChatClient configured with a cheap model (Haiku) for extraction.
-     * Returns null if Sourcegraph is not configured or no cheap model is available.
+     * Lazily initialize AutoMemoryManager on first use. Retrieval-only — no LLM
+     * client needed. Returns null if archival memory is not ready.
      *
      * Subsequent calls return the cached instance.
      */
@@ -208,36 +196,9 @@ class AgentService(private val project: Project) : Disposable {
             // Double-check after acquiring lock — another coroutine may have initialized while we waited
             autoMemoryManager?.let { return@withLock it }
 
-            val core = coreMemory ?: return@withLock null
             val archival = archivalMemory ?: return@withLock null
 
             try {
-                val connections = ConnectionSettings.getInstance()
-                val sgUrl = connections.state.sourcegraphUrl.trimEnd('/')
-                if (sgUrl.isBlank()) {
-                    log.info("[AgentService] AutoMemoryManager disabled: no Sourcegraph URL configured")
-                    return@withLock null
-                }
-
-                val credentialStore = CredentialStore()
-                val tokenProvider = { credentialStore.getToken(ServiceType.SOURCEGRAPH) }
-
-                // First, a bootstrap client with no model just to fetch the model list
-                val bootstrapClient = SourcegraphChatClient(baseUrl = sgUrl, tokenProvider = tokenProvider, model = "")
-                val models = ModelCache.getModels(bootstrapClient)
-                val cheapModel = ModelCache.pickCheapest(models)
-                if (cheapModel == null) {
-                    log.info("[AgentService] AutoMemoryManager disabled: no cheap model available")
-                    return@withLock null
-                }
-
-                // Build a dedicated client baked with the cheap model ID
-                val extractionClient = SourcegraphChatClient(
-                    baseUrl = sgUrl,
-                    tokenProvider = tokenProvider,
-                    model = cheapModel.id
-                )
-
                 // Path checker for staleness filtering of recalled archival entries.
                 // If an entry mentions file paths that no longer exist (renamed/moved/deleted),
                 // the retriever will suppress it so we don't inject stale guidance into the prompt.
@@ -255,17 +216,12 @@ class AgentService(private val project: Project) : Disposable {
                     }
                 }
 
-                val extractionLog = ExtractionLog.forProject(agentDir)
-
                 val mgr = AutoMemoryManager(
-                    coreMemory = core,
                     archivalMemory = archival,
-                    client = extractionClient,
-                    pathExists = pathChecker,
-                    extractionLog = extractionLog
+                    pathExists = pathChecker
                 )
                 autoMemoryManager = mgr
-                log.info("[AgentService] AutoMemoryManager initialized with model: ${cheapModel.modelName}")
+                log.info("[AgentService] AutoMemoryManager initialized (retrieval-only)")
                 mgr
             } catch (e: Exception) {
                 log.warn("[AgentService] Failed to initialize AutoMemoryManager (non-fatal): ${e.message}")
@@ -1106,24 +1062,6 @@ class AgentService(private val project: Project) : Disposable {
                         )
                     } catch (e: Exception) {
                         log.warn("AgentService: TASK_COMPLETE hook failed (non-fatal)", e)
-                    }
-                }
-
-                // AUTO-MEMORY: Extract insights from completed session — fire-and-forget on agent scope
-                // Uses cheap LLM (Haiku) to distill insights from conversation into core + archival memory.
-                val autoMemoryEnabled = AgentSettings.getInstance(project).state.autoMemoryEnabled
-                if (autoMemoryEnabled && (result is LoopResult.Completed || result is LoopResult.SessionHandoff)) {
-                    // Snapshot messages from the live context BEFORE launching, so extraction
-                    // doesn't re-read from disk (avoids coupling to checkpoint-order invariants
-                    // and saves a JSONL parse pass).
-                    val finalMessages = ctx.exportMessages()
-                    scope.launch {
-                        try {
-                            val mgr = ensureAutoMemory() ?: return@launch
-                            mgr.onSessionComplete(sid, finalMessages)
-                        } catch (e: Exception) {
-                            log.warn("[AgentService] Auto-memory extraction failed (non-fatal)", e)
-                        }
                     }
                 }
 

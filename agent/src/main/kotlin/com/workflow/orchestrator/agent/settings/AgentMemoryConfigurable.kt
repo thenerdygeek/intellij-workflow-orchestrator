@@ -14,11 +14,7 @@ import com.intellij.ui.dsl.builder.rows
 import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.memory.ArchivalMemory
 import com.workflow.orchestrator.agent.memory.CoreMemory
-import com.workflow.orchestrator.agent.memory.auto.ExtractionLog
 import com.workflow.orchestrator.core.util.ProjectIdentifier
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 import javax.swing.JComponent
 
 /**
@@ -147,84 +143,9 @@ class AgentMemoryConfigurable(
                 }
             }
 
-            group("Recent Extractions") {
-                row {
-                    comment(
-                        "Last 20 auto-memory extractions. Useful for sanity-checking what the " +
-                            "extractor is saving. Fresh on open — doesn't auto-refresh."
-                    )
-                }
-
-                // Snapshot the log once at panel-creation time so subsequent rows iterate
-                // a local copy. A fresh panel is built on every dialog open, so re-opening
-                // Settings picks up new entries.
-                val entries: List<ExtractionLog.Entry> = try {
-                    project.service<AgentService>().getExtractionLog().loadRecent(20)
-                } catch (_: Exception) {
-                    emptyList()
-                }
-
-                if (entries.isEmpty()) {
-                    row {
-                        comment("No extractions yet.")
-                    }
-                } else {
-                    val tsFormat = DateTimeFormatter.ofPattern("MM-dd HH:mm")
-                        .withZone(ZoneId.systemDefault())
-                    for (entry in entries) {
-                        val ts = tsFormat.format(Instant.ofEpochSecond(entry.timestamp))
-                        val sessionTail = entry.sessionId.takeLast(8)
-                        val coreCount = entry.coreUpdates.size
-                        val archCount = entry.archivalInserts.size
-                        val preview = buildPreview(entry)
-                        row {
-                            comment("$ts · $sessionTail · ${coreCount}c/${archCount}i · $preview")
-                        }
-                    }
-                }
-
-                row {
-                    button("Clear Log") {
-                        if (confirmClear("the extraction log (${entries.size} entries)")) {
-                            try {
-                                project.service<AgentService>().getExtractionLog().clear()
-                            } catch (_: Exception) {
-                                // Non-fatal — audit log cleanup failures shouldn't crash
-                                // the settings page.
-                            }
-                            // Flush pending UI state before reset() wipes it, then reset
-                            // so the panel rebuilds from the now-empty log on next open.
-                            dialogPanel?.apply()
-                            dialogPanel?.reset()
-                        }
-                    }.comment("Deletes the audit log. Does not affect stored memory.")
-                }
-            }
         }
         dialogPanel = innerPanel
         return innerPanel
-    }
-
-    /**
-     * Build an 80-char preview string for an extraction log entry. Prefers the
-     * first core update (prefixed with `[blockName]`), falling back to the first
-     * archival insert (prefixed with `[tag1,tag2,...]`), and finally `(empty)`.
-     */
-    private fun buildPreview(entry: ExtractionLog.Entry): String {
-        val raw: String = when {
-            entry.coreUpdates.isNotEmpty() -> {
-                val u = entry.coreUpdates.first()
-                "[${u.block}] ${u.content}"
-            }
-            entry.archivalInserts.isNotEmpty() -> {
-                val a = entry.archivalInserts.first()
-                val tagList = a.tags.joinToString(",")
-                "[$tagList] ${a.content}"
-            }
-            else -> "(empty)"
-        }
-        val flat = raw.replace('\n', ' ').replace('\r', ' ')
-        return if (flat.length > 80) flat.substring(0, 80) else flat
     }
 
     override fun isModified(): Boolean {
