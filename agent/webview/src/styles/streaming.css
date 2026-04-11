@@ -42,3 +42,40 @@
   color: var(--fg-muted);
   margin-left: 2px;
 }
+
+/*
+ * Per-word fade-in for streaming markdown.
+ *
+ * The `rehypeWordFade` plugin wraps every word in `<span class="sd-word">`
+ * so CSS can fade new words in as they arrive. Only `opacity` is animated
+ * because it's the one property that stays cheap in JCEF's off-screen
+ * compositor — `filter` and `backdrop-filter` run on the CPU per frame
+ * and tanked the earlier `BlurTextStream` pipeline.
+ *
+ * The animation fires on element MOUNT only. New word spans (just-arrived
+ * tokens inside the streaming message) animate; previously-mounted word
+ * spans do not re-animate on subsequent token updates, because React's
+ * reconciliation keeps their DOM nodes identity-stable. This is what makes
+ * the effect feel like individual words appearing rather than the whole
+ * paragraph flickering on every token.
+ *
+ * `animation-fill-mode: both` holds the final `opacity: 1` state after the
+ * animation finishes and applies the initial `opacity: 0` state before the
+ * animation starts, so there is no flash in either direction.
+ */
+@keyframes sd-word-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.sd-word {
+  animation: sd-word-fade-in 180ms ease-out both;
+}
+
+/*
+ * Respect user preference: if the OS reports reduced-motion, skip the fade
+ * entirely. The text still renders instantly; only the animation is dropped.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .sd-word { animation: none; }
+}
