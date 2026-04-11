@@ -440,16 +440,12 @@ Accomplish the user's task iteratively: analyze, break into steps, execute with 
      */
     private fun memory(): String = """MEMORY
 
-You have a persistent memory system that runs automatically.
-
-## Automatic (system-managed)
-- After each session, a background extractor saves important learnings to core memory and archival memory.
-- At task start, the system retrieves relevant past memories and injects them as <recalled_memory>.
+You have a persistent memory system. At task start, the system may inject relevant past memories as <recalled_memory>. Core memory (always-visible facts) is injected as <core_memory>.
 
 You do NOT need to call memory tools during normal tasks. Focus on the task.
 
 ## Manual memory tools (last resort)
-Only call memory tools if the user literally says "remember this" or "save this as a rule." Do not preemptively save your own observations — the session-end extractor will catch them if they matter.
+Only call memory tools if the user literally says "remember this" or "save this as a rule." Do not preemptively save your own observations.
 
 - core_memory_append / core_memory_replace — user-facing rules and facts.
 - archival_memory_insert — long-term searchable knowledge with 2-4 lowercase hyphen-separated tags.
