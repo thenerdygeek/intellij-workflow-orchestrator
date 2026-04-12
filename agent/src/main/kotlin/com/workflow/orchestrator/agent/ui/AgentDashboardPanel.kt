@@ -7,6 +7,8 @@ import java.awt.BorderLayout
 import java.util.concurrent.CopyOnWriteArrayList
 import javax.swing.JPanel
 import com.intellij.openapi.application.invokeLater
+import com.workflow.orchestrator.agent.tools.subagent.AgentConfigLoader
+import com.workflow.orchestrator.agent.tools.subagent.SubagentToolName
 import javax.swing.SwingUtilities
 
 /**
@@ -485,8 +487,9 @@ class AgentDashboardPanel(
         toolName: String, args: String = "",
         status: RichStreamingPanel.ToolCallStatus = RichStreamingPanel.ToolCallStatus.RUNNING
     ) {
-        cefPanel?.appendToolCall(toolCallId, toolName, args, status) ?: fallbackPanel?.appendToolCall(toolName, args, status)
-        broadcast { it.appendToolCall(toolCallId, toolName, args, status) }
+        val displayName = resolveToolDisplayName(toolName)
+        cefPanel?.appendToolCall(toolCallId, displayName, args, status) ?: fallbackPanel?.appendToolCall(displayName, args, status)
+        broadcast { it.appendToolCall(toolCallId, displayName, args, status) }
     }
 
     fun updateLastToolCall(
@@ -494,9 +497,23 @@ class AgentDashboardPanel(
         toolName: String = "", output: String? = null, diff: String? = null,
         toolCallId: String = ""
     ) {
-        cefPanel?.updateLastToolCall(status, result, durationMs, toolName, output, diff, toolCallId)
+        val displayName = resolveToolDisplayName(toolName)
+        cefPanel?.updateLastToolCall(status, result, durationMs, displayName, output, diff, toolCallId)
             ?: fallbackPanel?.updateLastToolCall(status, result, durationMs)
-        broadcast { it.updateLastToolCall(status, result, durationMs, toolName, output, diff, toolCallId) }
+        broadcast { it.updateLastToolCall(status, result, durationMs, displayName, output, diff, toolCallId) }
+    }
+
+    /**
+     * Resolves a tool name to a user-friendly display name.
+     * Maps `use_subagent_code_reviewer` → `agent (code-reviewer)`.
+     * Non-subagent tool names pass through unchanged.
+     */
+    private fun resolveToolDisplayName(toolName: String): String {
+        if (!SubagentToolName.isSubagentToolName(toolName)) return toolName
+        val agentName = try {
+            AgentConfigLoader.getInstance().resolveSubagentNameForTool(toolName)
+        } catch (_: Exception) { null }
+        return if (agentName != null) "agent ($agentName)" else toolName
     }
 
     fun appendToolOutput(toolCallId: String, chunk: String) {
