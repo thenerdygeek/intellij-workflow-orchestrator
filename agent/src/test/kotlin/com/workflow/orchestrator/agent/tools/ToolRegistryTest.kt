@@ -341,6 +341,71 @@ class ToolRegistryTest {
     }
 
     @Nested
+    inner class DeferredCatalogGroupedWithDescriptionsTests {
+
+        @Test
+        fun `groups tools by category with descriptions`() {
+            registry.registerDeferred(FakeAgentTool("find_implementations", description = "Find all implementations of an interface"), "Code Intelligence")
+            registry.registerDeferred(FakeAgentTool("type_hierarchy", description = "Show supertype/subtype hierarchy"), "Code Intelligence")
+            registry.registerDeferred(FakeAgentTool("git_blame", description = "Show line-by-line blame info"), "Git")
+
+            val grouped = registry.getDeferredCatalogGroupedWithDescriptions()
+
+            assertEquals(2, grouped.size)
+            assertTrue(grouped.containsKey("Code Intelligence"))
+            assertTrue(grouped.containsKey("Git"))
+
+            val codeIntel = grouped["Code Intelligence"]!!
+            assertEquals(2, codeIntel.size)
+            assertEquals("find_implementations" to "Find all implementations of an interface", codeIntel[0])
+            assertEquals("type_hierarchy" to "Show supertype/subtype hierarchy", codeIntel[1])
+
+            val git = grouped["Git"]!!
+            assertEquals(1, git.size)
+            assertEquals("git_blame" to "Show line-by-line blame info", git[0])
+        }
+
+        @Test
+        fun `extracts first non-blank line of multiline description`() {
+            val multilineDesc = """
+
+                Manage Jira tickets and sprints.
+                Supports transitions, comments, and worklogs.
+            """.trimIndent()
+            registry.registerDeferred(FakeAgentTool("jira", description = multilineDesc), "Integration")
+
+            val grouped = registry.getDeferredCatalogGroupedWithDescriptions()
+            assertEquals("Manage Jira tickets and sprints.", grouped["Integration"]!!.first().second)
+        }
+
+        @Test
+        fun `excludes activated tools`() {
+            registry.registerDeferred(FakeAgentTool("jira", description = "Jira tool"), "Integration")
+            registry.registerDeferred(FakeAgentTool("sonar", description = "Sonar tool"), "Integration")
+            registry.activateDeferred("jira")
+
+            val grouped = registry.getDeferredCatalogGroupedWithDescriptions()
+            val tools = grouped["Integration"]!!
+            assertEquals(1, tools.size)
+            assertEquals("sonar", tools.first().first)
+        }
+
+        @Test
+        fun `returns empty map when no deferred tools`() {
+            registry.registerCore(FakeAgentTool("read_file"))
+            assertTrue(registry.getDeferredCatalogGroupedWithDescriptions().isEmpty())
+        }
+
+        @Test
+        fun `uses Other category for uncategorized tools`() {
+            registry.registerDeferred(FakeAgentTool("misc_tool", description = "A misc tool"))
+
+            val grouped = registry.getDeferredCatalogGroupedWithDescriptions()
+            assertTrue(grouped.containsKey("Other"))
+        }
+    }
+
+    @Nested
     inner class CountTests {
 
         @Test

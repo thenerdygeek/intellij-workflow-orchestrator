@@ -385,6 +385,85 @@ class SystemPromptTest {
         assertFalse(prompt.contains("execute_command"), "should not use Cline's execute_command")
     }
 
+    // ---- Deferred tool catalog tests ----
+
+    @Test
+    fun `includes deferred tool catalog with descriptions`() {
+        val catalog = mapOf(
+            "Code Intelligence" to listOf(
+                "find_implementations" to "Find all implementations of an interface",
+                "type_hierarchy" to "Show supertype/subtype hierarchy"
+            ),
+            "Git" to listOf(
+                "git_blame" to "Show line-by-line blame info"
+            )
+        )
+        val prompt = SystemPrompt.build(
+            projectName = "p", projectPath = "/p",
+            deferredToolCatalog = catalog
+        )
+
+        assertTrue(prompt.contains("ADDITIONAL TOOLS"), "should contain deferred tools heading")
+        assertTrue(prompt.contains("find_implementations — Find all implementations of an interface"),
+            "should contain tool name with description")
+        assertTrue(prompt.contains("type_hierarchy — Show supertype/subtype hierarchy"),
+            "should contain second tool with description")
+        assertTrue(prompt.contains("git_blame — Show line-by-line blame info"),
+            "should contain git tool with description")
+        assertTrue(prompt.contains("**Code Intelligence:**"),
+            "should contain category heading")
+        assertTrue(prompt.contains("**Git:**"),
+            "should contain git category heading")
+    }
+
+    @Test
+    fun `omits deferred catalog when null`() {
+        val prompt = SystemPrompt.build(
+            projectName = "p", projectPath = "/p",
+            deferredToolCatalog = null
+        )
+
+        assertFalse(prompt.contains("ADDITIONAL TOOLS"),
+            "should not contain deferred tools heading when null")
+    }
+
+    @Test
+    fun `omits deferred catalog when empty`() {
+        val prompt = SystemPrompt.build(
+            projectName = "p", projectPath = "/p",
+            deferredToolCatalog = emptyMap()
+        )
+
+        assertFalse(prompt.contains("ADDITIONAL TOOLS"),
+            "should not contain deferred tools heading when empty")
+    }
+
+    // ---- Workflow nudge tests ----
+
+    @Test
+    fun `capabilities section includes workflow-based IDE tool nudges`() {
+        val prompt = defaultPrompt()
+        val capSection = prompt.substringAfter("CAPABILITIES").substringBefore("====")
+
+        assertTrue(capSection.contains("Understanding code structure"),
+            "should include code structure workflow nudge")
+        assertTrue(capSection.contains("Refactoring safely"),
+            "should include refactoring workflow nudge")
+        assertTrue(capSection.contains("Debugging"),
+            "should include debugging workflow nudge")
+        assertTrue(capSection.contains("Running tests"),
+            "should include testing workflow nudge")
+    }
+
+    @Test
+    fun `capabilities section emphasizes IDE tools as primary`() {
+        val prompt = defaultPrompt()
+        val capSection = prompt.substringAfter("CAPABILITIES").substringBefore("====")
+
+        assertTrue(capSection.contains("IDE tools are your primary tools"),
+            "should emphasize IDE tools as primary in capabilities section")
+    }
+
     @Test
     fun `does not reference VS Code`() {
         val prompt = defaultPrompt()

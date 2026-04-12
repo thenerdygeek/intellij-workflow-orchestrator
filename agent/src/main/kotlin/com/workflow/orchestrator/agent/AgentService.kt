@@ -780,8 +780,8 @@ class AgentService(private val project: Project) : Disposable {
                     registry.resetActiveDeferred()
                 }
 
-                // Build deferred catalog for system prompt injection (grouped by category)
-                val deferredCatalog = registry.getDeferredCatalogGrouped()
+                // Build deferred catalog for system prompt injection (grouped by category with descriptions)
+                val deferredCatalog = registry.getDeferredCatalogGroupedWithDescriptions()
 
                 // AUTO-MEMORY: Retrieve relevant archival memories for prompt injection (best-effort)
                 val recalledMemoryXml: String? = if (AgentSettings.getInstance(project).state.autoMemoryEnabled) {

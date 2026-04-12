@@ -125,6 +125,26 @@ class ToolRegistry {
         return grouped
     }
 
+    /**
+     * Returns deferred tools grouped by category with one-line descriptions.
+     * Category → list of (name, one-liner-description) pairs.
+     *
+     * This gives the LLM enough semantic signal to decide which tools to load
+     * via tool_search, without sending the full parameter schemas.
+     */
+    fun getDeferredCatalogGroupedWithDescriptions(): Map<String, List<Pair<String, String>>> {
+        val grouped = linkedMapOf<String, MutableList<Pair<String, String>>>()
+        for ((name, tool) in deferredTools) {
+            val category = deferredCategories[name] ?: "Other"
+            val oneLiner = tool.description.lineSequence()
+                .map { it.trim() }
+                .firstOrNull { it.isNotBlank() }
+                ?: tool.description.take(100)
+            grouped.getOrPut(category) { mutableListOf() }.add(name to oneLiner)
+        }
+        return grouped
+    }
+
     /** Reset active deferred tools (for new sessions). Moves them back to deferred. */
     fun resetActiveDeferred() {
         deferredTools.putAll(activeDeferred)

@@ -36,8 +36,8 @@ object SystemPrompt {
         availableSkills: List<SkillMetadata>? = null,
         activeSkillContent: String? = null,
         taskProgress: String? = null,
-        /** Deferred tools available via tool_search, grouped by category. */
-        deferredToolCatalog: Map<String, List<String>>? = null,
+        /** Deferred tools available via tool_search, grouped by category with one-line descriptions. */
+        deferredToolCatalog: Map<String, List<Pair<String, String>>>? = null,
         /** Compiled core memory XML (Letta pattern: always in prompt if non-empty). */
         coreMemoryXml: String? = null,
         /** Markdown tool definitions for Cline-style XML format (tools defined in prompt). */
@@ -224,14 +224,18 @@ You run inside IntelliJ IDEA with access to tools across several categories. Cor
 - Skills: use_skill, tool_search
 - Delegation: agent (sub-agent with isolated context)
 
-**Deferred tools (discover via tool_search):**
-- Code intelligence: find_implementations, type_hierarchy, call_hierarchy, file_structure, structural_search, dataflow_analysis, type_inference
-- Code quality: run_inspections, refactor_rename, format_code, optimize_imports, problem_view, list_quickfixes
-- Build & run: runtime_exec (run_tests, compile_module, get_test_results), runtime_config, coverage, build, spring
-- Debug: debug_breakpoints (breakpoints + session launch), debug_step (stepping + lifecycle), debug_inspect (evaluate, variables, set_value, thread_dump, hotswap)
-- Git: git_blame, git_branches, git_show_file, git_show_commit, git_file_history, git_merge_base
-- Integration: jira, bamboo_builds, sonar, bitbucket_pr, bitbucket_repo, bitbucket_review
-- Database: db_list_profiles, db_list_databases, db_schema, db_query
+**IMPORTANT — IDE tools are your primary tools.** Before falling back to search_code, glob_files, or run_command, check if a dedicated IDE tool handles the task. IDE tools provide structured, accurate results from the IDE's own indexes. Use tool_search to load any tool below.
+
+**When to load IDE tools (common workflows):**
+- **Understanding code structure** → find_implementations, type_hierarchy, call_hierarchy, file_structure
+- **Navigating types and data flow** → type_inference, dataflow_analysis, structural_search
+- **Refactoring safely** → refactor_rename, find_implementations, run_inspections, diagnostics
+- **Running tests / building** → runtime_exec (run_tests, compile_module), coverage, build
+- **Debugging** → debug_breakpoints, debug_step, debug_inspect
+- **Code quality** → run_inspections, list_quickfixes, format_code, optimize_imports
+- **Git history / blame** → git_blame, git_file_history, git_show_commit, git_branches
+- **Project integrations** → jira, bamboo_builds, sonar, bitbucket_pr, bitbucket_repo
+- **Database** → db_list_profiles, db_schema, db_query
 
 **Usage tips:**
 - Use glob_files with patterns like '**/*.kt' (recursive) or '*.xml' (top-level) to explore the project at '$projectPath'. Use search_code with output_mode='content' for regex searches with surrounding code.
@@ -302,18 +306,21 @@ You run inside IntelliJ IDEA with access to tools across several categories. Cor
 
     /**
      * Section 6b: Deferred Tool Catalog
-     * Lists tools available via tool_search, grouped by category for quick scanning.
-     * The LLM finds the relevant category, then uses tool_search to load the schema.
+     * Lists tools available via tool_search, grouped by category with one-line descriptions.
+     * The descriptions give the LLM enough semantic signal to decide which tools to load.
      */
-    private fun deferredToolCatalog(catalog: Map<String, List<String>>?): String? {
+    private fun deferredToolCatalog(catalog: Map<String, List<Pair<String, String>>>?): String? {
         if (catalog.isNullOrEmpty()) return null
         return buildString {
             appendLine("ADDITIONAL TOOLS (load via tool_search)")
             appendLine()
-            appendLine("You are running inside IntelliJ IDEA. These IDE-native tools are faster and more accurate than shell equivalents. Use tool_search with any name or keyword to load a tool's schema.")
+            appendLine("These IDE-native tools are faster and more accurate than shell equivalents. Use tool_search with any name or keyword to load a tool's full schema, then call it.")
             appendLine()
             for ((category, tools) in catalog) {
-                appendLine("$category: ${tools.joinToString(", ")}")
+                appendLine("**$category:**")
+                for ((name, desc) in tools) {
+                    appendLine("- $name — $desc")
+                }
             }
             appendLine()
             appendLine("Prefer IDE tools over shell commands: diagnostics over mvn compile, run_inspections over checkstyle, runtime_exec over mvn test, refactor_rename over find-and-replace. Use run_command only for tasks with no IDE equivalent (deploy, Docker, custom scripts).")
