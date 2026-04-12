@@ -19,65 +19,7 @@ class BridgeContractTest {
             ?: throw IllegalStateException("Contract fixture not found: contracts/$name")
     }
 
-    // ── Plan Revise Contract ──
-
-    @Test
-    fun `plan-revise valid payloads parse as Map of String to String`() {
-        val contract = json.parseToJsonElement(loadContract("plan-revise.json")).jsonObject
-        val validPayloads = contract["valid_payloads"]!!.jsonArray
-
-        for (testCase in validPayloads) {
-            val payload = testCase.jsonObject["payload"]!!.jsonPrimitive.content
-            val expectedKeys = testCase.jsonObject["expected_keys"]!!.jsonArray.map { it.jsonPrimitive.content }
-
-            // This is exactly what AgentController.setCefPlanCallbacks does
-            // when it receives the revise payload from JCEF
-            val parsed = json.parseToJsonElement(payload).jsonObject
-            val comments = parsed.entries.associate { (k, v) -> k to v.jsonPrimitive.content }
-
-            assertEquals(expectedKeys.sorted(), comments.keys.sorted(),
-                "Keys mismatch for test case: ${testCase.jsonObject["name"]}")
-
-            // Verify values are strings
-            for ((_, value) in comments) {
-                assertTrue(value is String, "Values must be strings")
-            }
-        }
-    }
-
-    @Test
-    fun `plan-revise invalid payloads fail to parse`() {
-        val contract = json.parseToJsonElement(loadContract("plan-revise.json")).jsonObject
-        val invalidPayloads = contract["invalid_payloads"]!!.jsonArray
-
-        for (testCase in invalidPayloads) {
-            val payload = testCase.jsonObject["payload"]!!.jsonPrimitive.content
-
-            assertThrows(Exception::class.java, {
-                if (payload.isBlank()) throw IllegalArgumentException("Blank payload")
-                val parsed = json.parseToJsonElement(payload)
-                // If it parses but isn't an object, that's also invalid
-                parsed.jsonObject
-            }, "Should fail for: ${testCase.jsonObject["name"]}")
-        }
-    }
-
-    @Test
-    fun `plan-revise comment keys follow section ID pattern`() {
-        val validKeyPattern = Regex("^(goal|approach|testing|step-\\d+)$")
-        val contract = json.parseToJsonElement(loadContract("plan-revise.json")).jsonObject
-        val validPayloads = contract["valid_payloads"]!!.jsonArray
-
-        for (testCase in validPayloads) {
-            val payload = testCase.jsonObject["payload"]!!.jsonPrimitive.content
-            val parsed = json.parseToJsonElement(payload).jsonObject
-
-            for (key in parsed.keys) {
-                assertTrue(validKeyPattern.matches(key),
-                    "Key '$key' doesn't match section ID pattern (goal|approach|testing|step-N)")
-            }
-        }
-    }
+    // ── Plan Revise Contract (v2 only — v1 format removed) ──
 
     // ── Plan Data Contract ──
 

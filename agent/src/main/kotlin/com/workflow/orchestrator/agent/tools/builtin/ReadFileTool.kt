@@ -39,7 +39,7 @@ class ReadFileTool : AgentTool {
         val rawPath = params["path"]?.jsonPrimitive?.content
             ?: return ToolResult("Error: 'path' parameter required", "Error: missing path", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
-        val (path, pathError) = PathValidator.resolveAndValidate(rawPath, project.basePath)
+        val (path, pathError) = PathValidator.resolveAndValidateForRead(rawPath, project.basePath)
         if (pathError != null) return pathError
 
         val resolvedPath = path!!

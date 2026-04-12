@@ -1,13 +1,25 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
 import com.workflow.orchestrator.agent.tools.WorkerType
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.*
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 
 class AskQuestionsToolTest {
 
     private val tool = AskQuestionsTool()
+
+    @AfterEach
+    fun cleanup() {
+        AskQuestionsTool.showSimpleQuestionCallback = null
+        AskQuestionsTool.showQuestionsCallback = null
+        AskQuestionsTool.pendingQuestions = null
+    }
 
     @Test
     fun `tool metadata is correct`() {
@@ -113,5 +125,77 @@ class AskQuestionsToolTest {
         ]"""
         val result = tool.validateQuestions(questionsJson)
         assertNull(result)
+    }
+
+    // ── Bug 2: simple question with no options must still surface question text ──
+
+    @Nested
+    inner class SimpleQuestionNoOptions {
+
+        @Test
+        fun `simple question callback receives question text even with null options`() = runTest {
+            var receivedQuestion: String? = null
+            var receivedOptions: String? = null
+
+            AskQuestionsTool.showSimpleQuestionCallback = { q, opts ->
+                receivedQuestion = q
+                receivedOptions = opts
+            }
+
+            val project = io.mockk.mockk<com.intellij.openapi.project.Project>(relaxed = true)
+
+            // Launch tool execution in background — it will block on the deferred
+            val job = launch {
+                tool.execute(buildJsonObject {
+                    put("question", "What database should we use?")
+                }, project)
+            }
+
+            // Give the coroutine a chance to run and set up the callback
+            kotlinx.coroutines.yield()
+
+            // Verify the callback was invoked with the question text
+            assertEquals("What database should we use?", receivedQuestion,
+                "showSimpleQuestionCallback must receive the question text")
+            assertNull(receivedOptions,
+                "Options should be null when not provided")
+
+            // The pending deferred should be set (tool is blocking)
+            assertNotNull(AskQuestionsTool.pendingQuestions,
+                "pendingQuestions should be set while waiting for answer")
+
+            // Resolve to let the coroutine complete
+            AskQuestionsTool.pendingQuestions?.complete("user answer")
+            job.join()
+        }
+
+        @Test
+        fun `simple question callback receives question text with empty options string`() = runTest {
+            var receivedQuestion: String? = null
+            var receivedOptions: String? = null
+
+            AskQuestionsTool.showSimpleQuestionCallback = { q, opts ->
+                receivedQuestion = q
+                receivedOptions = opts
+            }
+
+            val project = io.mockk.mockk<com.intellij.openapi.project.Project>(relaxed = true)
+
+            val job = launch {
+                tool.execute(buildJsonObject {
+                    put("question", "Which approach?")
+                    put("options", "")
+                }, project)
+            }
+
+            kotlinx.coroutines.yield()
+
+            assertEquals("Which approach?", receivedQuestion)
+            // Empty string options — the callback gets it as-is
+            assertEquals("", receivedOptions)
+
+            AskQuestionsTool.pendingQuestions?.complete("answer")
+            job.join()
+        }
     }
 }

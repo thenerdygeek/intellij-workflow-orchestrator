@@ -36,6 +36,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
@@ -327,8 +328,11 @@ class AgentController(
                     dashboard.showQuestions(wizardJson)
                 } else {
                     // Questions WITHOUT options → user types their answer freely in the chat input.
-                    // In XML mode (always on), the question text was already streamed to the UI
-                    // as part of the LLM's text content (before the tool block was parsed).
+                    // The question text lives in the tool call params (not in the streamed text),
+                    // so we must display it explicitly as an agent message. Use the streaming
+                    // pipeline (appendStreamToken + flush) to render it as a normal agent message.
+                    dashboard.appendStreamToken(question)
+                    dashboard.flushStreamBuffer()
                     dashboard.setBusy(false)
                     dashboard.setInputLocked(false)
                     dashboard.focusInput()
@@ -1623,13 +1627,25 @@ class AgentController(
         // Mark the plan as approved in the UI — switches PlanSummaryCard → PlanProgressWidget
         dashboard.approvePlanInUi()
 
-        // Build the approval instruction
+        // Build the approval instruction.
+        // When context was cleared, the plan content is no longer in the conversation.
+        // Include it inline so the LLM can proceed without needing read_file on the
+        // external plan path (which PathValidator blocks as outside the project).
         val stepsChecklist = currentPlanData?.steps?.joinToString("\n") { step ->
             "- [ ] ${step.title}"
         } ?: ""
 
         val instruction = buildString {
             appendLine("The user has approved the plan.")
+            if (clearContext) {
+                val planMarkdown = currentPlanData?.markdown
+                if (!planMarkdown.isNullOrBlank()) {
+                    appendLine()
+                    appendLine("<approved_plan>")
+                    appendLine(planMarkdown)
+                    appendLine("</approved_plan>")
+                }
+            }
             if (stepsChecklist.isNotBlank()) {
                 appendLine()
                 appendLine("Task checklist:")
@@ -1641,47 +1657,39 @@ class AgentController(
     }
 
     /**
-     * User submitted per-step comments on the plan — format and send into the loop.
+     * User submitted per-line comments on the plan — format and inject into the loop.
      *
-     * The loop stays in plan mode. The comments go through the userInputChannel,
-     * the LLM sees them, revises the plan, and presents again.
+     * The loop stays in plan mode. The revision message goes through the
+     * [userInputChannel] directly (NOT through [executeTask]) so it does NOT
+     * appear as a user-typed message in the chat. A small status indicator
+     * is shown instead.
      *
-     * @param commentsJson JSON array of step comments: [{"stepId":"1","comment":"..."}]
+     * @param commentsJson v2 JSON: `{"comments":[{line,content,comment}],"markdown":"..."}`
      */
     private fun revisePlan(commentsJson: String) {
         LOG.info("AgentController.revisePlan: $commentsJson")
 
-        // Parse the comments JSON into a human-readable revision request
-        val revisionMessage = buildString {
-            appendLine("I have comments on your plan. Please revise it:")
-            appendLine()
-            try {
-                val comments = kotlinx.serialization.json.Json.parseToJsonElement(commentsJson)
-                if (comments is kotlinx.serialization.json.JsonArray) {
-                    for (item in comments) {
-                        if (item is kotlinx.serialization.json.JsonObject) {
-                            val stepId = item["stepId"]?.let {
-                                (it as? kotlinx.serialization.json.JsonPrimitive)?.content
-                            } ?: "?"
-                            val comment = item["comment"]?.let {
-                                (it as? kotlinx.serialization.json.JsonPrimitive)?.content
-                            } ?: ""
-                            if (comment.isNotBlank()) {
-                                appendLine("- Step $stepId: $comment")
-                            }
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                // If JSON parsing fails, use the raw text
-                appendLine(commentsJson)
-            }
-            appendLine()
-            appendLine("Please revise the plan and present the updated version using plan_mode_respond.")
-        }
+        val revisionMessage = buildRevisionMessage(commentsJson)
+        val commentCount = countRevisionComments(commentsJson)
 
-        // Feed into the loop — stays in plan mode, LLM revises
-        executeTask(revisionMessage)
+        // Show a status indicator instead of a fake "user" message
+        dashboard.appendStatus("Plan revision requested with $commentCount comment(s)")
+        dashboard.setBusy(true)
+
+        // Inject directly into the channel — bypass executeTask to avoid
+        // displaying the generated prompt as a user message (Bug 1 fix)
+        val channel = userInputChannel
+        if (loopWaitingForInput && channel != null && currentJob?.isActive == true) {
+            loopWaitingForInput = false
+            runBlocking { channel.send(revisionMessage) }
+        } else if (currentJob?.isActive == true) {
+            // Loop is running but not waiting — queue as steering
+            val steeringId = "steer-revise-${System.currentTimeMillis()}"
+            steeringQueue.offer(SteeringMessage(id = steeringId, text = revisionMessage))
+        } else {
+            LOG.warn("AgentController.revisePlan: no active loop to receive revision")
+            dashboard.setBusy(false)
+        }
     }
 
     private fun togglePlanMode(enabled: Boolean) {
@@ -1958,5 +1966,67 @@ class AgentController(
         // this dispose and a new controller installing its own callback.
         // Matches the "remove listener on tear-down" pattern used elsewhere.
         ArtifactResultRegistry.getInstance(project).setPushCallback(null)
+    }
+}
+
+// ── Plan revision helpers (extracted for testability) ──────────────────────────
+
+/**
+ * Build a human-readable revision message from the plan editor's v2 JSON payload.
+ *
+ * v2 format: `{"comments": [{line, content, comment}], "markdown": "..."}`
+ *
+ * The output is injected into the agent loop as a user message so the LLM
+ * can see the per-line comments and revise the plan accordingly.
+ */
+internal fun buildRevisionMessage(commentsJson: String): String {
+    return buildString {
+        appendLine("I have comments on your plan. Please revise it:")
+        appendLine()
+        try {
+            val root = kotlinx.serialization.json.Json.parseToJsonElement(commentsJson)
+            if (root is kotlinx.serialization.json.JsonObject && root.containsKey("comments")) {
+                val comments = root["comments"]!!.jsonArray
+                for (item in comments) {
+                    val obj = item.jsonObject
+                    val line = obj["line"]?.jsonPrimitive?.intOrNull
+                    val content = obj["content"]?.jsonPrimitive?.content ?: ""
+                    val comment = obj["comment"]?.jsonPrimitive?.content ?: ""
+                    if (comment.isNotBlank()) {
+                        if (line != null && content.isNotBlank()) {
+                            appendLine("- Line $line (`$content`): $comment")
+                        } else {
+                            appendLine("- $comment")
+                        }
+                    }
+                }
+            } else {
+                // Unknown format — include raw text as fallback
+                appendLine(commentsJson)
+            }
+        } catch (_: Exception) {
+            // Invalid JSON — include raw text so the LLM can still try
+            appendLine(commentsJson)
+        }
+        appendLine()
+        appendLine("Please revise the plan and present the updated version using plan_mode_respond.")
+    }
+}
+
+/**
+ * Count the number of non-blank comments in a v2 revision payload.
+ * Returns 0 for invalid or empty payloads.
+ */
+internal fun countRevisionComments(commentsJson: String): Int {
+    return try {
+        val root = kotlinx.serialization.json.Json.parseToJsonElement(commentsJson)
+        if (root is kotlinx.serialization.json.JsonObject && root.containsKey("comments")) {
+            root["comments"]!!.jsonArray.count { item ->
+                val comment = item.jsonObject["comment"]?.jsonPrimitive?.content ?: ""
+                comment.isNotBlank()
+            }
+        } else 0
+    } catch (_: Exception) {
+        0
     }
 }

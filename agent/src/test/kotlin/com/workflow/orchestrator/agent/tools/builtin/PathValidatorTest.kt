@@ -67,4 +67,49 @@ class PathValidatorTest {
         assertNull(path)
         assertNotNull(error)
     }
+
+    // ── resolveAndValidateForRead: agent data directory access ──
+
+    @Test
+    fun `resolveAndValidateForRead allows paths within agent data directory`() {
+        val projectDir = tempDir.toFile()
+        val agentDataDir = File(System.getProperty("user.home"), ".workflow-orchestrator")
+        // Use a path that would exist in the agent data dir (doesn't need to exist for validation)
+        val agentPath = File(agentDataDir, "test-project/agent/sessions/abc/plan.md").absolutePath
+
+        val (path, error) = PathValidator.resolveAndValidateForRead(agentPath, projectDir.absolutePath)
+        assertNull(error, "Read access to ~/.workflow-orchestrator/ should be allowed")
+        assertNotNull(path)
+        assertTrue(path!!.startsWith(agentDataDir.canonicalPath))
+    }
+
+    @Test
+    fun `resolveAndValidateForRead still allows project paths`() {
+        val projectDir = tempDir.toFile()
+        File(projectDir, "src/Main.kt").apply { parentFile.mkdirs(); writeText("hi") }
+
+        val (path, error) = PathValidator.resolveAndValidateForRead("src/Main.kt", projectDir.absolutePath)
+        assertNull(error)
+        assertNotNull(path)
+    }
+
+    @Test
+    fun `resolveAndValidateForRead still blocks paths outside both directories`() {
+        val projectDir = tempDir.toFile()
+        val (path, error) = PathValidator.resolveAndValidateForRead("/etc/passwd", projectDir.absolutePath)
+        assertNull(path)
+        assertNotNull(error)
+        assertTrue(error!!.isError)
+    }
+
+    @Test
+    fun `resolveAndValidate (write) blocks agent data directory`() {
+        val projectDir = tempDir.toFile()
+        val agentPath = File(System.getProperty("user.home"), ".workflow-orchestrator/test/plan.md").absolutePath
+
+        val (path, error) = PathValidator.resolveAndValidate(agentPath, projectDir.absolutePath)
+        assertNull(path, "Write access to ~/.workflow-orchestrator/ should be blocked")
+        assertNotNull(error)
+        assertTrue(error!!.isError)
+    }
 }
