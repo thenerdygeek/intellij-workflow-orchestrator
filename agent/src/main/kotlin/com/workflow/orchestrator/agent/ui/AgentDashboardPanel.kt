@@ -330,6 +330,11 @@ class AgentDashboardPanel(
         broadcast(replay = false) { it.hideSkillBanner() }
     }
 
+    fun showToast(message: String, type: String = "info", durationMs: Int = 3000) {
+        runOnEdt { cefPanel?.showToast(message, type, durationMs) }
+        broadcast(replay = false) { it.showToast(message, type, durationMs) }
+    }
+
     fun setCefMentionCallbacks(onSendWithMentions: (String, String) -> Unit) {
         cefPanel?.onSendMessageWithMentions = onSendWithMentions
     }
@@ -407,6 +412,10 @@ class AgentDashboardPanel(
 
     fun setCefArtifactResultCallback(onResult: (String) -> Unit) {
         cefPanel?.onArtifactResult = onResult
+    }
+
+    fun setCefInteractiveRenderCallback(onResult: (String) -> Unit) {
+        cefPanel?.onInteractiveRenderResult = onResult
     }
 
     fun setCefEditorTabCallback(onOpen: (String) -> Unit) {
@@ -676,6 +685,62 @@ class AgentDashboardPanel(
     fun restoreInputText(text: String) {
         runOnEdt { cefPanel?.restoreInputText(text) }
         broadcast(replay = false) { it.restoreInputText(text) }
+    }
+
+    /**
+     * Push full session UI state to the webview for rehydration on resume.
+     * Does not replay to mirrors — session state is loaded once at resume time.
+     */
+    fun loadSessionState(uiMessagesJson: String) {
+        runOnEdt { cefPanel?.loadSessionState(uiMessagesJson) }
+        broadcast(replay = false) { it.loadSessionState(uiMessagesJson) }
+    }
+
+    fun showResumeBar(sessionId: String) {
+        runOnEdt { cefPanel?.showResumeBar(sessionId) }
+        broadcast(replay = false) { it.showResumeBar(sessionId) }
+    }
+
+    fun hideResumeBar() {
+        runOnEdt { cefPanel?.hideResumeBar() }
+        broadcast(replay = false) { it.hideResumeBar() }
+    }
+
+    fun loadSessionHistory(historyItemsJson: String) {
+        runOnEdt { cefPanel?.loadSessionHistory(historyItemsJson) }
+        broadcast(replay = false) { it.loadSessionHistory(historyItemsJson) }
+    }
+
+    fun showHistoryView() {
+        runOnEdt { cefPanel?.showHistoryView() }
+        broadcast(replay = false) { it.showHistoryView() }
+    }
+
+    fun showChatView() {
+        runOnEdt { cefPanel?.showChatView() }
+        broadcast(replay = false) { it.showChatView() }
+    }
+
+    fun setCefHistoryCallbacks(
+        onShowSession: (String) -> Unit,
+        onDeleteSession: (String) -> Unit,
+        onToggleFavorite: (String) -> Unit,
+        onStartNewSession: () -> Unit,
+        onBulkDeleteSessions: (String) -> Unit = {},
+        onExportSession: (String) -> Unit = {},
+        onExportAllSessions: () -> Unit = {},
+        onRequestHistory: () -> Unit = {},
+        onResumeViewedSession: () -> Unit = {},
+    ) {
+        cefPanel?.onShowSession = onShowSession
+        cefPanel?.onDeleteSession = onDeleteSession
+        cefPanel?.onToggleFavorite = onToggleFavorite
+        cefPanel?.onStartNewSession = onStartNewSession
+        cefPanel?.onBulkDeleteSessions = onBulkDeleteSessions
+        cefPanel?.onExportSession = onExportSession
+        cefPanel?.onExportAllSessions = onExportAllSessions
+        cefPanel?.onRequestHistory = onRequestHistory
+        cefPanel?.onResumeViewedSession = onResumeViewedSession
     }
 
     fun setCefCancelSteeringCallback(onCancel: (String) -> Unit) {

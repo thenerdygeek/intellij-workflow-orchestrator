@@ -1,7 +1,7 @@
 import { memo, useMemo } from 'react';
 import { useChatStore } from '@/stores/chatStore';
 import { kotlinBridge } from '@/bridge/jcef-bridge';
-import type { Message } from '@/bridge/types';
+import type { UiMessage } from '@/bridge/types';
 
 /**
  * Top bar for the agent chat — shows token budget indicator and new chat button.
@@ -22,7 +22,7 @@ export const TopBar = memo(function TopBar() {
 
   // Count running sub-agents from messages
   const runningAgentCount = useMemo(() => {
-    return messages.filter((m: Message) => m.subAgent?.status === 'RUNNING').length;
+    return messages.filter((m: UiMessage) => m.subagentData?.status === 'RUNNING').length;
   }, [messages]);
 
   const { used, max } = tokenBudget;
@@ -225,6 +225,19 @@ export const TopBar = memo(function TopBar() {
           <path d="M10 2h4v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
           <path d="M14 2L8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
           <path d="M7 3H3a1 1 0 00-1 1v9a1 1 0 001 1h9a1 1 0 001-1V9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      </button>
+      <button
+        onClick={() => kotlinBridge.requestHistory()}
+        className="flex items-center rounded px-1 py-0.5 transition-colors hover:bg-[var(--hover-overlay)]"
+        style={{ color: 'var(--fg-muted, #6b7280)' }}
+        title="Session history"
+        aria-label="Session history"
+      >
+        {/* Clock/history SVG icon */}
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <polyline points="12 6 12 12 16 14" />
         </svg>
       </button>
       <button

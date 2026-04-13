@@ -357,7 +357,6 @@
         <tabProvider implementation="com.workflow.orchestrator.automation.ui.AutomationTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.handover.ui.HandoverTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.agent.ui.AgentTabProvider"/>
-        <tabProvider implementation="com.workflow.orchestrator.agent.ui.HistoryTabProvider"/>
     </extensions>
 
     <applicationListeners>
