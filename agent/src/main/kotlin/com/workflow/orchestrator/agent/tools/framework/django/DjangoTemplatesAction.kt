@@ -1,4 +1,4 @@
-package com.workflow.orchestrator.agent.tools.framework.flask
+package com.workflow.orchestrator.agent.tools.framework.django
 
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.tools.ToolResult
@@ -24,7 +24,7 @@ internal suspend fun executeTemplates(params: JsonObject, project: Project): Too
         withContext(Dispatchers.IO) {
             val baseDir = File(basePath)
             val templateFiles = PythonFileScanner.scanPythonFiles(baseDir) { file ->
-                (file.extension == "html" || file.extension == "jinja2" || file.extension == "j2") &&
+                (file.extension == "html" || file.extension == "txt") &&
                     file.absolutePath.contains("/templates/")
             }
 
@@ -48,7 +48,7 @@ internal suspend fun executeTemplates(params: JsonObject, project: Project): Too
             }
 
             val content = buildString {
-                appendLine("Flask/Jinja2 templates (${filtered.size} total):")
+                appendLine("Django templates (${filtered.size} total):")
                 appendLine()
 
                 val byDir = filtered.groupBy { it.parentFile?.absolutePath ?: "" }

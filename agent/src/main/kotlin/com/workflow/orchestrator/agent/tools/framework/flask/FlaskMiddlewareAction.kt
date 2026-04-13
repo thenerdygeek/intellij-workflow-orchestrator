@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import com.workflow.orchestrator.agent.tools.framework.PythonFileScanner
 import java.io.File
 
 private data class MiddlewareEntry(
@@ -37,9 +38,7 @@ internal suspend fun executeMiddleware(params: JsonObject, project: Project): To
     return try {
         withContext(Dispatchers.IO) {
             val baseDir = File(basePath)
-            val pyFiles = baseDir.walkTopDown()
-                .filter { it.isFile && it.extension == "py" }
-                .toList()
+            val pyFiles = PythonFileScanner.scanAllPyFiles(baseDir)
 
             if (pyFiles.isEmpty()) {
                 return@withContext ToolResult(

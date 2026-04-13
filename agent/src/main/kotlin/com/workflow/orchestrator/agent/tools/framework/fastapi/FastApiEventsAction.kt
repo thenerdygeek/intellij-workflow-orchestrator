@@ -6,6 +6,7 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
+import com.workflow.orchestrator.agent.tools.framework.PythonFileScanner
 import java.io.File
 
 private data class EventEntry(
@@ -40,9 +41,7 @@ internal suspend fun executeEvents(params: JsonObject, project: Project): ToolRe
     return try {
         withContext(Dispatchers.IO) {
             val baseDir = File(basePath)
-            val pyFiles = baseDir.walkTopDown()
-                .filter { it.isFile && it.extension == "py" }
-                .toList()
+            val pyFiles = PythonFileScanner.scanAllPyFiles(baseDir)
 
             if (pyFiles.isEmpty()) {
                 return@withContext ToolResult(

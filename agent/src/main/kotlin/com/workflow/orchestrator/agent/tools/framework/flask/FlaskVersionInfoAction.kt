@@ -6,6 +6,7 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
+import com.workflow.orchestrator.agent.tools.framework.PythonFileScanner
 import java.io.File
 
 private data class DepVersion(val name: String, val version: String)
@@ -37,9 +38,9 @@ internal suspend fun executeVersionInfo(params: JsonObject, project: Project): T
             val versions = mutableListOf<DepVersion>()
 
             // Check requirements*.txt
-            baseDir.walkTopDown()
-                .filter { it.isFile && it.name.startsWith("requirements") && it.extension == "txt" }
-                .forEach { reqFile ->
+            PythonFileScanner.scanPythonFiles(baseDir) {
+                it.name.startsWith("requirements") && it.extension == "txt"
+            }.forEach { reqFile ->
                     for (match in REQUIREMENTS_PATTERN.findAll(reqFile.readText())) {
                         versions.add(DepVersion(match.groupValues[1].lowercase(), match.groupValues[2]))
                     }

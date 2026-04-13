@@ -1,4 +1,4 @@
-package com.workflow.orchestrator.agent.tools.framework.flask
+package com.workflow.orchestrator.agent.tools.framework.django
 
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.tools.ToolResult
@@ -10,20 +10,20 @@ import kotlinx.serialization.json.jsonPrimitive
 import com.workflow.orchestrator.agent.tools.framework.PythonFileScanner
 import java.io.File
 
-private data class FlaskFormEntry(
+private data class FormEntry(
     val file: String,
     val name: String,
-    val baseClass: String,
-    val fields: List<String>
+    val kind: String,  // "ModelForm", "Form"
+    val model: String?
 )
 
 private val FORM_CLASS_PATTERN = Regex(
-    """^class\s+(\w+)\s*\([^)]*(?:FlaskForm|Form)[^)]*\)""",
+    """^class\s+(\w+)\s*\([^)]*(\w*Form)[^)]*\)""",
     RegexOption.MULTILINE
 )
-private val FIELD_PATTERN = Regex(
-    """^\s{4}(\w+)\s*=\s*(\w+Field|SubmitField|SelectField|BooleanField|TextAreaField|PasswordField|HiddenField|RadioField|FileField|MultipleFileField|DecimalField|IntegerField|FloatField|DateField|DateTimeField|DateTimeLocalField|SelectMultipleField|FieldList|FormField)\s*\(""",
-    RegexOption.MULTILINE
+private val FORM_MODEL_PATTERN = Regex(
+    """class\s+Meta\s*:[^c]*model\s*=\s*(\w+)""",
+    setOf(RegexOption.DOT_MATCHES_ALL)
 )
 
 internal suspend fun executeForms(params: JsonObject, project: Project): ToolResult {
@@ -51,7 +51,7 @@ internal suspend fun executeForms(params: JsonObject, project: Project): ToolRes
                 )
             }
 
-            val allForms = mutableListOf<FlaskFormEntry>()
+            val allForms = mutableListOf<FormEntry>()
 
             for (formFile in formFiles) {
                 val content = formFile.readText()
@@ -59,22 +59,20 @@ internal suspend fun executeForms(params: JsonObject, project: Project): ToolRes
 
                 for (match in FORM_CLASS_PATTERN.findAll(content)) {
                     val name = match.groupValues[1]
-                    val baseClass = if (match.value.contains("FlaskForm")) "FlaskForm" else "Form"
+                    val kind = match.groupValues[2]
+                    if (kind.isBlank()) continue
                     val classStart = match.range.first
                     val classEnd = findFormClassEnd(content, classStart)
                     val classBody = content.substring(classStart, classEnd)
-
-                    val fields = FIELD_PATTERN.findAll(classBody).map { fm ->
-                        "${fm.groupValues[1]}: ${fm.groupValues[2]}"
-                    }.toList()
-
-                    allForms.add(FlaskFormEntry(relPath, name, baseClass, fields))
+                    val model = FORM_MODEL_PATTERN.find(classBody)?.groupValues?.get(1)
+                    allForms.add(FormEntry(relPath, name, kind, model))
                 }
             }
 
             val filtered = if (filter != null) {
                 allForms.filter { f ->
                     f.name.contains(filter, ignoreCase = true) ||
+                        f.model?.contains(filter, ignoreCase = true) == true ||
                         f.file.contains(filter, ignoreCase = true)
                 }
             } else {
@@ -83,21 +81,18 @@ internal suspend fun executeForms(params: JsonObject, project: Project): ToolRes
 
             if (filtered.isEmpty()) {
                 val filterDesc = if (filter != null) " matching '$filter'" else ""
-                return@withContext ToolResult("No Flask-WTF forms found$filterDesc.", "No forms", 5)
+                return@withContext ToolResult("No forms found$filterDesc.", "No forms", 5)
             }
 
             val content = buildString {
-                appendLine("Flask-WTF forms (${filtered.size} total):")
+                appendLine("Django forms (${filtered.size} total):")
                 appendLine()
                 val byFile = filtered.groupBy { it.file }
                 for ((file, forms) in byFile.toSortedMap()) {
                     appendLine("[$file]")
-                    for (form in forms.sortedBy { it.name }) {
-                        appendLine("  ${form.name}(${form.baseClass})")
-                        for (field in form.fields.take(10)) {
-                            appendLine("    - $field")
-                        }
-                        if (form.fields.size > 10) appendLine("    ... (${form.fields.size - 10} more)")
+                    for (f in forms.sortedBy { it.name }) {
+                        val modelStr = if (f.model != null) " (model=${f.model})" else ""
+                        appendLine("  ${f.name} extends ${f.kind}$modelStr")
                     }
                     appendLine()
                 }
