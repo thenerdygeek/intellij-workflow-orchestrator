@@ -15,6 +15,7 @@ import com.workflow.orchestrator.agent.hooks.HookResult
 import com.workflow.orchestrator.agent.hooks.HookType
 import com.workflow.orchestrator.agent.loop.ApprovalResult
 import com.workflow.orchestrator.agent.loop.ContextManager
+import com.workflow.orchestrator.agent.loop.SessionApprovalStore
 import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.loop.PlanJson
 import com.workflow.orchestrator.agent.loop.PlanStep
@@ -66,6 +67,8 @@ class AgentController(
 
     private val service = AgentService.getInstance(project)
     private var contextManager: ContextManager? = null
+    /** Session-scoped approval store. Created on first message, cleared on newChat. */
+    private val sessionApprovalStore = SessionApprovalStore()
     private var currentJob: Job? = null
     private var taskStartTime: Long = 0L
     /** Last task text for retry button (may include XML mention context). Gap 17. */
@@ -952,6 +955,7 @@ class AgentController(
             onPlanModeToggled = { enabled -> invokeLater { togglePlanMode(enabled) } },
             userInputChannel = userInputChannel,
             approvalGate = ::approvalGate,
+            sessionApprovalStore = sessionApprovalStore,
             onCheckpointSaved = ::onCheckpointSaved,
             onSubagentProgress = ::onSubagentProgress,
             onTokenUpdate = ::onTokenUpdate,
@@ -992,9 +996,10 @@ class AgentController(
      * @param toolName the tool requesting approval (e.g. "edit_file", "run_command")
      * @param args the raw JSON arguments string
      * @param riskLevel "low", "medium", or "high" risk classification
+     * @param allowSessionApproval whether the UI should offer "allow for session" (false for run_command)
      * @return the user's decision
      */
-    private suspend fun approvalGate(toolName: String, args: String, riskLevel: String): ApprovalResult {
+    private suspend fun approvalGate(toolName: String, args: String, riskLevel: String, allowSessionApproval: Boolean): ApprovalResult {
         val deferred = CompletableDeferred<ApprovalResult>()
         // Defensive reentry guard — see the invariant described on [pendingApproval].
         // If a second approvalGate call arrives while the first is still waiting,
@@ -1066,7 +1071,8 @@ class AgentController(
                 riskLevel = riskLevel,
                 description = description,
                 metadataJson = metadataJson,
-                diffContent = diffContent
+                diffContent = diffContent,
+                allowSessionApproval = allowSessionApproval
             )
         }
 
@@ -1407,6 +1413,7 @@ class AgentController(
 
                     // Reset context for the new session
                     contextManager = null
+                    sessionApprovalStore.clear()
 
                     // Auto-start fresh session with handoff context
                     currentJob = service.startHandoffSession(
@@ -1496,6 +1503,7 @@ class AgentController(
         lastStreamSnippet = ""
         contextManager?.clearActivePlanPath()
         contextManager = null
+        sessionApprovalStore.clear()
         taskStartTime = 0L
         lastTaskText = null
         lastDisplayText = null
@@ -1851,6 +1859,7 @@ class AgentController(
                     dashboard.promoteQueuedSteeringMessages(drainedIds)
                 }
             },
+            sessionApprovalStore = sessionApprovalStore,
         )
 
         if (job != null) {
@@ -2430,6 +2439,7 @@ class AgentController(
         phraseTimerJob?.cancel()
         phraseTimerJob = null
         contextManager = null
+        sessionApprovalStore.clear()
         currentSessionId = null
         currentPlanData = null
         pendingApproval?.cancel()

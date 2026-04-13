@@ -360,9 +360,9 @@ class AgentDashboardPanel(
         broadcast(replay = false) { it.appendSonarBadge(badgeJson) }
     }
 
-    fun showApproval(toolName: String, riskLevel: String, description: String, metadataJson: String, diffContent: String? = null) {
-        cefPanel?.showApproval(toolName, riskLevel, description, metadataJson, diffContent)
-        broadcast(replay = false) { it.showApproval(toolName, riskLevel, description, metadataJson, diffContent) }
+    fun showApproval(toolName: String, riskLevel: String, description: String, metadataJson: String, diffContent: String? = null, allowSessionApproval: Boolean = true) {
+        cefPanel?.showApproval(toolName, riskLevel, description, metadataJson, diffContent, allowSessionApproval)
+        broadcast(replay = false) { it.showApproval(toolName, riskLevel, description, metadataJson, diffContent, allowSessionApproval) }
     }
 
     fun showProcessInput(processId: String, description: String, prompt: String, command: String) {

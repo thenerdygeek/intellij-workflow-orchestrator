@@ -22,7 +22,8 @@ class CommandApprovalDialog(
     project: Project,
     private val command: String,
     private val workingDir: String,
-    private val riskAssessment: String
+    private val riskAssessment: String,
+    private val allowSessionApproval: Boolean = true
 ) : DialogWrapper(project) {
 
     var approved = false
@@ -70,7 +71,7 @@ class CommandApprovalDialog(
         // Allow all checkbox — hidden for HIGH risk
         allowAllCheckbox = com.intellij.ui.components.JBCheckBox("Allow all commands this session").apply {
             font = JBUI.Fonts.smallFont()
-            isVisible = riskAssessment.uppercase() != "HIGH"
+            isVisible = allowSessionApproval && riskAssessment.uppercase() != "HIGH"
         }
 
         // Warning at the bottom
