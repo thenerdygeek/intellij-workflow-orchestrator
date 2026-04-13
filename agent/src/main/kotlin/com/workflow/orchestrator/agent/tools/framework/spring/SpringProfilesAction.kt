@@ -107,11 +107,12 @@ private fun collectProfiles(project: Project): String {
         FilenameIndex.getVirtualFilesByName("application.yaml", scope)
     for (vf in appYmlFiles) {
         val text = VfsUtil.loadText(vf)
-        for (line in text.lines()) {
-            val trimmed = line.trim()
-            if (trimmed.startsWith("active:") && text.contains("profiles:")) {
-                activeProfiles = trimmed.substringAfter("active:").trim()
-            }
+        val properties = parseYamlToFlatProperties(text)
+        // Spring Boot 2.x: spring.profiles.active, Spring Boot 3.x: spring.config.activate.on-profile
+        val active = properties["spring.profiles.active"]
+            ?: properties["spring.config.activate.on-profile"]
+        if (!active.isNullOrBlank()) {
+            activeProfiles = active
         }
     }
 
