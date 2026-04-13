@@ -10,6 +10,8 @@ import com.intellij.psi.search.SearchScope
 import com.intellij.psi.search.searches.ReferencesSearch
 import com.intellij.psi.util.PsiTreeUtil
 import com.workflow.orchestrator.agent.tools.psi.PsiToolUtils
+import java.util.Collections
+import java.util.IdentityHashMap
 
 /**
  * Python implementation of [LanguageIntelligenceProvider].
@@ -424,8 +426,11 @@ class PythonProvider(
             val project = element.project
             val callers = mutableListOf<CallerInfo>()
             val maxDepth = depth.coerceIn(1, 3)
+            // IdentityHashMap: PsiElement.equals() is not a stable contract; identity comparison
+            // prevents re-visiting the same live PSI object across a recursive DFS.
+            val visited = Collections.newSetFromMap(IdentityHashMap<PsiElement, Boolean>())
 
-            collectPyCallers(element, 1, maxDepth, scope, callers, project)
+            collectPyCallers(element, 1, maxDepth, scope, callers, project, visited)
             return callers
         } catch (e: ProcessCanceledException) {
             throw e
@@ -946,9 +951,10 @@ class PythonProvider(
         maxDepth: Int,
         scope: SearchScope,
         result: MutableList<CallerInfo>,
-        project: Project
+        project: Project,
+        visited: MutableSet<PsiElement>
     ) {
-        if (currentDepth > maxDepth) return
+        if (currentDepth > maxDepth || !visited.add(element)) return
         val refs = ReferencesSearch.search(element, scope).findAll()
         val limit = if (currentDepth == 1) 30 else 10
         for (ref in refs.take(limit)) {
@@ -976,7 +982,7 @@ class PythonProvider(
             result.add(CallerInfo(name = callerName, filePath = file, line = line, depth = currentDepth))
 
             if (container != null && helper.isPyFunction(container) && currentDepth < maxDepth) {
-                collectPyCallers(container, currentDepth + 1, maxDepth, scope, result, project)
+                collectPyCallers(container, currentDepth + 1, maxDepth, scope, result, project, visited)
             }
         }
     }
