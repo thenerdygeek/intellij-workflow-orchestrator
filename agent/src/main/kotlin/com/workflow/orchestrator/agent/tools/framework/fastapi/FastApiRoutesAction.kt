@@ -25,6 +25,16 @@ private val HANDLER_PATTERN = Regex(
     """(?:async\s+)?def\s+(\w+)\s*\("""
 )
 
+// Matches: router = APIRouter(prefix="/api/v1") or APIRouter(prefix='/api/v1')
+private val API_ROUTER_PATTERN = Regex(
+    """(\w+)\s*=\s*APIRouter\s*\([^)]*prefix\s*=\s*["']([^"']*)["']"""
+)
+
+// Matches: app.include_router(router, prefix="/api/v1") or app.include_router(mod.router, prefix="/api/v1")
+private val INCLUDE_ROUTER_PATTERN = Regex(
+    """(\w+)\.include_router\s*\(\s*([\w.]+)(?:\s*,\s*[^)]*prefix\s*=\s*["']([^"']*)["'])?"""
+)
+
 internal suspend fun executeRoutes(params: JsonObject, project: Project): ToolResult {
     val pathFilter = params["path"]?.jsonPrimitive?.content
     val basePath = project.basePath
@@ -99,18 +109,47 @@ private fun parseRoutes(pyFile: File, basePath: String, results: MutableList<Rou
     val relPath = pyFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
     val lines = content.lines()
 
+    // Build router variable -> prefix map from APIRouter(prefix=...) declarations
+    val routerPrefixes = mutableMapOf<String, String>()
+    for (match in API_ROUTER_PATTERN.findAll(content)) {
+        val varName = match.groupValues[1]
+        val prefix = match.groupValues[2]
+        routerPrefixes[varName] = prefix
+    }
+
+    // Override with include_router(router, prefix=...) if present
+    for (match in INCLUDE_ROUTER_PATTERN.findAll(content)) {
+        val routerRef = match.groupValues[2]
+        val overridePrefix = match.groupValues[3]
+        if (overridePrefix.isNotEmpty()) {
+            // For dotted refs like "users.router", apply to the last segment ("router")
+            // which is the variable name used in route decorators within this file
+            val localName = routerRef.substringAfterLast('.')
+            routerPrefixes[localName] = overridePrefix
+            // Also store the full dotted name in case it matches
+            if (localName != routerRef) {
+                routerPrefixes[routerRef] = overridePrefix
+            }
+        }
+    }
+
     for ((index, line) in lines.withIndex()) {
         val trimmed = line.trim()
         if (trimmed.startsWith("#")) continue
 
         val match = ROUTE_DECORATOR_PATTERN.find(trimmed) ?: continue
+        val routerVar = match.groupValues[1]
         val method = match.groupValues[2]
-        val path = match.groupValues[3]
+        val routePath = match.groupValues[3]
+
+        // Compose full path: router prefix + route path
+        val prefix = routerPrefixes[routerVar] ?: ""
+        val fullPath = composePath(prefix, routePath)
 
         // Look for the handler function on the next non-empty, non-decorator lines
         val handler = findNextHandler(lines, index + 1)
 
-        results.add(RouteEntry(relPath, method, path, handler, index + 1))
+        results.add(RouteEntry(relPath, method, fullPath, handler, index + 1))
     }
 }
 
@@ -122,4 +161,17 @@ private fun findNextHandler(lines: List<String>, startIndex: Int): String {
         if (handlerMatch != null) return handlerMatch.groupValues[1]
     }
     return "(unknown)"
+}
+
+/**
+ * Composes a prefix and route path, handling slash deduplication.
+ * e.g., composePath("/api/v1", "/users") -> "/api/v1/users"
+ *       composePath("/api/v1/", "/users") -> "/api/v1/users"
+ *       composePath("", "/users") -> "/users"
+ */
+private fun composePath(prefix: String, routePath: String): String {
+    if (prefix.isEmpty()) return routePath
+    val normalizedPrefix = prefix.trimEnd('/')
+    val normalizedRoute = if (routePath.startsWith("/")) routePath else "/$routePath"
+    return "$normalizedPrefix$normalizedRoute"
 }
