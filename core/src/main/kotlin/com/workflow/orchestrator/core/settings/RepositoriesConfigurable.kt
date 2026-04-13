@@ -176,6 +176,9 @@ class RepositoriesConfigurable(
                 )
             )
         }
+        repoTableModel.fireTableDataChanged()
+        repoTable?.revalidate()
+        repoTable?.repaint()
     }
 
     private fun onAddRepo() {
