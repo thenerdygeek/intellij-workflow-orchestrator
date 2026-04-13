@@ -26,6 +26,17 @@ private val FUNCTION_AFTER_DECORATOR = Regex(
     RegexOption.MULTILINE
 )
 
+// Matches: bp = Blueprint('name', __name__, url_prefix='/api')
+// Also handles Blueprint("name", __name__, url_prefix="/api") and variations with other args
+private val BLUEPRINT_PATTERN = Regex(
+    """(\w+)\s*=\s*Blueprint\s*\([^)]*url_prefix\s*=\s*["']([^"']*)["']"""
+)
+
+// Matches: app.register_blueprint(bp, url_prefix='/api') or with keyword url_prefix=
+private val REGISTER_BLUEPRINT_PATTERN = Regex(
+    """(\w+)\.register_blueprint\s*\(\s*([\w.]+)(?:\s*,\s*[^)]*url_prefix\s*=\s*["']([^"']*)["'])?"""
+)
+
 internal suspend fun executeRoutes(params: JsonObject, project: Project): ToolResult {
     val filter = params["blueprint"]?.jsonPrimitive?.content
         ?: params["filter"]?.jsonPrimitive?.content
@@ -102,20 +113,57 @@ internal suspend fun executeRoutes(params: JsonObject, project: Project): ToolRe
 private fun parseRoutes(pyFile: File, basePath: String, results: MutableList<RouteEntry>) {
     val content = pyFile.readText()
     val relPath = pyFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
-    val lines = content.lines()
+
+    // Build blueprint variable -> url_prefix map
+    val blueprintPrefixes = mutableMapOf<String, String>()
+    for (match in BLUEPRINT_PATTERN.findAll(content)) {
+        val varName = match.groupValues[1]
+        val prefix = match.groupValues[2]
+        blueprintPrefixes[varName] = prefix
+    }
+
+    // Override with register_blueprint(bp, url_prefix=...) if present
+    for (match in REGISTER_BLUEPRINT_PATTERN.findAll(content)) {
+        val bpRef = match.groupValues[2]
+        val overridePrefix = match.groupValues[3]
+        if (overridePrefix.isNotEmpty()) {
+            val localName = bpRef.substringAfterLast('.')
+            blueprintPrefixes[localName] = overridePrefix
+            if (localName != bpRef) {
+                blueprintPrefixes[bpRef] = overridePrefix
+            }
+        }
+    }
 
     for (match in ROUTE_DECORATOR_PATTERN.findAll(content)) {
         val obj = match.groupValues[1]
         val method = match.groupValues[2]
-        val path = match.groupValues[3]
+        val routePath = match.groupValues[3]
         val methods = match.groupValues[4].takeIf { it.isNotBlank() }
             ?.replace("'", "")?.replace("\"", "")?.trim()
+
+        // Compose full path: blueprint prefix + route path
+        val prefix = blueprintPrefixes[obj] ?: ""
+        val fullPath = composePath(prefix, routePath)
 
         // Find the function name after this decorator
         val afterDecorator = content.substring(match.range.last)
         val funcMatch = FUNCTION_AFTER_DECORATOR.find(afterDecorator)
         val funcName = funcMatch?.groupValues?.get(1)
 
-        results.add(RouteEntry(relPath, "$obj.$method", path, methods, funcName))
+        results.add(RouteEntry(relPath, "$obj.$method", fullPath, methods, funcName))
     }
+}
+
+/**
+ * Composes a prefix and route path, handling slash deduplication.
+ * e.g., composePath("/api", "/users") -> "/api/users"
+ *       composePath("/api/", "/users") -> "/api/users"
+ *       composePath("", "/users") -> "/users"
+ */
+private fun composePath(prefix: String, routePath: String): String {
+    if (prefix.isEmpty()) return routePath
+    val normalizedPrefix = prefix.trimEnd('/')
+    val normalizedRoute = if (routePath.startsWith("/")) routePath else "/$routePath"
+    return "$normalizedPrefix$normalizedRoute"
 }
