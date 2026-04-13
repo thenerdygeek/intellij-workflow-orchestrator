@@ -26,6 +26,7 @@ class PythonPsiHelper {
         const val PY_PARAMETER_CLASS = "com.jetbrains.python.psi.PyParameter"
         const val PY_PARAMETER_LIST_CLASS = "com.jetbrains.python.psi.PyParameterList"
         const val PY_ASSIGNMENT_STATEMENT_CLASS = "com.jetbrains.python.psi.PyAssignmentStatement"
+        const val PY_AUG_ASSIGNMENT_STATEMENT_CLASS = "com.jetbrains.python.psi.PyAugAssignmentStatement"
         const val PY_CALL_EXPRESSION_CLASS = "com.jetbrains.python.psi.PyCallExpression"
         const val PY_REFERENCE_EXPRESSION_CLASS = "com.jetbrains.python.psi.PyReferenceExpression"
         const val PY_STRING_LITERAL_CLASS = "com.jetbrains.python.psi.PyStringLiteralExpression"
@@ -55,6 +56,7 @@ class PythonPsiHelper {
     val pyClassInheritorsSearchClass by lazy { loadClass(PY_CLASS_INHERITORS_SEARCH) }
     val pyParameterListClass by lazy { loadClass(PY_PARAMETER_LIST_CLASS) }
     val pyAssignmentStatementClass by lazy { loadClass(PY_ASSIGNMENT_STATEMENT_CLASS) }
+    val pyAugAssignmentStatementClass by lazy { loadClass(PY_AUG_ASSIGNMENT_STATEMENT_CLASS) }
     val pyStringLiteralClass by lazy { loadClass(PY_STRING_LITERAL_CLASS) }
     val pyResolveContextClass by lazy { loadClass(PY_RESOLVE_CONTEXT_CLASS) }
 
