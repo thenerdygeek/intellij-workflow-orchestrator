@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.tools.ide
 import com.intellij.lang.LanguageImportStatements
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -53,6 +54,10 @@ class OptimizeImportsTool : AgentTool {
                 WriteCommandAction.runWriteCommandAction(project, "Agent: Optimize Imports", null, {
                     val psiFile = PsiManager.getInstance(project).findFile(vf)
                     if (psiFile != null) {
+                        val document = FileDocumentManager.getInstance().getDocument(vf)
+                        val textBefore = document?.text ?: psiFile.text
+                        val importsBefore = extractImportLines(textBefore)
+
                         val optimizers = LanguageImportStatements.INSTANCE.forFile(psiFile)
                         var optimized = false
                         for (optimizer in optimizers) {
@@ -61,10 +66,37 @@ class OptimizeImportsTool : AgentTool {
                                 optimized = true
                             }
                         }
-                        result = if (optimized) {
-                            ToolResult("Optimized imports in ${vf.name}.", "Imports optimized", 5, artifacts = listOf(path))
+
+                        if (optimized) {
+                            val textAfter = document?.text ?: psiFile.text
+                            if (textBefore == textAfter) {
+                                result = ToolResult(
+                                    "Imports already optimal — no changes needed.",
+                                    "Already optimal",
+                                    5,
+                                    artifacts = listOf(path)
+                                )
+                            } else {
+                                val importsAfter = extractImportLines(textAfter)
+                                val removed = importsBefore - importsAfter.toSet()
+                                val added = importsAfter - importsBefore.toSet()
+                                val parts = mutableListOf<String>()
+                                if (removed.isNotEmpty()) {
+                                    parts.add("removed ${removed.size} unused import${if (removed.size != 1) "s" else ""}")
+                                }
+                                if (added.isNotEmpty()) {
+                                    parts.add("added ${added.size} import${if (added.size != 1) "s" else ""}")
+                                }
+                                val detail = if (parts.isNotEmpty()) parts.joinToString(", ") else "reformatted imports"
+                                result = ToolResult(
+                                    "Optimized imports in ${vf.name} ($detail).",
+                                    "Imports optimized",
+                                    5,
+                                    artifacts = listOf(path)
+                                )
+                            }
                         } else {
-                            ToolResult("No import optimizer available for ${vf.name}.", "No optimizer", 5)
+                            result = ToolResult("No import optimizer available for ${vf.name}.", "No optimizer", 5)
                         }
                     } else {
                         result = ToolResult("Cannot parse: $path", "Parse error", 5, isError = true)
@@ -74,6 +106,13 @@ class OptimizeImportsTool : AgentTool {
             result ?: ToolResult("Import optimization failed", "Error", 5, isError = true)
         } catch (e: Exception) {
             ToolResult("Error: ${e.message}", "Import error", 5, isError = true)
+        }
+    }
+
+    private fun extractImportLines(text: String): List<String> {
+        return text.lines().filter { line ->
+            val trimmed = line.trim()
+            trimmed.startsWith("import ") || trimmed.startsWith("from ")
         }
     }
 }
