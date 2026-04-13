@@ -649,37 +649,122 @@ All breakpoint actions modify IDE state. start_session/attach_to_process create 
                 null
             }
 
-            val lineBreakpoints = bpManager.allBreakpoints
-                .filterIsInstance<XLineBreakpoint<*>>()
-                .filter { bp -> filterFileUrl == null || bp.fileUrl == filterFileUrl }
+            val allBreakpoints = bpManager.allBreakpoints.toList()
 
-            if (lineBreakpoints.isEmpty()) {
+            // Separate breakpoints by type for type-specific formatting
+            val lineBreakpoints = mutableListOf<XLineBreakpoint<*>>()
+            val exceptionBreakpoints = mutableListOf<com.intellij.xdebugger.breakpoints.XBreakpoint<*>>()
+            val otherBreakpoints = mutableListOf<com.intellij.xdebugger.breakpoints.XBreakpoint<*>>()
+
+            for (bp in allBreakpoints) {
+                when {
+                    bp is XLineBreakpoint<*> -> {
+                        // Line breakpoints include method breakpoints and field watchpoints
+                        // (both created via addLineBreakpoint)
+                        if (filterFileUrl == null || bp.fileUrl == filterFileUrl) {
+                            lineBreakpoints.add(bp)
+                        }
+                    }
+                    bp.type is JavaExceptionBreakpointType -> {
+                        // Exception breakpoints have no file association — skip file filter
+                        if (filterFileUrl == null) {
+                            exceptionBreakpoints.add(bp)
+                        }
+                    }
+                    else -> {
+                        // Any other breakpoint type not yet categorized
+                        if (filterFileUrl == null) {
+                            otherBreakpoints.add(bp)
+                        }
+                    }
+                }
+            }
+
+            val totalCount = lineBreakpoints.size + exceptionBreakpoints.size + otherBreakpoints.size
+            if (totalCount == 0) {
                 val qualifier = if (filterFile != null) " in $filterFile" else ""
                 return ToolResult("No breakpoints found$qualifier.", "No breakpoints", ToolResult.ERROR_TOKEN_ESTIMATE)
             }
 
             val sb = StringBuilder()
-            sb.appendLine("Breakpoints (${lineBreakpoints.size}):")
+            sb.appendLine("Breakpoints ($totalCount):")
             sb.appendLine()
 
+            // Format line breakpoints (includes method breakpoints and field watchpoints)
             for (bp in lineBreakpoints) {
                 val fileName = bp.fileUrl.substringAfterLast('/')
                 val oneBased = bp.line + 1
 
+                val props = bp.properties
+                when {
+                    props is JavaMethodBreakpointProperties -> {
+                        val className = props.myClassPattern ?: ""
+                        val methodName = props.myMethodName ?: ""
+                        val display = if (className.isNotBlank()) "$className.$methodName" else methodName
+                        val traits = mutableListOf<String>()
+                        if (props.WATCH_ENTRY) traits.add("entry")
+                        if (props.WATCH_EXIT) traits.add("exit")
+                        traits.add(if (bp.isEnabled) "enabled" else "disabled")
+                        val bpCondition = bp.conditionExpression?.expression
+                        if (!bpCondition.isNullOrBlank()) traits.add("conditional: $bpCondition")
+                        sb.appendLine("Method: $display [${traits.joinToString(", ")}]")
+                    }
+                    props is JavaFieldBreakpointProperties -> {
+                        val className = props.myClassName ?: ""
+                        val fieldName = props.myFieldName ?: ""
+                        val display = if (className.isNotBlank()) "$className.$fieldName" else fieldName
+                        val traits = mutableListOf<String>()
+                        if (props.WATCH_ACCESS) traits.add("access")
+                        if (props.WATCH_MODIFICATION) traits.add("modification")
+                        traits.add(if (bp.isEnabled) "enabled" else "disabled")
+                        val bpCondition = bp.conditionExpression?.expression
+                        if (!bpCondition.isNullOrBlank()) traits.add("conditional: $bpCondition")
+                        sb.appendLine("Field: $display [${traits.joinToString(", ")}]")
+                    }
+                    else -> {
+                        // Standard line breakpoint
+                        val traits = mutableListOf<String>()
+                        traits.add(if (bp.isEnabled) "enabled" else "disabled")
+                        val bpCondition = bp.conditionExpression?.expression
+                        if (!bpCondition.isNullOrBlank()) traits.add("conditional: $bpCondition")
+                        val logExpr = bp.logExpressionObject?.expression
+                        if (!logExpr.isNullOrBlank()) traits.add("log: $logExpr")
+                        if (bp.isTemporary) traits.add("temporary")
+                        if (bp.suspendPolicy == SuspendPolicy.NONE) traits.add("non-suspend")
+                        sb.appendLine("$fileName:$oneBased [${traits.joinToString(", ")}]")
+                    }
+                }
+            }
+
+            // Format exception breakpoints
+            for (bp in exceptionBreakpoints) {
+                val props = bp.properties
+                val traits = mutableListOf<String>()
+                val exceptionClass: String
+                if (props is JavaExceptionBreakpointProperties) {
+                    exceptionClass = props.myQualifiedName?.ifBlank { "Any Exception" } ?: "Any Exception"
+                    if (props.NOTIFY_CAUGHT) traits.add("caught")
+                    if (props.NOTIFY_UNCAUGHT) traits.add("uncaught")
+                } else {
+                    exceptionClass = bp.type.id
+                }
+                traits.add(if (bp.isEnabled) "enabled" else "disabled")
+                val bpCondition = bp.conditionExpression?.expression
+                if (!bpCondition.isNullOrBlank()) traits.add("conditional: $bpCondition")
+                sb.appendLine("Exception: $exceptionClass [${traits.joinToString(", ")}]")
+            }
+
+            // Format any other breakpoint types generically
+            for (bp in otherBreakpoints) {
                 val traits = mutableListOf<String>()
                 traits.add(if (bp.isEnabled) "enabled" else "disabled")
                 val bpCondition = bp.conditionExpression?.expression
                 if (!bpCondition.isNullOrBlank()) traits.add("conditional: $bpCondition")
-                val logExpr = bp.logExpressionObject?.expression
-                if (!logExpr.isNullOrBlank()) traits.add("log: $logExpr")
-                if (bp.isTemporary) traits.add("temporary")
-                if (bp.suspendPolicy == SuspendPolicy.NONE) traits.add("non-suspend")
-
-                sb.appendLine("$fileName:$oneBased [${traits.joinToString(", ")}]")
+                sb.appendLine("${bp.type.title ?: bp.type.id}: [${traits.joinToString(", ")}]")
             }
 
             val content = sb.toString().trimEnd()
-            ToolResult(content, "${lineBreakpoints.size} breakpoints", TokenEstimator.estimate(content))
+            ToolResult(content, "$totalCount breakpoints", TokenEstimator.estimate(content))
         } catch (e: Exception) {
             ToolResult("Error listing breakpoints: ${e.message}", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
