@@ -555,23 +555,27 @@ class JsBridgeDispatcherTest {
         }
 
         @Test
-        fun `15s watchdog force-flushes when onLoadingStateChange never fires`() {
-            // Simulates: page load event never fires (CEF bug, missing resources,
-            // loadURL silent failure). The 15s watchdog calls markLoaded() as a fallback.
+        fun `watchdog does not flush — calls stay buffered until real page load`() {
+            // Simulates: watchdog fires at 15s but page hasn't loaded yet (slow machine).
+            // Calls must stay buffered so the real onLoadingStateChange flushes them.
             dispatcher.dispatch("setBusy(true)")
             dispatcher.dispatch("startSession('hello')")
             dispatcher.dispatch("appendStreamToken('...')")
 
-            assertEquals(0, executedCalls.size, "Nothing should execute before watchdog")
+            assertEquals(0, executedCalls.size, "Nothing should execute before page load")
             assertFalse(dispatcher.isLoaded)
+            assertEquals(3, dispatcher.pendingCallCount, "All calls should be buffered")
 
-            // Simulate the 15s watchdog firing (in real code this is a Timer task)
-            if (!dispatcher.isLoaded && !dispatcher.isDisposed) {
-                dispatcher.markLoaded()
-            }
+            // Simulate the watchdog firing — it only warns, does NOT markLoaded()
+            // (The watchdog no longer calls markLoaded to avoid flushing to a non-ready page)
 
+            assertFalse(dispatcher.isLoaded, "Watchdog must not mark page as loaded")
+            assertEquals(3, dispatcher.pendingCallCount, "Buffered calls must be preserved")
+
+            // Later, the real page load fires — NOW calls flush correctly
+            dispatcher.markLoaded()
             assertTrue(dispatcher.isLoaded)
-            assertEquals(3, executedCalls.size, "All buffered calls must flush on watchdog")
+            assertEquals(3, executedCalls.size, "All buffered calls must flush on real page load")
         }
     }
 }

@@ -588,16 +588,16 @@ class AgentCefPanel(
             else LOG.error("AgentCefPanel: index.html not found in resources")
         }
 
-        // Safety net: if the page hasn't loaded within 15 seconds, force-flush
-        // the pending calls. This catches scenarios where onLoadingStateChange
-        // never fires (CEF bug, missing resources, loadURL silent failure).
+        // Watchdog: warn if the page hasn't loaded within 15 seconds.
+        // Do NOT force-flush (markLoaded) here — on slow machines the page may load
+        // at 30-60s, and flushing JS calls into a non-ready page loses them permanently.
+        // The real onLoadingStateChange handler will flush when the page is truly ready.
         val dispatcher = bridgeDispatcher
         if (dispatcher != null) {
             java.util.Timer("cef-page-load-watchdog", true).schedule(object : java.util.TimerTask() {
                 override fun run() {
                     if (!dispatcher.isLoaded && !dispatcher.isDisposed) {
-                        LOG.warn("AgentCefPanel: page not loaded after 15s — force-flushing ${dispatcher.pendingCallCount} buffered calls")
-                        dispatcher.markLoaded()
+                        LOG.warn("AgentCefPanel: page not loaded after 15s — ${dispatcher.pendingCallCount} calls still buffered (will flush when page loads)")
                     }
                 }
             }, 15_000L)
