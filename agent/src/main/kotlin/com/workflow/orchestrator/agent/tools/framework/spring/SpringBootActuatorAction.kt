@@ -230,33 +230,10 @@ private fun readPropertiesManagement(file: File, target: MutableMap<String, Stri
 }
 
 private fun readYamlManagement(file: File, target: MutableMap<String, String>) {
-    val lines = file.readLines()
-    val keyStack = mutableListOf<Pair<Int, String>>()
-
-    for (line in lines) {
-        val trimmed = line.trimEnd()
-        if (trimmed.isBlank() || trimmed.startsWith("#") || trimmed.startsWith("---")) continue
-
-        val indent = line.length - line.trimStart().length
-
-        while (keyStack.isNotEmpty() && keyStack.last().first >= indent) {
-            keyStack.removeAt(keyStack.size - 1)
-        }
-
-        val colonIndex = trimmed.indexOf(':')
-        if (colonIndex < 0) continue
-
-        val key = trimmed.substring(0, colonIndex).trim()
-        val value = trimmed.substring(colonIndex + 1).trim()
-
-        keyStack.add(indent to key)
-
-        if (value.isNotEmpty() && !value.startsWith("#")) {
-            val fullKey = keyStack.joinToString(".") { it.second }
-            if (fullKey.startsWith("management.")) {
-                val cleanValue = value.removeSurrounding("\"").removeSurrounding("'")
-                target[fullKey] = cleanValue
-            }
+    val properties = parseYamlToFlatProperties(file.readText())
+    for ((key, value) in properties) {
+        if (key.startsWith("management.")) {
+            target[key] = value
         }
     }
 }

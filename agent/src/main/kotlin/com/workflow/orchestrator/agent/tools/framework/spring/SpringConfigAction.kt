@@ -113,32 +113,9 @@ private fun parsePropertiesFile(file: File, relativePath: String, target: Mutabl
 }
 
 private fun parseYamlFile(file: File, relativePath: String, target: MutableMap<String, MutableList<ConfigPropertyEntry>>) {
-    val lines = file.readLines()
-    val keyStack = mutableListOf<Pair<Int, String>>()
-
-    for (line in lines) {
-        val trimmed = line.trimEnd()
-        if (trimmed.isBlank() || trimmed.startsWith("#") || trimmed.startsWith("---")) continue
-
-        val indent = line.length - line.trimStart().length
-
-        while (keyStack.isNotEmpty() && keyStack.last().first >= indent) {
-            keyStack.removeAt(keyStack.size - 1)
-        }
-
-        val colonIndex = trimmed.indexOf(':')
-        if (colonIndex < 0) continue
-
-        val key = trimmed.substring(0, colonIndex).trim()
-        val value = trimmed.substring(colonIndex + 1).trim()
-
-        keyStack.add(indent to key)
-
-        if (value.isNotEmpty() && !value.startsWith("#")) {
-            val fullKey = keyStack.joinToString(".") { it.second }
-            val cleanValue = value.removeSurrounding("\"").removeSurrounding("'")
-            target.getOrPut(fullKey) { mutableListOf() }.add(ConfigPropertyEntry(cleanValue, relativePath))
-        }
+    val properties = parseYamlToFlatProperties(file.readText())
+    for ((key, value) in properties) {
+        target.getOrPut(key) { mutableListOf() }.add(ConfigPropertyEntry(value, relativePath))
     }
 }
 

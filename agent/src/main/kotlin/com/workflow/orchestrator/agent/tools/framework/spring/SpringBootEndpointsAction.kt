@@ -180,23 +180,9 @@ private fun resolveContextPath(project: Project): String {
 
         val ymlFile = File("$resourcesRoot/application.yml")
         if (ymlFile.exists()) {
-            val lines = ymlFile.readLines()
-            var inServer = false
-            var inServlet = false
-            for (line in lines) {
-                val trimmed = line.trimStart()
-                when {
-                    trimmed.startsWith("server:") -> { inServer = true; inServlet = false }
-                    inServer && trimmed.startsWith("servlet:") -> inServlet = true
-                    inServer && inServlet && trimmed.startsWith("context-path:") -> {
-                        val value = trimmed.substringAfter("context-path:").trim().removeSurrounding("\"").removeSurrounding("'")
-                        if (value.isNotBlank()) return value
-                    }
-                    !trimmed.startsWith(" ") && !trimmed.startsWith("\t") && trimmed.isNotBlank() -> {
-                        if (!trimmed.startsWith("server:")) { inServer = false; inServlet = false }
-                    }
-                }
-            }
+            val properties = parseYamlToFlatProperties(ymlFile.readText())
+            val contextPath = properties["server.servlet.context-path"]
+            if (!contextPath.isNullOrBlank()) return contextPath
         }
 
         ""
