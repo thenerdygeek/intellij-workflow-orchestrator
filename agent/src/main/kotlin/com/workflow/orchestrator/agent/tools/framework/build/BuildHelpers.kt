@@ -64,11 +64,16 @@ internal fun listGradleModules(baseDir: File): List<String> {
     }
 
     val modules = mutableListOf<String>()
-    val pattern = Regex("""include\s*\(\s*["']([^"']+)["']\s*\)|include\s+['"]([^'"]+)['"]""")
+    // Match: include(":a"), include(":a", ":b", ":c"), include ":a", ":b"
+    val includePattern = Regex("""include\s*\(?([^)\n]+)\)?""")
+    val modulePattern = Regex("""["']([^"']+)["']""")
     settingsFile.readLines().forEach { line ->
-        pattern.findAll(line).forEach { match ->
-            val mod = match.groupValues[1].ifEmpty { match.groupValues[2] }
-            if (mod.isNotBlank()) modules.add(mod)
+        includePattern.findAll(line).forEach { match ->
+            val args = match.groupValues[1]
+            modulePattern.findAll(args).forEach { modMatch ->
+                val mod = modMatch.groupValues[1]
+                if (mod.isNotBlank()) modules.add(mod)
+            }
         }
     }
     return modules
