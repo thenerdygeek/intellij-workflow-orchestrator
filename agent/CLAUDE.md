@@ -148,6 +148,14 @@ Two mechanisms:
 
 Tool set stabilizes per session — tools only expand across messages, never shrink (deferred tools once activated stay active).
 
+## ToolRegistry Internals
+
+- **Thread safety**: Registry map uses `ConcurrentHashMap`. `activateDeferred()` and `resetActiveDeferred()` are `@Synchronized` to prevent races when integration tools are toggled from multiple coroutines.
+- **Deferred activation**: Integration tools (Jira, Bamboo, Sonar, Bitbucket, DB) are registered lazily. `reregisterConditionalTools()` re-evaluates integration availability at runtime (e.g., after settings change) and adds/removes tools without restarting the session.
+- **Unregistration**: `unregisterDeferred(toolName)` removes a single tool from the deferred or active-deferred pool and invalidates the name cache; used to clean up integration tools that lose their service connection.
+- **One-liner extraction**: `extractOneLiner(toolResult)` DRY helper used by all tools — strips markdown, trims whitespace, and returns the first meaningful sentence for notification display.
+- **ToolResult.error()**: Factory companion method for consistent error ToolResult construction; avoids scattered inline error strings.
+
 ## Context Management
 
 All context management runs through `ContextManager` — a 3-stage compaction pipeline ported from Cline.
@@ -183,9 +191,27 @@ Users can send messages while the agent is working. Messages are injected at ite
 - **Write tools**: Execute sequentially (edit_file, run_command, etc.)
 - **Write tools set** (`WRITE_TOOLS` in `AgentLoop`): edit_file, create_file, run_command, revert_file, kill_process, send_stdin, format_code, optimize_imports, refactor_rename
 - **Approval tools** (`APPROVAL_TOOLS`): edit_file, create_file, run_command, revert_file — require user approval unless already allowed for session
+- **Per-tool timeouts**: `withTimeoutOrNull` wraps every execution — default 120s, `run_command` 600s, `agent` (SpawnAgentTool) unlimited. Timeout returns an error ToolResult; the LLM can retry or adjust.
+- **CancellationException**: Always re-thrown (never swallowed) so coroutine scope cancellation propagates correctly through the loop.
+- **Registration failures**: Tracked and logged; no more silent swallowing of deferred activation errors.
+- **Token estimate**: Computed after output truncation, not before, so context fill is accurate.
 - **Doom loop detection**: 3 identical consecutive tool calls = warning. 5 = hard failure.
 - **Context overflow**: Compress via `ContextManager` + REPLAY the failed request (OpenCode pattern)
 - **Task progress**: Extracted from `task_progress` parameter on every tool call (Cline's FocusChain pattern), injected via `AgentTool.injectTaskProgress()` into every tool schema
+
+## Tool Approval
+
+- **ApprovalPolicy**: Per-tool approval rules. Three policies: `ALWAYS_APPROVE` (trust, no gate), `ALLOW_FOR_SESSION` (user can grant once-per-session), `ALWAYS_PER_INVOCATION` (must approve every time). `run_command` is hardcoded to `ALWAYS_PER_INVOCATION` — it can never be allowed for session.
+- **SessionApprovalStore**: Holds the set of tools the user has approved for the current session. Lives at `AgentController` level (not `AgentLoop`), so approvals persist across loop restarts within the same session. Cleared on new chat.
+- **Pre-execution guard errors**: Logged to `fileLogger` + `sessionMetrics` so they appear in traces and are counted in the scorecard.
+
+## Tool Output Management
+
+- **ToolOutputConfig**: Per-tool output size limits. `DEFAULT` cap = 50K chars; `COMMAND` cap = 30K chars. Tools override via `outputConfig` property on `AgentTool` interface (e.g., `RunCommandTool` uses `ToolOutputConfig.COMMAND`).
+- **`grep_pattern` parameter**: Optional regex available on tools in `OUTPUT_FILTERABLE_TOOLS` set. The LLM passes a pattern; only matching lines are returned (no context lines — simple line filter). Applied before spill/truncation. Implemented via `ToolOutputConfig.applyGrep()`.
+- **`output_file` parameter**: Boolean (not a path). When `true`, full output is saved to disk via `ToolOutputSpiller` and the context receives a preview (first 20 + last 10 lines) with the file path. The LLM can then use `read_file` or `search_code` on the saved file.
+- **ToolOutputSpiller**: Auto-spills large outputs (>30K chars) to `{sessionDir}/tool-output/{toolName}-{epochSec}-output.txt`. Preview = head 20 lines + tail 10 lines + file reference. Falls back to truncation if disk write fails.
+- **System prompt guidance**: RULES section instructs the LLM on when to use `grep_pattern` (targeted extraction), `output_file` (save for later), and to prefer dedicated tools over raw commands.
 
 ## Plan Mode Enforcement
 
