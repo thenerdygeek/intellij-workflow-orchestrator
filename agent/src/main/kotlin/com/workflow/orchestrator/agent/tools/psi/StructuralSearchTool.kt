@@ -1,17 +1,11 @@
 package com.workflow.orchestrator.agent.tools.psi
 
 import com.intellij.openapi.application.ReadAction
-import com.intellij.openapi.fileTypes.LanguageFileType
 import com.intellij.openapi.project.Project
-import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.search.GlobalSearchScope
-import com.intellij.structuralsearch.MalformedPatternException
-import com.intellij.structuralsearch.MatchOptions
-import com.intellij.structuralsearch.Matcher
-import com.intellij.structuralsearch.UnsupportedPatternException
-import com.intellij.structuralsearch.plugin.util.CollectingMatchResultSink
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
+import com.workflow.orchestrator.agent.ide.LanguageProviderRegistry
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
@@ -20,7 +14,9 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
 
-class StructuralSearchTool : AgentTool {
+class StructuralSearchTool(
+    private val registry: LanguageProviderRegistry
+) : AgentTool {
     override val name = "structural_search"
     override val description = "Search for code patterns using structural search syntax. " +
         "More powerful than regex — matches code structure semantically. " +
@@ -63,7 +59,6 @@ class StructuralSearchTool : AgentTool {
             )
         }
 
-        val fileTypeName = params["file_type"]?.jsonPrimitive?.content ?: "java"
         val scopeName = params["scope"]?.jsonPrimitive?.content ?: "project"
         val maxResults = try {
             params["max_results"]?.jsonPrimitive?.int ?: 20
@@ -71,24 +66,40 @@ class StructuralSearchTool : AgentTool {
 
         if (PsiToolUtils.isDumb(project)) return PsiToolUtils.dumbModeError()
 
-        val fileType = resolveFileType(fileTypeName)
+        // Resolve provider (structural search is project-wide, use language ID)
+        val provider = registry.forLanguageId("JAVA") ?: registry.forLanguageId("kotlin")
             ?: return ToolResult(
-                "Error: unsupported file_type '$fileTypeName'. Use 'java' or 'kotlin'.",
-                "Error: bad file_type", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
+                "Code intelligence not available — no language provider registered",
+                "Error: no provider",
+                ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
             )
 
         val content = try {
-            performSearch(project, pattern, fileType, scopeName, maxResults)
-        } catch (e: MalformedPatternException) {
-            return ToolResult(
-                "Error: malformed pattern — ${e.message}",
-                "Error: malformed pattern", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
-            )
-        } catch (e: UnsupportedPatternException) {
-            return ToolResult(
-                "Error: unsupported pattern — ${e.message}",
-                "Error: unsupported pattern", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
-            )
+            val results = ReadAction.nonBlocking<List<com.workflow.orchestrator.agent.ide.StructuralMatchInfo>?> {
+                val scope = resolveScope(project, scopeName)
+                provider.structuralSearch(project, pattern, scope)
+            }.inSmartMode(project).executeSynchronously()
+
+            if (results == null) {
+                "Error: structural search failed — provider returned null"
+            } else if (results.isEmpty()) {
+                "No matches found for pattern: $pattern"
+            } else {
+                val shown = results.take(maxResults)
+                val sb = StringBuilder()
+                sb.appendLine("Found ${results.size} match${if (results.size != 1) "es" else ""} for pattern: $pattern")
+                sb.appendLine()
+                shown.forEachIndexed { index, match ->
+                    sb.appendLine("${index + 1}. ${match.filePath}:${match.line}")
+                    sb.appendLine("   ${match.matchedText.take(100)}")
+                    if (index < shown.size - 1) sb.appendLine()
+                }
+                if (results.size > maxResults) {
+                    sb.appendLine("\n... (${results.size - maxResults} more)")
+                }
+                sb.toString().trimEnd()
+            }
         } catch (e: Exception) {
             return ToolResult(
                 "Error: structural search failed — ${e.message}",
@@ -105,73 +116,6 @@ class StructuralSearchTool : AgentTool {
         )
     }
 
-    private fun resolveFileType(name: String): LanguageFileType? {
-        return when (name.lowercase()) {
-            "java" -> com.intellij.ide.highlighter.JavaFileType.INSTANCE
-            "kotlin", "kt" -> {
-                try {
-                    Class.forName("org.jetbrains.kotlin.idea.KotlinFileType")
-                        .getField("INSTANCE")
-                        .get(null) as LanguageFileType
-                } catch (_: Exception) {
-                    null
-                }
-            }
-            else -> null
-        }
-    }
-
-    private suspend fun performSearch(
-        project: Project,
-        pattern: String,
-        fileType: LanguageFileType,
-        scopeName: String,
-        maxResults: Int
-    ): String {
-        val results = ReadAction.nonBlocking<List<MatchInfo>> {
-            val matchOptions = MatchOptions().apply {
-                setSearchPattern(pattern)
-                setFileType(fileType)
-                setRecursiveSearch(true)
-                scope = resolveScope(project, scopeName)
-            }
-
-            val sink = CollectingMatchResultSink()
-            val matcher = Matcher(project, matchOptions)
-            matcher.findMatches(sink)
-
-            sink.matches.take(maxResults).mapNotNull { result ->
-                val match = result.match ?: return@mapNotNull null
-                val psiFile = match.containingFile ?: return@mapNotNull null
-                val virtualFile = psiFile.virtualFile ?: return@mapNotNull null
-                val document = PsiDocumentManager.getInstance(project).getDocument(psiFile)
-                val lineNumber = document?.getLineNumber(match.textOffset)?.plus(1)
-                val relativePath = PsiToolUtils.relativePath(project, virtualFile.path)
-                val matchedText = result.matchImage ?: match.text
-
-                MatchInfo(
-                    filePath = relativePath,
-                    line = lineNumber ?: 0,
-                    matchedText = matchedText.take(100)
-                )
-            }
-        }.inSmartMode(project).executeSynchronously()
-
-        if (results.isEmpty()) {
-            return "No matches found for pattern: $pattern"
-        }
-
-        val sb = StringBuilder()
-        sb.appendLine("Found ${results.size} match${if (results.size != 1) "es" else ""} for pattern: $pattern")
-        sb.appendLine()
-        results.forEachIndexed { index, match ->
-            sb.appendLine("${index + 1}. ${match.filePath}:${match.line}")
-            sb.appendLine("   ${match.matchedText}")
-            if (index < results.size - 1) sb.appendLine()
-        }
-        return sb.toString().trimEnd()
-    }
-
     private fun resolveScope(project: Project, scopeName: String): GlobalSearchScope {
         if (scopeName == "project" || scopeName.isBlank()) {
             return GlobalSearchScope.projectScope(project)
@@ -186,10 +130,4 @@ class StructuralSearchTool : AgentTool {
             GlobalSearchScope.projectScope(project)
         }
     }
-
-    private data class MatchInfo(
-        val filePath: String,
-        val line: Int,
-        val matchedText: String
-    )
 }

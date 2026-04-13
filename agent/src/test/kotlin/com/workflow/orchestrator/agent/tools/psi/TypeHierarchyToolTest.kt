@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools.psi
 
+import com.workflow.orchestrator.agent.ide.LanguageProviderRegistry
 import com.workflow.orchestrator.agent.tools.WorkerType
 import io.mockk.*
 import kotlinx.coroutines.test.runTest
@@ -8,9 +9,11 @@ import org.junit.jupiter.api.Test
 
 class TypeHierarchyToolTest {
 
+    private val registry = LanguageProviderRegistry()
+
     @Test
     fun `tool metadata is correct`() {
-        val tool = TypeHierarchyTool()
+        val tool = TypeHierarchyTool(registry)
         assertEquals("type_hierarchy", tool.name)
         assertTrue(tool.parameters.required.contains("class_name"))
         assertTrue(tool.parameters.properties.containsKey("class_name"))
@@ -18,13 +21,13 @@ class TypeHierarchyToolTest {
 
     @Test
     fun `allowedWorkers includes ANALYZER and REVIEWER`() {
-        val tool = TypeHierarchyTool()
+        val tool = TypeHierarchyTool(registry)
         assertEquals(setOf(WorkerType.ANALYZER, WorkerType.REVIEWER), tool.allowedWorkers)
     }
 
     @Test
     fun `toToolDefinition produces valid schema`() {
-        val tool = TypeHierarchyTool()
+        val tool = TypeHierarchyTool(registry)
         val def = tool.toToolDefinition()
         assertEquals("function", def.type)
         assertEquals("type_hierarchy", def.function.name)
@@ -33,7 +36,7 @@ class TypeHierarchyToolTest {
 
     @Test
     fun `execute returns dumbModeError when indexing`() = runTest {
-        val tool = TypeHierarchyTool()
+        val tool = TypeHierarchyTool(registry)
         val project = mockk<com.intellij.openapi.project.Project> {
             every { basePath } returns "/tmp"
         }
@@ -53,7 +56,7 @@ class TypeHierarchyToolTest {
 
     @Test
     fun `execute returns error when class_name is missing`() = runTest {
-        val tool = TypeHierarchyTool()
+        val tool = TypeHierarchyTool(registry)
         val project = mockk<com.intellij.openapi.project.Project> {
             every { basePath } returns "/tmp"
         }

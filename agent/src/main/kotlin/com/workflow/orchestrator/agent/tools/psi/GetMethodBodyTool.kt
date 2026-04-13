@@ -6,6 +6,7 @@ import com.intellij.openapi.util.TextRange
 import com.intellij.psi.PsiDocumentManager
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
+import com.workflow.orchestrator.agent.ide.LanguageProviderRegistry
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
@@ -13,7 +14,9 @@ import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-class GetMethodBodyTool : AgentTool {
+class GetMethodBodyTool(
+    private val registry: LanguageProviderRegistry
+) : AgentTool {
     override val name = "get_method_body"
     override val description =
         "Get the full source code of a specific method including annotations, signature, and body. " +
@@ -50,8 +53,18 @@ class GetMethodBodyTool : AgentTool {
             )
         val contextLines = (params["context_lines"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0).coerceIn(0, 5)
 
+        // Resolve provider (symbol-based — not file-based, so use language ID)
+        val provider = registry.forLanguageId("JAVA") ?: registry.forLanguageId("kotlin")
+            ?: return ToolResult(
+                "Code intelligence not available — no language provider registered",
+                "Error: no provider",
+                ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+
         val content = ReadAction.nonBlocking<String> {
-            val psiClass = PsiToolUtils.findClassAnywhere(project, className)
+            // Find the class via provider
+            val psiClass = provider.findSymbol(project, className) as? com.intellij.psi.PsiClass
                 ?: return@nonBlocking "Error: Class '$className' not found in project. " +
                         "Check the class name spelling or provide the fully qualified name."
 
@@ -84,7 +97,6 @@ class GetMethodBodyTool : AgentTool {
                 ""
             }
 
-            val documentManager = PsiDocumentManager.getInstance(project)
             val overloadsToShow = methods.take(3)
             val hiddenCount = methods.size - overloadsToShow.size
 
@@ -96,38 +108,20 @@ class GetMethodBodyTool : AgentTool {
                     sb.appendLine("(overload #${index + 1})")
                 }
 
-                val containingFile = method.containingFile
-                val document = containingFile?.let { documentManager.getDocument(it) }
-                val filePath = containingFile?.virtualFile?.path
-                    ?.let { PsiToolUtils.relativePath(project, it) } ?: "unknown"
-
-                if (document == null) {
+                // Delegate body extraction to the provider
+                val bodyResult = provider.getBody(method, contextLines)
+                if (bodyResult == null) {
+                    val filePath = method.containingFile?.virtualFile?.path
+                        ?.let { PsiToolUtils.relativePath(project, it) } ?: "unknown"
                     sb.appendLine("// Source unavailable for ${method.name} in $filePath")
                     if (index < overloadsToShow.size - 1) sb.appendLine("---")
                     return@forEachIndexed
                 }
 
-                // Determine the start of annotations (annotations are siblings before the method in PSI,
-                // but PsiMethod.textRange already includes its own modifier list which contains annotations).
-                val methodStartOffset = method.textRange.startOffset
-                val methodEndOffset = method.textRange.endOffset
-
-                val methodStartLine = document.getLineNumber(methodStartOffset)
-                val methodEndLine = document.getLineNumber(methodEndOffset)
-
-                // Apply context clamped to document bounds
-                val rangeStart = maxOf(0, methodStartLine - contextLines)
-                val rangeEnd = minOf(document.lineCount - 1, methodEndLine + contextLines)
-
+                val filePath = method.containingFile?.virtualFile?.path
+                    ?.let { PsiToolUtils.relativePath(project, it) } ?: "unknown"
                 sb.appendLine("// $filePath")
-
-                for (lineIdx in rangeStart..rangeEnd) {
-                    val lineStartOffset = document.getLineStartOffset(lineIdx)
-                    val lineEndOffset = document.getLineEndOffset(lineIdx)
-                    val lineText = document.getText(TextRange(lineStartOffset, lineEndOffset))
-                    val lineNum = lineIdx + 1
-                    sb.appendLine("$lineNum: $lineText")
-                }
+                sb.appendLine(bodyResult.source)
 
                 if (index < overloadsToShow.size - 1) {
                     sb.appendLine("---")

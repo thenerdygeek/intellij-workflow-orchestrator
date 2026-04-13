@@ -4,9 +4,9 @@ import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiClass
 import com.intellij.psi.PsiManager
-import com.intellij.testIntegration.TestFinder
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
+import com.workflow.orchestrator.agent.ide.LanguageProviderRegistry
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
@@ -15,7 +15,9 @@ import com.workflow.orchestrator.agent.tools.builtin.PathValidator
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-class TestFinderTool : AgentTool {
+class TestFinderTool(
+    private val registry: LanguageProviderRegistry
+) : AgentTool {
     override val name = "test_finder"
     override val description = "Find the test class for a source class, or the source class for a test class. " +
         "Uses IntelliJ's test framework integration (JUnit4, JUnit5, TestNG). " +
@@ -53,6 +55,9 @@ class TestFinderTool : AgentTool {
             val psiFile = PsiManager.getInstance(project).findFile(virtualFile)
                 ?: return@nonBlocking "Error: could not parse file: $filePath"
 
+            val provider = registry.forFile(psiFile)
+                ?: return@nonBlocking "Code intelligence not available for ${psiFile.language.displayName}"
+
             // Find the target class in the file
             val targetClass = if (className != null) {
                 findClassByName(psiFile, className)
@@ -62,91 +67,36 @@ class TestFinderTool : AgentTool {
                     ?: return@nonBlocking "Error: no class found in $filePath"
             }
 
-            val finders = TestFinder.EP_NAME.extensionList
+            // Delegate test finding to the provider
+            val result = provider.findRelatedTests(targetClass)
 
-            if (finders.isEmpty()) {
-                return@nonBlocking "Error: no TestFinder extensions registered (test framework plugin may not be installed)"
-            }
-
-            // Determine if the class is a test
-            val isTest = finders.any { finder ->
-                try {
-                    finder.isTest(targetClass)
-                } catch (_: Exception) {
-                    false
-                }
-            }
-
-            val qualifiedName = targetClass.qualifiedName ?: targetClass.name ?: "Unknown"
+            val qualifiedName = (targetClass as? PsiClass)?.qualifiedName
+                ?: (targetClass as? PsiClass)?.name ?: "Unknown"
             val relativePath = PsiToolUtils.relativePath(project, targetClass.containingFile?.virtualFile?.path ?: filePath)
 
             val sb = StringBuilder()
             sb.appendLine("Source class: $qualifiedName ($relativePath)")
-            sb.appendLine("Is test: $isTest")
+            sb.appendLine("Is test: ${result.isTestElement}")
             sb.appendLine()
 
-            if (isTest) {
-                // Find source classes for this test
-                val sourceClasses = mutableListOf<PsiClass>()
-                for (finder in finders) {
-                    try {
-                        val classes = finder.findClassesForTest(targetClass)
-                        for (element in classes) {
-                            if (element is PsiClass && element !in sourceClasses) {
-                                sourceClasses.add(element)
-                            }
-                        }
-                    } catch (_: Exception) {
-                        // Skip finders that fail
-                    }
-                }
-
-                if (sourceClasses.isEmpty()) {
+            if (result.relatedElements.isEmpty()) {
+                if (result.isTestElement) {
                     sb.appendLine("No source classes found for this test.")
                 } else {
-                    sb.appendLine("Found ${sourceClasses.size} source class${if (sourceClasses.size > 1) "es" else ""}:")
-                    sourceClasses.forEachIndexed { index, psiClass ->
-                        val name = psiClass.qualifiedName ?: psiClass.name ?: "Unknown"
-                        val path = psiClass.containingFile?.virtualFile?.path?.let {
-                            PsiToolUtils.relativePath(project, it)
-                        } ?: "unknown"
-                        sb.appendLine("  ${index + 1}. $name ($path)")
-                    }
+                    sb.appendLine("No test classes found for this source class.")
                 }
             } else {
-                // Find test classes for this source
-                val testClasses = mutableListOf<PsiClass>()
-                for (finder in finders) {
-                    try {
-                        val tests = finder.findTestsForClass(targetClass)
-                        for (element in tests) {
-                            if (element is PsiClass && element !in testClasses) {
-                                testClasses.add(element)
-                            }
-                        }
-                    } catch (_: Exception) {
-                        // Skip finders that fail
-                    }
-                }
-
-                if (testClasses.isEmpty()) {
-                    sb.appendLine("No test classes found for this source class.")
-                } else {
-                    sb.appendLine("Found ${testClasses.size} test class${if (testClasses.size > 1) "es" else ""}:")
-                    testClasses.forEachIndexed { index, psiClass ->
-                        val name = psiClass.qualifiedName ?: psiClass.name ?: "Unknown"
-                        val path = psiClass.containingFile?.virtualFile?.path?.let {
-                            PsiToolUtils.relativePath(project, it)
-                        } ?: "unknown"
-                        sb.appendLine("  ${index + 1}. $name ($path)")
-                    }
+                val label = if (result.isTestElement) "source" else "test"
+                sb.appendLine("Found ${result.relatedElements.size} $label class${if (result.relatedElements.size > 1) "es" else ""}:")
+                result.relatedElements.forEachIndexed { index, info ->
+                    sb.appendLine("  ${index + 1}. ${info.name} (${info.filePath})")
                 }
             }
 
             sb.toString().trimEnd()
         }.inSmartMode(project).executeSynchronously()
 
-        val isError = content.startsWith("Error:")
+        val isError = content.startsWith("Error:") || content.startsWith("Code intelligence not available")
         return ToolResult(
             content = content,
             summary = if (isError) content else "Test finder results for $filePath",
@@ -155,7 +105,7 @@ class TestFinderTool : AgentTool {
         )
     }
 
-    private fun findClassByName(psiFile: com.intellij.psi.PsiFile, className: String): PsiClass? {
+    private fun findClassByName(psiFile: com.intellij.psi.PsiFile, className: String): com.intellij.psi.PsiElement? {
         val classes = mutableListOf<PsiClass>()
         psiFile.accept(object : com.intellij.psi.PsiRecursiveElementVisitor() {
             override fun visitElement(element: com.intellij.psi.PsiElement) {
@@ -169,7 +119,7 @@ class TestFinderTool : AgentTool {
         return classes.firstOrNull { it.name == className || it.qualifiedName == className }
     }
 
-    private fun findFirstClass(psiFile: com.intellij.psi.PsiFile): PsiClass? {
+    private fun findFirstClass(psiFile: com.intellij.psi.PsiFile): com.intellij.psi.PsiElement? {
         var found: PsiClass? = null
         psiFile.accept(object : com.intellij.psi.PsiRecursiveElementVisitor() {
             override fun visitElement(element: com.intellij.psi.PsiElement) {

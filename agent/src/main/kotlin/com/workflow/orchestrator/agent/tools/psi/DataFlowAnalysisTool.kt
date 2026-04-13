@@ -3,10 +3,11 @@ package com.workflow.orchestrator.agent.tools.psi
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.project.Project
-import com.intellij.psi.*
-import com.intellij.psi.util.PsiTreeUtil
+import com.intellij.psi.PsiDocumentManager
+import com.intellij.psi.PsiManager
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
+import com.workflow.orchestrator.agent.ide.LanguageProviderRegistry
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
@@ -16,7 +17,9 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
 
-class DataFlowAnalysisTool : AgentTool {
+class DataFlowAnalysisTool(
+    private val registry: LanguageProviderRegistry
+) : AgentTool {
     override val name = "dataflow_analysis"
     override val description = "Analyze nullability, value ranges, and constant values of an expression in Java code. " +
         "Returns whether a variable can be null, its possible value range, and constant value if determinable. " +
@@ -77,9 +80,8 @@ class DataFlowAnalysisTool : AgentTool {
             val psiFile = PsiManager.getInstance(project).findFile(virtualFile)
                 ?: return@nonBlocking "Error: could not parse file: $filePath"
 
-            if (psiFile !is PsiJavaFile) {
-                return@nonBlocking "Error: not a Java file: $filePath"
-            }
+            val provider = registry.forFile(psiFile)
+                ?: return@nonBlocking "Code intelligence not available for ${psiFile.language.displayName}"
 
             val document = PsiDocumentManager.getInstance(project).getDocument(psiFile)
 
@@ -97,139 +99,27 @@ class DataFlowAnalysisTool : AgentTool {
             val leafElement = psiFile.findElementAt(offset)
                 ?: return@nonBlocking "No element found at this position"
 
-            // Find the nearest PsiExpression
-            val expression = PsiTreeUtil.getParentOfType(leafElement, PsiExpression::class.java, false)
-                ?: return@nonBlocking "No expression found at this position. DataFlow analysis requires an expression inside a method body."
-
             val fileName = virtualFile.name
             val lineNumber = document?.getLineNumber(offset)?.plus(1) ?: 0
 
-            analyzeDataFlow(expression, fileName, lineNumber)
+            // Delegate dataflow analysis to the language provider
+            val result = provider.analyzeDataflow(leafElement)
+                ?: return@nonBlocking "No expression found at this position. DataFlow analysis requires an expression inside a method body."
+
+            val sb = StringBuilder()
+            sb.appendLine("DataFlow analysis at $fileName:$lineNumber")
+            sb.appendLine("  Nullability: ${result.nullability}")
+            sb.appendLine("  Range: ${result.valueRange ?: "(not applicable)"}")
+            sb.appendLine("  Constant value: ${result.constantValue ?: "(none)"}")
+            sb.toString().trimEnd()
         }.inSmartMode(project).executeSynchronously()
 
-        val isError = content.startsWith("Error:")
+        val isError = content.startsWith("Error:") || content.startsWith("Code intelligence not available")
         return ToolResult(
             content = content,
             summary = if (isError) content else "DataFlow analyzed at $filePath",
             tokenEstimate = TokenEstimator.estimate(content),
             isError = isError
-        )
-    }
-
-    private fun analyzeDataFlow(expression: PsiExpression, fileName: String, lineNumber: Int): String {
-        val sb = StringBuilder()
-        sb.appendLine("DataFlow analysis at $fileName:$lineNumber")
-        sb.appendLine("  Expression: ${expression.text.take(80)}")
-
-        // Type
-        val exprType = expression.type
-        sb.appendLine("  Type: ${exprType?.presentableText ?: "Unknown (analysis inconclusive)"}")
-
-        // DfType via CommonDataflow
-        try {
-            val commonDataflowClass = Class.forName("com.intellij.codeInspection.dataFlow.CommonDataflow")
-
-            // Get DfType
-            val getDfTypeMethod = commonDataflowClass.getMethod("getDfType", PsiExpression::class.java)
-            val dfType = getDfTypeMethod.invoke(null, expression)
-
-            if (dfType != null) {
-                val dfTypeClass = Class.forName("com.intellij.codeInspection.dataFlow.types.DfType")
-                val topField = dfTypeClass.getField("TOP")
-                val topValue = topField.get(null)
-
-                // Nullability
-                val nullability = resolveNullability(dfType, topValue, exprType)
-                sb.appendLine("  Nullability: $nullability")
-            } else {
-                sb.appendLine("  Nullability: UNKNOWN (no dataflow result)")
-            }
-
-            // Range via getExpressionRange
-            val rangeText = resolveRange(commonDataflowClass, expression, exprType)
-            sb.appendLine("  Range: $rangeText")
-
-            // Constant value via computeValue
-            val constantText = resolveConstant(commonDataflowClass, expression)
-            sb.appendLine("  Constant value: $constantText")
-
-        } catch (_: ClassNotFoundException) {
-            sb.appendLine("  Nullability: UNKNOWN (DFA API not available)")
-            sb.appendLine("  Range: (not available)")
-            sb.appendLine("  Constant value: (not available)")
-        } catch (_: Exception) {
-            sb.appendLine("  Nullability: UNKNOWN (analysis error)")
-            sb.appendLine("  Range: (analysis error)")
-            sb.appendLine("  Constant value: (analysis error)")
-        }
-
-        return sb.toString().trimEnd()
-    }
-
-    private fun resolveNullability(dfType: Any, topValue: Any?, exprType: PsiType?): String {
-        // Check if dfType is TOP (unanalyzable)
-        if (dfType == topValue) {
-            return "Unknown (analysis inconclusive)"
-        }
-
-        return try {
-            val dfaNullabilityClass = Class.forName("com.intellij.codeInspection.dataFlow.DfaNullability")
-            val fromDfTypeMethod = dfaNullabilityClass.getMethod("fromDfType", Class.forName("com.intellij.codeInspection.dataFlow.types.DfType"))
-            val nullability = fromDfTypeMethod.invoke(null, dfType)
-            val nullabilityName = nullability.toString()
-
-            when {
-                nullabilityName.contains("NULLABLE", ignoreCase = true) -> "NULLABLE"
-                nullabilityName.contains("NOT_NULL", ignoreCase = true) -> "NOT_NULL"
-                nullabilityName.contains("FLUSHED", ignoreCase = true) -> "UNKNOWN (flushed by method call)"
-                else -> "UNKNOWN"
-            }
-        } catch (_: Exception) {
-            // Fallback: check if primitive (always NOT_NULL)
-            if (exprType is PsiPrimitiveType) "NOT_NULL" else "UNKNOWN"
-        }
-    }
-
-    private fun resolveRange(commonDataflowClass: Class<*>, expression: PsiExpression, exprType: PsiType?): String {
-        // Only applicable for numeric types
-        if (exprType == null || !isNumericType(exprType)) {
-            return "(not applicable)"
-        }
-
-        return try {
-            val getRangeMethod = commonDataflowClass.getMethod("getExpressionRange", PsiExpression::class.java)
-            val range = getRangeMethod.invoke(null, expression)
-            if (range != null) {
-                range.toString()
-            } else {
-                "(could not determine)"
-            }
-        } catch (_: Exception) {
-            "(not available)"
-        }
-    }
-
-    private fun resolveConstant(commonDataflowClass: Class<*>, expression: PsiExpression): String {
-        return try {
-            val computeValueMethod = commonDataflowClass.getMethod("computeValue", PsiExpression::class.java)
-            val value = computeValueMethod.invoke(null, expression)
-            if (value != null) {
-                value.toString()
-            } else {
-                "(none)"
-            }
-        } catch (_: Exception) {
-            "(not available)"
-        }
-    }
-
-    private fun isNumericType(type: PsiType): Boolean {
-        val text = type.canonicalText
-        return text in setOf(
-            "int", "long", "short", "byte", "float", "double", "char",
-            "java.lang.Integer", "java.lang.Long", "java.lang.Short",
-            "java.lang.Byte", "java.lang.Float", "java.lang.Double",
-            "java.lang.Character"
         )
     }
 

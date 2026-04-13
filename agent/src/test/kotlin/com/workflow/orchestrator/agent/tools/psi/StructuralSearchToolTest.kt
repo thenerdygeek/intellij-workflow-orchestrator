@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools.psi
 
+import com.workflow.orchestrator.agent.ide.LanguageProviderRegistry
 import com.workflow.orchestrator.agent.tools.WorkerType
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.*
@@ -8,7 +9,8 @@ import org.junit.jupiter.api.Test
 
 class StructuralSearchToolTest {
 
-    private val tool = StructuralSearchTool()
+    private val registry = LanguageProviderRegistry()
+    private val tool = StructuralSearchTool(registry)
 
     @Test
     fun `tool metadata is correct`() {
@@ -64,7 +66,7 @@ class StructuralSearchToolTest {
 
     @Test
     fun `tool can be instantiated`() {
-        val instance = StructuralSearchTool()
+        val instance = StructuralSearchTool(registry)
         assertNotNull(instance)
         assertEquals("structural_search", instance.name)
     }
