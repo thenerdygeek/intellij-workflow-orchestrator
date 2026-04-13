@@ -10,7 +10,6 @@ import com.workflow.orchestrator.agent.tools.ToolResult
 import git4idea.commands.Git
 import git4idea.commands.GitCommand
 import git4idea.commands.GitLineHandler
-import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
@@ -25,7 +24,8 @@ class GitBranchesTool : AgentTool {
     override val parameters = FunctionParameters(
         properties = mapOf(
             "show_remote" to ParameterProperty(type = "boolean", description = "Show remote branches. Default: true."),
-            "show_tags" to ParameterProperty(type = "boolean", description = "Show tags. Default: false.")
+            "show_tags" to ParameterProperty(type = "boolean", description = "Show tags. Default: false."),
+            "repo" to ParameterProperty(type = "string", description = "Optional: git root path (relative to project, absolute, or directory name) to target in multi-root projects.")
         ),
         required = emptyList()
     )
@@ -39,10 +39,10 @@ class GitBranchesTool : AgentTool {
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val showRemote = params["show_remote"]?.jsonPrimitive?.boolean ?: true
         val showTags = params["show_tags"]?.jsonPrimitive?.boolean ?: false
+        val repoParam = params["repo"]?.jsonPrimitive?.content
 
         return try {
-            val repoManager = GitRepositoryManager.getInstance(project)
-            val repo = repoManager.repositories.firstOrNull()
+            val repo = GitRepoResolver.resolve(project, repo = repoParam)
                 ?: return ToolResult("No git repository found in project.", "No git repo", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
             val currentBranch = repo.currentBranch?.name ?: "DETACHED HEAD"

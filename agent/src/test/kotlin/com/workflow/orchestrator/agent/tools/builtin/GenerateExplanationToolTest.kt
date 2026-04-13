@@ -41,12 +41,13 @@ class GenerateExplanationToolTest {
     }
 
     @Test
-    fun `all three parameters are defined`() {
+    fun `all four parameters are defined`() {
         val props = tool.parameters.properties
         assertTrue("title" in props)
         assertTrue("from_ref" in props)
         assertTrue("to_ref" in props)
-        assertEquals(3, props.size)
+        assertTrue("repo" in props)
+        assertEquals(4, props.size)
     }
 
     @Test

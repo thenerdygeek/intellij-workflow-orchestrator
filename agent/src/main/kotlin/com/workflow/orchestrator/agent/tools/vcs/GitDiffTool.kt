@@ -11,7 +11,6 @@ import com.workflow.orchestrator.agent.tools.ToolResult
 import git4idea.commands.Git
 import git4idea.commands.GitCommand
 import git4idea.commands.GitLineHandler
-import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
@@ -27,7 +26,8 @@ class GitDiffTool : AgentTool {
         properties = mapOf(
             "path" to ParameterProperty(type = "string", description = "Optional: file or directory path (relative to project root) to limit diff scope."),
             "staged" to ParameterProperty(type = "boolean", description = "If true, show only staged (cached) changes. Default: false (shows unstaged working tree diff)."),
-            "ref" to ParameterProperty(type = "string", description = "Optional: local ref (branch, tag, or commit SHA) to diff against. Example: 'main', 'HEAD~3'. Remote refs like 'origin/main' are rejected.")
+            "ref" to ParameterProperty(type = "string", description = "Optional: local ref (branch, tag, or commit SHA) to diff against. Example: 'main', 'HEAD~3'. Remote refs like 'origin/main' are rejected."),
+            "repo" to ParameterProperty(type = "string", description = "Optional: git root path (relative to project, absolute, or directory name) to target in multi-root projects. Auto-resolved from 'path' if omitted.")
         ),
         required = emptyList()
     )
@@ -42,6 +42,7 @@ class GitDiffTool : AgentTool {
         val path = params["path"]?.jsonPrimitive?.content
         val staged = params["staged"]?.jsonPrimitive?.boolean ?: false
         val ref = params["ref"]?.jsonPrimitive?.content
+        val repoParam = params["repo"]?.jsonPrimitive?.content
 
         // Safety: reject remote refs
         if (ref != null && REMOTE_REF_PATTERN.containsMatchIn(ref)) {
@@ -55,8 +56,7 @@ class GitDiffTool : AgentTool {
 
         return try {
             withContext(Dispatchers.IO) {
-                val repoManager = GitRepositoryManager.getInstance(project)
-                val repo = repoManager.repositories.firstOrNull()
+                val repo = GitRepoResolver.resolve(project, repo = repoParam, path = path)
                     ?: return@withContext ToolResult("No git repository found in project.", "No git repo", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
                 val handler = GitLineHandler(project, repo.root, GitCommand.DIFF)

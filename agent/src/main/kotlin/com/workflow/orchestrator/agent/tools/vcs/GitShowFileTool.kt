@@ -7,7 +7,6 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
-import git4idea.repo.GitRepositoryManager
 import git4idea.util.GitFileUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -22,7 +21,8 @@ class GitShowFileTool : AgentTool {
     override val parameters = FunctionParameters(
         properties = mapOf(
             "path" to ParameterProperty(type = "string", description = "File path relative to project root."),
-            "ref" to ParameterProperty(type = "string", description = "Git ref: branch name, tag, commit SHA, or HEAD~N.")
+            "ref" to ParameterProperty(type = "string", description = "Git ref: branch name, tag, commit SHA, or HEAD~N."),
+            "repo" to ParameterProperty(type = "string", description = "Optional: git root path (relative to project, absolute, or directory name) to target in multi-root projects. Auto-resolved from 'path' if omitted.")
         ),
         required = listOf("path", "ref")
     )
@@ -39,6 +39,7 @@ class GitShowFileTool : AgentTool {
             ?: return ToolResult("Error: 'path' parameter is required.", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         val ref = params["ref"]?.jsonPrimitive?.content
             ?: return ToolResult("Error: 'ref' parameter is required.", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+        val repoParam = params["repo"]?.jsonPrimitive?.content
 
         // Safety: reject remote refs
         if (REMOTE_REF_PATTERN.containsMatchIn(ref)) {
@@ -52,8 +53,7 @@ class GitShowFileTool : AgentTool {
 
         return try {
             withContext(Dispatchers.IO) {
-                val repoManager = GitRepositoryManager.getInstance(project)
-                val repo = repoManager.repositories.firstOrNull()
+                val repo = GitRepoResolver.resolve(project, repo = repoParam, path = path)
                     ?: return@withContext ToolResult("No git repository found in project.", "No git repo", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
                 val bytes = GitFileUtils.getFileContent(project, repo.root, ref, path)

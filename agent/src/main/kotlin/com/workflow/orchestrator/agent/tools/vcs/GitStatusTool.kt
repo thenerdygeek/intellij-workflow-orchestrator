@@ -4,23 +4,29 @@ import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
+import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
-import git4idea.repo.GitRepositoryManager
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 class GitStatusTool : AgentTool {
     override val name = "git_status"
     override val description = "Get the current git working tree status including branch name, remote tracking info, staged and unstaged changed files, and untracked files. Use this before making commits to see what has changed, to understand the current workspace state, or to check for uncommitted changes before switching branches. Do NOT use this for viewing actual content of changes (use git_diff instead) or for commit history (use git_log instead). Output is truncated to 50 changed files and 30 untracked files for large projects, so some entries may be omitted in very active repositories."
-    override val parameters = FunctionParameters(properties = emptyMap(), required = emptyList())
+    override val parameters = FunctionParameters(
+        properties = mapOf(
+            "repo" to ParameterProperty(type = "string", description = "Optional: git root path (relative to project, absolute, or directory name) to target in multi-root projects. Omit for single-repo projects.")
+        ),
+        required = emptyList()
+    )
     override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.REVIEWER, WorkerType.ANALYZER)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         return try {
-            val repoManager = GitRepositoryManager.getInstance(project)
-            val repo = repoManager.repositories.firstOrNull()
+            val repoParam = params["repo"]?.jsonPrimitive?.content
+            val repo = GitRepoResolver.resolve(project, repo = repoParam)
                 ?: return ToolResult("No git repository found in project.", "No git repo", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
             val branch = repo.currentBranch?.name ?: "DETACHED HEAD"
@@ -28,10 +34,18 @@ class GitStatusTool : AgentTool {
                 repo.getBranchTrackInfo(it.name)?.remoteBranch?.nameForRemoteOperations
             } ?: "none"
 
+            val repoRootPath = repo.root.path
+
             val content = ReadAction.compute<String, Exception> {
                 val clm = ChangeListManager.getInstance(project)
-                val changes = clm.allChanges
-                val untracked = clm.modifiedWithoutEditing
+                // Filter changes to this repo root in multi-root projects
+                val changes = clm.allChanges.filter { change ->
+                    val filePath = change.virtualFile?.path
+                        ?: change.afterRevision?.file?.path
+                        ?: change.beforeRevision?.file?.path
+                    filePath != null && filePath.startsWith(repoRootPath)
+                }
+                val untracked = clm.modifiedWithoutEditing.filter { it.path.startsWith(repoRootPath) }
 
                 buildString {
                     appendLine("Branch: $branch")

@@ -11,7 +11,6 @@ import com.workflow.orchestrator.agent.tools.ToolResult
 import git4idea.commands.Git
 import git4idea.commands.GitCommand
 import git4idea.commands.GitLineHandler
-import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
@@ -25,7 +24,8 @@ class GitFileHistoryTool : AgentTool {
     override val parameters = FunctionParameters(
         properties = mapOf(
             "path" to ParameterProperty(type = "string", description = "File path relative to project root."),
-            "max_count" to ParameterProperty(type = "integer", description = "Maximum number of commits to show. Default: 15, max: 30.")
+            "max_count" to ParameterProperty(type = "integer", description = "Maximum number of commits to show. Default: 15, max: 30."),
+            "repo" to ParameterProperty(type = "string", description = "Optional: git root path (relative to project, absolute, or directory name) to target in multi-root projects. Auto-resolved from 'path' if omitted.")
         ),
         required = listOf("path")
     )
@@ -42,11 +42,11 @@ class GitFileHistoryTool : AgentTool {
             ?: return ToolResult("Error: 'path' parameter is required.", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         val maxCount = (params["max_count"]?.jsonPrimitive?.int ?: DEFAULT_MAX_COUNT)
             .coerceIn(1, ABSOLUTE_MAX_COUNT)
+        val repoParam = params["repo"]?.jsonPrimitive?.content
 
         return try {
             withContext(Dispatchers.IO) {
-                val repoManager = GitRepositoryManager.getInstance(project)
-                val repo = repoManager.repositories.firstOrNull()
+                val repo = GitRepoResolver.resolve(project, repo = repoParam, path = path)
                     ?: return@withContext ToolResult("No git repository found in project.", "No git repo", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
                 val handler = GitLineHandler(project, repo.root, GitCommand.LOG)
