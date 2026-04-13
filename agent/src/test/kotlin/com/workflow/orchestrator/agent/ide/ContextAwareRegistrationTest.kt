@@ -156,6 +156,46 @@ class ContextAwareRegistrationTest {
         assertTrue(ToolRegistrationFilter.shouldRegisterPythonAdvancedDebugTools(proContext))
     }
 
+    // --- Python debug registration (Phase C5) ---
+
+    @Test
+    fun `debug tools register for PyCharm Community with Python core plugin`() {
+        val context = makeContext(product = IdeProduct.PYCHARM_COMMUNITY, hasPythonCorePlugin = true)
+        val hasDebug = ToolRegistrationFilter.shouldRegisterJavaDebugTools(context) ||
+            ToolRegistrationFilter.shouldRegisterPythonDebugTools(context)
+        assertTrue(hasDebug)
+    }
+
+    @Test
+    fun `debug tools register for PyCharm Professional`() {
+        val context = makeContext(product = IdeProduct.PYCHARM_PROFESSIONAL, hasPythonPlugin = true)
+        val hasDebug = ToolRegistrationFilter.shouldRegisterJavaDebugTools(context) ||
+            ToolRegistrationFilter.shouldRegisterPythonDebugTools(context)
+        assertTrue(hasDebug)
+    }
+
+    @Test
+    fun `debug tools register for IntelliJ with Java plugin`() {
+        val context = makeContext(product = IdeProduct.INTELLIJ_ULTIMATE, hasJavaPlugin = true)
+        val hasDebug = ToolRegistrationFilter.shouldRegisterJavaDebugTools(context) ||
+            ToolRegistrationFilter.shouldRegisterPythonDebugTools(context)
+        assertTrue(hasDebug)
+    }
+
+    @Test
+    fun `debug tools do NOT register for OTHER IDE with no language plugins`() {
+        val context = makeContext(product = IdeProduct.OTHER)
+        val hasDebug = ToolRegistrationFilter.shouldRegisterJavaDebugTools(context) ||
+            ToolRegistrationFilter.shouldRegisterPythonDebugTools(context)
+        assertFalse(hasDebug)
+    }
+
+    @Test
+    fun `shouldRegisterPythonDebugTools returns false for IntelliJ without Python`() {
+        val context = makeContext(product = IdeProduct.INTELLIJ_COMMUNITY, hasJavaPlugin = true)
+        assertFalse(ToolRegistrationFilter.shouldRegisterPythonDebugTools(context))
+    }
+
     private fun makeContext(
         product: IdeProduct = IdeProduct.INTELLIJ_ULTIMATE,
         hasJavaPlugin: Boolean = false,

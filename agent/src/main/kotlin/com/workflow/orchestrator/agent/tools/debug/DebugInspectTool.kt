@@ -648,6 +648,17 @@ Most actions require a suspended session. session_id defaults to active session.
             is SessionResolution.Failed -> return r.toolResult
         }
 
+        // Hot swap relies on the JVM HotSwap protocol (JDWP redefineClasses) which is
+        // Java/Kotlin-only. Python debug processes (PyDebugProcess) do not support it.
+        if (isPythonDebugSession(xSession)) {
+            return ToolResult(
+                "Hot swap is not supported for Python. Restart the debug session to apply changes.",
+                "Hot swap not supported for Python",
+                ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+        }
+
         return try {
             val hotSwapUI = HotSwapUI.getInstance(project)
             val debuggerManager = DebuggerManagerEx.getInstanceEx(project)
@@ -818,6 +829,11 @@ Most actions require a suspended session. session_id defaults to active session.
             is SessionResolution.Failed -> return r.toolResult
         }
 
+        // Drop frame has limited support in Python debugging: Python debug processes do not
+        // expose a JDI VirtualMachine, so canPopFrames() will return false and the operation
+        // will fail gracefully below. The error path already handles this case correctly.
+        // No hard block here — let the existing canPopFrames() check surface the error.
+
         return try {
             controller.executeOnManagerThread(session) { _, vmProxy ->
                 if (!vmProxy.canPopFrames()) {
@@ -890,6 +906,25 @@ Most actions require a suspended session. session_id defaults to active session.
     }
 
     // ── Private helpers ─────────────────────────────────────────────────────
+
+    /**
+     * Returns true when [session] is backed by a Python debug process.
+     *
+     * Uses reflection so the agent module has zero compile-time dependency on the
+     * Python plugin JARs. Python debug processes are named PyDebugProcess (PyCharm)
+     * or have "Py" in their class name — checking the simple name is sufficient
+     * because there is no other XDebugProcess subclass with that prefix.
+     */
+    private fun isPythonDebugSession(session: XDebugSession): Boolean {
+        return try {
+            val processClass = session.debugProcess.javaClass
+            processClass.simpleName.startsWith("Py") ||
+                processClass.name.contains("pydevd", ignoreCase = true) ||
+                processClass.name.contains("python", ignoreCase = true)
+        } catch (_: Exception) {
+            false
+        }
+    }
 
     private fun inferReturnType(returnValue: String?): String {
         if (returnValue == null) return "void"
