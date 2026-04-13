@@ -2,6 +2,8 @@ import type {
   ToolCallStatus,
   StatusType,
   SessionStatus,
+  UiMessage,
+  HistoryItem,
 } from './types';
 import { preloadDiff2Html } from '../components/rich/DiffHtml';
 import { updateChartById } from '../components/rich/chartUtils';
@@ -43,14 +45,14 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     }
   },
   appendUserMessage(text: string) {
-    stores?.getChatStore().addMessage('user', text);
+    stores?.getChatStore().addUserMessage(text);
   },
   appendUserMessageWithMentions(text: string, mentionsJson: string) {
     try {
       const mentions = JSON.parse(mentionsJson);
-      stores?.getChatStore().addMessage('user', text, mentions);
+      stores?.getChatStore().addUserMessage(text, mentions);
     } catch {
-      stores?.getChatStore().addMessage('user', text);
+      stores?.getChatStore().addUserMessage(text);
     }
   },
   finalizeQuestionsAsMessage() {
@@ -129,20 +131,38 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     stores?.getChatStore().updatePlanSummary(summary);
   },
   showQuestions(questionsJson: string) {
-    const parsed = JSON.parse(questionsJson);
-    // Kotlin sends either { questions: [...] } wrapper or bare [...] array
-    const rawQuestions = Array.isArray(parsed) ? parsed : parsed.questions;
-    if (rawQuestions) {
-      // Map Kotlin field names to TS types: question→text, single→single-select
-      const questions = rawQuestions.map((q: any) => ({
-        ...q,
-        text: q.text ?? q.question,  // Kotlin sends 'question', TS expects 'text'
-        type: q.type === 'single' ? 'single-select'
-            : q.type === 'multiple' ? 'multi-select'
-            : q.type,
-      }));
-      stores?.getChatStore().showQuestions(questions);
+    try {
+      const parsed = JSON.parse(questionsJson);
+      // Kotlin sends either { questions: [...] } wrapper or bare [...] array
+      const rawQuestions = Array.isArray(parsed) ? parsed : parsed.questions;
+      if (rawQuestions && rawQuestions.length > 0) {
+        // Map Kotlin field names to TS types: question→text, single→single-select
+        const questions = rawQuestions.map((q: any) => ({
+          ...q,
+          text: q.text ?? q.question,  // Kotlin sends 'question', TS expects 'text'
+          type: q.type === 'single' ? 'single-select'
+              : q.type === 'multiple' ? 'multi-select'
+              : q.type,
+        }));
+        stores?.getChatStore().showQuestions(questions);
+        // Round-trip: confirm successful render back to Kotlin
+        window._reportInteractiveRender?.(JSON.stringify({ type: 'question', status: 'ok', count: questions.length }));
+      } else {
+        // rawQuestions was falsy or empty — extract question text and show as agent message
+        const questionText = parsed?.questions?.[0]?.question ?? parsed?.question ?? questionsJson;
+        stores?.getChatStore().addAgentText(questionText);
+        window._reportInteractiveRender?.(JSON.stringify({ type: 'question', status: 'error', message: 'No questions array — fell back to text' }));
+      }
+    } catch (e) {
+      // JSON parse or mapping failed — show whatever we have as plain text so the user
+      // sees the question instead of a stuck working indicator
+      console.error('[bridge] showQuestions failed:', e);
+      stores?.getChatStore().addAgentText('[Question] ' + (questionsJson ?? '(empty)'));
+      window._reportInteractiveRender?.(JSON.stringify({ type: 'question', status: 'error', message: String(e) }));
     }
+    // Always ensure busy is cleared — the agent is waiting for user input, not processing.
+    stores?.getChatStore().setBusy(false);
+    stores?.getChatStore().setInputLocked(false);
   },
   showQuestion(index: number) {
     stores?.getChatStore().showQuestion(index);
@@ -156,6 +176,12 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   },
   setBusy(busy: boolean) {
     stores?.getChatStore().setBusy(busy);
+  },
+  showResumeBar(sessionId: string) {
+    stores?.getChatStore().setResumeSessionId(sessionId);
+  },
+  hideResumeBar() {
+    stores?.getChatStore().setResumeSessionId(null);
   },
   setSteeringMode(enabled: boolean) {
     stores?.getChatStore().setSteeringMode(enabled);
@@ -352,38 +378,27 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
       const snapshot = JSON.parse(snapshotJson);
       const store = stores?.getChatStore();
       if (!store) return;
-      // Restore messages
+      // Restore messages — snapshot may contain old Message format or new UiMessage format.
+      // Convert all to UiMessage[], then hydrate as a single batch.
       if (snapshot.messages) {
-        for (const msg of snapshot.messages) {
-          if (msg.toolChain) {
-            store.addMessage('agent', '');
-            // Patch the last message to include the toolChain
-            const messages = store.messages ?? [];
-            if (messages.length > 0) {
-              messages[messages.length - 1].toolChain = msg.toolChain;
-            }
-          } else if (msg.subAgent) {
-            store.addMessage('agent', '');
-            const messages = store.messages ?? [];
-            if (messages.length > 0) {
-              messages[messages.length - 1].subAgent = msg.subAgent;
-            }
-          } else if (msg.artifact) {
-            store.addMessage('agent', '');
-            const messages = store.messages ?? [];
-            if (messages.length > 0) {
-              messages[messages.length - 1].artifact = msg.artifact;
-            }
-          } else {
-            store.addMessage(msg.role, msg.content || '', msg.mentions);
-          }
-        }
+        const converted: UiMessage[] = snapshot.messages.map((msg: any) => {
+          // Already UiMessage format
+          if (msg.ts && msg.type) return msg as UiMessage;
+          // Legacy Message format — convert to UiMessage
+          return {
+            ts: msg.timestamp || Date.now(),
+            type: 'SAY' as const,
+            say: msg.role === 'user' ? 'USER_MESSAGE' as const : 'TEXT' as const,
+            text: msg.content || '',
+          };
+        });
+        store.hydrateFromUiMessages(converted);
       }
       // Restore plan
       if (snapshot.plan) store.setPlan(snapshot.plan);
-      // Restore session info
+      // Restore session info via completeSession (proper Zustand set)
       if (snapshot.session) {
-        store.session = snapshot.session;
+        store.completeSession(snapshot.session);
       }
       // Restore token budget
       if (snapshot.tokenBudget) {
@@ -394,6 +409,33 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     } catch (e) {
       console.error('[bridge] loadChatSnapshot error:', e);
     }
+  },
+  loadSessionState(uiMessagesJson: string) {
+    try {
+      const uiMessages: UiMessage[] = JSON.parse(uiMessagesJson);
+      stores?.getChatStore().hydrateFromUiMessages(uiMessages);
+    } catch (e) {
+      console.error('[bridge] loadSessionState error:', e);
+    }
+  },
+
+  // ── History view methods ──
+  loadSessionHistory(historyItemsJson: string) {
+    try {
+      const items: HistoryItem[] = JSON.parse(historyItemsJson);
+      stores?.getChatStore().setHistoryItems(items);
+      stores?.getChatStore().setViewMode('history');
+    } catch (e) {
+      console.error('[bridge] loadSessionHistory error:', e);
+    }
+  },
+
+  showHistoryView() {
+    stores?.getChatStore().setViewMode('history');
+  },
+
+  showChatView() {
+    stores?.getChatStore().setViewMode('chat');
   },
 };
 
@@ -451,6 +493,36 @@ export const kotlinBridge = {
     callKotlin('_sendMessageWithMentions', payload);
   },
   retryLastTask(): void { callKotlin('_retryLastTask'); },
+
+  // ── History view actions ──
+  showSession(sessionId: string) {
+    callKotlin('_showSession', sessionId);
+  },
+  resumeViewedSession() {
+    callKotlin('_resumeViewedSession');
+  },
+  deleteSession(sessionId: string) {
+    callKotlin('_deleteSession', sessionId);
+  },
+  toggleFavorite(sessionId: string) {
+    callKotlin('_toggleFavorite', sessionId);
+  },
+  startNewSession() {
+    callKotlin('_startNewSession');
+  },
+  bulkDeleteSessions(sessionIdsJson: string) {
+    callKotlin('_bulkDeleteSessions', sessionIdsJson);
+  },
+  exportSession(sessionId: string) {
+    callKotlin('_exportSession', sessionId);
+  },
+  exportAllSessions() {
+    callKotlin('_exportAllSessions');
+  },
+  requestHistory() {
+    callKotlin('_requestHistory');
+  },
+
   /**
    * Report the outcome of an artifact render round-trip back to Kotlin so the
    * suspended `render_artifact` tool call can resume with a structured result.
@@ -498,6 +570,14 @@ for (const [name, fn] of Object.entries(bridgeFunctions)) {
   };
 }
 
+// Alias: Kotlin calls _loadSessionState (underscore prefix convention for Kotlin→JS resume path)
+(window as any)._loadSessionState = (window as any).loadSessionState;
+
+// History view aliases (Kotlin→JS)
+(window as any)._loadSessionHistory = (window as any).loadSessionHistory;
+(window as any)._showHistoryView = (window as any).showHistoryView;
+(window as any)._showChatView = (window as any).showChatView;
+
 // ═══ Initialization ═══
 
 export function initBridge(storeAccessors: StoreAccessors): void {
@@ -510,6 +590,12 @@ export function initBridge(storeAccessors: StoreAccessors): void {
     bridge[name] = fn;
   }
   (window as any).__bridge = bridge;
+
+  // Re-register aliases after stores are set (direct, no buffering)
+  (window as any)._loadSessionState = bridgeFunctions.loadSessionState;
+  (window as any)._loadSessionHistory = bridgeFunctions.loadSessionHistory;
+  (window as any)._showHistoryView = bridgeFunctions.showHistoryView;
+  (window as any)._showChatView = bridgeFunctions.showChatView;
 
   // Replay any calls that arrived before stores were ready
   for (const call of pendingCalls) {

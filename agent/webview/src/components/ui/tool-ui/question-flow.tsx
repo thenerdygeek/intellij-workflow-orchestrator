@@ -202,10 +202,10 @@ function OptionItem({
       tabIndex={tabIndex}
       disabled={isDisabled}
       className={cn(
-        "peer group relative h-auto min-h-[50px] w-full justify-start text-left text-sm font-medium",
-        "rounded-none border-0 bg-transparent px-0 py-2 text-base shadow-none transition-none hover:bg-transparent! @md/question-flow:text-sm",
-        isFirst && "pb-2.5",
-        hasAdjacentOptions && "py-2.5",
+        "peer group relative h-auto min-h-[36px] w-full justify-start text-left text-[13px] font-medium",
+        "rounded-none border-0 bg-transparent px-0 py-1.5 shadow-none transition-none hover:bg-transparent!",
+        isFirst && "pb-2",
+        hasAdjacentOptions && "py-2",
       )}
     >
       <span
@@ -225,9 +225,9 @@ function OptionItem({
           <span className="flex h-6 items-center">{option.icon}</span>
         )}
         <div className="flex flex-col text-left">
-          <span className="leading-6 text-pretty">{option.label}</span>
+          <span className="leading-5 text-pretty">{option.label}</span>
           {option.description && (
-            <span className="text-muted-foreground text-sm font-normal text-pretty">
+            <span className="text-muted-foreground text-[11px] font-normal text-pretty">
               {option.description}
             </span>
           )}
@@ -443,7 +443,7 @@ function StepBodyContent({
     <div
       key={stepKey}
       className={cn(
-        "flex flex-col gap-4",
+        "flex flex-col gap-2",
         isExiting && [
           "absolute inset-0",
           "motion-safe:animate-out motion-safe:fade-out motion-safe:blur-out-sm motion-safe:duration-250 motion-safe:ease-[var(--cubic-ease-in-out)] motion-safe:fill-mode-forwards",
@@ -458,7 +458,7 @@ function StepBodyContent({
       aria-hidden={isExiting}
     >
       <div className="flex flex-col gap-1">
-        <h2 id={titleId} className="text-lg font-semibold leading-tight">
+        <h2 id={titleId} className="text-sm font-semibold leading-tight">
           {title}
         </h2>
         {description && (
@@ -560,7 +560,7 @@ function StepContent({
   return (
     <div
       className={cn(
-        "@container/question-flow flex w-full min-w-80 max-w-md flex-col gap-3",
+        "@container/question-flow flex w-full flex-col gap-2",
         "text-foreground",
         className,
       )}
@@ -572,7 +572,7 @@ function StepContent({
     >
       <div
         className={cn(
-          "bg-card flex w-full flex-col gap-4 rounded-2xl border p-5 shadow-xs",
+          "bg-card flex w-full flex-col gap-2.5 rounded-xl border p-4 shadow-xs",
         )}
       >
         <div className="flex flex-col gap-1">

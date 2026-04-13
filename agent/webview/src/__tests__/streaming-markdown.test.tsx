@@ -15,7 +15,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import { useEffect } from 'react';
-import type { Message } from '@/bridge/types';
+import type { UiMessage } from '@/bridge/types';
 import { AgentMessage } from '@/components/chat/AgentMessage';
 
 const INCOMPLETE_MARKDOWN = `Here is a Python snippet:
@@ -32,16 +32,16 @@ def foo():
 
 /**
  * Build a streaming agent-message stub. In the live app, `appendToken` creates
- * this message in the chat store on the first token and updates its `content`
+ * this message in the chat store on the first token and updates its `text`
  * in place on every subsequent token. Tests bypass the store and pass content
- * directly — the component under test is the renderer, not the store.
+ * directly -- the component under test is the renderer, not the store.
  */
-function streamingMessage(content: string): Message {
+function streamingMessage(content: string): UiMessage {
   return {
-    id: 'msg-streaming-test',
-    role: 'agent',
-    content,
-    timestamp: Date.now(),
+    ts: Date.now(),
+    type: 'SAY',
+    say: 'TEXT',
+    text: content,
   };
 }
 

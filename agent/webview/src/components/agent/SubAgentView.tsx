@@ -87,8 +87,8 @@ export const SubAgentView = memo(function SubAgentView({ subAgent }: SubAgentVie
   const isRunning = subAgent.status === 'RUNNING';
   const [isOpen, setIsOpen] = useState(true);
 
-  const agentType = extractType(subAgent.agentId);
-  const agentName = extractName(subAgent.agentId);
+  const agentType = extractType(subAgent.label);
+  const agentName = extractName(subAgent.label);
   const elapsedStr = useLiveTimer(subAgent.startedAt, isRunning);
 
   // ── Outer chat scroll context ──
@@ -268,9 +268,9 @@ export const SubAgentView = memo(function SubAgentView({ subAgent }: SubAgentVie
         >
           <div className="space-y-3">
             {subAgent.messages.map((msg, i) => (
-              <div key={msg.id} className="relative">
+              <div key={String(msg.ts)} className="relative">
                 {/* Nesting guard — 1 level only */}
-                {msg.subAgent ? (
+                {msg.subagentData ? (
                   <div
                     className="text-[11px] italic flex items-center gap-1 px-2 py-1 rounded"
                     style={{ color: 'var(--fg-muted)', backgroundColor: 'var(--code-bg)' }}
@@ -280,10 +280,29 @@ export const SubAgentView = memo(function SubAgentView({ subAgent }: SubAgentVie
                   </div>
                 ) : (
                   <>
-                    {msg.toolChain && msg.toolChain.length > 0 && (
-                      <ToolCallChain toolCalls={msg.toolChain} />
+                    {msg.toolCallData && (
+                      <ToolCallChain toolCalls={[{
+                        id: msg.toolCallData.toolCallId,
+                        name: msg.toolCallData.toolName,
+                        args: msg.toolCallData.args ?? '',
+                        status: (msg.toolCallData.status as any) ?? 'COMPLETED',
+                        result: msg.toolCallData.result,
+                        output: msg.toolCallData.output,
+                        durationMs: msg.toolCallData.durationMs,
+                        diff: msg.toolCallData.diff,
+                      }]} />
                     )}
-                    {msg.content && (
+                    {msg.say === 'REASONING' && msg.text && (
+                      <div className="text-[11px] px-2 py-1 rounded" style={{ color: 'var(--fg-muted)', backgroundColor: 'var(--thinking-bg, rgba(0,0,0,0.04))' }}>
+                        {msg.text}
+                      </div>
+                    )}
+                    {msg.say === 'ERROR' && msg.text && (
+                      <div className="text-[11px] px-2 py-1 rounded" style={{ color: 'var(--error, #ef4444)' }}>
+                        {msg.text}
+                      </div>
+                    )}
+                    {msg.text && msg.say !== 'REASONING' && msg.say !== 'ERROR' && !msg.toolCallData && (
                       <AgentMessage
                         message={msg}
                         isStreaming={isRunning && i === subAgent.messages.length - 1}

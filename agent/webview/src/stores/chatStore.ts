@@ -1,7 +1,5 @@
 import { create } from 'zustand';
 import type {
-  Message,
-  MessageRole,
   ToolCall,
   ToolCallStatus,
   Plan,
@@ -16,16 +14,34 @@ import type {
   EditDiff,
   Skill,
   ToastType,
-  SubAgentState,
   EditStats,
   CheckpointInfo,
   RollbackInfo,
+  UiMessage,
+  SubAgentState,
+  HistoryItem,
 } from '../bridge/types';
 
 // ── Internal ID generator ──
 let _idCounter = 0;
 function nextId(prefix: string = 'msg'): string {
   return `${prefix}-${Date.now()}-${++_idCounter}`;
+}
+
+/** Parse JSON without throwing — returns null on failure. */
+function safeJsonParse(s: string | undefined): any {
+  if (!s) return null;
+  try { return JSON.parse(s); } catch { return null; }
+}
+
+// ── Monotonic timestamp generator ──
+// Guarantees unique ts values even when multiple UiMessages are created
+// in the same millisecond (e.g., draining tool calls in appendToken).
+let _lastTs = 0;
+function uniqueTs(): number {
+  const now = Date.now();
+  _lastTs = now > _lastTs ? now : _lastTs + 1;
+  return _lastTs;
 }
 
 // ── Debug log ──
@@ -68,15 +84,18 @@ interface Toast {
 // ── Chat store state ──
 interface ChatState {
   // State
-  messages: Message[];
+  messages: UiMessage[];
   /**
-   * Id of the `Message` currently being written by the token stream, or `null`
-   * if no stream is active. The streaming message lives in `messages` like any
-   * other, updated in place via `appendToken`; this field just points at it so
-   * `ChatView` can toggle the caret on the right message.
+   * Timestamp of the `UiMessage` currently being written by the token stream,
+   * or `null` if no stream is active. The streaming message lives in `messages`
+   * like any other, updated in place via `appendToken`; this field just points
+   * at it so `ChatView` can toggle the caret on the right message.
    */
-  activeStream: { messageId: string } | null;
+  activeStream: { messageTs: number } | null;
   activeToolCalls: Map<string, ToolCall>;  // key = unique tool call ID
+  /** Live sub-agent state — accumulates internal messages and tool chains while running.
+   *  On completion/kill, the state is frozen into the UiMessage and removed from this map. */
+  activeSubAgents: Map<string, SubAgentState>;
   plan: Plan | null;
   planCommentCount: number;
   questions: Question[] | null;
@@ -120,10 +139,19 @@ interface ChatState {
   queuedSteeringMessages: { id: string; text: string; timestamp: number }[];
   restoredInputText: string | null;
 
+  // History view state
+  viewMode: 'history' | 'chat';
+  historyItems: HistoryItem[];
+  historySearch: string;
+
+  // Resume bar state — non-null when viewing a resumable session
+  resumeSessionId: string | null;
+
   // Actions
   startSession(task: string, mentions?: Mention[]): void;
   completeSession(info: SessionInfo): void;
-  addMessage(role: 'user' | 'agent', content: string, mentions?: Mention[]): void;
+  addUserMessage(text: string, mentions?: Mention[]): void;
+  addAgentText(text: string): void;
   appendToken(token: string): void;
   endStream(): void;
   addToolCall(toolCallId: string, name: string, args: string, status: ToolCallStatus): void;
@@ -216,6 +244,17 @@ interface ChatState {
   updateSubAgentMessage(payload: string): void;
   completeSubAgent(payload: string): void;
   killSubAgent(agentId: string): void;
+
+  // Session rehydration
+  hydrateFromUiMessages(uiMessages: UiMessage[]): void;
+
+  // History view actions
+  setViewMode(mode: 'history' | 'chat'): void;
+  setHistoryItems(items: HistoryItem[]): void;
+  setHistorySearch(query: string): void;
+
+  // Resume bar
+  setResumeSessionId(sessionId: string | null): void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -223,6 +262,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
   activeStream: null,
   activeToolCalls: new Map(),
+  activeSubAgents: new Map(),
   plan: null,
   planCommentCount: 0,
   questions: null,
@@ -270,20 +310,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
   planCompletedPendingClear: false,
   queuedSteeringMessages: [],
   restoredInputText: null,
+  viewMode: 'chat' as const,
+  historyItems: [],
+  historySearch: '',
+  resumeSessionId: null,
 
   // Actions
-  startSession(task: string, mentions?: Mention[]) {
-    const firstMessage: Message = {
-      id: nextId('msg'),
-      role: 'user',
-      content: task,
-      timestamp: Date.now(),
-      ...(mentions && mentions.length > 0 ? { mentions } : {}),
+  startSession(task: string, _mentions?: Mention[]) {
+    const firstMessage: UiMessage = {
+      ts: uniqueTs(),
+      type: 'SAY',
+      say: 'USER_MESSAGE',
+      text: task,
     };
     set({
       messages: [firstMessage],
       activeStream: null,
       activeToolCalls: new Map(),
+  activeSubAgents: new Map(),
       // Reset tool output streams alongside activeToolCalls — they are keyed by
       // the same tool call IDs and would otherwise leak across sessions.
       toolOutputStreams: {},
@@ -300,6 +344,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       checkpoints: [],
       queuedSteeringMessages: [],
       restoredInputText: null,
+      viewMode: 'chat' as const,
       session: {
         status: 'RUNNING',
         tokensUsed: 0,
@@ -311,18 +356,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   completeSession(info: SessionInfo) {
-    // Finalize any remaining active tool calls as a toolchain message,
+    // Finalize any remaining active tool calls as individual UiMessage entries,
     // merging any buffered stream output into each tool call first so it
     // survives past the toolOutputStreams reset.
     const state = get();
     const streams = state.toolOutputStreams;
-    const remaining = Array.from(state.activeToolCalls.values()).map(tc => {
+    const remaining = Array.from(state.activeToolCalls.values());
+    const toolMessages: UiMessage[] = remaining.map(tc => {
       const stream = streams[tc.id];
-      if (stream && !tc.output) return { ...tc, output: stream };
-      return tc;
+      const output = tc.output || stream || undefined;
+      return {
+        ts: uniqueTs(),
+        type: 'SAY' as const,
+        say: 'TOOL' as const,
+        toolCallData: {
+          toolCallId: tc.id,
+          toolName: tc.name,
+          args: tc.args,
+          status: tc.status,
+          result: tc.result,
+          output,
+          durationMs: tc.durationMs,
+          diff: tc.diff,
+        },
+      };
     });
-    const messages = remaining.length > 0
-      ? [...state.messages, { id: nextId('tc-chain'), role: 'system' as const, content: '', timestamp: Date.now(), toolChain: remaining }]
+    const messages = toolMessages.length > 0
+      ? [...state.messages, ...toolMessages]
       : state.messages;
     set({
       session: info,
@@ -330,6 +390,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       steeringMode: false,
       activeStream: null,
       activeToolCalls: new Map(),
+  activeSubAgents: new Map(),
       // Drop all tool output streams — the map was keyed by the now-cleared
       // tool call IDs and would otherwise leak for the rest of the app's life.
       toolOutputStreams: {},
@@ -340,17 +401,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  addMessage(role: 'user' | 'agent', content: string, mentions?: Mention[]) {
-    const message: Message = {
-      id: nextId('msg'),
-      role,
-      content,
-      timestamp: Date.now(),
-      ...(mentions && mentions.length > 0 ? { mentions } : {}),
-    };
-    set(state => ({
-      messages: [...state.messages, message],
-    }));
+  addUserMessage(text: string, _mentions?: Mention[]) {
+    const msg: UiMessage = { ts: uniqueTs(), type: 'SAY', say: 'USER_MESSAGE', text };
+    set(state => ({ messages: [...state.messages, msg] }));
+  },
+
+  addAgentText(text: string) {
+    const msg: UiMessage = { ts: uniqueTs(), type: 'SAY', say: 'TEXT', text };
+    set(state => ({ messages: [...state.messages, msg] }));
   },
 
   appendToken(token: string) {
@@ -364,7 +422,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       if (current == null) {
         // First token of a new stream. Drain any leftover active tool calls
-        // into a `tc-chain` system message so the chat flow stays
+        // into individual UiMessage{say:'TOOL'} entries so the chat flow stays
         // chronological: prior tools → streaming text → next tool chain.
         let messages = state.messages;
         let activeToolCalls = state.activeToolCalls;
@@ -372,46 +430,54 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
         if (state.activeToolCalls.size > 0) {
           const streams = state.toolOutputStreams;
-          const tools = Array.from(state.activeToolCalls.values()).map(tc => {
+          const toolMsgs: UiMessage[] = Array.from(state.activeToolCalls.values()).map(tc => {
             const s = streams[tc.id];
-            if (s && !tc.output) return { ...tc, output: s };
-            return tc;
+            const output = tc.output || s || undefined;
+            return {
+              ts: uniqueTs(),
+              type: 'SAY' as const,
+              say: 'TOOL' as const,
+              toolCallData: {
+                toolCallId: tc.id,
+                toolName: tc.name,
+                args: tc.args,
+                status: tc.status,
+                result: tc.result,
+                output,
+                durationMs: tc.durationMs,
+                diff: tc.diff,
+              },
+            };
           });
-          const chainMsg: Message = {
-            id: nextId('tc-chain'),
-            role: 'system',
-            content: '',
-            timestamp: Date.now(),
-            toolChain: tools,
-          };
-          messages = [...messages, chainMsg];
+          messages = [...messages, ...toolMsgs];
           activeToolCalls = new Map();
           toolOutputStreams = {};
         }
 
-        const messageId = nextId('msg');
-        const placeholder: Message = {
-          id: messageId,
-          role: 'agent',
-          content: token,
-          timestamp: Date.now(),
+        const messageTs = uniqueTs();
+        const placeholder: UiMessage = {
+          ts: messageTs,
+          type: 'SAY',
+          say: 'TEXT',
+          text: token,
+          partial: true,
         };
 
         return {
           messages: [...messages, placeholder],
-          activeStream: { messageId },
+          activeStream: { messageTs },
           activeToolCalls,
           toolOutputStreams,
         };
       }
 
       // Subsequent tokens update the existing placeholder in place. Keeping
-      // the same message id lets React.memo skip every other message (we
+      // the same message ts lets React.memo skip every other message (we
       // return `m` by reference for non-matching items) so rendering stays
       // O(1) in the streaming message per token.
       return {
         messages: state.messages.map(m =>
-          m.id === current.messageId ? { ...m, content: m.content + token } : m
+          m.ts === current.messageTs ? { ...m, text: (m.text || '') + token } : m
         ),
       };
     });
@@ -420,7 +486,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
   endStream() {
     const state = get();
     const shouldClearPlan = state.planCompletedPendingClear;
+    const streamTs = state.activeStream?.messageTs;
     set({
+      // Flip partial to false on the streaming message
+      ...(streamTs != null ? {
+        messages: state.messages.map(m =>
+          m.ts === streamTs ? { ...m, partial: false } : m
+        ),
+      } : {}),
       activeStream: null,
       ...(shouldClearPlan ? { plan: null, planCompletedPendingClear: false } : {}),
     });
@@ -501,77 +574,97 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   addDiff(diff: EditDiff) {
-    const message: Message = {
-      id: nextId('diff'),
-      role: 'system',
-      content: JSON.stringify(diff),
-      timestamp: Date.now(),
+    const msg: UiMessage = {
+      ts: uniqueTs(),
+      type: 'SAY',
+      say: 'TOOL',
+      text: JSON.stringify(diff),
+      toolCallData: {
+        toolCallId: nextId('diff'),
+        toolName: 'edit_file',
+        args: JSON.stringify({ file_path: diff.filePath }),
+        status: 'COMPLETED',
+      },
     };
-    set(state => ({ messages: [...state.messages, message] }));
+    set(state => ({ messages: [...state.messages, msg] }));
   },
 
   addDiffExplanation(title: string, diffSource: string) {
-    const message: Message = {
-      id: nextId('diff-exp'),
-      role: 'system',
-      content: JSON.stringify({ type: 'diff-explanation', title, diffSource }),
-      timestamp: Date.now(),
+    const msg: UiMessage = {
+      ts: uniqueTs(),
+      type: 'SAY',
+      say: 'TEXT',
+      text: JSON.stringify({ type: 'diff-explanation', title, diffSource }),
     };
-    set(state => ({ messages: [...state.messages, message] }));
+    set(state => ({ messages: [...state.messages, msg] }));
   },
 
   addCompletionSummary(result: string, verifyCommand?: string) {
-    const completionMessage: Message = {
-      id: nextId('completion'),
-      role: 'system',
-      content: JSON.stringify({ type: 'completion', result, verifyCommand }),
-      timestamp: Date.now(),
+    const msg: UiMessage = {
+      ts: uniqueTs(),
+      type: 'ASK',
+      ask: 'COMPLETION_RESULT',
+      text: verifyCommand ? JSON.stringify({ result, verifyCommand }) : result,
     };
     set(state => ({
-      messages: [...state.messages, completionMessage],
+      messages: [...state.messages, msg],
       activeStream: null,
     }));
   },
 
   addStatus(message: string, type: StatusType) {
-    const statusMessage: Message = {
-      id: nextId('status'),
-      role: 'system',
-      content: JSON.stringify({ type: 'status', message, statusType: type }),
-      timestamp: Date.now(),
+    // ERROR gets its own say; all other status types use CHECKPOINT_CREATED
+    // which the ChatView renders as a muted status line.
+    const msg: UiMessage = {
+      ts: uniqueTs(),
+      type: 'SAY',
+      say: type === 'ERROR' ? 'ERROR' : 'CHECKPOINT_CREATED',
+      text: message,
     };
-    set(state => ({ messages: [...state.messages, statusMessage] }));
+    set(state => ({ messages: [...state.messages, msg] }));
   },
 
   addThinking(text: string) {
-    const thinkingMessage: Message = {
-      id: nextId('thinking'),
-      role: 'system',
-      content: JSON.stringify({ type: 'thinking', text }),
-      timestamp: Date.now(),
+    const msg: UiMessage = {
+      ts: uniqueTs(),
+      type: 'SAY',
+      say: 'REASONING',
+      text,
     };
-    set(state => ({ messages: [...state.messages, thinkingMessage] }));
+    set(state => ({ messages: [...state.messages, msg] }));
   },
 
   finalizeToolChain() {
-    // Move current active tool calls into messages as a toolchain entry.
+    // Move current active tool calls into individual UiMessage entries.
     // Before clearing toolOutputStreams, merge any accumulated stream output
-    // into each tool call's `output` field so it survives finalization.
+    // into each tool call's data so it survives finalization.
     const state = get();
     const tools = Array.from(state.activeToolCalls.values());
     if (tools.length === 0) return;
     const streams = state.toolOutputStreams;
-    const mergedTools = tools.map(tc => {
+    const toolMessages: UiMessage[] = tools.map(tc => {
       const stream = streams[tc.id];
-      if (stream && !tc.output) {
-        return { ...tc, output: stream };
-      }
-      return tc;
+      const output = tc.output || stream || undefined;
+      return {
+        ts: uniqueTs(),
+        type: 'SAY' as const,
+        say: 'TOOL' as const,
+        toolCallData: {
+          toolCallId: tc.id,
+          toolName: tc.name,
+          args: tc.args,
+          status: tc.status,
+          result: tc.result,
+          output,
+          durationMs: tc.durationMs,
+          diff: tc.diff,
+        },
+      };
     });
-    const chainMsg: Message = { id: nextId('tc-chain'), role: 'system', content: '', timestamp: Date.now(), toolChain: mergedTools };
     set({
-      messages: [...state.messages, chainMsg],
+      messages: [...state.messages, ...toolMessages],
       activeToolCalls: new Map(),
+  activeSubAgents: new Map(),
       toolOutputStreams: {},
     });
   },
@@ -581,6 +674,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: [],
       activeStream: null,
       activeToolCalls: new Map(),
+  activeSubAgents: new Map(),
       // Drop tool output streams in lockstep with activeToolCalls.
       toolOutputStreams: {},
       plan: null,
@@ -588,6 +682,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       questions: null,
       questionSummary: null,
       retryMessage: null,
+      viewMode: 'chat',
+      resumeSessionId: null,
     });
   },
 
@@ -654,15 +750,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (!snapshot || snapshot.length === 0) {
         return { questions: null, questionSummary: null, activeQuestionIndex: 0 };
       }
-      const message: Message = {
-        id: nextId('msg'),
-        role: 'user',
-        content: '',
-        timestamp: Date.now(),
-        answeredQuestions: snapshot,
+      const msg: UiMessage = {
+        ts: uniqueTs(),
+        type: 'ASK',
+        ask: 'QUESTION_WIZARD',
+        questionData: {
+          questions: snapshot.map(q => ({
+            text: q.text,
+            options: q.options.map(o => o.label),
+          })),
+          currentIndex: snapshot.length - 1,
+          answers: snapshot.reduce((acc, q, i) => {
+            if (q.answer) {
+              acc[i] = Array.isArray(q.answer) ? q.answer.join(', ') : q.answer;
+            }
+            return acc;
+          }, {} as Record<number, string>),
+          status: 'COMPLETED',
+        },
       };
       return {
-        messages: [...state.messages, message],
+        messages: [...state.messages, msg],
         questions: null,
         questionSummary: null,
         activeQuestionIndex: 0,
@@ -772,73 +880,73 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   addChart(chartConfigJson: string) {
-    const message: Message = {
-      id: nextId('chart'),
-      role: 'system',
-      content: JSON.stringify({ type: 'chart', config: chartConfigJson }),
-      timestamp: Date.now(),
+    const msg: UiMessage = {
+      ts: uniqueTs(),
+      type: 'SAY',
+      say: 'TEXT',
+      text: JSON.stringify({ type: 'chart', config: chartConfigJson }),
     };
-    set(state => ({ messages: [...state.messages, message] }));
+    set(state => ({ messages: [...state.messages, msg] }));
   },
 
   addAnsiOutput(text: string) {
-    const message: Message = {
-      id: nextId('ansi'),
-      role: 'system',
-      content: JSON.stringify({ type: 'ansi', text }),
-      timestamp: Date.now(),
+    const msg: UiMessage = {
+      ts: uniqueTs(),
+      type: 'SAY',
+      say: 'TEXT',
+      text: JSON.stringify({ type: 'ansi', text }),
     };
-    set(state => ({ messages: [...state.messages, message] }));
+    set(state => ({ messages: [...state.messages, msg] }));
   },
 
   addTabs(tabsJson: string) {
-    const message: Message = {
-      id: nextId('tabs'),
-      role: 'system',
-      content: JSON.stringify({ type: 'tabs', data: tabsJson }),
-      timestamp: Date.now(),
+    const msg: UiMessage = {
+      ts: uniqueTs(),
+      type: 'SAY',
+      say: 'TEXT',
+      text: JSON.stringify({ type: 'tabs', data: tabsJson }),
     };
-    set(state => ({ messages: [...state.messages, message] }));
+    set(state => ({ messages: [...state.messages, msg] }));
   },
 
   addTimeline(itemsJson: string) {
-    const message: Message = {
-      id: nextId('timeline'),
-      role: 'system',
-      content: JSON.stringify({ type: 'timeline', data: itemsJson }),
-      timestamp: Date.now(),
+    const msg: UiMessage = {
+      ts: uniqueTs(),
+      type: 'SAY',
+      say: 'TEXT',
+      text: JSON.stringify({ type: 'timeline', data: itemsJson }),
     };
-    set(state => ({ messages: [...state.messages, message] }));
+    set(state => ({ messages: [...state.messages, msg] }));
   },
 
   addProgressBar(percent: number, type: string) {
-    const message: Message = {
-      id: nextId('progress'),
-      role: 'system',
-      content: JSON.stringify({ type: 'progressBar', percent, barType: type }),
-      timestamp: Date.now(),
+    const msg: UiMessage = {
+      ts: uniqueTs(),
+      type: 'SAY',
+      say: 'TEXT',
+      text: JSON.stringify({ type: 'progressBar', percent, barType: type }),
     };
-    set(state => ({ messages: [...state.messages, message] }));
+    set(state => ({ messages: [...state.messages, msg] }));
   },
 
   addJiraCard(cardJson: string) {
-    const message: Message = {
-      id: nextId('jira'),
-      role: 'system',
-      content: JSON.stringify({ type: 'jiraCard', data: cardJson }),
-      timestamp: Date.now(),
+    const msg: UiMessage = {
+      ts: uniqueTs(),
+      type: 'SAY',
+      say: 'TEXT',
+      text: JSON.stringify({ type: 'jiraCard', data: cardJson }),
     };
-    set(state => ({ messages: [...state.messages, message] }));
+    set(state => ({ messages: [...state.messages, msg] }));
   },
 
   addSonarBadge(badgeJson: string) {
-    const message: Message = {
-      id: nextId('sonar'),
-      role: 'system',
-      content: JSON.stringify({ type: 'sonarBadge', data: badgeJson }),
-      timestamp: Date.now(),
+    const msg: UiMessage = {
+      ts: uniqueTs(),
+      type: 'SAY',
+      say: 'TEXT',
+      text: JSON.stringify({ type: 'sonarBadge', data: badgeJson }),
     };
-    set(state => ({ messages: [...state.messages, message] }));
+    set(state => ({ messages: [...state.messages, msg] }));
   },
 
   showSkeleton() {
@@ -885,7 +993,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         diffContent,
       };
 
-      // Drain any active tool chain into a `tc-chain` system message and
+      // Drain any active tool chain into individual UiMessage entries and
       // clear the streaming caret so the approval card renders below all
       // prior content.
       const hadStream = state.activeStream != null;
@@ -893,13 +1001,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const newMessages = [...state.messages];
 
       if (tools.length > 0) {
-        newMessages.push({
-          id: nextId('tc-chain'),
-          role: 'system',
-          content: '',
-          timestamp: Date.now(),
-          toolChain: tools,
-        });
+        const streams = state.toolOutputStreams;
+        for (const tc of tools) {
+          const s = streams[tc.id];
+          const output = tc.output || s || undefined;
+          newMessages.push({
+            ts: uniqueTs(),
+            type: 'SAY' as const,
+            say: 'TOOL' as const,
+            toolCallData: {
+              toolCallId: tc.id,
+              toolName: tc.name,
+              args: tc.args,
+              status: tc.status,
+              result: tc.result,
+              output,
+              durationMs: tc.durationMs,
+              diff: tc.diff,
+            },
+          });
+        }
       }
 
       return {
@@ -994,32 +1115,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   applyRollback(rollback: RollbackInfo) {
     set((state) => {
+      const rolledBackIds = new Set(rollback.rolledBackEntryIds);
       const rolledBackFiles = new Set(rollback.affectedFiles);
 
       const messages = state.messages.map((msg) => {
-        // Mark messages that have a filePath matching a rolled-back file
-        let msgRolledBack = msg.rolledBack;
-        if ('filePath' in msg && msg.filePath && rolledBackFiles.has(msg.filePath)) {
-          msgRolledBack = true;
-        }
-
-        // Mark tool calls within tool chains that reference rolled-back files
-        let toolChain = msg.toolChain;
-        if (toolChain && toolChain.length > 0) {
-          toolChain = toolChain.map((tc) => {
-            try {
-              const parsed = JSON.parse(tc.args) as Record<string, unknown>;
-              const filePath = parsed.file_path || parsed.path;
-              if (typeof filePath === 'string' && rolledBackFiles.has(filePath)) {
-                return { ...tc, rolledBack: true };
-              }
-            } catch { /* not JSON, skip */ }
-            return tc;
-          });
-        }
-
-        if (msgRolledBack !== msg.rolledBack || toolChain !== msg.toolChain) {
-          return { ...msg, rolledBack: msgRolledBack, toolChain };
+        // Mark tool messages whose toolCallId matches a rolled-back entry
+        if (msg.toolCallData) {
+          const tcId = msg.toolCallData.toolCallId;
+          if (rolledBackIds.has(tcId)) {
+            return { ...msg, toolCallData: { ...msg.toolCallData, isError: true } };
+          }
+          // Also check by file path in args
+          try {
+            const parsed = JSON.parse(msg.toolCallData.args || '{}') as Record<string, unknown>;
+            const filePath = parsed.file_path || parsed.path;
+            if (typeof filePath === 'string' && rolledBackFiles.has(filePath)) {
+              return { ...msg, toolCallData: { ...msg.toolCallData, isError: true } };
+            }
+          } catch { /* not JSON, skip */ }
         }
         return msg;
       });
@@ -1058,11 +1171,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const idSet = new Set(ids);
       const toPromote = state.queuedSteeringMessages.filter(m => idSet.has(m.id));
       const remaining = state.queuedSteeringMessages.filter(m => !idSet.has(m.id));
-      const newMessages = toPromote.map(m => ({
-        id: nextId('msg'),
-        role: 'user' as const,
-        content: m.text,
-        timestamp: m.timestamp,
+      const newMessages: UiMessage[] = toPromote.map(m => ({
+        ts: m.timestamp,
+        type: 'SAY' as const,
+        say: 'USER_MESSAGE' as const,
+        text: m.text,
       }));
       return {
         messages: [...state.messages, ...newMessages],
@@ -1082,20 +1195,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
   // ── Artifact Actions ──
   addArtifact(payload: string) {
     try {
-      const { title, source, renderId } = JSON.parse(payload);
+      const { title: _title, source, renderId } = JSON.parse(payload);
       if (!renderId || typeof renderId !== 'string') {
         console.warn('[chatStore] addArtifact: payload missing renderId', payload);
         return;
       }
-      const msgId = nextId('artifact');
+      const msg: UiMessage = {
+        ts: uniqueTs(),
+        type: 'SAY',
+        say: 'ARTIFACT_RESULT',
+        text: source,
+        artifactId: renderId,
+      };
       set((state) => ({
-        messages: [...state.messages, {
-          id: msgId,
-          role: 'system' as MessageRole,
-          content: `artifact:${title}`,
-          timestamp: Date.now(),
-          artifact: { title, source, renderId },
-        }],
+        messages: [...state.messages, msg],
       }));
     } catch (e) {
       console.warn('[chatStore] addArtifact: malformed payload', e);
@@ -1103,39 +1216,51 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   // ── Sub-Agent Actions ──
+  // Live sub-agent state is tracked in activeSubAgents (like activeToolCalls).
+  // Internal messages and tool chains accumulate there while running.
+  // On completion/kill, the state is frozen into the UiMessage and removed from the map.
+
   spawnSubAgent(payload: string) {
     const data = JSON.parse(payload);
 
     set((state) => {
-      // Dedupe on agentId. Defensive guard against any future Kotlin-side
-      // regression that re-fires status="running" — without this, every
-      // spurious spawn event renders a new card (the original 77-card bug).
-      if (state.messages.some((m) => m.subAgent?.agentId === data.agentId)) {
+      // Dedupe on agentId
+      if (state.activeSubAgents.has(data.agentId) ||
+          state.messages.some((m) => m.subagentData?.agentId === data.agentId)) {
         return state;
       }
 
-      const subAgentState: SubAgentState = {
+      const agentState: SubAgentState = {
         agentId: data.agentId,
-        label: data.label,
+        label: data.label || 'general-purpose',
         status: 'RUNNING',
         iteration: 1,
         tokensUsed: 0,
         messages: [],
         activeToolChain: [],
+        summary: undefined,
         startedAt: Date.now(),
       };
 
+      const msg: UiMessage = {
+        ts: uniqueTs(),
+        type: 'SAY',
+        say: 'SUBAGENT_STARTED',
+        subagentData: {
+          agentId: data.agentId,
+          agentType: data.label || 'general-purpose',
+          description: data.label,
+          status: 'RUNNING',
+          iterations: 1,
+        },
+      };
+
+      const newMap = new Map(state.activeSubAgents);
+      newMap.set(data.agentId, agentState);
+
       return {
-        messages: [
-          ...state.messages,
-          {
-            id: nextId('subagent'),
-            role: 'system',
-            content: 'subagent', // sentinel to trigger SubAgentView
-            timestamp: Date.now(),
-            subAgent: subAgentState,
-          },
-        ],
+        messages: [...state.messages, msg],
+        activeSubAgents: newMap,
       };
     });
   },
@@ -1143,192 +1268,294 @@ export const useChatStore = create<ChatState>((set, get) => ({
   updateSubAgentIteration(payload: string) {
     const data = JSON.parse(payload);
     set((state) => {
-      const messages = [...state.messages];
-      const idx = messages.findIndex(m => m.subAgent?.agentId === data.agentId);
-      const msg = messages[idx];
-      if (msg && msg.subAgent) {
-        messages[idx] = {
-          ...msg,
-          subAgent: {
-            ...msg.subAgent,
-            iteration: data.iteration || msg.subAgent.iteration + 1
-          }
-        };
+      // Update live state
+      const newMap = new Map(state.activeSubAgents);
+      const agent = newMap.get(data.agentId);
+      if (agent) {
+        newMap.set(data.agentId, {
+          ...agent,
+          iteration: data.iteration || (agent.iteration + 1),
+          tokensUsed: data.tokensUsed ?? agent.tokensUsed,
+        });
       }
-      return { messages };
+      // Also update the UiMessage for persistence
+      const messages = state.messages.map(m =>
+        m.subagentData?.agentId === data.agentId
+          ? { ...m, subagentData: { ...m.subagentData!, iterations: data.iteration || (m.subagentData!.iterations + 1) } }
+          : m
+      );
+      return { messages, activeSubAgents: newMap };
     });
   },
 
   addSubAgentToolCall(payload: string) {
     const data = JSON.parse(payload);
     set((state) => {
-      const messages = [...state.messages];
-      const idx = messages.findIndex(m => m.subAgent?.agentId === data.agentId);
-      const msg = messages[idx];
-      if (msg && msg.subAgent) {
-        const subAgent = { ...msg.subAgent };
-        const resolvedStatus: ToolCallStatus =
-          data.status === 'COMPLETED' ? 'COMPLETED'
-            : data.status === 'ERROR' ? 'ERROR'
-              : 'RUNNING';
-        // Prefer the Kotlin-assigned tool call ID so the later update event
-        // can target this exact chip by ID. Parallel tool calls to the same
-        // tool would otherwise collide on the name-based reverse lookup.
-        const toolCallId: string = (typeof data.toolCallId === 'string' && data.toolCallId.length > 0)
-          ? data.toolCallId
-          : nextId('satool');
-        const toolCall: ToolCall = {
-          id: toolCallId,
+      const newMap = new Map(state.activeSubAgents);
+      const agent = newMap.get(data.agentId);
+      if (agent) {
+        const tc: ToolCall = {
+          id: data.toolCallId || `sa-tc-${uniqueTs()}`,
           name: data.toolName || 'unknown',
-          args: data.toolArgs || data.args || '{}',
-          status: resolvedStatus,
-          durationMs: data.durationMs,
-          result: data.result,
+          args: data.args || '',
+          status: 'RUNNING',
         };
-        subAgent.activeToolChain = [...(subAgent.activeToolChain || []), toolCall];
-        messages[idx] = { ...msg, subAgent };
+        newMap.set(data.agentId, {
+          ...agent,
+          activeToolChain: [...agent.activeToolChain, tc],
+        });
       }
-      return { messages };
+      // Update UiMessage say to PROGRESS
+      const messages = state.messages.map(m =>
+        m.subagentData?.agentId === data.agentId
+          ? { ...m, say: 'SUBAGENT_PROGRESS' as const }
+          : m
+      );
+      return { messages, activeSubAgents: newMap };
     });
   },
 
   updateSubAgentToolCall(payload: string) {
     const data = JSON.parse(payload);
     set((state) => {
-      const messages = [...state.messages];
-      const idx = messages.findIndex(m => m.subAgent?.agentId === data.agentId);
-      const msg = messages[idx];
-      if (msg && msg.subAgent) {
-        const subAgent = { ...msg.subAgent };
-        const toolChain = [...(subAgent.activeToolChain || [])];
-        // Prefer exact ID match so parallel tool calls to the same tool
-        // name (e.g. two concurrent read_files) can't swap results.
-        // Fall back to reverse "first RUNNING by name" lookup only when
-        // no toolCallId was provided or it is unknown to this chain
-        // (legacy senders, malformed payloads).
-        let toolIdx = -1;
-        const incomingId: string | undefined =
-          typeof data.toolCallId === 'string' && data.toolCallId.length > 0
-            ? data.toolCallId
-            : undefined;
-        if (incomingId) {
-          toolIdx = toolChain.findIndex(tc => tc.id === incomingId);
-        }
-        if (toolIdx === -1) {
-          // Manual reverse search (ES2022 compat — no findLastIndex)
-          for (let i = toolChain.length - 1; i >= 0; i--) {
-            const item = toolChain[i];
-            if (item && item.status === 'RUNNING' && item.name === data.toolName) {
-              toolIdx = i;
-              break;
-            }
-          }
-        }
-        if (toolIdx !== -1) {
-          const tc = toolChain[toolIdx]!;
-          toolChain[toolIdx] = {
-            id: tc.id,
-            name: tc.name,
-            args: tc.args,
-            status: data.isError ? 'ERROR' as const : 'COMPLETED' as const,
-            durationMs: data.toolDurationMs,
-            result: data.toolResult || '',
-            output: tc.output,
-          };
-          subAgent.activeToolChain = toolChain;
-          messages[idx] = { ...msg, subAgent };
-        }
+      const newMap = new Map(state.activeSubAgents);
+      const agent = newMap.get(data.agentId);
+      if (agent) {
+        const status: ToolCallStatus = data.isError ? 'ERROR' : 'COMPLETED';
+        // Finalize the tool: move from activeToolChain to messages
+        const matchIdx = agent.activeToolChain.findIndex(tc => tc.name === data.toolName && tc.status === 'RUNNING');
+        const finalized = matchIdx >= 0 ? agent.activeToolChain[matchIdx]! : null;
+        const remaining = matchIdx >= 0
+          ? [...agent.activeToolChain.slice(0, matchIdx), ...agent.activeToolChain.slice(matchIdx + 1)]
+          : agent.activeToolChain;
+
+        const toolMsg: UiMessage = {
+          ts: uniqueTs(),
+          type: 'SAY',
+          say: 'TOOL',
+          toolCallData: {
+            toolCallId: finalized?.id || data.toolCallId || `sa-tc-${uniqueTs()}`,
+            toolName: data.toolName || 'unknown',
+            args: finalized?.args || '',
+            status,
+            result: data.result || '',
+            durationMs: data.durationMs || 0,
+          },
+        };
+
+        newMap.set(data.agentId, {
+          ...agent,
+          activeToolChain: remaining,
+          messages: [...agent.messages, toolMsg],
+        });
       }
-      return { messages };
+      return { activeSubAgents: newMap };
     });
   },
 
   updateSubAgentMessage(payload: string) {
     const data = JSON.parse(payload);
     set((state) => {
-      const messages = [...state.messages];
-      const idx = messages.findIndex(m => m.subAgent?.agentId === data.agentId);
-      const msg = messages[idx];
-      if (msg && msg.subAgent) {
-        const subAgent = { ...msg.subAgent };
-        const newMsg: Message = {
-          id: nextId('samsg'),
-          role: 'agent',
-          content: data.textContent || '',
-          timestamp: Date.now()
+      const newMap = new Map(state.activeSubAgents);
+      const agent = newMap.get(data.agentId);
+      if (agent) {
+        const textMsg: UiMessage = {
+          ts: uniqueTs(),
+          type: 'SAY',
+          say: 'TEXT',
+          text: data.textContent || '',
         };
-        if (subAgent.activeToolChain && subAgent.activeToolChain.length > 0) {
-           newMsg.toolChain = [...subAgent.activeToolChain];
-           subAgent.activeToolChain = [];
-        }
-        subAgent.messages = [...(subAgent.messages || []), newMsg];
-        messages[idx] = { ...msg, subAgent };
+        newMap.set(data.agentId, {
+          ...agent,
+          messages: [...agent.messages, textMsg],
+        });
       }
-      return { messages };
+      // Update UiMessage text for persistence
+      const messages = state.messages.map(m =>
+        m.subagentData?.agentId === data.agentId
+          ? { ...m, say: 'SUBAGENT_PROGRESS' as const, text: data.textContent || '' }
+          : m
+      );
+      return { messages, activeSubAgents: newMap };
     });
   },
 
   completeSubAgent(payload: string) {
     const data = JSON.parse(payload);
     set((state) => {
-      const messages = [...state.messages];
-      const idx = messages.findIndex(m => m.subAgent?.agentId === data.agentId);
-      const msg = messages[idx];
-      if (msg && msg.subAgent) {
-        const subAgent = { ...msg.subAgent };
-        subAgent.status = data.isError ? 'ERROR' : 'COMPLETED';
-        subAgent.tokensUsed = data.tokensUsed || subAgent.tokensUsed || 0;
-        subAgent.summary = data.textContent || '';
-        
-        if (subAgent.activeToolChain && subAgent.activeToolChain.length > 0) {
-           subAgent.messages = [
-             ...(subAgent.messages || []),
-             {
-               id: nextId('satc'),
-               role: 'system',
-               content: '',
-               timestamp: Date.now(),
-               toolChain: subAgent.activeToolChain
-             }
-           ];
-           subAgent.activeToolChain = [];
-        }
-
-        messages[idx] = { ...msg, subAgent };
+      // Mark as completed in the map (keep entry so SubAgentView retains internal messages)
+      const newMap = new Map(state.activeSubAgents);
+      const agent = newMap.get(data.agentId);
+      if (agent) {
+        newMap.set(data.agentId, {
+          ...agent,
+          status: data.isError ? 'ERROR' : 'COMPLETED',
+          summary: data.textContent || '',
+          tokensUsed: data.tokensUsed ?? agent.tokensUsed,
+          activeToolChain: [], // clear any in-flight tools
+        });
       }
-      return { messages };
+
+      // Freeze into the UiMessage for persistence
+      const messages = state.messages.map(m => {
+        if (m.subagentData?.agentId === data.agentId) {
+          return {
+            ...m,
+            say: 'SUBAGENT_COMPLETED' as const,
+            subagentData: {
+              ...m.subagentData!,
+              status: data.isError ? 'FAILED' : 'COMPLETED',
+              summary: data.textContent || '',
+            },
+          };
+        }
+        return m;
+      });
+      return { messages, activeSubAgents: newMap };
     });
   },
 
   killSubAgent(agentId: string) {
     set((state) => {
-      const messages = [...state.messages];
-      const idx = messages.findIndex(m => m.subAgent?.agentId === agentId);
-      const msg = messages[idx];
-      if (msg && msg.subAgent) {
-        const subAgent = { ...msg.subAgent };
-        subAgent.status = 'KILLED';
-        // Flush any pending tool chain
-        if (subAgent.activeToolChain && subAgent.activeToolChain.length > 0) {
-          subAgent.messages = [
-            ...(subAgent.messages || []),
-            {
-              id: nextId('satc'),
-              role: 'system' as const,
-              content: '',
-              timestamp: Date.now(),
-              toolChain: subAgent.activeToolChain
-            }
-          ];
-          subAgent.activeToolChain = [];
-        }
-        messages[idx] = { ...msg, subAgent };
+      // Mark as killed in map (keep entry for SubAgentView to show history)
+      const newMap = new Map(state.activeSubAgents);
+      const agent = newMap.get(agentId);
+      if (agent) {
+        newMap.set(agentId, { ...agent, status: 'KILLED', activeToolChain: [] });
       }
-      return { messages };
+
+      const messages = state.messages.map(m =>
+        m.subagentData?.agentId === agentId
+          ? { ...m, say: 'SUBAGENT_COMPLETED' as const, subagentData: { ...m.subagentData!, status: 'KILLED' } }
+          : m
+      );
+      return { messages, activeSubAgents: newMap };
     });
     // Notify Kotlin to cancel the worker
     import('../bridge/jcef-bridge').then(({ kotlinBridge }) => {
       kotlinBridge.killSubAgent(agentId);
     });
+  },
+
+  // ── Session Rehydration ──
+  hydrateFromUiMessages(uiMessages: UiMessage[]) {
+    // Filter out internal tracking messages and partial (interrupted) messages.
+    const visible = uiMessages.filter(
+      m => m.say !== 'API_REQ_STARTED' && m.say !== 'API_REQ_FINISHED' && !m.partial
+    );
+
+    // Upgrade legacy TOOL messages for communication tools into their proper
+    // semantic types.  Old sessions (or sessions from SessionMigrator) may
+    // have attempt_completion / plan_mode_respond / ask_followup_question /
+    // ask_questions / act_mode_respond (removed) stored as generic TOOL messages.
+    // The current persistence code (AgentLoop) already saves them correctly,
+    // but we need to handle the old format gracefully.
+    const upgraded = visible.map(m => {
+      if (m.say !== 'TOOL' || !m.toolCallData) return m;
+      const { toolName, args } = m.toolCallData;
+      const parsed = safeJsonParse(args);
+
+      switch (toolName) {
+        case 'attempt_completion': {
+          const result = parsed?.result ?? m.toolCallData.result ?? '';
+          return {
+            ...m,
+            type: 'ASK' as const,
+            say: undefined,
+            ask: 'COMPLETION_RESULT' as const,
+            text: result,
+            toolCallData: undefined,
+          };
+        }
+        case 'plan_mode_respond': {
+          const response = parsed?.response ?? m.toolCallData.result ?? '';
+          return {
+            ...m,
+            type: 'SAY' as const,
+            say: 'TEXT' as const,
+            ask: undefined,
+            text: response,
+            toolCallData: undefined,
+          };
+        }
+        case 'act_mode_respond': {
+          const response = parsed?.response ?? m.toolCallData.result ?? '';
+          return {
+            ...m,
+            type: 'SAY' as const,
+            say: 'TEXT' as const,
+            ask: undefined,
+            text: response,
+            toolCallData: undefined,
+          };
+        }
+        case 'ask_followup_question': {
+          const question = parsed?.question ?? m.toolCallData.result ?? '';
+          return {
+            ...m,
+            type: 'ASK' as const,
+            say: undefined,
+            ask: 'FOLLOWUP' as const,
+            text: question,
+            toolCallData: undefined,
+          };
+        }
+        case 'ask_questions': {
+          const question = parsed?.question ?? parsed?.questions?.[0]?.question ?? m.toolCallData.result ?? '';
+          return {
+            ...m,
+            type: 'SAY' as const,
+            say: 'TEXT' as const,
+            ask: undefined,
+            text: question,
+            toolCallData: undefined,
+          };
+        }
+        default:
+          return m;
+      }
+    });
+
+    // Restore plan from last PLAN_UPDATE message
+    let restoredPlan: Plan | null = null;
+    for (let i = upgraded.length - 1; i >= 0; i--) {
+      const m = upgraded[i]!;
+      if (m.planData) {
+        const pd = m.planData;
+        restoredPlan = {
+          title: 'Plan',
+          steps: pd.steps.map((s, si) => ({
+            id: `plan-step-${si}`,
+            title: s.title,
+            status: (s.status as PlanStepStatus) || 'pending',
+            comment: pd.comments?.[si] ?? undefined,
+          })),
+          approved: pd.status === 'APPROVED' || pd.status === 'EXECUTING',
+        };
+        break;
+      }
+    }
+
+    set({
+      messages: upgraded,
+      activeStream: null,
+      viewMode: 'chat',
+      ...(restoredPlan ? { plan: restoredPlan } : {}),
+    });
+  },
+
+  // ── History View ──
+  setViewMode(mode: 'history' | 'chat') {
+    set({ viewMode: mode });
+  },
+  setHistoryItems(items: HistoryItem[]) {
+    set({ historyItems: items });
+  },
+  setHistorySearch(query: string) {
+    set({ historySearch: query });
+  },
+
+  setResumeSessionId(sessionId: string | null) {
+    set({ resumeSessionId: sessionId });
   },
 }));

@@ -321,8 +321,8 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
       >
         {/* Text input question */}
         {question.type === 'text' ? (
-          <div className="p-5">
-            <h2 className="text-base font-semibold mb-3" style={{ color: 'var(--fg)' }}>
+          <div className="p-4">
+            <h2 className="text-sm font-semibold mb-2" style={{ color: 'var(--fg)' }}>
               {question.text}
             </h2>
             <TextInput
@@ -349,11 +349,11 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
             </div>
 
             {/* "Other" option — visually continuous with the options above */}
-            <div className="px-5 pb-3">
+            <div className="px-4 pb-2">
               <div className="mx-1 mb-1" style={{ borderTop: '1px solid var(--border)' }} />
 
               <button
-                className="flex items-start gap-3 w-full text-left py-2.5 px-1 group"
+                className="flex items-start gap-3 w-full text-left py-1.5 px-1 group"
                 onClick={() => setCustomSelected(!customSelected)}
               >
                 <span className="flex h-6 items-center">
@@ -370,9 +370,9 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
                   </span>
                 </span>
                 <div className="flex flex-col text-left">
-                  <span className="text-sm font-medium leading-6" style={{ color: 'var(--fg)' }}>Other</span>
+                  <span className="text-[13px] font-medium leading-5" style={{ color: 'var(--fg)' }}>Other</span>
                   {!customSelected && (
-                    <span className="text-sm" style={{ color: 'var(--fg-muted)' }}>Type a custom answer</span>
+                    <span className="text-[11px]" style={{ color: 'var(--fg-muted)' }}>Type a custom answer</span>
                   )}
                 </div>
               </button>

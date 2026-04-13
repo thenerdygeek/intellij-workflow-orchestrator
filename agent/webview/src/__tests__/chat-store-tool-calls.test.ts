@@ -150,11 +150,11 @@ describe('chatStore — tool call UI state', () => {
     expect(byName.get('glob_files')![0]!.result).toBe('3 matches');
   });
 
-  it('first-token drain: completed tool chain becomes a tc-chain system message before the streaming placeholder', () => {
+  it('first-token drain: completed tool chain becomes individual TOOL messages before the streaming placeholder', () => {
     // Agent runs a tool, then streams a text response. The first text token
-    // must drain the completed tool chain into a `tc-chain`
-    // message BEFORE creating the streaming placeholder, so the visual
-    // order is: prior messages → tc-chain → streaming text.
+    // must drain the completed tool chain into individual UiMessage{say:'TOOL'}
+    // entries BEFORE creating the streaming placeholder, so the visual
+    // order is: prior messages -> tool messages -> streaming text.
     const { addToolCall, updateToolCall, appendToken } = chatState();
 
     addToolCall('tc-1', 'glob_files', '{"pattern":"**"}', 'RUNNING');
@@ -166,21 +166,20 @@ describe('chatStore — tool call UI state', () => {
     const state = chatState();
     // activeToolCalls should be drained.
     expect(state.activeToolCalls.size).toBe(0);
-    // messages should now contain the tc-chain AND the streaming placeholder.
-    const tcChainMessages = state.messages.filter(m => m.toolChain != null);
-    expect(tcChainMessages).toHaveLength(1);
-    expect(tcChainMessages[0]!.toolChain).toHaveLength(1);
-    expect(tcChainMessages[0]!.toolChain![0]!.name).toBe('glob_files');
-    expect(tcChainMessages[0]!.toolChain![0]!.status).toBe('COMPLETED');
+    // messages should now contain TOOL message(s) AND the streaming placeholder.
+    const toolMessages = state.messages.filter(m => m.say === 'TOOL');
+    expect(toolMessages).toHaveLength(1);
+    expect(toolMessages[0]!.toolCallData!.toolName).toBe('glob_files');
+    expect(toolMessages[0]!.toolCallData!.status).toBe('COMPLETED');
 
-    // The streaming placeholder is an agent message that comes AFTER the tc-chain.
-    const agentMessages = state.messages.filter(m => m.role === 'agent');
-    expect(agentMessages).toHaveLength(1);
-    expect(agentMessages[0]!.content).toBe('Here is what I found:');
+    // The streaming placeholder is a TEXT message that comes AFTER the tool messages.
+    const textMessages = state.messages.filter(m => m.say === 'TEXT');
+    expect(textMessages).toHaveLength(1);
+    expect(textMessages[0]!.text).toBe('Here is what I found:');
 
-    const tcChainIdx = state.messages.findIndex(m => m.toolChain != null);
-    const agentIdx = state.messages.findIndex(m => m.role === 'agent');
-    expect(tcChainIdx).toBeLessThan(agentIdx);
+    const toolIdx = state.messages.findIndex(m => m.say === 'TOOL');
+    const textIdx = state.messages.findIndex(m => m.say === 'TEXT');
+    expect(toolIdx).toBeLessThan(textIdx);
   });
 
   it('tool call arriving mid-stream clears the caret without duplicating the streaming text', () => {
@@ -190,16 +189,16 @@ describe('chatStore — tool call UI state', () => {
     appendToken('the files. ');
 
     let state = chatState();
-    expect(state.messages.filter(m => m.role === 'agent')).toHaveLength(1);
-    expect(state.messages.filter(m => m.role === 'agent')[0]!.content).toBe('Let me check the files. ');
+    expect(state.messages.filter(m => m.say === 'TEXT')).toHaveLength(1);
+    expect(state.messages.filter(m => m.say === 'TEXT')[0]!.text).toBe('Let me check the files. ');
 
     addToolCall('tc-1', 'read_file', '{"path":"a.kt"}', 'RUNNING');
 
     state = chatState();
     expect(state.activeStream).toBeNull();
-    const agentMessages = state.messages.filter(m => m.role === 'agent');
-    expect(agentMessages).toHaveLength(1);
-    expect(agentMessages[0]!.content).toBe('Let me check the files. ');
+    const textMessages = state.messages.filter(m => m.say === 'TEXT');
+    expect(textMessages).toHaveLength(1);
+    expect(textMessages[0]!.text).toBe('Let me check the files. ');
     expect(state.activeToolCalls.size).toBe(1);
     expect(state.activeToolCalls.get('tc-1')?.name).toBe('read_file');
   });

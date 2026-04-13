@@ -1,14 +1,14 @@
-import type { Message, ToolCall, Plan, Question, Mention, MentionSearchResult } from '@/bridge/types';
+import type { UiMessage, ToolCall, Plan, Question, Mention, MentionSearchResult } from '@/bridge/types';
 
-export const mockMessages: Message[] = [
-  { id: '1', role: 'user', content: 'Can you read the main configuration file and check for any deprecated settings?', timestamp: Date.now() - 60000 },
-  { id: '2', role: 'agent', content: 'I\'ll read the configuration file and analyze it for deprecated settings.\n\n```typescript\nconst config = loadConfig("app.config.ts");\n```\n\nFound **3 deprecated settings** that should be updated.', timestamp: Date.now() - 55000 },
-  { id: '3', role: 'user', content: 'Show me a markdown example with all formatting.', timestamp: Date.now() - 50000 },
-  { id: '4', role: 'agent', content: '## Markdown Demo\n\nHere\'s **bold**, *italic*, `inline code`, and a [link](https://example.com).\n\n- List item 1\n- List item 2\n  - Nested item\n\n> Blockquote text\n\n```python\ndef hello():\n    print("world")\n```', timestamp: Date.now() - 45000 },
+export const mockMessages: UiMessage[] = [
+  { ts: Date.now() - 60000, type: 'SAY', say: 'USER_MESSAGE', text: 'Can you read the main configuration file and check for any deprecated settings?' },
+  { ts: Date.now() - 55000, type: 'SAY', say: 'TEXT', text: 'I\'ll read the configuration file and analyze it for deprecated settings.\n\n```typescript\nconst config = loadConfig("app.config.ts");\n```\n\nFound **3 deprecated settings** that should be updated.' },
+  { ts: Date.now() - 50000, type: 'SAY', say: 'USER_MESSAGE', text: 'Show me a markdown example with all formatting.' },
+  { ts: Date.now() - 45000, type: 'SAY', say: 'TEXT', text: '## Markdown Demo\n\nHere\'s **bold**, *italic*, `inline code`, and a [link](https://example.com).\n\n- List item 1\n- List item 2\n  - Nested item\n\n> Blockquote text\n\n```python\ndef hello():\n    print("world")\n```' },
 ];
 
-export const mockStreamingMessage: Message = {
-  id: '5', role: 'agent', content: 'Analyzing the test results and preparing a summary of the findings...', timestamp: Date.now(),
+export const mockStreamingMessage: UiMessage = {
+  ts: Date.now(), type: 'SAY', say: 'TEXT', text: 'Analyzing the test results and preparing a summary of the findings...', partial: true,
 };
 
 export const mockToolCalls: ToolCall[] = [

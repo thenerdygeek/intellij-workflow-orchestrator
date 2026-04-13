@@ -1,28 +1,3 @@
-// ── Message types ──
-
-export type MessageRole = 'user' | 'agent' | 'system';
-
-export interface Message {
-  id: string;
-  role: MessageRole;
-  content: string;
-  timestamp: number;
-  /** Completed tool call chain — present on 'system' messages with type 'toolchain' */
-  toolChain?: ToolCall[];
-  /** Sub-agent state — present on 'system' messages with type 'subagent' */
-  subAgent?: SubAgentState;
-  /** File path associated with this message (e.g., from edit_file tool calls) */
-  filePath?: string;
-  /** Artifact state — present on messages with rendered artifacts */
-  artifact?: ArtifactState;
-  /** True if this message's changes have been rolled back */
-  rolledBack?: boolean;
-  /** Context mentions (file, ticket, skill, etc.) — rendered as chips in user bubbles */
-  mentions?: Mention[];
-  /** Frozen Q&A snapshot from a submitted ask_questions wizard — rendered as a finalized card */
-  answeredQuestions?: Question[];
-}
-
 // ── Sub-Agent types ──
 
 export interface SubAgentState {
@@ -31,7 +6,7 @@ export interface SubAgentState {
   status: 'RUNNING' | 'COMPLETED' | 'ERROR' | 'KILLED';
   iteration: number;
   tokensUsed: number;
-  messages: Message[];
+  messages: UiMessage[];
   activeToolChain: ToolCall[];
   summary?: string;
   startedAt: number;
@@ -280,4 +255,115 @@ export interface VisualizationConfig {
   autoRender: boolean;
   defaultExpanded: boolean;
   maxHeight: number;
+}
+
+// ── UiMessage types (primary chat message type) ──
+// Mirrors the Kotlin UiMessage data class in agent/session/UiMessage.kt.
+// This is the sole message type used by the Zustand store and all UI components.
+
+export type UiMessageType = 'ASK' | 'SAY';
+
+export type UiAsk =
+  | 'RESUME_TASK' | 'RESUME_COMPLETED_TASK' | 'TOOL' | 'COMMAND'
+  | 'FOLLOWUP' | 'COMPLETION_RESULT' | 'PLAN_APPROVE' | 'PLAN_MODE_RESPOND'
+  | 'ARTIFACT_RENDER' | 'QUESTION_WIZARD'
+  | 'APPROVAL_GATE' | 'SUBAGENT_PERMISSION';
+
+export type UiSay =
+  | 'API_REQ_STARTED' | 'API_REQ_FINISHED' | 'TEXT' | 'USER_MESSAGE' | 'REASONING'
+  | 'TOOL' | 'CHECKPOINT_CREATED' | 'ERROR' | 'PLAN_UPDATE'
+  | 'ARTIFACT_RESULT' | 'SUBAGENT_STARTED' | 'SUBAGENT_PROGRESS'
+  | 'SUBAGENT_COMPLETED' | 'STEERING_RECEIVED' | 'CONTEXT_COMPRESSED'
+  | 'MEMORY_SAVED' | 'ROLLBACK_PERFORMED';
+
+export interface UiMessageModelInfo {
+  modelId?: string;
+  provider?: string;
+}
+
+export interface UiMessagePlanStep {
+  title: string;
+  status: string;
+}
+
+export interface UiMessagePlanData {
+  steps: UiMessagePlanStep[];
+  status: string;
+  comments?: Record<number, string>;
+}
+
+export interface UiMessageApprovalData {
+  toolName: string;
+  toolInput: string;
+  diffPreview?: string;
+  status: string; // PENDING | APPROVED | REJECTED
+}
+
+export interface UiMessageSubagentData {
+  agentId: string;
+  agentType: string;
+  description: string;
+  status: string; // RUNNING | COMPLETED | FAILED | KILLED
+  iterations: number;
+  summary?: string;
+}
+
+export interface UiMessageQuestionItem {
+  text: string;
+  options: string[];
+}
+
+export interface UiMessageQuestionData {
+  questions: UiMessageQuestionItem[];
+  currentIndex: number;
+  answers?: Record<number, string>;
+  status: string; // IN_PROGRESS | COMPLETED | SKIPPED
+}
+
+export interface UiMessageToolCallData {
+  toolCallId: string;
+  toolName: string;
+  args?: string;
+  status?: string; // PENDING | RUNNING | COMPLETED | ERROR
+  result?: string;
+  output?: string;
+  durationMs?: number;
+  diff?: string;
+  isError?: boolean;
+}
+
+export interface UiMessage {
+  ts: number;
+  type: UiMessageType;
+  ask?: UiAsk;
+  say?: UiSay;
+  text?: string;
+  reasoning?: string;
+  images?: string[];
+  files?: string[];
+  partial?: boolean;
+  conversationHistoryIndex?: number;
+  conversationHistoryDeletedRange?: number[];
+  lastCheckpointHash?: string;
+  modelInfo?: UiMessageModelInfo;
+  artifactId?: string;
+  planData?: UiMessagePlanData;
+  approvalData?: UiMessageApprovalData;
+  questionData?: UiMessageQuestionData;
+  subagentData?: UiMessageSubagentData;
+  toolCallData?: UiMessageToolCallData;
+}
+
+/** Mirrors Kotlin HistoryItem from sessions.json */
+export interface HistoryItem {
+  id: string;
+  ts: number;
+  task: string;
+  tokensIn: number;
+  tokensOut: number;
+  cacheWrites?: number | null;
+  cacheReads?: number | null;
+  totalCost: number;
+  modelId?: string | null;
+  isFavorited: boolean;
 }
