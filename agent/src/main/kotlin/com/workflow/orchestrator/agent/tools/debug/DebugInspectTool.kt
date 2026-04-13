@@ -829,10 +829,12 @@ Most actions require a suspended session. session_id defaults to active session.
             is SessionResolution.Failed -> return r.toolResult
         }
 
-        // Drop frame has limited support in Python debugging: Python debug processes do not
-        // expose a JDI VirtualMachine, so canPopFrames() will return false and the operation
-        // will fail gracefully below. The error path already handles this case correctly.
-        // No hard block here — let the existing canPopFrames() check surface the error.
+        if (isPythonDebugSession(session)) {
+            return ToolResult(
+                "Drop frame is not supported in Python debug sessions. Python's debugger does not support rewinding execution.",
+                "Drop frame not supported for Python", 10
+            )
+        }
 
         return try {
             controller.executeOnManagerThread(session) { _, vmProxy ->
@@ -920,7 +922,8 @@ Most actions require a suspended session. session_id defaults to active session.
             val processClass = session.debugProcess.javaClass
             processClass.simpleName.startsWith("Py") ||
                 processClass.name.contains("pydevd", ignoreCase = true) ||
-                processClass.name.contains("python", ignoreCase = true)
+                processClass.name.startsWith("com.jetbrains.python") ||
+                processClass.name.startsWith("com.intellij.python")
         } catch (_: Exception) {
             false
         }

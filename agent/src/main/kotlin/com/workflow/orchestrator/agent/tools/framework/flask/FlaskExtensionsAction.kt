@@ -105,13 +105,16 @@ internal suspend fun executeExtensions(params: JsonObject, project: Project): To
                 return@withContext ToolResult("No extensions found$filterDesc.", "No extensions", 5)
             }
 
+            val filteredExtensions = filtered.filter { it.initStyle == "constructor" }
+            val filteredInitAppCalls = filtered.filter { it.initStyle == "init_app" }
+
             val content = buildString {
-                appendLine("Flask extensions (${extensions.size} definitions, ${initAppCalls.size} init_app calls):")
+                appendLine("Flask extensions (${filteredExtensions.size} definitions, ${filteredInitAppCalls.size} init_app calls):")
                 appendLine()
 
-                if (extensions.isNotEmpty()) {
+                if (filteredExtensions.isNotEmpty()) {
                     appendLine("Extension instances:")
-                    val byFile = extensions.groupBy { it.file }
+                    val byFile = filteredExtensions.groupBy { it.file }
                     for ((file, exts) in byFile.toSortedMap()) {
                         appendLine("  [$file]")
                         for (ext in exts.sortedBy { it.varName }) {
@@ -121,9 +124,9 @@ internal suspend fun executeExtensions(params: JsonObject, project: Project): To
                     appendLine()
                 }
 
-                if (initAppCalls.isNotEmpty()) {
+                if (filteredInitAppCalls.isNotEmpty()) {
                     appendLine("init_app() calls:")
-                    val byFile = initAppCalls.groupBy { it.file }
+                    val byFile = filteredInitAppCalls.groupBy { it.file }
                     for ((file, calls) in byFile.toSortedMap()) {
                         appendLine("  [$file]")
                         for (call in calls.sortedBy { it.varName }) {
@@ -135,7 +138,7 @@ internal suspend fun executeExtensions(params: JsonObject, project: Project): To
 
             ToolResult(
                 content = content.trimEnd(),
-                summary = "${extensions.size} extensions, ${initAppCalls.size} init_app calls",
+                summary = "${filteredExtensions.size} extensions, ${filteredInitAppCalls.size} init_app calls",
                 tokenEstimate = TokenEstimator.estimate(content)
             )
         }

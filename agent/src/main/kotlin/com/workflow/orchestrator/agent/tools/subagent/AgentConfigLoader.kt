@@ -443,6 +443,7 @@ class AgentConfigLoader private constructor() : Disposable {
             "architect-reviewer.md",
             "test-automator.md",
             "spring-boot-engineer.md",
+            "python-engineer.md",
             "refactoring-specialist.md",
             "devops-engineer.md",
             "security-auditor.md",
