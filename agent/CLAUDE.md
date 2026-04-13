@@ -160,7 +160,7 @@ Tool set stabilizes per session — tools only expand across messages, never shr
 Result stored as `IdeContext` in `AgentService`. Tools that can't work in the current environment are never registered. `IdeContext.summary()` provides a human-readable string for the system prompt.
 
 **Tool registration filter** (`ToolRegistrationFilter`): Guards tool categories:
-- Java PSI + Code Intelligence → requires `hasJavaPlugin`
+- PSI + Code Intelligence → requires `hasJavaPlugin` OR `supportsPython` (either language enables all 14 PSI tools)
 - Spring tools → requires `hasSpringPlugin && hasJavaPlugin`
 - Build tools (Maven/Gradle) → requires `hasJavaPlugin`
 - Debug tools → requires `hasJavaPlugin`
@@ -172,11 +172,14 @@ Key files: `ide/IdeContext.kt`, `ide/IdeContextDetector.kt`, `ide/ProjectScanner
 
 PSI tools delegate language-specific logic to pluggable providers via `LanguageProviderRegistry`.
 
-**Interface:** `LanguageIntelligenceProvider` (15 operations: symbol resolution, file structure, type hierarchy, implementations, type inference, dataflow, callers/callees, metadata, body, access classification, test discovery, diagnostics, structural search)
+**Interface:** `LanguageIntelligenceProvider` (16 operations: symbol resolution, file structure, type hierarchy, implementations, type inference, dataflow, callers/callees, metadata, body, access classification, test discovery, diagnostics, structural search)
 
 **Implementations:**
 - `JavaKotlinProvider` — wraps existing PsiToolUtils + inline Java/Kotlin PSI logic
-- (Python provider planned — Plan B2)
+- `PythonProvider` — reflection-based Python PSI access via `PythonPsiHelper`
+  - All 16 operations implemented except: `analyzeDataflow` (returns null — no Python equivalent) and `structuralSearch` (returns null — not supported for Python)
+  - Requires `PythonCore` plugin (Community-level, no Professional APIs needed)
+  - Zero compile-time dependency on Python plugin — all PSI access via `Class.forName` / `Method.invoke`
 
 **Registry:** `LanguageProviderRegistry` resolves provider by `PsiFile.language.id`. Thread-safe (ConcurrentHashMap). Initialized in `AgentService.registerAllTools()`.
 
