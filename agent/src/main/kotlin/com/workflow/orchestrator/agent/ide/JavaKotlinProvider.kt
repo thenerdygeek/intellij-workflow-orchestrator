@@ -17,6 +17,8 @@ import com.intellij.structuralsearch.Matcher
 import com.intellij.structuralsearch.plugin.util.CollectingMatchResultSink
 import com.intellij.testIntegration.TestFinder
 import com.workflow.orchestrator.agent.tools.psi.PsiToolUtils
+import java.util.Collections
+import java.util.IdentityHashMap
 
 /**
  * Java/Kotlin implementation of [LanguageIntelligenceProvider].
@@ -369,8 +371,11 @@ class JavaKotlinProvider(private val project: Project) : LanguageIntelligencePro
         val method = element as? PsiMethod ?: return emptyList()
         val callers = mutableListOf<CallerInfo>()
         val maxDepth = depth.coerceIn(1, 3)
+        // IdentityHashMap: PsiElement.equals() is not a stable contract; identity comparison
+        // prevents re-visiting the same live PSI object across a recursive DFS.
+        val visited = Collections.newSetFromMap(IdentityHashMap<PsiElement, Boolean>())
 
-        collectCallers(method, 1, maxDepth, scope, callers)
+        collectCallers(method, 1, maxDepth, scope, callers, visited)
         return callers
     }
 
@@ -787,9 +792,10 @@ class JavaKotlinProvider(private val project: Project) : LanguageIntelligencePro
         currentDepth: Int,
         maxDepth: Int,
         scope: SearchScope,
-        result: MutableList<CallerInfo>
+        result: MutableList<CallerInfo>,
+        visited: MutableSet<PsiElement>
     ) {
-        if (currentDepth > maxDepth) return
+        if (currentDepth > maxDepth || !visited.add(method)) return
         val refs = ReferencesSearch.search(method, scope).findAll()
         val limit = if (currentDepth == 1) 30 else 10
         for (ref in refs.take(limit)) {
@@ -809,7 +815,7 @@ class JavaKotlinProvider(private val project: Project) : LanguageIntelligencePro
             result.add(CallerInfo(name = callerName, filePath = file, line = line, depth = currentDepth))
 
             if (containingMethod != null && currentDepth < maxDepth) {
-                collectCallers(containingMethod, currentDepth + 1, maxDepth, scope, result)
+                collectCallers(containingMethod, currentDepth + 1, maxDepth, scope, result, visited)
             }
         }
     }
