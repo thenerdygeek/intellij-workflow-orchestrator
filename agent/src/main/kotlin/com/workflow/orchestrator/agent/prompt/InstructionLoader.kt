@@ -1,6 +1,8 @@
 package com.workflow.orchestrator.agent.prompt
 
 import com.intellij.openapi.diagnostic.Logger
+import com.workflow.orchestrator.agent.ide.IdeContext
+import com.workflow.orchestrator.agent.ide.IdeProduct
 import java.io.File
 
 /**
@@ -144,11 +146,20 @@ object InstructionLoader {
      * Port of Cline's getSkillContent(skillName, availableSkills) from skills.ts.
      * Loads content lazily — only when the skill is actually activated via use_skill.
      *
+     * When [ideContext] is provided, loads a language-specific variant file
+     * (e.g. SKILL.java.md for IntelliJ, SKILL.python.md for PyCharm) and appends
+     * it after the base content. Null ideContext preserves backward compatibility.
+     *
      * @param skillName the exact skill name to load
      * @param availableSkills the list from [getAvailableSkills]
+     * @param ideContext optional IDE context for language-variant selection
      * @return full skill content, or null if not found
      */
-    fun getSkillContent(skillName: String, availableSkills: List<SkillMetadata>): SkillContent? {
+    fun getSkillContent(
+        skillName: String,
+        availableSkills: List<SkillMetadata>,
+        ideContext: IdeContext? = null
+    ): SkillContent? {
         val skill = availableSkills.find { it.name == skillName } ?: return null
 
         return try {
@@ -160,14 +171,24 @@ object InstructionLoader {
                 }
             } ?: return null
 
-            val (_, body) = parseYamlFrontmatter(fileContent)
+            val (_, baseBody) = parseYamlFrontmatter(fileContent)
+
+            // Load language variant (if exists)
+            val variantBody = loadSkillVariant(skill, ideContext)
+
+            // Merge: base + variant (variant appended after base)
+            val fullInstructions = if (variantBody != null) {
+                baseBody.trim() + "\n\n" + variantBody.trim()
+            } else {
+                baseBody.trim()
+            }
 
             SkillContent(
                 name = skill.name,
                 description = skill.description,
                 path = skill.path,
                 source = skill.source,
-                instructions = body.trim()
+                instructions = fullInstructions
             )
         } catch (e: Exception) {
             LOG.warn("InstructionLoader: failed to load skill content for '${skill.name}': ${e.message}")
@@ -371,6 +392,41 @@ object InstructionLoader {
         }
 
         return FrontmatterResult(data = data, body = body, hadFrontmatter = true)
+    }
+
+    /**
+     * Load the language-specific variant of a skill.
+     * Variant file naming: SKILL.java.md (IntelliJ) or SKILL.python.md (PyCharm).
+     * Simple IDE-based selection — no mixed-language merging.
+     */
+    private fun loadSkillVariant(skill: SkillMetadata, ideContext: IdeContext?): String? {
+        if (ideContext == null) return null
+
+        val variantSuffix = when (ideContext.product) {
+            IdeProduct.INTELLIJ_ULTIMATE, IdeProduct.INTELLIJ_COMMUNITY -> "java"
+            IdeProduct.PYCHARM_PROFESSIONAL, IdeProduct.PYCHARM_COMMUNITY -> "python"
+            IdeProduct.OTHER -> return null
+        }
+
+        val variantFileName = "SKILL.$variantSuffix.md"
+
+        return try {
+            when (skill.source) {
+                SkillSource.BUNDLED -> {
+                    val basePath = skill.path.substringBeforeLast("/")
+                    loadClasspathResource("$basePath/$variantFileName")
+                }
+                SkillSource.PROJECT, SkillSource.GLOBAL -> {
+                    val variantFile = File(skill.path).parentFile?.resolve(variantFileName)
+                    if (variantFile?.isFile == true && variantFile.canRead()) {
+                        variantFile.readText(Charsets.UTF_8)
+                    } else null
+                }
+            }
+        } catch (e: Exception) {
+            LOG.warn("InstructionLoader: failed to load skill variant for '${skill.name}': ${e.message}")
+            null
+        }
     }
 
     /**
