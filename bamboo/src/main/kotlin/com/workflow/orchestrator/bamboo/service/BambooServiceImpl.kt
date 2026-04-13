@@ -64,12 +64,20 @@ class BambooServiceImpl(private val project: Project) : BambooService {
     override suspend fun getLatestBuild(planKey: String, branch: String?, repoName: String?): ToolResult<BuildResultData> {
         val api = client ?: return notConfiguredError("fetch latest build for $planKey")
 
-        // Pass branch directly to the API — same approach as BuildMonitorService.pollOnce().
-        // Bamboo handles branch-name-in-URL (URL-encoded) correctly.
-        return when (val result = api.getLatestResult(planKey, branch = branch)) {
+        // Resolve branch plan key first (same approach as getRecentBuilds),
+        // then fetch by key — no branch name in URL.
+        val effectivePlanKey = if (branch != null) {
+            val (resolved, error) = resolveBranchPlanKey(api, planKey, branch)
+            resolved ?: return buildErrorResult(planKey, 0,
+                ApiResult.Error(ErrorType.NOT_FOUND, error ?: "Branch resolution failed"))
+        } else {
+            planKey
+        }
+
+        return when (val result = api.getLatestResult(effectivePlanKey)) {
             is ApiResult.Success -> mapBuildResult(result.data)
             is ApiResult.Error -> {
-                log.warn("[BambooService] Failed to fetch latest build for $planKey (branch=$branch): ${result.message}")
+                log.warn("[BambooService] Failed to fetch latest build for $effectivePlanKey: ${result.message}")
                 buildErrorResult(planKey, 0, result)
             }
         }
@@ -808,13 +816,19 @@ class BambooServiceImpl(private val project: Project) : BambooService {
         planKey: String,
         branch: String
     ): Pair<String?, String?> { // (resolvedKey, errorMessage)
+        log.info("[BambooService] Resolving branch plan key: planKey=$planKey, branch='$branch'")
         return when (val branchResult = api.getBranches(planKey)) {
             is ApiResult.Success -> {
-                val branchDto = branchResult.data.find { it.name.equals(branch, ignoreCase = true) }
+                val branches = branchResult.data
+                log.info("[BambooService] Found ${branches.size} branches for $planKey: ${branches.joinToString { "'${it.name}'→${it.key}" }}")
+                val branchDto = branches.find { it.name.equals(branch, ignoreCase = true) }
                 if (branchDto != null) {
+                    log.info("[BambooService] Resolved branch '$branch' → key '${branchDto.key}'")
                     branchDto.key to null
                 } else {
-                    null to "Branch '$branch' not found in plan $planKey. Available: ${branchResult.data.joinToString { it.name }}"
+                    val msg = "Branch '$branch' not found in plan $planKey. Available: ${branches.joinToString { it.name }}"
+                    log.warn("[BambooService] $msg")
+                    null to msg
                 }
             }
             is ApiResult.Error -> {
