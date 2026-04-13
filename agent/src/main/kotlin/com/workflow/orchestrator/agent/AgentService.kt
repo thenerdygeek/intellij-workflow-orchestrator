@@ -20,9 +20,22 @@ import com.workflow.orchestrator.agent.prompt.EnvironmentDetailsBuilder
 import com.workflow.orchestrator.agent.prompt.InstructionLoader
 import com.workflow.orchestrator.agent.prompt.SystemPrompt
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.agent.session.AtomicFileWriter
 import com.workflow.orchestrator.agent.session.Session
 import com.workflow.orchestrator.agent.session.SessionStatus
-import com.workflow.orchestrator.agent.session.SessionStore
+import com.workflow.orchestrator.agent.session.HistoryItem
+import com.workflow.orchestrator.agent.session.MessageStateHandler
+import com.workflow.orchestrator.agent.session.UiMessage
+import com.workflow.orchestrator.agent.session.UiMessageType
+import com.workflow.orchestrator.agent.session.UiAsk
+import com.workflow.orchestrator.agent.session.UiSay
+import com.workflow.orchestrator.agent.session.ApiMessage
+import com.workflow.orchestrator.agent.session.ApiRole
+import com.workflow.orchestrator.agent.session.ContentBlock
+import com.workflow.orchestrator.agent.session.SessionLock
+import com.workflow.orchestrator.agent.session.ResumeHelper
+import com.workflow.orchestrator.agent.session.toChatMessage
+import com.workflow.orchestrator.agent.session.toApiMessage
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolRegistry
@@ -69,7 +82,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Central agent service — wires the AgentLoop, ToolRegistry, ContextManager,
- * SessionStore, and LLM brain together. Exposes [executeTask] for the UI layer.
+ * MessageStateHandler, and LLM brain together. Exposes [executeTask] for the UI layer.
  *
  * IntelliJ project-level service: one instance per open project.
  */
@@ -80,7 +93,6 @@ class AgentService(private val project: Project) : Disposable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     val registry = ToolRegistry()
-    val sessionStore: SessionStore
 
     /** Atomic reference tracking both the loop and job together to avoid race conditions. */
     private data class ActiveTask(val loop: AgentLoop, val job: Job)
@@ -119,7 +131,6 @@ class AgentService(private val project: Project) : Disposable {
         val basePath = project.basePath ?: System.getProperty("user.home")
         val agentDir = ProjectIdentifier.agentDir(basePath)
         this.agentDir = agentDir
-        sessionStore = SessionStore(agentDir)
 
         // Initialize 3-tier memory system (Letta pattern)
         val coreMem = CoreMemory.forProject(agentDir)
@@ -282,10 +293,11 @@ class AgentService(private val project: Project) : Disposable {
             }
         }
 
-        val allToolNames = registry.getActiveTools().keys
-        val allParamNames = registry.getActiveTools().values
-            .flatMap { it.parameters.properties.keys }
-            .toSet()
+        // Use allToolNames/allParamNames so the XML parser recognises deferred tool
+        // tags (e.g. <git_show_commit>) even before they are activated via tool_search.
+        // registry.get() already resolves all tiers, so execution works regardless.
+        val allToolNames = registry.allToolNames()
+        val allParamNames = registry.allParamNames()
         log.info("[Agent] Creating brain with model: $modelId at $sgUrl (tools=${allToolNames.size}, params=${allParamNames.size})")
 
         return OpenAiCompatBrain(
@@ -341,7 +353,6 @@ class AgentService(private val project: Project) : Disposable {
         safeRegisterCore { ThinkTool() }
         safeRegisterCore { AskQuestionsTool() }
         safeRegisterCore { PlanModeRespondTool() }
-        safeRegisterCore { ActModeRespondTool() }
         safeRegisterCore { EnablePlanModeTool() }
         safeRegisterCore { UseSkillTool() }
         safeRegisterCore { NewTaskTool() }
@@ -598,7 +609,13 @@ class AgentService(private val project: Project) : Disposable {
          * Callback fired after steering messages are drained and injected.
          * The UI promotes queued messages to regular chat messages.
          */
-        onSteeringDrained: ((drainedIds: List<String>) -> Unit)? = null
+        onSteeringDrained: ((drainedIds: List<String>) -> Unit)? = null,
+        /**
+         * Optional pre-built MessageStateHandler for resumed sessions.
+         * When provided, skips internal MessageStateHandler creation and initial message recording.
+         * Used by resumeSession which pre-loads state from persisted files.
+         */
+        messageStateHandler: MessageStateHandler? = null
     ): Job {
         val sid = sessionId ?: UUID.randomUUID().toString()
         var session = Session(
@@ -606,7 +623,6 @@ class AgentService(private val project: Project) : Disposable {
             title = task.take(100),
             status = SessionStatus.ACTIVE
         )
-        sessionStore.save(session)
         onSessionStarted?.invoke(sid)
 
         val sessionMetrics = SessionMetrics()
@@ -634,7 +650,6 @@ class AgentService(private val project: Project) : Disposable {
                             status = SessionStatus.CANCELLED,
                             lastMessageAt = System.currentTimeMillis()
                         )
-                        sessionStore.save(session)
                         onComplete(LoopResult.Cancelled(iterations = 0))
                         return@launch
                     }
@@ -703,11 +718,9 @@ class AgentService(private val project: Project) : Disposable {
                 val fbCredentialStore = CredentialStore()
                 val fbTokenProvider = { fbCredentialStore.getToken(ServiceType.SOURCEGRAPH) }
                 val brainFactory: suspend (String, String?) -> LlmBrain = { modelId: String, reason: String? ->
-                    // Compute tool names lazily so deferred tools loaded via request_tools are included
-                    val currentToolNames = registry.getActiveTools().keys
-                    val currentParamNames = registry.getActiveTools().values
-                        .flatMap { it.parameters.properties.keys }
-                        .toSet()
+                    // All tool names so the XML parser recognises deferred tools too
+                    val currentToolNames = registry.allToolNames()
+                    val currentParamNames = registry.allParamNames()
                     val newBrain = OpenAiCompatBrain(
                         sourcegraphUrl = fbUrl,
                         tokenProvider = fbTokenProvider,
@@ -813,8 +826,8 @@ class AgentService(private val project: Project) : Disposable {
                 ctx.setSystemPrompt(systemPromptBuilder(null))
 
                 // Build tool definitions dynamically — called on each loop iteration.
-                // Plan mode: remove write tools + act_mode_respond + enable_plan_mode, keep plan_mode_respond.
-                // Act mode: remove plan_mode_respond, keep act_mode_respond + write tools + enable_plan_mode.
+                // Plan mode: remove write tools + enable_plan_mode, keep plan_mode_respond.
+                // Act mode: remove plan_mode_respond, keep write tools + enable_plan_mode.
                 // Re-reads planModeActive on each call so enable_plan_mode tool takes effect mid-session.
                 //
                 // Also rebuilds the system prompt with updated tool definitions —
@@ -829,7 +842,7 @@ class AgentService(private val project: Project) : Disposable {
                             // Port of Cline's contextRequirements: omit use_skill when no skills available
                             if (tool.name == "use_skill" && !hasSkills) return@filter false
                             if (isPlanMode) {
-                                tool.name !in writeToolNames && tool.name != "act_mode_respond" && tool.name != "enable_plan_mode"
+                                tool.name !in writeToolNames && tool.name != "enable_plan_mode"
                             } else {
                                 tool.name != "plan_mode_respond"
                             }
@@ -867,9 +880,57 @@ class AgentService(private val project: Project) : Disposable {
                 // Log session start with actual tool count
                 fileLogger.logSessionStart(sid, task, toolDefs.size)
 
-                // Track the message count before this turn, so we can
-                // checkpoint only newly-added messages (JSONL append).
-                var lastCheckpointedCount = ctx.messageCount()
+                // Create MessageStateHandler for Cline-style two-file persistence.
+                // Persists ui_messages.json + api_conversation_history.json per session.
+                // Reuses basePath from API debug dir setup above.
+                val sessionBaseDir = ProjectIdentifier.agentDir(basePath)
+                val messageState = messageStateHandler ?: run {
+                    // Check if this is a follow-up turn in an existing session
+                    val sessionDir = java.io.File(sessionBaseDir, "sessions/$sid")
+                    val existingUi = if (sessionDir.exists()) MessageStateHandler.loadUiMessages(sessionDir) else emptyList()
+                    val existingApi = if (sessionDir.exists()) MessageStateHandler.loadApiHistory(sessionDir) else emptyList()
+
+                    // For follow-up turns, use the original task text from the first message
+                    val resolvedTaskText = if (existingUi.isNotEmpty()) {
+                        existingUi.firstOrNull { it.say == UiSay.TEXT }?.text?.take(200) ?: task.take(200)
+                    } else {
+                        task.take(200)
+                    }
+
+                    val handler = MessageStateHandler(
+                        baseDir = sessionBaseDir,
+                        sessionId = sid,
+                        taskText = resolvedTaskText
+                    )
+
+                    // Restore existing messages for follow-up turns (multi-turn session continuity)
+                    if (existingUi.isNotEmpty()) handler.setClineMessages(existingUi)
+                    if (existingApi.isNotEmpty()) handler.setApiConversationHistory(existingApi)
+
+                    // Add user message for this turn to both persistence files.
+                    // Skipped when messageStateHandler is pre-built (resume path adds its own).
+                    handler.addToApiConversationHistory(ApiMessage(
+                        role = ApiRole.USER,
+                        content = listOf(ContentBlock.Text(task)),
+                        ts = System.currentTimeMillis()
+                    ))
+                    handler.addToClineMessages(UiMessage(
+                        ts = System.currentTimeMillis(),
+                        type = UiMessageType.SAY,
+                        say = UiSay.USER_MESSAGE,
+                        text = task
+                    ))
+                    handler
+                }
+
+                // Wire onHistoryOverwrite callback so compaction persists truncated history.
+                // Ported from Cline's conversationHistoryDeletedRange pattern: after context
+                // truncation/summarization, the modified api_conversation_history is overwritten.
+                ctx.onHistoryOverwrite = { msgs, _ ->
+                    messageState.overwriteApiConversationHistory(
+                        msgs.map { it.toApiMessage() }
+                    )
+                }
 
                 // Write checkpoint counter — create checkpoint after write operations
                 var writeCheckpointCounter = 0
@@ -903,7 +964,8 @@ class AgentService(private val project: Project) : Disposable {
                         try {
                             val checkpointId = "cp-${writeCheckpointCounter}-${System.currentTimeMillis()}"
                             val description = "After $toolName: ${args.take(100)}"
-                            sessionStore.saveCheckpoint(
+                            MessageStateHandler.saveCheckpoint(
+                                baseDir = sessionBaseDir,
                                 sessionId = sid,
                                 checkpointId = checkpointId,
                                 messages = ctx.exportMessages(),
@@ -938,59 +1000,20 @@ class AgentService(private val project: Project) : Disposable {
                     onModelSwitch = onModelSwitch,
                     compactOnTimeoutExhaustion = compactOnTimeoutExhaustion,
                     onCheckpoint = {
-                        // Checkpoint: persist new messages since last checkpoint.
-                        // Ported from Cline's message-state.ts pattern where
-                        // saveApiConversationHistory is called on every state change.
-                        // We use JSONL append for efficiency (Cline rewrites the whole file).
-                        try {
-                            val allMessages = ctx.exportMessages()
-                            val newMessages = allMessages.subList(
-                                lastCheckpointedCount.coerceAtMost(allMessages.size),
-                                allMessages.size
-                            )
-                            for (msg in newMessages) {
-                                sessionStore.appendMessage(sid, msg)
-                            }
-                            lastCheckpointedCount = allMessages.size
-
-                            // Update session metadata with latest state
-                            // (Cline does this in saveClineMessagesAndUpdateHistoryInternal)
-                            session = session.copy(
-                                messageCount = allMessages.size,
-                                lastMessageAt = System.currentTimeMillis(),
-                                systemPrompt = ctx.getSystemPromptContent() ?: "",
-                                planModeEnabled = planModeActive.get(),
-                                lastToolCallId = allMessages.lastOrNull { it.role == "tool" }?.toolCallId
-                            )
-                            sessionStore.save(session)
-                            log.debug("[Agent] Session saved: $sid")
-                        } catch (e: Exception) {
-                            log.warn("AgentService: checkpoint save failed (non-fatal)", e)
-                        }
+                        // No-op: MessageStateHandler now handles per-change persistence
+                        // directly (Task 6). This callback is retained as a lifecycle hook
+                        // but the old SessionStore-based JSONL append path is removed.
                     },
+                    messageStateHandler = messageState,
                     toolExecutionMode = agentSettings.state.toolExecutionMode ?: "accumulate",
-                    toolNameProvider = { registry.getActiveTools().keys },
-                    paramNameProvider = { registry.getActiveTools().values.flatMap { it.parameters.properties.keys }.toSet() }
+                    toolNameProvider = { registry.allToolNames() },
+                    paramNameProvider = { registry.allParamNames() }
                 )
 
                 // I4: Set activeTask atomically after both loop and job are available
                 activeTask.set(ActiveTask(loop = loop, job = coroutineContext.job))
 
                 val result = loop.run(task)
-
-                // Final checkpoint: save all remaining messages
-                try {
-                    val allMessages = ctx.exportMessages()
-                    val remaining = allMessages.subList(
-                        lastCheckpointedCount.coerceAtMost(allMessages.size),
-                        allMessages.size
-                    )
-                    for (msg in remaining) {
-                        sessionStore.appendMessage(sid, msg)
-                    }
-                } catch (e: Exception) {
-                    log.warn("AgentService: final checkpoint save failed (non-fatal)", e)
-                }
 
                 // I5: Update session via .copy() (Session is now fully immutable)
                 // Extract token counts from result (ported from Cline's tokensIn/tokensOut)
@@ -1026,7 +1049,6 @@ class AgentService(private val project: Project) : Disposable {
                     messageCount = ctx.messageCount(),
                     metrics = sessionMetrics.snapshot()
                 )
-                sessionStore.save(session)
                 log.info("[Agent] Task ended: status=${session.status}, iterations=${ctx.messageCount()}, tokens=$tokensUsed")
 
                 // Log session end to structured file logger
@@ -1071,7 +1093,6 @@ class AgentService(private val project: Project) : Disposable {
                     status = SessionStatus.CANCELLED,
                     lastMessageAt = System.currentTimeMillis()
                 )
-                sessionStore.save(session)
                 fileLogger.logSessionEnd(sid, 0, 0, System.currentTimeMillis() - sessionStartTime)
                 onComplete(LoopResult.Cancelled(iterations = 0))
             } catch (e: Exception) {
@@ -1080,7 +1101,6 @@ class AgentService(private val project: Project) : Disposable {
                     status = SessionStatus.FAILED,
                     lastMessageAt = System.currentTimeMillis()
                 )
-                sessionStore.save(session)
                 fileLogger.logSessionEnd(sid, 0, 0, System.currentTimeMillis() - sessionStartTime, error = e.message)
                 onComplete(LoopResult.Failed(error = e.message ?: "Unknown error"))
             } finally {
@@ -1097,108 +1117,204 @@ class AgentService(private val project: Project) : Disposable {
     // ── Session Resume ────────────────────────────────────────────────────
 
     /**
-     * Resume a previously interrupted session from its checkpoint.
+     * Resume a previously interrupted session.
      *
-     * Faithful port of Cline's task resumption pattern:
-     * 1. Load session metadata (Cline's readTaskHistoryFromState + HistoryItem)
-     * 2. Load conversation history (Cline's getSavedApiConversationHistory)
-     * 3. Rebuild ContextManager with saved messages (Cline's setApiConversationHistory)
-     * 4. Rebuild system prompt from saved settings (Cline's readTaskSettingsFromStorage)
-     * 5. Continue execution — the LLM sees full history and picks up where it left off
+     * Faithful port of Cline's task resumption pattern (resumeTaskFromHistory):
+     * 1. Load both JSON files (ui_messages + api_conversation_history)
+     * 2. Acquire session lock (prevents double-resume across IDE instances)
+     * 3. Trim trailing resume messages and cost-less api_req_started
+     * 4. Pop trailing user message if interrupted mid-submission
+     * 5. Build taskResumption preamble with time-ago and mode
+     * 6. Create MessageStateHandler with restored state
+     * 7. Rebuild ContextManager from API history (lossless ApiMessage→ChatMessage)
+     * 8. Execute task with rebuilt context
      *
      * @param sessionId ID of the session to resume
-     * @param continuationMessage optional message to inject (e.g. "Continue from where you left off")
+     * @param userText optional user message provided at resume time
      * @param onStreamChunk streaming callback
      * @param onToolCall tool progress callback
+     * @param onTaskProgress task progress callback
      * @param onComplete completion callback
-     * @return the Job, or null if session not found or not resumable
+     * @param onUiMessagesLoaded callback to push full UI state to webview for rehydration
+     * @return the Job, or null if session not found, locked, or has no history
      *
-     * @see <a href="https://github.com/cline/cline/blob/main/src/core/storage/disk.ts">Cline disk.ts getSavedApiConversationHistory</a>
+     * @see <a href="https://github.com/cline/cline/blob/main/src/core/Cline.ts">Cline resumeTaskFromHistory</a>
      */
     fun resumeSession(
         sessionId: String,
-        continuationMessage: String = "Continue from where you left off. Your previous conversation history has been restored.",
+        userText: String? = null,
         onStreamChunk: (String) -> Unit = {},
         onToolCall: (ToolCallProgress) -> Unit = {},
         onTaskProgress: (TaskProgress) -> Unit = {},
-        onComplete: (LoopResult) -> Unit = {}
+        onComplete: (LoopResult) -> Unit = {},
+        onUiMessagesLoaded: ((List<UiMessage>) -> Unit)? = null,
+        onRetry: ((attempt: Int, maxAttempts: Int, reason: String, delayMs: Long) -> Unit)? = null,
+        onModelSwitch: ((fromModel: String, toModel: String, reason: String) -> Unit)? = null,
+        onPlanResponse: ((planText: String, needsMoreExploration: Boolean, planSteps: List<String>) -> Unit)? = null,
+        onPlanModeToggled: ((Boolean) -> Unit)? = null,
+        userInputChannel: Channel<String>? = null,
+        approvalGate: (suspend (toolName: String, args: String, riskLevel: String) -> com.workflow.orchestrator.agent.loop.ApprovalResult)? = null,
+        onCheckpointSaved: ((sessionId: String) -> Unit)? = null,
+        onSubagentProgress: ((agentId: String, update: SubagentProgressUpdate) -> Unit)? = null,
+        onTokenUpdate: ((inputTokens: Int, outputTokens: Int) -> Unit)? = null,
+        onDebugLog: ((level: String, event: String, detail: String, meta: Map<String, Any?>?) -> Unit)? = null,
+        onSessionStarted: ((sessionId: String) -> Unit)? = null,
+        steeringQueue: java.util.concurrent.ConcurrentLinkedQueue<SteeringMessage>? = null,
+        onSteeringDrained: ((drainedIds: List<String>) -> Unit)? = null,
     ): Job? {
-        // Step 1: Load session metadata
-        val session = sessionStore.load(sessionId)
-        if (session == null) {
-            log.warn("AgentService.resumeSession: session $sessionId not found")
+        val basePath = project.basePath ?: System.getProperty("user.home")
+        val sessionBaseDir = ProjectIdentifier.agentDir(basePath)
+        val sessionDir = File(sessionBaseDir, "sessions/$sessionId")
+        if (!sessionDir.exists()) {
+            log.warn("AgentService.resumeSession: session dir not found for $sessionId")
             return null
         }
 
-        // Only resume sessions that were interrupted (not already completed)
-        if (session.status == SessionStatus.COMPLETED) {
-            log.warn("AgentService.resumeSession: session $sessionId already completed")
+        // Acquire session lock — prevents double-resume across IDE instances
+        val lock = SessionLock.tryAcquire(sessionDir)
+        if (lock == null) {
+            log.warn("AgentService.resumeSession: session $sessionId is locked by another instance")
             return null
         }
 
-        // Step 2: Load conversation history
-        val savedMessages = sessionStore.loadMessages(sessionId)
-        if (savedMessages.isEmpty()) {
-            log.warn("AgentService.resumeSession: no messages found for session $sessionId")
+        // Load persisted state from both JSON files
+        var savedUiMessages = MessageStateHandler.loadUiMessages(sessionDir)
+        val savedApiHistory = MessageStateHandler.loadApiHistory(sessionDir)
+
+        if (savedApiHistory.isEmpty()) {
+            log.warn("AgentService.resumeSession: no api history for $sessionId")
+            lock.release()
             return null
         }
 
-        // Step 3: Rebuild ContextManager with saved messages
-        val agentSettings = AgentSettings.getInstance(project)
-        val ctx = ContextManager(maxInputTokens = agentSettings.state.maxInputTokens)
+        // Trim trailing resume messages and cost-less api_req_started (Cline pattern)
+        savedUiMessages = ResumeHelper.trimResumeMessages(savedUiMessages)
 
-        // Step 4: Restore system prompt from session metadata
-        if (session.systemPrompt.isNotBlank()) {
-            ctx.setSystemPrompt(session.systemPrompt)
-        } else {
-            // Rebuild system prompt from current settings (fallback)
+        // Push full ui_messages to webview for rehydration
+        onUiMessagesLoaded?.invoke(savedUiMessages)
+
+        // Determine resume ask type
+        val resumeAskType = ResumeHelper.determineResumeAskType(savedUiMessages)
+
+        // If session was already completed, display the UI messages but do NOT re-execute
+        if (resumeAskType == UiAsk.RESUME_COMPLETED_TASK) {
+            log.info("AgentService.resumeSession: session $sessionId was already completed, displaying without re-execution")
+            lock.release()
+            onComplete(LoopResult.Completed(
+                summary = "Task was previously completed.",
+                iterations = 0,
+                tokensUsed = 0,
+            ))
+            return scope.launch { /* no-op — session already completed, UI messages already pushed */ }
+        }
+
+        // Pop trailing user message if interrupted mid-submission
+        val popResult = ResumeHelper.popTrailingUserMessage(savedApiHistory)
+        val activeApiHistory = popResult.trimmedHistory
+
+        // Build task resumption preamble
+        val lastActivityTs = savedUiMessages.lastOrNull()?.ts ?: System.currentTimeMillis()
+        val agoText = ResumeHelper.formatTimeAgo(lastActivityTs)
+        val mode = if (planModeActive.get()) "plan" else "act"
+        val cwd = project.basePath ?: ""
+        val preamble = ResumeHelper.buildTaskResumptionPreamble(mode, agoText, cwd, userText)
+
+        // Build new user content: preamble + any popped content
+        val newUserContent = buildList {
+            add(ContentBlock.Text(preamble))
+            addAll(popResult.poppedContent)
+        }
+
+        // Create MessageStateHandler with restored state (init-only, before concurrent access)
+        val taskText = savedUiMessages.firstOrNull()?.text ?: "Resumed session"
+        val handler = MessageStateHandler(baseDir = sessionBaseDir, sessionId = sessionId, taskText = taskText)
+        handler.setClineMessages(savedUiMessages)
+        handler.setApiConversationHistory(activeApiHistory)
+
+        // TASK_RESUME hook — dispatched within scope.launch (IO coroutine), NOT runBlocking (C5 fix).
+        // The hook check and dispatch happen inside the launched coroutine to avoid blocking the calling thread.
+        val job = scope.launch(Dispatchers.IO) {
+            // Add resume ask to UI messages
+            handler.addToClineMessages(UiMessage(
+                ts = System.currentTimeMillis(),
+                type = UiMessageType.ASK,
+                ask = resumeAskType,
+                text = "Task was interrupted $agoText. Resuming..."
+            ))
+
+            // TASK_RESUME hook — now safe to call suspend functions (we're on IO dispatcher)
+            if (hookManager.hasHooks(HookType.TASK_RESUME)) {
+                val hookResult = hookManager.dispatch(
+                    HookEvent(
+                        type = HookType.TASK_RESUME,
+                        data = mapOf("sessionId" to sessionId, "messageCount" to savedApiHistory.size)
+                    )
+                )
+                if (hookResult is HookResult.Cancel) {
+                    log.info("AgentService: TASK_RESUME hook cancelled resume: ${hookResult.reason}")
+                    lock.release()
+                    onComplete(LoopResult.Cancelled(iterations = 0))
+                    return@launch
+                }
+            }
+
+            // Add the resumption user message to api history
+            handler.addToApiConversationHistory(ApiMessage(
+                role = ApiRole.USER,
+                content = newUserContent,
+                ts = System.currentTimeMillis()
+            ))
+
+            // Rebuild ContextManager from api history using lossless conversion
+            val agentSettings = AgentSettings.getInstance(project)
+            val ctx = ContextManager(maxInputTokens = agentSettings.state.maxInputTokens)
             val systemPrompt = SystemPrompt.build(
                 projectName = project.name,
                 projectPath = project.basePath ?: "",
-                planModeEnabled = session.planModeEnabled
+                planModeEnabled = planModeActive.get()
             )
             ctx.setSystemPrompt(systemPrompt)
+
+            // Convert ApiMessage list to ChatMessage list (lossless C2 fix)
+            // Include the resumption user message so the LLM sees it on the next call
+            val chatMessages = activeApiHistory.map { it.toChatMessage() } +
+                com.workflow.orchestrator.core.ai.dto.ChatMessage(role = "user", content = preamble)
+            ctx.restoreMessages(chatMessages)
+
+            log.info("[Agent] Resuming session: $sessionId (${savedApiHistory.size} api messages, interrupted $agoText)")
+
+            // Execute with the restored context and pre-built MessageStateHandler.
+            // We call executeTask which launches its own coroutine — we join it to
+            // keep this Job alive until completion so the caller can track/cancel it.
+            val innerJob = executeTask(
+                task = preamble,
+                sessionId = sessionId,
+                contextManager = ctx,
+                messageStateHandler = handler,
+                onStreamChunk = onStreamChunk,
+                onToolCall = onToolCall,
+                onTaskProgress = onTaskProgress,
+                onComplete = { result ->
+                    lock.release()
+                    onComplete(result)
+                },
+                onRetry = onRetry,
+                onModelSwitch = onModelSwitch,
+                onPlanResponse = onPlanResponse,
+                onPlanModeToggled = onPlanModeToggled,
+                userInputChannel = userInputChannel,
+                approvalGate = approvalGate,
+                onCheckpointSaved = onCheckpointSaved,
+                onSubagentProgress = onSubagentProgress,
+                onTokenUpdate = onTokenUpdate,
+                onDebugLog = onDebugLog,
+                onSessionStarted = onSessionStarted,
+                steeringQueue = steeringQueue,
+                onSteeringDrained = onSteeringDrained,
+            )
+            innerJob.join()
         }
-
-        // Restore saved messages into context manager
-        ctx.restoreMessages(savedMessages)
-
-        // Restore plan mode state from session
-        planModeActive.set(session.planModeEnabled)
-
-        log.info("[Agent] Resuming session: $sessionId (${savedMessages.size} messages)")
-
-        // TASK_RESUME hook (ported from Cline's TaskResume hook)
-        // Cancellable: can prevent session resumption.
-        // Cline: "Executes when a task is resumed after being interrupted."
-        if (hookManager.hasHooks(HookType.TASK_RESUME)) {
-            val hookResult = runBlocking {
-                hookManager.dispatch(
-                    HookEvent(
-                        type = HookType.TASK_RESUME,
-                        data = mapOf(
-                            "sessionId" to sessionId,
-                            "messageCount" to savedMessages.size
-                        )
-                    )
-                )
-            }
-            if (hookResult is HookResult.Cancel) {
-                log.info("AgentService: TASK_RESUME hook cancelled resume: ${hookResult.reason}")
-                return null
-            }
-        }
-
-        // Step 5: Continue execution with the restored context
-        return executeTask(
-            task = continuationMessage,
-            sessionId = sessionId,
-            contextManager = ctx,
-            onStreamChunk = onStreamChunk,
-            onToolCall = onToolCall,
-            onTaskProgress = onTaskProgress,
-            onComplete = onComplete
-        )
+        return job
     }
 
     // ── Checkpoint Reversion (ported from Cline's checkpoint reversion) ─────
@@ -1230,16 +1346,9 @@ class AgentService(private val project: Project) : Disposable {
         onComplete: (LoopResult) -> Unit = {}
     ): Job? {
         // Load checkpoint
-        val checkpointMessages = sessionStore.loadCheckpoint(sessionId, checkpointId)
+        val checkpointMessages = MessageStateHandler.loadCheckpoint(agentDir, sessionId, checkpointId)
         if (checkpointMessages == null) {
             log.warn("AgentService.revertToCheckpoint: checkpoint $checkpointId not found for session $sessionId")
-            return null
-        }
-
-        // Load session metadata
-        val session = sessionStore.load(sessionId)
-        if (session == null) {
-            log.warn("AgentService.revertToCheckpoint: session $sessionId not found")
             return null
         }
 
@@ -1247,25 +1356,10 @@ class AgentService(private val project: Project) : Disposable {
         val agentSettings = AgentSettings.getInstance(project)
         val ctx = ContextManager(maxInputTokens = agentSettings.state.maxInputTokens)
 
-        if (session.systemPrompt.isNotBlank()) {
-            ctx.setSystemPrompt(session.systemPrompt)
-        }
-
         ctx.restoreMessages(checkpointMessages)
 
-        // Overwrite session's messages with checkpoint state
-        sessionStore.saveMessages(sessionId, checkpointMessages)
-
         // Delete checkpoints after this one (they're invalidated by reversion)
-        sessionStore.deleteCheckpointsAfter(sessionId, checkpointId)
-
-        // Update session metadata
-        val updatedSession = session.copy(
-            status = SessionStatus.ACTIVE,
-            messageCount = checkpointMessages.size,
-            lastMessageAt = System.currentTimeMillis()
-        )
-        sessionStore.save(updatedSession)
+        MessageStateHandler.deleteCheckpointsAfter(agentDir, sessionId, checkpointId)
 
         log.info("AgentService.revertToCheckpoint: reverted session $sessionId to checkpoint $checkpointId " +
             "(${checkpointMessages.size} messages)")
@@ -1289,15 +1383,31 @@ class AgentService(private val project: Project) : Disposable {
      * @return list of checkpoint metadata, newest first
      */
     fun listCheckpoints(sessionId: String): List<com.workflow.orchestrator.agent.session.CheckpointInfo> {
-        return sessionStore.listCheckpoints(sessionId)
+        return MessageStateHandler.listCheckpoints(agentDir, sessionId)
     }
 
     /**
      * Update the title of an existing session (e.g. after Haiku generates a descriptive title).
+     * Updates the global index entry for this session with the new title/task text.
      */
     fun updateSessionTitle(sessionId: String, title: String) {
-        val session = sessionStore.load(sessionId) ?: return
-        sessionStore.save(session.copy(title = title))
+        // Title is stored in the global sessions.json index — reload, update, save
+        val indexFile = File(agentDir, "sessions.json")
+        try {
+            val items = MessageStateHandler.loadGlobalIndex(agentDir).toMutableList()
+            if (items.isEmpty()) return
+            val idx = items.indexOfFirst { it.id == sessionId }
+            if (idx >= 0) {
+                items[idx] = items[idx].copy(task = title.take(200))
+                val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; prettyPrint = true }
+                AtomicFileWriter.write(indexFile, json.encodeToString(
+                    kotlinx.serialization.builtins.ListSerializer(HistoryItem.serializer()),
+                    items
+                ))
+            }
+        } catch (e: Exception) {
+            log.warn("AgentService.updateSessionTitle: failed to update title (non-fatal)", e)
+        }
     }
 
     /**
@@ -1309,17 +1419,18 @@ class AgentService(private val project: Project) : Disposable {
      */
     fun getFilesModifiedSinceCheckpoint(sessionId: String, checkpointId: String): List<String> {
         return try {
-            val checkpointMessages = sessionStore.loadCheckpoint(sessionId, checkpointId) ?: return emptyList()
-            val currentMessages = sessionStore.loadMessages(sessionId)
+            val checkpointMessages = MessageStateHandler.loadCheckpoint(agentDir, sessionId, checkpointId) ?: return emptyList()
+            val sessionDir = File(agentDir, "sessions/$sessionId")
+            val currentMessages = MessageStateHandler.loadApiHistory(sessionDir)
             // Messages after the checkpoint = those beyond checkpointMessages.size
             val afterCheckpoint = currentMessages.drop(checkpointMessages.size)
-            // Extract file paths from tool calls in assistant messages
+            // Extract file paths from tool_use blocks in messages
             val files = mutableSetOf<String>()
             for (msg in afterCheckpoint) {
-                msg.toolCalls?.forEach { call ->
-                    if (call.function.name in AgentLoop.WRITE_TOOLS) {
+                msg.content.filterIsInstance<ContentBlock.ToolUse>().forEach { toolUse ->
+                    if (toolUse.name in AgentLoop.WRITE_TOOLS) {
                         try {
-                            val args = kotlinx.serialization.json.Json.parseToJsonElement(call.function.arguments)
+                            val args = kotlinx.serialization.json.Json.parseToJsonElement(toolUse.input)
                             val path = (args as? kotlinx.serialization.json.JsonObject)
                                 ?.get("path")
                                 ?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }

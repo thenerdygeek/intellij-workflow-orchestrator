@@ -170,6 +170,32 @@ class ToolRegistry {
         return all.values
     }
 
+    /**
+     * All registered tool names across all tiers (core + activeDeferred + deferred).
+     * Used for the XML parser's knownToolNames — the parser must recognise tool tags
+     * for deferred tools even before they are activated via tool_search, because
+     * registry.get() can resolve them and executeToolCalls can run them.
+     */
+    fun allToolNames(): Set<String> {
+        val names = LinkedHashSet<String>(coreTools.size + activeDeferred.size + deferredTools.size)
+        names.addAll(coreTools.keys)
+        names.addAll(activeDeferred.keys)
+        names.addAll(deferredTools.keys)
+        return names
+    }
+
+    /**
+     * All parameter names across all tiers.
+     * Companion to [allToolNames] for the XML parser's knownParamNames.
+     */
+    fun allParamNames(): Set<String> {
+        val params = LinkedHashSet<String>()
+        for (tool in coreTools.values) params.addAll(tool.parameters.properties.keys)
+        for (tool in activeDeferred.values) params.addAll(tool.parameters.properties.keys)
+        for (tool in deferredTools.values) params.addAll(tool.parameters.properties.keys)
+        return params
+    }
+
     /** Total count of all registered tools across all tiers. */
     fun count(): Int = coreTools.size + deferredTools.size + activeDeferred.size
 

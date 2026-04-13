@@ -21,6 +21,11 @@ import com.workflow.orchestrator.agent.loop.PlanStep
 import com.workflow.orchestrator.agent.loop.SteeringMessage
 import com.workflow.orchestrator.agent.loop.TaskProgress
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
+import com.workflow.orchestrator.agent.session.HistoryItem
+import com.workflow.orchestrator.agent.session.MessageStateHandler
+import com.workflow.orchestrator.agent.session.ResumeHelper
+import com.workflow.orchestrator.agent.session.UiAsk
+import com.workflow.orchestrator.agent.session.UiMessage
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.settings.ToolPreferences
 import com.workflow.orchestrator.agent.observability.HaikuPhraseGenerator
@@ -121,6 +126,13 @@ class AgentController(
      * Set when executeTask creates or resumes a session, cleared on newChat.
      */
     private var currentSessionId: String? = null
+
+    /**
+     * Session ID being viewed (read-only) from the history panel.
+     * Set by [showSession], cleared when the user starts a new chat or resumes.
+     * The user must explicitly click "Resume" to start execution.
+     */
+    private var viewedSessionId: String? = null
 
     /**
      * Structured plan data from the last plan_mode_respond call.
@@ -257,6 +269,13 @@ class AgentController(
             parseAndDispatchArtifactResult(json)
         }
 
+        // Interactive render round-trip — JS reports whether interactive UI
+        // (questions, plans, approvals) rendered successfully. On failure, Kotlin
+        // shows a fallback so the user is never stuck with an invisible widget.
+        dashboard.setCefInteractiveRenderCallback { json ->
+            handleInteractiveRenderResult(json)
+        }
+
         // Approval gate callbacks — user responds to approval cards for write tools
         dashboard.setCefApprovalCallbacks(
             onApprove = {
@@ -295,53 +314,85 @@ class AgentController(
         // The tool blocks on pendingQuestions deferred. When the user sends a message,
         // executeTask() intercepts it and resolves the deferred directly.
         com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.showSimpleQuestionCallback = { question, optionsJson ->
+            LOG.info("ask_followup_question: callback fired (question=${question.take(80)}, hasOptions=${!optionsJson.isNullOrBlank()})")
             // Drain stream batcher before UI flush so buffered tokens appear before the question
             streamBatcher.flush()
             invokeLater {
-                // Flush any in-progress stream + finalize tool chain so the question
-                // appears AFTER prior tool calls, not mixed in
-                dashboard.flushStreamBuffer()
-                dashboard.finalizeToolChain()
-
-                // Parse options if provided
-                val options = if (!optionsJson.isNullOrBlank()) {
-                    try {
-                        kotlinx.serialization.json.Json.decodeFromString<List<String>>(optionsJson)
-                    } catch (_: Exception) { emptyList() }
-                } else emptyList()
-
-                if (options.isNotEmpty()) {
-                    // Questions WITH options → use the QuestionView wizard UI
-                    // (clickable radio buttons with descriptions, Skip/Cancel actions)
-                    val wizardJson = buildString {
-                        append("""{"questions":[{"id":"q1","question":""")
-                        append(JsEscape.toJsonString(question))
-                        append(""","type":"single","options":[""")
-                        options.forEachIndexed { i, opt ->
-                            if (i > 0) append(",")
-                            append("""{"id":"o${i + 1}","label":""")
-                            append(JsEscape.toJsonString(opt))
-                            append("}")
-                        }
-                        append("]}]}")
-                    }
-                    dashboard.showQuestions(wizardJson)
-                } else {
-                    // Questions WITHOUT options → user types their answer freely in the chat input.
-                    // The question text lives in the tool call params (not in the streamed text),
-                    // so we must display it explicitly as an agent message. Use the streaming
-                    // pipeline (appendStreamToken + flush) to render it as a normal agent message.
-                    dashboard.appendStreamToken(question)
+                LOG.info("ask_followup_question: invokeLater running on EDT, dispatching to dashboard")
+                try {
+                    // Flush any in-progress stream + finalize tool chain so the question
+                    // appears AFTER prior tool calls, not mixed in
                     dashboard.flushStreamBuffer()
+                    dashboard.finalizeToolChain()
+
+                    // CRITICAL: Clear busy and unlock input FIRST — before any complex
+                    // rendering that could silently fail on the JCEF/JS side.
+                    // The agent is waiting for the user's answer, not processing.
+                    // The JS-side showQuestions bridge also calls setBusy(false) as a
+                    // safety net, but we do it here first so even if showQuestions
+                    // never reaches the JS side, the UI is never stuck.
                     dashboard.setBusy(false)
                     dashboard.setInputLocked(false)
+
+                    // Parse options if provided
+                    val options = if (!optionsJson.isNullOrBlank()) {
+                        try {
+                            kotlinx.serialization.json.Json.decodeFromString<List<String>>(optionsJson)
+                        } catch (_: Exception) { emptyList() }
+                    } else emptyList()
+
+                    if (options.isNotEmpty()) {
+                        // Questions WITH options → use the QuestionView wizard UI
+                        // (clickable radio buttons with descriptions, Skip/Cancel actions)
+                        val wizardJson = buildString {
+                            append("""{"questions":[{"id":"q1","question":""")
+                            append(JsEscape.toJsonString(question))
+                            append(""","type":"single","options":[""")
+                            options.forEachIndexed { i, opt ->
+                                if (i > 0) append(",")
+                                append("""{"id":"o${i + 1}","label":""")
+                                append(JsEscape.toJsonString(opt))
+                                append("}")
+                            }
+                            append("]}]}")
+                        }
+                        LOG.info("ask_followup_question: showing wizard with ${options.size} options")
+                        dashboard.showQuestions(wizardJson)
+                    } else {
+                        // Questions WITHOUT options → user types their answer freely in the chat input.
+                        // The question text lives in the tool call params (not in the streamed text),
+                        // so we must display it explicitly as an agent message. Use the streaming
+                        // pipeline (appendStreamToken + flush) to render it as a normal agent message.
+                        dashboard.appendStreamToken(question)
+                        dashboard.flushStreamBuffer()
+                    }
+                    dashboard.focusInput()
+                } catch (e: Exception) {
+                    LOG.warn("ask_followup_question callback failed: ${e.message}", e)
+                    // Ensure the UI is never stuck — clear busy and unlock input even on failure.
+                    // Also show the question as plain text so the user at least sees it.
+                    dashboard.setBusy(false)
+                    dashboard.setInputLocked(false)
+                    dashboard.appendStreamToken(question)
+                    dashboard.flushStreamBuffer()
                     dashboard.focusInput()
                 }
             }
         }
         // Wizard mode: structured multi-question UI
         com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.showQuestionsCallback = { questionsJson ->
-            invokeLater { dashboard.showQuestions(questionsJson) }
+            invokeLater {
+                // Clear busy FIRST — before the showQuestions bridge call which could
+                // silently fail on the JCEF/JS side
+                dashboard.setBusy(false)
+                dashboard.setInputLocked(false)
+                try {
+                    dashboard.showQuestions(questionsJson)
+                } catch (e: Exception) {
+                    LOG.warn("ask_questions wizard callback failed: ${e.message}", e)
+                }
+                dashboard.focusInput()
+            }
         }
         // Accumulate individual question answers so we can pass them on submit
         val collectedAnswers = mutableMapOf<String, String>()
@@ -361,7 +412,9 @@ class AgentController(
                     // System-level approval choice — route to our handler, not AskQuestionsTool
                     handleApprovalChoice(collectedAnswers)
                 } else {
-                    // Normal LLM-initiated question — resolve the pending deferred
+                    // Normal LLM-initiated question — resolve the pending deferred.
+                    // Restore busy state so the user sees the agent is processing their answer.
+                    dashboard.setBusy(true)
                     val answersJson = collectedAnswers.entries.joinToString(",", "{", "}") { (qid, opts) ->
                         "\"$qid\":$opts"
                     }
@@ -421,6 +474,19 @@ class AgentController(
                 LOG.warn("AgentController: subagent $agentId not found in running agents")
             }
         }
+
+        // Session history callbacks — user navigates, deletes, favorites sessions
+        dashboard.setCefHistoryCallbacks(
+            onShowSession = { sessionId -> showSession(sessionId) },
+            onDeleteSession = { sessionId -> handleDeleteSession(sessionId) },
+            onToggleFavorite = { sessionId -> handleToggleFavorite(sessionId) },
+            onStartNewSession = { handleStartNewSession() },
+            onBulkDeleteSessions = { json -> handleBulkDeleteSessions(json) },
+            onExportSession = { sessionId -> handleExportSession(sessionId) },
+            onExportAllSessions = { handleExportAllSessions() },
+            onRequestHistory = { showHistory() },
+            onResumeViewedSession = { resumeViewedSession() },
+        )
 
         // Set model name from settings
         val model = AgentSettings.getInstance(project).state.sourcegraphChatModel
@@ -770,6 +836,13 @@ class AgentController(
             return
         }
 
+        // If viewing a previous session, resume it with the user's message
+        if (viewedSessionId != null) {
+            LOG.info("AgentController: user typed while viewing session — resuming with message")
+            resumeViewedSession(task)
+            return
+        }
+
         // Cancel any running task before starting a new one
         currentJob?.let { job ->
             if (job.isActive) {
@@ -812,6 +885,7 @@ class AgentController(
         }
         currentJob = service.executeTask(
             task = task,
+            sessionId = currentSessionId,
             contextManager = contextManager,
             onStreamChunk = ::onStreamChunk,
             onToolCall = ::onToolCall,
@@ -1130,7 +1204,22 @@ class AgentController(
         }
     }
 
+    /** Tool names that render through dedicated UI paths, not generic tool cards. */
+    private val COMMUNICATION_TOOLS = setOf(
+        "plan_mode_respond",   // Rendered by onPlanResponse callback → PlanCard
+        "ask_followup_question", // Rendered by showSimpleQuestionCallback → text or QuestionView
+        "ask_questions",       // Rendered by showQuestionsCallback → QuestionView wizard
+        "attempt_completion",  // Rendered by onComplete callback → CompletionCard
+    )
+
     private fun onToolCall(progress: ToolCallProgress) {
+        // ── Communication tools: render as text, not tool cards ──
+        // These tools have dedicated UI rendering paths (callbacks, cards, wizards).
+        // Showing them as generic tool call cards would duplicate or conflict with their real UI.
+
+        // Skip entirely: these are fully handled by other callbacks
+        if (progress.toolName in setOf("plan_mode_respond", "ask_followup_question", "ask_questions", "attempt_completion")) return
+
         // Track recent tool calls for Haiku phrase generator — extract the most useful arg
         if (progress.result.isEmpty() && progress.durationMs == 0L) {
             val contextHint = try {
@@ -1366,7 +1455,14 @@ class AgentController(
 
     fun newChat() {
         LOG.info("AgentController.newChat")
+        resetForNewChat()
+    }
 
+    /**
+     * Reset all controller and dashboard state for a fresh session.
+     * Does NOT show history — callers decide the next view.
+     */
+    private fun resetForNewChat() {
         // Reset all service-level state (plan mode, tools, processes, active task)
         service.resetForNewChat()
 
@@ -1388,6 +1484,7 @@ class AgentController(
         pendingApproval?.cancel()
         pendingApproval = null
         pendingApprovalToolName = null
+        viewedSessionId = null
 
         // Reset ALL dashboard UI components to clean state
         dashboard.reset()                                          // Clear chat messages + replay log
@@ -1406,6 +1503,183 @@ class AgentController(
         dashboard.focusInput()                                      // Focus the input bar
     }
 
+    // ═══════════════════════════════════════════════════
+    //  Session history — list, delete, favorite, navigate
+    // ═══════════════════════════════════════════════════
+
+    private val historyJson = Json { encodeDefaults = true; ignoreUnknownKeys = true }
+
+    /**
+     * Load the global session index and push it to the webview as the history list.
+     * File I/O runs on Dispatchers.IO to avoid blocking the CEF thread.
+     */
+    fun showHistory() {
+        val basePath = project.basePath ?: return
+        val baseDir = ProjectIdentifier.agentDir(basePath)
+        CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+            val items = MessageStateHandler.loadGlobalIndex(baseDir)
+            val json = historyJson.encodeToString(items)
+            invokeLater { dashboard.loadSessionHistory(json) }
+        }
+    }
+
+    /**
+     * Delete a session from disk and refresh the history list.
+     */
+    fun handleDeleteSession(sessionId: String) {
+        val basePath = project.basePath ?: return
+        val baseDir = ProjectIdentifier.agentDir(basePath)
+        CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+            MessageStateHandler.deleteSession(baseDir, sessionId)
+            val items = MessageStateHandler.loadGlobalIndex(baseDir)
+            val json = historyJson.encodeToString(items)
+            invokeLater { dashboard.loadSessionHistory(json) }
+        }
+    }
+
+    /**
+     * Toggle the favorite flag on a session and refresh the history list.
+     */
+    fun handleToggleFavorite(sessionId: String) {
+        val basePath = project.basePath ?: return
+        val baseDir = ProjectIdentifier.agentDir(basePath)
+        CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+            MessageStateHandler.toggleFavorite(baseDir, sessionId)
+            val items = MessageStateHandler.loadGlobalIndex(baseDir)
+            val json = historyJson.encodeToString(items)
+            invokeLater { dashboard.loadSessionHistory(json) }
+        }
+    }
+
+    /**
+     * Start a fresh session from the history view.
+     * Resets state without showing history (avoids history→chat flicker).
+     */
+    fun handleStartNewSession() {
+        resetForNewChat()
+        dashboard.showChatView()
+    }
+
+    /**
+     * Bulk-delete multiple sessions from disk and refresh the history list.
+     * @param sessionIdsJson JSON array of session ID strings.
+     */
+    fun handleBulkDeleteSessions(sessionIdsJson: String) {
+        val basePath = project.basePath ?: return
+        val baseDir = ProjectIdentifier.agentDir(basePath)
+        CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+            try {
+                val ids = historyJson.decodeFromString<List<String>>(sessionIdsJson)
+                for (id in ids) {
+                    MessageStateHandler.deleteSession(baseDir, id)
+                }
+            } catch (e: Exception) {
+                LOG.warn("Failed to parse bulk delete session IDs", e)
+            }
+            val items = MessageStateHandler.loadGlobalIndex(baseDir)
+            val json = historyJson.encodeToString(items)
+            invokeLater { dashboard.loadSessionHistory(json) }
+        }
+    }
+
+    /**
+     * Export a single session as markdown and copy to clipboard.
+     */
+    fun handleExportSession(sessionId: String) {
+        val basePath = project.basePath ?: return
+        val baseDir = ProjectIdentifier.agentDir(basePath)
+        CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+            val markdown = formatSessionAsMarkdown(baseDir, sessionId)
+            if (markdown != null) {
+                com.workflow.orchestrator.core.ui.ClipboardUtil.copyToClipboard(markdown)
+                invokeLater {
+                    dashboard.showToast("Session exported to clipboard", "SUCCESS", 3000)
+                }
+            }
+        }
+    }
+
+    /**
+     * Export all sessions as markdown and copy to clipboard.
+     */
+    fun handleExportAllSessions() {
+        val basePath = project.basePath ?: return
+        val baseDir = ProjectIdentifier.agentDir(basePath)
+        CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+            val items = MessageStateHandler.loadGlobalIndex(baseDir)
+            if (items.isEmpty()) return@launch
+            val parts = items.mapNotNull { item ->
+                formatSessionAsMarkdown(baseDir, item.id)
+            }
+            if (parts.isNotEmpty()) {
+                val combined = parts.joinToString("\n\n---\n\n")
+                com.workflow.orchestrator.core.ui.ClipboardUtil.copyToClipboard(combined)
+                invokeLater {
+                    dashboard.showToast("${parts.size} sessions exported to clipboard", "SUCCESS", 3000)
+                }
+            }
+        }
+    }
+
+    /**
+     * Format a session's UI messages as a markdown string.
+     * Returns null if the session has no messages.
+     *
+     * The first SAY.TEXT message is the user's task (stored at session start).
+     * Subsequent SAY.TEXT messages are agent responses.
+     */
+    private fun formatSessionAsMarkdown(baseDir: java.io.File, sessionId: String): String? {
+        val sessionDir = java.io.File(baseDir, "sessions/$sessionId")
+        val messages = MessageStateHandler.loadUiMessages(sessionDir)
+        if (messages.isEmpty()) return null
+
+        // Find the session task from the global index
+        val items = MessageStateHandler.loadGlobalIndex(baseDir)
+        val task = items.find { it.id == sessionId }?.task ?: "Untitled Session"
+
+        val sb = StringBuilder()
+        sb.appendLine("# $task")
+        sb.appendLine()
+
+        var firstSayText = true
+        for (msg in messages) {
+            val text = msg.text?.takeIf { it.isNotBlank() } ?: continue
+            when (msg.type) {
+                com.workflow.orchestrator.agent.session.UiMessageType.SAY -> {
+                    when (msg.say) {
+                        com.workflow.orchestrator.agent.session.UiSay.TEXT -> {
+                            if (firstSayText) {
+                                // First SAY.TEXT is the user's original task
+                                sb.appendLine("**User:** $text")
+                                sb.appendLine()
+                                firstSayText = false
+                            } else {
+                                sb.appendLine("**Agent:** $text")
+                                sb.appendLine()
+                            }
+                        }
+                        else -> {} // skip tool calls, status, etc.
+                    }
+                }
+                com.workflow.orchestrator.agent.session.UiMessageType.ASK -> {
+                    when (msg.ask) {
+                        com.workflow.orchestrator.agent.session.UiAsk.FOLLOWUP -> {
+                            sb.appendLine("**User:** $text")
+                            sb.appendLine()
+                        }
+                        com.workflow.orchestrator.agent.session.UiAsk.COMPLETION_RESULT -> {
+                            sb.appendLine("**Agent (completion):** $text")
+                            sb.appendLine()
+                        }
+                        else -> {}
+                    }
+                }
+            }
+        }
+
+        return sb.toString().trimEnd()
+    }
+
     /**
      * Resume a previous session from its checkpoint.
      *
@@ -1415,26 +1689,157 @@ class AgentController(
      * - Creates new Task instance with restored state
      * - Task picks up execution from the checkpoint
      *
-     * We replicate this: load session + messages from SessionStore,
+     * We replicate this: load session + messages from MessageStateHandler,
      * rebuild ContextManager, and re-enter the agent loop.
      */
-    fun resumeSession(sessionId: String) {
+    /**
+     * Show a previous session read-only (view conversation without starting execution).
+     *
+     * Loads the UI messages and pushes them to the webview so the user can review
+     * the conversation. If the session is not completed, a "Resume" bar is shown
+     * at the bottom so the user can explicitly choose to continue execution.
+     */
+    fun showSession(sessionId: String) {
+        LOG.info("AgentController.showSession: $sessionId (view-only)")
+
+        // Cancel any running task first
+        if (currentJob?.isActive == true) {
+            service.cancelCurrentTask()
+        }
+        currentJob = null
+        viewedSessionId = sessionId
+
+        val basePath = project.basePath ?: System.getProperty("user.home")
+        val sessionDir = java.io.File(ProjectIdentifier.agentDir(basePath), "sessions/$sessionId")
+        if (!sessionDir.exists()) {
+            LOG.warn("AgentController.showSession: session dir not found for $sessionId")
+            return
+        }
+
+        // Load UI messages from disk
+        val savedUiMessages = MessageStateHandler.loadUiMessages(sessionDir)
+        if (savedUiMessages.isEmpty()) {
+            LOG.warn("AgentController.showSession: no ui messages for $sessionId")
+            return
+        }
+
+        // Trim trailing resume markers
+        val trimmed = ResumeHelper.trimResumeMessages(savedUiMessages)
+
+        // Determine if this session was already completed
+        val isCompleted = ResumeHelper.determineResumeAskType(trimmed) == UiAsk.RESUME_COMPLETED_TASK
+
+        // Push messages to webview (switches to chat view and shows conversation)
+        dashboard.reset()
+        postStateToWebview(trimmed)
+        dashboard.showChatView()
+        dashboard.setBusy(false)
+        dashboard.setInputLocked(false)
+
+        // Show the resume bar if the session is resumable (not completed)
+        if (!isCompleted) {
+            dashboard.showResumeBar(sessionId)
+        }
+    }
+
+    /**
+     * Resume a session that the user is currently viewing. Called when the user
+     * clicks "Resume" in the resume bar, optionally with a message to add.
+     */
+    fun resumeViewedSession(userText: String? = null) {
+        val sessionId = viewedSessionId
+        if (sessionId == null) {
+            LOG.warn("AgentController.resumeViewedSession: no viewed session to resume")
+            return
+        }
+        viewedSessionId = null
+        dashboard.hideResumeBar()
+        resumeSession(sessionId, userText)
+    }
+
+    fun resumeSession(sessionId: String, userText: String? = null) {
         LOG.info("AgentController.resumeSession: $sessionId")
+        viewedSessionId = null
         prepareForReplay("Resuming session...")
 
-        // Attempt resume — AgentService rebuilds the ContextManager from JSONL checkpoint
+        // Create a fresh input channel for the resumed loop
+        userInputChannel = Channel(Channel.RENDEZVOUS)
+        taskStartTime = System.currentTimeMillis()
+
+        val debugEnabled = AgentSettings.getInstance(project).state.showDebugLog
+
+        // Attempt resume — AgentService rebuilds the ContextManager from JSONL checkpoint.
+        // Pass ALL interactive callbacks so the resumed session has full functionality
+        // (approvals, plans, checkpoints, steering, token display, etc.).
         val job = service.resumeSession(
             sessionId = sessionId,
+            userText = userText,
             onStreamChunk = ::onStreamChunk,
             onToolCall = ::onToolCall,
             onTaskProgress = ::onTaskProgress,
-            onComplete = ::onComplete
+            onComplete = { result ->
+                if (debugEnabled) {
+                    val status = when (result) {
+                        is LoopResult.Completed -> "completed"
+                        is LoopResult.Cancelled -> "cancelled"
+                        is LoopResult.Failed -> "failed"
+                        is LoopResult.SessionHandoff -> "handoff"
+                    }
+                    dashboard.pushDebugLogEntry("session", "task_end", status, null)
+                }
+                onComplete(result)
+            },
+            onUiMessagesLoaded = { uiMessages -> postStateToWebview(uiMessages) },
+            onRetry = { attempt, maxAttempts, reason, delayMs ->
+                invokeLater {
+                    val delaySec = delayMs / 1000
+                    dashboard.appendStatus(
+                        "$reason — retrying ($attempt/$maxAttempts) in ${delaySec}s...",
+                        RichStreamingPanel.StatusType.WARNING
+                    )
+                }
+            },
+            onModelSwitch = { _, to, reason ->
+                invokeLater {
+                    val cached = com.workflow.orchestrator.core.ai.ModelCache.getCached()
+                    val displayName = cached.find { it.id == to }?.displayName
+                        ?: com.workflow.orchestrator.core.ai.dto.ModelInfo.formatModelName(to.substringAfterLast("::"))
+                    dashboard.setModelName(displayName)
+                    when {
+                        reason.startsWith("Escalating back", ignoreCase = true) ->
+                            dashboard.setModelFallbackState(false, null)
+                        else ->
+                            dashboard.setModelFallbackState(true, "$reason — now using $displayName")
+                    }
+                }
+            },
+            onPlanResponse = { text, explore, steps -> onPlanResponse(text, explore, steps) },
+            onPlanModeToggled = { enabled -> invokeLater { togglePlanMode(enabled) } },
+            userInputChannel = userInputChannel,
+            approvalGate = ::approvalGate,
+            onCheckpointSaved = ::onCheckpointSaved,
+            onSubagentProgress = ::onSubagentProgress,
+            onTokenUpdate = ::onTokenUpdate,
+            onDebugLog = if (debugEnabled) { level, event, detail, meta ->
+                dashboard.pushDebugLogEntry(level, event, detail, meta)
+            } else null,
+            onSessionStarted = { sid -> currentSessionId = sid },
+            steeringQueue = steeringQueue,
+            onSteeringDrained = { drainedIds ->
+                invokeLater {
+                    dashboard.promoteQueuedSteeringMessages(drainedIds)
+                }
+            },
         )
 
         if (job != null) {
             currentJob = job
             // Reset contextManager — the resumed session creates its own
             contextManager = null
+            // Push memory stats for resumed session
+            pushMemoryStats()
+            // Start working indicator
+            startPhraseTimer("Resumed session")
         } else {
             // Resume failed — notify user
             failReplay("Could not resume session. The session may have been deleted or has no saved messages.")
@@ -1463,6 +1868,19 @@ class AgentController(
         dashboard.setBusy(false)
         dashboard.setInputLocked(false)
         dashboard.focusInput()
+    }
+
+    /**
+     * Serialize the full UI messages array and push it to the webview for session rehydration.
+     *
+     * Called during session resume so the chat UI displays the complete conversation history
+     * from the previous session. The bridge function `_loadSessionState` (registered in
+     * jcef-bridge.ts, Task 9) replaces the chatStore messages with the deserialized array.
+     */
+    fun postStateToWebview(uiMessages: List<UiMessage>) {
+        val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
+        val messagesJson = json.encodeToString(uiMessages)
+        dashboard.loadSessionState(messagesJson)
     }
 
     /**
@@ -1944,6 +2362,41 @@ class AgentController(
             ArtifactResultRegistry.getInstance(project).reportResult(renderId, result)
         } catch (e: Exception) {
             LOG.warn("failed to parse artifact result JSON: $rawJson", e)
+        }
+    }
+
+    /**
+     * Handle round-trip confirmation from JS interactive renders (questions, plans, approvals).
+     *
+     * Payload: `{ "type": "question"|"plan"|"approval", "status": "ok"|"error", "message"?: "..." }`
+     *
+     * On error, the JS side already rendered a fallback (plain text). This handler logs
+     * the result so we have diagnostic visibility into silent JCEF failures.
+     */
+    private fun handleInteractiveRenderResult(rawJson: String) {
+        try {
+            val obj = Json.parseToJsonElement(rawJson).jsonObject
+            val type = obj["type"]?.jsonPrimitive?.content ?: "unknown"
+            val status = obj["status"]?.jsonPrimitive?.content ?: "unknown"
+            val message = obj["message"]?.jsonPrimitive?.content
+
+            if (status == "ok") {
+                LOG.info("Interactive render confirmed: type=$type, status=ok")
+                // Signal the watchdog timer in AskQuestionsTool that the UI rendered.
+                // This prevents the 10s watchdog from auto-resolving the deferred
+                // when the UI is alive but the user just hasn't answered yet.
+                if (type == "question") {
+                    com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.uiRenderConfirmed = true
+                }
+            } else {
+                LOG.warn("Interactive render FAILED: type=$type, status=$status, message=$message")
+                // JS side already handled the fallback rendering.
+                // Push a debug log entry so the user can see it in the API debug tab.
+                dashboard.pushDebugLogEntry("warn", "render_failed",
+                    "Interactive $type render failed: ${message ?: "unknown error"}", null)
+            }
+        } catch (e: Exception) {
+            LOG.warn("Failed to parse interactive render result: $rawJson", e)
         }
     }
 

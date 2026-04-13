@@ -191,8 +191,8 @@ class AskQuestionsToolTest {
             kotlinx.coroutines.yield()
 
             assertEquals("Which approach?", receivedQuestion)
-            // Empty string options — the callback gets it as-is
-            assertEquals("", receivedOptions)
+            // Empty string options are normalized to null (no options = plain text mode)
+            assertNull(receivedOptions)
 
             AskQuestionsTool.pendingQuestions?.complete("answer")
             job.join()
