@@ -656,6 +656,7 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                     PlanBranchData(
                         key = dto.key,
                         name = dto.name,
+                        shortName = dto.shortName,
                         enabled = dto.enabled
                     )
                 }

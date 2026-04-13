@@ -211,14 +211,17 @@ class AutomationPanel(
                 suppressBranchListener = true
                 branchCombo.removeAllItems()
 
-                // Add the master plan as first option
-                branchCombo.addItem(BranchComboItem(planKey, "master"))
-
                 for (branch in branches.filter { it.enabled }) {
-                    branchCombo.addItem(BranchComboItem(branch.key, branch.name))
+                    val displayName = branch.shortName.ifBlank { branch.name }
+                    branchCombo.addItem(BranchComboItem(branch.key, displayName))
                 }
 
-                // Default to develop if available, otherwise master
+                if (branchCombo.itemCount == 0) {
+                    // No branches found — fall back to master plan key
+                    branchCombo.addItem(BranchComboItem(planKey, planKey))
+                }
+
+                // Default to develop if available, otherwise first branch
                 val developIndex = (0 until branchCombo.itemCount).firstOrNull { i ->
                     val item = branchCombo.getItemAt(i)
                     item.branchName.equals("develop", ignoreCase = true)
