@@ -168,6 +168,37 @@ Result stored as `IdeContext` in `AgentService`. Tools that can't work in the cu
 
 Key files: `ide/IdeContext.kt`, `ide/IdeContextDetector.kt`, `ide/ProjectScanner.kt`
 
+### IDE-Aware System Prompt (Plan D)
+
+`SystemPrompt.build()` accepts an optional `IdeContext` parameter. Four sections adapt to the IDE environment:
+
+| Section | Dynamic content |
+|---------|----------------|
+| `agentRole()` | IDE name (IntelliJ IDEA / PyCharm / WebStorm) |
+| `capabilities()` | IDE context summary, specialized tool hints, language-specific curl tips |
+| `rules()` | Tool preference examples (mvn/gradlew vs pytest), subagent list (spring-boot-engineer vs python-engineer) |
+| `systemInfo()` | IDE name in system information |
+
+**Backward compatibility:** `ideContext = null` produces the same prompt as before (IntelliJ-flavored defaults).
+
+### Agent Persona Filtering
+
+`AgentConfigLoader.filterByIdeContext()` gates language-specific personas:
+- `spring-boot-engineer` → only when `IdeContext.supportsJava`
+- `python-engineer` → only when `IdeContext.supportsPython`
+- All other agents (code-reviewer, architect-reviewer, test-automator, etc.) → always available
+
+`SpawnAgentTool` uses `getFilteredConfigs(ideContext)` so the LLM description only lists relevant agents.
+
+### Deferred Tool Discovery
+
+Four techniques help the LLM discover specialized tools over generic fallbacks:
+
+1. **Task-to-tool hints table** — in `capabilities()`, maps common tasks (e.g., "Find API endpoints") to tool_search keywords (e.g., "spring") with "Instead of" column showing the inferior approach
+2. **IdeContext category hints** — when IdeContext is non-null, lists specialized tool categories (spring, django, build, debug, database) in the primacy zone
+3. **Related tool suggestions** — `ToolSearchTool.getRelatedToolsHint()` appends complementary tool suggestions when returning search results (e.g., loading "spring" suggests "build, coverage, db_schema")
+4. **Framework tool promotion** — `ToolRegistrationFilter.shouldPromoteFrameworkTool()` promotes detected framework tools from deferred to core
+
 ## Language Intelligence Providers
 
 PSI tools delegate language-specific logic to pluggable providers via `LanguageProviderRegistry`.
@@ -436,6 +467,27 @@ Agent has full programmatic access to IntelliJ's debugger via `AgentDebugControl
 **Substitutions:** `$ARGUMENTS`, `$1`-`$N`, `${CLAUDE_SKILL_DIR}`
 **Dynamic injection:** `` !`command` `` runs shell at preprocessing time (10s per cmd, 30s total, 10K cap)
 **Description budget:** 2% of context window (max 16K chars).
+
+### Skill Language Variants (Plan D)
+
+`InstructionLoader.getSkillContent()` accepts an optional `IdeContext` parameter. When non-null, it loads a language-specific variant file alongside the base `SKILL.md`:
+
+- IntelliJ (INTELLIJ_ULTIMATE, INTELLIJ_COMMUNITY) → `SKILL.java.md`
+- PyCharm (PYCHARM_PROFESSIONAL, PYCHARM_COMMUNITY) → `SKILL.python.md`
+- Other IDEs → base only
+
+Variant content is **appended** after the base (base + "\n\n" + variant). If no variant file exists, only the base is returned.
+
+**5 skills with variants:**
+| Skill | Java variant content | Python variant content |
+|-------|---------------------|----------------------|
+| `tdd` | JUnit 5, MockK, Gradle, Spring Boot test annotations | pytest, fixtures, coverage, markers |
+| `interactive-debugging` | CGLIB proxies, JDWP, Spring exceptions | Django template debug, debugpy, common Python exceptions |
+| `systematic-debugging` | Spring diagnostics, bean context, Testcontainers | Django/FastAPI diagnostics, import errors, venv issues |
+| `subagent-driven` | Java verification commands, spring-boot-engineer | Python verification commands, python-engineer |
+| `writing-plans` | Gradle/Maven build commands | pytest, pip/Poetry/uv, Django management |
+
+Variant files live alongside `SKILL.md` in the same skill directory (bundled classpath or user/project filesystem).
 
 ## Agent Tool (Subagent Management)
 
