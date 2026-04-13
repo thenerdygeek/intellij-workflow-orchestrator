@@ -65,4 +65,13 @@ class RuntimeExecToolTest {
         assertTrue(result.isError)
         assertTrue(result.content.contains("Unknown action"))
     }
+
+    @Test
+    fun `run_tests without class_name returns helpful error`() = runTest {
+        val result = tool.execute(buildJsonObject { put("action", "run_tests") }, project)
+        assertTrue(result.isError)
+        assertTrue(result.content.contains("class_name"), "Error should mention class_name parameter")
+        assertTrue(result.content.contains("test_finder"), "Error should suggest test_finder tool")
+        assertTrue(result.content.contains("fully qualified"), "Error should explain expected format")
+    }
 }
