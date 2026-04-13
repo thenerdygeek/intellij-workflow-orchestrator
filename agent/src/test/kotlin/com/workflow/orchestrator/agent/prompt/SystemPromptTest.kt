@@ -337,6 +337,29 @@ class SystemPromptTest {
         )
     }
 
+    @Test
+    fun `includes output management guidance in rules section`() {
+        val prompt = defaultPrompt()
+        val rulesSection = prompt.substringAfter("RULES").substringBefore("====")
+
+        assertTrue(
+            rulesSection.contains("Output Management"),
+            "should contain Output Management heading in rules section"
+        )
+        assertTrue(
+            rulesSection.contains("grep_pattern"),
+            "should document grep_pattern parameter"
+        )
+        assertTrue(
+            rulesSection.contains("output_file"),
+            "should document output_file parameter"
+        )
+        assertTrue(
+            rulesSection.contains("context pollution"),
+            "should explain why output filtering matters"
+        )
+    }
+
     // ---- Project path propagation tests ----
 
     @Test
