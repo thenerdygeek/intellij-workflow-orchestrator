@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools.psi
 
+import com.workflow.orchestrator.agent.ide.LanguageProviderRegistry
 import com.workflow.orchestrator.agent.tools.WorkerType
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.*
@@ -8,7 +9,8 @@ import org.junit.jupiter.api.Test
 
 class DataFlowAnalysisToolTest {
 
-    private val tool = DataFlowAnalysisTool()
+    private val registry = LanguageProviderRegistry()
+    private val tool = DataFlowAnalysisTool(registry)
 
     // ---- Metadata ----
 

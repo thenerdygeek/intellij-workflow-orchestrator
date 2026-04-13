@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools.psi
 
+import com.workflow.orchestrator.agent.ide.LanguageProviderRegistry
 import com.workflow.orchestrator.agent.tools.WorkerType
 import io.mockk.*
 import kotlinx.coroutines.test.runTest
@@ -8,9 +9,11 @@ import org.junit.jupiter.api.Test
 
 class CallHierarchyToolTest {
 
+    private val registry = LanguageProviderRegistry()
+
     @Test
     fun `tool metadata is correct`() {
-        val tool = CallHierarchyTool()
+        val tool = CallHierarchyTool(registry)
         assertEquals("call_hierarchy", tool.name)
         assertTrue(tool.parameters.required.contains("method"))
         assertTrue(tool.parameters.properties.containsKey("method"))
@@ -19,20 +22,20 @@ class CallHierarchyToolTest {
 
     @Test
     fun `allowedWorkers includes ANALYZER and REVIEWER`() {
-        val tool = CallHierarchyTool()
+        val tool = CallHierarchyTool(registry)
         assertEquals(setOf(WorkerType.ANALYZER, WorkerType.REVIEWER), tool.allowedWorkers)
     }
 
     @Test
     fun `class_name is optional parameter`() {
-        val tool = CallHierarchyTool()
+        val tool = CallHierarchyTool(registry)
         assertTrue(tool.parameters.required.contains("method"))
         assertFalse(tool.parameters.required.contains("class_name"))
     }
 
     @Test
     fun `toToolDefinition produces valid schema`() {
-        val tool = CallHierarchyTool()
+        val tool = CallHierarchyTool(registry)
         val def = tool.toToolDefinition()
         assertEquals("function", def.type)
         assertEquals("call_hierarchy", def.function.name)
@@ -42,7 +45,7 @@ class CallHierarchyToolTest {
 
     @Test
     fun `execute returns dumbModeError when indexing`() = runTest {
-        val tool = CallHierarchyTool()
+        val tool = CallHierarchyTool(registry)
         val project = mockk<com.intellij.openapi.project.Project> {
             every { basePath } returns "/tmp"
         }
@@ -62,7 +65,7 @@ class CallHierarchyToolTest {
 
     @Test
     fun `execute returns error when method is missing`() = runTest {
-        val tool = CallHierarchyTool()
+        val tool = CallHierarchyTool(registry)
         val project = mockk<com.intellij.openapi.project.Project> {
             every { basePath } returns "/tmp"
         }

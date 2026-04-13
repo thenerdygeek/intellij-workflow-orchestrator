@@ -408,17 +408,17 @@ class AgentService(private val project: Project) : Disposable {
 
         // Code Intelligence — PSI-based semantic analysis (guarded by IDE context)
         if (ToolRegistrationFilter.shouldRegisterJavaPsiTools(ideContext)) {
-            safeRegisterDeferred("Code Intelligence") { FindImplementationsTool() }
-            safeRegisterDeferred("Code Intelligence") { FileStructureTool() }
-            safeRegisterDeferred("Code Intelligence") { TypeHierarchyTool() }
-            safeRegisterDeferred("Code Intelligence") { CallHierarchyTool() }
-            safeRegisterDeferred("Code Intelligence") { TypeInferenceTool() }
-            safeRegisterDeferred("Code Intelligence") { DataFlowAnalysisTool() }
-            safeRegisterDeferred("Code Intelligence") { GetMethodBodyTool() }
-            safeRegisterDeferred("Code Intelligence") { GetAnnotationsTool() }
-            safeRegisterDeferred("Code Intelligence") { TestFinderTool() }
-            safeRegisterDeferred("Code Intelligence") { StructuralSearchTool() }
-            safeRegisterDeferred("Code Intelligence") { ReadWriteAccessTool() }
+            safeRegisterDeferred("Code Intelligence") { FindImplementationsTool(providerRegistry) }
+            safeRegisterDeferred("Code Intelligence") { FileStructureTool(providerRegistry) }
+            safeRegisterDeferred("Code Intelligence") { TypeHierarchyTool(providerRegistry) }
+            safeRegisterDeferred("Code Intelligence") { CallHierarchyTool(providerRegistry) }
+            safeRegisterDeferred("Code Intelligence") { TypeInferenceTool(providerRegistry) }
+            safeRegisterDeferred("Code Intelligence") { DataFlowAnalysisTool(providerRegistry) }
+            safeRegisterDeferred("Code Intelligence") { GetMethodBodyTool(providerRegistry) }
+            safeRegisterDeferred("Code Intelligence") { GetAnnotationsTool(providerRegistry) }
+            safeRegisterDeferred("Code Intelligence") { TestFinderTool(providerRegistry) }
+            safeRegisterDeferred("Code Intelligence") { StructuralSearchTool(providerRegistry) }
+            safeRegisterDeferred("Code Intelligence") { ReadWriteAccessTool(providerRegistry) }
         }
 
         // Code Quality — formatting, refactoring, inspections
