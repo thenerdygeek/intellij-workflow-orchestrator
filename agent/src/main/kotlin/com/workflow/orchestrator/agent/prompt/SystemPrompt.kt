@@ -518,6 +518,7 @@ In each user message, the environment_details will specify the current mode. The
             appendLine("- \"spring-boot-engineer\" — Spring Boot feature development. Discovers project patterns before implementing.")
         }
         if (ideContext?.supportsPython == true) {
+            // python-engineer persona ships with Plan C — forward reference, safe to list
             appendLine("- \"python-engineer\" — Python feature development. Discovers project patterns (Django, FastAPI, Flask) before implementing.")
         }
         appendLine("- \"refactoring-specialist\" — safe refactoring with tests before/after every step and per-file rollback.")

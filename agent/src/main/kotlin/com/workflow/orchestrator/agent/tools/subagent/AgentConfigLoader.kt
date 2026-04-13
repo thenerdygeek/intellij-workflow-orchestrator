@@ -131,7 +131,7 @@ class AgentConfigLoader private constructor() : Disposable {
         return configs.filter { config ->
             when (config.name.lowercase()) {
                 "spring-boot-engineer" -> ideContext.supportsJava
-                "python-engineer" -> ideContext.supportsPython
+                "python-engineer" -> ideContext.supportsPython  // ships with Plan C
                 else -> true // universal agents always available
             }
         }
