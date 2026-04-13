@@ -190,7 +190,7 @@ class AutomationPanel(
 
             // Step 3: Replace current repo's tag if detected
             if (tagDetection.detected && tagDetection.tag != null) {
-                val dockerTagKey = settings.state.dockerTagKey.orEmpty()
+                val dockerTagKey = resolveDockerTagKey()
                 tags = tagBuilderService.replaceCurrentRepoTag(tags, CurrentRepoContext(
                     serviceName = dockerTagKey,
                     branchName = "", // not needed for replacement
@@ -229,15 +229,44 @@ class AutomationPanel(
         }
     }
 
+    /**
+     * Resolves the effective docker tag key using fallback chain:
+     * RepoConfig.dockerTagKey → PluginSettings.State.dockerTagKey
+     */
+    private fun resolveDockerTagKey(): String {
+        val resolver = com.workflow.orchestrator.core.settings.RepoContextResolver.getInstance(project)
+        val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
+        val fromRepo = repoConfig?.dockerTagKey?.takeIf { it.isNotBlank() }
+        val fromGlobal = settings.state.dockerTagKey?.takeIf { it.isNotBlank() }
+        return (fromRepo ?: fromGlobal).orEmpty()
+    }
+
+    /**
+     * Resolves the effective CI plan key using fallback chain:
+     * PluginSettings.State.serviceCiPlanKey → RepoConfig.bambooPlanKey → PluginSettings.State.bambooPlanKey
+     */
+    private fun resolveServiceCiPlanKey(): String {
+        val fromDedicated = settings.state.serviceCiPlanKey?.takeIf { it.isNotBlank() }
+        if (fromDedicated != null) return fromDedicated
+
+        val resolver = com.workflow.orchestrator.core.settings.RepoContextResolver.getInstance(project)
+        val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
+        val fromRepo = repoConfig?.bambooPlanKey?.takeIf { it.isNotBlank() }
+        val fromGlobal = settings.state.bambooPlanKey?.takeIf { it.isNotBlank() }
+        return (fromRepo ?: fromGlobal).orEmpty()
+    }
+
     private suspend fun detectCurrentRepoTag(): TagDetectionResult {
-        val dockerTagKey = settings.state.dockerTagKey.orEmpty()
-        val serviceCiPlanKey = settings.state.serviceCiPlanKey.orEmpty()
+        val dockerTagKey = resolveDockerTagKey()
+        val ciPlanKey = resolveServiceCiPlanKey()
+
+        log.info("[Automation:UI] Resolved dockerTagKey='$dockerTagKey', ciPlanKey='$ciPlanKey'")
 
         if (dockerTagKey.isBlank()) {
-            return TagDetectionResult.notConfigured("Docker Tag Key")
+            return TagDetectionResult.notConfigured("Docker Tag Key (check Repositories settings or add bamboo-specs)")
         }
-        if (serviceCiPlanKey.isBlank()) {
-            return TagDetectionResult.notConfigured("Service CI Plan Key")
+        if (ciPlanKey.isBlank()) {
+            return TagDetectionResult.notConfigured("Service CI Plan Key (check Repositories settings)")
         }
 
         // Detect current branch
@@ -266,7 +295,7 @@ class AutomationPanel(
             return TagDetectionResult.branchDetectionFailed()
         }
 
-        return tagBuilderService.detectDockerTag(serviceCiPlanKey, branch)
+        return tagBuilderService.detectDockerTag(ciPlanKey, branch)
     }
 
     private fun updateStatusLabel(result: BaselineLoadResult) {
