@@ -14,6 +14,8 @@ import com.workflow.orchestrator.agent.ide.IdeContext
 import com.workflow.orchestrator.agent.ide.IdeContextDetector
 import com.workflow.orchestrator.agent.ide.JavaKotlinProvider
 import com.workflow.orchestrator.agent.ide.LanguageProviderRegistry
+import com.workflow.orchestrator.agent.ide.PythonPsiHelper
+import com.workflow.orchestrator.agent.ide.PythonProvider
 import com.workflow.orchestrator.agent.ide.ToolRegistrationFilter
 import com.workflow.orchestrator.agent.loop.AgentLoop
 import com.workflow.orchestrator.agent.loop.ContextManager
@@ -361,6 +363,15 @@ class AgentService(private val project: Project) : Disposable {
         if (ToolRegistrationFilter.shouldRegisterJavaPsiTools(ideContext)) {
             providerRegistry.register(JavaKotlinProvider(project))
         }
+        if (ToolRegistrationFilter.shouldRegisterPythonPsiTools(ideContext)) {
+            val pythonHelper = PythonPsiHelper()
+            if (pythonHelper.isAvailable) {
+                providerRegistry.register(PythonProvider(pythonHelper))
+                log.info("Python code intelligence provider registered")
+            } else {
+                log.warn("Python PSI tools requested but PythonCore plugin classes not found")
+            }
+        }
 
         // ── Core tools (always sent to LLM) ──────────────────────────────
         safeRegisterCore { ReadFileTool() }
@@ -385,12 +396,14 @@ class AgentService(private val project: Project) : Disposable {
         safeRegisterCore { GitLogTool() }
 
         // Core PSI — essential navigation tools (guarded by IDE context)
-        if (ToolRegistrationFilter.shouldRegisterJavaPsiTools(ideContext)) {
+        val hasPsiSupport = ToolRegistrationFilter.shouldRegisterJavaPsiTools(ideContext) ||
+            ToolRegistrationFilter.shouldRegisterPythonPsiTools(ideContext)
+        if (hasPsiSupport) {
             safeRegisterCore { FindDefinitionTool(providerRegistry) }
             safeRegisterCore { FindReferencesTool(providerRegistry) }
             safeRegisterCore { SemanticDiagnosticsTool(providerRegistry) }
         } else {
-            log.info("Skipping Java/Kotlin PSI tools — Java plugin not available")
+            log.info("Skipping PSI tools — neither Java nor Python plugin available")
         }
 
         // tool_search itself is core (the LLM needs it to discover deferred tools)
@@ -407,7 +420,7 @@ class AgentService(private val project: Project) : Disposable {
         // ── Deferred tools (loaded via tool_search) ──────────────────────
 
         // Code Intelligence — PSI-based semantic analysis (guarded by IDE context)
-        if (ToolRegistrationFilter.shouldRegisterJavaPsiTools(ideContext)) {
+        if (hasPsiSupport) {
             safeRegisterDeferred("Code Intelligence") { FindImplementationsTool(providerRegistry) }
             safeRegisterDeferred("Code Intelligence") { FileStructureTool(providerRegistry) }
             safeRegisterDeferred("Code Intelligence") { TypeHierarchyTool(providerRegistry) }
