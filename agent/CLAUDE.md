@@ -168,6 +168,22 @@ Result stored as `IdeContext` in `AgentService`. Tools that can't work in the cu
 
 Key files: `ide/IdeContext.kt`, `ide/IdeContextDetector.kt`, `ide/ProjectScanner.kt`
 
+## Language Intelligence Providers
+
+PSI tools delegate language-specific logic to pluggable providers via `LanguageProviderRegistry`.
+
+**Interface:** `LanguageIntelligenceProvider` (15 operations: symbol resolution, file structure, type hierarchy, implementations, type inference, dataflow, callers/callees, metadata, body, access classification, test discovery, diagnostics, structural search)
+
+**Implementations:**
+- `JavaKotlinProvider` — wraps existing PsiToolUtils + inline Java/Kotlin PSI logic
+- (Python provider planned — Plan B2)
+
+**Registry:** `LanguageProviderRegistry` resolves provider by `PsiFile.language.id`. Thread-safe (ConcurrentHashMap). Initialized in `AgentService.registerAllTools()`.
+
+**Tool pattern:** Each PSI tool accepts the registry in its constructor, resolves the provider from the target file, delegates the PSI operation, and formats the result. If no provider exists for the language, returns "Code intelligence not available for {language}."
+
+Key files: `ide/LanguageIntelligenceProvider.kt`, `ide/LanguageProviderRegistry.kt`, `ide/JavaKotlinProvider.kt`
+
 ## ToolRegistry Internals
 
 - **Thread safety**: Registry map uses `ConcurrentHashMap`. `activateDeferred()` and `resetActiveDeferred()` are `@Synchronized` to prevent races when integration tools are toggled from multiple coroutines.
