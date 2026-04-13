@@ -12,6 +12,8 @@ import com.workflow.orchestrator.agent.hooks.HookRunner
 import com.workflow.orchestrator.agent.hooks.HookType
 import com.workflow.orchestrator.agent.ide.IdeContext
 import com.workflow.orchestrator.agent.ide.IdeContextDetector
+import com.workflow.orchestrator.agent.ide.JavaKotlinProvider
+import com.workflow.orchestrator.agent.ide.LanguageProviderRegistry
 import com.workflow.orchestrator.agent.ide.ToolRegistrationFilter
 import com.workflow.orchestrator.agent.loop.AgentLoop
 import com.workflow.orchestrator.agent.loop.ContextManager
@@ -108,6 +110,9 @@ class AgentService(private val project: Project) : Disposable {
     }
 
     lateinit var ideContext: IdeContext
+        private set
+
+    lateinit var providerRegistry: LanguageProviderRegistry
         private set
 
     private var debugController: AgentDebugController? = null
@@ -351,6 +356,12 @@ class AgentService(private val project: Project) : Disposable {
             "languages=${ideContext.languages}, frameworks=${ideContext.detectedFrameworks}, " +
             "buildTools=${ideContext.detectedBuildTools}")
 
+        // Initialize language provider registry
+        providerRegistry = LanguageProviderRegistry()
+        if (ToolRegistrationFilter.shouldRegisterJavaPsiTools(ideContext)) {
+            providerRegistry.register(JavaKotlinProvider(project))
+        }
+
         // ── Core tools (always sent to LLM) ──────────────────────────────
         safeRegisterCore { ReadFileTool() }
         safeRegisterCore { EditFileTool() }
@@ -375,9 +386,9 @@ class AgentService(private val project: Project) : Disposable {
 
         // Core PSI — essential navigation tools (guarded by IDE context)
         if (ToolRegistrationFilter.shouldRegisterJavaPsiTools(ideContext)) {
-            safeRegisterCore { FindDefinitionTool() }
-            safeRegisterCore { FindReferencesTool() }
-            safeRegisterCore { SemanticDiagnosticsTool() }
+            safeRegisterCore { FindDefinitionTool(providerRegistry) }
+            safeRegisterCore { FindReferencesTool(providerRegistry) }
+            safeRegisterCore { SemanticDiagnosticsTool(providerRegistry) }
         } else {
             log.info("Skipping Java/Kotlin PSI tools — Java plugin not available")
         }
