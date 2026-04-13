@@ -84,7 +84,11 @@ class UseSkillTool : AgentTool {
             )
         }
 
-        val skillContent = InstructionLoader.getSkillContent(skillName, availableSkills)
+        // Get IdeContext for skill variant selection
+        val ideContext = try {
+            project.getService(com.workflow.orchestrator.agent.AgentService::class.java)?.ideContext
+        } catch (_: Exception) { null }
+        val skillContent = InstructionLoader.getSkillContent(skillName, availableSkills, ideContext)
 
         if (skillContent == null) {
             // Port of Cline: list available skill names in error message
