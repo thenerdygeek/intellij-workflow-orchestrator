@@ -82,7 +82,7 @@ class BambooApiClient(
         } else {
             "/rest/api/latest/result/$planKey/latest?expand=stages.stage.results.result"
         }
-        log.debug("[Bamboo:API] Fetching latest result: $path")
+        log.info("[Bamboo:API] getLatestResult: GET $path")
         return get(path)
     }
 
@@ -149,9 +149,14 @@ class BambooApiClient(
         planKey: String,
         maxResults: Int = 10
     ): ApiResult<List<BambooResultDto>> {
-        return get<BambooBuildStatusResponse>(
-            "/rest/api/latest/result/$planKey?max-results=$maxResults&expand=stages.stage,variables"
-        ).map { it.results.result }
+        val path = "/rest/api/latest/result/$planKey?max-results=$maxResults&expand=stages.stage,variables"
+        log.info("[Bamboo:API] getRecentResults: GET $path")
+        return get<BambooBuildStatusResponse>(path).also { result ->
+            when (result) {
+                is ApiResult.Success -> log.info("[Bamboo:API] getRecentResults: ${result.data.results.result.size} result(s) for $planKey")
+                is ApiResult.Error -> log.info("[Bamboo:API] getRecentResults: FAILED for $planKey — ${result.type}: ${result.message}")
+            }
+        }.map { it.results.result }
     }
 
     /** Rerun failed/incomplete jobs for a build via Bamboo's restartBuild action. */
