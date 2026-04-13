@@ -13,7 +13,6 @@ okhttp = "4.12.0"
 # ---- Database ----
 sqlite = "3.45.3.0"
 postgresql = "42.7.3"
-mysql = "8.3.0"
 
 # ---- JSON-RPC / Cody Agent ----
 lsp4j = "0.23.1"
@@ -46,7 +45,6 @@ okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver",
 # Database
 sqlite-jdbc = { group = "org.xerial", name = "sqlite-jdbc", version.ref = "sqlite" }
 postgresql-jdbc = { group = "org.postgresql", name = "postgresql", version.ref = "postgresql" }
-mysql-jdbc = { group = "com.mysql", name = "mysql-connector-j", version.ref = "mysql" }
 
 # Testing
 junit = { group = "junit", name = "junit", version.ref = "junit" }

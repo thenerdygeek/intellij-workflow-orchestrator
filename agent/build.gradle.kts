@@ -29,8 +29,9 @@ dependencies {
 
     // JDBC drivers — bundled in the plugin so the agent can query databases
     // without requiring an external DB tool (IntelliJ DataSources, DBeaver, etc.)
+    // PostgreSQL (BSD-2) and SQLite (Apache 2.0) have clean licenses.
+    // MySQL (GPL) and SQL Server are user-supplied via Generic JDBC mode.
     implementation(libs.postgresql.jdbc)
-    implementation(libs.mysql.jdbc)
     implementation(libs.sqlite.jdbc)
 
     testImplementation(libs.junit5.api)
