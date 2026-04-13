@@ -39,20 +39,28 @@ class FindDefinitionTool(
 
         val classNameHint = params["class_name"]?.jsonPrimitive?.content
 
-        // Resolve the provider for Java/Kotlin (the only languages currently supported)
-        val provider = registry.forLanguageId("JAVA") ?: registry.forLanguageId("kotlin")
-            ?: return ToolResult(
-                "Code intelligence not available — no language provider registered",
-                "Error: no provider",
-                ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true
-            )
-
         val content = ReadAction.nonBlocking<String> {
+            // Resolve provider from the file context of found symbols, falling back to hardcoded IDs
+            fun resolveProvider(element: com.intellij.psi.PsiElement? = null): com.workflow.orchestrator.agent.ide.LanguageIntelligenceProvider? {
+                // Prefer file-based resolution when we have an element
+                if (element != null) {
+                    val psiFile = element.containingFile
+                    if (psiFile != null) {
+                        registry.forFile(psiFile)?.let { return it }
+                    }
+                }
+                // Fall back to hardcoded language IDs when no file context available
+                return registry.forLanguageId("JAVA") ?: registry.forLanguageId("kotlin")
+            }
+
+            val fallbackProvider = resolveProvider()
+                ?: return@nonBlocking "Code intelligence not available — no language provider registered"
+
             // If class_name hint provided, search within that class first using "class#symbol" syntax
             if (classNameHint != null) {
-                val element = provider.findSymbol(project, "$classNameHint#$symbol")
+                val element = fallbackProvider.findSymbol(project, "$classNameHint#$symbol")
                 if (element != null) {
+                    val provider = resolveProvider(element) ?: fallbackProvider
                     val info = provider.getDefinitionInfo(element)
                     if (info != null) {
                         return@nonBlocking formatDefinitionOutput(element, info, symbol)
@@ -61,8 +69,9 @@ class FindDefinitionTool(
             }
 
             // General symbol lookup (handles FQN, Class#method, bare names)
-            val element = provider.findSymbol(project, symbol)
+            val element = fallbackProvider.findSymbol(project, symbol)
             if (element != null) {
+                val provider = resolveProvider(element) ?: fallbackProvider
                 val info = provider.getDefinitionInfo(element)
                 if (info != null) {
                     // Check for disambiguation hint

@@ -101,6 +101,7 @@ class DataFlowAnalysisTool(
 
             val fileName = virtualFile.name
             val lineNumber = document?.getLineNumber(offset)?.plus(1) ?: 0
+            val expressionText = leafElement.text.take(100)
 
             // Delegate dataflow analysis to the language provider
             val result = provider.analyzeDataflow(leafElement)
@@ -108,6 +109,7 @@ class DataFlowAnalysisTool(
 
             val sb = StringBuilder()
             sb.appendLine("DataFlow analysis at $fileName:$lineNumber")
+            sb.appendLine("  Expression: $expressionText")
             sb.appendLine("  Nullability: ${result.nullability}")
             sb.appendLine("  Range: ${result.valueRange ?: "(not applicable)"}")
             sb.appendLine("  Constant value: ${result.constantValue ?: "(none)"}")

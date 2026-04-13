@@ -135,7 +135,7 @@ data class TypeInferenceResult(
     val nullability: Nullability,
 )
 
-enum class Nullability { NULLABLE, NOT_NULL, UNKNOWN }
+enum class Nullability { NULLABLE, NOT_NULL, PLATFORM, UNKNOWN }
 
 data class DataflowResult(
     val nullability: Nullability,
