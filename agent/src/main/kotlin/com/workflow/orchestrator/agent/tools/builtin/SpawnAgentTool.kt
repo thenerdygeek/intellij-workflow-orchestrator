@@ -132,6 +132,7 @@ Tips:
     )
 
     override val allowedWorkers = setOf(WorkerType.ORCHESTRATOR, WorkerType.CODER)
+    override val timeoutMs: Long get() = Long.MAX_VALUE  // No timeout — bounded by iterations + budget
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val description = params["description"]?.jsonPrimitive?.content

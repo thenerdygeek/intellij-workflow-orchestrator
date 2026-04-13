@@ -3,6 +3,10 @@ package com.workflow.orchestrator.agent.tools
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
@@ -504,6 +508,117 @@ class ToolRegistryTest {
             assertEquals(2, registry.coreCount())
             assertEquals(1, registry.deferredCount()) // sonar only
             assertEquals(1, registry.activeDeferredCount()) // jira
+        }
+    }
+
+    @Nested
+    inner class ConcurrencyTests {
+
+        @Test
+        fun `concurrent activation of 100 deferred tools loses none`() = runBlocking {
+            val toolCount = 100
+            // Register 100 deferred tools
+            for (i in 0 until toolCount) {
+                registry.registerDeferred(FakeAgentTool("tool_$i"))
+            }
+            assertEquals(toolCount, registry.deferredCount())
+
+            // Activate all 100 from concurrent coroutines on the default dispatcher
+            val results = (0 until toolCount).map { i ->
+                async(Dispatchers.Default) {
+                    registry.activateDeferred("tool_$i")
+                }
+            }.awaitAll()
+
+            // Every activation should have returned a non-null tool
+            val activated = results.filterNotNull()
+            assertEquals(toolCount, activated.size, "Expected all $toolCount tools to be activated")
+
+            // All should now be in active-deferred, none left in deferred
+            assertEquals(toolCount, registry.activeDeferredCount())
+            assertEquals(0, registry.deferredCount())
+
+            // All tools should be accessible via get()
+            for (i in 0 until toolCount) {
+                assertNotNull(registry.get("tool_$i"), "tool_$i should be accessible via get()")
+            }
+
+            // All tools should appear in getActiveTools()
+            val activeTools = registry.getActiveTools()
+            assertEquals(toolCount, activeTools.size)
+        }
+
+        @Test
+        fun `concurrent registration does not lose tools`() = runBlocking {
+            val toolCount = 100
+            // Register 100 core tools concurrently
+            val coreJobs = (0 until toolCount).map { i ->
+                async(Dispatchers.Default) {
+                    registry.registerCore(FakeAgentTool("core_$i"))
+                }
+            }
+            // Register 100 deferred tools concurrently
+            val deferredJobs = (0 until toolCount).map { i ->
+                async(Dispatchers.Default) {
+                    registry.registerDeferred(FakeAgentTool("deferred_$i"), "Cat_${i % 5}")
+                }
+            }
+            coreJobs.awaitAll()
+            deferredJobs.awaitAll()
+
+            assertEquals(toolCount, registry.coreCount())
+            assertEquals(toolCount, registry.deferredCount())
+            assertEquals(toolCount * 2, registry.count())
+        }
+
+        @Test
+        fun `concurrent activation of same tool returns exactly one non-null`() = runBlocking {
+            registry.registerDeferred(FakeAgentTool("shared_tool"))
+
+            // 50 coroutines all try to activate the same tool name
+            val results = (0 until 50).map {
+                async(Dispatchers.Default) {
+                    registry.activateDeferred("shared_tool")
+                }
+            }.awaitAll()
+
+            // Exactly one coroutine should get the tool from deferredTools.remove()
+            // The rest should get it from the activeDeferred containsKey check
+            val nonNullResults = results.filterNotNull()
+            assertEquals(50, nonNullResults.size, "All callers should get a non-null result")
+
+            // The tool must end up in active-deferred, not lost
+            assertEquals(1, registry.activeDeferredCount())
+            assertEquals(0, registry.deferredCount())
+            assertNotNull(registry.get("shared_tool"))
+        }
+
+        @Test
+        fun `concurrent resetActiveDeferred does not lose tools`() = runBlocking {
+            val toolCount = 50
+            for (i in 0 until toolCount) {
+                registry.registerDeferred(FakeAgentTool("tool_$i"))
+            }
+            // Activate all
+            for (i in 0 until toolCount) {
+                registry.activateDeferred("tool_$i")
+            }
+            assertEquals(toolCount, registry.activeDeferredCount())
+            assertEquals(0, registry.deferredCount())
+
+            // Reset from multiple concurrent coroutines — should not throw or lose tools
+            val jobs = (0 until 10).map {
+                async(Dispatchers.Default) {
+                    registry.resetActiveDeferred()
+                }
+            }
+            jobs.awaitAll()
+
+            // After all resets, active deferred should be empty and
+            // all tools should be back in deferred (or still there from earlier resets)
+            assertEquals(0, registry.activeDeferredCount())
+            assertEquals(toolCount, registry.deferredCount())
+            assertEquals(toolCount, registry.count())
         }
     }
 }

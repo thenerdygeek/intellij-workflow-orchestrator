@@ -1,6 +1,8 @@
 package com.workflow.orchestrator.agent.tools
 
+import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.agent.api.dto.ToolDefinition
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Three-tier tool registry: core (always sent), deferred (loaded via tool_search),
@@ -14,27 +16,35 @@ import com.workflow.orchestrator.agent.api.dto.ToolDefinition
  */
 class ToolRegistry {
 
+    private val LOG = Logger.getInstance(ToolRegistry::class.java)
+
     // Tier 1: Core tools — always sent to LLM
-    private val coreTools = mutableMapOf<String, AgentTool>()
+    private val coreTools = ConcurrentHashMap<String, AgentTool>()
 
     // Tier 2: Deferred tools — available via tool_search, NOT sent to LLM initially
-    private val deferredTools = mutableMapOf<String, AgentTool>()
-    private val deferredCategories = mutableMapOf<String, String>()
+    private val deferredTools = ConcurrentHashMap<String, AgentTool>()
+    private val deferredCategories = ConcurrentHashMap<String, String>()
 
     // Tier 3: Active deferred — loaded via tool_search during a session, sent to LLM
-    private val activeDeferred = mutableMapOf<String, AgentTool>()
+    private val activeDeferred = ConcurrentHashMap<String, AgentTool>()
 
     // ── Registration ──────────────────────────────────────────────────────
 
     /** Register a core tool (always sent to LLM). */
     fun registerCore(tool: AgentTool) {
-        coreTools[tool.name] = tool
+        val existing = coreTools.put(tool.name, tool)
+        if (existing != null) {
+            LOG.warn("ToolRegistry: core tool '${tool.name}' registered twice, overwriting")
+        }
         invalidateCache()
     }
 
     /** Register a deferred tool (available via tool_search, not sent initially). */
     fun registerDeferred(tool: AgentTool, category: String = "Other") {
-        deferredTools[tool.name] = tool
+        val existing = deferredTools.put(tool.name, tool)
+        if (existing != null) {
+            LOG.warn("ToolRegistry: deferred tool '${tool.name}' registered twice, overwriting")
+        }
         deferredCategories[tool.name] = category
         invalidateCache()
     }
@@ -88,7 +98,11 @@ class ToolRegistry {
      * Activate a deferred tool — moves it from deferred to active-deferred.
      * Returns the tool if found, null if the name doesn't exist in deferred tools
      * or is already active.
+     *
+     * Synchronized to prevent two concurrent callers from both passing the
+     * containsKey checks and racing on deferredTools.remove() for the same key.
      */
+    @Synchronized
     fun activateDeferred(toolName: String): AgentTool? {
         // Already active (core or active-deferred) — no-op, return the tool
         if (activeDeferred.containsKey(toolName)) return activeDeferred[toolName]
@@ -100,17 +114,19 @@ class ToolRegistry {
         return tool
     }
 
+    private fun extractOneLiner(description: String): String =
+        description.lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it.isNotBlank() }
+            ?: description.take(100)
+
     /**
      * Returns a catalog of deferred tools (name + first line of description).
      * Used to inject into the system prompt so the LLM knows what's available.
      */
     fun getDeferredCatalog(): List<Pair<String, String>> {
         return deferredTools.values.map { tool ->
-            val oneLiner = tool.description.lineSequence()
-                .map { it.trim() }
-                .firstOrNull { it.isNotBlank() }
-                ?: tool.description.take(100)
-            tool.name to oneLiner
+            tool.name to extractOneLiner(tool.description)
         }
     }
 
@@ -139,19 +155,34 @@ class ToolRegistry {
         val grouped = linkedMapOf<String, MutableList<Pair<String, String>>>()
         for ((name, tool) in deferredTools) {
             val category = deferredCategories[name] ?: "Other"
-            val oneLiner = tool.description.lineSequence()
-                .map { it.trim() }
-                .firstOrNull { it.isNotBlank() }
-                ?: tool.description.take(100)
-            grouped.getOrPut(category) { mutableListOf() }.add(name to oneLiner)
+            grouped.getOrPut(category) { mutableListOf() }.add(name to extractOneLiner(tool.description))
         }
         return grouped
     }
 
-    /** Reset active deferred tools (for new sessions). Moves them back to deferred. */
+    /** Remove a deferred or active-deferred tool by name. Returns the removed tool or null. */
+    @Synchronized
+    fun unregisterDeferred(toolName: String): AgentTool? {
+        deferredCategories.remove(toolName)
+        val removed = deferredTools.remove(toolName) ?: activeDeferred.remove(toolName)
+        if (removed != null) invalidateCache()
+        return removed
+    }
+
+    /**
+     * Reset active deferred tools (for new sessions). Moves them back to deferred.
+     *
+     * Synchronized to prevent a concurrent activateDeferred() from inserting
+     * into activeDeferred between the snapshot and clear(), which would lose that entry.
+     */
+    @Synchronized
     fun resetActiveDeferred() {
-        deferredTools.putAll(activeDeferred)
+        val snapshot = HashMap(activeDeferred)
         activeDeferred.clear()
+        for ((name, tool) in snapshot) {
+            deferredTools[name] = tool
+            deferredCategories.putIfAbsent(name, "Other")
+        }
         invalidateCache()
     }
 
