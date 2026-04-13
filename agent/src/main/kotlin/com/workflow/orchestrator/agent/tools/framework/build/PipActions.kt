@@ -8,6 +8,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 
 /**
@@ -233,13 +234,19 @@ private fun runPipCommand(args: List<String>, project: Project): String? {
                 .redirectErrorStream(true)
                 .start()
 
+            // Drain stdout concurrently to prevent pipe-buffer deadlock
+            val outputFuture = CompletableFuture.supplyAsync {
+                process.inputStream.bufferedReader().readText()
+            }
             val completed = process.waitFor(CLI_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             if (!completed) {
                 process.destroyForcibly()
                 continue
             }
 
-            val output = process.inputStream.bufferedReader().readText()
+            val output = try {
+                outputFuture.get(5, TimeUnit.SECONDS)
+            } catch (_: Exception) { "" }
             if (process.exitValue() == 0) return output
         } catch (_: Exception) {
             continue

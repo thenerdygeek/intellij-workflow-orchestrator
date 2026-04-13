@@ -8,6 +8,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 
 /**
@@ -21,13 +22,35 @@ import java.util.concurrent.TimeUnit
 private const val CLI_TIMEOUT_SECONDS = 60L
 private const val RUN_TIMEOUT_SECONDS = 300L
 
+/** Safe characters for pytest -k and -m expressions (word chars, spaces, parens, boolean ops, dots, hyphens). */
+private val SAFE_PYTEST_EXPR = Regex("""^[\w\s\-.,()\[\]]+$""")
+
+/** Validate that a pytest path filter resolves within the project base directory. */
+private fun validatePytestPath(path: String, basePath: String): String? {
+    val canonical = File(basePath, path).canonicalPath
+    if (!canonical.startsWith(File(basePath).canonicalPath)) return null
+    return canonical
+}
+
 internal suspend fun executePytestDiscover(params: JsonObject, project: Project): ToolResult {
     val pathFilter = params["path"]?.jsonPrimitive?.content
 
     return try {
         withContext(Dispatchers.IO) {
+            val basePath = project.basePath
+                ?: return@withContext ToolResult("Error: project base path not available", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+
             val args = mutableListOf("--collect-only", "-q", "--no-header")
-            if (pathFilter != null) args.add(pathFilter)
+            if (pathFilter != null) {
+                val validatedPath = validatePytestPath(pathFilter, basePath)
+                    ?: return@withContext ToolResult(
+                        "Error: path '$pathFilter' resolves outside the project directory.",
+                        "Error: invalid path",
+                        ToolResult.ERROR_TOKEN_ESTIMATE,
+                        isError = true
+                    )
+                args.add(validatedPath)
+            }
 
             val output = runPytestCommand(args, project)
                 ?: return@withContext pytestNotFoundError()
@@ -76,14 +99,42 @@ internal suspend fun executePytestRun(params: JsonObject, project: Project): Too
 
     return try {
         withContext(Dispatchers.IO) {
+            val basePath = project.basePath
+                ?: return@withContext ToolResult("Error: project base path not available", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+
             val args = mutableListOf("-v", "--tb=short", "--no-header")
 
-            if (pathFilter != null) args.add(pathFilter)
+            if (pathFilter != null) {
+                val validatedPath = validatePytestPath(pathFilter, basePath)
+                    ?: return@withContext ToolResult(
+                        "Error: path '$pathFilter' resolves outside the project directory.",
+                        "Error: invalid path",
+                        ToolResult.ERROR_TOKEN_ESTIMATE,
+                        isError = true
+                    )
+                args.add(validatedPath)
+            }
             if (pattern != null) {
+                if (!SAFE_PYTEST_EXPR.matches(pattern) || pattern.contains("__")) {
+                    return@withContext ToolResult(
+                        "Error: pattern '$pattern' contains unsafe characters. Only word characters, spaces, dots, hyphens, parentheses, brackets, and commas are allowed.",
+                        "Error: unsafe pattern",
+                        ToolResult.ERROR_TOKEN_ESTIMATE,
+                        isError = true
+                    )
+                }
                 args.add("-k")
                 args.add(pattern)
             }
             if (markers != null) {
+                if (!SAFE_PYTEST_EXPR.matches(markers) || markers.contains("__")) {
+                    return@withContext ToolResult(
+                        "Error: markers '$markers' contains unsafe characters. Only word characters, spaces, dots, hyphens, parentheses, brackets, and commas are allowed.",
+                        "Error: unsafe markers",
+                        ToolResult.ERROR_TOKEN_ESTIMATE,
+                        isError = true
+                    )
+                }
                 args.add("-m")
                 args.add(markers)
             }
@@ -169,8 +220,20 @@ internal suspend fun executePytestFixtures(params: JsonObject, project: Project)
 
     return try {
         withContext(Dispatchers.IO) {
+            val basePath = project.basePath
+                ?: return@withContext ToolResult("Error: project base path not available", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+
             val args = mutableListOf("--fixtures", "-q", "--no-header")
-            if (pathFilter != null) args.add(pathFilter)
+            if (pathFilter != null) {
+                val validatedPath = validatePytestPath(pathFilter, basePath)
+                    ?: return@withContext ToolResult(
+                        "Error: path '$pathFilter' resolves outside the project directory.",
+                        "Error: invalid path",
+                        ToolResult.ERROR_TOKEN_ESTIMATE,
+                        isError = true
+                    )
+                args.add(validatedPath)
+            }
 
             val output = runPytestCommand(args, project)
                 ?: return@withContext pytestNotFoundError()
@@ -251,13 +314,19 @@ private fun runPytestCommand(args: List<String>, project: Project, timeout: Long
                 .redirectErrorStream(true)
                 .start()
 
+            // Drain stdout concurrently to prevent pipe-buffer deadlock
+            val outputFuture = CompletableFuture.supplyAsync {
+                process.inputStream.bufferedReader().readText()
+            }
             val completed = process.waitFor(timeout, TimeUnit.SECONDS)
             if (!completed) {
                 process.destroyForcibly()
                 continue
             }
 
-            val output = process.inputStream.bufferedReader().readText()
+            val output = try {
+                outputFuture.get(5, TimeUnit.SECONDS)
+            } catch (_: Exception) { "" }
             // pytest returns 0 (all pass), 1 (some fail), 5 (no tests collected)
             // All are valid outputs to parse
             val exitCode = process.exitValue()
