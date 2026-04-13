@@ -238,14 +238,29 @@ class RepositoriesConfigurable(
             val detected = resolver.autoDetectRepos()
             log.info("[Settings:Repos] VCS detection found ${detected.size} repo(s)")
 
-            // Save detected repos to settings immediately so the orchestrator can use them
+            // Save detected repos to settings immediately so the orchestrator can use them.
+            // For existing repos, merge missing fields (especially localVcsRootPath).
             val savedReposBefore = pluginSettings.getRepos().size
             for (repo in detected) {
-                val alreadyInSettings = pluginSettings.getRepos().any {
+                val existing = pluginSettings.getRepos().find {
                     it.bitbucketProjectKey.equals(repo.bitbucketProjectKey, ignoreCase = true) &&
                         it.bitbucketRepoSlug.equals(repo.bitbucketRepoSlug, ignoreCase = true)
                 }
-                if (!alreadyInSettings) {
+                if (existing != null) {
+                    // Merge missing fields from VCS detection into existing repo
+                    var merged = false
+                    if (existing.localVcsRootPath.isNullOrBlank() && !repo.localVcsRootPath.isNullOrBlank()) {
+                        existing.localVcsRootPath = repo.localVcsRootPath
+                        merged = true
+                    }
+                    if (existing.name.isNullOrBlank() && !repo.name.isNullOrBlank()) {
+                        existing.name = repo.name
+                        merged = true
+                    }
+                    if (merged) {
+                        log.info("[Settings:Repos] Merged VCS data into existing repo '${existing.displayLabel}': rootPath='${existing.localVcsRootPath}'")
+                    }
+                } else {
                     if (repo.isPrimary && pluginSettings.getRepos().any { it.isPrimary }) {
                         repo.isPrimary = false
                     }
