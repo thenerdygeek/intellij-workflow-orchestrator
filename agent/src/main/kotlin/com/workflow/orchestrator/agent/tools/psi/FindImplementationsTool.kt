@@ -34,29 +34,29 @@ class FindImplementationsTool(
             ?: return ToolResult("Error: 'method' parameter required", "Error: missing method", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         val className = params["class_name"]?.jsonPrimitive?.content
 
-        // Resolve provider (symbol-based — not file-based, so use language ID)
-        val provider = registry.forLanguageId("JAVA") ?: registry.forLanguageId("kotlin")
-            ?: return ToolResult(
+        // Resolve provider: try all registered providers until one finds the symbol
+        val allProviders = registry.allProviders()
+        if (allProviders.isEmpty()) {
+            return ToolResult(
                 "Code intelligence not available — no language provider registered",
                 "Error: no provider",
                 ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
             )
+        }
 
         val content = ReadAction.nonBlocking<String> {
             val scope = GlobalSearchScope.projectScope(project)
 
-            // Find the method element via provider
+            // Find the method element via provider — try each provider until one finds the symbol
             val symbolName = if (className != null) "$className#$methodName" else methodName
-            val element = provider.findSymbol(project, symbolName)
-
-            if (element == null) {
-                return@nonBlocking if (className != null) {
+            val (provider, element) = allProviders.firstNotNullOfOrNull { p ->
+                p.findSymbol(project, symbolName)?.let { p to it }
+            } ?: return@nonBlocking if (className != null) {
                     "No method '$methodName' found in class '$className'."
                 } else {
                     "No method '$methodName' found in project. Try providing 'class_name' to narrow the search."
                 }
-            }
 
             val implementations = provider.findImplementations(element, scope)
             if (implementations.isEmpty()) {

@@ -54,18 +54,24 @@ class GetAnnotationsTool(
         val memberName = params["member"]?.jsonPrimitive?.content
         val includeInherited = params["include_inherited"]?.jsonPrimitive?.boolean ?: false
 
-        // Resolve provider (symbol-based — not file-based, so use language ID)
-        val provider = registry.forLanguageId("JAVA") ?: registry.forLanguageId("kotlin")
-            ?: return ToolResult(
+        // Resolve provider: try all registered providers until one finds the symbol
+        val allProviders = registry.allProviders()
+        if (allProviders.isEmpty()) {
+            return ToolResult(
                 "Code intelligence not available — no language provider registered",
                 "Error: no provider",
                 ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
             )
+        }
 
         val content = ReadAction.nonBlocking<String> {
-            // Find the class via provider
-            val psiClass = provider.findSymbol(project, className) as? PsiClass
+            // Find the class via provider — try each provider until one finds the symbol
+            val (provider, psiElement) = allProviders.firstNotNullOfOrNull { p ->
+                p.findSymbol(project, className)?.let { p to it }
+            } ?: return@nonBlocking "No class '$className' found in project."
+
+            val psiClass = psiElement as? PsiClass
                 ?: return@nonBlocking "No class '$className' found in project."
 
             val fqn = psiClass.qualifiedName ?: psiClass.name ?: className

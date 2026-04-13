@@ -53,20 +53,26 @@ class GetMethodBodyTool(
             )
         val contextLines = (params["context_lines"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0).coerceIn(0, 5)
 
-        // Resolve provider (symbol-based — not file-based, so use language ID)
-        val provider = registry.forLanguageId("JAVA") ?: registry.forLanguageId("kotlin")
-            ?: return ToolResult(
+        // Resolve provider: try all registered providers until one finds the symbol
+        val allProviders = registry.allProviders()
+        if (allProviders.isEmpty()) {
+            return ToolResult(
                 "Code intelligence not available — no language provider registered",
                 "Error: no provider",
                 ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
             )
+        }
 
         val content = ReadAction.nonBlocking<String> {
-            // Find the class via provider
-            val psiClass = provider.findSymbol(project, className) as? com.intellij.psi.PsiClass
-                ?: return@nonBlocking "Error: Class '$className' not found in project. " +
+            // Find the class via provider — try each provider until one finds the symbol
+            val (provider, psiElement) = allProviders.firstNotNullOfOrNull { p ->
+                p.findSymbol(project, className)?.let { p to it }
+            } ?: return@nonBlocking "Error: Class '$className' not found in project. " +
                         "Check the class name spelling or provide the fully qualified name."
+
+            val psiClass = psiElement as? com.intellij.psi.PsiClass
+                ?: return@nonBlocking "Error: '$className' was found but is not a class."
 
             // Try direct (non-inherited) methods first
             var methods = psiClass.findMethodsByName(methodName, false).toList()
