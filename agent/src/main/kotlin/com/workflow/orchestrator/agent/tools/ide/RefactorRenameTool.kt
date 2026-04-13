@@ -6,13 +6,12 @@ import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
-import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.PsiManager
 import com.intellij.psi.PsiNamedElement
-import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.refactoring.rename.RenameProcessor
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
+import com.workflow.orchestrator.agent.ide.LanguageProviderRegistry
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
@@ -23,7 +22,9 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-class RefactorRenameTool : AgentTool {
+class RefactorRenameTool(
+    private val registry: LanguageProviderRegistry
+) : AgentTool {
     override val name = "refactor_rename"
     override val description = "Safely rename a class, method, field, or variable across the entire project. Updates ALL references, imports, and usages. Much safer than text replacement with edit_file."
     override val parameters = FunctionParameters(
@@ -89,27 +90,7 @@ class RefactorRenameTool : AgentTool {
     }
 
     private fun findElement(project: Project, symbol: String, rawFile: String?): com.intellij.psi.PsiElement? {
-        val scope = GlobalSearchScope.projectScope(project)
-        val facade = JavaPsiFacade.getInstance(project)
-
-        // If symbol contains a dot, try ClassName.memberName
-        if ('.' in symbol) {
-            val parts = symbol.split('.')
-            if (parts.size == 2) {
-                val className = parts[0]
-                val memberName = parts[1]
-                val psiClass = PsiToolUtils.findClass(project, className) ?: return null
-
-                // Try methods first, then fields
-                psiClass.findMethodsByName(memberName, false).firstOrNull()?.let { return it }
-                psiClass.findFieldByName(memberName, false)?.let { return it }
-            }
-        }
-
-        // Try as a class name (fully qualified or simple)
-        PsiToolUtils.findClass(project, symbol)?.let { return it }
-
-        // If a file is provided, search within that file for the symbol
+        // If a file is provided, search within that file first for disambiguation
         if (rawFile != null) {
             val (path, pathError) = PathValidator.resolveAndValidate(rawFile, project.basePath)
             if (pathError == null && path != null) {
@@ -117,11 +98,34 @@ class RefactorRenameTool : AgentTool {
                 if (vf != null) {
                     val psiFile = PsiManager.getInstance(project).findFile(vf)
                     if (psiFile != null) {
-                        return findSymbolInFile(psiFile, symbol)
+                        findSymbolInFile(psiFile, symbol)?.let { return it }
                     }
                 }
             }
         }
+
+        // If symbol contains a dot, try ClassName.memberName via Java/Kotlin PSI
+        if ('.' in symbol) {
+            val parts = symbol.split('.')
+            if (parts.size == 2) {
+                val className = parts[0]
+                val memberName = parts[1]
+                val psiClass = PsiToolUtils.findClass(project, className)
+                if (psiClass != null) {
+                    // Try methods first, then fields
+                    psiClass.findMethodsByName(memberName, false).firstOrNull()?.let { return it }
+                    psiClass.findFieldByName(memberName, false)?.let { return it }
+                }
+            }
+        }
+
+        // Try all registered providers (works for Java, Kotlin, Python, etc.)
+        registry.allProviders().firstNotNullOfOrNull { provider ->
+            provider.findSymbol(project, symbol)
+        }?.let { return it }
+
+        // Fallback: try Java PSI facade directly for class names
+        PsiToolUtils.findClass(project, symbol)?.let { return it }
 
         return null
     }
