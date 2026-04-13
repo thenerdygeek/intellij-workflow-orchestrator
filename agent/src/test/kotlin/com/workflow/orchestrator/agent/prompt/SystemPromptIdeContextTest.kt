@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.prompt
 
+import com.workflow.orchestrator.agent.ide.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.*
 import java.io.File
@@ -109,5 +110,116 @@ class SystemPromptIdeContextTest {
 
         val separatorCount = Regex("\n\n====\n\n").findAll(prompt).count()
         assertTrue(separatorCount >= 7, "Prompt must have at least 7 section separators, found $separatorCount")
+    }
+
+    // ==================== IDE Context Tests ====================
+
+    @Test
+    fun `null ideContext produces backward-compatible prompt`() {
+        val prompt = SystemPrompt.build(
+            projectName = "TestProject",
+            projectPath = "/test/project",
+            ideContext = null,
+        )
+        // Should behave like current prompt — IntelliJ-flavored
+        assertTrue(prompt.contains("IntelliJ"))
+        assertTrue(prompt.contains("spring-boot-engineer"))
+        assertTrue(prompt.contains("mvn compile") || prompt.contains("gradlew"))
+    }
+
+    @Test
+    fun `IntelliJ Ultimate prompt contains Java and Spring content`() {
+        val context = IdeContext(
+            product = IdeProduct.INTELLIJ_ULTIMATE,
+            productName = "IntelliJ IDEA 2025.1 Ultimate",
+            edition = Edition.ULTIMATE,
+            languages = setOf(Language.JAVA, Language.KOTLIN),
+            hasJavaPlugin = true,
+            hasPythonPlugin = false,
+            hasPythonCorePlugin = false,
+            hasSpringPlugin = true,
+            detectedFrameworks = setOf(Framework.SPRING),
+            detectedBuildTools = setOf(BuildTool.GRADLE),
+        )
+        val prompt = SystemPrompt.build(
+            projectName = "TestProject",
+            projectPath = "/test/project",
+            ideContext = context,
+        )
+        assertTrue(prompt.contains("IntelliJ"))
+        assertTrue(prompt.contains("Spring") || prompt.contains("spring"))
+        assertTrue(prompt.contains("spring-boot-engineer"))
+        assertFalse(prompt.contains("pytest"))
+        assertFalse(prompt.contains("python-engineer"))
+    }
+
+    @Test
+    fun `PyCharm prompt has Python content without Java content`() {
+        val context = IdeContext(
+            product = IdeProduct.PYCHARM_COMMUNITY,
+            productName = "PyCharm 2025.1 Community",
+            edition = Edition.COMMUNITY,
+            languages = setOf(Language.PYTHON),
+            hasJavaPlugin = false,
+            hasPythonPlugin = false,
+            hasPythonCorePlugin = true,
+            hasSpringPlugin = false,
+            detectedFrameworks = setOf(Framework.DJANGO),
+            detectedBuildTools = setOf(BuildTool.POETRY),
+        )
+        val prompt = SystemPrompt.build(
+            projectName = "TestProject",
+            projectPath = "/test/project",
+            ideContext = context,
+        )
+        assertTrue(prompt.contains("PyCharm"))
+        assertTrue(prompt.contains("Python") || prompt.contains("python"))
+        assertTrue(prompt.contains("Django") || prompt.contains("django"))
+        assertFalse(prompt.contains("spring-boot-engineer"))
+        assertFalse(prompt.contains("mvn compile"))
+        assertFalse(prompt.contains("gradlew"))
+    }
+
+    @Test
+    fun `WebStorm prompt has minimal language-specific content`() {
+        val context = IdeContext(
+            product = IdeProduct.OTHER,
+            productName = "WebStorm 2025.1",
+            edition = Edition.OTHER,
+            languages = emptySet(),
+            hasJavaPlugin = false,
+            hasPythonPlugin = false,
+            hasPythonCorePlugin = false,
+            hasSpringPlugin = false,
+            detectedFrameworks = emptySet(),
+            detectedBuildTools = emptySet(),
+        )
+        val prompt = SystemPrompt.build(
+            projectName = "TestProject",
+            projectPath = "/test/project",
+            ideContext = context,
+        )
+        assertTrue(prompt.contains("WebStorm"))
+        assertFalse(prompt.contains("spring-boot-engineer"))
+        assertFalse(prompt.contains("python-engineer"))
+        assertFalse(prompt.contains("mvn compile"))
+        assertFalse(prompt.contains("pytest"))
+    }
+
+    @Test
+    fun `prompt sections are properly ordered`() {
+        val prompt = SystemPrompt.build(
+            projectName = "TestProject",
+            projectPath = "/test/project",
+        )
+        val agentRoleIdx = prompt.indexOf("AI coding agent")
+        val capabilitiesIdx = prompt.indexOf("CAPABILITIES")
+        val rulesIdx = prompt.indexOf("RULES")
+        val systemInfoIdx = prompt.indexOf("SYSTEM INFORMATION")
+        val objectiveIdx = prompt.indexOf("OBJECTIVE")
+        assertTrue(agentRoleIdx < capabilitiesIdx, "Agent role before capabilities")
+        assertTrue(capabilitiesIdx < rulesIdx, "Capabilities before rules")
+        assertTrue(rulesIdx < systemInfoIdx, "Rules before system info")
+        assertTrue(systemInfoIdx < objectiveIdx, "System info before objective")
     }
 }
