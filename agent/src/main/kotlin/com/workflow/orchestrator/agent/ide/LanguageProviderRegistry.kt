@@ -25,4 +25,8 @@ class LanguageProviderRegistry {
 
     fun hasProvider(languageId: String): Boolean =
         providers.containsKey(languageId)
+
+    /** Return all distinct registered providers (deduplicated since one provider may handle multiple language IDs). */
+    fun allProviders(): List<LanguageIntelligenceProvider> =
+        providers.values.distinct()
 }

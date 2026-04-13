@@ -21,7 +21,7 @@ class StructuralSearchTool(
     override val description = "Search for code patterns using structural search syntax. " +
         "More powerful than regex — matches code structure semantically. " +
         "Use \$var\$ for template variables. " +
-        "Example: 'System.out.println(\$arg\$)' finds all println calls. Java and Kotlin supported."
+        "Example: 'System.out.println(\$arg\$)' finds all println calls."
     override val parameters = FunctionParameters(
         properties = mapOf(
             "pattern" to ParameterProperty(
@@ -30,7 +30,7 @@ class StructuralSearchTool(
             ),
             "file_type" to ParameterProperty(
                 type = "string",
-                description = "Language: \"java\" or \"kotlin\" (default: \"java\")"
+                description = "Language: \"java\", \"kotlin\", or \"python\" (default: tries all available)"
             ),
             "scope" to ParameterProperty(
                 type = "string",
@@ -66,19 +66,40 @@ class StructuralSearchTool(
 
         if (PsiToolUtils.isDumb(project)) return PsiToolUtils.dumbModeError()
 
-        // Resolve provider (structural search is project-wide, use language ID)
-        val provider = registry.forLanguageId("JAVA") ?: registry.forLanguageId("kotlin")
-            ?: return ToolResult(
+        val fileType = params["file_type"]?.jsonPrimitive?.content
+
+        // Resolve provider: use file_type if specified, otherwise try all providers
+        val allProviders = registry.allProviders()
+        if (allProviders.isEmpty()) {
+            return ToolResult(
                 "Code intelligence not available — no language provider registered",
                 "Error: no provider",
                 ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
             )
+        }
+
+        val providersToTry = if (fileType != null) {
+            // Map common file type names to language IDs
+            val langId = when (fileType.lowercase()) {
+                "java" -> "JAVA"
+                "kotlin", "kt" -> "kotlin"
+                "python", "py" -> "Python"
+                else -> fileType
+            }
+            val specific = registry.forLanguageId(langId)
+            if (specific != null) listOf(specific) else allProviders
+        } else {
+            allProviders
+        }
 
         val content = try {
             val results = ReadAction.nonBlocking<List<com.workflow.orchestrator.agent.ide.StructuralMatchInfo>?> {
                 val scope = resolveScope(project, scopeName)
-                provider.structuralSearch(project, pattern, scope)
+                // Try each provider until one returns non-null results
+                providersToTry.firstNotNullOfOrNull { provider ->
+                    provider.structuralSearch(project, pattern, scope)
+                }
             }.inSmartMode(project).executeSynchronously()
 
             if (results == null) {

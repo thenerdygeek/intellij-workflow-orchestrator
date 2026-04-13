@@ -31,18 +31,22 @@ class TypeHierarchyTool(
         val className = params["class_name"]?.jsonPrimitive?.content
             ?: return ToolResult("Error: 'class_name' parameter required", "Error: missing class_name", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
-        // Resolve provider (symbol-based — not file-based, so use language ID)
-        val provider = registry.forLanguageId("JAVA") ?: registry.forLanguageId("kotlin")
-            ?: return ToolResult(
+        // Resolve provider: try all registered providers until one finds the symbol
+        val allProviders = registry.allProviders()
+        if (allProviders.isEmpty()) {
+            return ToolResult(
                 "Code intelligence not available — no language provider registered",
                 "Error: no provider",
                 ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
             )
+        }
 
         val content = ReadAction.nonBlocking<String> {
-            val psiClass = provider.findSymbol(project, className)
-                ?: return@nonBlocking "No class '$className' found in project"
+            // Try each provider until one finds the symbol
+            val (provider, psiClass) = allProviders.firstNotNullOfOrNull { p ->
+                p.findSymbol(project, className)?.let { p to it }
+            } ?: return@nonBlocking "No class '$className' found in project"
 
             val result = provider.getTypeHierarchy(psiClass)
                 ?: return@nonBlocking "No class '$className' found in project"

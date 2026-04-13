@@ -16,7 +16,6 @@ class StructuralSearchToolTest {
     fun `tool metadata is correct`() {
         assertEquals("structural_search", tool.name)
         assertTrue(tool.description.contains("structural search"))
-        assertTrue(tool.description.contains("Java and Kotlin"))
 
         val props = tool.parameters.properties
         assertTrue(props.containsKey("pattern"))

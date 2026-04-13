@@ -36,20 +36,23 @@ class CallHierarchyTool(
         val className = params["class_name"]?.jsonPrimitive?.content
         val maxDepth = (params["depth"]?.jsonPrimitive?.content?.toIntOrNull() ?: 1).coerceIn(1, 3)
 
-        // Resolve provider (symbol-based — not file-based, so use language ID)
-        val provider = registry.forLanguageId("JAVA") ?: registry.forLanguageId("kotlin")
-            ?: return ToolResult(
+        // Resolve provider: try all registered providers until one finds the symbol
+        val allProviders = registry.allProviders()
+        if (allProviders.isEmpty()) {
+            return ToolResult(
                 "Code intelligence not available — no language provider registered",
                 "Error: no provider",
                 ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
             )
+        }
 
         val content = ReadAction.nonBlocking<String> {
-            // Find the method via provider
+            // Find the method via provider — try each provider until one finds the symbol
             val symbolName = if (className != null) "$className#$methodName" else methodName
-            val psiMethod = provider.findSymbol(project, symbolName)
-                ?: return@nonBlocking "No method '$methodName' found" +
+            val (provider, psiMethod) = allProviders.firstNotNullOfOrNull { p ->
+                p.findSymbol(project, symbolName)?.let { p to it }
+            } ?: return@nonBlocking "No method '$methodName' found" +
                         (if (className != null) " in class '$className'" else " in project")
 
             val qualifiedMethodName = (psiMethod as? com.intellij.psi.PsiMethod)?.let {
