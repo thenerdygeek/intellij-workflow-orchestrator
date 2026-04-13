@@ -115,13 +115,13 @@ class SystemPromptIdeContextTest {
     // ==================== IDE Context Tests ====================
 
     @Test
-    fun `null ideContext produces backward-compatible prompt`() {
+    fun `null ideContext produces IntelliJ-flavored prompt with Java defaults`() {
         val prompt = SystemPrompt.build(
             projectName = "TestProject",
             projectPath = "/test/project",
             ideContext = null,
         )
-        // Should behave like current prompt — IntelliJ-flavored
+        // Null ideContext defaults to IntelliJ IDEA with Java/Spring content
         assertTrue(prompt.contains("IntelliJ"))
         assertTrue(prompt.contains("spring-boot-engineer"))
         assertTrue(prompt.contains("mvn compile") || prompt.contains("gradlew"))
