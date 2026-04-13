@@ -37,10 +37,10 @@ class RepositoriesConfigurable(
     private var dialogPanel: com.intellij.openapi.ui.DialogPanel? = null
 
     // --- Repository table state ---
-    private val repoTableColumnNames = arrayOf("Name", "Bitbucket", "Bamboo Plan", "SonarQube", "Primary")
+    private val repoTableColumnNames = arrayOf("Name", "Bitbucket", "Bamboo Plan", "Docker Tag", "SonarQube", "Primary")
     private val repoTableModel = object : DefaultTableModel(repoTableColumnNames, 0) {
         override fun getColumnClass(columnIndex: Int): Class<*> =
-            if (columnIndex == 4) java.lang.Boolean::class.java else String::class.java
+            if (columnIndex == 5) java.lang.Boolean::class.java else String::class.java
 
         override fun isCellEditable(row: Int, column: Int): Boolean = false
     }
@@ -138,8 +138,8 @@ class RepositoriesConfigurable(
                     setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
                     preferredScrollableViewportSize = JBUI.size(600, 120)
                     tableHeader.reorderingAllowed = false
-                    columnModel.getColumn(4).preferredWidth = JBUI.scale(60)
-                    columnModel.getColumn(4).maxWidth = JBUI.scale(70)
+                    columnModel.getColumn(5).preferredWidth = JBUI.scale(60)
+                    columnModel.getColumn(5).maxWidth = JBUI.scale(70)
                 }
                 repoTable = table
                 val scrollPane = JBScrollPane(table)
@@ -170,6 +170,7 @@ class RepositoriesConfigurable(
                     repo.name ?: "",
                     "${repo.bitbucketProjectKey ?: ""}/${repo.bitbucketRepoSlug ?: ""}",
                     repo.bambooPlanKey ?: "",
+                    repo.dockerTagKey ?: "",
                     repo.sonarProjectKey ?: "",
                     repo.isPrimary
                 )
@@ -231,21 +232,13 @@ class RepositoriesConfigurable(
 
     private fun onAutoDetectRepos() {
         repoStatusLabel.text = "Detecting repositories from VCS roots..."
+        repoStatusLabel.foreground = StatusColors.INFO
         ApplicationManager.getApplication().executeOnPooledThread {
             val resolver = RepoContextResolver.getInstance(project)
             val detected = resolver.autoDetectRepos()
 
-            // Also run the orchestrator to fill docker tag, sonar key, bamboo plan key, etc.
-            val orchestrator = project.getService(
-                com.workflow.orchestrator.core.autodetect.AutoDetectOrchestrator::class.java
-            )
-            val orchestratorResult = kotlinx.coroutines.runBlocking { orchestrator.detectAll() }
-
+            // Show VCS detection results immediately, then run orchestrator
             invokeLater {
-                if (detected.isEmpty() && !orchestratorResult.anyFilled) {
-                    repoStatusLabel.text = "No repositories or project keys detected"
-                    return@invokeLater
-                }
                 var added = 0
                 for (repo in detected) {
                     val alreadyExists = editedRepos.any {
@@ -260,11 +253,45 @@ class RepositoriesConfigurable(
                         added++
                     }
                 }
+                if (added > 0) refreshRepoTable()
+                repoStatusLabel.text = if (added > 0)
+                    "Added $added repo(s). Detecting project keys..."
+                else
+                    "Detecting project keys (Bamboo plan, SonarQube, Docker Tag)..."
+            }
+
+            // Run orchestrator for project key detection (Bamboo plan detection can be slow)
+            val orchestrator = project.getService(
+                com.workflow.orchestrator.core.autodetect.AutoDetectOrchestrator::class.java
+            )
+            val orchestratorResult = try {
+                kotlinx.coroutines.runBlocking {
+                    kotlinx.coroutines.withTimeout(60_000) {
+                        orchestrator.detectAll()
+                    }
+                }
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                log.warn("[Settings:Repositories] Auto-detect timed out after 60s")
+                // Reload repos to pick up any partial results written to settings
+                null
+            }
+
+            invokeLater {
+                // Reload from settings to pick up any values written by the orchestrator
+                editedRepos.clear()
+                editedRepos.addAll(pluginSettings.getRepos())
                 refreshRepoTable()
-                val parts = mutableListOf<String>()
-                if (added > 0) parts.add("Added $added repo(s)")
-                if (orchestratorResult.anyFilled) parts.add("Filled: ${orchestratorResult.filledFields.joinToString(", ")}")
-                repoStatusLabel.text = if (parts.isNotEmpty()) parts.joinToString(" · ") else "Nothing new to detect"
+
+                if (orchestratorResult == null) {
+                    repoStatusLabel.text = "Detection timed out \u2014 Bamboo plan scan is slow. Try setting it manually via Edit."
+                    repoStatusLabel.foreground = StatusColors.WARNING
+                } else if (orchestratorResult.anyFilled) {
+                    repoStatusLabel.text = "Filled: ${orchestratorResult.filledFields.joinToString(", ")}"
+                    repoStatusLabel.foreground = StatusColors.SUCCESS
+                } else {
+                    repoStatusLabel.text = "No additional project keys detected"
+                    repoStatusLabel.foreground = StatusColors.SECONDARY_TEXT
+                }
             }
         }
     }
