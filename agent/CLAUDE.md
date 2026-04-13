@@ -209,7 +209,14 @@ Three framework meta-tools follow the SpringTool pattern (thin dispatcher + acti
 | `fastapi` | 10 | fastapi in deps | Yes |
 | `flask` | 10 | flask in deps | Yes |
 
-Implementation: File-scan primary (regex on .py files), PSI-optional. Zero compile-time Python plugin dependency.
+Implementation: File-scan primary (regex on .py files) via `PythonFileScanner` (shared utility with directory exclusions and sensitive value redaction), PSI-optional. Zero compile-time Python plugin dependency.
+
+**PythonFileScanner** (`tools/framework/PythonFileScanner.kt`): Shared utility for all Python framework tools.
+- `shouldScanDir()` — excludes 17+ directories (venv, .venv, node_modules, __pycache__, .git, .tox, .mypy_cache, .pytest_cache, dist, build, .eggs, site-packages, hidden dirs)
+- `scanPythonFiles(baseDir, filter)` — walks with `onEnter { shouldScanDir(it) }` to skip excluded subtrees entirely
+- `redactIfSensitive(key, value)` — redacts values for keys containing SECRET_KEY, PASSWORD, API_KEY, TOKEN, DATABASE_URL, PRIVATE_KEY, AWS_SECRET, etc.
+
+**Router/blueprint prefix resolution:** FastAPI routes compose `APIRouter(prefix=...)` + `app.include_router(..., prefix=...)` into full URL paths. Flask routes compose `Blueprint(url_prefix=...)` + `app.register_blueprint(..., url_prefix=...)` similarly.
 
 ## Language Intelligence Providers
 
@@ -226,7 +233,9 @@ PSI tools delegate language-specific logic to pluggable providers via `LanguageP
 
 **Registry:** `LanguageProviderRegistry` resolves provider by `PsiFile.language.id`. Thread-safe (ConcurrentHashMap). Initialized in `AgentService.registerAllTools()`.
 
-**Tool pattern:** Each PSI tool accepts the registry in its constructor, resolves the provider from the target file, delegates the PSI operation, and formats the result. If no provider exists for the language, returns "Code intelligence not available for {language}."
+**Tool pattern:** Each PSI tool accepts the registry in its constructor, resolves the provider by iterating `allProviders()` until one finds the symbol (no hardcoded Java fallback). If no provider exists for the language, returns "Code intelligence not available for {language}."
+
+**Cycle detection:** `findCallers()` in both providers uses an `IdentityHashMap`-based visited set to prevent infinite recursion on mutual call chains (A→B→A). PsiElement identity (not `.equals()`) is used because `PsiElement.equals()` is not a stable contract.
 
 Key files: `ide/LanguageIntelligenceProvider.kt`, `ide/LanguageProviderRegistry.kt`, `ide/JavaKotlinProvider.kt`
 
@@ -280,6 +289,15 @@ Users can send messages while the agent is working. Messages are injected at ite
 - **Doom loop detection**: 3 identical consecutive tool calls = warning. 5 = hard failure.
 - **Context overflow**: Compress via `ContextManager` + REPLAY the failed request (OpenCode pattern)
 - **Task progress**: Extracted from `task_progress` parameter on every tool call (Cline's FocusChain pattern), injected via `AgentTool.injectTaskProgress()` into every tool schema
+- **Dumb mode checks**: `OptimizeImportsTool` and `FormatCodeTool` check `DumbService.isDumb(project)` before operating — prevents removing used imports during indexing
+- **Session-scoped state**: `EditFileTool.lastEditLineRanges` keyed by `sessionId:canonicalPath` to prevent cross-session contamination of diagnostics edit ranges
+- **Middle-truncation**: Runtime/build/coverage tools use first-60% + last-40% truncation (via shared `truncateOutput()`) instead of head-biased `.take(N)` — preserves error messages and stack traces at end of output
+- **No-op detection**: `FormatCodeTool` and `OptimizeImportsTool` compare before/after text and report "no changes needed" when nothing changed
+- **Debug session unification**: All debug tools (step, inspect, breakpoints) resolve sessions via `IdeStateProbe.debugState()` — both agent-started and user-started sessions are visible
+- **All breakpoint types**: `list_breakpoints` shows line, exception, field watchpoint, and method breakpoints (not just `XLineBreakpoint`)
+- **Evaluate timeout**: `debug_inspect` evaluate action wraps with `withTimeoutOrNull(10s)` to prevent indefinite hangs
+- **Inspection profile**: `RunInspectionsTool` and `ListQuickFixesTool` use `profile.isToolEnabled()` instead of `isEnabledByDefault` — respects user's active inspection profile
+- **ToolResult.isError semantics**: `SemanticDiagnosticsTool` returns `isError=false` when problems are found (successful result), `isError=true` only for actual tool failures
 
 ## Tool Approval
 
