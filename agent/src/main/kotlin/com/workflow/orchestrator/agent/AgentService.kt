@@ -440,10 +440,15 @@ class AgentService(private val project: Project) : Disposable {
         } else {
             log.info("Skipping Spring tools — Spring plugin not available")
         }
-        // RuntimeExec, RuntimeConfig, and Coverage are universal (work in any IDE)
+        // RuntimeExec and RuntimeConfig are universal (work in any IDE)
         safeRegisterDeferred("Build & Run") { RuntimeExecTool() }
         safeRegisterDeferred("Build & Run") { RuntimeConfigTool() }
-        safeRegisterDeferred("Build & Run") { CoverageTool() }
+        // Coverage depends on the Coverage plugin (Ultimate/Professional)
+        if (ToolRegistrationFilter.shouldRegisterCoverageTool(ideContext)) {
+            safeRegisterDeferred("Build & Run") { CoverageTool() }
+        } else {
+            log.info("Skipping coverage tools — requires Ultimate or Professional edition")
+        }
 
         // Database — queries, schema, connection profiles
         safeRegisterDeferred("Database") { DbListProfilesTool() }
