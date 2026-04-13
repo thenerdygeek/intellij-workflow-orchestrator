@@ -6,6 +6,7 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
+import com.workflow.orchestrator.agent.tools.framework.PythonFileScanner
 import java.io.File
 
 private val TARGET_PACKAGES = listOf(
@@ -39,9 +40,9 @@ internal suspend fun executeVersionInfo(params: JsonObject, project: Project): T
 
             // Check requirements*.txt files
             val reqPattern = buildRequirementsPattern()
-            baseDir.walkTopDown()
-                .filter { it.isFile && it.name.startsWith("requirements") && it.extension == "txt" }
-                .forEach { reqFile ->
+            PythonFileScanner.scanPythonFiles(baseDir) {
+                it.name.startsWith("requirements") && it.extension == "txt"
+            }.forEach { reqFile ->
                     for (match in reqPattern.findAll(reqFile.readText())) {
                         val pkg = match.groupValues[1].lowercase()
                         val ver = match.groupValues[2]

@@ -308,6 +308,32 @@ class FlaskToolTest {
         }
 
         @Test
+        fun `config action redacts sensitive values`(@TempDir tempDir: Path) = runTest {
+            every { project.basePath } returns tempDir.toString()
+            tempDir.resolve("config.py").toFile().writeText(
+                """
+                class Config:
+                    SECRET_KEY = 'super-secret-value-123'
+                    DATABASE_URL = 'postgres://user:pass@host/db'
+                    SQLALCHEMY_DATABASE_URI = 'sqlite:///app.db'
+                    DEBUG = False
+                """.trimIndent()
+            )
+
+            val result = tool.execute(buildJsonObject { put("action", "config") }, project)
+            assertFalse(result.isError, "Expected success: ${result.content}")
+            // SECRET_KEY value should be redacted
+            assertTrue(result.content.contains("SECRET_KEY = ***REDACTED***"),
+                "SECRET_KEY should be redacted. Got: ${result.content}")
+            // DATABASE_URL should be redacted
+            assertTrue(result.content.contains("DATABASE_URL = ***REDACTED***"),
+                "DATABASE_URL should be redacted. Got: ${result.content}")
+            // Non-sensitive values should NOT be redacted
+            assertTrue(result.content.contains("DEBUG = False"),
+                "DEBUG should NOT be redacted. Got: ${result.content}")
+        }
+
+        @Test
         fun `extensions action finds Flask extensions`(@TempDir tempDir: Path) = runTest {
             every { project.basePath } returns tempDir.toString()
             tempDir.resolve("extensions.py").toFile().writeText(

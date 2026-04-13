@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import com.workflow.orchestrator.agent.tools.framework.PythonFileScanner
 import java.io.File
 
 private val CONFIG_CLASS_PATTERN = Regex(
@@ -40,21 +41,17 @@ internal suspend fun executeConfig(params: JsonObject, project: Project): ToolRe
             val baseDir = File(basePath)
 
             // Look for config.py, settings.py, config/*.py
-            val configFiles = baseDir.walkTopDown()
-                .filter { file ->
-                    file.isFile && file.extension == "py" && (
-                        file.name == "config.py" ||
-                            file.name == "settings.py" ||
-                            file.name == "default_settings.py" ||
-                            (file.parentFile?.name == "config" && file.extension == "py")
-                        )
-                }
-                .toList()
+            val configFiles = PythonFileScanner.scanPythonFiles(baseDir) { file ->
+                file.extension == "py" && (
+                    file.name == "config.py" ||
+                        file.name == "settings.py" ||
+                        file.name == "default_settings.py" ||
+                        (file.parentFile?.name == "config" && file.extension == "py")
+                    )
+            }
 
             // Also scan all .py files for from_object references
-            val allPyFiles = baseDir.walkTopDown()
-                .filter { it.isFile && it.extension == "py" }
-                .toList()
+            val allPyFiles = PythonFileScanner.scanAllPyFiles(baseDir)
 
             val fromObjectRefs = mutableListOf<Pair<String, String>>()
             for (pyFile in allPyFiles) {
@@ -103,7 +100,9 @@ internal suspend fun executeConfig(params: JsonObject, project: Project): ToolRe
                                 }
                                 .toList()
                             for (km in keys) {
-                                appendLine("    ${km.groupValues[1]} = ${km.groupValues[2].trim().take(120)}")
+                                val key = km.groupValues[1]
+                                val value = PythonFileScanner.redactIfSensitive(key, km.groupValues[2].trim().take(120))
+                                appendLine("    $key = $value")
                             }
                         }
                         appendLine()
@@ -117,7 +116,9 @@ internal suspend fun executeConfig(params: JsonObject, project: Project): ToolRe
                         if (settings.isNotEmpty()) {
                             appendLine("[$relPath]")
                             for (m in settings) {
-                                appendLine("  ${m.groupValues[1]} = ${m.groupValues[2].trim().take(120)}")
+                                val key = m.groupValues[1]
+                                val value = PythonFileScanner.redactIfSensitive(key, m.groupValues[2].trim().take(120))
+                                appendLine("  $key = $value")
                             }
                             appendLine()
                         }
