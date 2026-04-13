@@ -439,7 +439,7 @@ class AgentService(private val project: Project) : Disposable {
         // Code Quality — formatting, refactoring, inspections
         safeRegisterDeferred("Code Quality") { FormatCodeTool() }
         safeRegisterDeferred("Code Quality") { OptimizeImportsTool() }
-        safeRegisterDeferred("Code Quality") { RefactorRenameTool() }
+        safeRegisterDeferred("Code Quality") { RefactorRenameTool(providerRegistry) }
         safeRegisterDeferred("Code Quality") { RunInspectionsTool() }
         safeRegisterDeferred("Code Quality") { ProblemViewTool() }
         safeRegisterDeferred("Code Quality") { ListQuickFixesTool() }
