@@ -4,6 +4,7 @@ package com.workflow.orchestrator.agent.tools.subagent
 
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.Logger
+import com.workflow.orchestrator.agent.ide.IdeContext
 import java.nio.file.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -115,6 +116,33 @@ class AgentConfigLoader private constructor() : Disposable {
             configCache[agentName.lowercase()]?.let { result[toolName] = it }
         }
         return result
+    }
+
+    /**
+     * Filter loaded agent configs based on IDE context.
+     * Language-specific agents are excluded when their language isn't available.
+     * Universal agents (code-reviewer, architect-reviewer, etc.) are always included.
+     *
+     * When [ideContext] is null (e.g. tests or pre-detection), all configs are returned
+     * for backward compatibility.
+     */
+    fun filterByIdeContext(configs: List<AgentConfig>, ideContext: IdeContext?): List<AgentConfig> {
+        if (ideContext == null) return configs
+        return configs.filter { config ->
+            when (config.name.lowercase()) {
+                "spring-boot-engineer" -> ideContext.supportsJava
+                "python-engineer" -> ideContext.supportsPython
+                else -> true // universal agents always available
+            }
+        }
+    }
+
+    /**
+     * Returns all cached configs filtered by IDE context.
+     * Language-specific agents are excluded when their language isn't available.
+     */
+    fun getFilteredConfigs(ideContext: IdeContext?): List<AgentConfig> {
+        return filterByIdeContext(getAllCachedConfigs(), ideContext)
     }
 
     /**
