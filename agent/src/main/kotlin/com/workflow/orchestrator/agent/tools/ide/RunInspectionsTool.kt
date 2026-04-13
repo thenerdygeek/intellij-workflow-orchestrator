@@ -5,6 +5,7 @@ import com.intellij.codeInspection.ProblemDescriptor
 import com.intellij.codeInspection.ProblemHighlightType
 import com.intellij.codeInspection.ProblemsHolder
 import com.intellij.codeInspection.ex.LocalInspectionToolWrapper
+import com.intellij.codeInsight.daemon.HighlightDisplayKey
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
@@ -66,7 +67,8 @@ class RunInspectionsTool : AgentTool {
 
                 for (toolWrapper in profile.getInspectionTools(psiFile)) {
                     if (toolWrapper !is LocalInspectionToolWrapper) continue
-                    if (!toolWrapper.isEnabledByDefault) continue
+                    val key = HighlightDisplayKey.find(toolWrapper.shortName)
+                    if (key == null || !profile.isToolEnabled(key, psiFile)) continue
                     val tool = toolWrapper.tool
 
                     try {
