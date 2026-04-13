@@ -4,7 +4,14 @@ import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiDocumentManager
+import com.intellij.psi.PsiElement
+import com.intellij.psi.PsiField
+import com.intellij.psi.PsiLocalVariable
 import com.intellij.psi.PsiManager
+import com.intellij.psi.PsiMethod
+import com.intellij.psi.PsiNamedElement
+import com.intellij.psi.PsiParameter
+import com.intellij.psi.util.PsiTreeUtil
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.ide.LanguageProviderRegistry
@@ -92,12 +99,18 @@ class TypeInferenceTool(
             val leafElement = psiFile.findElementAt(offset)
                 ?: return@nonBlocking "No typed element found at this position"
 
+            // Classify the element kind for descriptive output
+            val (elementKind, elementName) = classifyElementKind(leafElement)
+
             // Delegate type inference to the language provider
             val result = provider.inferType(leafElement)
                 ?: return@nonBlocking "No typed element found at this position"
 
             val sb = StringBuilder()
-            sb.appendLine("Type of element:")
+            sb.appendLine("Type of $elementKind:")
+            if (elementName != null) {
+                sb.appendLine("  Expression: $elementName")
+            }
             sb.appendLine("  Presentable: ${result.typeName}")
             if (result.qualifiedName != null) {
                 sb.appendLine("  Qualified: ${result.qualifiedName}")
@@ -113,6 +126,51 @@ class TypeInferenceTool(
             tokenEstimate = TokenEstimator.estimate(content),
             isError = isError
         )
+    }
+
+    /**
+     * Classify a leaf PsiElement into its element kind and name for descriptive output.
+     * Walks up from the leaf to find the nearest typed parent (variable, parameter, field, method, expression).
+     * Supports both Java PSI types and Kotlin types via class name.
+     */
+    private fun classifyElementKind(leaf: PsiElement): Pair<String, String?> {
+        // Java types
+        PsiTreeUtil.getParentOfType(leaf, PsiLocalVariable::class.java, false)?.let { variable ->
+            return "local variable" to (variable.name ?: variable.text.take(50))
+        }
+        PsiTreeUtil.getParentOfType(leaf, PsiParameter::class.java, false)?.let { param ->
+            return "parameter" to (param.name ?: param.text.take(50))
+        }
+        PsiTreeUtil.getParentOfType(leaf, PsiField::class.java, false)?.let { field ->
+            return "field" to (field.name ?: field.text.take(50))
+        }
+        PsiTreeUtil.getParentOfType(leaf, PsiMethod::class.java, false)?.let { method ->
+            return "method return type" to method.name
+        }
+
+        // Kotlin types via class name (avoids hard compile-time dependency)
+        var current: PsiElement? = leaf
+        while (current != null) {
+            when (current.javaClass.simpleName) {
+                "KtProperty" -> {
+                    val name = (current as? PsiNamedElement)?.name ?: current.text.take(50)
+                    return "property" to name
+                }
+                "KtParameter" -> {
+                    val name = (current as? PsiNamedElement)?.name ?: current.text.take(50)
+                    return "parameter" to name
+                }
+                "KtNamedFunction" -> {
+                    val name = (current as? PsiNamedElement)?.name ?: current.text.take(50)
+                    return "function return type" to name
+                }
+            }
+            current = current.parent
+        }
+
+        // Fallback: expression
+        val exprText = leaf.text.take(100)
+        return "expression" to exprText
     }
 
     private fun resolveLineColumnToOffset(document: Document?, line: Int, column: Int): Int? {

@@ -5,8 +5,12 @@ import com.intellij.openapi.editor.Document
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.PsiDocumentManager
+import com.intellij.psi.PsiElement
+import com.intellij.psi.PsiField
+import com.intellij.psi.PsiLocalVariable
 import com.intellij.psi.PsiManager
 import com.intellij.psi.PsiNamedElement
+import com.intellij.psi.PsiParameter
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.search.LocalSearchScope
 import com.intellij.psi.search.SearchScope
@@ -105,6 +109,7 @@ class ReadWriteAccessTool(
                 ?: return@nonBlocking "No variable, field, or parameter found at this position"
 
             val targetName = (target as? PsiNamedElement)?.name ?: "unknown"
+            val targetKind = classifyTargetKind(target)
             val targetLine = document?.let { doc ->
                 doc.getLineNumber(target.textOffset) + 1
             } ?: 0
@@ -120,11 +125,11 @@ class ReadWriteAccessTool(
             val classification = provider.classifyAccesses(target, searchScope)
 
             if (classification.reads.isEmpty() && classification.writes.isEmpty() && classification.readWrites.isEmpty()) {
-                return@nonBlocking "Read/Write analysis for '$targetName' ($targetFileName:$targetLine)\n\nNo references found."
+                return@nonBlocking "Read/Write analysis for $targetKind '$targetName' ($targetFileName:$targetLine)\n\nNo references found."
             }
 
             val sb = StringBuilder()
-            sb.appendLine("Read/Write analysis for '$targetName' ($targetFileName:$targetLine)")
+            sb.appendLine("Read/Write analysis for $targetKind '$targetName' ($targetFileName:$targetLine)")
             sb.appendLine()
 
             sb.appendLine("Writes (${classification.writes.size}):")
@@ -173,6 +178,26 @@ class ReadWriteAccessTool(
             tokenEstimate = TokenEstimator.estimate(content),
             isError = isError
         )
+    }
+
+    /**
+     * Classify the target element into a human-readable kind string.
+     * Supports Java PSI types and Kotlin types via class name.
+     */
+    private fun classifyTargetKind(element: PsiElement): String {
+        return when (element) {
+            is PsiLocalVariable -> "local variable"
+            is PsiParameter -> "parameter"
+            is PsiField -> "field"
+            else -> {
+                // Kotlin types via class name
+                when (element.javaClass.simpleName) {
+                    "KtProperty" -> "property"
+                    "KtParameter" -> "parameter"
+                    else -> "variable"
+                }
+            }
+        }
     }
 
     private fun resolveLineColumnToOffset(document: Document?, line: Int, column: Int): Int? {

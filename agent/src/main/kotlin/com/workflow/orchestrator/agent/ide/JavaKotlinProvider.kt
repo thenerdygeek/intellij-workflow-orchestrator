@@ -857,7 +857,8 @@ class JavaKotlinProvider(private val project: Project) : LanguageIntelligencePro
         }
         return when (type) {
             is PsiPrimitiveType -> Nullability.NOT_NULL
-            else -> Nullability.UNKNOWN
+            // Java reference types without nullability annotation are "platform" types
+            else -> Nullability.PLATFORM
         }
     }
 

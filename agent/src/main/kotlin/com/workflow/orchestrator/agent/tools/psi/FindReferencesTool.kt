@@ -122,15 +122,13 @@ class FindReferencesTool(
         resolvedFilePath: String?,
         scope: GlobalSearchScope
     ): com.intellij.psi.PsiElement? {
-        val provider = registry.forLanguageId("JAVA") ?: registry.forLanguageId("kotlin")
-
         // If a file path is provided, try file-scoped resolution first
         if (resolvedFilePath != null) {
             val vFile = LocalFileSystem.getInstance().findFileByPath(resolvedFilePath)
             val psiFile = vFile?.let { PsiManager.getInstance(project).findFile(it) }
 
-            if (psiFile != null && provider != null) {
-                // Check if the provider supports this file's language
+            if (psiFile != null) {
+                // Resolve provider from the actual file's language
                 val fileProvider = registry.forFile(psiFile)
                 if (fileProvider != null) {
                     // Try to find symbol as class first, verify it's in this file
@@ -139,10 +137,8 @@ class FindReferencesTool(
                         return classElement
                     }
                 }
-            }
 
-            // File-scoped fallback: search classes in the file for a method with this name
-            if (psiFile != null) {
+                // File-scoped fallback: search classes in the file for a method with this name
                 val classes = (psiFile as? com.intellij.psi.PsiJavaFile)?.classes ?: emptyArray()
                 classes.flatMap { it.methods.toList() }
                     .firstOrNull { it.name == symbol }
@@ -150,7 +146,8 @@ class FindReferencesTool(
             }
         }
 
-        // Global resolution via provider
+        // Global resolution via provider (fall back to hardcoded language IDs when no file context)
+        val provider = registry.forLanguageId("JAVA") ?: registry.forLanguageId("kotlin")
         if (provider != null) {
             provider.findSymbol(project, symbol)?.let { return it }
         }
