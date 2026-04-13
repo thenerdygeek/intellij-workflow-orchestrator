@@ -18,11 +18,13 @@ import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.coroutines.*
 import java.awt.BorderLayout
 import java.awt.FlowLayout
+import java.awt.Font
 import javax.swing.*
 
 /**
  * Main Automation tab panel.
  * Header: suite selector + status + action buttons.
+ * Diagnostic banner: baseline info + docker tag detection indicator.
  * Two sub-tabs: Configure (tag table + variables) and Monitor (unified run view).
  */
 class AutomationPanel(
@@ -36,11 +38,29 @@ class AutomationPanel(
     private val tagBuilderService by lazy { project.getService(TagBuilderService::class.java) }
     private val queueService by lazy { project.getService(QueueService::class.java) }
     private val bambooService by lazy { project.getService(BambooService::class.java) }
+    private val driftDetectorService by lazy { project.getService(DriftDetectorService::class.java) }
 
     // Header components
     private val suiteCombo = JComboBox<SuiteComboItem>()
     private val statusLabel = JBLabel("").apply {
         foreground = StatusColors.SUCCESS
+    }
+
+    // Diagnostic banner components
+    private val baselineInfoLabel = JBLabel("").apply {
+        font = font.deriveFont(JBUI.scale(11).toFloat())
+        border = JBUI.Borders.emptyLeft(4)
+    }
+    private val dockerTagInfoLabel = JBLabel("").apply {
+        font = font.deriveFont(JBUI.scale(11).toFloat())
+        border = JBUI.Borders.emptyLeft(4)
+    }
+    private val diagnosticPanel = JPanel().apply {
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        border = JBUI.Borders.empty(2, 8, 4, 8)
+        add(baselineInfoLabel)
+        add(dockerTagInfoLabel)
+        isVisible = false // hidden until suite is loaded
     }
 
     // Sub-panels
@@ -68,7 +88,7 @@ class AutomationPanel(
             val leftPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
                 add(JBLabel("SUITE").apply {
                     foreground = StatusColors.SECONDARY_TEXT
-                    font = font.deriveFont(java.awt.Font.BOLD, JBUI.scale(11).toFloat())
+                    font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
                 })
                 add(suiteCombo)
                 add(statusLabel)
@@ -88,7 +108,14 @@ class AutomationPanel(
             add(leftPanel, BorderLayout.WEST)
             add(rightPanel, BorderLayout.EAST)
         }
-        add(headerPanel, BorderLayout.NORTH)
+
+        // Top: header + diagnostic banner
+        val topPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            add(headerPanel)
+            add(diagnosticPanel)
+        }
+        add(topPanel, BorderLayout.NORTH)
 
         // Configure tab: tag table (left) + variables (right)
         val configurePanel = JPanel(BorderLayout()).apply {
@@ -140,75 +167,148 @@ class AutomationPanel(
             suiteCombo.addItem(SuiteComboItem(suite.planKey, suite.displayName))
         }
         if (suites.isEmpty()) {
-            statusLabel.text = "No suites configured — go to Settings"
+            statusLabel.text = "No suites configured \u2014 go to Settings"
         }
     }
 
     private fun onSuiteSelected(planKey: String) {
         currentSuitePlanKey = planKey
         statusLabel.text = "Loading..."
+        statusLabel.foreground = StatusColors.INFO
+        diagnosticPanel.isVisible = false
         log.info("[Automation:UI] Suite selected: $planKey")
 
         scope.launch {
-            // Load baseline tags
-            val tags = tagBuilderService.loadBaseline(planKey)
+            // Step 1: Load baseline with diagnostics
+            val baselineResult = tagBuilderService.loadBaselineWithDiagnostics(planKey)
+            var tags = baselineResult.tags
+            log.info("[Automation:UI] Baseline result: ${baselineResult.diagnostics.buildsQueried} builds queried, " +
+                "${baselineResult.diagnostics.buildsWithDockerTags} with tags, selected=${baselineResult.selectedBuild?.buildNumber}")
 
-            // Auto-replace current repo's docker tag
-            val dockerTagKey = settings.state.dockerTagKey.orEmpty()
-            val updatedTags = if (dockerTagKey.isNotBlank()) {
-                // Get current branch via RepoContextResolver + reflection to avoid git4idea dependency
-                val branch = try {
-                    val resolver = com.workflow.orchestrator.core.settings.RepoContextResolver.getInstance(project)
-                    val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
-                    val gitRepoManager = Class.forName("git4idea.repo.GitRepositoryManager")
-                    val getInstance = gitRepoManager.getMethod("getInstance", Project::class.java)
-                    val manager = getInstance.invoke(null, project)
-                    val repos = gitRepoManager.getMethod("getRepositories").invoke(manager) as List<*>
-                    val targetRepo = if (repoConfig?.localVcsRootPath != null) {
-                        repos.find { repo ->
-                            val root = repo?.javaClass?.getMethod("getRoot")?.invoke(repo)
-                            val path = root?.javaClass?.getMethod("getPath")?.invoke(root) as? String
-                            path == repoConfig.localVcsRootPath
-                        }
-                    } else repos.firstOrNull()
-                    val repo = targetRepo ?: repos.firstOrNull()
-                    repo?.javaClass?.getMethod("getCurrentBranchName")?.invoke(repo) as? String ?: ""
-                } catch (_: Exception) { "" }
-                val serviceCiPlanKey = settings.state.serviceCiPlanKey.orEmpty()
+            // Step 2: Docker tag detection for current repo
+            val tagDetection = detectCurrentRepoTag()
 
-                val featureTag = if (serviceCiPlanKey.isNotBlank() && branch.isNotBlank()) {
-                    tagBuilderService.extractDockerTagFromBuildLog(serviceCiPlanKey, branch)
-                } else null
+            // Step 3: Replace current repo's tag if detected
+            if (tagDetection.detected && tagDetection.tag != null) {
+                val dockerTagKey = settings.state.dockerTagKey.orEmpty()
+                tags = tagBuilderService.replaceCurrentRepoTag(tags, CurrentRepoContext(
+                    serviceName = dockerTagKey,
+                    branchName = "", // not needed for replacement
+                    featureBranchTag = tagDetection.tag,
+                    detectedFrom = DetectionSource.SETTINGS_MAPPING
+                ))
+            }
 
-                if (featureTag != null) {
-                    tagBuilderService.replaceCurrentRepoTag(tags, CurrentRepoContext(
-                        serviceName = dockerTagKey,
-                        branchName = branch,
-                        featureBranchTag = featureTag,
-                        detectedFrom = DetectionSource.SETTINGS_MAPPING
-                    ))
-                } else tags
-            } else tags
+            // Step 4: Enrich with latest release tags from Nexus (if configured)
+            if (tags.isNotEmpty() && driftDetectorService.isRegistryConfigured()) {
+                log.info("[Automation:UI] Fetching latest release tags from registry...")
+                tags = driftDetectorService.enrichWithLatestReleaseTags(tags)
+            }
 
-            // Load plan variables via BambooService (core interface)
+            // Step 5: Load plan variables
             val varsResult = bambooService.getPlanVariables(planKey)
 
+            // Step 5: Update UI on EDT
             invokeLater {
-                // Update tag table
-                tagStagingPanel.updateTags(updatedTags)
+                tagStagingPanel.updateTags(tags)
 
-                // Update variables panel
                 if (!varsResult.isError) {
                     val varKeys = varsResult.data.map { it.name }
                     val varValues = varsResult.data.associate { it.name to it.value }
                     suiteConfigPanel.setAvailableVariables(varKeys)
+                    suiteConfigPanel.loadSuiteVariables(planKey)
                     suiteConfigPanel.setVariableValues(varValues)
                 }
 
-                statusLabel.text = if (tags.isEmpty()) "No baseline found" else "● Idle"
-                statusLabel.foreground = StatusColors.SUCCESS
+                // Update status label
+                updateStatusLabel(baselineResult)
+
+                // Update diagnostic banner
+                updateDiagnosticBanner(baselineResult, tagDetection)
             }
         }
+    }
+
+    private suspend fun detectCurrentRepoTag(): TagDetectionResult {
+        val dockerTagKey = settings.state.dockerTagKey.orEmpty()
+        val serviceCiPlanKey = settings.state.serviceCiPlanKey.orEmpty()
+
+        if (dockerTagKey.isBlank()) {
+            return TagDetectionResult.notConfigured("Docker Tag Key")
+        }
+        if (serviceCiPlanKey.isBlank()) {
+            return TagDetectionResult.notConfigured("Service CI Plan Key")
+        }
+
+        // Detect current branch
+        val branch = try {
+            val resolver = com.workflow.orchestrator.core.settings.RepoContextResolver.getInstance(project)
+            val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
+            val gitRepoManager = Class.forName("git4idea.repo.GitRepositoryManager")
+            val getInstance = gitRepoManager.getMethod("getInstance", Project::class.java)
+            val manager = getInstance.invoke(null, project)
+            val repos = gitRepoManager.getMethod("getRepositories").invoke(manager) as List<*>
+            val targetRepo = if (repoConfig?.localVcsRootPath != null) {
+                repos.find { repo ->
+                    val root = repo?.javaClass?.getMethod("getRoot")?.invoke(repo)
+                    val path = root?.javaClass?.getMethod("getPath")?.invoke(root) as? String
+                    path == repoConfig.localVcsRootPath
+                }
+            } else repos.firstOrNull()
+            val repo = targetRepo ?: repos.firstOrNull()
+            repo?.javaClass?.getMethod("getCurrentBranchName")?.invoke(repo) as? String ?: ""
+        } catch (e: Exception) {
+            log.warn("[Automation:UI] Branch detection failed: ${e.message}")
+            ""
+        }
+
+        if (branch.isBlank()) {
+            return TagDetectionResult.branchDetectionFailed()
+        }
+
+        return tagBuilderService.detectDockerTag(serviceCiPlanKey, branch)
+    }
+
+    private fun updateStatusLabel(result: BaselineLoadResult) {
+        if (result.selectedBuild != null) {
+            statusLabel.text = "\u25CF Idle"
+            statusLabel.foreground = StatusColors.SUCCESS
+        } else {
+            val diagnosticText = result.diagnostics.toStatusText()
+            statusLabel.text = diagnosticText.ifEmpty { "No baseline found" }
+            statusLabel.foreground = StatusColors.WARNING
+        }
+    }
+
+    private fun updateDiagnosticBanner(baseline: BaselineLoadResult, tagDetection: TagDetectionResult) {
+        // Baseline info
+        val build = baseline.selectedBuild
+        if (build != null) {
+            baselineInfoLabel.text = "\u2713 Baseline: build #${build.buildNumber} " +
+                "(${build.releaseTagCount}/${build.totalServices} release tags, score ${build.score})"
+            baselineInfoLabel.foreground = StatusColors.SUCCESS
+        } else {
+            val text = baseline.diagnostics.toStatusText()
+            baselineInfoLabel.text = "\u2717 $text"
+            baselineInfoLabel.foreground = StatusColors.ERROR
+            // Log skipped reasons for deeper debugging
+            for (reason in baseline.diagnostics.skippedReasons) {
+                log.info("[Automation:UI] Skipped: $reason")
+            }
+        }
+
+        // Docker tag detection info
+        if (tagDetection.detected) {
+            dockerTagInfoLabel.text = "\u2713 Docker tag: ${tagDetection.tag} (from ${tagDetection.buildKey})"
+            dockerTagInfoLabel.foreground = StatusColors.SUCCESS
+            dockerTagInfoLabel.font = dockerTagInfoLabel.font.deriveFont(Font.PLAIN, JBUI.scale(11).toFloat())
+        } else {
+            dockerTagInfoLabel.text = "\u26A0 ${tagDetection.reason}"
+            dockerTagInfoLabel.foreground = StatusColors.WARNING
+        }
+
+        diagnosticPanel.isVisible = true
+        diagnosticPanel.revalidate()
     }
 
     private fun onTriggerNow() {
@@ -227,7 +327,7 @@ class AutomationPanel(
                 if (!result.isError) {
                     val resultKey = result.data.buildKey
                     log.info("[Automation:UI] Build triggered: $resultKey")
-                    statusLabel.text = "▶ Triggered — $resultKey"
+                    statusLabel.text = "\u25B6 Triggered \u2014 $resultKey"
                     statusLabel.foreground = StatusColors.LINK
                     // Switch to Monitor tab
                     tabbedPane.selectedIndex = 1
@@ -259,7 +359,7 @@ class AutomationPanel(
         )
 
         queueService.enqueue(entry)
-        statusLabel.text = "⟳ Queued"
+        statusLabel.text = "\u27F3 Queued"
         statusLabel.foreground = JBColor(0x0969DA, 0x89b4fa)
         tabbedPane.selectedIndex = 1
         log.info("[Automation:UI] Run queued for suite $currentSuitePlanKey")
