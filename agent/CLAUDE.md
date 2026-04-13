@@ -110,7 +110,7 @@ Registered in `AgentService.registerAllTools()`:
 | Code Intelligence | find_implementations, file_structure, type_hierarchy, call_hierarchy, type_inference, dataflow_analysis, get_method_body, get_annotations, test_finder, structural_search, read_write_access |
 | Code Quality | format_code, optimize_imports, refactor_rename, run_inspections, problem_view, list_quickfixes |
 | Git | git_blame, git_branches, git_show_commit, git_show_file, git_stash_list, git_file_history, git_merge_base, changelist_shelve, generate_explanation |
-| Build & Run | build, spring, runtime_exec, runtime_config, coverage |
+| Build & Run | build, spring, django, fastapi, flask, runtime_exec, runtime_config, coverage |
 | Database | db_list_profiles, db_list_databases, db_query, db_schema |
 | Utilities | project_context, current_time, kill_process, send_stdin, ask_user_input |
 | Debug | debug_step, debug_inspect, debug_breakpoints |
@@ -198,6 +198,18 @@ Four techniques help the LLM discover specialized tools over generic fallbacks:
 2. **IdeContext category hints** — when IdeContext is non-null, lists specialized tool categories (spring, django, build, debug, database) in the primacy zone
 3. **Related tool suggestions** — `ToolSearchTool.getRelatedToolsHint()` appends complementary tool suggestions when returning search results (e.g., loading "spring" suggests "build, coverage, db_schema")
 4. **Framework tool promotion** — `ToolRegistrationFilter.shouldPromoteFrameworkTool()` promotes detected framework tools from deferred to core
+
+### Python Framework Tools
+
+Three framework meta-tools follow the SpringTool pattern (thin dispatcher + action files):
+
+| Tool | Actions | Detect | Promote |
+|------|---------|--------|---------|
+| `django` | 14 | manage.py + django in deps | Yes |
+| `fastapi` | 10 | fastapi in deps | Yes |
+| `flask` | 10 | flask in deps | Yes |
+
+Implementation: File-scan primary (regex on .py files), PSI-optional. Zero compile-time Python plugin dependency.
 
 ## Language Intelligence Providers
 

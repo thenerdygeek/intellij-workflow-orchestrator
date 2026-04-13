@@ -10,6 +10,7 @@ import com.workflow.orchestrator.agent.hooks.HookManager
 import com.workflow.orchestrator.agent.hooks.HookResult
 import com.workflow.orchestrator.agent.hooks.HookRunner
 import com.workflow.orchestrator.agent.hooks.HookType
+import com.workflow.orchestrator.agent.ide.Framework
 import com.workflow.orchestrator.agent.ide.IdeContext
 import com.workflow.orchestrator.agent.ide.IdeContextDetector
 import com.workflow.orchestrator.agent.ide.JavaKotlinProvider
@@ -455,15 +456,45 @@ class AgentService(private val project: Project) : Disposable {
         safeRegisterDeferred("Git") { GenerateExplanationTool() }
 
         // Build & Run — project build, run configs, coverage
-        if (ToolRegistrationFilter.shouldRegisterJavaBuildTools(ideContext)) {
+        // Build tool — register if Java OR Python build tools available
+        val hasBuildSupport = ToolRegistrationFilter.shouldRegisterJavaBuildTools(ideContext) ||
+            ToolRegistrationFilter.shouldRegisterPythonBuildTools(ideContext)
+        if (hasBuildSupport) {
             safeRegisterDeferred("Build & Run") { BuildTool() }
         } else {
-            log.info("Skipping Java build tools — Java plugin not available")
+            log.info("Skipping build tools — neither Java nor Python build tools available")
         }
         if (ToolRegistrationFilter.shouldRegisterSpringTools(ideContext)) {
             safeRegisterDeferred("Build & Run") { SpringTool() }
         } else {
             log.info("Skipping Spring tools — Spring plugin not available")
+        }
+        // Django
+        if (ToolRegistrationFilter.shouldRegisterDjangoTools(ideContext)) {
+            if (ToolRegistrationFilter.shouldPromoteFrameworkTool(ideContext, Framework.DJANGO)) {
+                safeRegisterCore { DjangoTool() }
+                log.info("Django tool promoted to core (framework detected in project)")
+            } else {
+                safeRegisterDeferred("Framework") { DjangoTool() }
+            }
+        }
+        // FastAPI
+        if (ToolRegistrationFilter.shouldRegisterFastApiTools(ideContext)) {
+            if (ToolRegistrationFilter.shouldPromoteFrameworkTool(ideContext, Framework.FASTAPI)) {
+                safeRegisterCore { FastApiTool() }
+                log.info("FastAPI tool promoted to core (framework detected in project)")
+            } else {
+                safeRegisterDeferred("Framework") { FastApiTool() }
+            }
+        }
+        // Flask
+        if (ToolRegistrationFilter.shouldRegisterFlaskTools(ideContext)) {
+            if (ToolRegistrationFilter.shouldPromoteFrameworkTool(ideContext, Framework.FLASK)) {
+                safeRegisterCore { FlaskTool() }
+                log.info("Flask tool promoted to core (framework detected in project)")
+            } else {
+                safeRegisterDeferred("Framework") { FlaskTool() }
+            }
         }
         // RuntimeExec and RuntimeConfig are universal (work in any IDE)
         safeRegisterDeferred("Build & Run") { RuntimeExecTool() }
