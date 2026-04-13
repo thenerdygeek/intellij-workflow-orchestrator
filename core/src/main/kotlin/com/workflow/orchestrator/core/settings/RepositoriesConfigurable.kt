@@ -236,31 +236,35 @@ class RepositoriesConfigurable(
         ApplicationManager.getApplication().executeOnPooledThread {
             val resolver = RepoContextResolver.getInstance(project)
             val detected = resolver.autoDetectRepos()
+            log.info("[Settings:Repos] VCS detection found ${detected.size} repo(s)")
 
-            // Show VCS detection results immediately, then run orchestrator
-            invokeLater {
-                var added = 0
-                for (repo in detected) {
-                    val alreadyExists = editedRepos.any {
-                        it.bitbucketProjectKey.equals(repo.bitbucketProjectKey, ignoreCase = true) &&
-                            it.bitbucketRepoSlug.equals(repo.bitbucketRepoSlug, ignoreCase = true)
-                    }
-                    if (!alreadyExists) {
-                        if (repo.isPrimary && editedRepos.any { it.isPrimary }) {
-                            repo.isPrimary = false
-                        }
-                        editedRepos.add(repo)
-                        added++
-                    }
+            // Save detected repos to settings immediately so the orchestrator can use them
+            val savedReposBefore = pluginSettings.getRepos().size
+            for (repo in detected) {
+                val alreadyInSettings = pluginSettings.getRepos().any {
+                    it.bitbucketProjectKey.equals(repo.bitbucketProjectKey, ignoreCase = true) &&
+                        it.bitbucketRepoSlug.equals(repo.bitbucketRepoSlug, ignoreCase = true)
                 }
-                if (added > 0) refreshRepoTable()
-                repoStatusLabel.text = if (added > 0)
-                    "Added $added repo(s). Detecting project keys..."
-                else
-                    "Detecting project keys (Bamboo plan, SonarQube, Docker Tag)..."
+                if (!alreadyInSettings) {
+                    if (repo.isPrimary && pluginSettings.getRepos().any { it.isPrimary }) {
+                        repo.isPrimary = false
+                    }
+                    pluginSettings.state.repos.add(repo)
+                    log.info("[Settings:Repos] Saved new repo to settings: ${repo.displayLabel} (rootPath=${repo.localVcsRootPath})")
+                }
+            }
+            log.info("[Settings:Repos] Settings repos: before=$savedReposBefore, after=${pluginSettings.getRepos().size}")
+
+            // Show VCS detection results immediately in the UI
+            invokeLater {
+                editedRepos.clear()
+                editedRepos.addAll(pluginSettings.getRepos())
+                refreshRepoTable()
+                repoStatusLabel.text = "Detecting project keys (Bamboo plan, SonarQube, Docker Tag)..."
             }
 
             // Run orchestrator for project key detection (Bamboo plan detection can be slow)
+            log.info("[Settings:Repos] Running orchestrator.detectAll()...")
             val orchestrator = project.getService(
                 com.workflow.orchestrator.core.autodetect.AutoDetectOrchestrator::class.java
             )
@@ -271,13 +275,23 @@ class RepositoriesConfigurable(
                     }
                 }
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                log.warn("[Settings:Repositories] Auto-detect timed out after 60s")
-                // Reload repos to pick up any partial results written to settings
+                log.warn("[Settings:Repos] Auto-detect timed out after 60s")
                 null
             }
+            log.info("[Settings:Repos] Orchestrator result: ${orchestratorResult?.filledFields ?: "timed out"}")
+
+            // Log final repo state for debugging
+            for (repo in pluginSettings.getRepos()) {
+                log.info("[Settings:Repos] Final repo '${repo.displayLabel}': " +
+                    "bambooPlan='${repo.bambooPlanKey}', dockerTag='${repo.dockerTagKey}', " +
+                    "sonar='${repo.sonarProjectKey}', rootPath='${repo.localVcsRootPath}'")
+            }
+            log.info("[Settings:Repos] Final global state: " +
+                "bambooPlan='${pluginSettings.state.bambooPlanKey}', dockerTag='${pluginSettings.state.dockerTagKey}', " +
+                "sonar='${pluginSettings.state.sonarProjectKey}'")
 
             invokeLater {
-                // Reload from settings to pick up any values written by the orchestrator
+                // Reload from settings to pick up values written by the orchestrator
                 editedRepos.clear()
                 editedRepos.addAll(pluginSettings.getRepos())
                 refreshRepoTable()
