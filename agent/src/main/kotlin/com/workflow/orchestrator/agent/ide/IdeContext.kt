@@ -87,4 +87,34 @@ object ToolRegistrationFilter {
     /** Whether a detected framework's meta-tool should be promoted to core */
     fun shouldPromoteFrameworkTool(context: IdeContext, framework: Framework): Boolean =
         framework in context.detectedFrameworks
+
+    // --- Python tool filters (for Plan B2/C) ---
+
+    /** Python PSI tools — requires Python plugin (Pro or Core) */
+    fun shouldRegisterPythonPsiTools(context: IdeContext): Boolean =
+        context.supportsPython
+
+    /** Python build tools (pip/poetry/uv actions in build meta-tool) */
+    fun shouldRegisterPythonBuildTools(context: IdeContext): Boolean =
+        context.supportsPython
+
+    /** Python debug tools — basic (Community) */
+    fun shouldRegisterPythonDebugTools(context: IdeContext): Boolean =
+        context.supportsPython
+
+    /** Python debug tools — advanced (Professional only: Django debug, remote interpreter) */
+    fun shouldRegisterPythonAdvancedDebugTools(context: IdeContext): Boolean =
+        context.supportsPythonAdvanced
+
+    /** Django meta-tool */
+    fun shouldRegisterDjangoTools(context: IdeContext): Boolean =
+        context.supportsPython && Framework.DJANGO in context.detectedFrameworks
+
+    /** FastAPI meta-tool */
+    fun shouldRegisterFastApiTools(context: IdeContext): Boolean =
+        context.supportsPython && Framework.FASTAPI in context.detectedFrameworks
+
+    /** Flask meta-tool */
+    fun shouldRegisterFlaskTools(context: IdeContext): Boolean =
+        context.supportsPython && Framework.FLASK in context.detectedFrameworks
 }
