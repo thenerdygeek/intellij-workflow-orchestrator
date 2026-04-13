@@ -148,6 +148,26 @@ Two mechanisms:
 
 Tool set stabilizes per session — tools only expand across messages, never shrink (deferred tools once activated stay active).
 
+## IDE Context Detection
+
+`IdeContextDetector` detects the runtime environment at agent startup:
+
+- **IDE product/edition**: `ApplicationInfo.getInstance().build.productCode` (IU, IC, PY, PC, etc.)
+- **Available plugins**: Java, Python (Pro/Core), Spring checked via `PluginManagerCore`
+- **Detected frameworks**: Django (manage.py + deps), FastAPI, Flask scanned from requirements/pyproject
+- **Detected build tools**: Maven (pom.xml), Gradle, pip, Poetry, uv scanned from project root
+
+Result stored as `IdeContext` in `AgentService`. Tools that can't work in the current environment are never registered. `IdeContext.summary()` provides a human-readable string for the system prompt.
+
+**Tool registration filter** (`ToolRegistrationFilter`): Guards tool categories:
+- Java PSI + Code Intelligence → requires `hasJavaPlugin`
+- Spring tools → requires `hasSpringPlugin && hasJavaPlugin`
+- Build tools (Maven/Gradle) → requires `hasJavaPlugin`
+- Debug tools → requires `hasJavaPlugin`
+- Database, runtime, coverage, universal → always registered
+
+Key files: `ide/IdeContext.kt`, `ide/IdeContextDetector.kt`, `ide/ProjectScanner.kt`
+
 ## ToolRegistry Internals
 
 - **Thread safety**: Registry map uses `ConcurrentHashMap`. `activateDeferred()` and `resetActiveDeferred()` are `@Synchronized` to prevent races when integration tools are toggled from multiple coroutines.
