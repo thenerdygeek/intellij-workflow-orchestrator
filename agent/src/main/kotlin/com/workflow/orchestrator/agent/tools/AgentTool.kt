@@ -82,6 +82,12 @@ interface AgentTool {
     val parameters: FunctionParameters
     val allowedWorkers: Set<WorkerType>
 
+    /** Max execution time in milliseconds. Default 120s. Override for tools needing more. */
+    val timeoutMs: Long get() = DEFAULT_TOOL_TIMEOUT_MS
+
+    /** Output configuration for this tool (max chars, truncation limits). */
+    val outputConfig: ToolOutputConfig get() = ToolOutputConfig.DEFAULT
+
     suspend fun execute(params: JsonObject, project: Project): ToolResult
 
     fun toToolDefinition(): ToolDefinition = ToolDefinition(
@@ -93,6 +99,9 @@ interface AgentTool {
     )
 
     companion object {
+        const val DEFAULT_TOOL_TIMEOUT_MS = 120_000L
+        const val LONG_TOOL_TIMEOUT_MS = 600_000L  // 10 min for run_command, build, etc.
+
         /** Shared task_progress property injected into every tool schema at the API call site. */
         val TASK_PROGRESS_PROPERTY = ParameterProperty(
             type = "string",
@@ -111,6 +120,46 @@ interface AgentTool {
                 function = def.function.copy(
                     parameters = params.copy(
                         properties = params.properties + ("task_progress" to TASK_PROGRESS_PROPERTY)
+                    )
+                )
+            )
+        }
+
+        // ---- LLM-controlled output filtering parameters ----
+
+        val GREP_PATTERN_PROPERTY = ParameterProperty(
+            type = "string",
+            description = "Regex pattern to filter output lines. Only lines matching this pattern are returned. " +
+                "Use when you only need specific information from a potentially large output."
+        )
+
+        val OUTPUT_FILE_PROPERTY = ParameterProperty(
+            type = "boolean",
+            description = "If true, save full output to a file and return a preview with the file path. " +
+                "Use for large outputs you may need to search later. Read the file with read_file or search_code."
+        )
+
+        /** Set of tools that support output filtering parameters. */
+        val OUTPUT_FILTERABLE_TOOLS = setOf(
+            "run_command", "search_code", "git", "sonar",
+            "bamboo_builds", "bamboo_plans", "jira", "db_query",
+            "bitbucket_pr", "bitbucket_repo",
+        )
+
+        /**
+         * Inject grep_pattern and output_file parameters into a tool definition.
+         * Only applied to tools in [OUTPUT_FILTERABLE_TOOLS].
+         */
+        fun injectOutputParams(def: ToolDefinition): ToolDefinition {
+            if (def.function.name !in OUTPUT_FILTERABLE_TOOLS) return def
+            val params = def.function.parameters
+            if ("grep_pattern" in params.properties) return def
+            return def.copy(
+                function = def.function.copy(
+                    parameters = params.copy(
+                        properties = params.properties +
+                            ("grep_pattern" to GREP_PATTERN_PROPERTY) +
+                            ("output_file" to OUTPUT_FILE_PROPERTY)
                     )
                 )
             )
@@ -162,5 +211,8 @@ data class ToolResult(
 ) {
     companion object {
         const val ERROR_TOKEN_ESTIMATE = 5
+
+        fun error(message: String, summary: String = message): ToolResult =
+            ToolResult(message, summary, ERROR_TOKEN_ESTIMATE, isError = true)
     }
 }

@@ -13,6 +13,7 @@ import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.security.CommandRisk
 import com.workflow.orchestrator.agent.security.CommandSafetyAnalyzer
 import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.ToolOutputConfig
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.int
@@ -43,6 +44,8 @@ class RunCommandTool : AgentTool {
         required = listOf("command", "shell", "description")
     )
     override val allowedWorkers = setOf(WorkerType.CODER)
+    override val timeoutMs: Long get() = AgentTool.LONG_TOOL_TIMEOUT_MS
+    override val outputConfig = ToolOutputConfig.COMMAND
 
     companion object {
         private val LOG = Logger.getInstance(RunCommandTool::class.java)
