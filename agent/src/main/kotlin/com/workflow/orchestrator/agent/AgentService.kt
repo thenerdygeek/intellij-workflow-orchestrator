@@ -489,10 +489,13 @@ class AgentService(private val project: Project) : Disposable {
         safeRegisterDeferred("Utilities") { AskUserInputTool() }
 
         // Debug tools (require AgentDebugController)
-        if (ToolRegistrationFilter.shouldRegisterJavaDebugTools(ideContext)) {
+        // XDebugger-based tools work for both Java/Kotlin and Python debug sessions.
+        val hasDebugSupport = ToolRegistrationFilter.shouldRegisterJavaDebugTools(ideContext) ||
+            ToolRegistrationFilter.shouldRegisterPythonDebugTools(ideContext)
+        if (hasDebugSupport) {
             registerDebugTools()
         } else {
-            log.info("Skipping Java debug tools — Java plugin not available")
+            log.info("Skipping debug tools — neither Java nor Python plugin available")
         }
 
         // ── Memory tools (always available — 3-tier Letta pattern) ───────
