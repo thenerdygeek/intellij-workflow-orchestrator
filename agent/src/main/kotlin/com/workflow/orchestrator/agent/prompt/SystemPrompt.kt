@@ -281,6 +281,39 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("- Database workflow — always follow this sequence: (1) db_list_profiles to discover configured connections, (2) db_list_databases to list user databases on a server profile (system DBs are filtered out), (3) db_schema to inspect table structure before writing queries, (4) db_query to run read-only SELECT statements. Profiles are server-level — one PostgreSQL profile can reach all databases on that server via the optional `database` parameter.")
         appendLine("- After refactoring code, use sonar.local_analysis(files=...) to get immediate SonarQube feedback on the changed files without waiting for the CI pipeline to complete a full scan. This runs the Sonar scanner locally and fetches fresh issues, hotspots, coverage, and duplications for exactly the files you changed.")
         append("- You can call multiple tools in a single response. If calls are independent, make them all in parallel for efficiency. If calls depend on each other, run them sequentially.")
+
+        // Task-to-tool hints — helps the LLM prefer specialized tools over generic fallbacks
+        appendLine()
+        appendLine()
+        appendLine("## When to Use Specialized Tools (via tool_search)")
+        appendLine()
+        appendLine("Before using glob_files or search_code for these tasks, use tool_search first:")
+        appendLine()
+        appendLine("| If you need to... | Search for... | Instead of... |")
+        appendLine("|---|---|---|")
+        if (ideContext == null || ideContext.supportsJava) {
+            appendLine("| Find API endpoints | \"endpoints\" or \"spring\" | Grepping for @PostMapping |")
+            appendLine("| Understand Spring beans/config | \"spring\" | Grepping for @Bean/@Component |")
+        }
+        if (ideContext?.supportsPython == true) {
+            if (Framework.DJANGO in ideContext.detectedFrameworks) {
+                appendLine("| Find Django URLs/views | \"django\" | Reading urls.py manually |")
+                appendLine("| Analyze Django models | \"django\" | Reading models.py manually |")
+            }
+            if (Framework.FASTAPI in ideContext.detectedFrameworks) {
+                appendLine("| Find FastAPI routes | \"fastapi\" | Grepping for @app.get |")
+            }
+            if (Framework.FLASK in ideContext.detectedFrameworks) {
+                appendLine("| Find Flask routes | \"flask\" | Grepping for @app.route |")
+            }
+        }
+        // Universal hints (always shown)
+        appendLine("| Understand class/type relationships | \"type_hierarchy\" | Manually reading extends/impl |")
+        appendLine("| Trace who calls a function | \"call_hierarchy\" | Grepping for function name |")
+        appendLine("| Check test coverage | \"coverage\" | Reading coverage reports manually |")
+        appendLine("| Inspect database schema | \"db_schema\" | Reading migration files |")
+        appendLine("| Check code quality issues | \"run_inspections\" | Running linter via run_command |")
+        appendLine("| Rename across codebase | \"refactor_rename\" | Find-and-replace via edit_file |")
     }.trimEnd()
 
     /**
