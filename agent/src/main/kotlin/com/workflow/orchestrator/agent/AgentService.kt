@@ -10,6 +10,9 @@ import com.workflow.orchestrator.agent.hooks.HookManager
 import com.workflow.orchestrator.agent.hooks.HookResult
 import com.workflow.orchestrator.agent.hooks.HookRunner
 import com.workflow.orchestrator.agent.hooks.HookType
+import com.workflow.orchestrator.agent.ide.IdeContext
+import com.workflow.orchestrator.agent.ide.IdeContextDetector
+import com.workflow.orchestrator.agent.ide.ToolRegistrationFilter
 import com.workflow.orchestrator.agent.loop.AgentLoop
 import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.loop.LoopResult
@@ -103,6 +106,9 @@ class AgentService(private val project: Project) : Disposable {
     private val fileLogger: AgentFileLogger by lazy {
         AgentFileLogger(logDir = ProjectIdentifier.logsDir(project.basePath ?: ""))
     }
+
+    lateinit var ideContext: IdeContext
+        private set
 
     private var debugController: AgentDebugController? = null
     private var coreMemory: CoreMemory? = null
@@ -340,6 +346,11 @@ class AgentService(private val project: Project) : Disposable {
      * are core, and remaining git tools are deferred.
      */
     private fun registerAllTools() {
+        ideContext = IdeContextDetector.detect(project)
+        log.info("IDE context detected: ${ideContext.product} (${ideContext.edition}), " +
+            "languages=${ideContext.languages}, frameworks=${ideContext.detectedFrameworks}, " +
+            "buildTools=${ideContext.detectedBuildTools}")
+
         // ── Core tools (always sent to LLM) ──────────────────────────────
         safeRegisterCore { ReadFileTool() }
         safeRegisterCore { EditFileTool() }
@@ -362,10 +373,14 @@ class AgentService(private val project: Project) : Disposable {
         safeRegisterCore { GitDiffTool() }
         safeRegisterCore { GitLogTool() }
 
-        // Core PSI — essential navigation tools
-        safeRegisterCore { FindDefinitionTool() }
-        safeRegisterCore { FindReferencesTool() }
-        safeRegisterCore { SemanticDiagnosticsTool() }
+        // Core PSI — essential navigation tools (guarded by IDE context)
+        if (ToolRegistrationFilter.shouldRegisterJavaPsiTools(ideContext)) {
+            safeRegisterCore { FindDefinitionTool() }
+            safeRegisterCore { FindReferencesTool() }
+            safeRegisterCore { SemanticDiagnosticsTool() }
+        } else {
+            log.info("Skipping Java/Kotlin PSI tools — Java plugin not available")
+        }
 
         // tool_search itself is core (the LLM needs it to discover deferred tools)
         safeRegisterCore { ToolSearchTool(registry) }
@@ -380,18 +395,20 @@ class AgentService(private val project: Project) : Disposable {
 
         // ── Deferred tools (loaded via tool_search) ──────────────────────
 
-        // Code Intelligence — PSI-based semantic analysis
-        safeRegisterDeferred("Code Intelligence") { FindImplementationsTool() }
-        safeRegisterDeferred("Code Intelligence") { FileStructureTool() }
-        safeRegisterDeferred("Code Intelligence") { TypeHierarchyTool() }
-        safeRegisterDeferred("Code Intelligence") { CallHierarchyTool() }
-        safeRegisterDeferred("Code Intelligence") { TypeInferenceTool() }
-        safeRegisterDeferred("Code Intelligence") { DataFlowAnalysisTool() }
-        safeRegisterDeferred("Code Intelligence") { GetMethodBodyTool() }
-        safeRegisterDeferred("Code Intelligence") { GetAnnotationsTool() }
-        safeRegisterDeferred("Code Intelligence") { TestFinderTool() }
-        safeRegisterDeferred("Code Intelligence") { StructuralSearchTool() }
-        safeRegisterDeferred("Code Intelligence") { ReadWriteAccessTool() }
+        // Code Intelligence — PSI-based semantic analysis (guarded by IDE context)
+        if (ToolRegistrationFilter.shouldRegisterJavaPsiTools(ideContext)) {
+            safeRegisterDeferred("Code Intelligence") { FindImplementationsTool() }
+            safeRegisterDeferred("Code Intelligence") { FileStructureTool() }
+            safeRegisterDeferred("Code Intelligence") { TypeHierarchyTool() }
+            safeRegisterDeferred("Code Intelligence") { CallHierarchyTool() }
+            safeRegisterDeferred("Code Intelligence") { TypeInferenceTool() }
+            safeRegisterDeferred("Code Intelligence") { DataFlowAnalysisTool() }
+            safeRegisterDeferred("Code Intelligence") { GetMethodBodyTool() }
+            safeRegisterDeferred("Code Intelligence") { GetAnnotationsTool() }
+            safeRegisterDeferred("Code Intelligence") { TestFinderTool() }
+            safeRegisterDeferred("Code Intelligence") { StructuralSearchTool() }
+            safeRegisterDeferred("Code Intelligence") { ReadWriteAccessTool() }
+        }
 
         // Code Quality — formatting, refactoring, inspections
         safeRegisterDeferred("Code Quality") { FormatCodeTool() }
@@ -413,8 +430,17 @@ class AgentService(private val project: Project) : Disposable {
         safeRegisterDeferred("Git") { GenerateExplanationTool() }
 
         // Build & Run — project build, run configs, coverage
-        safeRegisterDeferred("Build & Run") { BuildTool() }
-        safeRegisterDeferred("Build & Run") { SpringTool() }
+        if (ToolRegistrationFilter.shouldRegisterJavaBuildTools(ideContext)) {
+            safeRegisterDeferred("Build & Run") { BuildTool() }
+        } else {
+            log.info("Skipping Java build tools — Java plugin not available")
+        }
+        if (ToolRegistrationFilter.shouldRegisterSpringTools(ideContext)) {
+            safeRegisterDeferred("Build & Run") { SpringTool() }
+        } else {
+            log.info("Skipping Spring tools — Spring plugin not available")
+        }
+        // RuntimeExec, RuntimeConfig, and Coverage are universal (work in any IDE)
         safeRegisterDeferred("Build & Run") { RuntimeExecTool() }
         safeRegisterDeferred("Build & Run") { RuntimeConfigTool() }
         safeRegisterDeferred("Build & Run") { CoverageTool() }
@@ -433,7 +459,11 @@ class AgentService(private val project: Project) : Disposable {
         safeRegisterDeferred("Utilities") { AskUserInputTool() }
 
         // Debug tools (require AgentDebugController)
-        registerDebugTools()
+        if (ToolRegistrationFilter.shouldRegisterJavaDebugTools(ideContext)) {
+            registerDebugTools()
+        } else {
+            log.info("Skipping Java debug tools — Java plugin not available")
+        }
 
         // ── Memory tools (always available — 3-tier Letta pattern) ───────
         coreMemory?.let { cm ->
