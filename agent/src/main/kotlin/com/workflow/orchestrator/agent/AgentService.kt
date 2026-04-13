@@ -771,6 +771,11 @@ class AgentService(private val project: Project) : Disposable {
         messageStateHandler: MessageStateHandler? = null
     ): Job {
         val sid = sessionId ?: UUID.randomUUID().toString()
+
+        // Scope edit-range tracking to this session so that stale ranges from a
+        // previous session cannot leak into SemanticDiagnosticsTool calls.
+        com.workflow.orchestrator.agent.tools.builtin.EditFileTool.currentSessionId = sid
+
         var session = Session(
             id = sid,
             title = task.take(100),
@@ -1330,6 +1335,9 @@ class AgentService(private val project: Project) : Disposable {
             log.warn("AgentService.resumeSession: session dir not found for $sessionId")
             return null
         }
+
+        // Scope edit-range tracking to this session (same as executeTask)
+        com.workflow.orchestrator.agent.tools.builtin.EditFileTool.currentSessionId = sessionId
 
         // Acquire session lock — prevents double-resume across IDE instances
         val lock = SessionLock.tryAcquire(sessionDir)

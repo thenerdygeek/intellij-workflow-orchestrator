@@ -90,7 +90,7 @@ class CreateFileTool : AgentTool {
 
         // Track in EditFileTool.lastEditLineRanges for diff-aware diagnostics
         try {
-            EditFileTool.lastEditLineRanges[file.canonicalPath] = 1..lineCount
+            EditFileTool.lastEditLineRanges[EditFileTool.scopedKey(file.canonicalPath)] = 1..lineCount
         } catch (_: Exception) { }
 
         // Change tracking: AgentLoop.modifiedFiles collects artifacts from ToolResult

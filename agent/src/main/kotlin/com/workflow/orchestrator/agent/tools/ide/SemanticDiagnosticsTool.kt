@@ -48,7 +48,8 @@ class SemanticDiagnosticsTool(
 
         // Check if there's a recent edit range for this file (set by EditFileTool)
         val canonicalPath = try { java.io.File(path!!).canonicalPath } catch (_: Exception) { path!! }
-        val editRange = com.workflow.orchestrator.agent.tools.builtin.EditFileTool.lastEditLineRanges.remove(canonicalPath)
+        val scopedKey = com.workflow.orchestrator.agent.tools.builtin.EditFileTool.scopedKey(canonicalPath)
+        val editRange = com.workflow.orchestrator.agent.tools.builtin.EditFileTool.lastEditLineRanges.remove(scopedKey)
 
         return try {
             val result = ReadAction.nonBlocking<ToolResult?> {
