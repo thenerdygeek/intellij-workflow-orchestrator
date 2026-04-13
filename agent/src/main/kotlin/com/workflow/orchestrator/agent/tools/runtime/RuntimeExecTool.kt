@@ -68,7 +68,7 @@ Actions and their parameters:
 - get_running_processes() → List active run/debug sessions with status and PID
 - get_run_output(config_name, last_n_lines?, filter?) → Read process console output (last_n_lines default 200, max 1000; filter: regex pattern)
 - get_test_results(config_name, status_filter?) → Get structured test results (status_filter: FAILED|ERROR|PASSED|SKIPPED)
-- run_tests(class_name?, method?, timeout?, use_native_runner?) → Run tests via IntelliJ runner or shell fallback (timeout default 300s, max 900s)
+- run_tests(class_name, method?, timeout?, use_native_runner?) → Run tests for a specific class via IntelliJ runner or shell fallback (timeout default 300s, max 900s). class_name is required — use test_finder tool to discover test classes first.
 - compile_module(module?) → Compile module or entire project if omitted
 
 description optional: for approval dialog on run_tests, compile_module.
@@ -102,7 +102,7 @@ description optional: for approval dialog on run_tests, compile_module.
             ),
             "class_name" to ParameterProperty(
                 type = "string",
-                description = "Fully qualified test class name — for run_tests"
+                description = "Fully qualified test class name (required for run_tests — use test_finder to discover classes)"
             ),
             "method" to ParameterProperty(
                 type = "string",
@@ -604,7 +604,14 @@ description optional: for approval dialog on run_tests, compile_module.
 
     private suspend fun executeRunTests(params: JsonObject, project: Project): ToolResult {
         val className = params["class_name"]?.jsonPrimitive?.content
-            ?: return ToolResult("Error: 'class_name' parameter is required", "Error: missing class_name", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+            ?: return ToolResult(
+                "Error: 'class_name' is required — specify a fully qualified test class to run (e.g. com.example.MyServiceTest). " +
+                    "Running all tests is not supported as it can take 30+ minutes. " +
+                    "Use the 'test_finder' tool to discover test classes if you don't know the class name.",
+                "Error: missing class_name",
+                ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
 
         val method = params["method"]?.jsonPrimitive?.content
         val timeoutSeconds = (params["timeout"]?.jsonPrimitive?.intOrNull?.toLong() ?: RUN_TESTS_DEFAULT_TIMEOUT)
