@@ -940,7 +940,8 @@ class AgentService(private val project: Project) : Disposable {
                         deferredToolCatalog = deferredCatalog,
                         coreMemoryXml = coreMemory?.compile(),
                         toolDefinitionsMarkdown = toolDefsMarkdown,
-                        recalledMemoryXml = recalledMemoryXml
+                        recalledMemoryXml = recalledMemoryXml,
+                        ideContext = ideContext
                     )
                 }
                 // Set initial system prompt (XML defs added on first toolDefinitionProvider call)
@@ -1396,7 +1397,8 @@ class AgentService(private val project: Project) : Disposable {
             val systemPrompt = SystemPrompt.build(
                 projectName = project.name,
                 projectPath = project.basePath ?: "",
-                planModeEnabled = planModeActive.get()
+                planModeEnabled = planModeActive.get(),
+                ideContext = ideContext
             )
             ctx.setSystemPrompt(systemPrompt)
 
