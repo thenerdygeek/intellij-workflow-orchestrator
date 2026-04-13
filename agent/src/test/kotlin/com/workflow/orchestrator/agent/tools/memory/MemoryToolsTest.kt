@@ -4,8 +4,13 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.memory.ArchivalMemory
 import com.workflow.orchestrator.agent.memory.ConversationRecall
 import com.workflow.orchestrator.agent.memory.CoreMemory
+import com.workflow.orchestrator.agent.session.ApiMessage
+import com.workflow.orchestrator.agent.session.ApiRole
+import com.workflow.orchestrator.agent.session.ContentBlock
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.Assertions.*
@@ -287,12 +292,13 @@ class MemoryToolsTest {
             val sessionsDir = File(freshDir, "sessions")
             val sessionDir = File(sessionsDir, "session-001")
             sessionDir.mkdirs()
-            val messagesFile = File(sessionDir, "messages.jsonl")
-            messagesFile.writeText(buildString {
-                appendLine("""{"role":"user","content":"How do I fix the CORS error in Spring Boot?"}""")
-                appendLine("""{"role":"assistant","content":"To fix the CORS issue, add @CrossOrigin annotation to your controller."}""")
-                appendLine("""{"role":"user","content":"That worked, thanks!"}""")
-            })
+            val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+            val apiMessages = listOf(
+                ApiMessage(role = ApiRole.USER, content = listOf(ContentBlock.Text("How do I fix the CORS error in Spring Boot?"))),
+                ApiMessage(role = ApiRole.ASSISTANT, content = listOf(ContentBlock.Text("To fix the CORS issue, add @CrossOrigin annotation to your controller."))),
+                ApiMessage(role = ApiRole.USER, content = listOf(ContentBlock.Text("That worked, thanks!")))
+            )
+            File(sessionDir, "api_conversation_history.json").writeText(json.encodeToString(apiMessages))
             return ConversationSearchTool(ConversationRecall(sessionsDir))
         }
 

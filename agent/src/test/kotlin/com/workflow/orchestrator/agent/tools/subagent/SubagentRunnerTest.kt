@@ -61,8 +61,8 @@ class SubagentRunnerTest {
         paramNames: Set<String> = emptySet()
     ) : LlmBrain {
         override val modelId: String = "test-subagent-brain"
-        override val toolNameSet: Set<String> = toolNames
-        override val paramNameSet: Set<String> = paramNames
+        override var toolNameSet: Set<String> = toolNames
+        override var paramNameSet: Set<String> = paramNames
         private var callIndex = 0
         var cancelled = false
             private set

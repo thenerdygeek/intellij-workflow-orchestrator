@@ -3,14 +3,13 @@ package com.workflow.orchestrator.agent.session
 import kotlinx.serialization.Serializable
 
 /**
- * Session metadata — persisted as JSON alongside the message history.
+ * Session metadata — in-memory representation used during task execution.
  *
  * Ported from Cline's HistoryItem + TaskState persistence:
  * - Cline stores a HistoryItem (id, ts, task, tokensIn, tokensOut, totalCost, cwdOnInit,
  *   modelId) alongside per-task api_conversation_history.json and ui_messages.json.
- * - We collapse these into a single Session object stored at
- *   `{baseDir}/sessions/{sessionId}.json`, with a companion `messages.jsonl` file
- *   for conversation history (matching Cline's saveApiConversationHistory pattern).
+ * - Persistence is handled by MessageStateHandler which maintains sessions.json (global
+ *   index) and per-session api_conversation_history.json + ui_messages.json files.
  *
  * New fields for checkpoint/resume (matching Cline's TaskState persistence):
  * - [systemPrompt]: the system prompt used, needed to rebuild ContextManager on resume

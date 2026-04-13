@@ -1,11 +1,29 @@
 package com.workflow.orchestrator.agent.memory
 
+import com.workflow.orchestrator.agent.session.ApiMessage
+import com.workflow.orchestrator.agent.session.ApiRole
+import com.workflow.orchestrator.agent.session.ContentBlock
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.nio.file.Path
+
+private val testJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+private fun writeApiHistory(sessionDir: File, vararg messages: Pair<String, String>) {
+    sessionDir.mkdirs()
+    val apiMessages = messages.map { (role, content) ->
+        ApiMessage(
+            role = if (role == "assistant") ApiRole.ASSISTANT else ApiRole.USER,
+            content = listOf(ContentBlock.Text(content))
+        )
+    }
+    File(sessionDir, "api_conversation_history.json").writeText(testJson.encodeToString(apiMessages))
+}
 
 /**
  * End-to-end integration tests for the 3-tier memory system.
@@ -151,23 +169,17 @@ class MemoryIntegrationTest {
 
             // Create session 1 with known content
             val session1Dir = File(sessionsDir, "session-001")
-            session1Dir.mkdirs()
-            File(session1Dir, "messages.jsonl").writeText(
-                """
-                {"role":"user","content":"How do I fix the NullPointerException in UserService?"}
-                {"role":"assistant","content":"The NullPointerException occurs because the repository field is not injected. Add @Autowired annotation."}
-                {"role":"user","content":"That fixed it, thanks!"}
-                """.trimIndent() + "\n"
+            writeApiHistory(session1Dir,
+                "user" to "How do I fix the NullPointerException in UserService?",
+                "assistant" to "The NullPointerException occurs because the repository field is not injected. Add @Autowired annotation.",
+                "user" to "That fixed it, thanks!"
             )
 
             // Create session 2 with different content
             val session2Dir = File(sessionsDir, "session-002")
-            session2Dir.mkdirs()
-            File(session2Dir, "messages.jsonl").writeText(
-                """
-                {"role":"user","content":"How do I configure Gradle for multi-module builds?"}
-                {"role":"assistant","content":"Use the settings.gradle.kts file to include subprojects and configure shared dependencies in the root build.gradle.kts."}
-                """.trimIndent() + "\n"
+            writeApiHistory(session2Dir,
+                "user" to "How do I configure Gradle for multi-module builds?",
+                "assistant" to "Use the settings.gradle.kts file to include subprojects and configure shared dependencies in the root build.gradle.kts."
             )
 
             val recall = ConversationRecall(sessionsDir)
@@ -202,17 +214,15 @@ class MemoryIntegrationTest {
             val sessionsDir = tempDir.resolve("sessions-multi").toFile()
 
             val session1Dir = File(sessionsDir, "session-aaa")
-            session1Dir.mkdirs()
-            File(session1Dir, "messages.jsonl").writeText(
-                """{"role":"user","content":"The build failed with an error"}""" + "\n" +
-                """{"role":"assistant","content":"Let me check the build logs"}""" + "\n"
+            writeApiHistory(session1Dir,
+                "user" to "The build failed with an error",
+                "assistant" to "Let me check the build logs"
             )
 
             val session2Dir = File(sessionsDir, "session-bbb")
-            session2Dir.mkdirs()
-            File(session2Dir, "messages.jsonl").writeText(
-                """{"role":"user","content":"Another build issue today"}""" + "\n" +
-                """{"role":"assistant","content":"The build system needs configuration"}""" + "\n"
+            writeApiHistory(session2Dir,
+                "user" to "Another build issue today",
+                "assistant" to "The build system needs configuration"
             )
 
             val recall = ConversationRecall(sessionsDir)
@@ -280,17 +290,15 @@ class MemoryIntegrationTest {
             // --- Step 5: Conversation recall across sessions ---
             val sessionsDir = File(agentDir, "sessions")
             val session1 = File(sessionsDir, "sess-100")
-            session1.mkdirs()
-            File(session1, "messages.jsonl").writeText(
-                """{"role":"user","content":"Add kotlinx-serialization to the project"}""" + "\n" +
-                """{"role":"assistant","content":"I added kotlinx-serialization-json 1.6.0 to build.gradle.kts dependencies"}""" + "\n"
+            writeApiHistory(session1,
+                "user" to "Add kotlinx-serialization to the project",
+                "assistant" to "I added kotlinx-serialization-json 1.6.0 to build.gradle.kts dependencies"
             )
 
             val session2 = File(sessionsDir, "sess-200")
-            session2.mkdirs()
-            File(session2, "messages.jsonl").writeText(
-                """{"role":"user","content":"Run the tests to verify the build"}""" + "\n" +
-                """{"role":"assistant","content":"All 42 tests passed. The serialization module is working correctly."}""" + "\n"
+            writeApiHistory(session2,
+                "user" to "Run the tests to verify the build",
+                "assistant" to "All 42 tests passed. The serialization module is working correctly."
             )
 
             val recall = ConversationRecall(sessionsDir)
