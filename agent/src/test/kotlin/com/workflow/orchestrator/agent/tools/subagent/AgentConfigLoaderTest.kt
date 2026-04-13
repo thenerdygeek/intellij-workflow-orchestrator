@@ -390,13 +390,14 @@ class AgentConfigLoaderTest {
         loader.loadFromDisk(tempDir)
 
         val bundled = loader.getAllCachedConfigs().filter { it.bundled }
-        assertEquals(10, bundled.size, "Should load 10 bundled agents")
+        assertEquals(11, bundled.size, "Should load 11 bundled agents")
 
         val names = bundled.map { it.name }.toSet()
         assertTrue("explorer" in names)
         assertTrue("general-purpose" in names)
         assertTrue("code-reviewer" in names)
         assertTrue("spring-boot-engineer" in names)
+        assertTrue("python-engineer" in names)
         assertTrue("devops-engineer" in names)
         assertTrue("security-auditor" in names)
     }
