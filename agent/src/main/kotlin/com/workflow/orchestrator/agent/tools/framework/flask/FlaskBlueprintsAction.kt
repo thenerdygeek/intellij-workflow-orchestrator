@@ -24,9 +24,10 @@ private data class RegistrationEntry(
 )
 
 private val BLUEPRINT_CONSTRUCTOR_PATTERN = Regex(
-    """(\w+)\s*=\s*Blueprint\s*\(\s*["'](\w+)["'](?:\s*,\s*(\w+))?(?:\s*,\s*url_prefix\s*=\s*["']([^"']*)["'])?""",
+    """(\w+)\s*=\s*Blueprint\s*\(\s*["'](\w+)["']\s*,?\s*([^)]+)?""",
     RegexOption.MULTILINE
 )
+private val URL_PREFIX_PATTERN = Regex("""url_prefix\s*=\s*["']([^"']*)["']""")
 private val REGISTER_BLUEPRINT_PATTERN = Regex(
     """(\w+)\.register_blueprint\s*\(\s*(\w+)(?:\s*,\s*url_prefix\s*=\s*["']([^"']*)["'])?""",
     RegexOption.MULTILINE
@@ -66,13 +67,17 @@ internal suspend fun executeBlueprints(params: JsonObject, project: Project): To
                 val relPath = pyFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
 
                 for (match in BLUEPRINT_CONSTRUCTOR_PATTERN.findAll(content)) {
+                    val argsGroup = match.groupValues[3]
+                    val importName = argsGroup.split(",").firstOrNull()
+                        ?.trim()?.takeIf { it.isNotBlank() && !it.contains("=") }
+                    val urlPrefix = URL_PREFIX_PATTERN.find(argsGroup)?.groupValues?.get(1)
                     blueprints.add(
                         BlueprintEntry(
                             file = relPath,
                             varName = match.groupValues[1],
                             name = match.groupValues[2],
-                            importName = match.groupValues[3].takeIf { it.isNotBlank() },
-                            urlPrefix = match.groupValues[4].takeIf { it.isNotBlank() }
+                            importName = importName,
+                            urlPrefix = urlPrefix
                         )
                     )
                 }
