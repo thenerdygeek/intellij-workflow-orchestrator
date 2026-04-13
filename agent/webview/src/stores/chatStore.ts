@@ -71,6 +71,8 @@ interface PendingApproval {
   description?: string;
   metadata?: Array<{ key: string; value: string }>;
   diffContent?: string;
+  /** Whether the UI should offer "Allow for session". False for run_command. */
+  allowSessionApproval: boolean;
 }
 
 // ── Toast state ──
@@ -209,7 +211,7 @@ interface ChatState {
   showToast(message: string, type: string, durationMs: number): void;
   dismissToast(id: string): void;
   receiveMentionResults(results: MentionSearchResult[]): void;
-  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string): void;
+  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string, allowSessionApproval?: boolean): void;
   resolveApproval(decision: 'approve' | 'deny' | 'allowForSession'): void;
   showProcessInput(processId: string, description: string, prompt: string, command: string): void;
   resolveProcessInput(input: string): void;
@@ -985,7 +987,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ mentionResults: results });
   },
 
-  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string) {
+  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string, allowSessionApproval: boolean = true) {
     set(state => {
       const approval: PendingApproval = {
         toolName,
@@ -994,6 +996,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         description,
         metadata,
         diffContent,
+        allowSessionApproval,
       };
 
       // Drain any active tool chain into individual UiMessage entries and

@@ -38,6 +38,7 @@ import com.workflow.orchestrator.agent.session.toChatMessage
 import com.workflow.orchestrator.agent.session.toApiMessage
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.ToolOutputSpiller
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.memory.ArchivalMemory
 import com.workflow.orchestrator.agent.memory.ConversationRecall
@@ -110,6 +111,7 @@ class AgentService(private val project: Project) : Disposable {
     private var autoMemoryManager: AutoMemoryManager? = null
     private val autoMemoryInitMutex = Mutex()
     private lateinit var agentDir: java.io.File
+    private val failedRegistrations = mutableListOf<String>()
 
     /**
      * Hook manager — loaded from .agent-hooks.json in project root.
@@ -454,7 +456,11 @@ class AgentService(private val project: Project) : Disposable {
         // Only registered when the service URL is configured in ConnectionSettings
         registerConditionalIntegrationTools()
 
-        log.info("[Agent] Registered ${registry.coreCount()} core + ${registry.deferredCount()} deferred tools")
+        if (failedRegistrations.isNotEmpty()) {
+            log.error("AgentService: ${failedRegistrations.size} tools failed to register: $failedRegistrations")
+        }
+        log.info("AgentService: registered ${registry.coreCount()} core + ${registry.deferredCount()} deferred tools" +
+            if (failedRegistrations.isNotEmpty()) " (${failedRegistrations.size} failed)" else "")
     }
 
     /**
@@ -481,6 +487,53 @@ class AgentService(private val project: Project) : Disposable {
         }
     }
 
+    /**
+     * Re-check connection settings and register/unregister integration tools accordingly.
+     *
+     * Called whenever connection settings change so the tool set stays in sync without
+     * requiring an agent restart. Safe to call at any time — each check is idempotent:
+     *   - URL configured + tool absent  → register the tool
+     *   - URL blank      + tool present → unregister the tool
+     *   - Everything else               → no-op
+     */
+    fun reregisterConditionalTools() {
+        val connections = ConnectionSettings.getInstance()
+
+        // Jira
+        if (connections.state.jiraUrl.isNotBlank()) {
+            if (registry.getTool("jira") == null) safeRegisterDeferred("Integration") { JiraTool() }
+        } else {
+            if (registry.getTool("jira") != null) registry.unregisterDeferred("jira")
+        }
+
+        // Bamboo
+        if (connections.state.bambooUrl.isNotBlank()) {
+            if (registry.getTool("bamboo_builds") == null) safeRegisterDeferred("Integration") { BambooBuildsTool() }
+            if (registry.getTool("bamboo_plans") == null) safeRegisterDeferred("Integration") { BambooPlansTool() }
+        } else {
+            if (registry.getTool("bamboo_builds") != null) registry.unregisterDeferred("bamboo_builds")
+            if (registry.getTool("bamboo_plans") != null) registry.unregisterDeferred("bamboo_plans")
+        }
+
+        // SonarQube
+        if (connections.state.sonarUrl.isNotBlank()) {
+            if (registry.getTool("sonar") == null) safeRegisterDeferred("Integration") { SonarTool() }
+        } else {
+            if (registry.getTool("sonar") != null) registry.unregisterDeferred("sonar")
+        }
+
+        // Bitbucket
+        if (connections.state.bitbucketUrl.isNotBlank()) {
+            if (registry.getTool("bitbucket_pr") == null) safeRegisterDeferred("Integration") { BitbucketPrTool() }
+            if (registry.getTool("bitbucket_repo") == null) safeRegisterDeferred("Integration") { BitbucketRepoTool() }
+            if (registry.getTool("bitbucket_review") == null) safeRegisterDeferred("Integration") { BitbucketReviewTool() }
+        } else {
+            if (registry.getTool("bitbucket_pr") != null) registry.unregisterDeferred("bitbucket_pr")
+            if (registry.getTool("bitbucket_repo") != null) registry.unregisterDeferred("bitbucket_repo")
+            if (registry.getTool("bitbucket_review") != null) registry.unregisterDeferred("bitbucket_review")
+        }
+    }
+
     private fun registerDebugTools() {
         try {
             val controller = AgentDebugController(project)
@@ -497,7 +550,8 @@ class AgentService(private val project: Project) : Disposable {
         try {
             registry.registerCore(factory())
         } catch (e: Exception) {
-            log.warn("AgentService: failed to register core tool: ${e.message}")
+            log.warn("AgentService: failed to register core tool: ${e.message}", e)
+            failedRegistrations.add("core:${e.message?.take(50) ?: "unknown"}")
         }
     }
 
@@ -505,7 +559,8 @@ class AgentService(private val project: Project) : Disposable {
         try {
             registry.registerDeferred(factory(), category)
         } catch (e: Exception) {
-            log.warn("AgentService: failed to register deferred tool: ${e.message}")
+            log.warn("AgentService: failed to register deferred tool ($category): ${e.message}", e)
+            failedRegistrations.add("deferred/$category:${e.message?.take(50) ?: "unknown"}")
         }
     }
 
@@ -557,7 +612,14 @@ class AgentService(private val project: Project) : Disposable {
          * When set, the loop suspends before write tools and waits for user approval.
          * When null (e.g. in sub-agents or handoff sessions), write tools execute without approval.
          */
-        approvalGate: (suspend (toolName: String, args: String, riskLevel: String) -> com.workflow.orchestrator.agent.loop.ApprovalResult)? = null,
+        approvalGate: (suspend (toolName: String, args: String, riskLevel: String, allowSessionApproval: Boolean) -> com.workflow.orchestrator.agent.loop.ApprovalResult)? = null,
+        /**
+         * Session-scoped approval store. Tracks which tools the user has approved
+         * for the current session. Injected from the controller so approvals persist
+         * across follow-up messages (multiple executeTask calls within the same session).
+         * Defaults to a fresh store for backward compatibility (tests, sub-agents).
+         */
+        sessionApprovalStore: com.workflow.orchestrator.agent.loop.SessionApprovalStore = com.workflow.orchestrator.agent.loop.SessionApprovalStore(),
         /**
          * Optional callback fired after a write checkpoint is saved.
          * Used by the UI to update the checkpoint timeline display.
@@ -662,6 +724,10 @@ class AgentService(private val project: Project) : Disposable {
                 val sessionDebugDir = java.io.File(
                     ProjectIdentifier.agentDir(basePath),
                     "sessions/$sid"
+                )
+                // Output spiller: writes large tool outputs to disk, returns preview to LLM
+                val outputSpiller = ToolOutputSpiller(
+                    java.io.File(sessionDebugDir, "tool-output").toPath()
                 )
                 // Session-scoped API call counter — shared across the initial brain AND any
                 // brains spawned by the brainFactory below (recycle, model fallback). Keeps
@@ -844,6 +910,7 @@ class AgentService(private val project: Project) : Disposable {
                             }
                         }
                         .map { AgentTool.injectTaskProgress(it.toToolDefinition()) }
+                        .map { AgentTool.injectOutputParams(it) }
 
                     // Update system prompt when tool set changes (plan mode switch, deferred tool load)
                     val defsHash = defs.map { it.function.name }.hashCode()
@@ -954,6 +1021,7 @@ class AgentService(private val project: Project) : Disposable {
                     },
                     userInputChannel = userInputChannel,
                     approvalGate = approvalGate,
+                    sessionApprovalStore = sessionApprovalStore,
                     onWriteCheckpoint = { toolName, args ->
                         // Create named checkpoint after write operations (ported from Cline)
                         writeCheckpointCounter++
@@ -1003,7 +1071,8 @@ class AgentService(private val project: Project) : Disposable {
                     messageStateHandler = messageState,
                     toolExecutionMode = agentSettings.state.toolExecutionMode ?: "accumulate",
                     toolNameProvider = { registry.allToolNames() },
-                    paramNameProvider = { registry.allParamNames() }
+                    paramNameProvider = { registry.allParamNames() },
+                    outputSpiller = outputSpiller,
                 )
 
                 // I4: Set activeTask atomically after both loop and job are available
@@ -1149,7 +1218,7 @@ class AgentService(private val project: Project) : Disposable {
         onPlanResponse: ((planText: String, needsMoreExploration: Boolean, planSteps: List<String>) -> Unit)? = null,
         onPlanModeToggled: ((Boolean) -> Unit)? = null,
         userInputChannel: Channel<String>? = null,
-        approvalGate: (suspend (toolName: String, args: String, riskLevel: String) -> com.workflow.orchestrator.agent.loop.ApprovalResult)? = null,
+        approvalGate: (suspend (toolName: String, args: String, riskLevel: String, allowSessionApproval: Boolean) -> com.workflow.orchestrator.agent.loop.ApprovalResult)? = null,
         onCheckpointSaved: ((sessionId: String) -> Unit)? = null,
         onSubagentProgress: ((agentId: String, update: SubagentProgressUpdate) -> Unit)? = null,
         onTokenUpdate: ((inputTokens: Int, outputTokens: Int) -> Unit)? = null,
@@ -1157,6 +1226,7 @@ class AgentService(private val project: Project) : Disposable {
         onSessionStarted: ((sessionId: String) -> Unit)? = null,
         steeringQueue: java.util.concurrent.ConcurrentLinkedQueue<SteeringMessage>? = null,
         onSteeringDrained: ((drainedIds: List<String>) -> Unit)? = null,
+        sessionApprovalStore: com.workflow.orchestrator.agent.loop.SessionApprovalStore = com.workflow.orchestrator.agent.loop.SessionApprovalStore(),
     ): Job? {
         val basePath = project.basePath ?: System.getProperty("user.home")
         val sessionBaseDir = ProjectIdentifier.agentDir(basePath)
@@ -1307,6 +1377,7 @@ class AgentService(private val project: Project) : Disposable {
                 onSessionStarted = onSessionStarted,
                 steeringQueue = steeringQueue,
                 onSteeringDrained = onSteeringDrained,
+                sessionApprovalStore = sessionApprovalStore,
             )
             innerJob.join()
         }

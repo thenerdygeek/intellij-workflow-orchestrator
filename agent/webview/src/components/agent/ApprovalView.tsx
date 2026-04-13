@@ -11,7 +11,7 @@ interface ApprovalViewProps {
   diffContent?: string;
   onApprove: () => void;
   onDeny: () => void;
-  onAllowForSession: () => void;
+  onAllowForSession?: () => void;
 }
 
 export function ApprovalView({ toolName: _toolName, riskLevel, title, description, metadata, diffContent, onApprove, onDeny, onAllowForSession }: ApprovalViewProps) {

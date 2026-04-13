@@ -17,18 +17,25 @@ import com.workflow.orchestrator.agent.security.CommandSafetyAnalyzer
 import com.workflow.orchestrator.agent.security.CommandRisk
 import com.workflow.orchestrator.agent.session.*
 import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.ToolOutputConfig
+import com.workflow.orchestrator.agent.tools.ToolOutputSpiller
+import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.estimateTokens
 import com.workflow.orchestrator.agent.tools.truncateOutput
 import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.concurrent.atomic.AtomicBoolean
@@ -140,9 +147,10 @@ class AgentLoop(
      * @param toolName the tool about to execute
      * @param args the raw JSON arguments string
      * @param riskLevel "low", "medium", or "high" risk classification
+     * @param allowSessionApproval whether the UI should offer "allow for session" (false for run_command)
      * @return the user's decision
      */
-    private val approvalGate: (suspend (toolName: String, args: String, riskLevel: String) -> ApprovalResult)? = null,
+    private val approvalGate: (suspend (toolName: String, args: String, riskLevel: String, allowSessionApproval: Boolean) -> ApprovalResult)? = null,
     /**
      * Optional hook manager for lifecycle extensibility points.
      * Ported from Cline's hook system: dispatches PRE_TOOL_USE and POST_TOOL_USE
@@ -252,12 +260,25 @@ class AgentLoop(
      * (instead of failing). Limited to [MAX_COMPACTION_RETRIES] attempts.
      */
     private val compactOnTimeoutExhaustion: Boolean = false,
+    /**
+     * Session-scoped approval store. Tracks which tools the user has approved
+     * for the current session. Injected from the controller/session level so
+     * approvals persist across follow-up messages (multiple loop runs).
+     * Defaults to a fresh store for backward compatibility (tests, sub-agents).
+     */
+    private val sessionApprovalStore: SessionApprovalStore = SessionApprovalStore(),
     /** Tool execution mode: "accumulate" (default) or "stream_interrupt" (Cline-style). */
     private val toolExecutionMode: String = "accumulate",
     /** Dynamic provider for known tool names (re-read from registry each iteration for deferred tools). */
     private val toolNameProvider: (() -> Set<String>)? = null,
     /** Dynamic provider for known param names (re-read from registry each iteration for deferred tools). */
-    private val paramNameProvider: (() -> Set<String>)? = null
+    private val paramNameProvider: (() -> Set<String>)? = null,
+    /**
+     * Optional output spiller for persisting large tool outputs to disk.
+     * When set, outputs exceeding SPILL_THRESHOLD_CHARS or explicitly requested via
+     * output_file=true are written to disk and a preview is returned to the LLM.
+     */
+    private val outputSpiller: ToolOutputSpiller? = null,
 ) {
     private val cancelled = AtomicBoolean(false)
     private var totalTokensUsed = 0
@@ -276,8 +297,8 @@ class AgentLoop(
     /** Loop detector: tracks repeated identical tool calls (from Cline). */
     private val loopDetector = LoopDetector()
 
-    /** Tools the user has allowed for the rest of this session (via ALLOWED_FOR_SESSION). */
-    private val approvedForSession = mutableSetOf<String>()
+    // Session-scoped approval is handled by the injected sessionApprovalStore
+    // (lives at the session level, persists across loop runs within the same session).
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -353,7 +374,7 @@ class AgentLoop(
         )
 
         /** Subset of write tools that require user approval via the approval gate. */
-        val APPROVAL_TOOLS = setOf("edit_file", "create_file", "run_command", "revert_file")
+        val APPROVAL_TOOLS = ApprovalPolicy.APPROVAL_TOOLS
 
         /** Error types that are transient and safe to retry. */
         private val RETRYABLE_ERRORS = setOf(
@@ -947,31 +968,66 @@ class AgentLoop(
             if (tool == null) {
                 // Unknown tool
                 val allToolNames = if (toolResolver != null) "use tool_search to find tools" else tools.keys.joinToString(", ")
-                reportToolError(call, startTime, "Unknown tool: '$toolName'. Available tools: $allToolNames")
+                val unknownToolMsg = "Unknown tool: '$toolName'. Available tools: $allToolNames"
+                fileLogger?.logToolCall(
+                    sessionId = sessionId ?: "",
+                    toolName = toolName,
+                    durationMs = 0,
+                    isError = true,
+                    errorMessage = unknownToolMsg,
+                    tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                )
+                sessionMetrics?.recordToolCall(toolName, 0, true)
+                reportToolError(call, startTime, unknownToolMsg)
                 continue
             }
 
             // Plan mode guard: block write tools even if the LLM hallucinates them
             if (planMode && toolName in WRITE_TOOLS) {
-                reportToolError(
-                    call, startTime,
-                    "Error: '$toolName' is blocked in plan mode. You can only read, search, and analyze code."
+                val planModeBlockMsg = "Error: '$toolName' is blocked in plan mode. You can only read, search, and analyze code."
+                fileLogger?.logToolCall(
+                    sessionId = sessionId ?: "",
+                    toolName = toolName,
+                    durationMs = 0,
+                    isError = true,
+                    errorMessage = planModeBlockMsg,
+                    tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
                 )
+                sessionMetrics?.recordToolCall(toolName, 0, true)
+                reportToolError(call, startTime, planModeBlockMsg)
                 continue
             }
 
             // Approval gate (ported from Cline's approval flow).
             // Write tools require user approval unless already allowed for this session.
             // The gate suspends the coroutine (not blocking a thread) until the user responds.
-            if (toolName in APPROVAL_TOOLS && approvalGate != null && toolName !in approvedForSession) {
+            // Per-tool policy: run_command never gets session-wide approval because each
+            // command is arbitrarily different — approving `ls` shouldn't auto-approve `rm -rf /`.
+            val policy = ApprovalPolicy.forTool(toolName)
+            if (policy.requiresApproval && approvalGate != null && !sessionApprovalStore.isApproved(toolName)) {
                 val riskLevel = assessRisk(toolName, call.function.arguments)
-                val result = approvalGate.invoke(toolName, call.function.arguments, riskLevel)
+                val result = approvalGate.invoke(toolName, call.function.arguments, riskLevel, policy.allowSessionApproval)
                 when (result) {
                     ApprovalResult.DENIED -> {
-                        reportToolError(call, startTime, "Tool execution denied by user.")
+                        val deniedMsg = "Tool execution denied by user."
+                        fileLogger?.logToolCall(
+                            sessionId = sessionId ?: "",
+                            toolName = toolName,
+                            durationMs = 0,
+                            isError = true,
+                            errorMessage = deniedMsg,
+                            tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                        )
+                        sessionMetrics?.recordToolCall(toolName, 0, true)
+                        reportToolError(call, startTime, deniedMsg)
                         continue
                     }
-                    ApprovalResult.ALLOWED_FOR_SESSION -> approvedForSession.add(toolName)
+                    ApprovalResult.ALLOWED_FOR_SESSION -> {
+                        if (policy.allowSessionApproval) {
+                            sessionApprovalStore.approve(toolName)
+                        }
+                        // If policy doesn't allow session approval, treat as single APPROVED
+                    }
                     ApprovalResult.APPROVED -> { /* proceed with this single execution */ }
                 }
             }
@@ -1002,7 +1058,9 @@ class AgentLoop(
                             "toolName" to toolName,
                             "arguments" to call.function.arguments,
                             "iteration" to iteration,
-                            "sessionId" to sessionId
+                            "sessionId" to sessionId,
+                            "riskLevel" to assessRisk(toolName, call.function.arguments),
+                            "isWriteTool" to (toolName in WRITE_TOOLS).toString(),
                         )
                     )
                 )
@@ -1022,9 +1080,24 @@ class AgentLoop(
                 )
             )
 
-            // Execute tool
+            // Execute tool (with per-tool timeout and CancellationException propagation)
             val toolResult = try {
-                tool.execute(params, project)
+                val timeout = tool.timeoutMs
+                if (timeout == Long.MAX_VALUE) {
+                    tool.execute(params, project)
+                } else {
+                    withTimeoutOrNull(timeout) {
+                        tool.execute(params, project)
+                    } ?: ToolResult(
+                        content = "Error: Tool '$toolName' timed out after ${timeout / 1000}s. " +
+                            "The operation took too long. Try a more specific query or smaller scope.",
+                        summary = "Error: timeout after ${timeout / 1000}s",
+                        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                        isError = true
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e  // CRITICAL: Propagate cancellation — never swallow
             } catch (e: Exception) {
                 val errorMsg = "Tool '$toolName' threw exception: ${e.message}"
                 LOG.warn("[Loop] Tool $toolName failed: ${errorMsg.take(200)}")
@@ -1044,7 +1117,34 @@ class AgentLoop(
             }
 
             val durationMs = System.currentTimeMillis() - startTime
-            val truncatedContent = truncateOutput(toolResult.content)
+
+            // Apply LLM-requested output filtering (grep_pattern, output_file)
+            var processedContent = toolResult.content
+            val grepPattern = (params["grep_pattern"] as? JsonPrimitive)?.contentOrNull
+            if (!grepPattern.isNullOrBlank() && processedContent.isNotBlank()) {
+                processedContent = ToolOutputConfig.applyGrep(processedContent, grepPattern)
+            }
+
+            // Spill to file if requested via output_file=true or if over threshold
+            val requestedOutputFile = try {
+                params["output_file"]?.jsonPrimitive?.boolean == true
+            } catch (_: Exception) { false }
+
+            if (outputSpiller != null && (requestedOutputFile || processedContent.length > ToolOutputConfig.SPILL_THRESHOLD_CHARS)) {
+                val spillResult = outputSpiller.spill(toolName, processedContent)
+                processedContent = spillResult.preview
+            }
+
+            val truncatedContent = truncateOutput(processedContent, tool.outputConfig.maxChars)
+            // Re-estimate tokens after processing (grep/spill/truncation) so budget tracking
+            // reflects what actually enters context, not the raw tool output.
+            val actualTokenEstimate = if (truncatedContent.length < processedContent.length) {
+                estimateTokens(truncatedContent)  // Content was truncated — re-estimate
+            } else if (processedContent.length < toolResult.content.length) {
+                estimateTokens(processedContent)  // Content was grep-filtered or spilled — re-estimate
+            } else {
+                toolResult.tokenEstimate  // No processing occurred — use original estimate
+            }
 
             if (toolResult.isError) {
                 LOG.warn("[Loop] Tool $toolName failed: ${toolResult.content.take(200)}")
@@ -1058,14 +1158,14 @@ class AgentLoop(
                 isError = toolResult.isError,
                 args = call.function.arguments.take(500),
                 errorMessage = if (toolResult.isError) toolResult.content.take(500) else null,
-                tokenEstimate = toolResult.tokenEstimate
+                tokenEstimate = actualTokenEstimate
             )
             sessionMetrics?.recordToolCall(toolName, durationMs, toolResult.isError)
             onDebugLog?.invoke(
                 if (toolResult.isError) "error" else "info",
                 "tool_call",
                 "$toolName ${if (toolResult.isError) "ERROR" else "OK"} (${durationMs}ms)",
-                mapOf("tool" to toolName, "duration" to durationMs, "tokens" to toolResult.tokenEstimate)
+                mapOf("tool" to toolName, "duration" to durationMs, "tokens" to actualTokenEstimate)
             )
 
             // Add result to context

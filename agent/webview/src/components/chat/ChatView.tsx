@@ -616,7 +616,7 @@ export const ChatView = memo(function ChatView() {
               diffContent={pendingApproval.diffContent}
               onApprove={handleApprove}
               onDeny={handleDeny}
-              onAllowForSession={handleAllowForSession}
+              onAllowForSession={pendingApproval.allowSessionApproval ? handleAllowForSession : undefined}
             />
           </div>
         )}
