@@ -46,7 +46,8 @@ class DatabaseConnectionManagerTest {
     @AfterEach
     fun shutdownMysqlCleanupThread() {
         runCatching {
-            com.mysql.cj.jdbc.AbandonedConnectionCleanupThread.uncheckedShutdown()
+            val clazz = Class.forName("com.mysql.cj.jdbc.AbandonedConnectionCleanupThread")
+            clazz.getMethod("uncheckedShutdown").invoke(null)
         }
     }
 
