@@ -266,6 +266,31 @@ class AutoDetectOrchestrator(private val project: Project, private val cs: Corou
 
         private val log = Logger.getInstance(AutoDetectOrchestrator::class.java)
 
+        /**
+         * Builds the full Bamboo plan key from PROJECT_KEY and PLAN_KEY constants.
+         * Bamboo API requires "PROJECT-PLAN" format (e.g., "ACME-DEMOAPPSERVICE").
+         * If PLAN_KEY already contains a hyphen (already full format), uses it as-is.
+         */
+        internal fun buildFullPlanKey(constants: Map<String, String>): String? {
+            val planKey = constants["PLAN_KEY"]?.takeIf { it.isNotBlank() } ?: return null
+            if ('-' in planKey) return planKey // already full format
+            val projectKey = constants["PROJECT_KEY"]?.takeIf { it.isNotBlank() } ?: return planKey
+            return "$projectKey-$planKey"
+        }
+
+        /**
+         * Like [fillIfEmpty] but also overwrites if the current value is just the short
+         * PLAN_KEY (no hyphen) and the new value is the full PROJECT-PLAN format.
+         * This corrects stale values from earlier versions that stored only PLAN_KEY.
+         */
+        internal fun fillOrUpgradePlanKey(current: String?, fullKey: String?): String? {
+            if (fullKey.isNullOrBlank()) return current
+            if (current.isNullOrBlank()) return fullKey
+            // Overwrite if current is the short key and fullKey is the proper PROJECT-PLAN format
+            if ('-' !in current && '-' in fullKey && fullKey.endsWith(current)) return fullKey
+            return current
+        }
+
         /** Visible for testing. Writes constants into a state object via fill-only-empty. */
         internal fun applyBambooSpecsToState(
             state: PluginSettings.State,
@@ -273,16 +298,15 @@ class AutoDetectOrchestrator(private val project: Project, private val cs: Corou
             label: String,
             filled: MutableList<String>
         ) {
-            log.info("[AutoDetect:Apply] Applying to $label state. Constants keys: ${constants.keys}")
-            log.info("[AutoDetect:Apply]   Current dockerTagKey='${state.dockerTagKey}', looking for DOCKER_TAG_NAME='${constants["DOCKER_TAG_NAME"]}'")
-            log.info("[AutoDetect:Apply]   Current bambooPlanKey='${state.bambooPlanKey}', looking for PLAN_KEY='${constants["PLAN_KEY"]}'")
+            val fullPlanKey = buildFullPlanKey(constants)
+            log.info("[AutoDetect:Apply] Applying to $label state. DOCKER_TAG_NAME='${constants["DOCKER_TAG_NAME"]}', fullPlanKey='$fullPlanKey' (PROJECT_KEY='${constants["PROJECT_KEY"]}', PLAN_KEY='${constants["PLAN_KEY"]}')")
             val newDocker = fillIfEmpty(state.dockerTagKey, constants["DOCKER_TAG_NAME"])
             if (newDocker != state.dockerTagKey && !newDocker.isNullOrBlank()) {
                 state.dockerTagKey = newDocker
                 filled += "$label.dockerTagKey"
                 log.info("[AutoDetect:Apply]   SET $label.dockerTagKey = '$newDocker'")
             }
-            val newPlan = fillIfEmpty(state.bambooPlanKey, constants["PLAN_KEY"])
+            val newPlan = fillOrUpgradePlanKey(state.bambooPlanKey, fullPlanKey)
             if (newPlan != state.bambooPlanKey && !newPlan.isNullOrBlank()) {
                 state.bambooPlanKey = newPlan
                 filled += "$label.bambooPlanKey"
@@ -297,16 +321,15 @@ class AutoDetectOrchestrator(private val project: Project, private val cs: Corou
             filled: MutableList<String>
         ) {
             val label = repoLabel(repo)
-            log.info("[AutoDetect:Apply] Applying to repo '$label'. Constants keys: ${constants.keys}")
-            log.info("[AutoDetect:Apply]   Current dockerTagKey='${repo.dockerTagKey}', looking for DOCKER_TAG_NAME='${constants["DOCKER_TAG_NAME"]}'")
-            log.info("[AutoDetect:Apply]   Current bambooPlanKey='${repo.bambooPlanKey}', looking for PLAN_KEY='${constants["PLAN_KEY"]}'")
+            val fullPlanKey = buildFullPlanKey(constants)
+            log.info("[AutoDetect:Apply] Applying to repo '$label'. DOCKER_TAG_NAME='${constants["DOCKER_TAG_NAME"]}', fullPlanKey='$fullPlanKey' (PROJECT_KEY='${constants["PROJECT_KEY"]}', PLAN_KEY='${constants["PLAN_KEY"]}')")
             val newDocker = fillIfEmpty(repo.dockerTagKey, constants["DOCKER_TAG_NAME"])
             if (newDocker != repo.dockerTagKey && !newDocker.isNullOrBlank()) {
                 repo.dockerTagKey = newDocker
                 filled += "$label.dockerTagKey"
                 log.info("[AutoDetect:Apply]   SET $label.dockerTagKey = '$newDocker'")
             }
-            val newPlan = fillIfEmpty(repo.bambooPlanKey, constants["PLAN_KEY"])
+            val newPlan = fillOrUpgradePlanKey(repo.bambooPlanKey, fullPlanKey)
             if (newPlan != repo.bambooPlanKey && !newPlan.isNullOrBlank()) {
                 repo.bambooPlanKey = newPlan
                 filled += "$label.bambooPlanKey"

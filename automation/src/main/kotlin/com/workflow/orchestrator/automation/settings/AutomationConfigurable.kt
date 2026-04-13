@@ -86,26 +86,6 @@ class AutomationConfigurable(private val project: Project) : SearchableConfigura
     override fun getId(): String = "workflow.orchestrator.automation"
     override fun getDisplayName(): String = "Automation"
 
-    private fun resolveDockerTagKey(): String {
-        val settings = PluginSettings.getInstance(project)
-        val resolver = com.workflow.orchestrator.core.settings.RepoContextResolver.getInstance(project)
-        val repo = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
-        return repo?.dockerTagKey?.takeIf { it.isNotBlank() }
-            ?: settings.state.dockerTagKey?.takeIf { it.isNotBlank() }
-            ?: "(not detected \u2014 run Auto-Detect in Repositories)"
-    }
-
-    private fun resolveServiceCiPlanKey(): String {
-        val settings = PluginSettings.getInstance(project)
-        val fromDedicated = settings.state.serviceCiPlanKey?.takeIf { it.isNotBlank() }
-        if (fromDedicated != null) return fromDedicated
-        val resolver = com.workflow.orchestrator.core.settings.RepoContextResolver.getInstance(project)
-        val repo = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
-        return repo?.bambooPlanKey?.takeIf { it.isNotBlank() }
-            ?: settings.state.bambooPlanKey?.takeIf { it.isNotBlank() }
-            ?: "(not detected \u2014 run Auto-Detect in Repositories)"
-    }
-
     override fun createComponent(): JComponent {
         // Recreate scope in case it was cancelled by a previous disposeUIResources()
         scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -120,13 +100,8 @@ class AutomationConfigurable(private val project: Project) : SearchableConfigura
             )
 
             group("Docker Tags") {
-                row("Docker tag key:") {
-                    label(resolveDockerTagKey())
-                        .comment("From Repositories settings (auto-detected from bamboo-specs DOCKER_TAG_NAME)")
-                }
-                row("CI plan key:") {
-                    label(resolveServiceCiPlanKey())
-                        .comment("From Repositories settings (auto-detected from bamboo-specs PLAN_KEY)")
+                row {
+                    comment("Docker Tag Key and Bamboo Plan Key are auto-detected from bamboo-specs and shown in Settings \u2192 Repositories.")
                 }
                 row("Build variable name:") {
                     textField()
