@@ -293,6 +293,32 @@ class TagBuilderServiceTest {
         assertTrue(result.reason.contains("CI-PLAN-99"))
     }
 
+    @Test
+    fun `extractDockerTagFromLog returns tag from log text`() {
+        val log = "Building...\nUnique Docker Tag : feature-test-abc123\nDone."
+        val tag = service.extractDockerTagFromLog(log)
+        assertEquals("feature-test-abc123", tag)
+    }
+
+    @Test
+    fun `extractDockerTagFromLog strips ANSI escape codes`() {
+        val log = "Unique Docker Tag : \u001B[32mfeature-test-xyz\u001B[0m"
+        val tag = service.extractDockerTagFromLog(log)
+        assertEquals("feature-test-xyz", tag)
+    }
+
+    @Test
+    fun `extractDockerTagFromLog returns null when pattern not found`() {
+        val log = "Building...\nTests passed.\nDone."
+        val tag = service.extractDockerTagFromLog(log)
+        assertNull(tag)
+    }
+
+    @Test
+    fun `extractDockerTagFromLog returns null for empty log`() {
+        assertNull(service.extractDockerTagFromLog(""))
+    }
+
     private fun makeBuildResultData(
         buildNumber: Int,
         state: String,

@@ -13,6 +13,15 @@ sealed class WorkflowEvent {
         val status: BuildEventStatus
     ) : WorkflowEvent()
 
+    /** Emitted by :bamboo after a terminal build's log has been fetched. */
+    data class BuildLogReady(
+        val planKey: String,
+        val buildNumber: Int,
+        val resultKey: String,
+        val status: BuildEventStatus,
+        val logText: String
+    ) : WorkflowEvent()
+
     /** Emitted by :sonar when quality gate status changes. */
     data class QualityGateResult(
         val projectKey: String,

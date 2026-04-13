@@ -18,6 +18,11 @@ class TagBuilderService {
     private val bambooService: BambooService
     private val buildVariableName: String
 
+    companion object {
+        private val DOCKER_TAG_REGEX = Regex("Unique Docker Tag\\s*:\\s*(.+)")
+        private val ANSI_ESCAPE_REGEX = Regex("\\x1B\\[[0-9;]*m")
+    }
+
     /** Project service constructor — used by IntelliJ DI. */
     constructor(project: Project) {
         val settings = PluginSettings.getInstance(project)
@@ -215,13 +220,10 @@ class TagBuilderService {
         val logResult = bambooService.getBuildLog(resultKey)
         if (logResult.isError) {
             log.warn("[Automation:Tags] Failed to fetch build log for $resultKey: ${logResult.summary}")
-            return TagDetectionResult.noTagInLog(resultKey)
+            return TagDetectionResult.logFetchFailed(resultKey)
         }
 
-        val dockerTagRegex = Regex("Unique Docker Tag\\s*:\\s*(.+)")
-        val match = dockerTagRegex.find(logResult.data)
-        val tag = match?.groupValues?.get(1)?.trim()
-            ?.replace(Regex("\\x1B\\[[0-9;]*m"), "") // Strip ANSI escape codes
+        val tag = extractDockerTagFromLog(logResult.data)
 
         return if (tag != null) {
             log.info("[Automation:Tags] Detected docker tag: '$tag' from $resultKey")
@@ -230,6 +232,17 @@ class TagBuilderService {
             log.warn("[Automation:Tags] 'Unique Docker Tag' not found in build log for $resultKey")
             TagDetectionResult.noTagInLog(resultKey)
         }
+    }
+
+    /**
+     * Extract docker tag from pre-fetched build log text.
+     * Pure function — no API calls. Used by event-driven path (BuildLogReady).
+     */
+    fun extractDockerTagFromLog(logText: String): String? {
+        val match = DOCKER_TAG_REGEX.find(logText) ?: return null
+        return match.groupValues[1].trim()
+            .replace(ANSI_ESCAPE_REGEX, "")
+            .takeIf { it.isNotBlank() }
     }
 
     /** Legacy method — delegates to [detectDockerTag]. */

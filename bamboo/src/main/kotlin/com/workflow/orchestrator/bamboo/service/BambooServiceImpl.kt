@@ -64,20 +64,34 @@ class BambooServiceImpl(private val project: Project) : BambooService {
     override suspend fun getLatestBuild(planKey: String, branch: String?, repoName: String?): ToolResult<BuildResultData> {
         val api = client ?: return notConfiguredError("fetch latest build for $planKey")
 
-        // Resolve branch plan key first (same approach as getRecentBuilds),
-        // then fetch by key — no branch name in URL.
-        val effectivePlanKey = if (branch != null) {
-            val (resolved, error) = resolveBranchPlanKey(api, planKey, branch)
-            resolved ?: return buildErrorResult(planKey, 0,
-                ApiResult.Error(ErrorType.NOT_FOUND, error ?: "Branch resolution failed"))
-        } else {
-            planKey
+        if (branch != null) {
+            // Try branch plan key resolution first
+            val (resolved, _) = resolveBranchPlanKey(api, planKey, branch)
+            if (resolved != null) {
+                return when (val result = api.getLatestResult(resolved)) {
+                    is ApiResult.Success -> mapBuildResult(result.data)
+                    is ApiResult.Error -> {
+                        log.warn("[BambooService] Failed to fetch latest build for resolved key $resolved: ${result.message}")
+                        buildErrorResult(planKey, 0, result)
+                    }
+                }
+            }
+            // Fallback: use Bamboo's /branch/{name}/latest URL (server-side resolution).
+            // This works even when the branch isn't in the branches list API response.
+            log.info("[BambooService] Branch resolution failed for '$branch', falling back to direct branch URL")
+            return when (val result = api.getLatestResult(planKey, branch)) {
+                is ApiResult.Success -> mapBuildResult(result.data)
+                is ApiResult.Error -> {
+                    log.warn("[BambooService] Fallback also failed for $planKey/branch/$branch: ${result.message}")
+                    buildErrorResult(planKey, 0, result)
+                }
+            }
         }
 
-        return when (val result = api.getLatestResult(effectivePlanKey)) {
+        return when (val result = api.getLatestResult(planKey)) {
             is ApiResult.Success -> mapBuildResult(result.data)
             is ApiResult.Error -> {
-                log.warn("[BambooService] Failed to fetch latest build for $effectivePlanKey: ${result.message}")
+                log.warn("[BambooService] Failed to fetch latest build for $planKey: ${result.message}")
                 buildErrorResult(planKey, 0, result)
             }
         }

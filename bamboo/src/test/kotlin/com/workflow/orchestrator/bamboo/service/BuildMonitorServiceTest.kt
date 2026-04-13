@@ -43,6 +43,7 @@ class BuildMonitorServiceTest {
     fun `pollOnce updates stateFlow with build result`() = runTest {
         val result = makeResult("Successful", "Finished")
         coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(result)
+        coEvery { apiClient.getBuildLog("PROJ-BUILD-42") } returns ApiResult.Success("log content")
 
         val service = BuildMonitorService(apiClient, eventBus, this)
 
@@ -75,6 +76,7 @@ class BuildMonitorServiceTest {
         // Second poll returns completed build → status changed → event emitted
         val successResult = makeResult("Successful", "Finished")
         coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(successResult)
+        coEvery { apiClient.getBuildLog("PROJ-BUILD-42") } returns ApiResult.Success("log content")
 
         eventBus.events.test {
             service.pollOnce("PROJ-BUILD", "main")
@@ -93,6 +95,7 @@ class BuildMonitorServiceTest {
     fun `pollOnce does not emit event when status unchanged`() = runTest {
         val result = makeResult("Successful", "Finished")
         coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(result)
+        coEvery { apiClient.getBuildLog("PROJ-BUILD-42") } returns ApiResult.Success("log content")
 
         val service = BuildMonitorService(apiClient, eventBus, this)
 
@@ -119,12 +122,105 @@ class BuildMonitorServiceTest {
         // Second poll returns failed build → status changed → event emitted
         val failedResult = makeResult("Failed", "Finished")
         coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(failedResult)
+        coEvery { apiClient.getBuildLog("PROJ-BUILD-42") } returns ApiResult.Success("build failed log")
 
         eventBus.events.test {
             service.pollOnce("PROJ-BUILD", "main")
 
             val event = awaitItem() as WorkflowEvent.BuildFinished
             assertEquals(WorkflowEvent.BuildEventStatus.FAILED, event.status)
+
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `pollOnce emits BuildLogReady on first terminal poll`() = runTest {
+        val result = makeResult("Successful", "Finished")
+        coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(result)
+        coEvery { apiClient.getBuildLog("PROJ-BUILD-42") } returns ApiResult.Success("Unique Docker Tag : my-tag-123")
+
+        val service = BuildMonitorService(apiClient, eventBus, this)
+
+        eventBus.events.test {
+            service.pollOnce("PROJ-BUILD", "main")
+
+            // First poll of terminal build emits BuildLogReady (but NOT BuildFinished)
+            val event = awaitItem()
+            assertTrue(event is WorkflowEvent.BuildLogReady)
+            val logEvent = event as WorkflowEvent.BuildLogReady
+            assertEquals("PROJ-BUILD", logEvent.planKey)
+            assertEquals(42, logEvent.buildNumber)
+            assertEquals("PROJ-BUILD-42", logEvent.resultKey)
+            assertEquals(WorkflowEvent.BuildEventStatus.SUCCESS, logEvent.status)
+            assertEquals("Unique Docker Tag : my-tag-123", logEvent.logText)
+
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `pollOnce emits BuildLogReady with empty text on log fetch failure`() = runTest {
+        val result = makeResult("Successful", "Finished")
+        coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(result)
+        coEvery { apiClient.getBuildLog("PROJ-BUILD-42") } returns
+            ApiResult.Error(com.workflow.orchestrator.core.model.ErrorType.NETWORK_ERROR, "timeout")
+
+        val service = BuildMonitorService(apiClient, eventBus, this)
+
+        eventBus.events.test {
+            service.pollOnce("PROJ-BUILD", "main")
+
+            val event = awaitItem()
+            assertTrue(event is WorkflowEvent.BuildLogReady)
+            assertEquals("", (event as WorkflowEvent.BuildLogReady).logText)
+
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `pollOnce does not re-fetch log for same build number`() = runTest {
+        val result = makeResult("Successful", "Finished")
+        coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(result)
+        coEvery { apiClient.getBuildLog("PROJ-BUILD-42") } returns ApiResult.Success("log")
+
+        val service = BuildMonitorService(apiClient, eventBus, this)
+
+        // First poll — fetches log
+        service.pollOnce("PROJ-BUILD", "main")
+
+        eventBus.events.test {
+            // Second poll with same build — should NOT emit BuildLogReady again
+            service.pollOnce("PROJ-BUILD", "main")
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `pollOnce emits BuildLogReady with FAILED status for failed build`() = runTest {
+        val inProgress = makeResult("InProgress", "InProgress")
+        coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(inProgress)
+
+        val service = BuildMonitorService(apiClient, eventBus, this)
+        service.pollOnce("PROJ-BUILD", "main")
+
+        val failed = makeResult("Failed", "Finished")
+        coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(failed)
+        coEvery { apiClient.getBuildLog("PROJ-BUILD-42") } returns ApiResult.Success("build failed")
+
+        eventBus.events.test {
+            service.pollOnce("PROJ-BUILD", "main")
+
+            // BuildFinished first
+            val finishedEvent = awaitItem()
+            assertTrue(finishedEvent is WorkflowEvent.BuildFinished)
+
+            // Then BuildLogReady
+            val logEvent = awaitItem()
+            assertTrue(logEvent is WorkflowEvent.BuildLogReady)
+            assertEquals(WorkflowEvent.BuildEventStatus.FAILED, (logEvent as WorkflowEvent.BuildLogReady).status)
 
             cancelAndIgnoreRemainingEvents()
         }

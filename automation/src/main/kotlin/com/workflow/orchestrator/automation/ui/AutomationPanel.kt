@@ -13,6 +13,8 @@ import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.automation.model.*
 import com.workflow.orchestrator.automation.service.*
+import com.workflow.orchestrator.core.events.EventBus
+import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.coroutines.*
@@ -72,8 +74,13 @@ class AutomationPanel(
     // Sub-tabs
     private val tabbedPane = JBTabbedPane()
 
+    // Branch selector
+    private val branchCombo = JComboBox<BranchComboItem>()
+    private var suppressBranchListener = false
+
     // State
     private var currentSuitePlanKey: String = ""
+    private var currentBranchPlanKey: String = ""
 
     init {
         border = JBUI.Borders.empty(4)
@@ -91,6 +98,11 @@ class AutomationPanel(
                     font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
                 })
                 add(suiteCombo)
+                add(JBLabel("BRANCH").apply {
+                    foreground = StatusColors.SECONDARY_TEXT
+                    font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
+                })
+                add(branchCombo)
                 add(statusLabel)
             }
 
@@ -143,6 +155,13 @@ class AutomationPanel(
             onSuiteSelected(item.planKey)
         }
 
+        // Branch selection listener
+        branchCombo.addActionListener {
+            if (suppressBranchListener) return@addActionListener
+            val item = branchCombo.selectedItem as? BranchComboItem ?: return@addActionListener
+            onBranchSelected(item)
+        }
+
         // Wire queue/trigger callbacks
         queueStatusPanel.onCancel = { onCancel() }
         queueStatusPanel.onQueue = { onQueueRun() }
@@ -152,6 +171,9 @@ class AutomationPanel(
         Disposer.register(this, suiteConfigPanel)
         Disposer.register(this, queueStatusPanel)
         Disposer.register(this, monitorPanel)
+
+        // Subscribe to BuildLogReady events from the Build tab
+        subscribeToBuildEvents()
 
         // Auto-select first suite
         if (suiteCombo.itemCount > 0) {
@@ -173,14 +195,55 @@ class AutomationPanel(
 
     private fun onSuiteSelected(planKey: String) {
         currentSuitePlanKey = planKey
-        statusLabel.text = "Loading..."
+        currentBranchPlanKey = ""
+        statusLabel.text = "Loading branches..."
         statusLabel.foreground = StatusColors.INFO
         diagnosticPanel.isVisible = false
         log.info("[Automation:UI] Suite selected: $planKey")
 
         scope.launch {
-            // Step 1: Load baseline with diagnostics
-            val baselineResult = tagBuilderService.loadBaselineWithDiagnostics(planKey)
+            // Step 1: Fetch branches for this suite plan
+            val branchesResult = bambooService.getPlanBranches(planKey)
+            val branches = if (!branchesResult.isError) branchesResult.data else emptyList()
+            log.info("[Automation:UI] Found ${branches.size} branches for $planKey")
+
+            invokeLater {
+                suppressBranchListener = true
+                branchCombo.removeAllItems()
+
+                // Add the master plan as first option
+                branchCombo.addItem(BranchComboItem(planKey, "master"))
+
+                for (branch in branches.filter { it.enabled }) {
+                    branchCombo.addItem(BranchComboItem(branch.key, branch.name))
+                }
+
+                // Default to develop if available, otherwise master
+                val developIndex = (0 until branchCombo.itemCount).firstOrNull { i ->
+                    val item = branchCombo.getItemAt(i)
+                    item.branchName.equals("develop", ignoreCase = true)
+                }
+                branchCombo.selectedIndex = developIndex ?: 0
+                suppressBranchListener = false
+
+                val selected = branchCombo.selectedItem as? BranchComboItem
+                if (selected != null) {
+                    onBranchSelected(selected)
+                }
+            }
+        }
+    }
+
+    private fun onBranchSelected(branch: BranchComboItem) {
+        currentBranchPlanKey = branch.branchPlanKey
+        statusLabel.text = "Loading..."
+        statusLabel.foreground = StatusColors.INFO
+        diagnosticPanel.isVisible = false
+        log.info("[Automation:UI] Branch selected: ${branch.branchName} (key=${branch.branchPlanKey})")
+
+        scope.launch {
+            // Step 1: Load baseline with the resolved branch plan key
+            val baselineResult = tagBuilderService.loadBaselineWithDiagnostics(currentBranchPlanKey)
             var tags = baselineResult.tags
             log.info("[Automation:UI] Baseline result: ${baselineResult.diagnostics.buildsQueried} builds queried, " +
                 "${baselineResult.diagnostics.buildsWithDockerTags} with tags, selected=${baselineResult.selectedBuild?.buildNumber}")
@@ -193,7 +256,7 @@ class AutomationPanel(
                 val dockerTagKey = resolveDockerTagKey()
                 tags = tagBuilderService.replaceCurrentRepoTag(tags, CurrentRepoContext(
                     serviceName = dockerTagKey,
-                    branchName = "", // not needed for replacement
+                    branchName = "",
                     featureBranchTag = tagDetection.tag,
                     detectedFrom = DetectionSource.SETTINGS_MAPPING
                 ))
@@ -205,10 +268,10 @@ class AutomationPanel(
                 tags = driftDetectorService.enrichWithLatestReleaseTags(tags)
             }
 
-            // Step 5: Load plan variables
-            val varsResult = bambooService.getPlanVariables(planKey)
+            // Step 5: Load plan variables for the suite (master plan key)
+            val varsResult = bambooService.getPlanVariables(currentSuitePlanKey)
 
-            // Step 5: Update UI on EDT
+            // Step 6: Update UI on EDT
             invokeLater {
                 tagStagingPanel.updateTags(tags)
 
@@ -216,7 +279,7 @@ class AutomationPanel(
                     val varKeys = varsResult.data.map { it.name }
                     val varValues = varsResult.data.associate { it.name to it.value }
                     suiteConfigPanel.setAvailableVariables(varKeys)
-                    suiteConfigPanel.loadSuiteVariables(planKey)
+                    suiteConfigPanel.loadSuiteVariables(currentSuitePlanKey)
                     suiteConfigPanel.setVariableValues(varValues)
                 }
 
@@ -340,6 +403,85 @@ class AutomationPanel(
         diagnosticPanel.revalidate()
     }
 
+    private fun subscribeToBuildEvents() {
+        scope.launch {
+            val eventBus = project.getService(EventBus::class.java)
+            eventBus.events.collect { event ->
+                if (event is WorkflowEvent.BuildLogReady) {
+                    onBuildLogReady(event)
+                }
+            }
+        }
+    }
+
+    private fun onBuildLogReady(event: WorkflowEvent.BuildLogReady) {
+        if (currentSuitePlanKey.isBlank()) return
+
+        // Only process events matching the configured service CI plan key
+        val ciPlanKey = resolveServiceCiPlanKey()
+        if (ciPlanKey.isBlank() || !event.planKey.equals(ciPlanKey, ignoreCase = true)) {
+            log.info("[Automation:UI] Ignoring BuildLogReady for ${event.planKey} (configured CI plan: $ciPlanKey)")
+            return
+        }
+
+        log.info("[Automation:UI] BuildLogReady received: ${event.resultKey}, status=${event.status}")
+
+        val tagDetection = when (event.status) {
+            WorkflowEvent.BuildEventStatus.FAILED ->
+                TagDetectionResult.buildFailed(event.planKey, event.buildNumber)
+            WorkflowEvent.BuildEventStatus.SUCCESS -> {
+                if (event.logText.isEmpty()) {
+                    TagDetectionResult.logFetchFailed(event.resultKey)
+                } else {
+                    val tag = tagBuilderService.extractDockerTagFromLog(event.logText)
+                    if (tag != null) {
+                        TagDetectionResult.success(tag, event.resultKey)
+                    } else {
+                        TagDetectionResult.noTagInLog(event.resultKey)
+                    }
+                }
+            }
+        }
+
+        log.info("[Automation:UI] Docker tag detection from event: detected=${tagDetection.detected}, tag=${tagDetection.tag}, reason=${tagDetection.reason}")
+
+        // Update the tag in the staging table if detected
+        if (tagDetection.detected && tagDetection.tag != null) {
+            val dockerTagKey = resolveDockerTagKey()
+            if (dockerTagKey.isNotBlank()) {
+                val currentTags = tagStagingPanel.getCurrentTags()
+                val updatedTags = tagBuilderService.replaceCurrentRepoTag(currentTags, CurrentRepoContext(
+                    serviceName = dockerTagKey,
+                    branchName = "",
+                    featureBranchTag = tagDetection.tag,
+                    detectedFrom = DetectionSource.SETTINGS_MAPPING
+                ))
+                invokeLater { tagStagingPanel.updateTags(updatedTags) }
+            }
+        }
+
+        // Update diagnostic banner on EDT
+        invokeLater {
+            updateDockerTagBanner(tagDetection)
+        }
+    }
+
+    /** Updates only the docker tag portion of the diagnostic banner. */
+    private fun updateDockerTagBanner(tagDetection: TagDetectionResult) {
+        if (tagDetection.detected) {
+            dockerTagInfoLabel.text = "\u2713 Docker tag: ${tagDetection.tag} (from ${tagDetection.buildKey})"
+            dockerTagInfoLabel.foreground = StatusColors.SUCCESS
+            dockerTagInfoLabel.font = dockerTagInfoLabel.font.deriveFont(Font.PLAIN, JBUI.scale(11).toFloat())
+        } else {
+            // Use ERROR color for build failures, WARNING for other issues
+            val isBuildFailure = tagDetection.reason.startsWith("CI build failed")
+            dockerTagInfoLabel.text = "${if (isBuildFailure) "\u2717" else "\u26A0"} ${tagDetection.reason}"
+            dockerTagInfoLabel.foreground = if (isBuildFailure) StatusColors.ERROR else StatusColors.WARNING
+        }
+        diagnosticPanel.isVisible = true
+        diagnosticPanel.revalidate()
+    }
+
     private fun onTriggerNow() {
         if (currentSuitePlanKey.isBlank()) return
 
@@ -406,4 +548,8 @@ class AutomationPanel(
 
 private data class SuiteComboItem(val planKey: String, val displayName: String) {
     override fun toString() = displayName.ifBlank { planKey }
+}
+
+private data class BranchComboItem(val branchPlanKey: String, val branchName: String) {
+    override fun toString() = branchName.ifBlank { branchPlanKey }
 }

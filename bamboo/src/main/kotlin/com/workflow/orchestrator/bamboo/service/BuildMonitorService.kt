@@ -89,6 +89,7 @@ class BuildMonitorService : Disposable {
 
     private var previousBuildNumber: Int? = null
     private var previousStatus: BuildStatus? = null
+    private var lastLogFetchedForBuild: Int? = null
     private var poller: SmartPoller? = null
 
     fun startPolling(planKey: String, branch: String, intervalMs: Long = 30_000) {
@@ -96,6 +97,7 @@ class BuildMonitorService : Disposable {
         stopPolling()
         previousBuildNumber = null
         previousStatus = null
+        lastLogFetchedForBuild = null
         poller = SmartPoller(
             name = "BuildMonitor",
             baseIntervalMs = intervalMs,
@@ -178,6 +180,41 @@ class BuildMonitorService : Disposable {
                 )
 
                 sendBuildNotification(planKey, dto.buildNumber, buildState.overallStatus)
+            }
+
+            // Fetch build log and emit BuildLogReady for terminal builds.
+            // Emitted on first poll too (unlike BuildFinished) so consumers like
+            // Automation tab get the current state when they subscribe.
+            if (isTerminal && dto.buildNumber != lastLogFetchedForBuild) {
+                lastLogFetchedForBuild = dto.buildNumber
+                val resultKey = "${planKey}-${dto.buildNumber}"
+                val eventStatus = when (buildState.overallStatus) {
+                    BuildStatus.SUCCESS -> WorkflowEvent.BuildEventStatus.SUCCESS
+                    else -> WorkflowEvent.BuildEventStatus.FAILED
+                }
+                val logText = try {
+                    when (val logResult = apiClient.getBuildLog(resultKey)) {
+                        is ApiResult.Success -> logResult.data
+                        is ApiResult.Error -> {
+                            log.warn("[Bamboo:Monitor] Failed to fetch log for $resultKey: ${logResult.message}")
+                            ""
+                        }
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    log.warn("[Bamboo:Monitor] Exception fetching log for $resultKey: ${e.message}")
+                    ""
+                }
+                eventBus.emit(
+                    WorkflowEvent.BuildLogReady(
+                        planKey = planKey,
+                        buildNumber = dto.buildNumber,
+                        resultKey = resultKey,
+                        status = eventStatus,
+                        logText = logText
+                    )
+                )
             }
 
             previousBuildNumber = dto.buildNumber

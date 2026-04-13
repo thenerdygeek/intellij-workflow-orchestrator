@@ -144,6 +144,14 @@ data class TagDetectionResult(
             detected = false, tag = null, buildKey = buildKey,
             reason = "Build $buildKey has no 'Unique Docker Tag' in log"
         )
+        fun buildFailed(planKey: String, buildNumber: Int) = TagDetectionResult(
+            detected = false, tag = null, buildKey = "$planKey-$buildNumber",
+            reason = "CI build failed ($planKey #$buildNumber)"
+        )
+        fun logFetchFailed(resultKey: String) = TagDetectionResult(
+            detected = false, tag = null, buildKey = resultKey,
+            reason = "Could not fetch build log for $resultKey"
+        )
         fun branchDetectionFailed() = TagDetectionResult(
             detected = false, tag = null, buildKey = null,
             reason = "Could not detect current git branch"
