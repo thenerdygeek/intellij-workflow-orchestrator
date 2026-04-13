@@ -15,6 +15,7 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -37,7 +38,7 @@ IntelliJ run configuration management — create, modify, delete, and list run/d
 Actions and their parameters:
 - get_run_configurations(type_filter?) → List configs (type_filter: application|spring_boot|junit|gradle|remote_debug)
 - create_run_config(name, type, main_class?, test_class?, test_method?, module?, env_vars?, vm_options?, program_args?, working_dir?, active_profiles?, port?) → Create config (type: application|spring_boot|junit|gradle|remote_debug; main_class required for application/spring_boot; test_class required for junit)
-- modify_run_config(name, env_vars?, vm_options?, program_args?, working_dir?, active_profiles?) → Modify existing config (at least one change required)
+- modify_run_config(name, env_vars?, replace_env_vars?, vm_options?, program_args?, working_dir?, active_profiles?) → Modify existing config (at least one change required; env_vars are MERGED with existing by default, set replace_env_vars=true to replace all)
 - delete_run_config(name) → Delete config (only [Agent]-prefixed configs)
 
 description optional: for approval dialog on create/modify/delete.
@@ -84,7 +85,11 @@ description optional: for approval dialog on create/modify/delete.
             ),
             "env_vars" to ParameterProperty(
                 type = "object",
-                description = "Environment variables as key-value pairs — for create_run_config, modify_run_config"
+                description = "Environment variables as key-value pairs — for create_run_config, modify_run_config. In modify_run_config, these are MERGED with existing env vars by default (use replace_env_vars=true for full replacement)"
+            ),
+            "replace_env_vars" to ParameterProperty(
+                type = "boolean",
+                description = "If true, replace ALL existing env vars instead of merging — for modify_run_config only (default: false)"
             ),
             "vm_options" to ParameterProperty(
                 type = "string",
@@ -520,6 +525,7 @@ description optional: for approval dialog on create/modify/delete.
         val envVars = params["env_vars"]?.jsonObject?.let { obj ->
             obj.entries.associate { (k, v) -> k to v.jsonPrimitive.content }
         }
+        val replaceEnvVars = params["replace_env_vars"]?.jsonPrimitive?.booleanOrNull ?: false
         val vmOptions = params["vm_options"]?.jsonPrimitive?.contentOrNull
         val programArgs = params["program_args"]?.jsonPrimitive?.contentOrNull
         val workingDir = params["working_dir"]?.jsonPrimitive?.contentOrNull
@@ -545,8 +551,9 @@ description optional: for approval dialog on create/modify/delete.
             val failures = mutableListOf<String>()
 
             envVars?.let {
-                modifyApplyEnvVars(config, it, failures)
-                changes.add("env_vars (${it.size} vars)")
+                modifyApplyEnvVars(config, it, replaceEnvVars, failures)
+                val mode = if (replaceEnvVars) "replaced" else "merged"
+                changes.add("env_vars (${it.size} vars, $mode)")
             }
             vmOptions?.let {
                 modifyApplyVmOptions(config, it, failures)
@@ -595,12 +602,41 @@ description optional: for approval dialog on create/modify/delete.
         }
     }
 
-    private fun modifyApplyEnvVars(config: RunConfiguration, envVars: Map<String, String>, failures: MutableList<String>) {
+    private fun modifyApplyEnvVars(
+        config: RunConfiguration, envVars: Map<String, String>,
+        replaceEnvVars: Boolean, failures: MutableList<String>
+    ) {
         if (config is ApplicationConfiguration) {
-            trySetProperty(failures, "env_vars") { config.envs = envVars }
+            trySetProperty(failures, "env_vars") {
+                val effectiveEnvs = if (replaceEnvVars) {
+                    envVars
+                } else {
+                    val merged = config.envs.toMutableMap()
+                    merged.putAll(envVars)
+                    merged
+                }
+                config.envs = effectiveEnvs
+            }
         } else {
-            trySetEnvsReflection(failures, "env_vars", config, envVars)
+            trySetProperty(failures, "env_vars") {
+                val effectiveEnvs = if (replaceEnvVars) {
+                    envVars
+                } else {
+                    val existing = getEnvsViaReflection(config)
+                    val merged = existing.toMutableMap()
+                    merged.putAll(envVars)
+                    merged
+                }
+                setEnvsViaReflection(config, effectiveEnvs)
+            }
         }
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun getEnvsViaReflection(config: RunConfiguration): Map<String, String> {
+        val method = config.javaClass.methods.find { it.name == "getEnvs" && it.parameterCount == 0 }
+            ?: return emptyMap()
+        return (method.invoke(config) as? Map<String, String>) ?: emptyMap()
     }
 
     private fun modifyApplyVmOptions(config: RunConfiguration, vmOptions: String, failures: MutableList<String>) {
