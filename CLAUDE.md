@@ -30,7 +30,7 @@ Plugin ID: `com.workflow.orchestrator.plugin` | Kotlin 2.1.10 | Gradle + Intelli
 | `:pullrequest` | PR list/detail dashboard, merge actions, Bitbucket PR management |
 | `:automation` | Docker tag staging, queue management, drift/conflict detection |
 | `:handover` | Jira closure, copyright fixes, AI pre-review, QA clipboard, time logging |
-| `:agent` | AI coding agent faithfully ported from Cline (VS Code) — ReAct loop (AgentLoop), 3-tier ToolRegistry (~22 core + ~48 deferred via `tool_search`, conditional integration loading), Cline-ported 11-section system prompt (SystemPrompt), 3-stage ContextManager (file read dedup + conversation truncation + LLM summarization), loop detection (3 soft/5 hard), 8 lifecycle hooks (HookManager), explicit completion via `attempt_completion`, plan mode with `plan_mode_respond`/`act_mode_respond` (user-controlled act switch), skill system (`use_skill` + InstructionLoader), session handoff (`new_task`), JSONL session persistence with checkpoint reversion (SessionStore), task progress (markdown checklist), cost tracking, diff view, sub-agent delegation (`agent` tool, 3 scopes: research/implement/review, parallel research up to 5 concurrent, configurable context budget), 8 bundled specialist agent personas + user-defined YAML agents via AgentConfigLoader, tool approval gate with diff preview, JCEF chat UI |
+| `:agent` | AI coding agent faithfully ported from Cline (VS Code) — ReAct loop (AgentLoop), 3-tier ToolRegistry (~22 core + ~48 deferred via `tool_search`, conditional integration loading), Cline-ported 11-section system prompt (SystemPrompt), 3-stage ContextManager (file read dedup + conversation truncation + LLM summarization), loop detection (3 soft/5 hard), 8 lifecycle hooks (HookManager), explicit completion via `attempt_completion`, plan mode with `plan_mode_respond` (user-controlled act switch), skill system (`use_skill` + InstructionLoader), session handoff (`new_task`), two-file JSON session persistence with streaming crash safety (MessageStateHandler), task progress (markdown checklist), cost tracking, diff view, sub-agent delegation (`agent` tool, 3 scopes: research/implement/review, parallel research up to 5 concurrent, configurable context budget), 8 bundled specialist agent personas + user-defined YAML agents via AgentConfigLoader, tool approval gate with diff preview, JCEF chat UI |
 
 **Dependency rule:** Feature modules depend ONLY on `:core`. Cross-module communication uses `EventBus` (`SharedFlow<WorkflowEvent>` in `:core`).
 
@@ -133,7 +133,7 @@ If any answer is NO, the AI agent cannot use this feature.
 Explore -> plan -> revise -> act flow ported from Cline. Two enforcement layers:
 
 1. **Schema filtering** (AgentService): write tools (`edit_file`, `create_file`, `run_command`, `revert_file`,
-   `kill_process`, `send_stdin`, `format_code`, `optimize_imports`, `refactor_rename`) + `act_mode_respond`
+   `kill_process`, `send_stdin`, `format_code`, `optimize_imports`, `refactor_rename`)
    removed from tool definitions in plan mode; `plan_mode_respond` removed in act mode
 2. **Execution guard** (AgentLoop): `WRITE_TOOLS` set blocked even if LLM hallucinates them past schema filtering
 
@@ -144,8 +144,8 @@ Explore -> plan -> revise -> act flow ported from Cline. Two enforcement layers:
   If `needsMoreExploration=true`, loop continues immediately. If `false`, loop suspends via `userInputChannel`
   waiting for user input (chat message, plan comments, or approve). User types freely to discuss/refine.
 - **Act switch:** Only the user can switch to act mode (click Approve). LLM CANNOT switch to act mode.
-- **Act flow:** After approval, `planModeActive` set to false, write tools re-enabled. LLM uses
-  `act_mode_respond` for progress updates (cannot be called consecutively — ported from Cline)
+- **Act flow:** After approval, `planModeActive` set to false, write tools re-enabled. LLM proceeds
+  with task execution using the full tool set.
 
 ## Threading
 
@@ -175,10 +175,11 @@ All agent data lives under `~/.workflow-orchestrator/{ProjectName-hash}/` (compu
 
 | Data | Path | Retention |
 |---|---|---|
-| Session metadata | `agent/sessions/{sessionId}.json` | Per-session |
-| Conversation history | `agent/sessions/{sessionId}/messages.jsonl` | Per-session |
-| Checkpoints | `agent/sessions/{sessionId}/checkpoints/{cpId}.jsonl` | Per-session |
-| Checkpoint metadata | `agent/sessions/{sessionId}/checkpoints/{cpId}.meta.json` | Per-session |
+| Global session index | `agent/sessions.json` | Persistent |
+| API conversation history | `agent/sessions/{sessionId}/api_conversation_history.json` | Per-session |
+| UI messages | `agent/sessions/{sessionId}/ui_messages.json` | Per-session |
+| Session lock | `agent/sessions/{sessionId}/.lock` | Per-session |
+| Checkpoints | `agent/sessions/{sessionId}/checkpoints/` | Per-session |
 | Core memory | `agent/core-memory.json` | Persistent |
 | Archival memory | `agent/archival/store.json` | Persistent (5000 cap) |
 | Legacy memory | `agent/memory/` | Persistent |
@@ -211,10 +212,11 @@ Key files: `tools/subagent/SubagentModels.kt` (data classes), `tools/subagent/Su
 (name generation), `tools/subagent/AgentConfigLoader.kt` (YAML loading + file watching),
 `tools/subagent/SubagentRunner.kt` (execution wrapper), `tools/builtin/SpawnAgentTool.kt` (orchestration).
 
-**Persistence pattern** (ported from Cline's `message-state.ts`): JSONL append after every tool execution
-for conversation history. Session metadata updated atomically after each checkpoint. Named checkpoints
-created after write operations (`edit_file`, `create_file`, etc.) for checkpoint reversion support.
-Atomic writes (write to .tmp then rename) for crash safety.
+**Persistence pattern** (ported from Cline's `message-state.ts` + `disk.ts`): Two-file JSON persistence
+(api_conversation_history.json + ui_messages.json) with per-change atomic rewrite under coroutine Mutex.
+Named checkpoints created after write operations (`edit_file`, `create_file`, etc.) for checkpoint
+reversion support. Atomic writes (write to .tmp then `Files.move(ATOMIC_MOVE)`) for crash safety.
+Streaming chunks persisted with `partial: true` flag, flipped on stream end.
 
 **Hook config:** `.agent-hooks.json` in project root (8 hook types: TaskStart, UserPromptSubmit,
 TaskResume, PreCompact, TaskCancel, PreToolUse, PostToolUse, TaskComplete).
@@ -230,7 +232,7 @@ Three-tier storage (Letta/MemGPT pattern) with event-driven triggers ported from
 **Storage (existing):**
 - **Tier 1 — Core Memory** (`core-memory.json`): Named blocks always injected as `<core_memory>` in system prompt.
 - **Tier 2 — Archival Memory** (`archival/store.json`): JSON store with tag-boosted keyword search.
-- **Tier 3 — Conversation Recall**: Keyword search across JSONL session transcripts.
+- **Tier 3 — Conversation Recall**: Keyword search across past session conversation history (api_conversation_history.json).
 
 **Triggers (event-driven, system-managed via `AutoMemoryManager`):**
 - **Session-end extraction**: After completed sessions, cheap LLM (Haiku) extracts insights → core + archival.
@@ -243,6 +245,9 @@ LLM memory tools (`core_memory_read/append/replace`, `archival_memory_insert/sea
 ## UX Constraints
 
 - ONE tool window "Workflow" (bottom-docked), 6 tabs: Sprint, PR, Build, Quality, Automation, Handover
+- Session history is integrated into the Agent chat webview as a `HistoryView` React component (not a separate tab).
+  Webview toggles between `viewMode: 'history'` (session cards, search, empty state) and `viewMode: 'chat'` (active session).
+  Bridge functions: `_loadSessionHistory` (K→JS), `_showSession`/`_deleteSession`/`_toggleFavorite`/`_startNewSession` (JS→K).
 - ONE status bar widget per service area
 - JB components only: JBList, JBTable, JBSplitter, JBColor, JBUI.Borders
 - SVG icons with light + dark variants; reuse `AllIcons.*` for standard concepts

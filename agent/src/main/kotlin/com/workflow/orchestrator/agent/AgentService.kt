@@ -293,9 +293,6 @@ class AgentService(private val project: Project) : Disposable {
             }
         }
 
-        // Use allToolNames/allParamNames so the XML parser recognises deferred tool
-        // tags (e.g. <git_show_commit>) even before they are activated via tool_search.
-        // registry.get() already resolves all tiers, so execution works regardless.
         val allToolNames = registry.allToolNames()
         val allParamNames = registry.allParamNames()
         log.info("[Agent] Creating brain with model: $modelId at $sgUrl (tools=${allToolNames.size}, params=${allParamNames.size})")
@@ -718,7 +715,6 @@ class AgentService(private val project: Project) : Disposable {
                 val fbCredentialStore = CredentialStore()
                 val fbTokenProvider = { fbCredentialStore.getToken(ServiceType.SOURCEGRAPH) }
                 val brainFactory: suspend (String, String?) -> LlmBrain = { modelId: String, reason: String? ->
-                    // All tool names so the XML parser recognises deferred tools too
                     val currentToolNames = registry.allToolNames()
                     val currentParamNames = registry.allParamNames()
                     val newBrain = OpenAiCompatBrain(

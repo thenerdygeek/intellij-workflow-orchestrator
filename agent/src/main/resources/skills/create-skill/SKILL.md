@@ -75,7 +75,7 @@ The agent has tools across 11 categories:
 - **SonarQube:** sonar (actions: issues, quality_gate, coverage, search_projects, analysis_tasks, etc.)
 - **Bitbucket:** bitbucket_pr (actions: create_pr, get_pr_diff, get_pr_changes, get_pr_commits, etc.), bitbucket_review, bitbucket_repo
 - **Memory:** core_memory_append, core_memory_replace, core_memory_read, archival_memory_insert, archival_memory_search, save_memory, conversation_search
-- **Planning & Communication:** enable_plan_mode, plan_mode_respond, act_mode_respond, ask_followup_question, attempt_completion, use_skill
+- **Planning & Communication:** enable_plan_mode, plan_mode_respond, ask_followup_question, attempt_completion, use_skill
 - **Database:** db_schema, db_query, db_list_profiles
 
 Select the 3-8 most relevant tools for the `preferred-tools` field. These are documentation for readers and the agent — not hard restrictions.

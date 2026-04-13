@@ -29,7 +29,7 @@ AgentController (UI entry point)
 ## Key Components
 
 - **SingleAgentSession** — Core ReAct loop. Budget enforcement, tool call processing, context reduction on API errors. Truncated tool call recovery — detects invalid JSON when finishReason=length, asks LLM to retry with smaller operation. No iteration limit — loop runs until task completion or context budget exhaustion (no nudging, no "hurry up" messages). Mid-loop cancellation support. Parallel read-only tool execution (via coroutineScope+async). Context overflow replay (compress + retry same request). Doom loop detection before each tool call. Streaming token estimate when usage is null.
-- **ConversationSession** — Long-lived session across user messages. Owns `EventSourcedContextBridge`, `PlanManager`, `QuestionManager`, `WorkingSet`, `RollbackManager`. Persisted to JSONL.
+- **ConversationSession** — Long-lived session across user messages. Owns `EventSourcedContextBridge`, `PlanManager`, `QuestionManager`, `WorkingSet`, `RollbackManager`. Persisted via two-file JSON (api_conversation_history.json + ui_messages.json) through `MessageStateHandler`.
 - **EventSourcedContextBridge** — The sole context management system. Owns `EventStore`, `CondenserPipeline`, `ConversationMemory`, all anchors (facts, skills, guardrails, mentions, plan, changeLedger), token tracking, and `ToolOutputStore`. Every mutation is recorded as a typed event in `EventStore`. Before each LLM call, `getMessagesViaCondenser()` runs the full `EventStore → View → CondenserPipeline → ConversationMemory → List<ChatMessage>` pipeline. Exposes `currentTokens`, `effectiveMaxInputTokens`, `updateTokensFromUsage()`, `updateReservedTokens()`, and all anchor slots.
 - **EventStore** — Append-only log of typed agent events (MessageAction, ToolAction, ToolResultObservation, SystemMessageAction, FactRecordedAction, PlanUpdatedAction, etc.). Persisted as JSONL under `{sessionDir}/events.jsonl`. Loaded and replayed on session resume. Single source of truth.
 - **View** — Immutable projection of all EventStore events at a point in time. Produced by `View.fromEvents(eventStore.all())`. Carries `events` (ordered list), `forgottenEventIds` (from condensation actions), and token estimates. Passed to the CondenserPipeline as the input for each condensation decision.
@@ -277,19 +277,49 @@ All paths:
 
 ## Conversation Persistence & Durable Execution
 
-- Messages: `~/.workflow-orchestrator/{proj}/agent/sessions/{sessionId}/messages.jsonl` (append-only)
-- Metadata: `{sessionId}/metadata.json`
-- Plan: `{sessionId}/plan.json`
-- Checkpoints: `{sessionId}/checkpoint.json` — saved after every iteration with: iteration, tokensUsed, editedFiles, hasPlan, lastActivity, persistedMessageCount
-- Traces: `{sessionId}/traces/trace.jsonl`
-- API Debug: `{sessionId}/api-debug/call-NNN-{request|response|error}.txt`
-- Global index: `GlobalSessionIndex` (app-level `PersistentStateComponent`)
+Faithful port of Cline's two-file session persistence (message-state.ts + disk.ts):
 
-**Durable execution flow:**
-1. After each ReAct iteration, `onCheckpoint` callback fires → `ConversationSession.saveCheckpoint()` persists messages (incremental JSONL append) + checkpoint state
-2. On IDE crash: session stays "active" in GlobalSessionIndex
-3. On next startup: `AgentStartupActivity` detects "active" sessions, marks as "interrupted", shows notification with "Resume Session" action
-4. On resume: `ConversationSession.load()` replays JSONL messages, loads checkpoint, injects `<session_resumed>` context (edited files, iteration count, plan status) so the agent can orient and continue
+**Per-session files:**
+```
+~/.workflow-orchestrator/{proj}/agent/
+├── sessions.json                          # List<HistoryItem> global index
+└── sessions/
+    └── {sessionId}/
+        ├── api_conversation_history.json  # List<ApiMessage> — what goes to the LLM
+        ├── ui_messages.json               # List<UiMessage> — what the chat UI shows
+        ├── .lock                          # Per-session FileLock (prevents dual-instance)
+        ├── plan.json                      # Plan state (if active)
+        └── checkpoints/                   # Named checkpoints after write operations
+```
+
+**Save cadence:** Per-change under `kotlinx.coroutines.sync.Mutex` (ports Cline's p-mutex). Every `addToClineMessages`, `updateClineMessage`, `addToApiConversationHistory` atomically rewrites the file via write-then-rename. No timer, no batching.
+
+**Key classes:**
+- `MessageStateHandler` — owns both in-memory arrays + mutex + save logic
+- `AtomicFileWriter` — write to temp then `Files.move(ATOMIC_MOVE)`
+- `SessionLock` — `java.nio.channels.FileLock` on `.lock` file
+- `ResumeHelper` — trim logic + taskResumption preamble builder
+- `SessionMigrator` — converts old JSONL sessions on startup (idempotent)
+
+**Streaming persistence:** Every LLM chunk persists with `partial: true`. On stream end, flipped to `partial: false`. On abort: synthetic assistant turn with `[Response interrupted by user]` marker. Crash at any point leaves consistent state.
+
+**Resume flow (port of Cline's resumeTaskFromHistory):**
+1. Load `ui_messages.json` then trim trailing resume/cost-less messages
+2. Load `api_conversation_history.json` then pop trailing user message if interrupted mid-submission
+3. Acquire session lock
+4. Push full `ui_messages` to webview via `_loadSessionState` bridge (rehydrates every bubble)
+5. Build `[TASK RESUMPTION]` preamble with time-ago and optional user text
+6. Rebuild ContextManager with lossless `ApiMessage.toChatMessage()` conversion
+7. Continue execution via `initiateTaskLoop(newUserContent)`
+
+**Mid-stream abort (port of Cline's abortStream):**
+- Flip last `partial` message to `partial=false`
+- Append synthetic assistant: `text + "\n\n[Response interrupted by user]"`
+- Never replay an in-flight tool call
+
+**UiMessage cross-link:** `conversationHistoryIndex = apiHistory.size - 1` set on every `addToClineMessages`. Maps each UI bubble to its corresponding API message for edit-from-here and checkpoint reversion.
+
+**Global index:** `sessions.json` (List<HistoryItem>) updated atomically under a separate `globalIndexMutex` on every state change. History panel reads this for the session list.
 
 ## Three-Tier Memory System
 
@@ -310,10 +340,10 @@ All paths:
 - No ML models — uses tag-boosted keyword matching (sub-millisecond for <5K entries)
 
 ### Tier 3: Conversation Recall (past session search)
-- Searches JSONL transcripts across all past sessions
+- Searches api_conversation_history.json across all past sessions
 - `conversation_search` tool for keyword search
 - Returns matching messages with session context
-- Read-only — sessions persisted by ConversationStore
+- Read-only — sessions persisted by MessageStateHandler
 
 ### Legacy: Markdown Memory
 - Location: `~/.workflow-orchestrator/{proj}/agent/memory/`

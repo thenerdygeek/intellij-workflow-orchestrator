@@ -452,6 +452,28 @@ class ToolRegistryTest {
         }
 
         @Test
+        fun `allToolNames cache invalidates on registration and activation`() {
+            registry.registerCore(FakeAgentTool("read_file"))
+            val before = registry.allToolNames()
+            assertEquals(1, before.size)
+
+            // registerDeferred invalidates cache
+            registry.registerDeferred(FakeAgentTool("jira"))
+            val afterDeferred = registry.allToolNames()
+            assertEquals(2, afterDeferred.size)
+
+            // activateDeferred invalidates cache
+            registry.activateDeferred("jira")
+            val afterActivate = registry.allToolNames()
+            assertEquals(2, afterActivate.size)
+
+            // resetActiveDeferred invalidates cache
+            registry.resetActiveDeferred()
+            val afterReset = registry.allToolNames()
+            assertEquals(2, afterReset.size)
+        }
+
+        @Test
         fun `allToolNames is consistent with get() resolution`() {
             // The XML parser uses allToolNames to recognise tags.
             // registry.get() resolves tools for execution.
