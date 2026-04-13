@@ -349,6 +349,20 @@ Do NOT use run_command when a dedicated IDE tool exists. IDE tools provide struc
 - Use refactor_rename instead of find-and-replace via run_command
 Use tool_search to discover tools by keyword if you're unsure which tool handles a task. Reserve run_command for tasks with no IDE equivalent (deploy, Docker, custom scripts, curl).
 
+# Output Management
+
+Several tools support output filtering parameters to prevent context pollution:
+- `grep_pattern`: Regex to filter output lines. Use when you only need specific information (e.g., grep_pattern="ERROR|WARN" on build output, grep_pattern="def test_" on file listing).
+- `output_file`: Save full output to disk, get a preview + file path. Use for large outputs you'll need to search later — then use read_file or search_code on the saved file.
+
+When to use filtering:
+- Build/test output: Use grep_pattern to extract failures, not the full log
+- Large search results: Use output_file then search_code on the saved file
+- API responses: Use grep_pattern for specific fields
+- Git logs: Use grep_pattern for relevant commits
+
+Prefer dedicated tools over raw commands: Use search_code instead of run_command with grep. Use glob_files instead of run_command with find.
+
 # Read Before Edit
 Do not propose changes to code you haven't read. If the task involves modifying a file, read it first. Understand existing code before suggesting modifications.
 
