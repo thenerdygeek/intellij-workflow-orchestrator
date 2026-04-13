@@ -26,8 +26,8 @@ class OpenAiCompatBrain(
     connectTimeoutSeconds: Long = 30,
     readTimeoutSeconds: Long = 180,  // Increased for NO_KEEPALIVE safety on large prompts
     httpClientOverride: OkHttpClient? = null,
-    override val toolNameSet: Set<String> = emptySet(),
-    override val paramNameSet: Set<String> = emptySet()
+    override var toolNameSet: Set<String> = emptySet(),
+    override var paramNameSet: Set<String> = emptySet()
 ) : LlmBrain {
 
     private val client = SourcegraphChatClient(

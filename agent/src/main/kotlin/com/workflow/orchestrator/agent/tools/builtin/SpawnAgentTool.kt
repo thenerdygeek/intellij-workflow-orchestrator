@@ -247,6 +247,13 @@ Tips:
         iterationOverride: Int
     ): ToolResult {
         val brain = brainProvider()
+        // Scope the brain's XML parser to the subagent's tools, not the parent's.
+        // Without this, the SourcegraphChatClient post-stream XML parser can't find
+        // tool calls for tools not in the parent's active set (e.g., deferred tools
+        // like file_structure), causing the response to be treated as text-only and
+        // the LLM to hallucinate instead of executing tools.
+        brain.toolNameSet = resolvedTools.keys
+        brain.paramNameSet = resolvedTools.values.flatMap { it.parameters.properties.keys }.toSet()
         val maxIter = (config.maxTurns ?: iterationOverride).coerceIn(MIN_ITERATIONS, MAX_ITERATIONS)
 
         val runner = SubagentRunner(
@@ -337,6 +344,9 @@ Tips:
             prompts.mapIndexed { idx, p ->
                 async {
                     val brain = brainProvider()
+                    // Scope brain's XML parser to subagent's tool set (same as executeSingle)
+                    brain.toolNameSet = resolvedTools.keys
+                    brain.paramNameSet = resolvedTools.values.flatMap { it.parameters.properties.keys }.toSet()
                     val runner = SubagentRunner(
                         brain = brain,
                         tools = resolvedTools,

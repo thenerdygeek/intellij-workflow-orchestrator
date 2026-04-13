@@ -43,6 +43,12 @@ declare global {
     _revertCheckpoint?: (checkpointId: string) => void;
     _cancelSteering?: (steeringId: string) => void;
     _retryLastTask?: () => void;
+    _reportInteractiveRender?: (json: string) => void;
+    _resumeViewedSession?: () => void;
+    _loadSessionState?: (uiMessagesJson: string) => void;
+    _bulkDeleteSessions?: (sessionIdsJson: string) => void;
+    _exportSession?: (sessionId: string) => void;
+    _exportAllSessions?: () => void;
     __mock?: Record<string, (...args: any[]) => any>;
     // Debug log panel — pushed from Kotlin via AgentCefPanel.updateDebugLogVisibility()
     setDebugLogVisible?: (visible: boolean) => void;

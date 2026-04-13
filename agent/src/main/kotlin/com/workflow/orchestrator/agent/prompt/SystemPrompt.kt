@@ -219,7 +219,7 @@ You run inside IntelliJ IDEA with access to tools across several categories. Cor
 - Execution: run_command (shell), think (reasoning scratchpad)
 - Code intelligence: find_definition, find_references, diagnostics
 - VCS: git_status, git_diff, git_log
-- Communication: ask_followup_question, attempt_completion, act_mode_respond, plan_mode_respond
+- Communication: ask_followup_question, attempt_completion, plan_mode_respond
 - Memory: core_memory_read/append/replace, archival_memory_insert/search, conversation_search
 - Skills: use_skill, tool_search
 - Delegation: agent (sub-agent with isolated context)

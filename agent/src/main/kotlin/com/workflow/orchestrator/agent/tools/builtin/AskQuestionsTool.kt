@@ -9,6 +9,7 @@ import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.util.JsEscape
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -83,6 +84,17 @@ class AskQuestionsTool : AgentTool {
     companion object {
         private const val QUESTION_TIMEOUT_MS = 5 * 60 * 1000L // 5 minutes
 
+        /**
+         * Grace period after the callback fires before we assume the UI failed to render.
+         * If the deferred isn't resolved by the user AND the UI render confirmation hasn't
+         * arrived within this window, we log a warning. The tool still waits for the full
+         * [QUESTION_TIMEOUT_MS], but this shorter check enables early diagnostics.
+         *
+         * Set to 10s — enough for EDT scheduling + JCEF round-trip, short enough to detect
+         * a stuck UI before the user gives up.
+         */
+        private const val UI_RENDER_GRACE_MS = 10_000L
+
         /** Callback to show the question wizard in the dashboard UI (wizard mode). */
         var showQuestionsCallback: ((String) -> Unit)? = null
 
@@ -93,6 +105,14 @@ class AskQuestionsTool : AgentTool {
         /** Deferred result that blocks tool execution until the user answers. */
         @Volatile
         var pendingQuestions: CompletableDeferred<String>? = null
+
+        /**
+         * Set to true by the UI layer (JCEF bridge round-trip) when the question
+         * has been successfully rendered. Checked by [executeSimple]/[executeWizard]
+         * after [UI_RENDER_GRACE_MS] to detect silent UI failures.
+         */
+        @Volatile
+        var uiRenderConfirmed: Boolean = false
 
         /** Resolve the pending question(s) with the user's answer. */
         fun resolveQuestions(answersJson: String) {
@@ -107,7 +127,10 @@ class AskQuestionsTool : AgentTool {
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val simpleQuestion = params["question"]?.jsonPrimitive?.content
-        val questionsJson = params["questions"]?.jsonPrimitive?.content
+        val questionsJson = params["questions"]?.let { element ->
+            // Accept both string-encoded JSON and raw JSON arrays
+            try { element.jsonPrimitive.content } catch (_: Exception) { element.toString() }
+        }
 
         // Must provide either 'question' (simple) or 'questions' (wizard)
         if (simpleQuestion == null && questionsJson == null) {
@@ -119,7 +142,11 @@ class AskQuestionsTool : AgentTool {
 
         // ── Simple mode: single question, user types answer ──
         if (simpleQuestion != null) {
-            return executeSimple(simpleQuestion, params["options"]?.jsonPrimitive?.content)
+            // Extract options — accept both string-encoded JSON and raw JSON arrays
+            val optionsStr = params["options"]?.let { element ->
+                try { element.jsonPrimitive.content } catch (_: Exception) { element.toString() }
+            }
+            return executeSimple(simpleQuestion, optionsStr)
         }
 
         // ── Wizard mode: structured multi-question wizard ──
@@ -133,15 +160,20 @@ class AskQuestionsTool : AgentTool {
     private suspend fun executeSimple(question: String, optionsJson: String?): ToolResult {
         val deferred = CompletableDeferred<String>()
         pendingQuestions = deferred
+        uiRenderConfirmed = false
+
+        val (options, parseWarning) = parseSimpleOptions(optionsJson)
 
         // Show via simple question callback (chat-based) or wizard fallback
         val simpleCallback = showSimpleQuestionCallback
         val wizardCallback = showQuestionsCallback
         if (simpleCallback != null) {
-            simpleCallback(question, optionsJson)
+            val reserializedOptions = if (options.isNotEmpty()) {
+                "[${options.joinToString(",") { JsEscape.toJsonString(it) }}]"
+            } else null
+            simpleCallback(question, reserializedOptions)
         } else if (wizardCallback != null) {
             // Fallback: wrap as a single-question wizard
-            val options = parseSimpleOptions(optionsJson)
             val wrappedJson = buildString {
                 append("""{"questions":[{"id":"q1","question":""")
                 append(JsEscape.toJsonString(question))
@@ -164,7 +196,22 @@ class AskQuestionsTool : AgentTool {
             )
         }
 
+        // UI render watchdog: if the JCEF bridge hasn't confirmed the render within
+        // UI_RENDER_GRACE_MS, assume the UI is stuck and auto-resolve the deferred
+        // so the agent loop doesn't block for 5 minutes. Uses a daemon timer thread
+        // to avoid structured concurrency issues (we can't launch a coroutine that
+        // outlives the withTimeoutOrNull scope without completing it).
+        val watchdogTimer = java.util.Timer("ask-question-watchdog", true)
+        watchdogTimer.schedule(object : java.util.TimerTask() {
+            override fun run() {
+                if (!deferred.isCompleted && !uiRenderConfirmed) {
+                    deferred.complete("[UI_RENDER_FAILED]")
+                }
+            }
+        }, UI_RENDER_GRACE_MS)
+
         val answer = withTimeoutOrNull(QUESTION_TIMEOUT_MS) { deferred.await() }
+        watchdogTimer.cancel()
         pendingQuestions = null
 
         if (answer == null) {
@@ -183,8 +230,23 @@ class AskQuestionsTool : AgentTool {
             )
         }
 
+        if (answer == "[UI_RENDER_FAILED]") {
+            return ToolResult(
+                "Error: The question UI failed to render (JCEF bridge timeout). " +
+                    "The question was: \"$question\". " +
+                    "Ask the question as plain text in your response instead of using this tool.",
+                "ask_followup_question: UI render failed",
+                ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
+            )
+        }
+
         // Match Cline's response format: <answer>text</answer>
-        val content = "<answer>\n$answer\n</answer>"
+        val content = buildString {
+            if (parseWarning != null) appendLine(parseWarning).appendLine()
+            appendLine("<answer>")
+            appendLine(answer)
+            appendLine("</answer>")
+        }
         return ToolResult(
             content = content,
             summary = "User answered: ${answer.take(200)}",
@@ -217,9 +279,21 @@ class AskQuestionsTool : AgentTool {
 
         val deferred = CompletableDeferred<String>()
         pendingQuestions = deferred
+        uiRenderConfirmed = false
         callback(wizardJson)
 
+        // UI render watchdog (same pattern as executeSimple)
+        val watchdogTimer = java.util.Timer("ask-question-wizard-watchdog", true)
+        watchdogTimer.schedule(object : java.util.TimerTask() {
+            override fun run() {
+                if (!deferred.isCompleted && !uiRenderConfirmed) {
+                    deferred.complete("[UI_RENDER_FAILED]")
+                }
+            }
+        }, UI_RENDER_GRACE_MS)
+
         val answersJson = withTimeoutOrNull(QUESTION_TIMEOUT_MS) { deferred.await() }
+        watchdogTimer.cancel()
         pendingQuestions = null
 
         if (answersJson == null) {
@@ -235,6 +309,15 @@ class AskQuestionsTool : AgentTool {
                 "User cancelled the question wizard.",
                 "ask_followup_question: wizard cancelled",
                 ToolResult.ERROR_TOKEN_ESTIMATE, isError = false
+            )
+        }
+
+        if (answersJson == "[UI_RENDER_FAILED]") {
+            return ToolResult(
+                "Error: The question wizard UI failed to render (JCEF bridge timeout). " +
+                    "Ask the questions as plain text in your response instead of using this tool.",
+                "ask_followup_question: wizard UI render failed",
+                ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
             )
         }
 
@@ -279,12 +362,19 @@ class AskQuestionsTool : AgentTool {
         return null
     }
 
-    private fun parseSimpleOptions(optionsJson: String?): List<String> {
-        if (optionsJson.isNullOrBlank()) return emptyList()
+    /**
+     * Parse simple options from JSON string. Returns null on parse failure
+     * so the caller can report the error to the LLM instead of silently
+     * falling back to no-options mode.
+     */
+    private fun parseSimpleOptions(optionsJson: String?): Pair<List<String>, String?> {
+        if (optionsJson.isNullOrBlank()) return emptyList<String>() to null
         return try {
-            json.decodeFromString<List<String>>(optionsJson)
-        } catch (_: Exception) {
-            emptyList()
+            json.decodeFromString<List<String>>(optionsJson) to null
+        } catch (e: Exception) {
+            emptyList<String>() to "Warning: could not parse 'options' as JSON string array: ${e.message}. " +
+                "Expected format: [\"Option A\", \"Option B\", \"Option C\"]. " +
+                "Options were ignored — showing question as plain text."
         }
     }
 

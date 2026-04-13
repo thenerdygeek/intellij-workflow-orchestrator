@@ -1,18 +1,18 @@
 package com.workflow.orchestrator.agent.memory
 
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonPrimitive
+import com.workflow.orchestrator.agent.session.ApiMessage
+import com.workflow.orchestrator.agent.session.ContentBlock
+import com.workflow.orchestrator.agent.session.MessageStateHandler
 import java.io.File
 
 /**
  * Tier 3: Conversation Recall — search past session transcripts.
  *
  * Port of Letta's conversation_search (core_tool_executor.py:81-305)
- * simplified: keyword search over existing JSONL session files.
+ * simplified: keyword search over api_conversation_history.json files.
  *
- * Read-only — sessions are persisted by SessionStore.
- * Searches across all messages.jsonl files in the sessions directory.
+ * Read-only — sessions are persisted by MessageStateHandler.
+ * Searches across all api_conversation_history.json files in the sessions directory.
  *
  * Letta uses hybrid embedding + FTS search. We use keyword matching
  * (sufficient for <100 sessions, sub-second performance).
@@ -20,7 +20,6 @@ import java.io.File
 class ConversationRecall(private val sessionsDir: File) {
 
     companion object {
-        private val json = Json { ignoreUnknownKeys = true }
         private const val DEFAULT_LIMIT = 20
         private const val MAX_CONTENT_LENGTH = 500
 
@@ -51,51 +50,45 @@ class ConversationRecall(private val sessionsDir: File) {
 
         if (!sessionsDir.exists() || !sessionsDir.isDirectory) return emptyList()
 
-        // Scan all session directories for messages.jsonl files
+        // Scan all session directories for api_conversation_history.json files
         val sessionDirs = sessionsDir.listFiles { f -> f.isDirectory }?.sortedByDescending { it.name }
             ?: return emptyList()
 
         for (sessionDir in sessionDirs) {
-            val messagesFile = File(sessionDir, "messages.jsonl")
-            if (!messagesFile.exists()) continue
+            val history: List<ApiMessage> = MessageStateHandler.loadApiHistory(sessionDir)
+            if (history.isEmpty()) continue
 
             val sessionId = sessionDir.name
 
-            try {
-                messagesFile.forEachLine { line ->
-                    if (results.size >= limit) return@forEachLine
-                    if (line.isBlank()) return@forEachLine
+            for (msg in history) {
+                if (results.size >= limit) break
 
-                    try {
-                        val msg = json.decodeFromString<JsonObject>(line)
-                        val role = msg["role"]?.jsonPrimitive?.content ?: return@forEachLine
-                        val content = msg["content"]?.jsonPrimitive?.content ?: return@forEachLine
+                val role = msg.role.name.lowercase()
 
-                        // Role filter (Letta: filter by assistant/user/tool)
-                        if (roles != null && role !in roles) return@forEachLine
+                // Role filter (Letta: filter by assistant/user/tool)
+                if (roles != null && role !in roles) continue
 
-                        // Skip tool messages (Letta: removes ALL tool messages to prevent recursion)
-                        if (role == "tool") return@forEachLine
+                // Skip tool results (Letta: removes ALL tool messages to prevent recursion)
+                if (msg.content.any { it is ContentBlock.ToolResult }) continue
 
-                        // Keyword match — OR logic with frequency-based scoring
-                        // (unified with ArchivalMemory via MemoryKeywordSearch helper)
-                        val score = keywords.sumOf { kw ->
-                            MemoryKeywordSearch.countOccurrences(content, kw)
-                        }
-                        if (score == 0) return@forEachLine
+                // Extract text content from content blocks
+                val textContent = msg.content.filterIsInstance<ContentBlock.Text>()
+                    .joinToString("\n") { it.text }
+                    .takeIf { it.isNotBlank() } ?: continue
 
-                        results.add(RecallResult(
-                            sessionId = sessionId,
-                            role = role,
-                            content = content.take(MAX_CONTENT_LENGTH),
-                            score = score
-                        ))
-                    } catch (e: Exception) {
-                        // Skip malformed lines
-                    }
+                // Keyword match — OR logic with frequency-based scoring
+                // (unified with ArchivalMemory via MemoryKeywordSearch helper)
+                val score = keywords.sumOf { kw ->
+                    MemoryKeywordSearch.countOccurrences(textContent, kw)
                 }
-            } catch (e: Exception) {
-                // Skip unreadable session files
+                if (score == 0) continue
+
+                results.add(RecallResult(
+                    sessionId = sessionId,
+                    role = role,
+                    content = textContent.take(MAX_CONTENT_LENGTH),
+                    score = score
+                ))
             }
 
             if (results.size >= limit) break

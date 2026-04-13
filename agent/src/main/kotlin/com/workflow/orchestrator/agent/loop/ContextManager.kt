@@ -41,7 +41,18 @@ import com.workflow.orchestrator.core.model.ApiResult
  */
 class ContextManager(
     val maxInputTokens: Int = 150_000,
-    private val compactionThreshold: Double = 0.85
+    private val compactionThreshold: Double = 0.85,
+    /**
+     * Callback invoked after compaction modifies the conversation history.
+     *
+     * Ported from Cline's conversationHistoryDeletedRange pattern in message-state.ts:
+     * when context truncation or summarization removes messages, this callback persists
+     * the modified history via MessageStateHandler.overwriteApiConversationHistory().
+     *
+     * @param messages the current conversation messages after compaction
+     * @param deletedRange the (startIdx, endIdx) range that was removed
+     */
+    var onHistoryOverwrite: (suspend (List<ChatMessage>, deletedRange: Pair<Int, Int>) -> Unit)? = null
 ) {
     private val LOG = Logger.getInstance(ContextManager::class.java)
 
@@ -495,13 +506,20 @@ class ContextManager(
             val removedCount = countBeforeTruncation - messageCount()
             if (removedCount > 0) {
                 LOG.info("[Context] Truncated: removed $removedCount messages (strategy: $keep)")
+                // Notify persistence layer so truncated history is persisted (Cline's conversationHistoryDeletedRange pattern)
+                onHistoryOverwrite?.invoke(messages.toList(), Pair(2, 2 + removedCount - 1))
             }
         }
 
         // Stage 3: LLM summarization as optional fallback (our addition)
         if (utilizationPercent() > 95.0) {
+            val countBeforeSummarization = messageCount()
             llmSummarize(brain)
             invalidateTokens()
+            val summarizedCount = countBeforeSummarization - messageCount()
+            if (summarizedCount > 0) {
+                onHistoryOverwrite?.invoke(messages.toList(), Pair(0, summarizedCount - 1))
+            }
         }
 
         // After compaction: re-inject active skill and plan path so LLM retains them
@@ -668,10 +686,10 @@ class ContextManager(
      * Port of Cline's setApiConversationHistory(newHistory) from message-state.ts:
      * replaces the in-memory message list and rebuilds derived indices.
      *
-     * Used during session resume: SessionStore loads the JSONL file, then this
+     * Used during session resume: MessageStateHandler loads persisted history, then this
      * method restores the ContextManager to the checkpointed state.
      *
-     * @param savedMessages messages loaded from JSONL checkpoint
+     * @param savedMessages messages loaded from checkpoint
      */
     fun restoreMessages(savedMessages: List<ChatMessage>) {
         messages.clear()

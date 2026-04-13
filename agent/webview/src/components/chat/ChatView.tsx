@@ -1,16 +1,19 @@
-import { memo, useCallback, useRef, useEffect, useState } from 'react';
+import { memo, useCallback, useRef, useEffect, useState, useMemo } from 'react';
 import { useChatStore } from '@/stores/chatStore';
-import { AgentMessage } from './AgentMessage';
+import { AgentMessage, AnsweredQuestionsCard } from './AgentMessage';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ToolCallChain } from '@/components/agent/ToolCallChain';
 import { SubAgentView } from '@/components/agent/SubAgentView';
 import { ArtifactRenderer } from '@/components/rich/ArtifactRenderer';
+import { ThinkingView } from '@/components/agent/ThinkingView';
+import { CompletionCard } from '@/components/agent/CompletionCard';
 import { PlanSummaryCard } from '@/components/agent/PlanSummaryCard';
 import { PlanProgressWidget } from '@/components/agent/PlanProgressWidget';
 import { QuestionView } from '@/components/agent/QuestionView';
 import { ApprovalView } from '@/components/agent/ApprovalView';
 import { ProcessInputView } from '@/components/agent/ProcessInputView';
 import { RollbackCard } from '@/components/agent/RollbackCard';
+import type { UiMessage, ToolCall, Plan, PlanStepStatus, SubAgentState } from '@/bridge/types';
 import {
   ChatContainerRoot,
   ChatContainerContent,
@@ -312,7 +315,9 @@ export const ChatView = memo(function ChatView() {
   const resolveProcessInput = useChatStore(s => s.resolveProcessInput);
   const retryMessage = useChatStore(s => s.retryMessage);
   const rollbackEvents = useChatStore(s => s.rollbackEvents);
+  const activeSubAgents = useChatStore(s => s.activeSubAgents);
   const queuedSteeringMessages = useChatStore(s => s.queuedSteeringMessages);
+  const resumeSessionId = useChatStore(s => s.resumeSessionId);
 
   const approvalRef = useRef<HTMLDivElement>(null);
   const lastAgentMsgRef = useRef<HTMLDivElement>(null);
@@ -361,6 +366,33 @@ export const ChatView = memo(function ChatView() {
   // Show working indicator for the entire ReAct loop — from user message until final response
   const showWorkingIndicator = busy;
 
+  // Group consecutive TOOL messages into tool chains for compact rendering
+  type RenderItem = { kind: 'message'; msg: UiMessage; idx: number }
+                  | { kind: 'toolGroup'; tools: UiMessage[]; idx: number };
+
+  const renderItems: RenderItem[] = useMemo(() => {
+    const result: RenderItem[] = [];
+    let toolBuffer: UiMessage[] = [];
+    let toolStartIdx = 0;
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i]!;
+      if (msg.say === 'TOOL' && msg.toolCallData) {
+        if (toolBuffer.length === 0) toolStartIdx = i;
+        toolBuffer.push(msg);
+      } else {
+        if (toolBuffer.length > 0) {
+          result.push({ kind: 'toolGroup', tools: toolBuffer, idx: toolStartIdx });
+          toolBuffer = [];
+        }
+        result.push({ kind: 'message', msg, idx: i });
+      }
+    }
+    if (toolBuffer.length > 0) {
+      result.push({ kind: 'toolGroup', tools: toolBuffer, idx: toolStartIdx });
+    }
+    return result;
+  }, [messages]);
+
   return (
     <ChatContainerRoot
       className="relative flex-1 min-h-0"
@@ -368,47 +400,193 @@ export const ChatView = memo(function ChatView() {
       aria-label="Agent chat messages"
     >
       <ChatContainerContent className="px-4 py-3 pb-4 gap-3">
-        {/* Messages — tool chains are embedded as system messages with toolChain field */}
-        {messages.map((msg, i) => {
-          // Render Sub-Agents
-          if (msg.subAgent) {
+        {/* Messages — dispatch on say/ask to the appropriate component */}
+        {renderItems.map((item) => {
+          if (item.kind === 'toolGroup') {
+            // Consecutive TOOL messages grouped into a single ToolCallChain
+            const toolCalls: ToolCall[] = item.tools.map(t => ({
+              id: t.toolCallData!.toolCallId,
+              name: t.toolCallData!.toolName,
+              args: t.toolCallData!.args ?? '',
+              status: (t.toolCallData!.status as any) ?? 'COMPLETED',
+              result: t.toolCallData!.result,
+              output: t.toolCallData!.output,
+              durationMs: t.toolCallData!.durationMs,
+              diff: t.toolCallData!.diff,
+            }));
             return (
-              <ErrorBoundary key={msg.id}>
-                 <SubAgentView subAgent={msg.subAgent} />
+              <ErrorBoundary key={`toolgroup-${item.tools[0]!.ts}-${item.idx}`}>
+                <ToolCallChain toolCalls={toolCalls} />
               </ErrorBoundary>
             );
           }
 
-          // Render artifacts (system messages with artifact)
-          if (msg.artifact) {
+          const msg = item.msg;
+          const idx = item.idx;
+          const key = `msg-${msg.ts}-${idx}`;
+
+          // Sub-agent messages — use live state from activeSubAgents for running agents,
+          // fall back to flat UiMessage data for completed/resumed agents
+          if (msg.say === 'SUBAGENT_STARTED' || msg.say === 'SUBAGENT_PROGRESS' || msg.say === 'SUBAGENT_COMPLETED') {
+            if (!msg.subagentData) return null;
+            const liveState = activeSubAgents.get(msg.subagentData.agentId);
+            const subAgentState: SubAgentState = liveState ?? {
+              agentId: msg.subagentData.agentId,
+              label: msg.subagentData.description,
+              status: msg.subagentData.status as any,
+              iteration: msg.subagentData.iterations,
+              tokensUsed: 0,
+              messages: [],
+              activeToolChain: [],
+              summary: msg.subagentData.summary,
+              startedAt: msg.ts,
+            };
             return (
-              <ErrorBoundary key={msg.id}>
-                <ArtifactRenderer source={msg.artifact.source} title={msg.artifact.title} renderId={msg.artifact.renderId} />
+              <ErrorBoundary key={key}>
+                <SubAgentView subAgent={subAgentState} />
               </ErrorBoundary>
             );
           }
 
-          // Render completed tool chains (system messages with toolChain)
-          if (msg.toolChain) {
+          // Artifacts
+          if (msg.say === 'ARTIFACT_RESULT' && msg.text) {
             return (
-              <ErrorBoundary key={msg.id}>
-                <ToolCallChain toolCalls={msg.toolChain} />
+              <ErrorBoundary key={key}>
+                <ArtifactRenderer source={msg.text} title="Artifact" renderId={msg.artifactId} />
               </ErrorBoundary>
             );
           }
-          // Attach ref to the last agent message for scroll-to-top on stream end
-          const isLastAgent = msg.role === 'agent' && i === messages.length - 1;
-          const isStreamingMsg = activeStream?.messageId === msg.id;
-          return (
-            <ErrorBoundary key={msg.id}>
-              <div
-                ref={isLastAgent ? lastAgentMsgRef : undefined}
-                style={{ animationDelay: `${Math.min(i * 40, 200)}ms` }}
-              >
-                <AgentMessage message={msg} isStreaming={isStreamingMsg} />
+
+          // Reasoning / thinking
+          if (msg.say === 'REASONING') {
+            return (
+              <ErrorBoundary key={key}>
+                <ThinkingView content={msg.text ?? ''} isStreaming={false} />
+              </ErrorBoundary>
+            );
+          }
+
+          // Completion result
+          if (msg.ask === 'COMPLETION_RESULT') {
+            return (
+              <ErrorBoundary key={key}>
+                <CompletionCard result={msg.text ?? ''} />
+              </ErrorBoundary>
+            );
+          }
+
+          // Approval gate
+          if (msg.ask === 'APPROVAL_GATE' && msg.approvalData) {
+            const toolCalls: ToolCall[] = [{
+              id: msg.approvalData.toolName,
+              name: msg.approvalData.toolName,
+              args: msg.approvalData.toolInput,
+              status: msg.approvalData.status === 'APPROVED' ? 'COMPLETED'
+                    : msg.approvalData.status === 'REJECTED' ? 'ERROR'
+                    : 'PENDING',
+              diff: msg.approvalData.diffPreview,
+            }];
+            return (
+              <ErrorBoundary key={key}>
+                <ToolCallChain toolCalls={toolCalls} />
+              </ErrorBoundary>
+            );
+          }
+
+          // Completed question wizard
+          if (msg.ask === 'QUESTION_WIZARD' && msg.questionData?.status === 'COMPLETED') {
+            const questions = msg.questionData.questions.map((q, qi) => ({
+              id: String(qi),
+              text: q.text,
+              type: 'single-select' as const,
+              options: q.options.map(o => ({ label: o })),
+              answer: msg.questionData?.answers?.[qi],
+            }));
+            return (
+              <ErrorBoundary key={key}>
+                <AnsweredQuestionsCard questions={questions} />
+              </ErrorBoundary>
+            );
+          }
+
+          // Status-line messages
+          if (msg.say === 'ERROR' || msg.say === 'CHECKPOINT_CREATED' || msg.say === 'CONTEXT_COMPRESSED' ||
+              msg.say === 'MEMORY_SAVED' || msg.say === 'ROLLBACK_PERFORMED' || msg.say === 'STEERING_RECEIVED') {
+            return (
+              <div key={key} className="px-1 py-0.5 text-[11px]" style={{ color: 'var(--fg-muted, #888)' }}>
+                {msg.text}
               </div>
-            </ErrorBoundary>
-          );
+            );
+          }
+
+          // Resume markers — render as a subtle status line
+          if (msg.ask === 'RESUME_TASK' || msg.ask === 'RESUME_COMPLETED_TASK') {
+            return (
+              <div key={key} className="px-1 py-0.5 text-[11px]" style={{ color: 'var(--fg-muted, #888)' }}>
+                {msg.text || 'Session resumed'}
+              </div>
+            );
+          }
+
+          // Followup — agent asking a follow-up question
+          if (msg.ask === 'FOLLOWUP') {
+            return (
+              <ErrorBoundary key={key}>
+                <AgentMessage message={msg} />
+              </ErrorBoundary>
+            );
+          }
+
+          // Plan updates — render inline as a progress snapshot so they appear
+          // in chronological order on resume. The global plan widget at the
+          // bottom handles the live interactive approve/revise flow.
+          if (msg.say === 'PLAN_UPDATE' && msg.planData) {
+            const pd = msg.planData;
+            const inlinePlan: Plan = {
+              title: 'Plan',
+              steps: pd.steps.map((s, si) => ({
+                id: `plan-step-${msg.ts}-${si}`,
+                title: s.title,
+                status: (s.status as PlanStepStatus) || 'pending',
+                comment: pd.comments?.[si] ?? undefined,
+              })),
+              approved: pd.status === 'APPROVED' || pd.status === 'EXECUTING',
+            };
+            return (
+              <ErrorBoundary key={key}>
+                {inlinePlan.approved
+                  ? <PlanProgressWidget plan={inlinePlan} />
+                  : <PlanSummaryCard plan={inlinePlan} />}
+              </ErrorBoundary>
+            );
+          }
+
+          // User messages and agent text
+          if (msg.say === 'USER_MESSAGE' || msg.say === 'TEXT') {
+            const isLastAgent = msg.say === 'TEXT' && idx === messages.length - 1;
+            const isStreamingMsg = activeStream?.messageTs === msg.ts;
+            return (
+              <ErrorBoundary key={key}>
+                <div
+                  ref={isLastAgent ? lastAgentMsgRef : undefined}
+                  style={{ animationDelay: `${Math.min(idx * 40, 200)}ms` }}
+                >
+                  <AgentMessage message={msg} isStreaming={isStreamingMsg} />
+                </div>
+              </ErrorBoundary>
+            );
+          }
+
+          // Default: render text content as AgentMessage
+          if (msg.text) {
+            return (
+              <ErrorBoundary key={key}>
+                <AgentMessage message={msg} />
+              </ErrorBoundary>
+            );
+          }
+
+          return null;
         })}
 
         {/* Active tool calls — rendered below the streaming message (which
@@ -453,7 +631,8 @@ export const ChatView = memo(function ChatView() {
           </ErrorBoundary>
         ))}
 
-        {/* Plan */}
+        {/* Plan — global widget for live interactive approve/revise flow.
+            On resume, the plan renders inline via PLAN_UPDATE messages above. */}
         {plan && !plan.approved && <PlanSummaryCard plan={plan} />}
         {plan && plan.approved && <PlanProgressWidget plan={plan} />}
 
@@ -529,6 +708,38 @@ export const ChatView = memo(function ChatView() {
             <span className="text-[11px] truncate max-w-[300px]" style={{ color: 'var(--fg-muted)' }}>
               {retryMessage}
             </span>
+          </div>
+        )}
+
+        {/* Resume bar — shown when viewing a previous session that can be continued */}
+        {resumeSessionId && !busy && (
+          <div
+            className="mx-3 my-2 flex items-center gap-3 rounded-lg px-4 py-3 animate-[fade-in_200ms_ease-out]"
+            style={{
+              backgroundColor: 'var(--hover-overlay, rgba(255,255,255,0.03))',
+              border: '1px solid var(--border)',
+            }}
+          >
+            <span className="text-[12px] flex-1" style={{ color: 'var(--fg-muted)' }}>
+              This session was interrupted. You can continue where it left off.
+            </span>
+            <button
+              className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors"
+              style={{
+                color: '#fff',
+                backgroundColor: 'var(--accent, #6366f1)',
+              }}
+              onClick={() => {
+                import('@/bridge/jcef-bridge').then(({ kotlinBridge }) => {
+                  kotlinBridge.resumeViewedSession();
+                });
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                <path d="M5 3l8 5-8 5V3z" fill="currentColor" />
+              </svg>
+              Resume
+            </button>
           </div>
         )}
 

@@ -5,7 +5,6 @@ import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
-import com.workflow.orchestrator.agent.tools.builtin.ActModeRespondTool
 import com.workflow.orchestrator.agent.tools.builtin.PlanModeRespondTool
 import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.dto.*
@@ -343,55 +342,6 @@ class PlanModeLoopTest {
             channel.send("Approved. Implement it.")
 
             loopJob.join()
-        }
-    }
-
-    // ---- Act mode respond tests ----
-
-    @Nested
-    inner class ActModeRespondTests {
-
-        @Test
-        fun `act_mode_respond does not end the loop`() = runTest {
-            val brain = sequenceBrain(
-                toolCallResponse("act_mode_respond" to """{"response":"I found the issue, now fixing..."}"""),
-                toolCallResponse("attempt_completion" to """{"result":"Fixed the bug"}""")
-            )
-
-            val completionTool = fakeTool("attempt_completion", ToolResult(
-                content = "Fixed the bug",
-                summary = "Fixed the bug",
-                tokenEstimate = 5,
-                isCompletion = true
-            ))
-            val tools = listOf(ActModeRespondTool(), completionTool)
-            val loop = buildLoop(brain, tools, planMode = false)
-            val result = loop.run("Fix the bug")
-
-            assertTrue(result is LoopResult.Completed, "should complete after act_mode_respond + attempt_completion")
-        }
-
-        @Test
-        fun `act_mode_respond consecutive call is blocked`() = runTest {
-            val brain = sequenceBrain(
-                toolCallResponse("act_mode_respond" to """{"response":"Update 1"}"""),
-                // Second consecutive act_mode_respond should be blocked, but loop continues
-                toolCallResponse("act_mode_respond" to """{"response":"Update 2"}"""),
-                toolCallResponse("attempt_completion" to """{"result":"Done"}""")
-            )
-
-            val completionTool = fakeTool("attempt_completion", ToolResult(
-                content = "Done",
-                summary = "Done",
-                tokenEstimate = 5,
-                isCompletion = true
-            ))
-            val tools = listOf(ActModeRespondTool(), completionTool)
-            val loop = buildLoop(brain, tools, planMode = false)
-            val result = loop.run("Do work")
-
-            // Loop should still complete even after the blocked consecutive call
-            assertTrue(result is LoopResult.Completed, "should complete despite blocked consecutive call")
         }
     }
 }

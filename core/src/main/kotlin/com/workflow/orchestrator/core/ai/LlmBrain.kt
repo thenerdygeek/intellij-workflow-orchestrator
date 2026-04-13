@@ -44,9 +44,13 @@ interface LlmBrain {
     /** Signal the active stream to stop cooperatively. */
     fun interruptStream() {}
 
-    /** Known tool names for XML parser. */
-    val toolNameSet: Set<String> get() = emptySet()
+    /** Known tool names for XML parser. Mutable to allow subagent scoping. */
+    var toolNameSet: Set<String>
+        get() = emptySet()
+        set(_) {}
 
-    /** Known param names for XML parser. */
-    val paramNameSet: Set<String> get() = emptySet()
+    /** Known param names for XML parser. Mutable to allow subagent scoping. */
+    var paramNameSet: Set<String>
+        get() = emptySet()
+        set(_) {}
 }

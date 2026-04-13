@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.tools
 
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
+import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import kotlinx.serialization.json.JsonObject
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
@@ -402,6 +403,89 @@ class ToolRegistryTest {
 
             val grouped = registry.getDeferredCatalogGroupedWithDescriptions()
             assertTrue(grouped.containsKey("Other"))
+        }
+    }
+
+    @Nested
+    inner class AllToolNamesTests {
+
+        @Test
+        fun `allToolNames includes core, activeDeferred, and deferred tools`() {
+            registry.registerCore(FakeAgentTool("read_file"))
+            registry.registerCore(FakeAgentTool("edit_file"))
+            registry.registerDeferred(FakeAgentTool("git_show_commit"))
+            registry.registerDeferred(FakeAgentTool("jira"))
+            registry.activateDeferred("jira") // moves to activeDeferred
+
+            val names = registry.allToolNames()
+            assertEquals(4, names.size)
+            assertTrue(names.contains("read_file"))     // core
+            assertTrue(names.contains("edit_file"))      // core
+            assertTrue(names.contains("jira"))           // activeDeferred
+            assertTrue(names.contains("git_show_commit")) // still deferred
+        }
+
+        @Test
+        fun `allToolNames returns empty when no tools registered`() {
+            assertTrue(registry.allToolNames().isEmpty())
+        }
+
+        @Test
+        fun `allParamNames includes params from all tiers`() {
+            registry.registerCore(FakeAgentTool(
+                "read_file",
+                parameters = FunctionParameters(properties = mapOf("path" to ParameterProperty(type = "string", description = "File path")))
+            ))
+            registry.registerDeferred(FakeAgentTool(
+                "git_show_commit",
+                parameters = FunctionParameters(properties = mapOf(
+                    "commit" to ParameterProperty(type = "string", description = "Commit hash"),
+                    "include_diff" to ParameterProperty(type = "boolean", description = "Include diff")
+                ))
+            ))
+
+            val params = registry.allParamNames()
+            assertEquals(3, params.size)
+            assertTrue(params.contains("path"))
+            assertTrue(params.contains("commit"))
+            assertTrue(params.contains("include_diff"))
+        }
+
+        @Test
+        fun `allToolNames cache invalidates on registration and activation`() {
+            registry.registerCore(FakeAgentTool("read_file"))
+            val before = registry.allToolNames()
+            assertEquals(1, before.size)
+
+            // registerDeferred invalidates cache
+            registry.registerDeferred(FakeAgentTool("jira"))
+            val afterDeferred = registry.allToolNames()
+            assertEquals(2, afterDeferred.size)
+
+            // activateDeferred invalidates cache
+            registry.activateDeferred("jira")
+            val afterActivate = registry.allToolNames()
+            assertEquals(2, afterActivate.size)
+
+            // resetActiveDeferred invalidates cache
+            registry.resetActiveDeferred()
+            val afterReset = registry.allToolNames()
+            assertEquals(2, afterReset.size)
+        }
+
+        @Test
+        fun `allToolNames is consistent with get() resolution`() {
+            // The XML parser uses allToolNames to recognise tags.
+            // registry.get() resolves tools for execution.
+            // These MUST agree: every name in allToolNames must be resolvable by get().
+            registry.registerCore(FakeAgentTool("read_file"))
+            registry.registerDeferred(FakeAgentTool("git_show_commit"))
+            registry.registerDeferred(FakeAgentTool("jira"))
+            registry.activateDeferred("jira")
+
+            for (name in registry.allToolNames()) {
+                assertNotNull(registry.get(name), "allToolNames contains '$name' but get('$name') returns null")
+            }
         }
     }
 

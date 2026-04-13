@@ -1,5 +1,10 @@
 package com.workflow.orchestrator.agent.memory
 
+import com.workflow.orchestrator.agent.session.ApiMessage
+import com.workflow.orchestrator.agent.session.ApiRole
+import com.workflow.orchestrator.agent.session.ContentBlock
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -12,6 +17,7 @@ class ConversationRecallTest {
     @TempDir lateinit var tempDir: Path
     private lateinit var sessionsDir: File
     private lateinit var recall: ConversationRecall
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     @BeforeEach
     fun setUp() {
@@ -23,10 +29,24 @@ class ConversationRecallTest {
     private fun createSession(sessionId: String, vararg messages: Pair<String, String>) {
         val dir = File(sessionsDir, sessionId)
         dir.mkdirs()
-        val file = File(dir, "messages.jsonl")
-        file.writeText(messages.joinToString("\n") { (role, content) ->
-            """{"role":"$role","content":"$content"}"""
-        })
+        val apiMessages = messages.map { (role, content) ->
+            when (role) {
+                "tool" -> ApiMessage(
+                    role = ApiRole.USER,
+                    content = listOf(ContentBlock.ToolResult(toolUseId = "call_1", content = content))
+                )
+                "assistant" -> ApiMessage(
+                    role = ApiRole.ASSISTANT,
+                    content = listOf(ContentBlock.Text(content))
+                )
+                else -> ApiMessage(
+                    role = ApiRole.USER,
+                    content = listOf(ContentBlock.Text(content))
+                )
+            }
+        }
+        val file = File(dir, "api_conversation_history.json")
+        file.writeText(json.encodeToString(apiMessages))
     }
 
     @Test

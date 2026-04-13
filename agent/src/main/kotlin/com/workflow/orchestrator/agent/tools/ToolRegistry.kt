@@ -29,12 +29,14 @@ class ToolRegistry {
     /** Register a core tool (always sent to LLM). */
     fun registerCore(tool: AgentTool) {
         coreTools[tool.name] = tool
+        invalidateCache()
     }
 
     /** Register a deferred tool (available via tool_search, not sent initially). */
     fun registerDeferred(tool: AgentTool, category: String = "Other") {
         deferredTools[tool.name] = tool
         deferredCategories[tool.name] = category
+        invalidateCache()
     }
 
     /**
@@ -94,6 +96,7 @@ class ToolRegistry {
 
         val tool = deferredTools.remove(toolName) ?: return null
         activeDeferred[toolName] = tool
+        invalidateCache()
         return tool
     }
 
@@ -149,9 +152,20 @@ class ToolRegistry {
     fun resetActiveDeferred() {
         deferredTools.putAll(activeDeferred)
         activeDeferred.clear()
+        invalidateCache()
     }
 
     // ── Global Access (for execution — all tools are callable) ───────────
+
+    // Cached name/param sets, invalidated on any registration or activation change.
+    // Avoids per-iteration allocation in the ReAct loop hot path.
+    private var cachedToolNames: Set<String>? = null
+    private var cachedParamNames: Set<String>? = null
+
+    private fun invalidateCache() {
+        cachedToolNames = null
+        cachedParamNames = null
+    }
 
     /** Get any tool by name (core, deferred, or active-deferred). */
     fun get(name: String): AgentTool? {
@@ -161,13 +175,34 @@ class ToolRegistry {
     /** Alias for backward compatibility with code that uses getTool(). */
     fun getTool(name: String): AgentTool? = get(name)
 
-    /** All registered tools regardless of tier. */
-    fun allTools(): Collection<AgentTool> {
-        val all = LinkedHashMap<String, AgentTool>()
+    private fun allToolMap(): Map<String, AgentTool> {
+        val all = LinkedHashMap<String, AgentTool>(coreTools.size + activeDeferred.size + deferredTools.size)
         all.putAll(coreTools)
         all.putAll(activeDeferred)
         all.putAll(deferredTools)
-        return all.values
+        return all
+    }
+
+    /** All registered tools regardless of tier. */
+    fun allTools(): Collection<AgentTool> = allToolMap().values
+
+    /**
+     * The XML parser must recognise tool tags for deferred tools even before
+     * they are activated via tool_search, because [get] resolves all tiers.
+     * Cached — invalidated on registration/activation changes.
+     */
+    fun allToolNames(): Set<String> {
+        return cachedToolNames ?: allToolMap().keys.also { cachedToolNames = it }
+    }
+
+    /**
+     * XML parser needs param names from all tiers to recognise parameter tags
+     * inside tool calls for deferred tools. Cached alongside [allToolNames].
+     */
+    fun allParamNames(): Set<String> {
+        return cachedParamNames ?: allToolMap().values
+            .flatMapTo(LinkedHashSet()) { it.parameters.properties.keys }
+            .also { cachedParamNames = it }
     }
 
     /** Total count of all registered tools across all tiers. */

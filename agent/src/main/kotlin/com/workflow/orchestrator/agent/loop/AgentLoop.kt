@@ -15,6 +15,7 @@ import com.workflow.orchestrator.agent.hooks.HookResult
 import com.workflow.orchestrator.agent.hooks.HookType
 import com.workflow.orchestrator.agent.security.CommandSafetyAnalyzer
 import com.workflow.orchestrator.agent.security.CommandRisk
+import com.workflow.orchestrator.agent.session.*
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.truncateOutput
 import com.workflow.orchestrator.core.ai.LlmBrain
@@ -29,6 +30,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -85,6 +87,16 @@ class AgentLoop(
     private val maxIterations: Int = 200,
     private val planMode: Boolean = false,
     private val onCheckpoint: (suspend () -> Unit)? = null,
+    /**
+     * Optional Cline-style session persistence handler.
+     * When provided, every streaming chunk, assistant message, and tool result is
+     * persisted to ui_messages.json + api_conversation_history.json via this handler.
+     * Nullable: sub-agents and tests pass null (no persistence overhead).
+     *
+     * All calls are awaited inline (NOT in launch{}) because AgentLoop.run() already
+     * executes on Dispatchers.IO — fire-and-forget would defeat the per-change guarantee.
+     */
+    private val messageStateHandler: MessageStateHandler? = null,
     /**
      * Optional provider for dynamic tool definitions. When set, this is called on each
      * iteration to get the current tool definitions (supporting tool_search activation).
@@ -267,13 +279,6 @@ class AgentLoop(
     /** Tools the user has allowed for the rest of this session (via ALLOWED_FOR_SESSION). */
     private val approvedForSession = mutableSetOf<String>()
 
-    /**
-     * Tracks the last tool name called — used to enforce act_mode_respond
-     * consecutive-call constraint (ported from Cline: act_mode_respond cannot
-     * be called twice in a row).
-     */
-    private var lastToolName: String? = null
-
     private val json = Json { ignoreUnknownKeys = true }
 
     companion object {
@@ -311,7 +316,6 @@ class AgentLoop(
             "# Next Steps\n\n" +
             "If you have completed the user's task, use the attempt_completion tool.\n" +
             "If you require additional information from the user, use the ask_followup_question tool.\n" +
-            "If you want to respond conversationally, use the act_mode_respond tool.\n" +
             "Otherwise, if you have not completed the task and do not need additional information, " +
             "then proceed with the next step of the task.\n" +
             "(This is an automated message, so do not respond to it conversationally.)"
@@ -402,6 +406,8 @@ class AgentLoop(
         contextManager.addUserMessage(withEnvDetails(task))
 
         var iteration = 0
+        /** Tracks the last accumulated assistant text across iterations for abort persistence. */
+        var lastAccumulatedText = ""
         var consecutiveEmpties = 0
         var consecutiveMistakes = 0  // Cline: consecutiveMistakeCount — tracks text-only (no tool) responses
         val maxConsecutiveMistakes = 3  // Cline: configurable via settings. At max, asks user for feedback.
@@ -477,6 +483,17 @@ class AgentLoop(
             val currentToolNames = toolNameProvider?.invoke() ?: brain.toolNameSet
             val currentParamNames = paramNameProvider?.invoke() ?: brain.paramNameSet
 
+            // Persist api_req_started UI message before the LLM call (Cline pattern, I7 fix).
+            // AgentLoop runs on Dispatchers.IO — all messageStateHandler calls are awaited inline.
+            messageStateHandler?.addToClineMessages(UiMessage(
+                ts = System.currentTimeMillis(),
+                type = UiMessageType.SAY,
+                say = UiSay.API_REQ_STARTED,
+                text = "{}"  // Updated with cost info after response
+            ))
+            val apiReqStartedIdx = messageStateHandler?.getClineMessages()?.lastIndex ?: -1
+            var isFirstStreamChunk = true
+
             val apiResult = brain.chatStream(
                 messages = contextManager.getMessages(),
                 tools = currentToolDefs,
@@ -506,6 +523,31 @@ class AgentLoop(
                         lastPresentedTextLength = stripped.length
                     }
 
+                    // Persist streaming text to ui_messages.json (C3 fix — awaited inline, NOT in launch{}).
+                    // First chunk: add partial message. Subsequent: update in-place.
+                    // Use visibleText (TextContent blocks only), NOT raw accumulatedText.
+                    // The raw text includes XML tool call tags (e.g. <read_file><path>...</path></read_file>)
+                    // which the live UI strips via the parser but would show as raw XML on resume.
+                    messageStateHandler?.let { handler ->
+                        val persistText = visibleText
+                        if (isFirstStreamChunk) {
+                            handler.addToClineMessages(UiMessage(
+                                ts = System.currentTimeMillis(),
+                                type = UiMessageType.SAY,
+                                say = UiSay.TEXT,
+                                text = persistText,
+                                partial = true
+                            ))
+                            isFirstStreamChunk = false
+                        } else {
+                            val msgs = handler.getClineMessages()
+                            val lastIdx = msgs.lastIndex
+                            if (lastIdx >= 0 && msgs[lastIdx].partial) {
+                                handler.updateClineMessage(lastIdx, msgs[lastIdx].copy(text = persistText))
+                            }
+                        }
+                    }
+
                     // Stream-interrupt: if a tool block just completed, interrupt stream
                     if (toolExecutionMode == "stream_interrupt") {
                         val completedTool = blocks.filterIsInstance<ToolUseContent>()
@@ -516,6 +558,9 @@ class AgentLoop(
                     }
                 }
             )
+
+            // Capture accumulated text for abort persistence (accessible outside the while loop).
+            lastAccumulatedText = accumulatedText.toString()
 
             // Stage 2: Handle API errors with retry for transient failures
             if (apiResult is ApiResult.Error) {
@@ -673,6 +718,7 @@ class AgentLoop(
                     continue
                 }
                 LOG.warn("[Loop] Task failed after $iteration iterations: ${apiResult.message.take(200)}")
+                abortStream(lastAccumulatedText, "streaming_failed")
                 return makeFailed(apiResult.message, iteration)
             }
 
@@ -716,6 +762,25 @@ class AgentLoop(
                     mapOf("latencyMs" to apiLatencyMs, "promptTokens" to usage.promptTokens, "completionTokens" to usage.completionTokens))
             }
 
+            // Finalize streaming UI message (flip partial=false) and update api_req_started with cost (I7 fix).
+            val promptTokens = response.usage?.promptTokens ?: 0
+            val completionTokens = response.usage?.completionTokens ?: 0
+            messageStateHandler?.let { handler ->
+                // Finalize partial text message
+                val msgs = handler.getClineMessages()
+                val lastIdx = msgs.lastIndex
+                if (lastIdx >= 0 && msgs[lastIdx].partial) {
+                    handler.updateClineMessage(lastIdx, msgs[lastIdx].copy(partial = false))
+                }
+
+                // Update api_req_started with cost/token info
+                if (apiReqStartedIdx >= 0 && apiReqStartedIdx <= msgs.lastIndex) {
+                    val costJson = """{"tokensIn":$promptTokens,"tokensOut":$completionTokens}"""
+                    handler.updateClineMessage(apiReqStartedIdx,
+                        handler.getClineMessages()[apiReqStartedIdx].copy(text = costJson))
+                }
+            }
+
             val choice = response.choices.firstOrNull() ?: continue
             val assistantMessage = choice.message
 
@@ -734,6 +799,15 @@ class AgentLoop(
 
             // Stage 4: Add assistant message to context
             contextManager.addAssistantMessage(assistantMessage)
+
+            // Persist assistant message to api_conversation_history (Cline pattern).
+            messageStateHandler?.addToApiConversationHistory(ApiMessage(
+                role = ApiRole.ASSISTANT,
+                content = buildApiContentBlocks(assistantMessage),
+                ts = System.currentTimeMillis(),
+                modelInfo = ModelInfo(modelId = brain.modelId),
+                metrics = ApiRequestMetrics(inputTokens = promptTokens, outputTokens = completionTokens)
+            ))
 
             val hasToolCalls = !assistantMessage.toolCalls.isNullOrEmpty()
             val hasContent = !assistantMessage.content.isNullOrBlank()
@@ -790,6 +864,7 @@ class AgentLoop(
 
         if (cancelled.get()) {
             LOG.info("[Loop] Task cancelled at iteration $iteration")
+            abortStream(lastAccumulatedText, "user_cancelled")
             return makeCancelled(iteration)
         }
 
@@ -881,18 +956,6 @@ class AgentLoop(
                 reportToolError(
                     call, startTime,
                     "Error: '$toolName' is blocked in plan mode. You can only read, search, and analyze code."
-                )
-                continue
-            }
-
-            // act_mode_respond consecutive-call guard (ported from Cline).
-            // Cline: "This tool cannot be called consecutively — each use must be
-            // followed by a different tool call or completion."
-            if (toolName == "act_mode_respond" && lastToolName == "act_mode_respond") {
-                reportToolError(
-                    call, startTime,
-                    "Error: act_mode_respond cannot be called consecutively. " +
-                        "Use a different tool or call attempt_completion."
                 )
                 continue
             }
@@ -1013,6 +1076,75 @@ class AgentLoop(
                 toolName = toolName
             )
 
+            // Persist tool result to both files (Cline pattern — awaited inline).
+            messageStateHandler?.addToApiConversationHistory(ApiMessage(
+                role = ApiRole.USER,
+                content = listOf(ContentBlock.ToolResult(
+                    toolUseId = toolCallId,
+                    content = truncatedContent,
+                    isError = toolResult.isError
+                )),
+                ts = System.currentTimeMillis()
+            ))
+            // Persist UI message — communication tools get semantic types instead of TOOL
+            val uiMsg = when (toolName) {
+                // plan_mode_respond: persist as PLAN_UPDATE so it renders inline as a plan card on resume.
+                // The planData is populated later by onPlanResponse; here we save the markdown text.
+                "plan_mode_respond" -> UiMessage(
+                    ts = System.currentTimeMillis(),
+                    type = UiMessageType.SAY,
+                    say = UiSay.PLAN_UPDATE,
+                    text = toolResult.content.take(2000),
+                    planData = if (toolResult.planSteps.isNotEmpty()) PlanCardData(
+                        steps = toolResult.planSteps.map { PlanStep(title = it, status = "pending") },
+                        status = PlanStatus.AWAITING_APPROVAL,
+                    ) else null,
+                )
+                // ask_followup_question: persist as TEXT — the question is rendered via the
+                // showSimpleQuestionCallback (streaming text) or showQuestionsCallback (wizard).
+                // On resume, it should appear as agent text, not a tool card.
+                "ask_followup_question", "ask_questions" -> {
+                    val questionText = try {
+                        kotlinx.serialization.json.Json.parseToJsonElement(call.function.arguments)
+                            .let { it as? kotlinx.serialization.json.JsonObject }
+                            ?.get("question")?.jsonPrimitive?.content
+                            ?: toolResult.content
+                    } catch (_: Exception) { toolResult.content }
+                    UiMessage(
+                        ts = System.currentTimeMillis(),
+                        type = UiMessageType.SAY,
+                        say = UiSay.TEXT,
+                        text = questionText.take(2000),
+                    )
+                }
+                // attempt_completion: persist as ASK/COMPLETION_RESULT for CompletionCard on resume.
+                "attempt_completion" -> UiMessage(
+                    ts = System.currentTimeMillis(),
+                    type = UiMessageType.ASK,
+                    ask = UiAsk.COMPLETION_RESULT,
+                    text = toolResult.content.take(2000),
+                )
+                // All other tools: persist as TOOL with full toolCallData
+                else -> UiMessage(
+                    ts = System.currentTimeMillis(),
+                    type = UiMessageType.SAY,
+                    say = UiSay.TOOL,
+                    text = "$toolName: ${toolResult.summary.take(500)}",
+                    toolCallData = ToolCallData(
+                        toolCallId = toolCallId,
+                        toolName = toolName,
+                        args = call.function.arguments,
+                        status = if (toolResult.isError) "ERROR" else "COMPLETED",
+                        result = toolResult.summary.take(500),
+                        output = toolResult.content.takeIf { it != toolResult.summary }?.take(2000),
+                        durationMs = durationMs,
+                        diff = toolResult.diff,
+                        isError = toolResult.isError,
+                    ),
+                )
+            }
+            messageStateHandler?.addToClineMessages(uiMsg)
+
             // POST_TOOL_USE hook (ported from Cline's PostToolUse hook)
             // Observation-only: runs after tool execution, cannot change the result.
             // Cline: fires PostToolUse with tool name, parameters, result, success, durationMs.
@@ -1077,12 +1209,18 @@ class AgentLoop(
             // returning, so the LLM sees the real render outcome (incl. missing
             // symbols / runtime errors) instead of the previous fire-and-forget path.
 
-            // Track last tool name for consecutive-call guards
-            lastToolName = toolName
 
             // Check for completion
             if (toolResult.isCompletion) {
                 LOG.info("[Loop] Task completed in $iteration iterations ($totalInputTokens input, $totalOutputTokens output tokens)")
+                // Persist completion as ASK/COMPLETION_RESULT so resume detects completed sessions
+                // and the CompletionCard renders on rehydration.
+                messageStateHandler?.addToClineMessages(UiMessage(
+                    ts = System.currentTimeMillis(),
+                    type = UiMessageType.ASK,
+                    ask = UiAsk.COMPLETION_RESULT,
+                    text = toolResult.content
+                ))
                 return LoopResult.Completed(
                     summary = toolResult.content,
                     iterations = iteration,
@@ -1172,12 +1310,71 @@ class AgentLoop(
     )
 
     /**
+     * Persist abort state when the stream is interrupted mid-flight.
+     *
+     * Port of Cline's abortStream (task-index.ts:2721-2780):
+     * 1. Flip the last partial UI message to non-partial so it renders correctly on resume
+     * 2. Append a synthetic assistant turn with an interrupt marker so the LLM knows the
+     *    previous response was cut short
+     * 3. Save both files atomically
+     *
+     * Called from two paths:
+     * - User cancellation: cancelReason = "user_cancelled"
+     * - API error after retries exhausted: cancelReason = "streaming_failed"
+     */
+    private suspend fun abortStream(assistantText: String, cancelReason: String) {
+        messageStateHandler?.let { handler ->
+            // 1. Flip last partial message to non-partial
+            val msgs = handler.getClineMessages()
+            val lastIdx = msgs.lastIndex
+            if (lastIdx >= 0 && msgs[lastIdx].partial) {
+                handler.updateClineMessage(lastIdx, msgs[lastIdx].copy(partial = false))
+            }
+
+            // 2. Append synthetic assistant turn with interrupt marker
+            val interruptMarker = if (cancelReason == "streaming_failed") {
+                "[Response interrupted by API Error]"
+            } else {
+                "[Response interrupted by user]"
+            }
+            handler.addToApiConversationHistory(ApiMessage(
+                role = ApiRole.ASSISTANT,
+                content = listOf(ContentBlock.Text("$assistantText\n\n$interruptMarker")),
+                ts = System.currentTimeMillis()
+            ))
+
+            // 3. Save both files
+            handler.saveBoth()
+        }
+    }
+
+    /**
      * Append the latest environment_details block to a user message.
      * Returns the message unchanged if the provider returns null.
      */
     private fun withEnvDetails(message: String): String {
         val envDetails = environmentDetailsProvider?.invoke()
         return if (envDetails != null) "$message\n\n$envDetails" else message
+    }
+
+    /**
+     * Convert a ChatMessage (assistant response) to ApiMessage ContentBlock list.
+     * Preserves text content and tool_use calls for lossless api_conversation_history (C2 fix).
+     */
+    private fun buildApiContentBlocks(msg: ChatMessage): List<ContentBlock> {
+        val blocks = mutableListOf<ContentBlock>()
+        val textContent = msg.content
+        if (!textContent.isNullOrBlank()) {
+            blocks.add(ContentBlock.Text(textContent))
+        }
+        msg.toolCalls?.forEach { tc ->
+            blocks.add(ContentBlock.ToolUse(
+                id = tc.id,
+                name = tc.function.name,
+                input = tc.function.arguments
+            ))
+        }
+        return blocks.ifEmpty { listOf(ContentBlock.Text("")) }
     }
 
     /**

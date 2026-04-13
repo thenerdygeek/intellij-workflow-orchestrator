@@ -1,11 +1,6 @@
 import { memo } from 'react';
-import type { Message, Mention, Question } from '@/bridge/types';
+import type { UiMessage, Mention, Question } from '@/bridge/types';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
-import { ThinkingView } from '@/components/agent/ThinkingView';
-import { CompletionCard } from '@/components/agent/CompletionCard';
-import { EditDiffView } from '@/components/agent/EditDiffView';
-import { DiffHtml } from '@/components/rich/DiffHtml';
-import { ChartView } from '@/components/rich/ChartView';
 import {
   Message as PkMessage,
   MessageAvatar,
@@ -74,7 +69,7 @@ function splitContentWithMentions(content: string, mentions: Mention[]): Segment
 }
 
 /** Frozen Q&A snapshot rendered when an ask_questions wizard has been submitted. */
-function AnsweredQuestionsCard({ questions }: { questions: Question[] }) {
+export function AnsweredQuestionsCard({ questions }: { questions: Question[] }) {
   return (
     <div
       className="my-1 rounded-lg border p-3"
@@ -126,7 +121,7 @@ function UserContent({ content, mentions }: { content: string; mentions?: Mentio
 }
 
 interface AgentMessageProps {
-  message: Message;
+  message: UiMessage;
   isStreaming?: boolean;
 }
 
@@ -134,63 +129,8 @@ export const AgentMessage = memo(function AgentMessage({
   message,
   isStreaming = false,
 }: AgentMessageProps) {
-  const isUser = message.role === 'user';
-  const content = message.content;
-
-  // System messages: thinking blocks and status lines
-  if (message.role === 'system') {
-    try {
-      const parsed = JSON.parse(message.content) as Record<string, any>;
-      if (parsed.type === 'thinking') {
-        return <ThinkingView content={parsed.text ?? ''} isStreaming={false} />;
-      }
-      if (parsed.type === 'completion') {
-        return <CompletionCard result={parsed.result ?? ''} verifyCommand={parsed.verifyCommand} />;
-      }
-      if (parsed.type === 'status') {
-        return (
-          <div className="px-1 py-0.5 text-[11px]" style={{ color: 'var(--fg-muted, #888)' }}>
-            {parsed.message}
-          </div>
-        );
-      }
-      if (parsed.type === 'chart' && parsed.config) {
-        return <ChartView source={parsed.config} />;
-      }
-      // Diff explanation from generate_explanation tool
-      if (parsed.type === 'diff-explanation' && parsed.diffSource) {
-        return (
-          <div style={{ marginBottom: 8 }}>
-            {parsed.title && (
-              <div style={{
-                fontSize: 13,
-                fontWeight: 600,
-                marginBottom: 6,
-                color: 'var(--fg-secondary, #94a3b8)',
-              }}>
-                {parsed.title}
-              </div>
-            )}
-            <DiffHtml diffSource={parsed.diffSource} />
-          </div>
-        );
-      }
-      // Edit diffs from the Kotlin bridge (has filePath + oldLines + newLines)
-      if (parsed.filePath && Array.isArray(parsed.oldLines) && Array.isArray(parsed.newLines)) {
-        return (
-          <EditDiffView
-            filePath={parsed.filePath}
-            oldLines={parsed.oldLines}
-            newLines={parsed.newLines}
-            accepted={parsed.accepted ?? null}
-          />
-        );
-      }
-    } catch {
-      // not JSON — fall through to null
-    }
-    return null;
-  }
+  const isUser = message.say === 'USER_MESSAGE';
+  const content = message.text ?? '';
 
   return (
     <PkMessage
@@ -222,10 +162,8 @@ export const AgentMessage = memo(function AgentMessage({
           </span>
         )}
 
-        {message.answeredQuestions && message.answeredQuestions.length > 0 ? (
-          <AnsweredQuestionsCard questions={message.answeredQuestions} />
-        ) : isUser ? (
-          <UserContent content={content} mentions={message.mentions} />
+        {isUser ? (
+          <UserContent content={content} />
         ) : (
           <MarkdownRenderer content={content} isStreaming={isStreaming} />
         )}
@@ -243,7 +181,7 @@ export const AgentMessage = memo(function AgentMessage({
         {/* Timestamp on hover */}
         <div className="mt-1 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
           <span className="text-[10px] text-[var(--fg-muted)]">
-            {new Date(message.timestamp).toLocaleTimeString([], {
+            {new Date(message.ts).toLocaleTimeString([], {
               hour: '2-digit',
               minute: '2-digit',
             })}

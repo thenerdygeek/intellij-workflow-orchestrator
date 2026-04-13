@@ -102,10 +102,25 @@ class AgentCefPanel(
     private var retryLastTaskQuery: JBCefJSQuery? = null
     private var processInputQuery: JBCefJSQuery? = null
     private var artifactResultQuery: JBCefJSQuery? = null
+    private var interactiveRenderResultQuery: JBCefJSQuery? = null
+    private var showSessionQuery: JBCefJSQuery? = null
+    private var deleteSessionQuery: JBCefJSQuery? = null
+    private var toggleFavoriteQuery: JBCefJSQuery? = null
+    private var startNewSessionQuery: JBCefJSQuery? = null
+    private var bulkDeleteSessionsQuery: JBCefJSQuery? = null
+    private var exportSessionQuery: JBCefJSQuery? = null
+    private var exportAllSessionsQuery: JBCefJSQuery? = null
+    private var requestHistoryQuery: JBCefJSQuery? = null
+    private var resumeViewedSessionQuery: JBCefJSQuery? = null
     var mentionSearchProvider: MentionSearchProvider? = null
     var onSendMessageWithMentions: ((String, String) -> Unit)? = null  // (text, mentionsJson)
-    @Volatile private var pageLoaded = false
-    private val pendingCalls = mutableListOf<String>()
+
+    /**
+     * Bridge dispatcher: manages the pageLoaded/pendingCalls state machine.
+     * Initialized lazily in [createBrowser] once the browser instance exists.
+     * All callJs() calls delegate to this dispatcher.
+     */
+    private var bridgeDispatcher: JsBridgeDispatcher? = null
 
     /** Callback when user clicks "Undo" in the JCEF footer. */
     var onUndoRequested: (() -> Unit)? = null
@@ -201,6 +216,38 @@ class AgentCefPanel(
      * `render_artifact` tool's suspended coroutine resumes with a structured result.
      */
     var onArtifactResult: ((String) -> Unit)? = null
+    /**
+     * Callback fired when a JCEF interactive render (questions, plans, approvals)
+     * reports its outcome back to Kotlin via the `_reportInteractiveRender` bridge.
+     * Param is a JSON string: `{ "type": "question"|"plan"|"approval", "status": "ok"|"error", "message"?: "..." }`.
+     */
+    var onInteractiveRenderResult: ((String) -> Unit)? = null
+
+    /** Callback when user clicks a session in the history list. Param: sessionId. */
+    var onShowSession: ((String) -> Unit)? = null
+    /** Callback when user clicks delete on a session in the history list. Param: sessionId. */
+    var onDeleteSession: ((String) -> Unit)? = null
+    /** Callback when user toggles favorite on a session in the history list. Param: sessionId. */
+    var onToggleFavorite: ((String) -> Unit)? = null
+    /** Callback when user clicks "New Session" from the history view. */
+    var onStartNewSession: (() -> Unit)? = null
+    /** Callback when user bulk-deletes sessions. Param: JSON array of session IDs. */
+    var onBulkDeleteSessions: ((String) -> Unit)? = null
+    /** Callback when user exports a single session. Param: sessionId. */
+    var onExportSession: ((String) -> Unit)? = null
+    /** Callback when user exports all sessions. */
+    var onExportAllSessions: (() -> Unit)? = null
+    /** Callback when user clicks the history button in TopBar. */
+    var onRequestHistory: (() -> Unit)? = null
+    /** Callback when user clicks "Resume" in the resume bar. */
+    var onResumeViewedSession: (() -> Unit)? = null
+
+    /**
+     * Fired after the page is fully loaded and all bridges are injected.
+     * Used by AgentController to re-push initial state (model, skills, memory)
+     * so it arrives even if the page took longer than expected to load.
+     */
+    var onPageReady: (() -> Unit)? = null
 
     init {
         Disposer.register(parentDisposable) { scope.cancel() }
@@ -221,7 +268,22 @@ class AgentCefPanel(
         // Set larger JS query pool for streaming
         b.jbCefClient.setProperty(JBCefClient.Properties.JS_QUERY_POOL_SIZE, 200)
 
-        // Register scheme handler factory for serving resources from JAR
+        // Initialize the bridge dispatcher — all callJs() calls go through this.
+        // The executor calls directly into the CEF browser's JS engine.
+        bridgeDispatcher = JsBridgeDispatcher(
+            executor = { code ->
+                try {
+                    b.cefBrowser.executeJavaScript(code, CefResourceSchemeHandler.BASE_URL, 0)
+                } catch (e: Exception) {
+                    LOG.warn("AgentCefPanel: JS execution failed for ${code.take(60)}: ${e.message}")
+                }
+            }
+        )
+
+        // Register scheme handler factory for serving resources from JAR.
+        // NOTE: loadURL is called AFTER all query registration + load handler setup
+        // (see end of this method) to avoid a race where the page finishes loading
+        // before onLoadingStateChange is registered, leaving pageLoaded=false forever.
         try {
             val factory = org.cef.callback.CefSchemeHandlerFactory { _, _, _, _ ->
                 CefResourceSchemeHandler()
@@ -231,17 +293,8 @@ class AgentCefPanel(
                 CefResourceSchemeHandler.AUTHORITY,
                 factory
             )
-            // Load via scheme URL — all relative paths in HTML resolve via our handler
-            b.loadURL(CefResourceSchemeHandler.BASE_URL + "index.html")
         } catch (e: Exception) {
-            // Fallback: if CefApp registration fails, load HTML directly
-            LOG.warn("AgentCefPanel: scheme handler registration failed, falling back to loadHTML", e)
-            val htmlContent = javaClass.classLoader.getResource("webview/dist/index.html")?.readText()
-            if (htmlContent != null) b.loadHTML(htmlContent)
-            else {
-                LOG.error("AgentCefPanel: index.html not found in resources")
-                return
-            }
+            LOG.warn("AgentCefPanel: scheme handler registration failed", e)
         }
 
         // Create JS→Kotlin bridges for UI actions (undo, view-trace, example prompts).
@@ -412,6 +465,18 @@ class AgentCefPanel(
         retryLastTaskQuery = registerQuery(b) { _ -> onRetryLastTask?.invoke(); JBCefJSQuery.Response("ok") }
         processInputQuery = registerQuery(b) { input -> onProcessInputResolved?.invoke(input); JBCefJSQuery.Response("ok") }
         artifactResultQuery = registerQuery(b) { json -> onArtifactResult?.invoke(json); JBCefJSQuery.Response("ok") }
+        interactiveRenderResultQuery = registerQuery(b) { json -> onInteractiveRenderResult?.invoke(json); JBCefJSQuery.Response("ok") }
+
+        // Session history bridges
+        showSessionQuery = registerQuery(b) { sessionId -> onShowSession?.invoke(sessionId); JBCefJSQuery.Response("ok") }
+        deleteSessionQuery = registerQuery(b) { sessionId -> onDeleteSession?.invoke(sessionId); JBCefJSQuery.Response("ok") }
+        toggleFavoriteQuery = registerQuery(b) { sessionId -> onToggleFavorite?.invoke(sessionId); JBCefJSQuery.Response("ok") }
+        startNewSessionQuery = registerQuery(b) { _ -> onStartNewSession?.invoke(); JBCefJSQuery.Response("ok") }
+        bulkDeleteSessionsQuery = registerQuery(b) { json -> onBulkDeleteSessions?.invoke(json); JBCefJSQuery.Response("ok") }
+        exportSessionQuery = registerQuery(b) { sessionId -> onExportSession?.invoke(sessionId); JBCefJSQuery.Response("ok") }
+        exportAllSessionsQuery = registerQuery(b) { _ -> onExportAllSessions?.invoke(); JBCefJSQuery.Response("ok") }
+        requestHistoryQuery = registerQuery(b) { _ -> onRequestHistory?.invoke(); JBCefJSQuery.Response("ok") }
+        resumeViewedSessionQuery = registerQuery(b) { _ -> onResumeViewedSession?.invoke(); JBCefJSQuery.Response("ok") }
 
         // Wait for page load before executing JS
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
@@ -420,211 +485,136 @@ class AgentCefPanel(
                 canGoBack: Boolean, canGoForward: Boolean
             ) {
                 if (!isLoading) {
-                    applyCurrentTheme()
+                    LOG.info("AgentCefPanel: onLoadingStateChange(isLoading=false) — injecting bridges")
+                    // Each bridge injection is wrapped individually so a failure in one
+                    // does not skip the rest. Without this, a single q.inject() exception
+                    // would leave ALL subsequent window._xxx functions unregistered — the
+                    // root cause of the "skills missing from input bar" regression.
+                    var bridgeFailures = 0
+                    fun injectBridge(name: String, block: () -> Unit) {
+                        try { block() } catch (e: Exception) {
+                            bridgeFailures++
+                            LOG.warn("AgentCefPanel: bridge injection failed for $name: ${e.message}")
+                        }
+                    }
+                    injectBridge("theme") { applyCurrentTheme() }
                     // Inject JS→Kotlin bridge functions for JCEF UI actions
-                    undoQuery?.let { q ->
-                        val undoJs = q.inject("'undo'")
-                        js("window._requestUndo = function() { $undoJs }")
+                    injectBridge("_requestUndo") { undoQuery?.let { q ->
+                        js("window._requestUndo = function() { ${q.inject("'undo'")} }")
+                    } }
+                    injectBridge("_requestViewTrace") { traceQuery?.let { q ->
+                        js("window._requestViewTrace = function() { ${q.inject("'trace'")} }")
+                    } }
+                    injectBridge("_submitPrompt") { promptQuery?.let { q ->
+                        js("window._submitPrompt = function(text) { ${q.inject("text")} }")
+                    } }
+                    // All bridges: (query, windowFnName, jsFnParams, injectExpr)
+                    // Each is wrapped in injectBridge so one failure doesn't skip the rest.
+                    injectBridge("_approvePlan") { planApproveQuery?.let { q -> js("window._approvePlan = function() { ${q.inject("'approve'")} }") } }
+                    injectBridge("_revisePlan") { planReviseQuery?.let { q -> js("window._revisePlan = function(comments) { ${q.inject("comments")} }") } }
+                    injectBridge("_toggleTool") { toolToggleQuery?.let { q -> js("window._toggleTool = function(data) { ${q.inject("data")} }") } }
+                    injectBridge("_questionAnswered") { questionAnsweredQuery?.let { q -> js("window._questionAnswered = function(qid, opts) { ${q.inject("qid + ':' + opts")} }") } }
+                    injectBridge("_questionSkipped") { questionSkippedQuery?.let { q -> js("window._questionSkipped = function(qid) { ${q.inject("qid")} }") } }
+                    injectBridge("_chatAboutOption") { chatAboutQuery?.let { q -> js("window._chatAboutOption = function(qid, label, msg) { ${q.inject("qid + '\\x1F' + label + '\\x1F' + msg")} }") } }
+                    injectBridge("_questionsSubmitted") { questionsSubmittedQuery?.let { q -> js("window._questionsSubmitted = function() { ${q.inject("'submit'")} }") } }
+                    injectBridge("_questionsCancelled") { questionsCancelledQuery?.let { q -> js("window._questionsCancelled = function() { ${q.inject("'cancel'")} }") } }
+                    injectBridge("_editQuestion") { editQuestionQuery?.let { q -> js("window._editQuestion = function(qid) { ${q.inject("qid")} }") } }
+                    injectBridge("_deactivateSkill") { deactivateSkillQuery?.let { q -> js("window._deactivateSkill = function() { ${q.inject("'dismiss'")} }") } }
+                    injectBridge("_navigateToFile") { navigateToFileQuery?.let { q -> js("window._navigateToFile = function(path) { ${q.inject("path")} }") } }
+                    injectBridge("_cancelTask") { cancelTaskQuery?.let { q -> js("window._cancelTask = function() { ${q.inject("'cancel'")} }") } }
+                    injectBridge("_newChat") { newChatQuery?.let { q -> js("window._newChat = function() { ${q.inject("'new'")} }") } }
+                    injectBridge("_sendMessage") { sendMessageQuery?.let { q -> js("window._sendMessage = function(text) { ${q.inject("text")} }") } }
+                    injectBridge("_changeModel") { changeModelQuery?.let { q -> js("window._changeModel = function(modelId) { ${q.inject("modelId")} }") } }
+                    injectBridge("_togglePlanMode") { togglePlanModeQuery?.let { q -> js("window._togglePlanMode = function(enabled) { ${q.inject("String(enabled)")} }") } }
+                    injectBridge("_toggleRalphLoop") { toggleRalphLoopQuery?.let { q -> js("window._toggleRalphLoop = function(enabled) { ${q.inject("String(enabled)")} }") } }
+                    injectBridge("_activateSkill") { activateSkillQuery?.let { q -> js("window._activateSkill = function(name) { ${q.inject("name")} }") } }
+                    injectBridge("_requestFocusIde") { requestFocusIdeQuery?.let { q -> js("window._requestFocusIde = function() { ${q.inject("'focus'")} }") } }
+                    injectBridge("_openSettings") { openSettingsQuery?.let { q -> js("window._openSettings = function() { ${q.inject("'settings'")} }") } }
+                    injectBridge("_openMemorySettings") { openMemorySettingsQuery?.let { q -> js("window._openMemorySettings = function() { ${q.inject("'memorySettings'")} }") } }
+                    injectBridge("_openToolsPanel") { openToolsPanelQuery?.let { q -> js("window._openToolsPanel = function() { ${q.inject("'tools'")} }") } }
+                    injectBridge("_searchMentions") { searchMentionsQuery?.let { q -> js("window._searchMentions = function(data) { ${q.inject("data")} }") } }
+                    injectBridge("_searchTickets") { searchTicketsQuery?.let { q -> js("window._searchTickets = function(query) { ${q.inject("query")} }") } }
+                    injectBridge("_validateTicket") { validateTicketQuery?.let { q -> js("window._validateTicket = function(key, cb) { ${q.inject("key + '|' + cb")} }") } }
+                    injectBridge("_sendMessageWithMentions") { sendMessageWithMentionsQuery?.let { q -> js("window._sendMessageWithMentions = function(payload) { ${q.inject("payload")} }") } }
+                    injectBridge("_openInEditorTab") { openInEditorTabQuery?.let { q -> js("window._openInEditorTab = function(payload) { ${q.inject("payload")} }") } }
+                    injectBridge("_focusPlanEditor") { focusPlanEditorQuery?.let { q -> js("window._focusPlanEditor = function() { ${q.inject("''")} }") } }
+                    injectBridge("_revisePlanFromEditor") { revisePlanFromEditorQuery?.let { q -> js("window._revisePlanFromEditor = function() { ${q.inject("''")} }") } }
+                    injectBridge("_viewInEditor") { viewInEditorQuery?.let { q -> js("window._viewInEditor = function() { ${q.inject("''")} }") } }
+                    injectBridge("_approveToolCall") { approveToolCallQuery?.let { q -> js("window._approveToolCall = function() { ${q.inject("'approve'")} }") } }
+                    injectBridge("_denyToolCall") { denyToolCallQuery?.let { q -> js("window._denyToolCall = function() { ${q.inject("'deny'")} }") } }
+                    injectBridge("_allowToolForSession") { allowToolForSessionQuery?.let { q -> js("window._allowToolForSession = function(toolName) { ${q.inject("toolName")} }") } }
+                    injectBridge("_interactiveHtmlMessage") { interactiveHtmlMessageQuery?.let { q -> js("window._interactiveHtmlMessage = function(json) { ${q.inject("json")} }") } }
+                    injectBridge("_acceptDiffHunk") { acceptDiffHunkQuery?.let { q -> js("window._acceptDiffHunk = function(fp,hi,ec) { ${q.inject("JSON.stringify({filePath:fp,hunkIndex:hi,editedContent:ec||null})")} }") } }
+                    injectBridge("_rejectDiffHunk") { rejectDiffHunkQuery?.let { q -> js("window._rejectDiffHunk = function(fp,hi) { ${q.inject("JSON.stringify({filePath:fp,hunkIndex:hi})")} }") } }
+                    injectBridge("_killToolCall") { killToolCallQuery?.let { q -> js("window._killToolCall = function(toolCallId) { ${q.inject("toolCallId")} }") } }
+                    injectBridge("_killSubAgent") { killSubAgentQuery?.let { q -> js("window._killSubAgent = function(agentId) { ${q.inject("agentId")} }") } }
+                    injectBridge("_resolveProcessInput") { processInputQuery?.let { q -> js("window._resolveProcessInput = function(input) { ${q.inject("input")} }") } }
+                    injectBridge("_revertCheckpoint") { revertCheckpointQuery?.let { q -> js("window._revertCheckpoint = function(id) { ${q.inject("id")} }") } }
+                    injectBridge("_cancelSteering") { cancelSteeringQuery?.let { q -> js("window._cancelSteering = function(id) { ${q.inject("id")} }") } }
+                    injectBridge("_retryLastTask") { retryLastTaskQuery?.let { q -> js("window._retryLastTask = function() { ${q.inject("''")} }") } }
+                    injectBridge("_reportArtifactResult") { artifactResultQuery?.let { q -> js("window._reportArtifactResult = function(json) { ${q.inject("json")} }") } }
+                    injectBridge("_reportInteractiveRender") { interactiveRenderResultQuery?.let { q -> js("window._reportInteractiveRender = function(json) { ${q.inject("json")} }") } }
+                    injectBridge("_showSession") { showSessionQuery?.let { q -> js("window._showSession = function(sessionId) { ${q.inject("sessionId")} }") } }
+                    injectBridge("_deleteSession") { deleteSessionQuery?.let { q -> js("window._deleteSession = function(sessionId) { ${q.inject("sessionId")} }") } }
+                    injectBridge("_toggleFavorite") { toggleFavoriteQuery?.let { q -> js("window._toggleFavorite = function(sessionId) { ${q.inject("sessionId")} }") } }
+                    injectBridge("_startNewSession") { startNewSessionQuery?.let { q -> js("window._startNewSession = function() { ${q.inject("'new'")} }") } }
+                    injectBridge("_bulkDeleteSessions") { bulkDeleteSessionsQuery?.let { q -> js("window._bulkDeleteSessions = function(json) { ${q.inject("json")} }") } }
+                    injectBridge("_exportSession") { exportSessionQuery?.let { q -> js("window._exportSession = function(sessionId) { ${q.inject("sessionId")} }") } }
+                    injectBridge("_exportAllSessions") { exportAllSessionsQuery?.let { q -> js("window._exportAllSessions = function() { ${q.inject("'all'")} }") } }
+                    injectBridge("_requestHistory") { requestHistoryQuery?.let { q -> js("window._requestHistory = function() { ${q.inject("''")} }") } }
+                    injectBridge("_resumeViewedSession") { resumeViewedSessionQuery?.let { q -> js("window._resumeViewedSession = function() { ${q.inject("''")} }") } }
+
+                    if (bridgeFailures > 0) {
+                        LOG.error("AgentCefPanel: $bridgeFailures bridge injection(s) FAILED — some JS→Kotlin callbacks may be missing")
+                    } else {
+                        LOG.info("AgentCefPanel: all bridges injected successfully")
                     }
-                    traceQuery?.let { q ->
-                        val traceJs = q.inject("'trace'")
-                        js("window._requestViewTrace = function() { $traceJs }")
-                    }
-                    promptQuery?.let { q ->
-                        val promptJs = q.inject("text")
-                        js("window._submitPrompt = function(text) { $promptJs }")
-                    }
-                    planApproveQuery?.let { q ->
-                        val planApproveJs = q.inject("'approve'")
-                        js("window._approvePlan = function() { $planApproveJs }")
-                    }
-                    planReviseQuery?.let { q ->
-                        val planReviseJs = q.inject("comments")
-                        js("window._revisePlan = function(comments) { $planReviseJs }")
-                    }
-                    toolToggleQuery?.let { q ->
-                        val toolToggleJs = q.inject("data")
-                        js("window._toggleTool = function(data) { $toolToggleJs }")
-                    }
-                    // Question wizard bridges
-                    questionAnsweredQuery?.let { q ->
-                        val qaJs = q.inject("qid + ':' + opts")
-                        js("window._questionAnswered = function(qid, opts) { $qaJs }")
-                    }
-                    questionSkippedQuery?.let { q ->
-                        val qsJs = q.inject("qid")
-                        js("window._questionSkipped = function(qid) { $qsJs }")
-                    }
-                    chatAboutQuery?.let { q ->
-                        val caJs = q.inject("qid + '\\x1F' + label + '\\x1F' + msg")
-                        js("window._chatAboutOption = function(qid, label, msg) { $caJs }")
-                    }
-                    questionsSubmittedQuery?.let { q ->
-                        val qsubJs = q.inject("'submit'")
-                        js("window._questionsSubmitted = function() { $qsubJs }")
-                    }
-                    questionsCancelledQuery?.let { q ->
-                        val qcanJs = q.inject("'cancel'")
-                        js("window._questionsCancelled = function() { $qcanJs }")
-                    }
-                    editQuestionQuery?.let { q ->
-                        val eqJs = q.inject("qid")
-                        js("window._editQuestion = function(qid) { $eqJs }")
-                    }
-                    deactivateSkillQuery?.let { q ->
-                        val dsJs = q.inject("'dismiss'")
-                        js("window._deactivateSkill = function() { $dsJs }")
-                    }
-                    navigateToFileQuery?.let { q ->
-                        val navJs = q.inject("path")
-                        js("window._navigateToFile = function(path) { $navJs }")
-                    }
-                    // Toolbar + input bar bridges
-                    cancelTaskQuery?.let { q ->
-                        val cancelJs = q.inject("'cancel'")
-                        js("window._cancelTask = function() { $cancelJs }")
-                    }
-                    newChatQuery?.let { q ->
-                        val newJs = q.inject("'new'")
-                        js("window._newChat = function() { $newJs }")
-                    }
-                    sendMessageQuery?.let { q ->
-                        val sendJs = q.inject("text")
-                        js("window._sendMessage = function(text) { $sendJs }")
-                    }
-                    changeModelQuery?.let { q ->
-                        val modelJs = q.inject("modelId")
-                        js("window._changeModel = function(modelId) { $modelJs }")
-                    }
-                    togglePlanModeQuery?.let { q ->
-                        val planJs = q.inject("String(enabled)")
-                        js("window._togglePlanMode = function(enabled) { $planJs }")
-                    }
-                    toggleRalphLoopQuery?.let { q ->
-                        val ralphJs = q.inject("String(enabled)")
-                        js("window._toggleRalphLoop = function(enabled) { $ralphJs }")
-                    }
-                    activateSkillQuery?.let { q ->
-                        val skillJs = q.inject("name")
-                        js("window._activateSkill = function(name) { $skillJs }")
-                    }
-                    requestFocusIdeQuery?.let { q ->
-                        val focusJs = q.inject("'focus'")
-                        js("window._requestFocusIde = function() { $focusJs }")
-                    }
-                    openSettingsQuery?.let { q ->
-                        val settingsJs = q.inject("'settings'")
-                        js("window._openSettings = function() { $settingsJs }")
-                    }
-                    openMemorySettingsQuery?.let { q ->
-                        val memSettingsJs = q.inject("'memorySettings'")
-                        js("window._openMemorySettings = function() { $memSettingsJs }")
-                    }
-                    openToolsPanelQuery?.let { q ->
-                        val toolsJs = q.inject("'tools'")
-                        js("window._openToolsPanel = function() { $toolsJs }")
-                    }
-                    searchMentionsQuery?.let { q ->
-                        val searchJs = q.inject("data")
-                        js("window._searchMentions = function(data) { $searchJs }")
-                    }
-                    searchTicketsQuery?.let { q ->
-                        val ticketJs = q.inject("query")
-                        js("window._searchTickets = function(query) { $ticketJs }")
-                    }
-                    validateTicketQuery?.let { q ->
-                        val validateJs = q.inject("key + '|' + cb")
-                        js("window._validateTicket = function(key, cb) { $validateJs }")
-                    }
-                    sendMessageWithMentionsQuery?.let { q ->
-                        val sendJs = q.inject("payload")
-                        js("window._sendMessageWithMentions = function(payload) { $sendJs }")
-                    }
-                    openInEditorTabQuery?.let { q ->
-                        val tabJs = q.inject("payload")
-                        js("window._openInEditorTab = function(payload) { $tabJs }")
-                    }
-                    focusPlanEditorQuery?.let { q ->
-                        val focusJs = q.inject("''")
-                        js("window._focusPlanEditor = function() { $focusJs }")
-                    }
-                    revisePlanFromEditorQuery?.let { q ->
-                        val revJs = q.inject("''")
-                        js("window._revisePlanFromEditor = function() { $revJs }")
-                    }
-                    viewInEditorQuery?.let { q ->
-                        val vJs = q.inject("''")
-                        js("window._viewInEditor = function() { $vJs }")
-                    }
-                    // Tool call approval + diff hunk + interactive HTML bridges
-                    approveToolCallQuery?.let { q ->
-                        val approveJs = q.inject("'approve'")
-                        js("window._approveToolCall = function() { $approveJs }")
-                    }
-                    denyToolCallQuery?.let { q ->
-                        val denyJs = q.inject("'deny'")
-                        js("window._denyToolCall = function() { $denyJs }")
-                    }
-                    allowToolForSessionQuery?.let { q ->
-                        val allowJs = q.inject("toolName")
-                        js("window._allowToolForSession = function(toolName) { $allowJs }")
-                    }
-                    interactiveHtmlMessageQuery?.let { q ->
-                        val htmlJs = q.inject("json")
-                        js("window._interactiveHtmlMessage = function(json) { $htmlJs }")
-                    }
-                    acceptDiffHunkQuery?.let { q ->
-                        val acceptJs = q.inject("JSON.stringify({filePath:fp,hunkIndex:hi,editedContent:ec||null})")
-                        js("window._acceptDiffHunk = function(fp,hi,ec) { $acceptJs }")
-                    }
-                    rejectDiffHunkQuery?.let { q ->
-                        val rejectJs = q.inject("JSON.stringify({filePath:fp,hunkIndex:hi})")
-                        js("window._rejectDiffHunk = function(fp,hi) { $rejectJs }")
-                    }
-                    killToolCallQuery?.let { q ->
-                        val killJs = q.inject("toolCallId")
-                        js("window._killToolCall = function(toolCallId) { $killJs }")
-                    }
-                    killSubAgentQuery?.let { q ->
-                        val killSaJs = q.inject("agentId")
-                        js("window._killSubAgent = function(agentId) { $killSaJs }")
-                    }
-                    processInputQuery?.let { q ->
-                        val inputJs = q.inject("input")
-                        js("window._resolveProcessInput = function(input) { $inputJs }")
-                    }
-                    revertCheckpointQuery?.let { q ->
-                        val revertJs = q.inject("id")
-                        js("window._revertCheckpoint = function(id) { $revertJs }")
-                    }
-                    cancelSteeringQuery?.let { q ->
-                        val cancelJs = q.inject("id")
-                        js("window._cancelSteering = function(id) { $cancelJs }")
-                    }
-                    retryLastTaskQuery?.let { q ->
-                        val retryJs = q.inject("''")
-                        js("window._retryLastTask = function() { $retryJs }")
-                    }
-                    artifactResultQuery?.let { q ->
-                        // Receives a JSON string { renderId, status, ... } from the
-                        // ArtifactRenderer after the sandbox iframe postback. The
-                        // JS side stringifies the payload before invoking.
-                        val artifactJs = q.inject("json")
-                        js("window._reportArtifactResult = function(json) { $artifactJs }")
-                    }
-                    // Set pageLoaded AFTER bridges are injected
-                    pageLoaded = true
-                    // Then flush pending calls (they can now execute)
-                    synchronized(pendingCalls) {
-                        pendingCalls.forEach { js(it) }
-                        pendingCalls.clear()
-                    }
+                    // markLoaded flushes all buffered callJs calls. injectBridge catches
+                    // per-bridge exceptions, so we always reach here.
+                    LOG.info("AgentCefPanel: marking page loaded, flushing ${bridgeDispatcher?.pendingCallCount ?: 0} buffered calls")
+                    bridgeDispatcher?.markLoaded()
+
+                    // Notify controller so it can re-push initial state (model, skills,
+                    // memory). This is a safety net: if the page loaded slowly and
+                    // buffered calls already flushed, this is a harmless no-op. If
+                    // anything was lost, this guarantees the UI gets the correct state.
+                    onPageReady?.invoke()
                 }
             }
         }, b.cefBrowser)
 
         browser = b
         add(b.component, BorderLayout.CENTER)
+
+        // Load the page LAST — after the load handler is registered.
+        // If loadURL is called before addLoadHandler, the page can finish loading
+        // before the handler is attached (local JAR resource = sub-millisecond load),
+        // the onLoadingStateChange(isLoading=false) event fires with no listener,
+        // pageLoaded stays false forever, and all callJs calls are buffered but never
+        // flushed — causing the stuck-spinner bug.
+        try {
+            b.loadURL(CefResourceSchemeHandler.BASE_URL + "index.html")
+        } catch (e: Exception) {
+            LOG.warn("AgentCefPanel: loadURL failed, falling back to loadHTML", e)
+            val htmlContent = javaClass.classLoader.getResource("webview/dist/index.html")?.readText()
+            if (htmlContent != null) b.loadHTML(htmlContent)
+            else LOG.error("AgentCefPanel: index.html not found in resources")
+        }
+
+        // Watchdog: warn if the page hasn't loaded within 15 seconds.
+        // Do NOT force-flush (markLoaded) here — on slow machines the page may load
+        // at 30-60s, and flushing JS calls into a non-ready page loses them permanently.
+        // The real onLoadingStateChange handler will flush when the page is truly ready.
+        val dispatcher = bridgeDispatcher
+        if (dispatcher != null) {
+            java.util.Timer("cef-page-load-watchdog", true).schedule(object : java.util.TimerTask() {
+                override fun run() {
+                    if (!dispatcher.isLoaded && !dispatcher.isDisposed) {
+                        LOG.warn("AgentCefPanel: page not loaded after 15s — ${dispatcher.pendingCallCount} calls still buffered (will flush when page loads)")
+                    }
+                }
+            }, 15_000L)
+        }
     }
 
     // ═══════════════════════════════════════════════════
@@ -1053,6 +1043,34 @@ class AgentCefPanel(
         callJs("restoreInputText(${JsEscape.toJsString(text)})")
     }
 
+    /**
+     * Push full session UI state to the webview for rehydration on resume.
+     * Calls the `_loadSessionState` bridge function registered in jcef-bridge.ts.
+     */
+    fun loadSessionState(uiMessagesJson: String) {
+        callJs("_loadSessionState(${JsEscape.toJsString(uiMessagesJson)})")
+    }
+
+    fun loadSessionHistory(historyItemsJson: String) {
+        callJs("_loadSessionHistory(${JsEscape.toJsString(historyItemsJson)})")
+    }
+
+    fun showHistoryView() {
+        callJs("_showHistoryView()")
+    }
+
+    fun showChatView() {
+        callJs("_showChatView()")
+    }
+
+    fun showResumeBar(sessionId: String) {
+        callJs("showResumeBar(${JsEscape.toJsString(sessionId)})")
+    }
+
+    fun hideResumeBar() {
+        callJs("hideResumeBar()")
+    }
+
     // ═══════════════════════════════════════════════════
     //  Theme
     // ═══════════════════════════════════════════════════
@@ -1130,24 +1148,20 @@ class AgentCefPanel(
 
     /** Execute JavaScript in the browser, queuing if page hasn't loaded yet. */
     private fun callJs(code: String) {
-        if (pageLoaded) {
-            js(code)
-        } else {
-            synchronized(pendingCalls) {
-                if (pendingCalls.size >= 10_000) {
-                    LOG.warn("Pending JS calls queue exceeded 10K items, dropping call")
-                    return
-                }
-                pendingCalls.add(code)
-            }
-        }
+        bridgeDispatcher?.dispatch(code)
     }
 
+    /**
+     * Execute JavaScript directly on the browser, bypassing the dispatcher.
+     * Used by [applyCurrentTheme] and bridge injection inside the load handler
+     * (which runs before markLoaded, so the dispatcher would buffer them).
+     */
     private fun js(code: String) {
+        val b = browser ?: return
         try {
-            browser?.cefBrowser?.executeJavaScript(code, CefResourceSchemeHandler.BASE_URL, 0)
+            b.cefBrowser.executeJavaScript(code, CefResourceSchemeHandler.BASE_URL, 0)
         } catch (e: Exception) {
-            LOG.debug("AgentCefPanel: JS execution failed: ${e.message}")
+            LOG.warn("AgentCefPanel: JS execution failed for ${code.take(60)}: ${e.message}")
         }
     }
 
@@ -1171,6 +1185,7 @@ class AgentCefPanel(
 
     override fun dispose() {
         scope.cancel()
+        bridgeDispatcher?.dispose()
         // Tear down every JBCefJSQuery created via registerQuery in one pass.
         // This automatically covers any new bridges added later — no risk of
         // forgetting one in dispose() (the previous toggleRalphLoopQuery leak).

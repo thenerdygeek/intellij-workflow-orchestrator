@@ -198,7 +198,7 @@ function ComponentsTab() {
       {/* ── Messages ── */}
       <Section title="Messages">
         {mockMessages.map(msg => (
-          <AgentMessage key={msg.id} message={msg} />
+          <AgentMessage key={msg.ts} message={msg} />
         ))}
         <SubLabel text="Streaming message:" />
         <AgentMessage message={mockStreamingMessage} isStreaming={true} />
@@ -689,33 +689,28 @@ const CHAT_FLOW_TOOL_CALLS_3: typeof mockToolCalls = [
 ];
 
 const MSG_USER_1: (typeof mockMessages)[0] = {
-  id: 'cf-u1', role: 'user',
-  content: 'Refactor the auth module — extract token validation into a separate service, add tests, and make sure CI passes.',
-  timestamp: Date.now() - 180000,
+  ts: Date.now() - 180000, type: 'SAY', say: 'USER_MESSAGE',
+  text: 'Refactor the auth module — extract token validation into a separate service, add tests, and make sure CI passes.',
 };
 
 const MSG_AGENT_1: (typeof mockMessages)[0] = {
-  id: 'cf-a1', role: 'agent',
-  content: "I'll start by reading the current auth implementation and searching for all JWT usages before making any changes.",
-  timestamp: Date.now() - 175000,
+  ts: Date.now() - 175000, type: 'SAY', say: 'TEXT',
+  text: "I'll start by reading the current auth implementation and searching for all JWT usages before making any changes.",
 };
 
 const MSG_AGENT_2: (typeof mockMessages)[0] = {
-  id: 'cf-a2', role: 'agent',
-  content: "Found 4 usages of `jwt.decode` across 3 files. I'll now extract this into a dedicated `TokenService`. Here's the proposed change:",
-  timestamp: Date.now() - 160000,
+  ts: Date.now() - 160000, type: 'SAY', say: 'TEXT',
+  text: "Found 4 usages of `jwt.decode` across 3 files. I'll now extract this into a dedicated `TokenService`. Here's the proposed change:",
 };
 
 const MSG_AGENT_3: (typeof mockMessages)[0] = {
-  id: 'cf-a3', role: 'agent',
-  content: "Edit applied and diagnostics are clean. Before running the full test suite, let me check if there are any questions about the approach:",
-  timestamp: Date.now() - 130000,
+  ts: Date.now() - 130000, type: 'SAY', say: 'TEXT',
+  text: "Edit applied and diagnostics are clean. Before running the full test suite, let me check if there are any questions about the approach:",
 };
 
 const MSG_AGENT_4: (typeof mockMessages)[0] = {
-  id: 'cf-a4', role: 'agent',
-  content: "All tests passing. Here's a summary of the CI build and quality gate status:",
-  timestamp: Date.now() - 60000,
+  ts: Date.now() - 60000, type: 'SAY', say: 'TEXT',
+  text: "All tests passing. Here's a summary of the CI build and quality gate status:",
 };
 
 const MOCK_CHART_CI = JSON.stringify({
