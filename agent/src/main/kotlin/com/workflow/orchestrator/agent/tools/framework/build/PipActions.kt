@@ -5,7 +5,10 @@ import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.util.concurrent.CompletableFuture
@@ -257,24 +260,32 @@ private fun runPipCommand(args: List<String>, project: Project): String? {
 
 // ── JSON parsers ─────────────────────────────────────────────────────────
 
-private fun parsePipJsonList(json: String): List<PipPackageInfo> {
+private val pipJson = Json { ignoreUnknownKeys = true }
+
+private fun parsePipJsonList(output: String): List<PipPackageInfo> {
     // pip list --format=json outputs: [{"name": "pkg", "version": "1.0"}, ...]
-    val results = mutableListOf<PipPackageInfo>()
-    val pattern = Regex("""\{"name"\s*:\s*"([^"]+)"\s*,\s*"version"\s*:\s*"([^"]+)"\}""")
-    for (match in pattern.findAll(json)) {
-        results.add(PipPackageInfo(match.groupValues[1], match.groupValues[2]))
+    val array = pipJson.parseToJsonElement(output).jsonArray
+    return array.map { item ->
+        val obj = item.jsonObject
+        PipPackageInfo(
+            name = obj["name"]?.jsonPrimitive?.content ?: "",
+            version = obj["version"]?.jsonPrimitive?.content ?: "",
+        )
     }
-    return results
 }
 
-private fun parsePipJsonOutdated(json: String): List<PipOutdatedInfo> {
+private fun parsePipJsonOutdated(output: String): List<PipOutdatedInfo> {
     // pip list --outdated --format=json outputs: [{"name": "pkg", "version": "1.0", "latest_version": "2.0", "latest_filetype": "wheel"}, ...]
-    val results = mutableListOf<PipOutdatedInfo>()
-    val pattern = Regex("""\{[^}]*"name"\s*:\s*"([^"]+)"[^}]*"version"\s*:\s*"([^"]+)"[^}]*"latest_version"\s*:\s*"([^"]+)"[^}]*"latest_filetype"\s*:\s*"([^"]+)"[^}]*\}""")
-    for (match in pattern.findAll(json)) {
-        results.add(PipOutdatedInfo(match.groupValues[1], match.groupValues[2], match.groupValues[3], match.groupValues[4]))
+    val array = pipJson.parseToJsonElement(output).jsonArray
+    return array.map { item ->
+        val obj = item.jsonObject
+        PipOutdatedInfo(
+            name = obj["name"]?.jsonPrimitive?.content ?: "",
+            version = obj["version"]?.jsonPrimitive?.content ?: "",
+            latestVersion = obj["latest_version"]?.jsonPrimitive?.content ?: "",
+            latestFiletype = obj["latest_filetype"]?.jsonPrimitive?.content ?: "",
+        )
     }
-    return results
 }
 
 // ── Requirements/config parsers ──────────────────────────────────────────
