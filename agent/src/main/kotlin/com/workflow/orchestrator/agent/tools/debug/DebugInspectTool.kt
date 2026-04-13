@@ -255,7 +255,19 @@ Most actions require a suspended session. session_id defaults to active session.
         }
 
         return try {
-            val evalResult = controller.evaluate(session, expression, 0)
+            val evalResult = withTimeoutOrNull(EVALUATE_TIMEOUT_MS) {
+                controller.evaluate(session, expression, 0)
+            }
+
+            if (evalResult == null) {
+                return ToolResult(
+                    "Expression evaluation timed out after ${EVALUATE_TIMEOUT_MS / 1000} seconds. " +
+                        "The expression may contain an infinite loop or be waiting for a lock.",
+                    "Evaluation timed out",
+                    ToolResult.ERROR_TOKEN_ESTIMATE,
+                    isError = true
+                )
+            }
 
             if (evalResult.isError) {
                 return ToolResult("Error: ${evalResult.result}", "Evaluation error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
@@ -989,6 +1001,9 @@ Most actions require a suspended session. session_id defaults to active session.
     }
 
     companion object {
+        // EvaluateTool constants
+        private const val EVALUATE_TIMEOUT_MS = 10_000L
+
         // GetStackFramesTool constants
         private const val DEFAULT_MAX_FRAMES = 20
         private const val MAX_FRAMES_CAP = 50
