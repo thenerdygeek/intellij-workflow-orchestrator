@@ -102,7 +102,7 @@ class SemanticDiagnosticsTool(
                     val skippedNote = if (skippedCount > 0) "\n  ($skippedCount pre-existing issue(s) outside edit range excluded)" else ""
                     val flagNote = if (hasProblemFlag && filterRange != null) "\n  Note: IDE flags this file as problematic (may have issues outside your edit)" else ""
                     val content = "${relevantProblems.size} issue(s) in ${vf.name}$scopeNote:\n${lines.joinToString("\n")}$more$skippedNote$flagNote"
-                    ToolResult(content, "${relevantProblems.size} issues", TokenEstimator.estimate(content), isError = true)
+                    ToolResult(content, "${relevantProblems.size} issues", TokenEstimator.estimate(content), isError = false)
                 }
             }.inSmartMode(project).executeSynchronously()
             result ?: ToolResult("PSI file became invalid during analysis.", "Invalid", 5, isError = true)
