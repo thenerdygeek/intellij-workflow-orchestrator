@@ -414,7 +414,8 @@ class AgentService(private val project: Project) : Disposable {
             brainProvider = { createBrain() },
             toolRegistry = registry,
             project = project,
-            configLoader = AgentConfigLoader.getInstance()
+            configLoader = AgentConfigLoader.getInstance(),
+            ideContext = ideContext
         ) }
 
         // ── Deferred tools (loaded via tool_search) ──────────────────────

@@ -10,6 +10,7 @@ import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.estimateTokens
+import com.workflow.orchestrator.agent.ide.IdeContext
 import com.workflow.orchestrator.agent.tools.subagent.AgentConfig
 import com.workflow.orchestrator.agent.tools.subagent.AgentConfigLoader
 import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
@@ -46,7 +47,8 @@ class SpawnAgentTool(
     var sessionDebugDir: java.io.File? = null,
     var toolExecutionMode: String = "accumulate",
     var onSubagentProgress: (suspend (String, SubagentProgressUpdate) -> Unit)? = null,
-    private val configLoader: AgentConfigLoader? = null
+    private val configLoader: AgentConfigLoader? = null,
+    private val ideContext: IdeContext? = null
 ) : AgentTool {
 
     override val name = "agent"
@@ -79,7 +81,7 @@ Tips:
 - Include file paths. The sub-agent starts with zero context.
 - For implementation tasks, tell the agent to verify its work (run tests, check compilation)."""
 
-            val configs = configLoader?.getAllCachedConfigs()
+            val configs = configLoader?.getFilteredConfigs(ideContext)
             if (configs.isNullOrEmpty()) return base
 
             val suffix = buildString {
@@ -230,7 +232,7 @@ Tips:
     }
 
     private fun buildUnknownAgentTypeError(name: String): String {
-        val available = configLoader?.getAllCachedConfigs()
+        val available = configLoader?.getFilteredConfigs(ideContext)
             ?.sortedBy { it.name }
             ?.joinToString(", ") { it.name }
             ?: "(none loaded)"
