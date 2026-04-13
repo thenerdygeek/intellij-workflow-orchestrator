@@ -242,6 +242,13 @@ class AgentCefPanel(
     /** Callback when user clicks "Resume" in the resume bar. */
     var onResumeViewedSession: (() -> Unit)? = null
 
+    /**
+     * Fired after the page is fully loaded and all bridges are injected.
+     * Used by AgentController to re-push initial state (model, skills, memory)
+     * so it arrives even if the page took longer than expected to load.
+     */
+    var onPageReady: (() -> Unit)? = null
+
     init {
         Disposer.register(parentDisposable) { scope.cancel() }
         try {
@@ -566,6 +573,12 @@ class AgentCefPanel(
                     // per-bridge exceptions, so we always reach here.
                     LOG.info("AgentCefPanel: marking page loaded, flushing ${bridgeDispatcher?.pendingCallCount ?: 0} buffered calls")
                     bridgeDispatcher?.markLoaded()
+
+                    // Notify controller so it can re-push initial state (model, skills,
+                    // memory). This is a safety net: if the page loaded slowly and
+                    // buffered calls already flushed, this is a harmless no-op. If
+                    // anything was lost, this guarantees the UI gets the correct state.
+                    onPageReady?.invoke()
                 }
             }
         }, b.cefBrowser)

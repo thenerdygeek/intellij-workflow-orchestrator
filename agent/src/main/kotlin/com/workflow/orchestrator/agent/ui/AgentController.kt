@@ -488,21 +488,27 @@ class AgentController(
             onResumeViewedSession = { resumeViewedSession() },
         )
 
-        // Set model name from settings
+        // Push initial state (model, skills, memory) — buffered if page isn't loaded yet.
+        pushInitialState()
+
+        // Re-push when page actually finishes loading, in case the initial push was
+        // buffered and the page took longer than expected (slow machines, heavy IDE startup).
+        // If the buffered calls already flushed successfully, this is a harmless idempotent re-push.
+        dashboard.setCefPageReadyCallback { pushInitialState() }
+    }
+
+    /**
+     * Push model name, memory stats, model list, and skills to the webview.
+     * Called at init (buffered if page isn't ready) and again from onPageReady
+     * (guarantees state arrives even on slow machines).
+     */
+    private fun pushInitialState() {
         val model = AgentSettings.getInstance(project).state.sourcegraphChatModel
         if (!model.isNullOrBlank()) {
             dashboard.setModelName(model)
         }
-
-        // Push initial memory stats so the TopBar indicator shows from first paint,
-        // even before the user sends any task. (Review M2.) callJs buffers when the
-        // webview hasn't loaded yet, so this will fire on first paint.
         pushMemoryStats()
-
-        // Fetch available models from Sourcegraph and populate the dropdown
         loadModelList()
-
-        // Push available skills to the chat UI for autocomplete/suggestions
         loadSkillsList()
     }
 

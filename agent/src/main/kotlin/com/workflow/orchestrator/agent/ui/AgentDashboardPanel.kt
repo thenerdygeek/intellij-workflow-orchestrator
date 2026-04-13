@@ -743,6 +743,10 @@ class AgentDashboardPanel(
         cefPanel?.onResumeViewedSession = onResumeViewedSession
     }
 
+    fun setCefPageReadyCallback(onReady: () -> Unit) {
+        cefPanel?.onPageReady = onReady
+    }
+
     fun setCefCancelSteeringCallback(onCancel: (String) -> Unit) {
         cefPanel?.onCancelSteering = onCancel
     }
