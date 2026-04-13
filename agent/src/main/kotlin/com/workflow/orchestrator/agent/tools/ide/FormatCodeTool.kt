@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.tools.ide
 
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.PsiManager
@@ -34,6 +35,14 @@ class FormatCodeTool : AgentTool {
 
         val (path, pathError) = PathValidator.resolveAndValidate(rawPath, project.basePath)
         if (pathError != null) return pathError
+
+        if (DumbService.isDumb(project)) {
+            return ToolResult(
+                "IDE is still indexing. format_code cannot run safely during indexing " +
+                "because it may operate on incomplete PSI trees. Try again in a moment.",
+                "Indexing", 5, isError = true
+            )
+        }
 
         val vf = LocalFileSystem.getInstance().refreshAndFindFileByPath(path!!)
             ?: return ToolResult("File not found: $path", "Not found", 5, isError = true)
