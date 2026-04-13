@@ -217,16 +217,15 @@ class AutomationPanel(
                 }
 
                 if (branchCombo.itemCount == 0) {
-                    // No branches found — fall back to master plan key
+                    // No branches returned — fall back to the plan key itself
                     branchCombo.addItem(BranchComboItem(planKey, planKey))
                 }
 
-                // Default to develop if available, otherwise first branch
-                val developIndex = (0 until branchCombo.itemCount).firstOrNull { i ->
-                    val item = branchCombo.getItemAt(i)
-                    item.branchName.equals("develop", ignoreCase = true)
-                }
-                branchCombo.selectedIndex = developIndex ?: 0
+                // Default to the branch whose key matches the suite plan key
+                val defaultIndex = (0 until branchCombo.itemCount).firstOrNull { i ->
+                    branchCombo.getItemAt(i).branchPlanKey == planKey
+                } ?: 0
+                branchCombo.selectedIndex = defaultIndex
                 suppressBranchListener = false
 
                 val selected = branchCombo.selectedItem as? BranchComboItem
