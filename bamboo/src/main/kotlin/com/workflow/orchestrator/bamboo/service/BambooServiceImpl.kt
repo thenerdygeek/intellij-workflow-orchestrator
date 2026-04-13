@@ -64,19 +64,12 @@ class BambooServiceImpl(private val project: Project) : BambooService {
     override suspend fun getLatestBuild(planKey: String, branch: String?, repoName: String?): ToolResult<BuildResultData> {
         val api = client ?: return notConfiguredError("fetch latest build for $planKey")
 
-        // Resolve branch plan key if a branch is specified
-        val effectivePlanKey = if (branch != null) {
-            val (resolved, error) = resolveBranchPlanKey(api, planKey, branch)
-            resolved ?: return buildErrorResult(planKey, 0,
-                ApiResult.Error(ErrorType.NOT_FOUND, error ?: "Branch resolution failed"))
-        } else {
-            planKey
-        }
-
-        return when (val result = api.getLatestResult(effectivePlanKey)) {
+        // Pass branch directly to the API — same approach as BuildMonitorService.pollOnce().
+        // Bamboo handles branch-name-in-URL (URL-encoded) correctly.
+        return when (val result = api.getLatestResult(planKey, branch = branch)) {
             is ApiResult.Success -> mapBuildResult(result.data)
             is ApiResult.Error -> {
-                log.warn("[BambooService] Failed to fetch latest build for $effectivePlanKey: ${result.message}")
+                log.warn("[BambooService] Failed to fetch latest build for $planKey (branch=$branch): ${result.message}")
                 buildErrorResult(planKey, 0, result)
             }
         }
