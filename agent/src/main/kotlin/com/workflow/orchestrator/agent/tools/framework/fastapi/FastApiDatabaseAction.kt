@@ -137,8 +137,7 @@ private fun parseDbModels(pyFile: File, basePath: String, results: MutableList<D
         val className = match.groupValues[1]
         if (className == "Meta" || className == "Config") continue
         // Avoid matching SQLAlchemy Base subclass again
-        val matchText = content.substring(match.range.first, minOf(match.range.last + 50, content.length))
-        if (matchText.contains("Base")) continue
+        if (match.value.contains("Base")) continue
         val classStart = match.range.first
         val classEnd = findDbClassEnd(content, classStart)
         val classBody = content.substring(classStart, classEnd)
