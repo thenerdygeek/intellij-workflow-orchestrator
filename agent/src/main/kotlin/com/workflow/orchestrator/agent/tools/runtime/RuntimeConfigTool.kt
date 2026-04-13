@@ -304,7 +304,7 @@ description optional: for approval dialog on create/modify/delete.
             val settings = runManager.createConfiguration(prefixedName, factory)
             val config = settings.configuration
 
-            applyCreateConfigSettings(
+            val failures = applyCreateConfigSettings(
                 config, configType, mainClass, testClass, testMethod, module,
                 envVars, vmOptions, programArgs, workingDir ?: project.basePath,
                 activeProfiles, port ?: 5005
@@ -326,9 +326,19 @@ description optional: for approval dialog on create/modify/delete.
                 envVars?.let { if (it.isNotEmpty()) appendLine("  Env vars: ${it.keys.joinToString(", ")}") }
                 activeProfiles?.let { appendLine("  Active profiles: $it") }
                 if (configType == "remote_debug") appendLine("  Debug port: ${port ?: 5005}")
+                if (failures.isNotEmpty()) {
+                    appendLine()
+                    appendLine("WARNING: Some properties failed to apply:")
+                    failures.forEach { appendLine("  - $it") }
+                }
             }.trimEnd()
 
-            ToolResult(content, "Created config '$prefixedName' ($configType)", TokenEstimator.estimate(content))
+            val summary = if (failures.isNotEmpty()) {
+                "Created config '$prefixedName' ($configType) with ${failures.size} property error(s)"
+            } else {
+                "Created config '$prefixedName' ($configType)"
+            }
+            ToolResult(content, summary, TokenEstimator.estimate(content))
         } catch (e: Exception) {
             ToolResult("Error creating run configuration: ${e.message}", "Error creating config", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
@@ -366,50 +376,54 @@ description optional: for approval dialog on create/modify/delete.
         testClass: String?, testMethod: String?, module: String?,
         envVars: Map<String, String>?, vmOptions: String?, programArgs: String?,
         workingDir: String?, activeProfiles: String?, port: Int
-    ) {
-        when (configType) {
+    ): List<String> {
+        return when (configType) {
             "application" -> applyApplicationConfig(config, mainClass, vmOptions, programArgs, envVars, workingDir)
             "spring_boot" -> applyReflectionConfig(config, mainClass, vmOptions, programArgs, envVars, workingDir, activeProfiles)
             "junit" -> applyJUnitConfig(config, testClass, testMethod, vmOptions, envVars, workingDir)
             "remote_debug" -> applyRemoteConfig(config, port)
             "gradle" -> applyGradleConfig(config, programArgs, vmOptions, envVars, workingDir)
+            else -> emptyList()
         }
     }
 
     private fun applyApplicationConfig(
         config: RunConfiguration, mainClass: String?, vmOptions: String?,
         programArgs: String?, envVars: Map<String, String>?, workingDir: String?
-    ) {
+    ): List<String> {
+        val failures = mutableListOf<String>()
         if (config is ApplicationConfiguration) {
-            mainClass?.let { config.mainClassName = it }
-            vmOptions?.let { config.vmParameters = it }
-            programArgs?.let { config.programParameters = it }
-            envVars?.let { config.envs = it }
-            workingDir?.let { config.workingDirectory = it }
+            mainClass?.let { trySetProperty(failures, "main_class") { config.mainClassName = it } }
+            vmOptions?.let { trySetProperty(failures, "vm_options") { config.vmParameters = it } }
+            programArgs?.let { trySetProperty(failures, "program_args") { config.programParameters = it } }
+            envVars?.let { trySetProperty(failures, "env_vars") { config.envs = it } }
+            workingDir?.let { trySetProperty(failures, "working_dir") { config.workingDirectory = it } }
         }
+        return failures
     }
 
     private fun applyReflectionConfig(
         config: RunConfiguration, mainClass: String?, vmOptions: String?,
         programArgs: String?, envVars: Map<String, String>?, workingDir: String?,
         activeProfiles: String?
-    ) {
-        try {
-            mainClass?.let { setViaReflection(config, "setMainClassName", it) }
-            vmOptions?.let { setViaReflection(config, "setVMParameters", it) }
-            programArgs?.let { setViaReflection(config, "setProgramParameters", it) }
-            envVars?.let { setEnvsViaReflection(config, it) }
-            workingDir?.let { setViaReflection(config, "setWorkingDirectory", it) }
-            activeProfiles?.let { setViaReflection(config, "setActiveProfiles", it) }
-        } catch (_: Exception) { }
+    ): List<String> {
+        val failures = mutableListOf<String>()
+        mainClass?.let { trySetReflection(failures, "main_class", config, "setMainClassName", it) }
+        vmOptions?.let { trySetReflection(failures, "vm_options", config, "setVMParameters", it) }
+        programArgs?.let { trySetReflection(failures, "program_args", config, "setProgramParameters", it) }
+        envVars?.let { trySetEnvsReflection(failures, "env_vars", config, it) }
+        workingDir?.let { trySetReflection(failures, "working_dir", config, "setWorkingDirectory", it) }
+        activeProfiles?.let { trySetReflection(failures, "active_profiles", config, "setActiveProfiles", it) }
+        return failures
     }
 
     private fun applyJUnitConfig(
         config: RunConfiguration, testClass: String?, testMethod: String?,
         vmOptions: String?, envVars: Map<String, String>?, workingDir: String?
-    ) {
-        try {
-            testClass?.let {
+    ): List<String> {
+        val failures = mutableListOf<String>()
+        testClass?.let {
+            trySetProperty(failures, "test_class") {
                 val getPersistentData = config.javaClass.methods.find { m -> m.name == "getPersistentData" }
                 val data = getPersistentData?.invoke(config)
                 if (data != null) {
@@ -422,48 +436,77 @@ description optional: for approval dialog on create/modify/delete.
                         val methodField = data.javaClass.getField("METHOD_NAME")
                         methodField.set(data, method)
                     }
+                } else {
+                    throw IllegalStateException("getPersistentData() returned null — JUnit config type may not be available")
                 }
             }
-            vmOptions?.let { setViaReflection(config, "setVMParameters", it) }
-            envVars?.let { setEnvsViaReflection(config, it) }
-            workingDir?.let { setViaReflection(config, "setWorkingDirectory", it) }
-        } catch (_: Exception) { }
+        }
+        vmOptions?.let { trySetReflection(failures, "vm_options", config, "setVMParameters", it) }
+        envVars?.let { trySetEnvsReflection(failures, "env_vars", config, it) }
+        workingDir?.let { trySetReflection(failures, "working_dir", config, "setWorkingDirectory", it) }
+        return failures
     }
 
-    private fun applyRemoteConfig(config: RunConfiguration, port: Int) {
-        try {
+    private fun applyRemoteConfig(config: RunConfiguration, port: Int): List<String> {
+        val failures = mutableListOf<String>()
+        trySetProperty(failures, "port") {
             val portField = config.javaClass.getField("PORT")
             portField.set(config, port.toString())
+        }
+        trySetProperty(failures, "host") {
             val hostField = config.javaClass.getField("HOST")
             hostField.set(config, "localhost")
+        }
+        trySetProperty(failures, "server_mode") {
             val serverModeField = config.javaClass.getField("SERVER_MODE")
             serverModeField.set(config, false)
-        } catch (_: Exception) { }
+        }
+        return failures
     }
 
     private fun applyGradleConfig(
         config: RunConfiguration, programArgs: String?, vmOptions: String?,
         envVars: Map<String, String>?, workingDir: String?
-    ) {
-        try {
-            programArgs?.let { setViaReflection(config, "setRawCommandLine", it) }
-            vmOptions?.let { setViaReflection(config, "setVmOptions", it) }
-            workingDir?.let { setViaReflection(config, "setWorkingDirectory", it) }
-        } catch (_: Exception) { }
+    ): List<String> {
+        val failures = mutableListOf<String>()
+        programArgs?.let { trySetReflection(failures, "program_args", config, "setRawCommandLine", it) }
+        vmOptions?.let { trySetReflection(failures, "vm_options", config, "setVmOptions", it) }
+        workingDir?.let { trySetReflection(failures, "working_dir", config, "setWorkingDirectory", it) }
+        return failures
     }
 
     private fun setViaReflection(config: RunConfiguration, methodName: String, value: String) {
-        try {
-            val method = config.javaClass.methods.find { it.name == methodName && it.parameterCount == 1 }
-            method?.invoke(config, value)
-        } catch (_: Exception) { }
+        val method = config.javaClass.methods.find { it.name == methodName && it.parameterCount == 1 }
+            ?: throw NoSuchMethodException("Method '$methodName' not found on ${config.javaClass.simpleName}")
+        method.invoke(config, value)
     }
 
     private fun setEnvsViaReflection(config: RunConfiguration, envs: Map<String, String>) {
+        val method = config.javaClass.methods.find { it.name == "setEnvs" && it.parameterCount == 1 }
+            ?: throw NoSuchMethodException("Method 'setEnvs' not found on ${config.javaClass.simpleName}")
+        method.invoke(config, envs)
+    }
+
+    private inline fun trySetProperty(failures: MutableList<String>, propertyName: String, block: () -> Unit) {
         try {
-            val method = config.javaClass.methods.find { it.name == "setEnvs" && it.parameterCount == 1 }
-            method?.invoke(config, envs)
-        } catch (_: Exception) { }
+            block()
+        } catch (e: Exception) {
+            failures.add("$propertyName: ${e.message ?: e.javaClass.simpleName}")
+        }
+    }
+
+    private fun trySetReflection(
+        failures: MutableList<String>, propertyName: String,
+        config: RunConfiguration, methodName: String, value: String
+    ) {
+        trySetProperty(failures, propertyName) { setViaReflection(config, methodName, value) }
+    }
+
+    private fun trySetEnvsReflection(
+        failures: MutableList<String>, propertyName: String,
+        config: RunConfiguration, envs: Map<String, String>
+    ) {
+        trySetProperty(failures, propertyName) { setEnvsViaReflection(config, envs) }
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -499,25 +542,26 @@ description optional: for approval dialog on create/modify/delete.
 
             val config = settings.configuration
             val changes = mutableListOf<String>()
+            val failures = mutableListOf<String>()
 
             envVars?.let {
-                modifyApplyEnvVars(config, it)
+                modifyApplyEnvVars(config, it, failures)
                 changes.add("env_vars (${it.size} vars)")
             }
             vmOptions?.let {
-                modifyApplyVmOptions(config, it)
+                modifyApplyVmOptions(config, it, failures)
                 changes.add("vm_options")
             }
             programArgs?.let {
-                modifyApplyProgramArgs(config, it)
+                modifyApplyProgramArgs(config, it, failures)
                 changes.add("program_args")
             }
             workingDir?.let {
-                modifyApplyWorkingDir(config, it)
+                modifyApplyWorkingDir(config, it, failures)
                 changes.add("working_dir")
             }
             activeProfiles?.let {
-                modifyApplyActiveProfiles(config, it)
+                modifyApplyActiveProfiles(config, it, failures)
                 changes.add("active_profiles")
             }
 
@@ -533,73 +577,72 @@ description optional: for approval dialog on create/modify/delete.
                 workingDir?.let { appendLine("  Working dir: $it") }
                 envVars?.let { if (it.isNotEmpty()) appendLine("  Env vars: ${it.keys.joinToString(", ")}") }
                 activeProfiles?.let { appendLine("  Active profiles: $it") }
+                if (failures.isNotEmpty()) {
+                    appendLine()
+                    appendLine("WARNING: Some properties failed to apply:")
+                    failures.forEach { appendLine("  - $it") }
+                }
             }.trimEnd()
 
-            ToolResult(content, "Modified config '$configName': ${changes.joinToString(", ")}", TokenEstimator.estimate(content))
+            val summary = if (failures.isNotEmpty()) {
+                "Modified config '$configName' with ${failures.size} property error(s)"
+            } else {
+                "Modified config '$configName': ${changes.joinToString(", ")}"
+            }
+            ToolResult(content, summary, TokenEstimator.estimate(content))
         } catch (e: Exception) {
             ToolResult("Error modifying run configuration: ${e.message}", "Error modifying config", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
     }
 
-    private fun modifyApplyEnvVars(config: RunConfiguration, envVars: Map<String, String>) {
+    private fun modifyApplyEnvVars(config: RunConfiguration, envVars: Map<String, String>, failures: MutableList<String>) {
         if (config is ApplicationConfiguration) {
-            config.envs = envVars
+            trySetProperty(failures, "env_vars") { config.envs = envVars }
         } else {
-            try {
-                val method = config.javaClass.methods.find { it.name == "setEnvs" && it.parameterCount == 1 }
-                method?.invoke(config, envVars)
-            } catch (_: Exception) { }
+            trySetEnvsReflection(failures, "env_vars", config, envVars)
         }
     }
 
-    private fun modifyApplyVmOptions(config: RunConfiguration, vmOptions: String) {
+    private fun modifyApplyVmOptions(config: RunConfiguration, vmOptions: String, failures: MutableList<String>) {
         if (config is ApplicationConfiguration) {
-            config.vmParameters = vmOptions
+            trySetProperty(failures, "vm_options") { config.vmParameters = vmOptions }
         } else {
-            try {
+            trySetProperty(failures, "vm_options") {
                 val method = config.javaClass.methods.find {
                     (it.name == "setVMParameters" || it.name == "setVmParameters" || it.name == "setVmOptions")
                         && it.parameterCount == 1
                 }
-                method?.invoke(config, vmOptions)
-            } catch (_: Exception) { }
+                    ?: throw NoSuchMethodException("No VM parameters setter found on ${config.javaClass.simpleName}")
+                method.invoke(config, vmOptions)
+            }
         }
     }
 
-    private fun modifyApplyProgramArgs(config: RunConfiguration, args: String) {
+    private fun modifyApplyProgramArgs(config: RunConfiguration, args: String, failures: MutableList<String>) {
         if (config is ApplicationConfiguration) {
-            config.programParameters = args
+            trySetProperty(failures, "program_args") { config.programParameters = args }
         } else {
-            try {
+            trySetProperty(failures, "program_args") {
                 val method = config.javaClass.methods.find {
                     (it.name == "setProgramParameters" || it.name == "setRawCommandLine")
                         && it.parameterCount == 1
                 }
-                method?.invoke(config, args)
-            } catch (_: Exception) { }
-        }
-    }
-
-    private fun modifyApplyWorkingDir(config: RunConfiguration, dir: String) {
-        if (config is ApplicationConfiguration) {
-            config.workingDirectory = dir
-        } else {
-            try {
-                val method = config.javaClass.methods.find {
-                    it.name == "setWorkingDirectory" && it.parameterCount == 1
-                }
-                method?.invoke(config, dir)
-            } catch (_: Exception) { }
-        }
-    }
-
-    private fun modifyApplyActiveProfiles(config: RunConfiguration, profiles: String) {
-        try {
-            val method = config.javaClass.methods.find {
-                it.name == "setActiveProfiles" && it.parameterCount == 1
+                    ?: throw NoSuchMethodException("No program arguments setter found on ${config.javaClass.simpleName}")
+                method.invoke(config, args)
             }
-            method?.invoke(config, profiles)
-        } catch (_: Exception) { }
+        }
+    }
+
+    private fun modifyApplyWorkingDir(config: RunConfiguration, dir: String, failures: MutableList<String>) {
+        if (config is ApplicationConfiguration) {
+            trySetProperty(failures, "working_dir") { config.workingDirectory = dir }
+        } else {
+            trySetReflection(failures, "working_dir", config, "setWorkingDirectory", dir)
+        }
+    }
+
+    private fun modifyApplyActiveProfiles(config: RunConfiguration, profiles: String, failures: MutableList<String>) {
+        trySetReflection(failures, "active_profiles", config, "setActiveProfiles", profiles)
     }
 
     // ══════════════════════════════════════════════════════════════════════
