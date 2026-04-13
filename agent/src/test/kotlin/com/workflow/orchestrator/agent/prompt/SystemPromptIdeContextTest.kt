@@ -206,6 +206,66 @@ class SystemPromptIdeContextTest {
         assertFalse(prompt.contains("pytest"))
     }
 
+    // ==================== Task-to-Tool Hints Tests ====================
+
+    @Test
+    fun `capabilities includes task-to-tool hints table`() {
+        val prompt = SystemPrompt.build(
+            projectName = "TestProject",
+            projectPath = "/test/project",
+        )
+        assertTrue(prompt.contains("When to Use Specialized Tools"))
+        assertTrue(prompt.contains("type_hierarchy"))
+        assertTrue(prompt.contains("call_hierarchy"))
+        assertTrue(prompt.contains("refactor_rename"))
+    }
+
+    @Test
+    fun `IntelliJ capabilities includes Spring endpoint hints`() {
+        val context = IdeContext(
+            product = IdeProduct.INTELLIJ_ULTIMATE,
+            productName = "IntelliJ IDEA 2025.1 Ultimate",
+            edition = Edition.ULTIMATE,
+            languages = setOf(Language.JAVA, Language.KOTLIN),
+            hasJavaPlugin = true,
+            hasPythonPlugin = false,
+            hasPythonCorePlugin = false,
+            hasSpringPlugin = true,
+            detectedFrameworks = setOf(Framework.SPRING),
+            detectedBuildTools = setOf(BuildTool.GRADLE),
+        )
+        val prompt = SystemPrompt.build(
+            projectName = "TestProject",
+            projectPath = "/test/project",
+            ideContext = context,
+        )
+        assertTrue(prompt.contains("Find API endpoints"))
+        assertTrue(prompt.contains("spring"))
+    }
+
+    @Test
+    fun `PyCharm with Django capabilities includes Django hints`() {
+        val context = IdeContext(
+            product = IdeProduct.PYCHARM_PROFESSIONAL,
+            productName = "PyCharm 2025.1 Professional",
+            edition = Edition.PROFESSIONAL,
+            languages = setOf(Language.PYTHON),
+            hasJavaPlugin = false,
+            hasPythonPlugin = true,
+            hasPythonCorePlugin = false,
+            hasSpringPlugin = false,
+            detectedFrameworks = setOf(Framework.DJANGO),
+            detectedBuildTools = setOf(BuildTool.POETRY),
+        )
+        val prompt = SystemPrompt.build(
+            projectName = "TestProject",
+            projectPath = "/test/project",
+            ideContext = context,
+        )
+        assertTrue(prompt.contains("Django URLs/views") || prompt.contains("django"))
+        assertFalse(prompt.contains("Find API endpoints") && prompt.contains("spring"))
+    }
+
     @Test
     fun `prompt sections are properly ordered`() {
         val prompt = SystemPrompt.build(
