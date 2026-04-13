@@ -263,8 +263,8 @@ class TagBuilderServiceTest {
     @Test
     fun `detectDockerTag returns noBuild when no build found`() = runTest {
         coEvery { bambooService.getLatestBuild("CI-PLAN", "feature/gone", null) } returns ToolResult(
-            data = BuildResultData(planKey = "", buildNumber = 0, state = "", durationSeconds = 0),
-            summary = "not found",
+            data = BuildResultData(planKey = "CI-PLAN", buildNumber = 0, state = "ERROR", durationSeconds = 0),
+            summary = "Branch 'feature/gone' not found",
             isError = true
         )
 
