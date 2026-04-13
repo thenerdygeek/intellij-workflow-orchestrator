@@ -46,6 +46,7 @@ __pycache__/
 
 # Test/lab result artifacts
 docs/Result_*/
+tools/sourcegraph-probe/Result_*/
 
 # Superpowers plans (ephemeral dev artifacts)
 docs/superpowers/plans/
