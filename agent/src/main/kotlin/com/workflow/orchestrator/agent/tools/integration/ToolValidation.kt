@@ -56,12 +56,8 @@ object ToolValidation {
      * Standard error result for a missing required parameter.
      * Used by every meta-tool when a required parameter is absent for the chosen action.
      */
-    fun missingParam(name: String): ToolResult = ToolResult(
-        content = "Error: '$name' parameter required",
-        summary = "Error: missing $name",
-        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-        isError = true
-    )
+    fun missingParam(name: String): ToolResult =
+        ToolResult.error("Error: '$name' parameter required", "Error: missing $name")
 
     fun validateTimeSpent(timeSpent: String): ToolResult? {
         if (timeSpent.isBlank()) {

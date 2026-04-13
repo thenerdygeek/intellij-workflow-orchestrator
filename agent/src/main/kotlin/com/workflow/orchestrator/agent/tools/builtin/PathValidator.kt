@@ -44,10 +44,7 @@ object PathValidator {
         allowAgentDataDir: Boolean
     ): Pair<String?, ToolResult?> {
         if (projectBasePath == null) {
-            return null to ToolResult(
-                "Error: project base path not available",
-                "Error: no project", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
-            )
+            return null to ToolResult.error("Error: project base path not available", "Error: no project")
         }
 
         val resolved = if (File(rawPath).isAbsolute) rawPath else File(projectBasePath, rawPath).path
@@ -55,10 +52,7 @@ object PathValidator {
         val canonical = try {
             File(resolved).canonicalPath
         } catch (e: Exception) {
-            return null to ToolResult(
-                "Error: invalid path '$rawPath': ${e.message}",
-                "Error: invalid path", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
-            )
+            return null to ToolResult.error("Error: invalid path '$rawPath': ${e.message}", "Error: invalid path")
         }
 
         val projectCanonical = File(projectBasePath).canonicalPath
@@ -76,10 +70,10 @@ object PathValidator {
             }
         }
 
-        return null to ToolResult(
+        return null to ToolResult.error(
             "Error: path '$rawPath' resolves outside the project directory. " +
             "File operations are restricted to the project directory for security.",
-            "Error: path outside project", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
+            "Error: path outside project"
         )
     }
 }
