@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.tools.framework.build
 
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.truncateOutput
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -197,7 +198,7 @@ internal suspend fun executePytestRun(params: JsonObject, project: Project): Too
                 if (results.failureOutput.isNotBlank()) {
                     appendLine()
                     appendLine("Failure details:")
-                    append(results.failureOutput.take(5000)) // Cap failure output
+                    append(truncateOutput(results.failureOutput, 5000))
                 }
             }
 
