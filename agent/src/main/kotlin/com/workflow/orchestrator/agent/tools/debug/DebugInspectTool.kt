@@ -13,6 +13,7 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.truncateOutput
 import com.workflow.orchestrator.agent.tools.integration.ToolValidation
 import com.workflow.orchestrator.agent.tools.platform.DebugState
 import com.workflow.orchestrator.agent.tools.platform.IdeStateProbe
@@ -370,8 +371,8 @@ Most actions require a suspended session. session_id defaults to active session.
 
             var content = sb.toString()
             if (content.length > MAX_OUTPUT_CHARS) {
-                content = content.take(MAX_OUTPUT_CHARS) +
-                    "\n... (use variable_name to inspect specific variable)"
+                content = truncateOutput(content, MAX_OUTPUT_CHARS) +
+                    "\n(use variable_name to inspect specific variable)"
             }
 
             val varCount = targetVars.size

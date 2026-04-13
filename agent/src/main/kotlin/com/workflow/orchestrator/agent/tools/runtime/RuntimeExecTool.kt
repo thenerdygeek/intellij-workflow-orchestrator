@@ -29,6 +29,7 @@ import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.TestConsoleUtils
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.truncateOutput
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
 import com.workflow.orchestrator.agent.util.ReflectionUtils
 import kotlinx.coroutines.CancellableContinuation
@@ -303,11 +304,7 @@ description optional: for approval dialog on run_tests, compile_module.
             }
 
             val content = sb.toString().trimEnd()
-            val capped = if (content.length > RUN_OUTPUT_TOKEN_CAP_CHARS) {
-                content.take(RUN_OUTPUT_TOKEN_CAP_CHARS) + "\n... (output truncated)"
-            } else {
-                content
-            }
+            val capped = truncateOutput(content, RUN_OUTPUT_TOKEN_CAP_CHARS)
 
             ToolResult(capped, "${lines.size} lines from ${descriptor.displayName}", capped.length / 4)
         } catch (e: Exception) {
@@ -528,11 +525,7 @@ description optional: for approval dialog on run_tests, compile_module.
             }
 
             val content = sb.toString().trimEnd()
-            val capped = if (content.length > TEST_RESULTS_TOKEN_CAP_CHARS) {
-                content.take(TEST_RESULTS_TOKEN_CAP_CHARS) + "\n... (results truncated)"
-            } else {
-                content
-            }
+            val capped = truncateOutput(content, TEST_RESULTS_TOKEN_CAP_CHARS)
 
             ToolResult(capped, "$overallStatus: $passed passed, $failed failed", capped.length / 4)
         } catch (e: Exception) {
@@ -1030,9 +1023,7 @@ description optional: for approval dialog on run_tests, compile_module.
                     process.inputStream.bufferedReader().use { reader ->
                         var line = reader.readLine()
                         while (line != null) {
-                            if (outputBuilder.length < RUN_TESTS_MAX_OUTPUT_CHARS) {
-                                outputBuilder.appendLine(line)
-                            }
+                            outputBuilder.appendLine(line)
                             if (toolCallId != null) {
                                 activeStreamCallback?.invoke(toolCallId, line + "\n")
                             }
@@ -1051,7 +1042,7 @@ description optional: for approval dialog on run_tests, compile_module.
             if (!completed) {
                 process.destroyForcibly()
                 readerThread.join(1000)
-                val truncatedOutput = outputBuilder.toString()
+                val truncatedOutput = truncateOutput(outputBuilder.toString(), RUN_TESTS_MAX_OUTPUT_CHARS)
                 return ToolResult(
                     "[TIMEOUT] Test execution timed out after ${timeoutSeconds}s for $testTarget.\nPartial output:\n$truncatedOutput",
                     "Test timeout", TokenEstimator.estimate(truncatedOutput), isError = true
@@ -1059,7 +1050,13 @@ description optional: for approval dialog on run_tests, compile_module.
             }
 
             readerThread.join(2000)
-            val truncatedOutput = outputBuilder.toString()
+            val rawOutput = outputBuilder.toString()
+            // Check build failure markers on full output before truncation
+            val isBuildFailure = rawOutput.contains("BUILD FAILURE") ||       // Maven
+                rawOutput.contains("COMPILATION ERROR") ||                    // Maven
+                rawOutput.contains("compileTestJava FAILED") ||               // Gradle Java
+                rawOutput.contains("compileTestKotlin FAILED")                // Gradle Kotlin
+            val truncatedOutput = truncateOutput(rawOutput, RUN_TESTS_MAX_OUTPUT_CHARS)
 
             val exitCode = process.exitValue()
             if (exitCode == 0) {
@@ -1067,10 +1064,6 @@ description optional: for approval dialog on run_tests, compile_module.
             } else {
                 // Distinguish build/compilation failure from test failure so the agent
                 // doesn't confuse "no tests ran" with "tests ran and failed".
-                val isBuildFailure = truncatedOutput.contains("BUILD FAILURE") ||       // Maven
-                    truncatedOutput.contains("COMPILATION ERROR") ||                    // Maven
-                    truncatedOutput.contains("compileTestJava FAILED") ||               // Gradle Java
-                    truncatedOutput.contains("compileTestKotlin FAILED")                // Gradle Kotlin
                 if (isBuildFailure) {
                     ToolResult(
                         "BUILD FAILED — test execution did not start (exit code $exitCode).\n\n" +
@@ -1268,11 +1261,7 @@ description optional: for approval dialog on run_tests, compile_module.
         }
 
         val content = sb.toString().trimEnd()
-        val capped = if (content.length > RUN_TESTS_TOKEN_CAP_CHARS) {
-            content.take(RUN_TESTS_TOKEN_CAP_CHARS) + "\n... (results truncated)"
-        } else {
-            content
-        }
+        val capped = truncateOutput(content, RUN_TESTS_TOKEN_CAP_CHARS)
 
         return ToolResult(
             capped,
@@ -1324,7 +1313,7 @@ description optional: for approval dialog on run_tests, compile_module.
 
         /** Build watchdog timeout — how long to wait for CompilationStatusListener callback. */
         private const val BUILD_WATCHDOG_MAX_MS = 300_000L     // Hard cap at 5 min (matches test timeout)
-        private const val RUN_TESTS_MAX_OUTPUT_CHARS = 4000
+        private const val RUN_TESTS_MAX_OUTPUT_CHARS = 12000
         private const val RUN_TESTS_TOKEN_CAP_CHARS = 12000
 
         // Shared test result constants
