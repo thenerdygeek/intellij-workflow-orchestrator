@@ -13,8 +13,9 @@ import org.junit.jupiter.api.Test
 /**
  * Scenario-based tests for [BuildTool].
  *
- * Strategy mirrors [SpringToolTest]: BuildTool is a meta-tool with 11 actions
- * that touch real Maven/Gradle/IntelliJ services. Tests lock in:
+ * Strategy mirrors [SpringToolTest]: BuildTool is a meta-tool with 26 actions
+ * (11 Maven/Gradle/module + 15 pip/Poetry/uv/pytest) that touch real
+ * Maven/Gradle/IntelliJ services and Python CLI tools. Tests lock in:
  *
  *  1. **Tool surface** — name, action enum, parameter schema, allowedWorkers,
  *     ToolDefinition serialization.
@@ -43,13 +44,17 @@ class BuildToolTest {
         }
 
         @Test
-        fun `description mentions Maven and Gradle`() {
+        fun `description mentions Maven and Gradle and Python tools`() {
             assertTrue(tool.description.contains("Maven"))
             assertTrue(tool.description.contains("Gradle"))
+            assertTrue(tool.description.contains("pip"))
+            assertTrue(tool.description.contains("Poetry"))
+            assertTrue(tool.description.contains("uv"))
+            assertTrue(tool.description.contains("pytest"))
         }
 
         @Test
-        fun `description lists all 11 actions`() {
+        fun `description lists all 26 actions`() {
             val desc = tool.description
             ALL_ACTIONS.forEach { action ->
                 assertTrue(desc.contains(action), "description should mention action '$action'")
@@ -57,10 +62,10 @@ class BuildToolTest {
         }
 
         @Test
-        fun `action enum contains exactly 11 actions`() {
+        fun `action enum contains exactly 26 actions`() {
             val actions = tool.parameters.properties["action"]?.enumValues
             assertNotNull(actions)
-            assertEquals(11, actions!!.size)
+            assertEquals(26, actions!!.size)
         }
 
         @Test
@@ -138,9 +143,37 @@ class BuildToolTest {
         }
 
         @Test
-        fun `total parameter count is 10`() {
-            // 1 action discriminator + 9 action-specific parameters
-            assertEquals(10, tool.parameters.properties.size)
+        fun `package parameter exists and is string type`() {
+            val prop = tool.parameters.properties["package"]
+            assertNotNull(prop)
+            assertEquals("string", prop!!.type)
+        }
+
+        @Test
+        fun `path parameter exists and is string type`() {
+            val prop = tool.parameters.properties["path"]
+            assertNotNull(prop)
+            assertEquals("string", prop!!.type)
+        }
+
+        @Test
+        fun `pattern parameter exists and is string type`() {
+            val prop = tool.parameters.properties["pattern"]
+            assertNotNull(prop)
+            assertEquals("string", prop!!.type)
+        }
+
+        @Test
+        fun `markers parameter exists and is string type`() {
+            val prop = tool.parameters.properties["markers"]
+            assertNotNull(prop)
+            assertEquals("string", prop!!.type)
+        }
+
+        @Test
+        fun `total parameter count is 14`() {
+            // 1 action discriminator + 9 Maven/Gradle params + 4 Python params
+            assertEquals(14, tool.parameters.properties.size)
         }
 
         @Test
@@ -164,7 +197,7 @@ class BuildToolTest {
             assertEquals("build", def.function.name)
             assertTrue(def.function.description.isNotBlank())
             assertEquals("object", def.function.parameters.type)
-            assertEquals(10, def.function.parameters.properties.size)
+            assertEquals(14, def.function.parameters.properties.size)
             assertEquals(listOf("action"), def.function.parameters.required)
         }
     }
@@ -263,6 +296,21 @@ class BuildToolTest {
         @Test fun `gradle_properties routes`() = smokeTestAction("gradle_properties")
         @Test fun `project_modules routes`() = smokeTestAction("project_modules")
         @Test fun `module_dependency_graph routes`() = smokeTestAction("module_dependency_graph")
+        @Test fun `pip_list routes`() = smokeTestAction("pip_list")
+        @Test fun `pip_outdated routes`() = smokeTestAction("pip_outdated")
+        @Test fun `pip_show routes`() = smokeTestAction("pip_show")
+        @Test fun `pip_dependencies routes`() = smokeTestAction("pip_dependencies")
+        @Test fun `poetry_list routes`() = smokeTestAction("poetry_list")
+        @Test fun `poetry_outdated routes`() = smokeTestAction("poetry_outdated")
+        @Test fun `poetry_show routes`() = smokeTestAction("poetry_show")
+        @Test fun `poetry_lock_status routes`() = smokeTestAction("poetry_lock_status")
+        @Test fun `poetry_scripts routes`() = smokeTestAction("poetry_scripts")
+        @Test fun `uv_list routes`() = smokeTestAction("uv_list")
+        @Test fun `uv_outdated routes`() = smokeTestAction("uv_outdated")
+        @Test fun `uv_lock_status routes`() = smokeTestAction("uv_lock_status")
+        @Test fun `pytest_discover routes`() = smokeTestAction("pytest_discover")
+        @Test fun `pytest_run routes`() = smokeTestAction("pytest_run")
+        @Test fun `pytest_fixtures routes`() = smokeTestAction("pytest_fixtures")
     }
 
     companion object {
@@ -277,7 +325,22 @@ class BuildToolTest {
             "gradle_tasks",
             "gradle_properties",
             "project_modules",
-            "module_dependency_graph"
+            "module_dependency_graph",
+            "pip_list",
+            "pip_outdated",
+            "pip_show",
+            "pip_dependencies",
+            "poetry_list",
+            "poetry_outdated",
+            "poetry_show",
+            "poetry_lock_status",
+            "poetry_scripts",
+            "uv_list",
+            "uv_outdated",
+            "uv_lock_status",
+            "pytest_discover",
+            "pytest_run",
+            "pytest_fixtures"
         )
     }
 }
