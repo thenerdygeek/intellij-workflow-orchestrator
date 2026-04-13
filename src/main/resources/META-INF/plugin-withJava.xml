@@ -1,0 +1,26 @@
+<idea-plugin>
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- SonarQube Editor Integration (Java/Kotlin only) -->
+        <codeInsight.lineMarkerProvider language="JAVA"
+            implementationClass="com.workflow.orchestrator.sonar.ui.CoverageLineMarkerProvider"/>
+        <codeInsight.lineMarkerProvider language="kotlin"
+            implementationClass="com.workflow.orchestrator.sonar.ui.CoverageLineMarkerProvider"/>
+
+        <externalAnnotator language="JAVA"
+            implementationClass="com.workflow.orchestrator.sonar.ui.SonarIssueAnnotator"/>
+        <externalAnnotator language="kotlin"
+            implementationClass="com.workflow.orchestrator.sonar.ui.SonarIssueAnnotator"/>
+
+        <!-- Sonar Fix Intention Action (Alt+Enter) — Java/Kotlin only -->
+        <intentionAction>
+            <language>JAVA</language>
+            <className>com.workflow.orchestrator.sonar.editor.SonarFixIntentionAction</className>
+            <category>Workflow Orchestrator</category>
+        </intentionAction>
+        <intentionAction>
+            <language>kotlin</language>
+            <className>com.workflow.orchestrator.sonar.editor.SonarFixIntentionAction</className>
+            <category>Workflow Orchestrator</category>
+        </intentionAction>
+    </extensions>
+</idea-plugin>
