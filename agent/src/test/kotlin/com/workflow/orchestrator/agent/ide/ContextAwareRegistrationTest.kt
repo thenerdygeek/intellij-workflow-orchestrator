@@ -78,6 +78,30 @@ class ContextAwareRegistrationTest {
     }
 
     @Test
+    fun `shouldRegisterCoverageTool returns true for Ultimate`() {
+        val context = makeContext(product = IdeProduct.INTELLIJ_ULTIMATE)
+        assertTrue(ToolRegistrationFilter.shouldRegisterCoverageTool(context))
+    }
+
+    @Test
+    fun `shouldRegisterCoverageTool returns true for Professional`() {
+        val context = makeContext(product = IdeProduct.PYCHARM_PROFESSIONAL)
+        assertTrue(ToolRegistrationFilter.shouldRegisterCoverageTool(context))
+    }
+
+    @Test
+    fun `shouldRegisterCoverageTool returns false for Community`() {
+        val context = makeContext(product = IdeProduct.INTELLIJ_COMMUNITY)
+        assertFalse(ToolRegistrationFilter.shouldRegisterCoverageTool(context))
+    }
+
+    @Test
+    fun `shouldRegisterCoverageTool returns false for OTHER`() {
+        val context = makeContext(product = IdeProduct.OTHER)
+        assertFalse(ToolRegistrationFilter.shouldRegisterCoverageTool(context))
+    }
+
+    @Test
     fun `database tools always register regardless of IDE`() {
         for (product in IdeProduct.entries) {
             val context = makeContext(product = product)
