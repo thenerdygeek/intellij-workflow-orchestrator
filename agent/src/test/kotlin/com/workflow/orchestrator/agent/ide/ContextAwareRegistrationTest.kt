@@ -117,6 +117,45 @@ class ContextAwareRegistrationTest {
         }
     }
 
+    // --- Python filter tests ---
+
+    @Test
+    fun `shouldRegisterPythonPsiTools returns true for PyCharm`() {
+        val context = makeContext(product = IdeProduct.PYCHARM_PROFESSIONAL, hasPythonPlugin = true)
+        assertTrue(ToolRegistrationFilter.shouldRegisterPythonPsiTools(context))
+    }
+
+    @Test
+    fun `shouldRegisterPythonPsiTools returns false for IntelliJ without Python`() {
+        val context = makeContext(product = IdeProduct.INTELLIJ_COMMUNITY, hasJavaPlugin = true)
+        assertFalse(ToolRegistrationFilter.shouldRegisterPythonPsiTools(context))
+    }
+
+    @Test
+    fun `shouldRegisterDjangoTools returns true when Django detected in PyCharm`() {
+        val context = makeContext(
+            product = IdeProduct.PYCHARM_COMMUNITY,
+            hasPythonCorePlugin = true,
+            detectedFrameworks = setOf(Framework.DJANGO),
+        )
+        assertTrue(ToolRegistrationFilter.shouldRegisterDjangoTools(context))
+    }
+
+    @Test
+    fun `shouldRegisterDjangoTools returns false when Django not detected`() {
+        val context = makeContext(product = IdeProduct.PYCHARM_PROFESSIONAL, hasPythonPlugin = true)
+        assertFalse(ToolRegistrationFilter.shouldRegisterDjangoTools(context))
+    }
+
+    @Test
+    fun `shouldRegisterPythonAdvancedDebugTools requires Professional Python plugin`() {
+        val communityContext = makeContext(product = IdeProduct.PYCHARM_COMMUNITY, hasPythonCorePlugin = true)
+        assertFalse(ToolRegistrationFilter.shouldRegisterPythonAdvancedDebugTools(communityContext))
+
+        val proContext = makeContext(product = IdeProduct.PYCHARM_PROFESSIONAL, hasPythonPlugin = true)
+        assertTrue(ToolRegistrationFilter.shouldRegisterPythonAdvancedDebugTools(proContext))
+    }
+
     private fun makeContext(
         product: IdeProduct = IdeProduct.INTELLIJ_ULTIMATE,
         hasJavaPlugin: Boolean = false,
