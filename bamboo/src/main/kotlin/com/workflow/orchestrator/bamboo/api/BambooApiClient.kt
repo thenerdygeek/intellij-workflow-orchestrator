@@ -149,12 +149,18 @@ class BambooApiClient(
         planKey: String,
         maxResults: Int = 10
     ): ApiResult<List<BambooResultDto>> {
-        // Collection endpoint requires results.result. prefix for nested expands
-        val path = "/rest/api/latest/result/$planKey?max-results=$maxResults&expand=results.result.stages.stage,results.result.variables"
+        // Collection endpoint requires results.result. prefix for nested expands.
+        // Expand variables.variable to populate the inner variable list (not just the wrapper).
+        val path = "/rest/api/latest/result/$planKey?max-results=$maxResults" +
+            "&expand=results.result.stages.stage.results.result,results.result.variables.variable"
         log.info("[Bamboo:API] getRecentResults: GET $path")
         return get<BambooBuildStatusResponse>(path).also { result ->
             when (result) {
-                is ApiResult.Success -> log.info("[Bamboo:API] getRecentResults: ${result.data.results.result.size} result(s) for $planKey")
+                is ApiResult.Success -> {
+                    val results = result.data.results.result
+                    val varCounts = results.take(3).joinToString { "#${it.buildNumber}:${it.variables.variable.size}vars" }
+                    log.info("[Bamboo:API] getRecentResults: ${results.size} result(s) for $planKey ($varCounts)")
+                }
                 is ApiResult.Error -> log.info("[Bamboo:API] getRecentResults: FAILED for $planKey — ${result.type}: ${result.message}")
             }
         }.map { it.results.result }
