@@ -320,6 +320,7 @@ export const ChatView = memo(function ChatView() {
   const resumeSessionId = useChatStore(s => s.resumeSessionId);
 
   const approvalRef = useRef<HTMLDivElement>(null);
+  const questionsRef = useRef<HTMLDivElement>(null);
   const lastAgentMsgRef = useRef<HTMLDivElement>(null);
   const wasStreamingRef = useRef(false);
 
@@ -343,6 +344,13 @@ export const ChatView = memo(function ChatView() {
     }
     wasStreamingRef.current = isStreaming;
   }, [isStreaming]);
+
+  // Auto-scroll to question wizard when it appears
+  useEffect(() => {
+    if (questions && questions.length > 0 && questionsRef.current) {
+      questionsRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [questions]);
 
   // Auto-scroll to approval gate when it appears
   useEffect(() => {
@@ -638,7 +646,9 @@ export const ChatView = memo(function ChatView() {
 
         {/* Questions */}
         {questions && questions.length > 0 && (
-          <QuestionView questions={questions} activeIndex={activeQuestionIndex} />
+          <div ref={questionsRef}>
+            <QuestionView questions={questions} activeIndex={activeQuestionIndex} />
+          </div>
         )}
 
         {/* Queued steering messages — shown above the working indicator */}
