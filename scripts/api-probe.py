@@ -6,10 +6,10 @@ Hits all service APIs (Bamboo, Jira, SonarQube, Bitbucket, Docker Registry)
 and saves censored JSON responses for analysis.
 
 Usage:
-    python3 scripts/api-probe.py --config scripts/api-probe-config.json
+    python3 api-probe.py --config api-probe-config.json
 
 Config file format (create from template):
-    python3 scripts/api-probe.py --init
+    python3 api-probe.py --init config.json
 """
 
 import argparse
@@ -578,7 +578,6 @@ def save_results(service: str, results: list, output_dir: Path):
 
 CONFIG_TEMPLATE = {
     "_comment": "API Probe config. Fill in URLs and tokens. All fields are optional except url+token per service.",
-    "output_dir": "scripts/api-probe-results",
     "bamboo": {
         "url": "https://bamboo.example.com",
         "token": "YOUR_BAMBOO_PAT",
@@ -632,24 +631,28 @@ def init_config(path: str):
 def main():
     parser = argparse.ArgumentParser(description="API Response Probe for Workflow Orchestrator")
     parser.add_argument("--config", type=str, help="Path to config JSON file")
-    parser.add_argument("--init", action="store_true", help="Generate config template")
+    parser.add_argument("--init", type=str, nargs="?", const="api-probe-config.json",
+                        metavar="PATH", help="Generate config template (default: api-probe-config.json)")
     parser.add_argument("--services", type=str, default="all",
                         help="Comma-separated services to probe: bamboo,jira,sonar,bitbucket,docker (default: all)")
     args = parser.parse_args()
 
-    if args.init:
-        init_config("scripts/api-probe-config.json")
+    if args.init is not None:
+        init_config(args.init)
         return
 
     if not args.config:
-        print("Usage: python3 scripts/api-probe.py --config <config.json>")
-        print("       python3 scripts/api-probe.py --init  (to create config template)")
+        print("Usage: python3 api-probe.py --config <config.json>")
+        print("       python3 api-probe.py --init [path]  (to create config template)")
         sys.exit(1)
 
     with open(args.config) as f:
         config = json.load(f)
 
-    output_dir = Path(config.get("output_dir", "scripts/api-probe-results"))
+    # Default output dir next to the config file
+    config_dir = str(Path(args.config).parent)
+    default_output = str(Path(config_dir) / "api-probe-results")
+    output_dir = Path(config.get("output_dir", default_output))
     output_dir.mkdir(parents=True, exist_ok=True)
 
     services = args.services.split(",") if args.services != "all" else [
