@@ -347,11 +347,20 @@ class AgentLoop(
          * Message for empty responses (no text, no tools).
          * Ported from Cline: empty responses are treated as PROVIDER ERRORS,
          * separate from text-only (model mistakes).
+         *
+         * NOTE: Must include the tool-use directive. Without it, the model reads
+         * "Please retry" and responds with a text-only explanation of the error,
+         * which drops into Case B (TEXT_ONLY_NUDGE) and resets consecutiveEmpties
+         * to 0 — the alternating text-only ↔ empty cycle continues indefinitely.
          */
         private const val EMPTY_RESPONSE_ERROR =
             "Invalid API Response: The provider returned an empty or unparsable response. " +
             "This is a provider-side issue where the model failed to generate valid output. " +
-            "Please retry — if the problem persists, check the model or provider configuration."
+            "Please retry using a tool call.\n\n" +
+            "If you have completed the task, use the attempt_completion tool. " +
+            "If you need more information, use the ask_followup_question tool. " +
+            "Otherwise proceed with the next step using an appropriate tool. " +
+            "(This is an automated message — do not respond to it conversationally.)"
         /**
          * Prefix for mid-turn steering messages injected from the user's queued input.
          * Frames the message so the LLM continues its current task rather than treating
@@ -856,6 +865,7 @@ class AgentLoop(
                 hasToolCalls -> {
                     consecutiveEmpties = 0
                     consecutiveMistakes = 0  // Tool use resets mistake count
+                    brain.temperature = 0.0  // Reset temperature escalation after successful tool use
 
                     // Batch guard: if attempt_completion co-occurs with other tools in the
                     // same LLM turn, strip it and nudge. Reason: the LLM cannot legitimately
@@ -893,8 +903,11 @@ class AgentLoop(
 
                 // Case B: Text only (no tool calls) — Cline pattern: inject nudge, increment mistake count
                 // Ported from Cline index.ts line 3201-3207: noToolsUsed + consecutiveMistakeCount++
+                // NOTE: We do NOT reset consecutiveEmpties here. A text-only response between two
+                // empty responses is still part of an empty/stall cycle — resetting the empty counter
+                // allows alternating text-only ↔ empty to cycle past MAX_CONSECUTIVE_EMPTIES.
+                // Only a real tool call (Case A) resets both counters.
                 hasContent -> {
-                    consecutiveEmpties = 0
                     consecutiveMistakes++
                     LOG.info("[Loop] Text-only response (no tool calls) — mistake $consecutiveMistakes/$maxConsecutiveMistakes")
 
@@ -917,10 +930,17 @@ class AgentLoop(
                 }
 
                 // Case C: Empty response — provider error (Cline treats separately from text-only)
-                // Ported from Cline: empty = provider error, NOT a model mistake
+                // Ported from Cline: empty = provider error, NOT a model mistake.
+                // Temperature escalation (OpenHands pattern): bump to 1.0 before the next
+                // call to break degenerate zero-temperature sampling that can produce empty
+                // outputs in some models. Confirmed safe: Sourcegraph probe result_1 shows
+                // temperature 0–1.0 all return HTTP 200.
                 else -> {
                     consecutiveEmpties++
-                    LOG.warn("[Loop] Empty response from LLM — provider error (attempt $consecutiveEmpties/$MAX_CONSECUTIVE_EMPTIES)")
+                    // Escalate temperature before retry — breaks zero-temp degenerate sampling.
+                    // Reset happens in Case A when the model produces a real tool call.
+                    brain.temperature = 1.0
+                    LOG.warn("[Loop] Empty response from LLM — provider error (attempt $consecutiveEmpties/$MAX_CONSECUTIVE_EMPTIES, temperature escalated to 1.0)")
                     if (consecutiveEmpties >= MAX_CONSECUTIVE_EMPTIES) {
                         return makeFailed(
                             "Provider returned $MAX_CONSECUTIVE_EMPTIES consecutive empty responses. Check model/provider configuration.",
