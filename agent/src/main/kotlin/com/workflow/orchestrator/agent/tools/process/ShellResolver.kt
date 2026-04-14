@@ -78,7 +78,8 @@ object ShellResolver {
         val isWindows = System.getProperty("os.name").lowercase().contains("win")
         if (!isWindows) {
             val bash = resolveBashExecutable()
-            return listOf(ShellConfig(bash, listOf("-c"), ShellType.BASH, "bash"))
+            // -l = login shell to recover full PATH when IDE launched from desktop (Goose pattern)
+            return listOf(ShellConfig(bash, listOf("-l", "-c"), ShellType.BASH, "bash"))
         }
 
         val shells = mutableListOf<ShellConfig>()
@@ -168,9 +169,10 @@ object ShellResolver {
     // ── Private resolution helpers ──────────────────
 
     private fun resolveDefault(isWindows: Boolean, project: Project?): ShellConfig {
+        // TODO: Check AgentSettings.preferredShell override when field is added
         if (!isWindows) {
             val bash = resolveBashExecutable()
-            return ShellConfig(bash, listOf("-c"), ShellType.BASH, "bash")
+            return ShellConfig(bash, listOf("-l", "-c"), ShellType.BASH, "bash")
         }
         // Windows: Git Bash → PowerShell 7+ → PowerShell 5.1 → cmd.exe
         findGitBash()?.let {
@@ -201,7 +203,7 @@ object ShellResolver {
             return ShellConfig(gitBash, listOf("-c"), ShellType.BASH, "Git Bash")
         }
         val bash = resolveBashExecutable()
-        return ShellConfig(bash, listOf("-c"), ShellType.BASH, "bash")
+        return ShellConfig(bash, listOf("-l", "-c"), ShellType.BASH, "bash")
     }
 
     private fun resolveCmd(isWindows: Boolean): ShellConfig {
