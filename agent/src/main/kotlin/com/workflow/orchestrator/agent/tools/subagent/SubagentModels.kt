@@ -87,6 +87,13 @@ data class SubagentProgressUpdate(
      * the stable per-run identifier for dedupe.
      */
     val label: String? = null,
+    /**
+     * A raw streaming token/chunk from the sub-agent's LLM output. When non-null, the
+     * update carries no other meaningful field — the UI should append this to the
+     * sub-agent card's last partial TEXT message. Separate from [result] / [latestToolCall]
+     * so the Kotlin↔JS bridge can fast-path streaming without re-serialising stats.
+     */
+    val streamDelta: String? = null,
 )
 
 /**

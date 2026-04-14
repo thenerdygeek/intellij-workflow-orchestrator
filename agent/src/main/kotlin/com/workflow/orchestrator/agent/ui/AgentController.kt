@@ -1163,6 +1163,12 @@ class AgentController(
                             update.toolCompleteIsError
                         )
                     }
+                    // Stream delta — raw LLM token to append to the sub-agent card's last
+                    // partial TEXT message. Kept separate from tool chip events so streaming
+                    // is fast-pathed without re-serialising stats.
+                    update.streamDelta?.let { delta ->
+                        dashboard.appendSubAgentStreamDelta(agentId, delta)
+                    }
                     update.stats?.let { stats ->
                         dashboard.updateSubAgentIteration(agentId, stats.toolCalls)
                     }

@@ -48,6 +48,23 @@ class SpawnAgentTool(
     var sessionDebugDir: java.io.File? = null,
     var toolExecutionMode: String = "accumulate",
     var onSubagentProgress: (suspend (String, SubagentProgressUpdate) -> Unit)? = null,
+    /**
+     * Parent-session approval gate. Forwarded to every [SubagentRunner] so write tools
+     * delegated to a sub-agent surface the same modal as write tools called directly
+     * by the main agent. Closes the bypass where an orchestrator could delegate
+     * `edit_file` / `run_command` to a sub-agent to avoid the approval UI.
+     */
+    var approvalGate: (suspend (toolName: String, args: String, riskLevel: String, allowSessionApproval: Boolean) -> com.workflow.orchestrator.agent.loop.ApprovalResult)? = null,
+    /** Parent hook manager — fires PRE/POST_TOOL_USE etc. for sub-agent tool calls. */
+    var hookManager: com.workflow.orchestrator.agent.hooks.HookManager? = null,
+    /** Parent session metrics — sub-agent tool / API timings flow into parent scorecard. */
+    var sessionMetrics: com.workflow.orchestrator.agent.observability.SessionMetrics? = null,
+    /** Parent file logger — sub-agent lifecycle events land in the same JSONL stream. */
+    var fileLogger: com.workflow.orchestrator.agent.observability.AgentFileLogger? = null,
+    /** Parent debug-log callback — sub-agent warnings/events reach the JCEF debug panel. */
+    var onDebugLog: ((level: String, event: String, detail: String, meta: Map<String, Any?>?) -> Unit)? = null,
+    /** Parent checkpoint callback — fires after sub-agent write tools. */
+    var onCheckpoint: (suspend () -> Unit)? = null,
     private val configLoader: AgentConfigLoader? = null,
     private val ideContext: IdeContext? = null
 ) : AgentTool {
@@ -270,7 +287,13 @@ Tips:
             contextBudget = contextBudget,
             maxOutputTokens = maxOutputTokens,
             apiDebugDir = subagentDebugDir(description),
-            toolExecutionMode = toolExecutionMode
+            toolExecutionMode = toolExecutionMode,
+            approvalGate = approvalGate,
+            hookManager = hookManager,
+            sessionMetrics = sessionMetrics,
+            fileLogger = fileLogger,
+            onDebugLog = onDebugLog,
+            onCheckpoint = onCheckpoint,
         )
 
         val agentId = generateAgentId()
@@ -360,7 +383,13 @@ Tips:
                         contextBudget = contextBudget,
                         maxOutputTokens = maxOutputTokens,
                         apiDebugDir = subagentDebugDir("${description}-${idx + 1}"),
-                        toolExecutionMode = toolExecutionMode
+                        toolExecutionMode = toolExecutionMode,
+                        approvalGate = approvalGate,
+                        hookManager = hookManager,
+                        sessionMetrics = sessionMetrics,
+                        fileLogger = fileLogger,
+                        onDebugLog = onDebugLog,
+                        onCheckpoint = onCheckpoint,
                     )
 
                     val childAgentId = generateAgentId()

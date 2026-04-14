@@ -868,6 +868,14 @@ class AgentCefPanel(
         callJs("updateSubAgentMessage(${JsEscape.toJsString(payload)})")
     }
 
+    fun appendSubAgentStreamDelta(agentId: String, delta: String) {
+        val payload = buildJsonObject {
+            put("agentId", agentId)
+            put("delta", delta)
+        }.toString()
+        callJs("appendSubAgentStreamDelta(${JsEscape.toJsString(payload)})")
+    }
+
     fun completeSubAgent(agentId: String, textContent: String, tokensUsed: Int, isError: Boolean) {
         val payload = buildJsonObject {
             put("agentId", agentId)

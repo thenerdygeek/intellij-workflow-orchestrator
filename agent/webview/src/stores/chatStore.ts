@@ -252,6 +252,7 @@ interface ChatState {
   addSubAgentToolCall(payload: string): void;
   updateSubAgentToolCall(payload: string): void;
   updateSubAgentMessage(payload: string): void;
+  appendSubAgentStreamDelta(payload: string): void;
   completeSubAgent(payload: string): void;
   killSubAgent(agentId: string): void;
 
@@ -1389,6 +1390,42 @@ export const useChatStore = create<ChatState>((set, get) => ({
           : m
       );
       return { messages, activeSubAgents: newMap };
+    });
+  },
+
+  /**
+   * Append a raw streaming token/chunk to the sub-agent card's last partial TEXT
+   * message. Unlike [updateSubAgentMessage] which replaces the whole text, this
+   * incrementally appends — mirroring how the main agent's streaming works —
+   * so the user sees tokens flow in the sub-agent card rather than a single
+   * delayed block.
+   *
+   * If no partial TEXT message exists yet for this sub-agent, one is created.
+   */
+  appendSubAgentStreamDelta(payload: string) {
+    const { agentId, delta } = JSON.parse(payload) as { agentId: string; delta: string };
+    if (!delta) return;
+    set((state) => {
+      const newMap = new Map(state.activeSubAgents);
+      const agent = newMap.get(agentId);
+      if (!agent) return state;
+      const msgs = agent.messages;
+      const lastIdx = msgs.length - 1;
+      const last = lastIdx >= 0 ? msgs[lastIdx] : undefined;
+      if (last && last.type === 'SAY' && last.say === 'TEXT') {
+        const updated: UiMessage = { ...last, text: (last.text ?? '') + delta };
+        const nextMessages = msgs.slice(0, lastIdx).concat(updated);
+        newMap.set(agentId, { ...agent, messages: nextMessages });
+      } else {
+        const textMsg: UiMessage = {
+          ts: uniqueTs(),
+          type: 'SAY',
+          say: 'TEXT',
+          text: delta,
+        };
+        newMap.set(agentId, { ...agent, messages: [...msgs, textMsg] });
+      }
+      return { activeSubAgents: newMap };
     });
   },
 

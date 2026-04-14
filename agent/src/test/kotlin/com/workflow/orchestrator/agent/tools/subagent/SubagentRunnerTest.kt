@@ -508,4 +508,115 @@ class SubagentRunnerTest {
                 "System prompt should still contain the original config prompt text")
         }
     }
+
+    @Nested
+    inner class ForcedStreamInterruptTests {
+
+        @Test
+        fun `sub-agent forces stream_interrupt regardless of caller-supplied accumulate`() {
+            val brain = SequenceBrain(emptyList())
+            val runner = SubagentRunner(
+                brain = brain,
+                tools = buildTools(),
+                systemPrompt = "test",
+                project = project,
+                maxIterations = 5,
+                planMode = false,
+                contextBudget = 50_000,
+                toolExecutionMode = "accumulate", // caller says accumulate …
+            )
+            // … runner must ignore it.
+            assertEquals("stream_interrupt", runner.effectiveToolExecutionMode)
+        }
+    }
+
+    @Nested
+    inner class ApprovalGateTests {
+
+        @Test
+        fun `write tool in sub-agent hits parent approval gate`() = runTest {
+            val writeTool = object : AgentTool {
+                override val name = "edit_file"
+                override val description = "stub edit tool"
+                override val parameters = FunctionParameters(properties = emptyMap())
+                override val allowedWorkers = setOf(WorkerType.CODER)
+                override suspend fun execute(params: JsonObject, project: Project) =
+                    ToolResult(content = "edited", summary = "edited", tokenEstimate = 5)
+            }
+            val tools = mapOf(
+                "edit_file" to writeTool,
+                "attempt_completion" to AttemptCompletionTool(),
+            )
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "edit_file" to """{"path":"a.kt","old_string":"a","new_string":"b"}""",
+                )),
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"done"}""",
+                )),
+            ))
+
+            val approvalCalls = mutableListOf<Triple<String, String, String>>()
+            val gate: suspend (String, String, String, Boolean) -> com.workflow.orchestrator.agent.loop.ApprovalResult =
+                { toolName, args, risk, _ ->
+                    approvalCalls += Triple(toolName, args, risk)
+                    com.workflow.orchestrator.agent.loop.ApprovalResult.APPROVED
+                }
+
+            val runner = SubagentRunner(
+                brain = brain,
+                tools = tools,
+                systemPrompt = "test",
+                project = project,
+                maxIterations = 10,
+                planMode = false,
+                contextBudget = 50_000,
+                approvalGate = gate,
+            )
+            val result = runner.run("edit") {}
+
+            assertEquals(SubagentRunStatus.COMPLETED, result.status)
+            assertEquals(1, approvalCalls.size,
+                "Expected approval gate to fire once for edit_file — sub-agent must surface the same modal as the main agent.")
+            assertEquals("edit_file", approvalCalls.single().first)
+        }
+
+        @Test
+        fun `sub-agent without approval gate still runs write tools (backwards compat)`() = runTest {
+            val writeTool = object : AgentTool {
+                override val name = "edit_file"
+                override val description = "stub"
+                override val parameters = FunctionParameters(properties = emptyMap())
+                override val allowedWorkers = setOf(WorkerType.CODER)
+                override suspend fun execute(params: JsonObject, project: Project) =
+                    ToolResult(content = "edited", summary = "edited", tokenEstimate = 5)
+            }
+            val tools = mapOf(
+                "edit_file" to writeTool,
+                "attempt_completion" to AttemptCompletionTool(),
+            )
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "edit_file" to """{"path":"a.kt","old_string":"a","new_string":"b"}""",
+                )),
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"done"}""",
+                )),
+            ))
+
+            val runner = SubagentRunner(
+                brain = brain,
+                tools = tools,
+                systemPrompt = "test",
+                project = project,
+                maxIterations = 10,
+                planMode = false,
+                contextBudget = 50_000,
+                // no approvalGate
+            )
+            val result = runner.run("edit") {}
+            assertEquals(SubagentRunStatus.COMPLETED, result.status,
+                "Null approval gate must not block execution.")
+        }
+    }
 }
