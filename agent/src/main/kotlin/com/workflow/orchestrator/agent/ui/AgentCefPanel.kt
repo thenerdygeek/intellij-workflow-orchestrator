@@ -963,9 +963,28 @@ class AgentCefPanel(
 
     // ── Tool call approval rendering ──
 
-    fun showApproval(toolName: String, riskLevel: String, description: String, metadataJson: String, diffContent: String? = null, allowSessionApproval: Boolean = true) {
+    fun showApproval(
+        toolName: String,
+        riskLevel: String,
+        description: String,
+        metadataJson: String,
+        diffContent: String? = null,
+        commandPreviewJson: String? = null,
+        allowSessionApproval: Boolean = true,
+    ) {
         val diffArg = if (diffContent != null) JsEscape.toJsString(diffContent) else "null"
-        callJs("showApproval(${JsEscape.toJsString(toolName)},${JsEscape.toJsString(riskLevel)},${JsEscape.toJsString(description)},${JsEscape.toJsString(metadataJson)},$diffArg,$allowSessionApproval)")
+        val previewArg = if (commandPreviewJson != null) JsEscape.toJsString(commandPreviewJson) else "null"
+        callJs(
+            "showApproval(" +
+                "${JsEscape.toJsString(toolName)}," +
+                "${JsEscape.toJsString(riskLevel)}," +
+                "${JsEscape.toJsString(description)}," +
+                "${JsEscape.toJsString(metadataJson)}," +
+                "$diffArg," +
+                "$previewArg," +
+                "$allowSessionApproval" +
+                ")"
+        )
     }
 
     fun showProcessInput(processId: String, description: String, prompt: String, command: String) {

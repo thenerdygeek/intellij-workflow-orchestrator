@@ -263,12 +263,36 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   appendSonarBadge(badgeJson: string) {
     stores?.getChatStore().addSonarBadge(badgeJson);
   },
-  showApproval(toolName: string, riskLevel: string, description: string, metadataJson: string, diffContent?: string | null, allowSessionApproval?: boolean) {
+  showApproval(
+    toolName: string,
+    riskLevel: string,
+    description: string,
+    metadataJson: string,
+    diffContent?: string | null,
+    commandPreviewJson?: string | null,
+    allowSessionApproval?: boolean,
+  ) {
     // Preload diff2html immediately so the module is ready (or nearly ready) by the time
     // ApprovalView mounts and DiffHtml's useEffect fires — eliminates the loading skeleton.
     if (diffContent) preloadDiff2Html();
     const metadata = metadataJson ? JSON.parse(metadataJson) : [];
-    stores?.getChatStore().showApproval(toolName, riskLevel, description, metadata, diffContent ?? undefined, allowSessionApproval ?? true);
+    let commandPreview: unknown = undefined;
+    if (commandPreviewJson) {
+      try {
+        commandPreview = JSON.parse(commandPreviewJson);
+      } catch (e) {
+        console.error('[bridge] commandPreview parse error:', e);
+      }
+    }
+    stores?.getChatStore().showApproval(
+      toolName,
+      riskLevel,
+      description,
+      metadata,
+      diffContent ?? undefined,
+      commandPreview ?? undefined,
+      allowSessionApproval ?? true,
+    );
   },
   showProcessInput(processId: string, description: string, prompt: string, command: string) {
     stores?.getChatStore().showProcessInput(processId, description, prompt, command);
