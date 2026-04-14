@@ -21,6 +21,7 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolOutputConfig
 import com.workflow.orchestrator.agent.tools.ToolOutputSpiller
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.ToolResultType
 import com.workflow.orchestrator.agent.tools.estimateTokens
 import com.workflow.orchestrator.agent.tools.truncateOutput
 import com.workflow.orchestrator.core.ai.LlmBrain
@@ -1212,10 +1213,12 @@ class AgentLoop(
                     type = UiMessageType.SAY,
                     say = UiSay.PLAN_UPDATE,
                     text = toolResult.content.take(2000),
-                    planData = if (toolResult.planSteps.isNotEmpty()) PlanCardData(
-                        steps = toolResult.planSteps.map { PlanStep(title = it, status = PlanStepStatus.PENDING) },
-                        status = PlanStatus.AWAITING_APPROVAL,
-                    ) else null,
+                    planData = ((toolResult.type as? ToolResultType.PlanResponse)?.steps ?: emptyList()).let { steps ->
+                        if (steps.isNotEmpty()) PlanCardData(
+                            steps = steps.map { PlanStep(title = it, status = PlanStepStatus.PENDING) },
+                            status = PlanStatus.AWAITING_APPROVAL,
+                        ) else null
+                    },
                 )
                 // ask_followup_question: persist as TEXT — the question is rendered via the
                 // showSimpleQuestionCallback (streaming text) or showQuestionsCallback (wizard).
@@ -1327,74 +1330,67 @@ class AgentLoop(
             // symbols / runtime errors) instead of the previous fire-and-forget path.
 
 
-            // Check for completion
-            if (toolResult.isCompletion) {
-                LOG.info("[Loop] Task completed in $iteration iterations ($totalInputTokens input, $totalOutputTokens output tokens)")
-                // Persist completion as ASK/COMPLETION_RESULT so resume detects completed sessions
-                // and the CompletionCard renders on rehydration.
-                messageStateHandler?.addToClineMessages(UiMessage(
-                    ts = System.currentTimeMillis(),
-                    type = UiMessageType.ASK,
-                    ask = UiAsk.COMPLETION_RESULT,
-                    text = toolResult.content
-                ))
-                return LoopResult.Completed(
-                    summary = toolResult.content,
-                    iterations = iteration,
-                    tokensUsed = totalTokensUsed,
-                    verifyCommand = toolResult.verifyCommand,
-                    inputTokens = totalInputTokens,
-                    outputTokens = totalOutputTokens,
-                    filesModified = filesModifiedList(),
-                    linesAdded = totalLinesAdded,
-                    linesRemoved = totalLinesRemoved
-                )
-            }
-
-            // Check for session handoff (new_task tool — ported from Cline)
-            if (toolResult.isSessionHandoff) {
-                return LoopResult.SessionHandoff(
-                    context = toolResult.handoffContext ?: toolResult.content,
-                    iterations = iteration,
-                    tokensUsed = totalTokensUsed,
-                    inputTokens = totalInputTokens,
-                    outputTokens = totalOutputTokens,
-                    filesModified = filesModifiedList(),
-                    linesAdded = totalLinesAdded,
-                    linesRemoved = totalLinesRemoved
-                )
-            }
-
-            // Check for plan response (plan_mode_respond tool)
-            // Matches Cline's plan mode: the loop NEVER exits for plan presentation.
-            // - Notify UI via callback so the plan card can be rendered
-            // - If needs_more_exploration=true, loop continues immediately (LLM explores more)
-            // - If needs_more_exploration=false, wait for user input before next LLM call
-            if (toolResult.isPlanResponse) {
-                LOG.info("[Loop] Plan presented (needsMoreExploration=${toolResult.needsMoreExploration}, steps=${toolResult.planSteps.size})")
-                onPlanResponse?.invoke(toolResult.content, toolResult.needsMoreExploration, toolResult.planSteps)
-
-                if (!toolResult.needsMoreExploration && userInputChannel != null) {
-                    // Wait for user input (matches Cline's ask() pattern).
-                    // The user can: type in chat, add step comments, or click approve.
-                    // Each sends a message into the channel, which resumes the loop.
-                    contextManager.addUserMessage(withEnvDetails(userInputChannel.receive()))
-                    // Continue the loop — LLM will see the user's message and respond
+            when (toolResult.type) {
+                is ToolResultType.Completion -> {
+                    LOG.info("[Loop] Task completed in $iteration iterations ($totalInputTokens input, $totalOutputTokens output tokens)")
+                    // Persist completion as ASK/COMPLETION_RESULT so resume detects completed sessions
+                    // and the CompletionCard renders on rehydration.
+                    messageStateHandler?.addToClineMessages(UiMessage(
+                        ts = System.currentTimeMillis(),
+                        type = UiMessageType.ASK,
+                        ask = UiAsk.COMPLETION_RESULT,
+                        text = toolResult.content
+                    ))
+                    return LoopResult.Completed(
+                        summary = toolResult.content,
+                        iterations = iteration,
+                        tokensUsed = totalTokensUsed,
+                        verifyCommand = toolResult.verifyCommand,
+                        inputTokens = totalInputTokens,
+                        outputTokens = totalOutputTokens,
+                        filesModified = filesModifiedList(),
+                        linesAdded = totalLinesAdded,
+                        linesRemoved = totalLinesRemoved
+                    )
                 }
-                // needs_more_exploration=true OR no channel: loop continues immediately
-            }
+                is ToolResultType.SessionHandoff -> {
+                    val handoff = toolResult.type
+                    return LoopResult.SessionHandoff(
+                        context = handoff.context,
+                        iterations = iteration,
+                        tokensUsed = totalTokensUsed,
+                        inputTokens = totalInputTokens,
+                        outputTokens = totalOutputTokens,
+                        filesModified = filesModifiedList(),
+                        linesAdded = totalLinesAdded,
+                        linesRemoved = totalLinesRemoved
+                    )
+                }
+                is ToolResultType.PlanResponse -> {
+                    val pr = toolResult.type
+                    LOG.info("[Loop] Plan presented (needsMoreExploration=${pr.needsMoreExploration}, steps=${pr.steps.size})")
+                    onPlanResponse?.invoke(toolResult.content, pr.needsMoreExploration, pr.steps)
 
-            // Handle enable_plan_mode: activate plan mode so next iteration
-            // rebuilds tool definitions (removes write tools, adds plan_mode_respond)
-            if (toolResult.enablePlanMode) {
-                LOG.info("[Loop] Plan mode enabled by LLM via enable_plan_mode tool")
-                onPlanModeToggle?.invoke(true)
-            }
-
-            // Store active skill in ContextManager for compaction survival
-            // (ported from Cline: skill content is re-injected after compaction)
-            if (toolResult.isSkillActivation && toolResult.activatedSkillContent != null) {
-                contextManager.setActiveSkill(toolResult.activatedSkillContent)
+                    if (!pr.needsMoreExploration && userInputChannel != null) {
+                        // Wait for user input (matches Cline's ask() pattern).
+                        // The user can: type in chat, add step comments, or click approve.
+                        // Each sends a message into the channel, which resumes the loop.
+                        contextManager.addUserMessage(withEnvDetails(userInputChannel.receive()))
+                        // Continue the loop — LLM will see the user's message and respond
+                    }
+                    // needs_more_exploration=true OR no channel: loop continues immediately
+                }
+                is ToolResultType.PlanModeToggle -> {
+                    LOG.info("[Loop] Plan mode enabled by LLM via enable_plan_mode tool")
+                    onPlanModeToggle?.invoke(true)
+                }
+                is ToolResultType.SkillActivation -> {
+                    val activation = toolResult.type
+                    contextManager.setActiveSkill(activation.skillContent)
+                }
+                is ToolResultType.Standard, is ToolResultType.Error -> {
+                    // Normal result — no special dispatch
+                }
             }
         }
         return null

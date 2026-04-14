@@ -116,7 +116,7 @@ class PlanModeRespondTool : AgentTool {
             LOG.warn("plan_mode_respond: steps array is empty — plan card will show no steps")
         }
 
-        return ToolResult(
+        return ToolResult.planResponse(
             content = response,
             summary = if (needsMoreExploration) {
                 "Plan draft (needs more exploration): ${response.take(200)}"
@@ -124,9 +124,8 @@ class PlanModeRespondTool : AgentTool {
                 "Plan presented (${planSteps.size} steps): ${response.take(200)}"
             },
             tokenEstimate = response.length / 4,
-            isPlanResponse = true,
             needsMoreExploration = needsMoreExploration,
-            planSteps = planSteps
+            steps = planSteps
         )
     }
 }
