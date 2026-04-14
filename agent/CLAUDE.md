@@ -218,6 +218,24 @@ Implementation: File-scan primary (regex on .py files) via `PythonFileScanner` (
 
 **Router/blueprint prefix resolution:** FastAPI routes compose `APIRouter(prefix=...)` + `app.include_router(..., prefix=...)` into full URL paths. Flask routes compose `Blueprint(url_prefix=...)` + `app.register_blueprint(..., url_prefix=...)` similarly.
 
+## System Prompt Snapshot Tests
+
+Golden snapshot tests verify the exact system prompt output for 7 IDE variants:
+- `prompt-snapshots/null-context.txt` — backward compatibility baseline
+- `prompt-snapshots/intellij-ultimate.txt` — Java/Kotlin + Spring + Gradle
+- `prompt-snapshots/intellij-community.txt` — Java/Kotlin + Maven, no Spring
+- `prompt-snapshots/pycharm-professional.txt` — Python + Django + Poetry
+- `prompt-snapshots/pycharm-community.txt` — Python + FastAPI + uv
+- `prompt-snapshots/webstorm.txt` — base tools only (no language-specific content)
+- `prompt-snapshots/intellij-ultimate-mixed.txt` — Java + Python + Spring + Django
+
+**When you change SystemPrompt.kt:**
+1. Run `./gradlew :agent:test --tests "*SNAPSHOT*"` — expect failures on changed variants
+2. Review the diff to confirm changes are intentional
+3. Run `./gradlew :agent:test --tests "*generate all golden snapshots*"` to regenerate
+4. Run `./gradlew :agent:test --tests "*SNAPSHOT*"` again — all should pass
+5. Commit the updated snapshot files alongside the code change
+
 ## Language Intelligence Providers
 
 PSI tools delegate language-specific logic to pluggable providers via `LanguageProviderRegistry`.
