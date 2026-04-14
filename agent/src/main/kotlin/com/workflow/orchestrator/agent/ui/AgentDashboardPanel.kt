@@ -157,12 +157,14 @@ class AgentDashboardPanel(
     // ═══════════════════════════════════════════════════
 
     fun setBusy(busy: Boolean) {
+        LOG.info("[UI State] setBusy($busy)")
         cachedBusy = busy
         runOnEdt { cefPanel?.setBusy(busy) }
         broadcast(replay = false) { it.setBusy(busy) }
     }
 
     fun setSteeringMode(enabled: Boolean) {
+        LOG.info("[UI State] setSteeringMode($enabled)")
         runOnEdt { cefPanel?.setSteeringMode(enabled) }
         broadcast(replay = false) { it.setSteeringMode(enabled) }
     }
@@ -208,6 +210,7 @@ class AgentDashboardPanel(
     }
 
     fun setInputLocked(locked: Boolean) {
+        LOG.info("[UI State] setInputLocked($locked)")
         cachedInputLocked = locked
         runOnEdt { cefPanel?.setInputLocked(locked) }
         broadcast(replay = false) { it.setInputLocked(locked) }

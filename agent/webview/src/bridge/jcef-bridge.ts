@@ -144,11 +144,16 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
               : q.type === 'multiple' ? 'multi-select'
               : q.type,
         }));
+        console.log(`[bridge] showQuestions: ${questions.length} question(s), types=[${questions.map((q: any) => q.type).join(',')}], options=[${questions.map((q: any) => q.options?.length ?? 0).join(',')}]`);
         stores?.getChatStore().showQuestions(questions);
+        // Verify the store accepted the questions
+        const storeQuestions = stores?.getChatStore().questions;
+        console.log(`[bridge] showQuestions: store has ${storeQuestions?.length ?? 'null'} questions after set`);
         // Round-trip: confirm successful render back to Kotlin
         window._reportInteractiveRender?.(JSON.stringify({ type: 'question', status: 'ok', count: questions.length }));
       } else {
         // rawQuestions was falsy or empty — extract question text and show as agent message
+        console.warn('[bridge] showQuestions: no questions array — falling back to text');
         const questionText = parsed?.questions?.[0]?.question ?? parsed?.question ?? questionsJson;
         stores?.getChatStore().addAgentText(questionText);
         window._reportInteractiveRender?.(JSON.stringify({ type: 'question', status: 'error', message: 'No questions array — fell back to text' }));
@@ -160,9 +165,11 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
       stores?.getChatStore().addAgentText('[Question] ' + (questionsJson ?? '(empty)'));
       window._reportInteractiveRender?.(JSON.stringify({ type: 'question', status: 'error', message: String(e) }));
     }
-    // Always ensure busy is cleared — the agent is waiting for user input, not processing.
+    // Always ensure busy is cleared and steering enabled — the agent is waiting for user input.
+    console.log('[bridge] showQuestions: clearing busy, unlocking input, enabling steering');
     stores?.getChatStore().setBusy(false);
     stores?.getChatStore().setInputLocked(false);
+    stores?.getChatStore().setSteeringMode(true);
   },
   showQuestion(index: number) {
     stores?.getChatStore().showQuestion(index);

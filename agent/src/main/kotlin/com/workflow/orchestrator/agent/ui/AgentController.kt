@@ -325,20 +325,24 @@ class AgentController(
                     dashboard.flushStreamBuffer()
                     dashboard.finalizeToolChain()
 
-                    // CRITICAL: Clear busy and unlock input FIRST — before any complex
-                    // rendering that could silently fail on the JCEF/JS side.
+                    // CRITICAL: Clear busy, unlock input, and ensure steering is on.
                     // The agent is waiting for the user's answer, not processing.
                     // The JS-side showQuestions bridge also calls setBusy(false) as a
                     // safety net, but we do it here first so even if showQuestions
                     // never reaches the JS side, the UI is never stuck.
+                    LOG.info("ask_followup_question: clearing busy, unlocking input, enabling steering")
                     dashboard.setBusy(false)
                     dashboard.setInputLocked(false)
+                    dashboard.setSteeringMode(true)
 
                     // Parse options if provided
                     val options = if (!optionsJson.isNullOrBlank()) {
                         try {
                             kotlinx.serialization.json.Json.decodeFromString<List<String>>(optionsJson)
-                        } catch (_: Exception) { emptyList() }
+                        } catch (e: Exception) {
+                            LOG.warn("ask_followup_question: failed to parse options JSON: ${e.message}, raw='${optionsJson?.take(200)}'")
+                            emptyList()
+                        }
                     } else emptyList()
 
                     if (options.isNotEmpty()) {
@@ -356,13 +360,14 @@ class AgentController(
                             }
                             append("]}]}")
                         }
-                        LOG.info("ask_followup_question: showing wizard with ${options.size} options")
+                        LOG.info("ask_followup_question: showing wizard with ${options.size} options (wizardJson=${wizardJson.length} chars)")
                         dashboard.showQuestions(wizardJson)
                     } else {
                         // Questions WITHOUT options → user types their answer freely in the chat input.
                         // The question text lives in the tool call params (not in the streamed text),
                         // so we must display it explicitly as an agent message. Use the streaming
                         // pipeline (appendStreamToken + flush) to render it as a normal agent message.
+                        LOG.info("ask_followup_question: no options — showing as plain text (question=${question.length} chars)")
                         dashboard.appendStreamToken(question)
                         dashboard.flushStreamBuffer()
                     }
@@ -373,6 +378,7 @@ class AgentController(
                     // Also show the question as plain text so the user at least sees it.
                     dashboard.setBusy(false)
                     dashboard.setInputLocked(false)
+                    dashboard.setSteeringMode(true)
                     dashboard.appendStreamToken(question)
                     dashboard.flushStreamBuffer()
                     dashboard.focusInput()
@@ -381,11 +387,14 @@ class AgentController(
         }
         // Wizard mode: structured multi-question UI
         com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.showQuestionsCallback = { questionsJson ->
+            LOG.info("ask_questions: wizard callback fired (json=${questionsJson.length} chars)")
             invokeLater {
                 // Clear busy FIRST — before the showQuestions bridge call which could
                 // silently fail on the JCEF/JS side
+                LOG.info("ask_questions: clearing busy, unlocking input, enabling steering")
                 dashboard.setBusy(false)
                 dashboard.setInputLocked(false)
+                dashboard.setSteeringMode(true)
                 try {
                     dashboard.showQuestions(questionsJson)
                 } catch (e: Exception) {
@@ -811,9 +820,10 @@ class AgentController(
         // If a simple question is pending (ask_followup_question), resolve it with user's answer
         val pending = com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.pendingQuestions
         if (pending != null && !pending.isCompleted && currentJob?.isActive == true) {
-            LOG.info("AgentController: resolving pending question with user answer")
+            LOG.info("AgentController: resolving pending question with user answer — setting busy=true, steeringMode=true")
             displayUserMessage(uiText, displayMentionsJson)
             dashboard.setBusy(true)
+            dashboard.setSteeringMode(true)
             pending.complete(task)
             return
         }
@@ -821,9 +831,10 @@ class AgentController(
         // If the loop is waiting for user input (plan mode dialogue), feed into it
         val channel = userInputChannel
         if (loopWaitingForInput && channel != null && currentJob?.isActive == true) {
-            LOG.info("AgentController: feeding user message into existing loop via channel")
+            LOG.info("AgentController: feeding user message into existing loop via channel — setting busy=true, steeringMode=true")
             displayUserMessage(uiText, displayMentionsJson)
             dashboard.setBusy(true)
+            dashboard.setSteeringMode(true)
             // Input is NOT locked — user can always type freely (Cline behavior)
             loopWaitingForInput = false
             runBlocking { channel.send(task) }
@@ -859,6 +870,7 @@ class AgentController(
 
         // Show user message in the chat UI
         displayUserMessage(uiText, displayMentionsJson)
+        LOG.info("executeTask: setting busy=true, steeringMode=true (turn start)")
         dashboard.setBusy(true)
         dashboard.setSteeringMode(true)
         // Input is NOT locked — user can always type (Cline behavior)
@@ -1409,8 +1421,10 @@ class AgentController(
                 }
             }
 
+            LOG.info("onComplete: clearing busy, unlocking input, disabling steering")
             dashboard.setBusy(false)
             dashboard.setInputLocked(false)
+            dashboard.setSteeringMode(false)
             dashboard.focusInput()
             currentJob = null
             // Reset channel state — the loop has finished
