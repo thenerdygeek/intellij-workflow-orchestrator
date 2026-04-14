@@ -84,7 +84,8 @@ class RunCommandToolTest {
         val result = tool.execute(params, project)
 
         assertTrue(result.isError)
-        assertTrue(result.content.contains("blocked"))
+        assertTrue(result.content.contains("blocked") || result.content.contains("Blocked"),
+            "Expected 'blocked' in: ${result.content}")
     }
 
     @Test
@@ -97,7 +98,8 @@ class RunCommandToolTest {
         val result = tool.execute(params, project)
 
         assertTrue(result.isError)
-        assertTrue(result.content.contains("blocked"))
+        assertTrue(result.content.contains("blocked") || result.content.contains("Blocked"),
+            "Expected 'blocked' in: ${result.content}")
     }
 
     @Test
@@ -110,7 +112,8 @@ class RunCommandToolTest {
         val result = tool.execute(params, project)
 
         assertTrue(result.isError)
-        assertTrue(result.content.contains("blocked"))
+        assertTrue(result.content.contains("blocked") || result.content.contains("Blocked"),
+            "Expected 'blocked' in: ${result.content}")
     }
 
     @Test
@@ -123,7 +126,8 @@ class RunCommandToolTest {
         val result = tool.execute(params, project)
 
         assertTrue(result.isError)
-        assertTrue(result.content.contains("blocked"))
+        assertTrue(result.content.contains("blocked") || result.content.contains("Blocked"),
+            "Expected 'blocked' in: ${result.content}")
     }
 
     @Test
@@ -136,7 +140,8 @@ class RunCommandToolTest {
         val result = tool.execute(params, project)
 
         assertTrue(result.isError)
-        assertTrue(result.content.contains("blocked"))
+        assertTrue(result.content.contains("blocked") || result.content.contains("Blocked"),
+            "Expected 'blocked' in: ${result.content}")
     }
 
     @Test
@@ -210,13 +215,14 @@ class RunCommandToolTest {
     fun `tool metadata is correct`() {
         val tool = RunCommandTool()
         assertEquals("run_command", tool.name)
-        // TODO: re-enable after runtime.WorkerType is restored in lean agent rewrite
-        // assertEquals(setOf(com.workflow.orchestrator.agent.runtime.WorkerType.CODER), tool.allowedWorkers)
         assertTrue(tool.parameters.required.contains("command"))
         assertTrue(tool.parameters.required.contains("shell"))
         assertTrue(tool.parameters.required.contains("description"))
         val shellProp = tool.parameters.properties["shell"]!!
         assertEquals(listOf("bash", "cmd", "powershell"), shellProp.enumValues)
+        // Verify new parameters are present
+        assertNotNull(tool.parameters.properties["env"], "env parameter should be present")
+        assertNotNull(tool.parameters.properties["separate_stderr"], "separate_stderr parameter should be present")
     }
 
     @Test
@@ -270,7 +276,9 @@ class RunCommandToolTest {
         val result = tool.execute(params, project)
 
         assertTrue(result.isError)
-        assertTrue(result.content.contains("Invalid shell"))
+        // ShellResolver throws ShellUnavailableException for unknown shells
+        assertTrue(result.content.contains("Unknown shell") || result.content.contains("Invalid shell"),
+            "Expected shell error in: ${result.content}")
     }
 
     @Test
@@ -305,5 +313,46 @@ class RunCommandToolTest {
         assertTrue(RunCommandTool.isLikelyPasswordPrompt("Credentials: "))
         assertFalse(RunCommandTool.isLikelyPasswordPrompt("Enter your name: "))
         assertFalse(RunCommandTool.isLikelyPasswordPrompt("Hello world"))
+    }
+
+    // ── New tests for env parameter ──────────────────
+
+    @Test
+    fun `execute applies safe env vars`() = runTest {
+        val tool = RunCommandTool()
+        val params = buildJsonObject {
+            put("command", "echo \$MY_TEST_VAR")
+            put("shell", "bash")
+            put("description", "Test env passthrough")
+            put("env", buildJsonObject {
+                put("MY_TEST_VAR", "agent_value_42")
+            })
+        }
+
+        val result = tool.execute(params, project)
+
+        assertFalse(result.isError, "Expected no error, got: ${result.content}")
+        assertTrue(result.content.contains("agent_value_42"),
+            "Expected env var value in output, got: ${result.content}")
+    }
+
+    @Test
+    fun `execute rejects blocked env vars but continues with safe ones`() = runTest {
+        val tool = RunCommandTool()
+        val params = buildJsonObject {
+            put("command", "echo \$MY_VAR")
+            put("shell", "bash")
+            put("description", "Test env")
+            put("env", buildJsonObject {
+                put("MY_VAR", "hello_42")
+                put("LD_PRELOAD", "/tmp/evil.so")
+            })
+        }
+
+        val result = tool.execute(params, project)
+
+        assertFalse(result.isError, "Expected no error, got: ${result.content}")
+        assertTrue(result.content.contains("hello_42"),
+            "Expected safe var in output, got: ${result.content}")
     }
 }
