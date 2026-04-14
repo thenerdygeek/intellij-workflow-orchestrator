@@ -170,6 +170,11 @@
         <postStartupActivity
             implementation="com.workflow.orchestrator.core.autodetect.WorkflowAutoDetectStartupActivity"/>
 
+        <!-- Build monitor — starts polling at project open so BuildLogReady events
+             flow to Automation tab without requiring the Build tab to be opened first -->
+        <postStartupActivity
+            implementation="com.workflow.orchestrator.bamboo.listeners.BuildMonitorStartupActivity"/>
+
         <!-- TODO Phase 1B: BuildStatusBarWidgetFactory -->
 
         <!-- Auto-detect orchestrator (core, no module dependency) -->
