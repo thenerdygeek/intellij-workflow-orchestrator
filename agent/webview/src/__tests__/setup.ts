@@ -10,3 +10,4 @@ Object.defineProperty(window, '_cancelTask', { value: vi.fn(), writable: true })
 Object.defineProperty(window, '_revertCheckpoint', { value: vi.fn(), writable: true });
 Object.defineProperty(window, '_submitPrompt', { value: vi.fn(), writable: true });
 Object.defineProperty(window, 'setPlanPending', { value: vi.fn(), writable: true });
+Object.defineProperty(window, '_copyToClipboard', { value: vi.fn(), writable: true });

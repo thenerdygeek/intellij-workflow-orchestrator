@@ -2,6 +2,7 @@ import { memo, useState, useRef, useEffect, useCallback } from 'react';
 import type { SubAgentState } from '@/bridge/types';
 import { AgentMessage } from '@/components/chat/AgentMessage';
 import { ToolCallChain } from '@/components/agent/ToolCallChain';
+import { CopyButton } from '@/components/ui/copy-button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { Bot, Loader2, XCircle, AlertCircle, Check, ChevronDown, Square } from 'lucide-react';
@@ -321,13 +322,14 @@ export const SubAgentView = memo(function SubAgentView({ subAgent }: SubAgentVie
             {/* Completion summary */}
             {!isRunning && subAgent.summary && (
               <div
-                className="mt-2 px-3 py-2 rounded-md text-[11px] border"
+                className="group mt-2 px-3 py-2 rounded-md text-[11px] border relative"
                 style={{
                   color: 'var(--fg-muted)',
                   backgroundColor: 'var(--code-bg)',
                   borderColor: 'var(--border)',
                 }}
               >
+                <CopyButton text={subAgent.summary} size="sm" hoverOnly className="absolute top-1.5 right-1.5" label="Copy result" />
                 <div className="font-semibold mb-1" style={{ color: 'var(--fg-secondary)' }}>
                   Result
                 </div>

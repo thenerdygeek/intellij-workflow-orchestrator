@@ -519,6 +519,9 @@ export const kotlinBridge = {
   exportAllSessions() {
     callKotlin('_exportAllSessions');
   },
+  copyToClipboard(text: string) {
+    callKotlin('_copyToClipboard', text);
+  },
   requestHistory() {
     callKotlin('_requestHistory');
   },

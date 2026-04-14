@@ -112,6 +112,7 @@ class AgentCefPanel(
     private var exportAllSessionsQuery: JBCefJSQuery? = null
     private var requestHistoryQuery: JBCefJSQuery? = null
     private var resumeViewedSessionQuery: JBCefJSQuery? = null
+    private var copyToClipboardQuery: JBCefJSQuery? = null
     var mentionSearchProvider: MentionSearchProvider? = null
     var onSendMessageWithMentions: ((String, String) -> Unit)? = null  // (text, mentionsJson)
 
@@ -477,6 +478,10 @@ class AgentCefPanel(
         exportAllSessionsQuery = registerQuery(b) { _ -> onExportAllSessions?.invoke(); JBCefJSQuery.Response("ok") }
         requestHistoryQuery = registerQuery(b) { _ -> onRequestHistory?.invoke(); JBCefJSQuery.Response("ok") }
         resumeViewedSessionQuery = registerQuery(b) { _ -> onResumeViewedSession?.invoke(); JBCefJSQuery.Response("ok") }
+        copyToClipboardQuery = registerQuery(b) { text ->
+            com.workflow.orchestrator.core.ui.ClipboardUtil.copyToClipboard(text)
+            JBCefJSQuery.Response("ok")
+        }
 
         // Wait for page load before executing JS
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
@@ -563,6 +568,7 @@ class AgentCefPanel(
                     injectBridge("_exportAllSessions") { exportAllSessionsQuery?.let { q -> js("window._exportAllSessions = function() { ${q.inject("'all'")} }") } }
                     injectBridge("_requestHistory") { requestHistoryQuery?.let { q -> js("window._requestHistory = function() { ${q.inject("''")} }") } }
                     injectBridge("_resumeViewedSession") { resumeViewedSessionQuery?.let { q -> js("window._resumeViewedSession = function() { ${q.inject("''")} }") } }
+                    injectBridge("_copyToClipboard") { copyToClipboardQuery?.let { q -> js("window._copyToClipboard = function(text) { ${q.inject("text")} }") } }
 
                     if (bridgeFailures > 0) {
                         LOG.error("AgentCefPanel: $bridgeFailures bridge injection(s) FAILED — some JS→Kotlin callbacks may be missing")

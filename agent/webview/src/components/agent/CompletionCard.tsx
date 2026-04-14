@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
+import { CopyButton } from '@/components/ui/copy-button';
 
 interface CompletionCardProps {
   result: string;
@@ -10,15 +11,9 @@ export const CompletionCard = memo(function CompletionCard({
   result,
   verifyCommand,
 }: CompletionCardProps) {
-  const handleCopyCommand = () => {
-    if (verifyCommand) {
-      navigator.clipboard.writeText(verifyCommand);
-    }
-  };
-
   return (
     <div
-      className="relative rounded-lg overflow-hidden animate-[message-enter_300ms_ease-out_both]"
+      className="group relative rounded-lg overflow-hidden animate-[message-enter_300ms_ease-out_both]"
       style={{
         border: '1px solid color-mix(in srgb, var(--success, #22C55E) 30%, var(--border, #333))',
         background: `linear-gradient(
@@ -46,6 +41,7 @@ export const CompletionCard = memo(function CompletionCard({
         >
           Task Completed
         </span>
+        <CopyButton text={result} size="sm" hoverOnly className="ml-auto" label="Copy result" />
       </div>
 
       {/* Summary content */}
@@ -68,16 +64,7 @@ export const CompletionCard = memo(function CompletionCard({
           <code className="flex-1 text-[12px] font-mono" style={{ color: 'var(--fg-secondary)' }}>
             {verifyCommand}
           </code>
-          <button
-            onClick={handleCopyCommand}
-            className="flex-shrink-0 rounded p-1 transition-colors hover:bg-[var(--hover-overlay-strong)]"
-            title="Copy command"
-          >
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <rect x="5" y="5" width="9" height="9" rx="1.5" stroke="var(--fg-muted, #888)" strokeWidth="1.2" />
-              <path d="M11 5V3.5A1.5 1.5 0 009.5 2h-6A1.5 1.5 0 002 3.5v6A1.5 1.5 0 003.5 11H5" stroke="var(--fg-muted, #888)" strokeWidth="1.2" />
-            </svg>
-          </button>
+          <CopyButton text={verifyCommand} size="sm" label="Copy command" />
         </div>
       )}
     </div>

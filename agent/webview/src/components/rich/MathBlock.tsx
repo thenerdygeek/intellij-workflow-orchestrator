@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { RichBlock } from './RichBlock';
+import { kotlinBridge, isJcefEnvironment } from '@/bridge/jcef-bridge';
 
 // ── Singleton lazy-load for KaTeX ──
 
@@ -68,7 +69,11 @@ export function MathBlock({ latex, displayMode = true }: MathBlockProps) {
   }, [renderMath]);
 
   const handleCopyLatex = useCallback(() => {
-    void navigator.clipboard.writeText(latex);
+    if (isJcefEnvironment()) {
+      kotlinBridge.copyToClipboard(latex);
+    } else {
+      void navigator.clipboard.writeText(latex);
+    }
   }, [latex]);
 
   // Inline mode — render as span without RichBlock wrapper

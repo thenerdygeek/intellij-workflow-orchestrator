@@ -7,6 +7,7 @@
 
 import { useState, useCallback, type CSSProperties } from 'react';
 import { cn } from '@/lib/utils';
+import { kotlinBridge, isJcefEnvironment } from '@/bridge/jcef-bridge';
 
 type CopyButtonSize = 'sm' | 'md';
 
@@ -38,10 +39,16 @@ export function CopyButton({
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(text).then(() => {
+    if (isJcefEnvironment()) {
+      kotlinBridge.copyToClipboard(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    });
+    } else {
+      navigator.clipboard.writeText(text).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      });
+    }
   }, [text]);
 
   const s = ICON_SIZE[size];
