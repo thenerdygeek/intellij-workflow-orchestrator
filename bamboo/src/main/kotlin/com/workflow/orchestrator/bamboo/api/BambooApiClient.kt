@@ -149,7 +149,8 @@ class BambooApiClient(
         planKey: String,
         maxResults: Int = 10
     ): ApiResult<List<BambooResultDto>> {
-        val path = "/rest/api/latest/result/$planKey?max-results=$maxResults&expand=stages.stage,variables"
+        // Collection endpoint requires results.result. prefix for nested expands
+        val path = "/rest/api/latest/result/$planKey?max-results=$maxResults&expand=results.result.stages.stage,results.result.variables"
         log.info("[Bamboo:API] getRecentResults: GET $path")
         return get<BambooBuildStatusResponse>(path).also { result ->
             when (result) {
