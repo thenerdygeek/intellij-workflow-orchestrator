@@ -19,6 +19,7 @@ import com.workflow.orchestrator.agent.loop.SessionApprovalStore
 import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.loop.PlanJson
 import com.workflow.orchestrator.agent.loop.PlanStep
+import com.workflow.orchestrator.agent.session.PlanStepStatus
 import com.workflow.orchestrator.agent.loop.SteeringMessage
 import com.workflow.orchestrator.agent.loop.TaskProgress
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
@@ -31,6 +32,7 @@ import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.settings.ToolPreferences
 import com.workflow.orchestrator.agent.observability.HaikuPhraseGenerator
 import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
+import com.workflow.orchestrator.agent.tools.subagent.SubagentExecutionStatus
 import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
 import com.workflow.orchestrator.agent.ui.plan.AgentPlanEditor
 import com.workflow.orchestrator.agent.ui.plan.AgentPlanVirtualFile
@@ -1112,14 +1114,14 @@ class AgentController(
     private fun onSubagentProgress(agentId: String, update: SubagentProgressUpdate) {
         invokeLater {
             when (update.status) {
-                "running" -> {
-                    // SpawnAgentTool emits "running" exactly once per child, with the
+                SubagentExecutionStatus.RUNNING -> {
+                    // SpawnAgentTool emits RUNNING exactly once per child, with the
                     // human-readable label set on the same update. The webview dedupes
                     // on agentId, so this call materialises one card per real run.
                     val label = update.label ?: update.latestToolCall ?: "Starting..."
                     dashboard.spawnSubAgent(agentId, label)
                 }
-                "completed" -> {
+                SubagentExecutionStatus.COMPLETED -> {
                     dashboard.completeSubAgent(
                         agentId,
                         update.result ?: "Completed",
@@ -1127,7 +1129,7 @@ class AgentController(
                         isError = false
                     )
                 }
-                "failed" -> {
+                SubagentExecutionStatus.FAILED -> {
                     dashboard.completeSubAgent(
                         agentId,
                         update.error ?: "Failed",
@@ -1135,7 +1137,7 @@ class AgentController(
                         isError = true
                     )
                 }
-                else -> {
+                SubagentExecutionStatus.PENDING, null -> {
                     // Tool starting — add a RUNNING tool chip to the subagent's chain.
                     // The toolCallId from [ToolCallProgress] is threaded through so the
                     // webview can key parallel tool calls by exact ID instead of relying
@@ -1214,9 +1216,9 @@ class AgentController(
             var foundFirstIncomplete = false
             val steps = progress.items.mapIndexed { index, item ->
                 val status = when {
-                    item.completed -> "completed"
-                    !foundFirstIncomplete -> { foundFirstIncomplete = true; "running" }
-                    else -> "pending"
+                    item.completed -> PlanStepStatus.COMPLETED
+                    !foundFirstIncomplete -> { foundFirstIncomplete = true; PlanStepStatus.RUNNING }
+                    else -> PlanStepStatus.PENDING
                 }
                 PlanStep(
                     id = (index + 1).toString(),

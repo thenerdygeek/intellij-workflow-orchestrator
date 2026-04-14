@@ -169,8 +169,8 @@ class SubagentRunnerTest {
 
             // Should have progress updates: at least "running" and "completed"
             assertTrue(progressUpdates.size >= 2, "Expected at least 2 progress updates, got ${progressUpdates.size}")
-            assertEquals("running", progressUpdates.first().status)
-            assertEquals("completed", progressUpdates.last().status)
+            assertEquals(SubagentExecutionStatus.RUNNING, progressUpdates.first().status)
+            assertEquals(SubagentExecutionStatus.COMPLETED, progressUpdates.last().status)
         }
 
         @Test
@@ -218,7 +218,7 @@ class SubagentRunnerTest {
             assertNull(result.result)
 
             // Should have progress updates including final "failed" status
-            assertTrue(progressUpdates.any { it.status == "failed" },
+            assertTrue(progressUpdates.any { it.status == SubagentExecutionStatus.FAILED },
                 "Should have a 'failed' progress update")
         }
     }
@@ -330,16 +330,16 @@ class SubagentRunnerTest {
             ))
 
             val runner = createRunner(brain)
-            val statuses = mutableListOf<String>()
+            val statuses = mutableListOf<SubagentExecutionStatus>()
 
             runner.run("Quick task") { update ->
                 update.status?.let { statuses.add(it) }
             }
 
-            assertTrue(statuses.contains("running"), "Should have 'running' status")
-            assertTrue(statuses.contains("completed"), "Should have 'completed' status")
-            assertEquals("running", statuses.first(), "First status should be 'running'")
-            assertEquals("completed", statuses.last(), "Last status should be 'completed'")
+            assertTrue(statuses.contains(SubagentExecutionStatus.RUNNING), "Should have RUNNING status")
+            assertTrue(statuses.contains(SubagentExecutionStatus.COMPLETED), "Should have COMPLETED status")
+            assertEquals(SubagentExecutionStatus.RUNNING, statuses.first(), "First status should be RUNNING")
+            assertEquals(SubagentExecutionStatus.COMPLETED, statuses.last(), "Last status should be COMPLETED")
         }
 
         @Test
@@ -349,14 +349,14 @@ class SubagentRunnerTest {
             ))
 
             val runner = createRunner(brain)
-            val statuses = mutableListOf<String>()
+            val statuses = mutableListOf<SubagentExecutionStatus>()
 
             runner.run("Will fail") { update ->
                 update.status?.let { statuses.add(it) }
             }
 
-            assertTrue(statuses.contains("running"), "Should have 'running' status")
-            assertTrue(statuses.contains("failed"), "Should have 'failed' status")
+            assertTrue(statuses.contains(SubagentExecutionStatus.RUNNING), "Should have RUNNING status")
+            assertTrue(statuses.contains(SubagentExecutionStatus.FAILED), "Should have FAILED status")
         }
     }
 
