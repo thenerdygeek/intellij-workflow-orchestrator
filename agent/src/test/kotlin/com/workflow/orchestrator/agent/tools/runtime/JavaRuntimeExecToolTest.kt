@@ -205,25 +205,122 @@ class JavaRuntimeExecToolTest {
         assertEquals(TestStatus.ERROR, entry.status, "terminated tests must surface as ERROR, not PASSED")
     }
 
-    @Test
-    fun `no-tests-found branch now reports isError true with runner-error-check summary`() {
-        // This mirrors the fallback path in JavaRuntimeExecTool.executeRunTests /
-        // extractNativeResults when the tree is healthy (no defect) but contains zero
-        // real leaves — e.g. LLM passed a class name with no @Test methods.
-        // The new contract: this is NOT "success with 0 tests" — it's an error so the
-        // LLM can correct course rather than proceeding.
-        val root = makeRoot(leaves = emptyList())
-        val collected = collectTestResults(root)
-        assertTrue(collected.isEmpty())
+    // ══════════════════════════════════════════════════════════════════════
+    // interpretTestRoot — regression tests for the root.isDefect bug.
+    //
+    // THE BUG: root.isDefect bubbles up from children. Before the fix, the
+    // guard `if (root.isDefect || …) { buildRunnerErrorResult(root) }` fired
+    // whenever any test failed, returning "Test runner error: unknown" instead
+    // of the per-test results.
+    // ══════════════════════════════════════════════════════════════════════
 
-        // The fallback-branch behavior itself is covered by directly exercising the tool's
-        // construction of the ToolResult. We simulate by constructing the same result body
-        // the tool uses — the exact call site is `ToolResult("...", "No tests executed —
-        // check class name or runner error", 10, isError = true)` — and verifying the
-        // contract contract is encoded in the summary string.
-        val expectedSummary = "No tests executed — check class name or runner error"
-        // The message is a plain string constant in JavaRuntimeExecTool — this test locks
-        // the contract at the call site.
-        assertEquals("No tests executed — check class name or runner error", expectedSummary)
+    private fun makeFailedLeaf(name: String): SMTestProxy {
+        val leaf = mockk<SMTestProxy>(relaxed = true)
+        every { leaf.isLeaf } returns true
+        every { leaf.locationUrl } returns "java:test://com.example.Foo/$name"
+        every { leaf.isDefect } returns true
+        every { leaf.wasTerminated() } returns false
+        every { leaf.isIgnored } returns false
+        every { leaf.name } returns name
+        every { leaf.duration } returns 15
+        every { leaf.stacktrace } returns "java.lang.AssertionError: expected <1> but was <2>\n  at com.example.FooTest.$name(FooTest.java:42)"
+        every { leaf.errorMessage } returns "expected <1> but was <2>"
+        return leaf
+    }
+
+    @Test
+    fun `interpretTestRoot — 3 pass 1 fail returns structured results, NOT runner error`() {
+        // THE KEY REGRESSION: root.isDefect is true because one test failed, but we must
+        // still collect and report the individual test results.
+        val passLeaf1 = makeRealLeaf("testA")
+        val passLeaf2 = makeRealLeaf("testB")
+        val passLeaf3 = makeRealLeaf("testC")
+        val failLeaf  = makeFailedLeaf("testD_shouldFail")
+
+        val root = makeRoot(
+            leaves = listOf(passLeaf1, passLeaf2, passLeaf3, failLeaf),
+            isDefect = true,    // bubbles up from failLeaf — this is what triggered the bug
+            errorMessage = null // root has no own error message when it's just a child failure
+        )
+
+        val result = interpretTestRoot(root, "com.example.FooTest")
+
+        assertTrue(result.isError, "result should be error because a test failed")
+        assertTrue(
+            result.content.contains("FAILED"),
+            "content should contain FAILED status"
+        )
+        assertFalse(
+            result.summary.startsWith("Test runner error"),
+            "summary must NOT be 'Test runner error' — actual test results must be returned. Got: ${result.summary}"
+        )
+        assertTrue(
+            result.content.contains("testD_shouldFail"),
+            "failing test name should appear in content"
+        )
+        assertTrue(
+            result.content.contains("3 passed") || result.content.contains("passed, 1 failed"),
+            "pass/fail counts should be reported. Content: ${result.content}"
+        )
+    }
+
+    @Test
+    fun `interpretTestRoot — all pass returns structured non-error results`() {
+        val root = makeRoot(
+            leaves = listOf(makeRealLeaf("testX"), makeRealLeaf("testY")),
+            isDefect = false
+        )
+        val result = interpretTestRoot(root, "com.example.BarTest")
+        assertFalse(result.isError, "all-pass run should not be an error")
+        assertTrue(result.content.contains("PASSED"))
+    }
+
+    @Test
+    fun `interpretTestRoot — runner crash with no real leaves returns runner error`() {
+        val engineLeaf = makeSyntheticLeaf(locationUrl = "java:engine://junit-jupiter")
+        val root = makeRoot(
+            leaves = listOf(engineLeaf),  // only a synthetic engine leaf, no real tests
+            isDefect = true,
+            errorMessage = "Internal Error Occurred",
+            stacktrace = "at org.junit.platform.launcher.LauncherSession.execute(LauncherSession.java:65)"
+        )
+        val result = interpretTestRoot(root, "com.example.BrokenTest")
+        assertTrue(result.isError)
+        assertTrue(
+            result.summary.startsWith("Test runner error"),
+            "engine crash with no real leaves must produce runner error. Got: ${result.summary}"
+        )
+        assertTrue(result.content.contains("Internal Error Occurred"))
+    }
+
+    @Test
+    fun `interpretTestRoot — terminated run with partial results includes TERMINATED prefix`() {
+        val passLeaf = makeRealLeaf("testFast")
+        val root = makeRoot(
+            leaves = listOf(passLeaf),
+            wasTerminated = true,
+            isDefect = false
+        )
+        val result = interpretTestRoot(root, "com.example.SlowTest")
+        assertTrue(result.isError)
+        assertTrue(
+            result.content.contains("[TERMINATED]"),
+            "terminated run with partial results must include [TERMINATED] prefix"
+        )
+    }
+
+    @Test
+    fun `interpretTestRoot — empty suite with no defect returns helpful no-tests-found error`() {
+        val root = makeRoot(leaves = emptyList(), isDefect = false, isEmptySuite = true)
+        val result = interpretTestRoot(root, "com.example.EmptyTest")
+        assertTrue(result.isError)
+        assertFalse(
+            result.summary.startsWith("Test runner error"),
+            "empty suite without error should say 'no tests found', not 'runner error'"
+        )
+        assertTrue(
+            result.content.contains("no test methods") || result.content.contains("No test"),
+            "content should explain no @Test methods were found. Got: ${result.content}"
+        )
     }
 }

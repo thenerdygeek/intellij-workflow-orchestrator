@@ -151,18 +151,22 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
 
         val testTarget = if (method != null) "$className#$method" else className
 
+        // Resolve the module once and share it with both the native runner (for config
+        // wiring) and the shell fallback (for multi-module Gradle/Maven subproject path).
+        val module = findModuleForClass(project, className)
+
         if (useNativeRunner) {
             try {
                 val result = executeWithNativeRunner(project, className, method, testTarget, timeoutSeconds)
                 if (result != null) return result
             } catch (e: Exception) {
-                val shellResult = executeWithShell(project, testTarget, timeoutSeconds)
+                val shellResult = executeWithShell(project, testTarget, timeoutSeconds, module)
                 val warning = "[WARNING] Native test runner failed (${e.javaClass.simpleName}: ${e.message}), used shell fallback.\n\n"
                 return shellResult.copy(content = warning + shellResult.content)
             }
         }
 
-        return executeWithShell(project, testTarget, timeoutSeconds)
+        return executeWithShell(project, testTarget, timeoutSeconds, module)
     }
 
     private suspend fun executeWithNativeRunner(
@@ -350,27 +354,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                 override fun onTestingFinished(sender: TestResultsViewer) {
                     val root = sender.testsRootNode as? SMTestProxy.SMRootTestProxy
                     if (root != null && continuation.isActive) {
-                        // Bug fix: before interpreting the tree, check whether the root itself
-                        // surfaced a runner-level failure. An "Internal Error Occurred" root
-                        // with zero real leaves was previously being reported to the LLM as
-                        // "1 passed, 0 failed" because synthetic engine leaves were counted as
-                        // PASSED. Root-health check surfaces the actual runner error instead.
-                        if (root.isDefect || root.wasTerminated() || root.isEmptySuite) {
-                            continuation.resume(buildRunnerErrorResult(root))
-                            return
-                        }
-                        val allTests = collectTestResults(root)
-                        val resultVal = if (allTests.isNotEmpty()) {
-                            formatStructuredResults(allTests, descriptor.displayName ?: testTarget)
-                        } else {
-                            ToolResult(
-                                "Test run completed for $testTarget but no test methods found in results.",
-                                "No tests executed — check class name or runner error",
-                                10,
-                                isError = true
-                            )
-                        }
-                        continuation.resume(resultVal)
+                        continuation.resume(interpretTestRoot(root, descriptor.displayName ?: testTarget))
                     }
                 }
             })
@@ -525,26 +509,15 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             )
         }
 
-        // Bug fix: same root-health check as the native listener path so timeout /
-        // fallback extraction doesn't silently report "1 passed, 0 failed" either.
-        if (testRoot.isDefect || testRoot.wasTerminated() || testRoot.isEmptySuite) {
-            return buildRunnerErrorResult(testRoot)
-        }
-
-        val allTests = collectTestResults(testRoot)
-        if (allTests.isEmpty()) {
-            return ToolResult(
-                "Test run completed for $testTarget but no test methods found in results.",
-                "No tests executed — check class name or runner error",
-                10,
-                isError = true
-            )
-        }
-
-        return formatStructuredResults(allTests, descriptor.displayName ?: testTarget)
+        return interpretTestRoot(testRoot, descriptor.displayName ?: testTarget)
     }
 
-    private fun executeWithShell(project: Project, testTarget: String, timeoutSeconds: Long): ToolResult {
+    private fun executeWithShell(
+        project: Project,
+        testTarget: String,
+        timeoutSeconds: Long,
+        module: com.intellij.openapi.module.Module? = null
+    ): ToolResult {
         val basePath = project.basePath
             ?: return ToolResult("Error: no project base path available", "Error: no project", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
@@ -552,18 +525,64 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         val hasMaven = File(baseDir, "pom.xml").exists()
         val hasGradle = File(baseDir, "build.gradle").exists() || File(baseDir, "build.gradle.kts").exists()
 
+        // Derive the Gradle subproject path from the module's content root directory.
+        // For a module rooted at <projectRoot>/core/, the Gradle task is :core:test.
+        // For nested modules (<projectRoot>/services/auth/), the task is :services:auth:test.
+        // Falls back to a root-level `test` task if the module dir can't be determined or
+        // if it equals the project root (single-module project).
+        val gradleSubprojectPath: String? = module?.let { m ->
+            try {
+                val contentRoot = com.intellij.openapi.roots.ModuleRootManager.getInstance(m)
+                    .contentRoots.firstOrNull()?.path
+                if (contentRoot != null) {
+                    val rel = contentRoot.removePrefix(basePath).trimStart('/', File.separatorChar)
+                    if (rel.isNotBlank()) ":" + rel.replace(File.separatorChar, ':') else null
+                } else null
+            } catch (_: Exception) { null }
+        }
+
+        // Maven: for multi-module projects, restrict the build to the module containing
+        // the test class. Maven module directories contain their own pom.xml.
+        val mavenModuleDir: File? = module?.let { m ->
+            try {
+                val contentRoot = com.intellij.openapi.roots.ModuleRootManager.getInstance(m)
+                    .contentRoots.firstOrNull()?.path
+                if (contentRoot != null && File(contentRoot, "pom.xml").exists()) File(contentRoot)
+                else null
+            } catch (_: Exception) { null }
+        }
+
         val command = when {
-            hasMaven -> "mvn test -Dtest=$testTarget -Dsurefire.useFile=false -q"
+            hasMaven -> {
+                val className = testTarget.substringBefore('#')
+                val methodPart = if ('#' in testTarget) "#${testTarget.substringAfter('#')}" else ""
+                if (mavenModuleDir != null && mavenModuleDir != baseDir) {
+                    // Run only the submodule to avoid rebuilding unrelated modules
+                    "mvn test -Dtest=${className}${methodPart} -Dsurefire.useFile=false -q --also-make"
+                } else {
+                    "mvn test -Dtest=${className}${methodPart} -Dsurefire.useFile=false -q"
+                }
+            }
             hasGradle -> {
                 val gradleWrapper = if (File(baseDir, "gradlew").exists()) "./gradlew" else "gradle"
                 val gradleTarget = testTarget.replace('#', '.')
-                "$gradleWrapper test --tests '$gradleTarget' --no-daemon -q"
+                if (gradleSubprojectPath != null) {
+                    // Multi-module: run only the subproject that owns the test class
+                    "$gradleWrapper ${gradleSubprojectPath}:test --tests '$gradleTarget' --no-daemon -q"
+                } else {
+                    "$gradleWrapper test --tests '$gradleTarget' --no-daemon -q"
+                }
             }
             else -> return ToolResult(
                 "No Maven (pom.xml) or Gradle (build.gradle) build file found in project root.",
                 "No build tool found", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
             )
         }
+
+        // For Maven multi-module: run from the submodule directory so Maven uses the
+        // submodule's pom.xml and doesn't walk unrelated modules. For everything else
+        // (Gradle, single-module Maven) always run from the project root.
+        val workDir = if (hasMaven && mavenModuleDir != null && mavenModuleDir != baseDir) mavenModuleDir else baseDir
 
         return try {
             val isWindows = System.getProperty("os.name").lowercase().contains("win")
@@ -573,7 +592,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                 ProcessBuilder("sh", "-c", command)
             }
 
-            processBuilder.directory(baseDir)
+            processBuilder.directory(workDir)
             processBuilder.redirectErrorStream(true)
 
             val process = processBuilder.start()

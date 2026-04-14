@@ -188,3 +188,55 @@ internal fun buildRunnerErrorResult(root: SMTestProxy): ToolResult {
         isError = true
     )
 }
+
+/**
+ * Interpret an [SMTestProxy] root after a test run completes, distinguishing
+ * between normal test results (some may have failed), runner-level errors, and
+ * empty suites.
+ *
+ * **Key invariant**: `root.isDefect` bubbles up from children — it is `true`
+ * whenever any test method failed, even when the run itself completed normally.
+ * It MUST NOT be used alone as a runner-failure signal; doing so causes runs
+ * where some tests fail to be reported as "Test runner error: unknown" instead
+ * of the actual per-test results.
+ *
+ * Decision tree:
+ * 1. Collect real test leaves first via [collectTestResults].
+ * 2. If leaves exist → format them (passes + failures) regardless of `root.isDefect`.
+ * 3. If no leaves + `root.wasTerminated()` → runner was killed externally.
+ * 4. If no leaves + `root.isDefect` → engine-level failure (wrong class, JUnit 5 crash).
+ * 5. If no leaves + no defect → empty suite (no @Test methods, wrong class name).
+ */
+internal fun interpretTestRoot(root: SMTestProxy, runName: String): ToolResult {
+    val allTests = collectTestResults(root)
+
+    if (allTests.isNotEmpty()) {
+        // Real tests ran — format pass/fail/error/skip regardless of root defect state.
+        val result = formatStructuredResults(allTests, runName)
+        // If the process was also terminated (e.g. timeout), prepend a warning.
+        return if (root.wasTerminated()) {
+            result.copy(
+                content = "[TERMINATED] Test run was killed before all tests could complete. Partial results:\n\n${result.content}",
+                isError = true
+            )
+        } else result
+    }
+
+    // No real test leaves — distinguish the failure cause.
+    return when {
+        root.wasTerminated() ->
+            buildRunnerErrorResult(root)   // killed before any test reported
+        root.isDefect ->
+            buildRunnerErrorResult(root)   // engine-level failure (JUnit 5 crash, class not found, etc.)
+        else -> ToolResult(
+            content = "Test run completed for '$runName' but no test methods were found.\n\n" +
+                "Possible causes:\n" +
+                "  • Class name is not a test class or has no @Test methods\n" +
+                "  • Tests are annotated with a framework the runner doesn't support\n" +
+                "  • Module not compiled — run compile_module first",
+            summary = "No tests found in '$runName'",
+            tokenEstimate = 20,
+            isError = true
+        )
+    }
+}
