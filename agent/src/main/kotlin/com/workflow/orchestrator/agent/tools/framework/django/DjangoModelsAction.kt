@@ -99,14 +99,14 @@ internal suspend fun executeModels(params: JsonObject, project: Project): ToolRe
 
 private fun parseModels(modelFile: File, basePath: String, results: MutableList<ModelEntry>) {
     val content = modelFile.readText()
-    val relPath = modelFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+    val relPath = PythonFileScanner.relPath(modelFile, basePath)
     val appName = modelFile.parentFile?.name ?: "unknown"
 
     for (match in MODEL_CLASS_PATTERN.findAll(content)) {
         val className = match.groupValues[1]
         if (className == "Meta" || className == "Admin") continue
         val classStart = match.range.first
-        val classEnd = findClassEnd(content, classStart)
+        val classEnd = PythonFileScanner.findClassEnd(content, classStart)
         val classBody = content.substring(classStart, classEnd)
         val fields = FIELD_PATTERN.findAll(classBody).map { fm ->
             "${fm.groupValues[1]}: ${fm.groupValues[2].trim()}"
@@ -115,9 +115,3 @@ private fun parseModels(modelFile: File, basePath: String, results: MutableList<
     }
 }
 
-private fun findClassEnd(content: String, classStart: Int): Int {
-    // Simple heuristic: find the next class definition at the same indent level
-    val nextClass = Regex("""^class\s+\w+""", RegexOption.MULTILINE)
-        .find(content, classStart + 1)
-    return nextClass?.range?.first ?: content.length
-}

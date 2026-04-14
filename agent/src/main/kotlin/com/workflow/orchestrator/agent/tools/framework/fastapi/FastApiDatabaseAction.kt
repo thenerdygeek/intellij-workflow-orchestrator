@@ -115,14 +115,13 @@ internal suspend fun executeDatabase(params: JsonObject, project: Project): Tool
 
 private fun parseDbModels(pyFile: File, basePath: String, results: MutableList<DbModelEntry>) {
     val content = pyFile.readText()
-    val relPath = pyFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+    val relPath = PythonFileScanner.relPath(pyFile, basePath)
 
-    // SQLAlchemy models
     for (match in SQLALCHEMY_MODEL_PATTERN.findAll(content)) {
         val className = match.groupValues[1]
         if (className == "Meta" || className == "Config") continue
         val classStart = match.range.first
-        val classEnd = findDbClassEnd(content, classStart)
+        val classEnd = PythonFileScanner.findClassEnd(content, classStart)
         val classBody = content.substring(classStart, classEnd)
         val fields = SA_COLUMN_PATTERN.findAll(classBody)
             .filter { fm -> !fm.groupValues[1].startsWith("_") }
@@ -131,14 +130,13 @@ private fun parseDbModels(pyFile: File, basePath: String, results: MutableList<D
         results.add(DbModelEntry(relPath, className, "SQLAlchemy", fields))
     }
 
-    // Tortoise models
     for (match in TORTOISE_MODEL_PATTERN.findAll(content)) {
         val className = match.groupValues[1]
         if (className == "Meta" || className == "Config") continue
         // Avoid matching SQLAlchemy Base subclass again
         if (match.value.contains("Base")) continue
         val classStart = match.range.first
-        val classEnd = findDbClassEnd(content, classStart)
+        val classEnd = PythonFileScanner.findClassEnd(content, classStart)
         val classBody = content.substring(classStart, classEnd)
         val fields = TORTOISE_FIELD_PATTERN.findAll(classBody)
             .filter { fm -> !fm.groupValues[1].startsWith("_") }
@@ -148,8 +146,3 @@ private fun parseDbModels(pyFile: File, basePath: String, results: MutableList<D
     }
 }
 
-private fun findDbClassEnd(content: String, classStart: Int): Int {
-    val nextClass = Regex("""^class\s+\w+""", RegexOption.MULTILINE)
-        .find(content, classStart + 1)
-    return nextClass?.range?.first ?: content.length
-}

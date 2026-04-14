@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.loop
 
+import com.workflow.orchestrator.agent.session.PlanStepStatus
 import kotlinx.serialization.Serializable
 
 /**
@@ -15,7 +16,7 @@ data class PlanStep(
     val id: String,
     val title: String,
     val description: String = "",
-    val status: String = "pending"
+    val status: PlanStepStatus = PlanStepStatus.PENDING
 )
 
 @Serializable

@@ -19,6 +19,11 @@ class MessageStateHandler(
     private val uiMessages: MutableList<UiMessage> = mutableListOf()
     private val apiHistory: MutableList<ApiMessage> = mutableListOf()
 
+    /** Throttle global index updates to at most once per second during streaming. */
+    @Volatile private var lastGlobalIndexUpdateMs = 0L
+    @Volatile private var globalIndexDirty = false
+    private val globalIndexThrottleMs = 1000L
+
     private val sessionDir: File get() = File(baseDir, "sessions/$sessionId")
     private val uiMessagesFile: File get() = File(sessionDir, "ui_messages.json")
     private val apiHistoryFile: File get() = File(sessionDir, "api_conversation_history.json")
@@ -82,7 +87,14 @@ class MessageStateHandler(
     private suspend fun saveInternal() {
         sessionDir.mkdirs()
         AtomicFileWriter.write(uiMessagesFile, json.encodeToString(uiMessages))
-        updateGlobalIndex()
+        val now = System.currentTimeMillis()
+        if (now - lastGlobalIndexUpdateMs >= globalIndexThrottleMs) {
+            updateGlobalIndex()
+            lastGlobalIndexUpdateMs = now
+            globalIndexDirty = false
+        } else {
+            globalIndexDirty = true
+        }
     }
 
     private fun saveApiHistoryInternal() {
@@ -93,6 +105,12 @@ class MessageStateHandler(
     suspend fun saveBoth() = mutex.withLock {
         saveInternal()
         saveApiHistoryInternal()
+        // Flush any throttled global index update
+        if (globalIndexDirty) {
+            updateGlobalIndex()
+            lastGlobalIndexUpdateMs = System.currentTimeMillis()
+            globalIndexDirty = false
+        }
     }
 
     private suspend fun updateGlobalIndex() = globalIndexMutex.withLock {
@@ -133,16 +151,14 @@ class MessageStateHandler(
         /** Separate mutex for sessions.json to prevent races between concurrent sessions (I2 fix). */
         private val globalIndexMutex = Mutex()
 
-        private val loaderJson = Json { ignoreUnknownKeys = true }
         private val compactJson = Json { ignoreUnknownKeys = true }
-        private val prettyJsonStatic = Json { ignoreUnknownKeys = true; prettyPrint = true }
-        private val indexJson = Json { ignoreUnknownKeys = true; encodeDefaults = true; prettyPrint = true }
+        private val prettyJsonStatic = Json { ignoreUnknownKeys = true; encodeDefaults = true; prettyPrint = true }
 
         fun loadUiMessages(sessionDir: File): List<UiMessage> {
             val file = File(sessionDir, "ui_messages.json")
             if (!file.exists()) return emptyList()
             return try {
-                loaderJson.decodeFromString<List<UiMessage>>(file.readText())
+                compactJson.decodeFromString<List<UiMessage>>(file.readText())
             } catch (_: Exception) { emptyList() }
         }
 
@@ -150,7 +166,7 @@ class MessageStateHandler(
             val file = File(sessionDir, "api_conversation_history.json")
             if (!file.exists()) return emptyList()
             return try {
-                loaderJson.decodeFromString<List<ApiMessage>>(file.readText())
+                compactJson.decodeFromString<List<ApiMessage>>(file.readText())
             } catch (_: Exception) { emptyList() }
         }
 
@@ -158,7 +174,7 @@ class MessageStateHandler(
             val file = File(baseDir, "sessions.json")
             if (!file.exists()) return emptyList()
             return try {
-                loaderJson.decodeFromString<List<HistoryItem>>(file.readText())
+                compactJson.decodeFromString<List<HistoryItem>>(file.readText())
             } catch (_: Exception) { emptyList() }
         }
 
@@ -169,9 +185,9 @@ class MessageStateHandler(
             val indexFile = File(baseDir, "sessions.json")
             if (indexFile.exists()) {
                 try {
-                    val items = loaderJson.decodeFromString<List<HistoryItem>>(indexFile.readText())
+                    val items = compactJson.decodeFromString<List<HistoryItem>>(indexFile.readText())
                     val filtered = items.filter { it.id != sessionId }
-                    AtomicFileWriter.write(indexFile, indexJson.encodeToString(filtered))
+                    AtomicFileWriter.write(indexFile, prettyJsonStatic.encodeToString(filtered))
                 } catch (_: Exception) { /* corrupted index, skip */ }
             }
             val sessionDir = File(baseDir, "sessions/$sessionId")
@@ -185,12 +201,12 @@ class MessageStateHandler(
             val indexFile = File(baseDir, "sessions.json")
             if (!indexFile.exists()) return
             try {
-                val items = loaderJson.decodeFromString<List<HistoryItem>>(indexFile.readText())
+                val items = compactJson.decodeFromString<List<HistoryItem>>(indexFile.readText())
                 val updated = items.map { item ->
                     if (item.id == sessionId) item.copy(isFavorited = !item.isFavorited) else item
                 }
                 if (updated != items) {
-                    AtomicFileWriter.write(indexFile, indexJson.encodeToString(updated))
+                    AtomicFileWriter.write(indexFile, prettyJsonStatic.encodeToString(updated))
                 }
             } catch (_: Exception) { /* corrupted index, skip */ }
         }
@@ -220,22 +236,12 @@ class MessageStateHandler(
             dir.mkdirs()
 
             val file = checkpointFile(baseDir, sessionId, checkpointId)
-            val tempFile = File(file.parent, "${file.name}.tmp")
-            try {
-                tempFile.bufferedWriter().use { writer ->
-                    for (msg in messages) {
-                        writer.write(compactJson.encodeToString(msg))
-                        writer.newLine()
-                    }
+            val content = buildString {
+                for (msg in messages) {
+                    appendLine(compactJson.encodeToString(msg))
                 }
-                if (!tempFile.renameTo(file)) {
-                    tempFile.copyTo(file, overwrite = true)
-                    tempFile.delete()
-                }
-            } catch (e: Exception) {
-                tempFile.delete()
-                throw e
             }
+            AtomicFileWriter.write(file, content)
 
             val meta = CheckpointInfo(
                 id = checkpointId,
@@ -273,7 +279,7 @@ class MessageStateHandler(
             return dir.listFiles { f -> f.name.endsWith(".meta.json") }
                 ?.mapNotNull { file ->
                     try {
-                        loaderJson.decodeFromString<CheckpointInfo>(file.readText())
+                        compactJson.decodeFromString<CheckpointInfo>(file.readText())
                     } catch (_: Exception) { null }
                 }
                 ?.sortedByDescending { it.createdAt }
@@ -287,7 +293,7 @@ class MessageStateHandler(
             val targetMeta = checkpointMetaFile(baseDir, sessionId, checkpointId)
             if (!targetMeta.exists()) return
             val targetInfo = try {
-                loaderJson.decodeFromString<CheckpointInfo>(targetMeta.readText())
+                compactJson.decodeFromString<CheckpointInfo>(targetMeta.readText())
             } catch (_: Exception) { return }
 
             val allCheckpoints = listCheckpoints(baseDir, sessionId)

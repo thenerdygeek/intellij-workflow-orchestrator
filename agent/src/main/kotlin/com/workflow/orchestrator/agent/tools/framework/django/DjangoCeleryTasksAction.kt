@@ -59,7 +59,7 @@ internal suspend fun executeCeleryTasks(params: JsonObject, project: Project): T
             for (taskFile in taskFiles) {
                 val content = taskFile.readText()
                 if (!content.contains("@shared_task") && !content.contains(".task")) continue
-                val relPath = taskFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+                val relPath = PythonFileScanner.relPath(taskFile, basePath)
 
                 SHARED_TASK_PATTERN.findAll(content).forEach { match ->
                     val name = match.groupValues[1]

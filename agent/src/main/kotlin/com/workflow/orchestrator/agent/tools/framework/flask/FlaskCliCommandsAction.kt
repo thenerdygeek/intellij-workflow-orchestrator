@@ -109,7 +109,7 @@ internal suspend fun executeCliCommands(params: JsonObject, project: Project): T
 
 private fun parseCliCommands(pyFile: File, basePath: String, results: MutableList<CliCommandEntry>) {
     val content = pyFile.readText()
-    val relPath = pyFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+    val relPath = PythonFileScanner.relPath(pyFile, basePath)
 
     for (match in CLI_COMMAND_PATTERN.findAll(content)) {
         val obj = match.groupValues[1]

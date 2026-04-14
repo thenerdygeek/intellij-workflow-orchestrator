@@ -100,13 +100,13 @@ internal suspend fun executeModels(params: JsonObject, project: Project): ToolRe
 
 private fun parseFlaskModels(modelFile: File, basePath: String, results: MutableList<FlaskModelEntry>) {
     val content = modelFile.readText()
-    val relPath = modelFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+    val relPath = PythonFileScanner.relPath(modelFile, basePath)
 
     for (match in MODEL_CLASS_PATTERN.findAll(content)) {
         val className = match.groupValues[1]
         if (className == "Meta") continue
         val classStart = match.range.first
-        val classEnd = findModelClassEnd(content, classStart)
+        val classEnd = PythonFileScanner.findClassEnd(content, classStart)
         val classBody = content.substring(classStart, classEnd)
         val columns = COLUMN_PATTERN.findAll(classBody).map { cm ->
             val colName = cm.groupValues[1]
@@ -118,8 +118,3 @@ private fun parseFlaskModels(modelFile: File, basePath: String, results: Mutable
     }
 }
 
-private fun findModelClassEnd(content: String, classStart: Int): Int {
-    val nextClass = Regex("""^class\s+\w+""", RegexOption.MULTILINE)
-        .find(content, classStart + 1)
-    return nextClass?.range?.first ?: content.length
-}

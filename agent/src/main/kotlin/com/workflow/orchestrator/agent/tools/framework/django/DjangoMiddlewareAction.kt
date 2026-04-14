@@ -43,7 +43,7 @@ internal suspend fun executeMiddleware(params: JsonObject, project: Project): To
 
             for (settingsFile in settingsFiles) {
                 val content = settingsFile.readText()
-                val relPath = settingsFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+                val relPath = PythonFileScanner.relPath(settingsFile, basePath)
                 val middlewareBlock = MIDDLEWARE_BLOCK_PATTERN.find(content) ?: continue
                 val entries = MIDDLEWARE_ENTRY_PATTERN.findAll(middlewareBlock.groupValues[1])
                     .map { it.groupValues[1] }

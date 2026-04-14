@@ -80,7 +80,7 @@ internal suspend fun executeBackgroundTasks(params: JsonObject, project: Project
 
 private fun parseBackgroundTasks(pyFile: File, basePath: String, results: MutableList<BackgroundTaskEntry>) {
     val content = pyFile.readText()
-    val relPath = pyFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+    val relPath = PythonFileScanner.relPath(pyFile, basePath)
 
     for (match in BACKGROUND_TASKS_PARAM_PATTERN.findAll(content)) {
         val funcName = match.groupValues[1]

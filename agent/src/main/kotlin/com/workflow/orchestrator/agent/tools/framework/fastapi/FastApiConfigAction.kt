@@ -98,13 +98,13 @@ internal suspend fun executeConfig(params: JsonObject, project: Project): ToolRe
 
 private fun parseConfigs(pyFile: File, basePath: String, results: MutableList<ConfigEntry>) {
     val content = pyFile.readText()
-    val relPath = pyFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+    val relPath = PythonFileScanner.relPath(pyFile, basePath)
 
     for (match in BASE_SETTINGS_PATTERN.findAll(content)) {
         val className = match.groupValues[1]
         if (className == "Config") continue
         val classStart = match.range.first
-        val classEnd = findConfigClassEnd(content, classStart)
+        val classEnd = PythonFileScanner.findClassEnd(content, classStart)
         val classBody = content.substring(classStart, classEnd)
         val fields = CONFIG_FIELD_PATTERN.findAll(classBody)
             .filter { fm ->
@@ -121,8 +121,3 @@ private fun parseConfigs(pyFile: File, basePath: String, results: MutableList<Co
     }
 }
 
-private fun findConfigClassEnd(content: String, classStart: Int): Int {
-    val nextClass = Regex("""^class\s+\w+""", RegexOption.MULTILINE)
-        .find(content, classStart + 1)
-    return nextClass?.range?.first ?: content.length
-}

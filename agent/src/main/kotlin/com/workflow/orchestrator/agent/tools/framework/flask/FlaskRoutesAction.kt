@@ -111,7 +111,7 @@ internal suspend fun executeRoutes(params: JsonObject, project: Project): ToolRe
 
 private fun parseRoutes(pyFile: File, basePath: String, results: MutableList<RouteEntry>) {
     val content = pyFile.readText()
-    val relPath = pyFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+    val relPath = PythonFileScanner.relPath(pyFile, basePath)
 
     // Build blueprint variable -> url_prefix map
     val blueprintPrefixes = mutableMapOf<String, String>()

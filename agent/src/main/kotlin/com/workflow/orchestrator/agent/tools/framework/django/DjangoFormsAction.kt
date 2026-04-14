@@ -55,14 +55,14 @@ internal suspend fun executeForms(params: JsonObject, project: Project): ToolRes
 
             for (formFile in formFiles) {
                 val content = formFile.readText()
-                val relPath = formFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+                val relPath = PythonFileScanner.relPath(formFile, basePath)
 
                 for (match in FORM_CLASS_PATTERN.findAll(content)) {
                     val name = match.groupValues[1]
                     val kind = match.groupValues[2]
                     if (kind.isBlank()) continue
                     val classStart = match.range.first
-                    val classEnd = findFormClassEnd(content, classStart)
+                    val classEnd = PythonFileScanner.findClassEnd(content, classStart)
                     val classBody = content.substring(classStart, classEnd)
                     val model = FORM_MODEL_PATTERN.find(classBody)?.groupValues?.get(1)
                     allForms.add(FormEntry(relPath, name, kind, model))
@@ -109,8 +109,3 @@ internal suspend fun executeForms(params: JsonObject, project: Project): ToolRes
     }
 }
 
-private fun findFormClassEnd(content: String, classStart: Int): Int {
-    val nextClass = Regex("""^class\s+\w+""", RegexOption.MULTILINE)
-        .find(content, classStart + 1)
-    return nextClass?.range?.first ?: content.length
-}

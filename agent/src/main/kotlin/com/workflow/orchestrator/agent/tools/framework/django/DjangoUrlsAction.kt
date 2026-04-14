@@ -109,7 +109,7 @@ internal suspend fun executeUrls(params: JsonObject, project: Project): ToolResu
 
 private fun parseUrlPatterns(urlFile: File, basePath: String, results: MutableList<UrlPatternEntry>) {
     val content = urlFile.readText()
-    val relPath = urlFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+    val relPath = PythonFileScanner.relPath(urlFile, basePath)
 
     for (line in content.lines()) {
         val trimmed = line.trim()

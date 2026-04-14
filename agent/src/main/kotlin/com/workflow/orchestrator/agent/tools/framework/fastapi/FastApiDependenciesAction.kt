@@ -97,7 +97,7 @@ internal suspend fun executeDependencies(params: JsonObject, project: Project): 
 
 private fun parseDependencies(pyFile: File, basePath: String, results: MutableList<DependencyEntry>) {
     val content = pyFile.readText()
-    val relPath = pyFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+    val relPath = PythonFileScanner.relPath(pyFile, basePath)
     val lines = content.lines()
 
     var currentFunction = "(module-level)"

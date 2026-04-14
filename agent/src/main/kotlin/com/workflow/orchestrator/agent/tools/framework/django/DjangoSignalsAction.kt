@@ -54,7 +54,7 @@ internal suspend fun executeSignals(params: JsonObject, project: Project): ToolR
 
             for (signalFile in signalFiles) {
                 val content = signalFile.readText()
-                val relPath = signalFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+                val relPath = PythonFileScanner.relPath(signalFile, basePath)
 
                 RECEIVER_DECORATOR_PATTERN.findAll(content).forEach { match ->
                     val signal = match.groupValues[1]

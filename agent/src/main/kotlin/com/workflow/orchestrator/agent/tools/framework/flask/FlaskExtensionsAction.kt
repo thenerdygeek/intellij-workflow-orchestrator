@@ -69,7 +69,7 @@ internal suspend fun executeExtensions(params: JsonObject, project: Project): To
 
             for (pyFile in pyFiles) {
                 val content = pyFile.readText()
-                val relPath = pyFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+                val relPath = PythonFileScanner.relPath(pyFile, basePath)
 
                 for (match in EXTENSION_CONSTRUCTOR_PATTERN.findAll(content)) {
                     val varName = match.groupValues[1]

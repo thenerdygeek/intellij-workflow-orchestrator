@@ -98,13 +98,13 @@ internal suspend fun executeModels(params: JsonObject, project: Project): ToolRe
 
 private fun parsePydanticModels(pyFile: File, basePath: String, results: MutableList<PydanticModelEntry>) {
     val content = pyFile.readText()
-    val relPath = pyFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+    val relPath = PythonFileScanner.relPath(pyFile, basePath)
 
     for (match in PYDANTIC_MODEL_PATTERN.findAll(content)) {
         val className = match.groupValues[1]
         if (className == "Config") continue
         val classStart = match.range.first
-        val classEnd = findClassEnd(content, classStart)
+        val classEnd = PythonFileScanner.findClassEnd(content, classStart)
         val classBody = content.substring(classStart, classEnd)
         val fields = FIELD_PATTERN.findAll(classBody)
             .filter { fm ->
@@ -118,8 +118,3 @@ private fun parsePydanticModels(pyFile: File, basePath: String, results: Mutable
     }
 }
 
-private fun findClassEnd(content: String, classStart: Int): Int {
-    val nextClass = Regex("""^class\s+\w+""", RegexOption.MULTILINE)
-        .find(content, classStart + 1)
-    return nextClass?.range?.first ?: content.length
-}

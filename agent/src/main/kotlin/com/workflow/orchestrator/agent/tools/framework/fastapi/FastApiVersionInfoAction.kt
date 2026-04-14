@@ -38,7 +38,6 @@ internal suspend fun executeVersionInfo(params: JsonObject, project: Project): T
             val baseDir = File(basePath)
             val versions = mutableMapOf<String, String>()
 
-            // Check requirements*.txt files
             val reqPattern = buildRequirementsPattern()
             PythonFileScanner.scanPythonFiles(baseDir) {
                 it.name.startsWith("requirements") && it.extension == "txt"
@@ -50,7 +49,6 @@ internal suspend fun executeVersionInfo(params: JsonObject, project: Project): T
                     }
                 }
 
-            // Check pyproject.toml
             val pyprojectPattern = buildPyprojectPattern()
             baseDir.resolve("pyproject.toml").takeIf { it.exists() }?.let { pyproject ->
                 for (match in pyprojectPattern.findAll(pyproject.readText())) {
@@ -60,7 +58,6 @@ internal suspend fun executeVersionInfo(params: JsonObject, project: Project): T
                 }
             }
 
-            // Check setup.cfg
             baseDir.resolve("setup.cfg").takeIf { it.exists() }?.let { setupCfg ->
                 for (match in reqPattern.findAll(setupCfg.readText())) {
                     val pkg = match.groupValues[1].lowercase()

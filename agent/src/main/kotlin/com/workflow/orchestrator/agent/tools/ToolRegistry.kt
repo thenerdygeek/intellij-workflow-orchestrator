@@ -67,9 +67,10 @@ class ToolRegistry {
         return result
     }
 
-    /** Returns tool definitions for the active tool set (core + active deferred). */
+    /** Returns tool definitions for the active tool set (core + active deferred). Cached. */
     fun getActiveDefinitions(): List<ToolDefinition> {
-        return getActiveTools().values.map { it.toToolDefinition() }
+        return cachedActiveDefinitions ?: getActiveTools().values.map { it.toToolDefinition() }
+            .also { cachedActiveDefinitions = it }
     }
 
     // ── Deferred Tool Search & Activation ────────────────────────────────
@@ -192,10 +193,12 @@ class ToolRegistry {
     // Avoids per-iteration allocation in the ReAct loop hot path.
     private var cachedToolNames: Set<String>? = null
     private var cachedParamNames: Set<String>? = null
+    private var cachedActiveDefinitions: List<ToolDefinition>? = null
 
     private fun invalidateCache() {
         cachedToolNames = null
         cachedParamNames = null
+        cachedActiveDefinitions = null
     }
 
     /** Get any tool by name (core, deferred, or active-deferred). */

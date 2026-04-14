@@ -95,7 +95,7 @@ internal suspend fun executeViews(params: JsonObject, project: Project): ToolRes
 
 private fun parseViews(viewFile: File, basePath: String, results: MutableList<ViewEntry>) {
     val content = viewFile.readText()
-    val relPath = viewFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+    val relPath = PythonFileScanner.relPath(viewFile, basePath)
 
     for (match in CBV_PATTERN.findAll(content)) {
         val name = match.groupValues[1]

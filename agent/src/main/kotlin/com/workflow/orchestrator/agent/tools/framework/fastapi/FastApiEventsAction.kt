@@ -90,7 +90,7 @@ internal suspend fun executeEvents(params: JsonObject, project: Project): ToolRe
 
 private fun parseEvents(pyFile: File, basePath: String, results: MutableList<EventEntry>) {
     val content = pyFile.readText()
-    val relPath = pyFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+    val relPath = PythonFileScanner.relPath(pyFile, basePath)
     val lines = content.lines()
 
     // Parse @app.on_event("startup"/"shutdown") decorators
