@@ -136,8 +136,8 @@ class ApiClient:
 
 # ─── Probe definitions ───────────────────────────────────────────────────────
 
-def probe_bamboo(cfg: dict, output_dir: Path):
-    """Probe all Bamboo API endpoints."""
+def probe_bamboo(cfg: dict, output_dir: Path, endpoint_filter: set = None):
+    """Probe Bamboo API endpoints."""
     client = ApiClient(
         cfg["url"], {"Authorization": f"Bearer {cfg['token']}"}, "bamboo"
     )
@@ -161,8 +161,11 @@ def probe_bamboo(cfg: dict, output_dir: Path):
             ("plan_variables", f"/rest/api/latest/plan/{plan_key}/variable", {}),
             ("latest_result", f"/rest/api/latest/result/{plan_key}/latest",
              {"expand": "stages.stage.results.result"}),
+            # Recent results: try multiple expand patterns to see which returns items
             ("recent_results", f"/rest/api/latest/result/{plan_key}",
-             {"max-results": "5", "expand": "stages.stage,variables"}),
+             {"max-results": "5", "expand": "results.result.stages.stage,results.result.variables"}),
+            ("recent_results_minimal", f"/rest/api/latest/result/{plan_key}",
+             {"max-results": "5"}),
             ("running_queued", f"/rest/api/latest/result/{plan_key}",
              {"includeAllStates": "true", "max-results": "5"}),
             ("search_plans", "/rest/api/latest/search/plans",
@@ -173,30 +176,60 @@ def probe_bamboo(cfg: dict, output_dir: Path):
     branch = cfg.get("branch", "")
     if plan_key and branch:
         encoded_branch = quote(branch, safe="")
-        endpoints.append(
+        endpoints += [
             ("latest_result_branch",
              f"/rest/api/latest/result/{plan_key}/branch/{encoded_branch}/latest",
-             {"expand": "stages.stage.results.result"})
-        )
+             {"expand": "stages.stage.results.result"}),
+        ]
 
-    # Build result key specific
+    # Branch plan key (a specific branch's own key, e.g. PROJ-AUTO0)
+    branch_plan_key = cfg.get("branch_plan_key", "")
+    if branch_plan_key:
+        endpoints += [
+            ("branch_latest_result", f"/rest/api/latest/result/{branch_plan_key}/latest",
+             {"expand": "stages.stage.results.result"}),
+            ("branch_recent_results", f"/rest/api/latest/result/{branch_plan_key}",
+             {"max-results": "5", "expand": "results.result.stages.stage"}),
+            ("branch_recent_results_minimal", f"/rest/api/latest/result/{branch_plan_key}",
+             {"max-results": "5"}),
+            ("branch_variables", f"/rest/api/latest/plan/{branch_plan_key}/variable", {}),
+        ]
+
+    # Build result key (plan-level, e.g. PROJ-AUTO-2474)
     result_key = cfg.get("result_key", "")
     if result_key:
         endpoints += [
             ("build_result", f"/rest/api/latest/result/{result_key}",
-             {"expand": "stages.stage"}),
+             {"expand": "stages.stage.results.result"}),
             ("build_variables", f"/rest/api/latest/result/{result_key}",
-             {"expand": "variables"}),
-            ("build_log", f"/download/{result_key}/build_logs/{result_key}.log", {}),
+             {"expand": "variables.variable"}),
+            ("build_log_plan", f"/download/{result_key}/build_logs/{result_key}.log", {}),
             ("build_artifacts", f"/rest/api/latest/result/{result_key}",
              {"expand": "artifacts.artifact"}),
             ("test_results", f"/rest/api/latest/result/{result_key}",
              {"expand": "testResults.failedTests.testResult,testResults.successfulTests.testResult"}),
         ]
 
+    # Job result key (job-level, e.g. PROJ-AUTO-JOB1-2474)
+    job_result_key = cfg.get("job_result_key", "")
+    if job_result_key:
+        endpoints += [
+            ("job_result", f"/rest/api/latest/result/{job_result_key}",
+             {"expand": "stages.stage"}),
+            ("job_log", f"/download/{job_result_key}/build_logs/{job_result_key}.log", {}),
+            ("job_test_results", f"/rest/api/latest/result/{job_result_key}",
+             {"expand": "testResults.failedTests.testResult,testResults.successfulTests.testResult"}),
+            ("job_artifacts", f"/rest/api/latest/result/{job_result_key}",
+             {"expand": "artifacts.artifact"}),
+        ]
+
+    # Filter endpoints if requested
+    if endpoint_filter:
+        endpoints = [(n, p, q) for n, p, q in endpoints if n in endpoint_filter]
+
     for name, path, params in endpoints:
         print(f"    {name}...", end=" ", flush=True)
-        is_raw = name in ("plan_specs", "build_log")
+        is_raw = name in ("plan_specs", "build_log_plan", "job_log")
         resp = client.get(path, params=params, raw=is_raw)
         results.append({"endpoint": name, **resp})
         status = resp.get("status_code", resp.get("error", "?"))
@@ -206,8 +239,8 @@ def probe_bamboo(cfg: dict, output_dir: Path):
     save_results("bamboo", results, output_dir)
 
 
-def probe_jira(cfg: dict, output_dir: Path):
-    """Probe all Jira API endpoints."""
+def probe_jira(cfg: dict, output_dir: Path, endpoint_filter: set = None):
+    """Probe Jira API endpoints."""
     client = ApiClient(
         cfg["url"], {"Authorization": f"Bearer {cfg['token']}"}, "jira"
     )
@@ -274,6 +307,9 @@ def probe_jira(cfg: dict, output_dir: Path):
              {"issueId": issue_id, "applicationType": "stash", "dataType": "pullrequest"}),
         ]
 
+    if endpoint_filter:
+        endpoints = [(n, p, q) for n, p, q in endpoints if n in endpoint_filter]
+
     for name, path, params in endpoints:
         print(f"    {name}...", end=" ", flush=True)
         resp = client.get(path, params=params)
@@ -285,7 +321,7 @@ def probe_jira(cfg: dict, output_dir: Path):
     save_results("jira", results, output_dir)
 
 
-def probe_sonar(cfg: dict, output_dir: Path):
+def probe_sonar(cfg: dict, output_dir: Path, endpoint_filter: set = None):
     """Probe all SonarQube API endpoints."""
     client = ApiClient(
         cfg["url"], {"Authorization": f"Bearer {cfg['token']}"}, "sonar"
@@ -327,6 +363,9 @@ def probe_sonar(cfg: dict, output_dir: Path):
              {"qualifiers": "TRK", "q": project_key.split(":")[-1], "ps": "10"}),
         ]
 
+    if endpoint_filter:
+        endpoints = [(n, p, q) for n, p, q in endpoints if n in endpoint_filter]
+
     for name, path, params in endpoints:
         print(f"    {name}...", end=" ", flush=True)
         resp = client.get(path, params=params)
@@ -338,7 +377,7 @@ def probe_sonar(cfg: dict, output_dir: Path):
     save_results("sonar", results, output_dir)
 
 
-def probe_bitbucket(cfg: dict, output_dir: Path):
+def probe_bitbucket(cfg: dict, output_dir: Path, endpoint_filter: set = None):
     """Probe all Bitbucket Server API endpoints."""
     client = ApiClient(
         cfg["url"], {"Authorization": f"Bearer {cfg['token']}"}, "bitbucket"
@@ -396,6 +435,9 @@ def probe_bitbucket(cfg: dict, output_dir: Path):
                 ("build_status", f"/rest/build-status/1.0/commits/{commit_id}", {})
             )
 
+    if endpoint_filter:
+        endpoints = [(n, p, q) for n, p, q in endpoints if n in endpoint_filter]
+
     for name, path, params in endpoints:
         print(f"    {name}...", end=" ", flush=True)
         is_raw = name == "pr_diff"
@@ -408,7 +450,7 @@ def probe_bitbucket(cfg: dict, output_dir: Path):
     save_results("bitbucket", results, output_dir)
 
 
-def probe_docker_registry(cfg: dict, output_dir: Path):
+def probe_docker_registry(cfg: dict, output_dir: Path, endpoint_filter: set = None):
     """Probe Docker Registry v2 endpoints (Nexus uses Basic auth with username:passcode)."""
     username = cfg.get("username", "")
     passcode = cfg.get("passcode", "")
@@ -431,12 +473,15 @@ def probe_docker_registry(cfg: dict, output_dir: Path):
         ]
         tag = cfg.get("tag", "")
         if tag:
-            # HEAD request for manifest check
-            print(f"    manifest_check...", end=" ", flush=True)
-            resp = client.head(f"/v2/{repo_name}/manifests/{tag}")
-            results.append({"endpoint": "manifest_check", **resp})
-            status = resp.get("status_code", resp.get("error", "?"))
-            print(f"{status}")
+            if not endpoint_filter or "manifest_check" in endpoint_filter:
+                print(f"    manifest_check...", end=" ", flush=True)
+                resp = client.head(f"/v2/{repo_name}/manifests/{tag}")
+                results.append({"endpoint": "manifest_check", **resp})
+                status = resp.get("status_code", resp.get("error", "?"))
+                print(f"{status}")
+
+    if endpoint_filter:
+        endpoints = [(n, p, q) for n, p, q in endpoints if n in endpoint_filter]
 
     for name, path, params in endpoints:
         print(f"    {name}...", end=" ", flush=True)
@@ -484,7 +529,9 @@ CONFIG_TEMPLATE = {
         "token": "YOUR_BAMBOO_PAT",
         "plan_key": "PROJ-PLAN",
         "branch": "develop",
-        "result_key": "PROJ-PLAN-123"
+        "branch_plan_key": "",
+        "result_key": "PROJ-PLAN-123",
+        "job_result_key": ""
     },
     "jira": {
         "url": "https://jira.example.com",
@@ -537,6 +584,8 @@ def main():
                         metavar="PATH", help="Generate config template (default: api-probe-config.json)")
     parser.add_argument("--services", type=str, default="all",
                         help="Comma-separated services to probe: bamboo,jira,sonar,bitbucket,docker (default: all)")
+    parser.add_argument("--endpoints", type=str, default="",
+                        help="Comma-separated endpoint names to run (default: all). E.g. --endpoints job_log,job_result")
     args = parser.parse_args()
 
     if args.init is not None:
@@ -560,10 +609,13 @@ def main():
     services = args.services.split(",") if args.services != "all" else [
         "bamboo", "jira", "sonar", "bitbucket", "docker"
     ]
+    endpoint_filter = set(args.endpoints.split(",")) if args.endpoints else None
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"API Probe — {timestamp}")
     print(f"Output: {output_dir}/")
+    if endpoint_filter:
+        print(f"Endpoints: {', '.join(sorted(endpoint_filter))}")
 
     probes = {
         "bamboo": (probe_bamboo, "bamboo"),
@@ -592,7 +644,7 @@ def main():
             print(f"\n  [SKIP] {svc}: no token configured")
             continue
         try:
-            probe_fn(cfg, output_dir)
+            probe_fn(cfg, output_dir, endpoint_filter)
         except Exception as e:
             print(f"\n  [ERROR] {svc}: {e}")
 
