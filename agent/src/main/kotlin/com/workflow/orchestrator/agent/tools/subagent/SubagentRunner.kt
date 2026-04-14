@@ -88,7 +88,7 @@ class SubagentRunner(
             contextManager.setSystemPrompt(composedSystemPrompt)
 
             // 3. Report initial "running" status
-            onProgress(SubagentProgressUpdate(status = "running", stats = stats.snapshot()))
+            onProgress(SubagentProgressUpdate(status = SubagentExecutionStatus.RUNNING, stats = stats.snapshot()))
 
             // 4. Check abort before proceeding
             if (abortRequested.get()) {
@@ -209,7 +209,7 @@ class SubagentRunner(
             }
 
             // 9. Report final status
-            val finalStatus = if (result.status == SubagentRunStatus.COMPLETED) "completed" else "failed"
+            val finalStatus = if (result.status == SubagentRunStatus.COMPLETED) SubagentExecutionStatus.COMPLETED else SubagentExecutionStatus.FAILED
             onProgress(
                 SubagentProgressUpdate(
                     status = finalStatus,
@@ -226,7 +226,7 @@ class SubagentRunner(
                 return cancelledResult(stats).also { cancelResult ->
                     onProgress(
                         SubagentProgressUpdate(
-                            status = "failed",
+                            status = SubagentExecutionStatus.FAILED,
                             stats = cancelResult.stats,
                             error = cancelResult.error
                         )
@@ -244,7 +244,7 @@ class SubagentRunner(
             )
             onProgress(
                 SubagentProgressUpdate(
-                    status = "failed",
+                    status = SubagentExecutionStatus.FAILED,
                     stats = failedResult.stats,
                     error = errorMsg
                 )

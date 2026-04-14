@@ -46,7 +46,7 @@ class SubagentModelsTest {
     @Test
     fun `SubagentStatusItem defaults to pending`() {
         val item = SubagentStatusItem(index = 0, prompt = "Explore the codebase")
-        assertEquals("pending", item.status)
+        assertEquals(SubagentExecutionStatus.PENDING, item.status)
         assertEquals(0, item.toolCalls)
         assertEquals(0.0, item.totalCost)
         assertNull(item.latestToolCall)

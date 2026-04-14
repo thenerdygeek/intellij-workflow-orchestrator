@@ -13,6 +13,7 @@ import com.workflow.orchestrator.agent.tools.estimateTokens
 import com.workflow.orchestrator.agent.ide.IdeContext
 import com.workflow.orchestrator.agent.tools.subagent.AgentConfig
 import com.workflow.orchestrator.agent.tools.subagent.AgentConfigLoader
+import com.workflow.orchestrator.agent.tools.subagent.SubagentExecutionStatus
 import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
 import com.workflow.orchestrator.agent.tools.subagent.SubagentRunResult
 import com.workflow.orchestrator.agent.tools.subagent.SubagentRunStats
@@ -281,13 +282,13 @@ Tips:
             // agentId — the UI dedupes on agentId.
             onSubagentProgress?.invoke(
                 agentId,
-                SubagentProgressUpdate(status = "running", label = uiLabel)
+                SubagentProgressUpdate(status = SubagentExecutionStatus.RUNNING, label = uiLabel)
             )
             val result = runner.run(prompt) { progress ->
                 // Don't re-emit "running" for per-tool ticks — that would re-spawn
                 // the card. The runner only emits status="running" once at start;
                 // we already emitted that above with the label, so suppress it here.
-                val safe = if (progress.status == "running") progress.copy(status = null) else progress
+                val safe = if (progress.status == SubagentExecutionStatus.RUNNING) progress.copy(status = null) else progress
                 onSubagentProgress?.invoke(agentId, safe)
             }
             return mapSingleResult(description, config.name, result)
@@ -335,8 +336,7 @@ Tips:
         val entries = prompts.mapIndexed { idx, p ->
             SubagentStatusItem(
                 index = idx,
-                prompt = excerpt(p),
-                status = "pending"
+                prompt = excerpt(p)
             )
         }
 
@@ -372,9 +372,9 @@ Tips:
                     // update the existing card instead of spawning new ones.
                     onSubagentProgress?.invoke(
                         childAgentId,
-                        SubagentProgressUpdate(status = "running", label = childLabel)
+                        SubagentProgressUpdate(status = SubagentExecutionStatus.RUNNING, label = childLabel)
                     )
-                    entries[idx].status = "running"
+                    entries[idx].status = SubagentExecutionStatus.RUNNING
 
                     try {
                         val result = runner.run(p) { progress ->
@@ -394,29 +394,29 @@ Tips:
                             // Suppress any "running" status from the runner — we already
                             // spawned the card explicitly above, and re-emitting "running"
                             // would re-spawn duplicate cards (the original 77-card bug).
-                            val safe = if (progress.status == "running") progress.copy(status = null) else progress
+                            val safe = if (progress.status == SubagentExecutionStatus.RUNNING) progress.copy(status = null) else progress
                             onSubagentProgress?.invoke(childAgentId, safe)
                         }
 
                         // Final per-child status
                         when (result.status) {
                             SubagentRunStatus.COMPLETED -> {
-                                entries[idx].status = "completed"
+                                entries[idx].status = SubagentExecutionStatus.COMPLETED
                                 entries[idx].result = result.result
                             }
                             SubagentRunStatus.FAILED -> {
-                                entries[idx].status = "failed"
+                                entries[idx].status = SubagentExecutionStatus.FAILED
                                 entries[idx].error = result.error
                             }
                         }
                         result
                     } catch (e: Exception) {
-                        entries[idx].status = "failed"
+                        entries[idx].status = SubagentExecutionStatus.FAILED
                         entries[idx].error = e.message ?: "Unknown error"
                         // Tell the UI this specific child failed.
                         onSubagentProgress?.invoke(
                             childAgentId,
-                            SubagentProgressUpdate(status = "failed", error = e.message ?: "Unknown error")
+                            SubagentProgressUpdate(status = SubagentExecutionStatus.FAILED, error = e.message ?: "Unknown error")
                         )
                         SubagentRunResult(
                             status = SubagentRunStatus.FAILED,

@@ -253,7 +253,7 @@ class ParallelSubagentIntegrationTest {
         assertEquals(3, brainCount.get(), "Should have created exactly 3 brains")
 
         // Verify progress callbacks include completed updates
-        val completedUpdates = progressUpdates.filter { it.second.status == "completed" }
+        val completedUpdates = progressUpdates.filter { it.second.status == SubagentExecutionStatus.COMPLETED }
         assertTrue(
             completedUpdates.size >= 1,
             "Progress callbacks should include at least 1 'completed' group update, got: ${progressUpdates.map { it.second.status }}"
