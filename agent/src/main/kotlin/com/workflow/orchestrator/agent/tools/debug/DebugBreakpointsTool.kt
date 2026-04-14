@@ -665,7 +665,7 @@ All breakpoint actions modify IDE state. start_session/attach_to_process create 
                             lineBreakpoints.add(bp)
                         }
                     }
-                    bp.type is JavaExceptionBreakpointType -> {
+                    isJavaExceptionBreakpoint(bp) -> {
                         // Exception breakpoints have no file association — skip file filter
                         if (filterFileUrl == null) {
                             exceptionBreakpoints.add(bp)
@@ -696,31 +696,9 @@ All breakpoint actions modify IDE state. start_session/attach_to_process create 
                 val oneBased = bp.line + 1
 
                 val props = bp.properties
+                val javaFormatted = formatJavaBreakpointProperties(bp, props)
                 when {
-                    props is JavaMethodBreakpointProperties -> {
-                        val className = props.myClassPattern ?: ""
-                        val methodName = props.myMethodName ?: ""
-                        val display = if (className.isNotBlank()) "$className.$methodName" else methodName
-                        val traits = mutableListOf<String>()
-                        if (props.WATCH_ENTRY) traits.add("entry")
-                        if (props.WATCH_EXIT) traits.add("exit")
-                        traits.add(if (bp.isEnabled) "enabled" else "disabled")
-                        val bpCondition = bp.conditionExpression?.expression
-                        if (!bpCondition.isNullOrBlank()) traits.add("conditional: $bpCondition")
-                        sb.appendLine("Method: $display [${traits.joinToString(", ")}]")
-                    }
-                    props is JavaFieldBreakpointProperties -> {
-                        val className = props.myClassName ?: ""
-                        val fieldName = props.myFieldName ?: ""
-                        val display = if (className.isNotBlank()) "$className.$fieldName" else fieldName
-                        val traits = mutableListOf<String>()
-                        if (props.WATCH_ACCESS) traits.add("access")
-                        if (props.WATCH_MODIFICATION) traits.add("modification")
-                        traits.add(if (bp.isEnabled) "enabled" else "disabled")
-                        val bpCondition = bp.conditionExpression?.expression
-                        if (!bpCondition.isNullOrBlank()) traits.add("conditional: $bpCondition")
-                        sb.appendLine("Field: $display [${traits.joinToString(", ")}]")
-                    }
+                    javaFormatted != null -> sb.appendLine(javaFormatted)
                     else -> {
                         // Standard line breakpoint
                         val traits = mutableListOf<String>()
@@ -1055,5 +1033,56 @@ All breakpoint actions modify IDE state. start_session/attach_to_process create 
             }
         }
         return 0
+    }
+
+    /**
+     * Safely checks if a breakpoint is a Java exception breakpoint.
+     * Returns false if Java debugger classes aren't available (e.g., in PyCharm).
+     */
+    private fun isJavaExceptionBreakpoint(bp: com.intellij.xdebugger.breakpoints.XBreakpoint<*>): Boolean =
+        try {
+            bp.type is JavaExceptionBreakpointType
+        } catch (_: NoClassDefFoundError) {
+            false
+        }
+
+    /**
+     * Formats Java-specific breakpoint properties (method breakpoints, field watchpoints).
+     * Returns null if the properties aren't Java-specific or if Java debugger classes
+     * aren't available (e.g., in PyCharm).
+     */
+    private fun formatJavaBreakpointProperties(
+        bp: XLineBreakpoint<*>,
+        props: Any?
+    ): String? = try {
+        when (props) {
+            is JavaMethodBreakpointProperties -> {
+                val className = props.myClassPattern ?: ""
+                val methodName = props.myMethodName ?: ""
+                val display = if (className.isNotBlank()) "$className.$methodName" else methodName
+                val traits = mutableListOf<String>()
+                if (props.WATCH_ENTRY) traits.add("entry")
+                if (props.WATCH_EXIT) traits.add("exit")
+                traits.add(if (bp.isEnabled) "enabled" else "disabled")
+                val bpCondition = bp.conditionExpression?.expression
+                if (!bpCondition.isNullOrBlank()) traits.add("conditional: $bpCondition")
+                "Method: $display [${traits.joinToString(", ")}]"
+            }
+            is JavaFieldBreakpointProperties -> {
+                val className = props.myClassName ?: ""
+                val fieldName = props.myFieldName ?: ""
+                val display = if (className.isNotBlank()) "$className.$fieldName" else fieldName
+                val traits = mutableListOf<String>()
+                if (props.WATCH_ACCESS) traits.add("access")
+                if (props.WATCH_MODIFICATION) traits.add("modification")
+                traits.add(if (bp.isEnabled) "enabled" else "disabled")
+                val bpCondition = bp.conditionExpression?.expression
+                if (!bpCondition.isNullOrBlank()) traits.add("conditional: $bpCondition")
+                "Field: $display [${traits.joinToString(", ")}]"
+            }
+            else -> null
+        }
+    } catch (_: NoClassDefFoundError) {
+        null
     }
 }

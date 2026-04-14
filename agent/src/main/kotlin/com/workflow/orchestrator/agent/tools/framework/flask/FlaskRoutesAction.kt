@@ -143,7 +143,7 @@ private fun parseRoutes(pyFile: File, basePath: String, results: MutableList<Rou
 
         // Compose full path: blueprint prefix + route path
         val prefix = blueprintPrefixes[obj] ?: ""
-        val fullPath = composePath(prefix, routePath)
+        val fullPath = PythonFileScanner.composePath(prefix, routePath)
 
         // Find the function name after this decorator
         val afterDecorator = content.substring(match.range.last)
@@ -152,17 +152,4 @@ private fun parseRoutes(pyFile: File, basePath: String, results: MutableList<Rou
 
         results.add(RouteEntry(relPath, "$obj.$method", fullPath, methods, funcName))
     }
-}
-
-/**
- * Composes a prefix and route path, handling slash deduplication.
- * e.g., composePath("/api", "/users") -> "/api/users"
- *       composePath("/api/", "/users") -> "/api/users"
- *       composePath("", "/users") -> "/users"
- */
-private fun composePath(prefix: String, routePath: String): String {
-    if (prefix.isEmpty()) return routePath
-    val normalizedPrefix = prefix.trimEnd('/')
-    val normalizedRoute = if (routePath.startsWith("/")) routePath else "/$routePath"
-    return "$normalizedPrefix$normalizedRoute"
 }

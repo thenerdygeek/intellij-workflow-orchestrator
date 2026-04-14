@@ -25,7 +25,7 @@ object PythonFileScanner {
         ".git",
         ".tox", ".nox",
         ".mypy_cache", ".pytest_cache", ".ruff_cache",
-        "dist", "build", ".eggs", "*.egg-info",
+        "dist", "build", ".eggs",
         ".hg", ".svn",
         ".idea", ".vscode",
         "site-packages"
@@ -79,6 +79,17 @@ object PythonFileScanner {
      * @param value the raw configuration value
      * @return "***REDACTED***" if the key is sensitive, otherwise the original value
      */
+    /**
+     * Composes a URL prefix and route path, normalizing slashes.
+     * E.g., composePath("/api/v1", "/users") → "/api/v1/users"
+     */
+    fun composePath(prefix: String, routePath: String): String {
+        if (prefix.isEmpty()) return routePath
+        val normalizedPrefix = prefix.trimEnd('/')
+        val normalizedRoute = if (routePath.startsWith("/")) routePath else "/$routePath"
+        return "$normalizedPrefix$normalizedRoute"
+    }
+
     fun redactIfSensitive(key: String, value: String): String {
         val upperKey = key.uppercase()
         return if (SENSITIVE_KEY_PATTERNS.any { upperKey.contains(it) }) {

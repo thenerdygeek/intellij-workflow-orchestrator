@@ -143,7 +143,7 @@ private fun parseRoutes(pyFile: File, basePath: String, results: MutableList<Rou
 
         // Compose full path: router prefix + route path
         val prefix = routerPrefixes[routerVar] ?: ""
-        val fullPath = composePath(prefix, routePath)
+        val fullPath = PythonFileScanner.composePath(prefix, routePath)
 
         // Look for the handler function on the next non-empty, non-decorator lines
         val handler = findNextHandler(lines, index + 1)
@@ -162,15 +162,3 @@ private fun findNextHandler(lines: List<String>, startIndex: Int): String {
     return "(unknown)"
 }
 
-/**
- * Composes a prefix and route path, handling slash deduplication.
- * e.g., composePath("/api/v1", "/users") -> "/api/v1/users"
- *       composePath("/api/v1/", "/users") -> "/api/v1/users"
- *       composePath("", "/users") -> "/users"
- */
-private fun composePath(prefix: String, routePath: String): String {
-    if (prefix.isEmpty()) return routePath
-    val normalizedPrefix = prefix.trimEnd('/')
-    val normalizedRoute = if (routePath.startsWith("/")) routePath else "/$routePath"
-    return "$normalizedPrefix$normalizedRoute"
-}
