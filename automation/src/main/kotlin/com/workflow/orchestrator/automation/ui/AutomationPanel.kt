@@ -356,12 +356,16 @@ class AutomationPanel(
     }
 
     private fun onBuildLogReady(event: WorkflowEvent.BuildLogReady) {
-        if (currentSuitePlanKey.isBlank()) return
+        if (currentSuitePlanKey.isBlank()) {
+            log.info("[Automation:UI] Ignoring BuildLogReady — no suite selected (currentSuitePlanKey is blank)")
+            return
+        }
 
         // Only process events matching the configured service CI plan key
         val ciPlanKey = resolveServiceCiPlanKey()
+        log.info("[Automation:UI] BuildLogReady event: planKey='${event.planKey}', ciPlanKey='$ciPlanKey', suitePlan='$currentSuitePlanKey'")
         if (ciPlanKey.isBlank() || !event.planKey.equals(ciPlanKey, ignoreCase = true)) {
-            log.info("[Automation:UI] Ignoring BuildLogReady for ${event.planKey} (configured CI plan: $ciPlanKey)")
+            log.info("[Automation:UI] Ignoring BuildLogReady for '${event.planKey}' — does not match CI plan '$ciPlanKey'")
             return
         }
 

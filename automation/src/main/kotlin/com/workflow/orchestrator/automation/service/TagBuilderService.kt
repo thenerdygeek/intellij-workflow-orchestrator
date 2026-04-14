@@ -82,7 +82,9 @@ class TagBuilderService {
             buildsWithVars++
             log.info("[Automation:Tags]   Build #${build.buildNumber}: fetched ${variables.size} variables: ${variables.keys}")
 
-            val dockerTagsJson = variables[buildVariableName]
+            // Case-insensitive lookup — Bamboo variable may be DockerTagsAsJson or dockerTagsAsJson
+            val dockerTagsJson = variables.entries
+                .firstOrNull { it.key.equals(buildVariableName, ignoreCase = true) }?.value
             if (dockerTagsJson == null) {
                 val reason = "#${build.buildNumber}: no '$buildVariableName' in variables [${variables.keys.joinToString()}]"
                 log.info("[Automation:Tags]   $reason")

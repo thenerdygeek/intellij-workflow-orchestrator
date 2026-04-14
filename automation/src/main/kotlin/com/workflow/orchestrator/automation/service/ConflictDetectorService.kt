@@ -43,7 +43,8 @@ class ConflictDetectorService {
             if (varsResult.isError) continue
 
             val variablesMap = varsResult.data.associate { it.name to it.value }
-            val dockerTagsJson = variablesMap[buildVariableName] ?: continue
+            val dockerTagsJson = variablesMap.entries
+                .firstOrNull { it.key.equals(buildVariableName, ignoreCase = true) }?.value ?: continue
             val otherTags = parseDockerTagsJson(dockerTagsJson)
 
             for ((service, yourTag) in stagedTags) {
