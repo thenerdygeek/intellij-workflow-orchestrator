@@ -40,9 +40,53 @@ class SubagentRunner(
     private val contextBudget: Int,
     private val maxOutputTokens: Int? = null,
     private val apiDebugDir: File? = null,
-    private val toolExecutionMode: String = "accumulate"
+    toolExecutionMode: String = "accumulate",
+    /**
+     * Optional approval gate forwarded from the parent session. When set, write-tool
+     * executions inside the sub-agent suspend waiting for user approval, just like
+     * they do for the main agent. Null = no approval (tests, read-only sub-agents).
+     */
+    private val approvalGate: (suspend (toolName: String, args: String, riskLevel: String, allowSessionApproval: Boolean) -> com.workflow.orchestrator.agent.loop.ApprovalResult)? = null,
+    /**
+     * Optional hook manager forwarded from the parent session. When set, PRE_TOOL_USE /
+     * POST_TOOL_USE / etc. fire for sub-agent tool calls with the same semantics as the
+     * main agent.
+     */
+    private val hookManager: com.workflow.orchestrator.agent.hooks.HookManager? = null,
+    /**
+     * Optional session metrics accumulator from the parent session. Sub-agent tool
+     * durations / API latencies flow into the parent scorecard.
+     */
+    private val sessionMetrics: com.workflow.orchestrator.agent.observability.SessionMetrics? = null,
+    /**
+     * Optional file logger from the parent session. Sub-agent lifecycle events land in
+     * the same JSONL stream as the parent's.
+     */
+    private val fileLogger: com.workflow.orchestrator.agent.observability.AgentFileLogger? = null,
+    /**
+     * Optional debug log callback forwarded from the parent session. Routes sub-agent
+     * warnings/events to the JCEF debug panel.
+     */
+    private val onDebugLog: ((level: String, event: String, detail: String, meta: Map<String, Any?>?) -> Unit)? = null,
+    /**
+     * Optional checkpoint callback forwarded from the parent session. Fired after
+     * sub-agent write tools so the checkpoint timeline on the parent UI reflects
+     * changes made inside the sub-agent.
+     */
+    private val onCheckpoint: (suspend () -> Unit)? = null,
 ) {
     private val abortRequested = AtomicBoolean(false)
+
+    /**
+     * Effective tool execution mode for this sub-agent. Always `"stream_interrupt"`
+     * regardless of what the caller passed, because sub-agents must ReAct one
+     * tool at a time. The constructor arg is retained for API compatibility but
+     * intentionally ignored — sub-agents should not accumulate because batched
+     * `attempt_completion` speculates past tool results.
+     */
+    @Suppress("unused")
+    private val callerRequestedToolExecutionMode: String = toolExecutionMode
+    internal val effectiveToolExecutionMode: String = "stream_interrupt"
 
     /**
      * Abort the subagent run. Sets the abort flag and cancels the brain's active request.
@@ -72,10 +116,16 @@ class SubagentRunner(
         val stats = MutableSubagentStats()
 
         try {
-            // 0. Wire API debug dumps on the brain (separate subdir from main agent)
-            if (apiDebugDir != null && brain is OpenAiCompatBrain) {
-                brain.setApiDebugDir(apiDebugDir)
-                brain.resetApiCallCounter()
+            // 0. Wire API debug dumps on the brain (separate subdir from main agent).
+            //    Detach any parent-session shared counter so this sub-agent's dumps
+            //    number from 001 inside its own debug dir — otherwise the shared
+            //    counter would interleave numbering between parent and sub-agent.
+            if (brain is OpenAiCompatBrain) {
+                brain.detachSharedApiCallCounter()
+                if (apiDebugDir != null) {
+                    brain.setApiDebugDir(apiDebugDir)
+                    brain.resetApiCallCounter()
+                }
             }
 
             // 1. Build tool definitions and compose system prompt with XML tool defs
@@ -151,7 +201,18 @@ class SubagentRunner(
                         onProgress(SubagentProgressUpdate(stats = stats.snapshot()))
                     }
                 },
-                toolExecutionMode = toolExecutionMode,
+                toolExecutionMode = effectiveToolExecutionMode,
+                approvalGate = approvalGate,
+                hookManager = hookManager,
+                sessionMetrics = sessionMetrics,
+                fileLogger = fileLogger,
+                onDebugLog = onDebugLog,
+                onCheckpoint = onCheckpoint,
+                onStreamChunk = { chunk ->
+                    scope.launch {
+                        onProgress(SubagentProgressUpdate(streamDelta = chunk, stats = stats.snapshot()))
+                    }
+                },
                 // Gap 2 fix: scope XML parser tool/param names to this sub-agent's
                 // own tool set, not the main agent's brain.toolNameSet fallback.
                 toolNameProvider = { tools.keys },

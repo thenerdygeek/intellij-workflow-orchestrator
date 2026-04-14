@@ -496,9 +496,19 @@ class AgentService(private val project: Project) : Disposable {
                 safeRegisterDeferred("Framework") { FlaskTool() }
             }
         }
-        // RuntimeExec and RuntimeConfig are universal (work in any IDE)
+        // Universal process observation (no compile or test runner)
         safeRegisterDeferred("Build & Run") { RuntimeExecTool() }
         safeRegisterDeferred("Build & Run") { RuntimeConfigTool() }
+
+        // Java/Kotlin native test runner + Java compiler
+        if (ToolRegistrationFilter.shouldRegisterJavaBuildTools(ideContext)) {
+            safeRegisterDeferred("Build & Run") { JavaRuntimeExecTool() }
+        }
+
+        // Python pytest runner + py_compile
+        if (ToolRegistrationFilter.shouldRegisterPythonBuildTools(ideContext)) {
+            safeRegisterDeferred("Build & Run") { PythonRuntimeExecTool() }
+        }
         // Coverage depends on the Coverage plugin (Ultimate/Professional)
         if (ToolRegistrationFilter.shouldRegisterCoverageTool(ideContext)) {
             safeRegisterDeferred("Build & Run") { CoverageTool() }
@@ -1023,13 +1033,31 @@ class AgentService(private val project: Project) : Disposable {
                     defs
                 }
 
-                // Wire sub-agent progress callback and settings for this task execution
+                // Wire sub-agent progress callback and settings for this task execution.
+                // All parent-session callbacks — approvalGate, hookManager, sessionMetrics,
+                // fileLogger, onDebugLog, onCheckpoint — are forwarded so sub-agents honour
+                // the same approval UX, hooks, observability, and checkpoint timeline as
+                // the main agent. Without this plumbing, delegating a write tool to a
+                // sub-agent would bypass the modal; delegating any tool would leave its
+                // PRE/POST_TOOL_USE hooks silent and its timings off the scorecard.
                 val spawnAgentTool = registry.get("agent") as? com.workflow.orchestrator.agent.tools.builtin.SpawnAgentTool
                 if (spawnAgentTool != null) {
                     spawnAgentTool.contextBudget = agentSettings.state.maxInputTokens
                     spawnAgentTool.maxOutputTokens = agentSettings.state.maxOutputTokens
                     spawnAgentTool.sessionDebugDir = sessionDebugDir
                     spawnAgentTool.toolExecutionMode = agentSettings.state.toolExecutionMode ?: "accumulate"
+                    spawnAgentTool.approvalGate = approvalGate
+                    spawnAgentTool.hookManager = hookManager
+                    spawnAgentTool.sessionMetrics = sessionMetrics
+                    spawnAgentTool.fileLogger = fileLogger
+                    spawnAgentTool.onDebugLog = onDebugLog
+                    spawnAgentTool.onCheckpoint = onCheckpointSaved?.let { cb ->
+                        // AgentLoop expects `suspend () -> Unit`; the outer callback is
+                        // `(String) -> Unit` keyed by sessionId. Close over the current
+                        // session id so parent-timeline checkpoint updates route correctly.
+                        val sidSnapshot = sid
+                        suspend { cb(sidSnapshot) }
+                    }
                     spawnAgentTool.onSubagentProgress = if (onSubagentProgress != null) {
                         { agentId, update -> onSubagentProgress(agentId, update) }
                     } else null
@@ -1272,8 +1300,19 @@ class AgentService(private val project: Project) : Disposable {
                 activeTask.set(null)
                 // Clear API debug dir so the brain doesn't dump after task ends
                 (brainRef as? OpenAiCompatBrain)?.setApiDebugDir(null)
-                // Clear per-task sub-agent progress callback
-                (registry.get("agent") as? com.workflow.orchestrator.agent.tools.builtin.SpawnAgentTool)?.onSubagentProgress = null
+                // Clear per-task sub-agent callbacks. Leaving any of these attached
+                // would allow a stale reference to the previous session's AgentController
+                // / loggers / hook manager to handle events for the next spawn call —
+                // cancelled deferreds, dangling modals, cross-session metric contamination.
+                (registry.get("agent") as? com.workflow.orchestrator.agent.tools.builtin.SpawnAgentTool)?.let {
+                    it.onSubagentProgress = null
+                    it.approvalGate = null
+                    it.hookManager = null
+                    it.sessionMetrics = null
+                    it.fileLogger = null
+                    it.onDebugLog = null
+                    it.onCheckpoint = null
+                }
             }
         }
         return job

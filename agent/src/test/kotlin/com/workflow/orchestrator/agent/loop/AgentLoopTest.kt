@@ -1124,4 +1124,49 @@ class AgentLoopTest {
             assertEquals(120_000L, tool.timeoutMs)
         }
     }
+
+    @Nested
+    inner class AttemptCompletionBatchGuardTests {
+
+        @Test
+        fun `attempt_completion batched with other tools is deferred to next turn`() = runTest {
+            val brain = sequenceBrain(
+                toolCallResponse(
+                    "read_file" to """{"path":"x.kt"}""",
+                    "attempt_completion" to """{"result":"Guess: x is foo."}""",
+                ),
+                toolCallResponse(
+                    "attempt_completion" to """{"result":"Actual: x reads bar."}""",
+                ),
+            )
+            val tools = listOf(
+                fakeTool("read_file", ToolResult(content = "val x = \"bar\"", summary = "read", tokenEstimate = 5)),
+                completionTool("Actual: x reads bar."),
+            )
+            val loop = buildLoop(brain, tools)
+
+            val result = loop.run("what is x?")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed, got $result")
+            val summary = (result as LoopResult.Completed).summary
+            assertTrue(summary.contains("Actual"), "Expected post-observation summary, got: $summary")
+            assertFalse(summary.contains("Guess"), "Premature completion summary leaked: $summary")
+            assertEquals(2, result.iterations, "Expected TWO LLM turns — batch guard deferred completion")
+        }
+
+        @Test
+        fun `attempt_completion alone in a batch is executed immediately`() = runTest {
+            val brain = sequenceBrain(
+                toolCallResponse("attempt_completion" to """{"result":"Done."}"""),
+            )
+            val tools = listOf(completionTool("Done."))
+            val loop = buildLoop(brain, tools)
+
+            val result = loop.run("task")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed, got $result")
+            assertEquals(1, (result as LoopResult.Completed).iterations, "Expected a single turn — no guard fired")
+            assertEquals("Done.", result.summary)
+        }
+    }
 }

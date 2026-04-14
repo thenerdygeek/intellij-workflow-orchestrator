@@ -401,6 +401,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   updateSubAgentMessage(payload: string) {
     stores?.getChatStore().updateSubAgentMessage(payload);
   },
+  appendSubAgentStreamDelta(payload: string) {
+    stores?.getChatStore().appendSubAgentStreamDelta(payload);
+  },
   completeSubAgent(payload: string) {
     stores?.getChatStore().completeSubAgent(payload);
   },

@@ -631,6 +631,11 @@ class AgentDashboardPanel(
         broadcast(replay = false) { it.updateSubAgentMessage(agentId, textContent) }
     }
 
+    fun appendSubAgentStreamDelta(agentId: String, delta: String) {
+        runOnEdt { cefPanel?.appendSubAgentStreamDelta(agentId, delta) }
+        broadcast(replay = false) { it.appendSubAgentStreamDelta(agentId, delta) }
+    }
+
     fun completeSubAgent(agentId: String, textContent: String, tokensUsed: Int, isError: Boolean) {
         runOnEdt { cefPanel?.completeSubAgent(agentId, textContent, tokensUsed, isError) }
         broadcast(replay = false) { it.completeSubAgent(agentId, textContent, tokensUsed, isError) }
