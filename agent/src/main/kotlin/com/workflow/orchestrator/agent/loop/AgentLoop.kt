@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.loop
 
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.core.ai.AssistantMessageContent
 import com.workflow.orchestrator.core.ai.AssistantMessageParser
 import com.workflow.orchestrator.core.ai.TextContent
 import com.workflow.orchestrator.core.ai.ToolUseContent
@@ -501,6 +502,8 @@ class AgentLoop(
             // Tool/param names read from providers (updated when deferred tools load via request_tools).
             val accumulatedText = StringBuilder()
             var lastPresentedTextLength = 0
+            var cachedBlocks: List<AssistantMessageContent>? = null
+            var cachedStrippedText = ""
             val currentToolNames = toolNameProvider?.invoke() ?: brain.toolNameSet
             val currentParamNames = paramNameProvider?.invoke() ?: brain.paramNameSet
 
@@ -525,19 +528,33 @@ class AgentLoop(
                     // Always accumulate
                     accumulatedText.append(text)
 
-                    // Re-parse full accumulated text
-                    val blocks = AssistantMessageParser.parse(
-                        accumulatedText.toString(),
-                        currentToolNames,
-                        currentParamNames
-                    )
+                    // Conditional re-parse: skip when no XML structural character in chunk
+                    val needsParse = cachedBlocks == null || text.contains('<') || text.contains('>')
+                    val blocks = if (needsParse) {
+                        AssistantMessageParser.parse(
+                            accumulatedText.toString(),
+                            currentToolNames,
+                            currentParamNames
+                        ).also { cachedBlocks = it }
+                    } else {
+                        cachedBlocks!!
+                    }
 
                     // Extract visible text (TextContent blocks only)
                     val visibleText = blocks.filterIsInstance<TextContent>()
                         .joinToString("\n\n") { it.content }
 
                     // Only send NEW text to UI (delta since last presentation)
-                    val stripped = AssistantMessageParser.stripPartialTag(visibleText)
+                    val stripped = if (needsParse) {
+                        // When no tool calls present, use accumulated text directly to preserve whitespace
+                        // (TextContent.content is trimmed by the parser, which loses trailing spaces at chunk boundaries)
+                        val hasToolCalls = blocks.any { it is ToolUseContent }
+                        val base = if (hasToolCalls) visibleText else accumulatedText.toString()
+                        AssistantMessageParser.stripPartialTag(base)
+                            .also { cachedStrippedText = it }
+                    } else {
+                        (cachedStrippedText + text).also { cachedStrippedText = it }
+                    }
                     if (stripped.length > lastPresentedTextLength) {
                         val delta = stripped.substring(lastPresentedTextLength)
                         onStreamChunk(delta)
@@ -546,11 +563,11 @@ class AgentLoop(
 
                     // Persist streaming text to ui_messages.json (C3 fix — awaited inline, NOT in launch{}).
                     // First chunk: add partial message. Subsequent: update in-place.
-                    // Use visibleText (TextContent blocks only), NOT raw accumulatedText.
-                    // The raw text includes XML tool call tags (e.g. <read_file><path>...</path></read_file>)
-                    // which the live UI strips via the parser but would show as raw XML on resume.
+                    // Use stripped text (partial XML tags removed), NOT raw accumulatedText.
+                    // The raw text includes XML tool call tags which would show as raw XML on resume.
+                    // Use `stripped` (always up-to-date) rather than `visibleText` (stale on skip-parse path).
                     messageStateHandler?.let { handler ->
-                        val persistText = visibleText
+                        val persistText = stripped
                         if (isFirstStreamChunk) {
                             handler.addToClineMessages(UiMessage(
                                 ts = System.currentTimeMillis(),
@@ -1196,7 +1213,7 @@ class AgentLoop(
                     say = UiSay.PLAN_UPDATE,
                     text = toolResult.content.take(2000),
                     planData = if (toolResult.planSteps.isNotEmpty()) PlanCardData(
-                        steps = toolResult.planSteps.map { PlanStep(title = it, status = "pending") },
+                        steps = toolResult.planSteps.map { PlanStep(title = it, status = PlanStepStatus.PENDING) },
                         status = PlanStatus.AWAITING_APPROVAL,
                     ) else null,
                 )
@@ -1234,7 +1251,7 @@ class AgentLoop(
                         toolCallId = toolCallId,
                         toolName = toolName,
                         args = call.function.arguments,
-                        status = if (toolResult.isError) "ERROR" else "COMPLETED",
+                        status = if (toolResult.isError) ToolCallStatus.ERROR else ToolCallStatus.COMPLETED,
                         result = toolResult.summary.take(500),
                         output = toolResult.content.takeIf { it != toolResult.summary }?.take(2000),
                         durationMs = durationMs,

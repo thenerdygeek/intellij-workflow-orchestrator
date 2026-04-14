@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.session
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -55,7 +56,21 @@ enum class SubagentStatus { RUNNING, COMPLETED, FAILED, KILLED }
 enum class WizardStatus { IN_PROGRESS, COMPLETED, SKIPPED }
 
 @Serializable
-data class PlanStep(val title: String, val status: String = "pending")
+enum class PlanStepStatus {
+    @SerialName("pending") PENDING,
+    @SerialName("in_progress") IN_PROGRESS,
+    @SerialName("running") RUNNING,
+    @SerialName("completed") COMPLETED,
+    @SerialName("done") DONE,
+    @SerialName("failed") FAILED,
+    @SerialName("skipped") SKIPPED,
+}
+
+@Serializable
+enum class ToolCallStatus { PENDING, RUNNING, COMPLETED, ERROR }
+
+@Serializable
+data class PlanStep(val title: String, val status: PlanStepStatus = PlanStepStatus.PENDING)
 
 @Serializable
 data class PlanCardData(
@@ -98,7 +113,7 @@ data class ToolCallData(
     val toolCallId: String,
     val toolName: String,
     val args: String = "",
-    val status: String = "COMPLETED", // PENDING | RUNNING | COMPLETED | ERROR
+    val status: ToolCallStatus = ToolCallStatus.COMPLETED,
     val result: String? = null,
     val output: String? = null,
     val durationMs: Long = 0,

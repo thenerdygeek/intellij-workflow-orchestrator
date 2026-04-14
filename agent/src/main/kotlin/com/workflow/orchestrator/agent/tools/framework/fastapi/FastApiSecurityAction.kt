@@ -97,7 +97,7 @@ internal suspend fun executeSecurity(params: JsonObject, project: Project): Tool
 
 private fun parseSecurity(pyFile: File, basePath: String, results: MutableList<SecurityEntry>) {
     val content = pyFile.readText()
-    val relPath = pyFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+    val relPath = PythonFileScanner.relPath(pyFile, basePath)
     val lines = content.lines()
 
     for ((index, line) in lines.withIndex()) {

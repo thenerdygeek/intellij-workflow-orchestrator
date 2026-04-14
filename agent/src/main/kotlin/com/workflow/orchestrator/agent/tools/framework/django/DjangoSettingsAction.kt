@@ -45,7 +45,7 @@ internal suspend fun executeSettings(params: JsonObject, project: Project): Tool
                 appendLine()
 
                 for (settingsFile in settingsFiles.sortedBy { it.name }) {
-                    val relPath = settingsFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+                    val relPath = PythonFileScanner.relPath(settingsFile, basePath)
                     val fileContent = settingsFile.readText()
                     val settings = SETTING_PATTERN.findAll(fileContent)
                         .map { it.groupValues[1] to it.groupValues[2].trim().take(120) }

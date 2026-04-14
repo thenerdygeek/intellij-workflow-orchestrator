@@ -51,7 +51,7 @@ internal suspend fun executeAdmin(params: JsonObject, project: Project): ToolRes
 
             for (adminFile in adminFiles) {
                 val content = adminFile.readText()
-                val relPath = adminFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+                val relPath = PythonFileScanner.relPath(adminFile, basePath)
 
                 ADMIN_REGISTER_PATTERN.findAll(content).forEach { match ->
                     registrations.add(Triple(relPath, match.groupValues[1], match.groupValues[2].ifBlank { null }))

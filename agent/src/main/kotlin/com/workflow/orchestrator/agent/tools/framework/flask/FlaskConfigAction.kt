@@ -40,7 +40,6 @@ internal suspend fun executeConfig(params: JsonObject, project: Project): ToolRe
         withContext(Dispatchers.IO) {
             val baseDir = File(basePath)
 
-            // Look for config.py, settings.py, config/*.py
             val configFiles = PythonFileScanner.scanPythonFiles(baseDir) { file ->
                 file.extension == "py" && (
                     file.name == "config.py" ||
@@ -50,13 +49,12 @@ internal suspend fun executeConfig(params: JsonObject, project: Project): ToolRe
                     )
             }
 
-            // Also scan all .py files for from_object references
             val allPyFiles = PythonFileScanner.scanAllPyFiles(baseDir)
 
             val fromObjectRefs = mutableListOf<Pair<String, String>>()
             for (pyFile in allPyFiles) {
                 val content = pyFile.readText()
-                val relPath = pyFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+                val relPath = PythonFileScanner.relPath(pyFile, basePath)
                 for (match in FROM_OBJECT_PATTERN.findAll(content)) {
                     fromObjectRefs.add(relPath to match.groupValues[1])
                 }
@@ -80,17 +78,16 @@ internal suspend fun executeConfig(params: JsonObject, project: Project): ToolRe
                 }
 
                 for (configFile in configFiles.sortedBy { it.name }) {
-                    val relPath = configFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+                    val relPath = PythonFileScanner.relPath(configFile, basePath)
                     val fileContent = configFile.readText()
 
-                    // Find class-based config
                     val classes = CONFIG_CLASS_PATTERN.findAll(fileContent).toList()
                     if (classes.isNotEmpty()) {
                         appendLine("[$relPath]")
                         for (classMatch in classes) {
                             val className = classMatch.groupValues[1]
                             val classStart = classMatch.range.first
-                            val classEnd = findNextClassOrEnd(fileContent, classStart)
+                            val classEnd = PythonFileScanner.findClassEnd(fileContent, classStart)
                             val classBody = fileContent.substring(classStart, classEnd)
 
                             appendLine("  class $className:")
@@ -107,7 +104,6 @@ internal suspend fun executeConfig(params: JsonObject, project: Project): ToolRe
                         }
                         appendLine()
                     } else {
-                        // Top-level key-value config
                         val settings = TOP_LEVEL_CONFIG_PATTERN.findAll(fileContent)
                             .filter { m ->
                                 filter == null || m.groupValues[1].contains(filter, ignoreCase = true)
@@ -142,8 +138,3 @@ internal suspend fun executeConfig(params: JsonObject, project: Project): ToolRe
     }
 }
 
-private fun findNextClassOrEnd(content: String, classStart: Int): Int {
-    val nextClass = Regex("""^class\s+\w+""", RegexOption.MULTILINE)
-        .find(content, classStart + 1)
-    return nextClass?.range?.first ?: content.length
-}

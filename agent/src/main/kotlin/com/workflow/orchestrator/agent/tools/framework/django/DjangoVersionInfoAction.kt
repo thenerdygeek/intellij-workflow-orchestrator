@@ -35,10 +35,8 @@ internal suspend fun executeVersionInfo(params: JsonObject, project: Project): T
         withContext(Dispatchers.IO) {
             val baseDir = File(basePath)
 
-            // Try to find Django version from requirements files
             val djangoVersion = findDjangoVersion(baseDir)
 
-            // Find installed apps from settings
             val settingsFiles = PythonFileScanner.scanPythonFiles(baseDir) {
                 it.name.startsWith("settings") && it.extension == "py"
             }
@@ -86,7 +84,6 @@ internal suspend fun executeVersionInfo(params: JsonObject, project: Project): T
 }
 
 private fun findDjangoVersion(baseDir: File): String? {
-    // Check requirements*.txt
     PythonFileScanner.scanPythonFiles(baseDir) {
         it.name.startsWith("requirements") && it.extension == "txt"
     }.forEach { reqFile ->
@@ -95,7 +92,6 @@ private fun findDjangoVersion(baseDir: File): String? {
             }
         }
 
-    // Check pyproject.toml
     baseDir.resolve("pyproject.toml").takeIf { it.exists() }?.let { pyproject ->
         PYPROJECT_DJANGO_PATTERN.find(pyproject.readText())?.let {
             return it.groupValues[1]

@@ -105,7 +105,7 @@ internal suspend fun executeRoutes(params: JsonObject, project: Project): ToolRe
 
 private fun parseRoutes(pyFile: File, basePath: String, results: MutableList<RouteEntry>) {
     val content = pyFile.readText()
-    val relPath = pyFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+    val relPath = PythonFileScanner.relPath(pyFile, basePath)
     val lines = content.lines()
 
     // Build router variable -> prefix map from APIRouter(prefix=...) declarations

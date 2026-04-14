@@ -168,7 +168,6 @@ internal suspend fun executePipDependencies(params: JsonObject, project: Project
                 parseSetupPy(setupPy, dependencies)
             }
 
-            // Check pyproject.toml for dependencies
             val pyprojectToml = File(baseDir, "pyproject.toml")
             if (pyprojectToml.isFile) {
                 parsePyprojectDependencies(pyprojectToml, dependencies)

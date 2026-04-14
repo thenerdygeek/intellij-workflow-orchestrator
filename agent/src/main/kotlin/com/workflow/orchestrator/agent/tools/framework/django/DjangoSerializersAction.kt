@@ -55,13 +55,13 @@ internal suspend fun executeSerializers(params: JsonObject, project: Project): T
 
             for (serializerFile in serializerFiles) {
                 val content = serializerFile.readText()
-                val relPath = serializerFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+                val relPath = PythonFileScanner.relPath(serializerFile, basePath)
 
                 for (match in SERIALIZER_CLASS_PATTERN.findAll(content)) {
                     val name = match.groupValues[1]
                     val kind = match.groupValues[2]
                     val classStart = match.range.first
-                    val classEnd = findClassEnd(content, classStart)
+                    val classEnd = PythonFileScanner.findClassEnd(content, classStart)
                     val classBody = content.substring(classStart, classEnd)
                     val model = MODEL_META_PATTERN.find(classBody)?.groupValues?.get(1)
                     allSerializers.add(SerializerEntry(relPath, name, kind, model))
@@ -108,8 +108,3 @@ internal suspend fun executeSerializers(params: JsonObject, project: Project): T
     }
 }
 
-private fun findClassEnd(content: String, classStart: Int): Int {
-    val nextClass = Regex("""^class\s+\w+""", RegexOption.MULTILINE)
-        .find(content, classStart + 1)
-    return nextClass?.range?.first ?: content.length
-}

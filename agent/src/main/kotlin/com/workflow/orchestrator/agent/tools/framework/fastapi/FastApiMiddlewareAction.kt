@@ -82,7 +82,7 @@ internal suspend fun executeMiddleware(params: JsonObject, project: Project): To
 
 private fun parseMiddleware(pyFile: File, basePath: String, results: MutableList<MiddlewareEntry>) {
     val content = pyFile.readText()
-    val relPath = pyFile.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+    val relPath = PythonFileScanner.relPath(pyFile, basePath)
     val lines = content.lines()
 
     for ((index, line) in lines.withIndex()) {

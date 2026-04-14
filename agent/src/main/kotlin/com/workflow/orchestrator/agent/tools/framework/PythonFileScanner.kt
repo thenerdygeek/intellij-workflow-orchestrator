@@ -1,5 +1,7 @@
 package com.workflow.orchestrator.agent.tools.framework
 
+import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.core.ai.TokenEstimator
 import java.io.File
 
 /**
@@ -12,6 +14,9 @@ import java.io.File
  *   (SECRET_KEY, PASSWORD, API_KEY, TOKEN, etc.).
  */
 object PythonFileScanner {
+
+    /** Precompiled regex for finding the next top-level class definition. */
+    private val NEXT_CLASS_REGEX = Regex("""^class\s+\w+""", RegexOption.MULTILINE)
 
     /**
      * Directory names to exclude from Python project file scanning.
@@ -97,5 +102,74 @@ object PythonFileScanner {
         } else {
             value
         }
+    }
+
+    /**
+     * Finds the end of a Python class body by locating the next top-level class definition.
+     * Uses a simple heuristic — does not handle nested classes.
+     */
+    fun findClassEnd(content: String, classStart: Int): Int {
+        return NEXT_CLASS_REGEX.find(content, classStart + 1)?.range?.first ?: content.length
+    }
+
+    /**
+     * Computes a relative path from [basePath] to [file].
+     */
+    fun relPath(file: File, basePath: String): String =
+        file.absolutePath.removePrefix(basePath).trimStart(File.separatorChar)
+
+    /**
+     * Scans for template files under /templates/ directories and formats them grouped by directory.
+     * Shared between Django and Flask template actions.
+     */
+    fun scanAndFormatTemplates(
+        baseDir: File,
+        basePath: String,
+        extensions: Set<String>,
+        headerLabel: String,
+        filter: String?,
+    ): ToolResult {
+        val templateFiles = scanPythonFiles(baseDir) { file ->
+            file.extension in extensions && file.absolutePath.contains("/templates/")
+        }
+
+        if (templateFiles.isEmpty()) {
+            return ToolResult(
+                "No template files found in templates/ directories.",
+                "No templates found",
+                5
+            )
+        }
+
+        val filtered = if (filter != null) {
+            templateFiles.filter { it.absolutePath.contains(filter, ignoreCase = true) }
+        } else {
+            templateFiles
+        }
+
+        if (filtered.isEmpty()) {
+            val filterDesc = if (filter != null) " matching '$filter'" else ""
+            return ToolResult("No templates found$filterDesc.", "No templates", 5)
+        }
+
+        val content = buildString {
+            appendLine("$headerLabel (${filtered.size} total):")
+            appendLine()
+            val byDir = filtered.groupBy { it.parentFile?.absolutePath ?: "" }
+            for ((dir, files) in byDir.toSortedMap()) {
+                val relDir = dir.removePrefix(basePath).trimStart(File.separatorChar)
+                appendLine("[$relDir]")
+                for (tmpl in files.sortedBy { it.name }) {
+                    appendLine("  ${tmpl.name}")
+                }
+                appendLine()
+            }
+        }
+
+        return ToolResult(
+            content = content.trimEnd(),
+            summary = "${filtered.size} templates",
+            tokenEstimate = TokenEstimator.estimate(content)
+        )
     }
 }

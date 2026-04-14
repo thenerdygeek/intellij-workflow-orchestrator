@@ -37,7 +37,6 @@ internal suspend fun executeVersionInfo(params: JsonObject, project: Project): T
             val baseDir = File(basePath)
             val versions = mutableListOf<DepVersion>()
 
-            // Check requirements*.txt
             PythonFileScanner.scanPythonFiles(baseDir) {
                 it.name.startsWith("requirements") && it.extension == "txt"
             }.forEach { reqFile ->
@@ -46,21 +45,18 @@ internal suspend fun executeVersionInfo(params: JsonObject, project: Project): T
                     }
                 }
 
-            // Check pyproject.toml
             baseDir.resolve("pyproject.toml").takeIf { it.exists() }?.let { pyproject ->
                 for (match in PYPROJECT_DEP_PATTERN.findAll(pyproject.readText())) {
                     versions.add(DepVersion(match.groupValues[1].lowercase(), match.groupValues[2]))
                 }
             }
 
-            // Check Pipfile
             baseDir.resolve("Pipfile").takeIf { it.exists() }?.let { pipfile ->
                 for (match in PIPFILE_PATTERN.findAll(pipfile.readText())) {
                     versions.add(DepVersion(match.groupValues[1].lowercase(), match.groupValues[2]))
                 }
             }
 
-            // Check setup.py / setup.cfg
             baseDir.resolve("setup.py").takeIf { it.exists() }?.let { setup ->
                 for (match in REQUIREMENTS_PATTERN.findAll(setup.readText())) {
                     versions.add(DepVersion(match.groupValues[1].lowercase(), match.groupValues[2]))
