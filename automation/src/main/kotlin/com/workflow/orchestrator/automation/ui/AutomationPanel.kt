@@ -202,7 +202,7 @@ class AutomationPanel(
         log.info("[Automation:UI] Suite selected: $planKey")
 
         scope.launch {
-            // Step 1: Fetch branches for this suite plan
+            // Fetch branches for this suite plan
             val branchesResult = bambooService.getPlanBranches(planKey)
             val branches = if (!branchesResult.isError) branchesResult.data else emptyList()
             log.info("[Automation:UI] Found ${branches.size} branches for $planKey")
@@ -211,27 +211,19 @@ class AutomationPanel(
                 suppressBranchListener = true
                 branchCombo.removeAllItems()
 
+                // Master plan is the default (first entry)
+                branchCombo.addItem(BranchComboItem(planKey, "default"))
+
+                // Add child branches below
                 for (branch in branches.filter { it.enabled }) {
                     val displayName = branch.shortName.ifBlank { branch.name }
                     branchCombo.addItem(BranchComboItem(branch.key, displayName))
                 }
 
-                if (branchCombo.itemCount == 0) {
-                    // No branches returned — fall back to the plan key itself
-                    branchCombo.addItem(BranchComboItem(planKey, planKey))
-                }
-
-                // Default to the branch whose key matches the suite plan key
-                val defaultIndex = (0 until branchCombo.itemCount).firstOrNull { i ->
-                    branchCombo.getItemAt(i).branchPlanKey == planKey
-                } ?: 0
-                branchCombo.selectedIndex = defaultIndex
+                branchCombo.selectedIndex = 0
                 suppressBranchListener = false
 
-                val selected = branchCombo.selectedItem as? BranchComboItem
-                if (selected != null) {
-                    onBranchSelected(selected)
-                }
+                onBranchSelected(branchCombo.getItemAt(0))
             }
         }
     }
@@ -244,36 +236,22 @@ class AutomationPanel(
         log.info("[Automation:UI] Branch selected: ${branch.branchName} (key=${branch.branchPlanKey})")
 
         scope.launch {
-            // Step 1: Load baseline with the resolved branch plan key
+            // Step 1: Load baseline with the selected branch plan key
             val baselineResult = tagBuilderService.loadBaselineWithDiagnostics(currentBranchPlanKey)
             var tags = baselineResult.tags
             log.info("[Automation:UI] Baseline result: ${baselineResult.diagnostics.buildsQueried} builds queried, " +
                 "${baselineResult.diagnostics.buildsWithDockerTags} with tags, selected=${baselineResult.selectedBuild?.buildNumber}")
 
-            // Step 2: Docker tag detection for current repo
-            val tagDetection = detectCurrentRepoTag()
-
-            // Step 3: Replace current repo's tag if detected
-            if (tagDetection.detected && tagDetection.tag != null) {
-                val dockerTagKey = resolveDockerTagKey()
-                tags = tagBuilderService.replaceCurrentRepoTag(tags, CurrentRepoContext(
-                    serviceName = dockerTagKey,
-                    branchName = "",
-                    featureBranchTag = tagDetection.tag,
-                    detectedFrom = DetectionSource.SETTINGS_MAPPING
-                ))
-            }
-
-            // Step 4: Enrich with latest release tags from Nexus (if configured)
+            // Step 2: Enrich with latest release tags from Nexus (if configured)
             if (tags.isNotEmpty() && driftDetectorService.isRegistryConfigured()) {
                 log.info("[Automation:UI] Fetching latest release tags from registry...")
                 tags = driftDetectorService.enrichWithLatestReleaseTags(tags)
             }
 
-            // Step 5: Load plan variables for the suite (master plan key)
+            // Step 3: Load plan variables for the suite (master plan key)
             val varsResult = bambooService.getPlanVariables(currentSuitePlanKey)
 
-            // Step 6: Update UI on EDT
+            // Step 4: Update UI on EDT
             invokeLater {
                 tagStagingPanel.updateTags(tags)
 
@@ -285,11 +263,10 @@ class AutomationPanel(
                     suiteConfigPanel.setVariableValues(varValues)
                 }
 
-                // Update status label
                 updateStatusLabel(baselineResult)
 
-                // Update diagnostic banner
-                updateDiagnosticBanner(baselineResult, tagDetection)
+                // Docker tag: show pending state — BuildLogReady events will update it
+                updateDiagnosticBanner(baselineResult, tagDetection = null)
             }
         }
     }
@@ -321,48 +298,6 @@ class AutomationPanel(
         return (fromRepo ?: fromGlobal).orEmpty()
     }
 
-    private suspend fun detectCurrentRepoTag(): TagDetectionResult {
-        val dockerTagKey = resolveDockerTagKey()
-        val ciPlanKey = resolveServiceCiPlanKey()
-
-        log.info("[Automation:UI] Resolved dockerTagKey='$dockerTagKey', ciPlanKey='$ciPlanKey'")
-
-        if (dockerTagKey.isBlank()) {
-            return TagDetectionResult.notConfigured("Docker Tag Key (check Repositories settings or add bamboo-specs)")
-        }
-        if (ciPlanKey.isBlank()) {
-            return TagDetectionResult.notConfigured("Service CI Plan Key (check Repositories settings)")
-        }
-
-        // Detect current branch
-        val branch = try {
-            val resolver = com.workflow.orchestrator.core.settings.RepoContextResolver.getInstance(project)
-            val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
-            val gitRepoManager = Class.forName("git4idea.repo.GitRepositoryManager")
-            val getInstance = gitRepoManager.getMethod("getInstance", Project::class.java)
-            val manager = getInstance.invoke(null, project)
-            val repos = gitRepoManager.getMethod("getRepositories").invoke(manager) as List<*>
-            val targetRepo = if (repoConfig?.localVcsRootPath != null) {
-                repos.find { repo ->
-                    val root = repo?.javaClass?.getMethod("getRoot")?.invoke(repo)
-                    val path = root?.javaClass?.getMethod("getPath")?.invoke(root) as? String
-                    path == repoConfig.localVcsRootPath
-                }
-            } else repos.firstOrNull()
-            val repo = targetRepo ?: repos.firstOrNull()
-            repo?.javaClass?.getMethod("getCurrentBranchName")?.invoke(repo) as? String ?: ""
-        } catch (e: Exception) {
-            log.warn("[Automation:UI] Branch detection failed: ${e.message}")
-            ""
-        }
-
-        if (branch.isBlank()) {
-            return TagDetectionResult.branchDetectionFailed()
-        }
-
-        return tagBuilderService.detectDockerTag(ciPlanKey, branch)
-    }
-
     private fun updateStatusLabel(result: BaselineLoadResult) {
         if (result.selectedBuild != null) {
             statusLabel.text = "\u25CF Idle"
@@ -374,7 +309,7 @@ class AutomationPanel(
         }
     }
 
-    private fun updateDiagnosticBanner(baseline: BaselineLoadResult, tagDetection: TagDetectionResult) {
+    private fun updateDiagnosticBanner(baseline: BaselineLoadResult, tagDetection: TagDetectionResult?) {
         // Baseline info
         val build = baseline.selectedBuild
         if (build != null) {
@@ -385,20 +320,24 @@ class AutomationPanel(
             val text = baseline.diagnostics.toStatusText()
             baselineInfoLabel.text = "\u2717 $text"
             baselineInfoLabel.foreground = StatusColors.ERROR
-            // Log skipped reasons for deeper debugging
             for (reason in baseline.diagnostics.skippedReasons) {
                 log.info("[Automation:UI] Skipped: $reason")
             }
         }
 
         // Docker tag detection info
-        if (tagDetection.detected) {
+        if (tagDetection == null) {
+            // Pending — waiting for BuildLogReady event from Build tab
+            dockerTagInfoLabel.text = "\u23F3 Waiting for CI build..."
+            dockerTagInfoLabel.foreground = StatusColors.INFO
+        } else if (tagDetection.detected) {
             dockerTagInfoLabel.text = "\u2713 Docker tag: ${tagDetection.tag} (from ${tagDetection.buildKey})"
             dockerTagInfoLabel.foreground = StatusColors.SUCCESS
             dockerTagInfoLabel.font = dockerTagInfoLabel.font.deriveFont(Font.PLAIN, JBUI.scale(11).toFloat())
         } else {
-            dockerTagInfoLabel.text = "\u26A0 ${tagDetection.reason}"
-            dockerTagInfoLabel.foreground = StatusColors.WARNING
+            val isBuildFailure = tagDetection.reason.startsWith("CI build failed")
+            dockerTagInfoLabel.text = "${if (isBuildFailure) "\u2717" else "\u26A0"} ${tagDetection.reason}"
+            dockerTagInfoLabel.foreground = if (isBuildFailure) StatusColors.ERROR else StatusColors.WARNING
         }
 
         diagnosticPanel.isVisible = true
