@@ -175,12 +175,20 @@ class SourcegraphChatClient(
                     } else content
                 }
                 "tool" -> {
-                    // Convert tool result to user message with plain text prefix.
-                    // Do NOT use XML tags like <tool_result> — they prime the LLM to
-                    // generate <tool_calls> as text instead of using the structured API.
-                    // Plain text labels (matching OpenHands/SWE-agent pattern) avoid this.
-                    val toolContent = "TOOL RESULT:\n${msg.content ?: ""}"
-                    converted.add(ChatMessage(role = "user", content = toolContent))
+                    if (!msg.toolCallId.isNullOrBlank()) {
+                        // Native tool call result — preserve role + toolCallId for API correlation.
+                        if (pendingSystemContent != null) {
+                            converted.add(ChatMessage(role = "user", content = "<system_instructions>\n$pendingSystemContent\n</system_instructions>"))
+                            pendingSystemContent = null
+                        }
+                        converted.add(msg)
+                    } else {
+                        // XML-based tool result (no toolCallId) — convert to user role with plain text prefix.
+                        // Do NOT use XML tags like <tool_result> — they prime the LLM to
+                        // generate <tool_calls> as text instead of using the structured API.
+                        val toolContent = "TOOL RESULT:\n${msg.content ?: ""}"
+                        converted.add(ChatMessage(role = "user", content = toolContent))
+                    }
                 }
                 "user" -> {
                     // Merge any pending system content into this user message
@@ -211,10 +219,11 @@ class SourcegraphChatClient(
         }
 
         // Phase 2: merge consecutive same-role messages (Anthropic requirement)
+        // Skip merging tool messages — each must keep its own toolCallId for API correlation.
         val merged = mutableListOf<ChatMessage>()
         for (msg in converted) {
             val last = merged.lastOrNull()
-            if (last != null && last.role == msg.role && last.toolCalls == null && msg.toolCalls == null) {
+            if (last != null && last.role == msg.role && last.role != "tool" && last.toolCalls == null && msg.toolCalls == null) {
                 // Merge into previous message
                 merged[merged.size - 1] = ChatMessage(
                     role = msg.role,
@@ -256,10 +265,11 @@ class SourcegraphChatClient(
         }
 
         // Phase 5: ensure no two consecutive same-role messages after removals
+        // Skip merging tool messages — each must keep its own toolCallId for API correlation.
         val result = mutableListOf<ChatMessage>()
         for (msg in merged) {
             val last = result.lastOrNull()
-            if (last != null && last.role == msg.role && last.toolCalls == null && msg.toolCalls == null) {
+            if (last != null && last.role == msg.role && last.role != "tool" && last.toolCalls == null && msg.toolCalls == null) {
                 result[result.size - 1] = ChatMessage(
                     role = msg.role,
                     content = "${last.content ?: ""}\n\n${msg.content ?: ""}"
@@ -351,6 +361,7 @@ class SourcegraphChatClient(
                     }
 
                 val contentBuilder = StringBuilder()
+                val thinkingBuilder = StringBuilder()
                 val toolCallBuilders = mutableMapOf<Int, ToolCallBuilder>()
                 var role = "assistant"
                 var finishReason = "stop"
@@ -383,6 +394,7 @@ class SourcegraphChatClient(
                                 choice.delta.let { delta ->
                                     delta.role?.let { role = it }
                                     delta.content?.let { contentBuilder.append(it) }
+                                    delta.reasoning?.let { thinkingBuilder.append(it) }
                                     delta.toolCalls?.forEach { tc ->
                                         val builder = toolCallBuilders.getOrPut(tc.index) { ToolCallBuilder() }
                                         tc.id?.let { builder.id = it }
@@ -497,7 +509,8 @@ class SourcegraphChatClient(
                 val finalMessage = ChatMessage(
                     role = role,
                     content = finalContent,
-                    toolCalls = finalToolCalls
+                    toolCalls = finalToolCalls,
+                    reasoning = thinkingBuilder.toString().takeIf { it.isNotBlank() }
                 )
 
                 activeCall.set(null)

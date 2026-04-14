@@ -10,6 +10,7 @@ import com.workflow.orchestrator.core.ai.dto.*
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
 import io.mockk.mockk
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -165,7 +166,8 @@ class AgentLoopTest {
         onStreamChunk: (String) -> Unit = {},
         onToolCall: (ToolCallProgress) -> Unit = {},
         planMode: Boolean = false,
-        onCheckpoint: (suspend () -> Unit)? = null
+        onCheckpoint: (suspend () -> Unit)? = null,
+        userInputChannel: Channel<String>? = null
     ): AgentLoop {
         val toolMap = tools.associateBy { it.name }
         val toolDefs = tools.map { it.toToolDefinition() }
@@ -179,7 +181,8 @@ class AgentLoopTest {
             onToolCall = onToolCall,
             maxIterations = maxIterations,
             planMode = planMode,
-            onCheckpoint = onCheckpoint
+            onCheckpoint = onCheckpoint,
+            userInputChannel = userInputChannel
         )
     }
 
@@ -241,6 +244,55 @@ class AgentLoopTest {
             assertTrue(result is LoopResult.Failed, "Expected Failed but got $result")
             val failed = result as LoopResult.Failed
             assertTrue(failed.error.contains("empty", ignoreCase = true))
+        }
+    }
+
+    @Nested
+    inner class EmptyResponseRetryTests {
+
+        @Test
+        fun `asks user after max empty retries instead of failing`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(emptyResponse()),
+                ApiResult.Success(emptyResponse()),
+                ApiResult.Success(emptyResponse()),
+                ApiResult.Success(toolCallResponse("attempt_completion" to """{"result":"OK."}"""))
+            ))
+            val userInput = Channel<String>(Channel.UNLIMITED)
+            userInput.send("Please try again")
+            val tools = listOf(completionTool("OK."))
+            val loop = buildLoop(brain, tools, userInputChannel = userInput)
+            val result = loop.run("Do something")
+            assertTrue(result is LoopResult.Completed, "Expected Completed after user retry but got $result")
+        }
+
+        @Test
+        fun `still fails after max empty retries for sub-agents`() = runTest {
+            val brain = sequenceBrain(emptyResponse(), emptyResponse(), emptyResponse())
+            val tools = listOf(completionTool())
+            val loop = buildLoop(brain, tools) // no userInputChannel
+            val result = loop.run("Do something")
+            assertTrue(result is LoopResult.Failed, "Expected Failed for sub-agent but got $result")
+            assertTrue((result as LoopResult.Failed).error.contains("empty", ignoreCase = true))
+        }
+
+        @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+        @Test
+        fun `empty responses use exponential delay before retry`() = runTest {
+            val brain = sequenceBrain(
+                emptyResponse(),
+                toolCallResponse("attempt_completion" to """{"result":"Recovered."}""")
+            )
+            val tools = listOf(completionTool("Recovered."))
+            val loop = buildLoop(brain, tools)
+            val startTime = testScheduler.currentTime
+            val result = loop.run("Do something")
+            assertTrue(result is LoopResult.Completed)
+            // First empty retry should delay EMPTY_RETRY_BASE_DELAY_MS (2000ms)
+            assertTrue(
+                testScheduler.currentTime - startTime >= 2000,
+                "Expected at least 2000ms delay for first empty retry"
+            )
         }
     }
 
@@ -309,6 +361,45 @@ class AgentLoopTest {
             assertTrue(result is LoopResult.Failed, "Expected Failed but got $result")
             val failed = result as LoopResult.Failed
             assertTrue(failed.error.contains("Authentication failed"))
+        }
+
+        @Test
+        fun `all-error tool calls increment mistake counter`() = runTest {
+            // 3 iterations of invalid JSON tool calls trigger escalation, then user rescues, then completion.
+            // Each iteration has ALL tool calls failing (invalid JSON), so consecutiveMistakes increments.
+            // At maxConsecutiveMistakes (3) the loop waits for user input via userInputChannel.
+            val responses = listOf(
+                toolCallResponse("read_file" to "not json"),
+                toolCallResponse("read_file" to "also bad{"),
+                toolCallResponse("read_file" to "still wrong"),
+                toolCallResponse("attempt_completion" to """{"result":"Done."}""")
+            )
+            val brain = SequenceBrain(responses.map { ApiResult.Success(it) })
+            val userInput = Channel<String>(Channel.UNLIMITED)
+            userInput.send("Try using valid JSON")
+
+            val tools = listOf(fakeTool("read_file"), completionTool("Done."))
+            val loop = buildLoop(brain, tools, userInputChannel = userInput)
+            val result = loop.run("Do something")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed after user rescued from errors but got $result")
+        }
+
+        @Test
+        fun `successful tool calls reset mistake counter`() = runTest {
+            // One error, then one success, then completion.
+            // A single error should not escalate — the success resets consecutiveMistakes to 0.
+            val brain = sequenceBrain(
+                toolCallResponse("read_file" to "bad json"),
+                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
+                toolCallResponse("attempt_completion" to """{"result":"Done."}""")
+            )
+
+            val tools = listOf(fakeTool("read_file"), completionTool("Done."))
+            val loop = buildLoop(brain, tools)
+            val result = loop.run("Do something")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed — single error shouldn't escalate but got $result")
         }
     }
 
@@ -493,6 +584,40 @@ class AgentLoopTest {
         }
 
         @Test
+        fun `asks user after all API retries exhausted instead of failing`() = runTest {
+            // 6 rate limit errors (exceeds MAX_API_RETRIES=5), then recovery after user input
+            val errors = (1..6).map {
+                ApiResult.Error(ErrorType.RATE_LIMITED, "Rate limit exceeded") as ApiResult<ChatCompletionResponse>
+            }
+            val recovery = ApiResult.Success(toolCallResponse("attempt_completion" to """{"result":"Done."}"""))
+            val brain = SequenceBrain(errors + recovery)
+
+            val userInput = Channel<String>(Channel.UNLIMITED)
+            userInput.send("Please retry")
+
+            val tools = listOf(completionTool("Done."))
+            val loop = buildLoop(brain, tools, userInputChannel = userInput)
+            val result = loop.run("Do something")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed after user retry but got $result")
+        }
+
+        @Test
+        fun `still fails after API retries for sub-agents`() = runTest {
+            val errors = (1..6).map {
+                ApiResult.Error(ErrorType.RATE_LIMITED, "Rate limit exceeded") as ApiResult<ChatCompletionResponse>
+            }
+            val brain = SequenceBrain(errors)
+
+            val tools = listOf(completionTool())
+            val loop = buildLoop(brain, tools) // no userInputChannel
+            val result = loop.run("Do something")
+
+            assertTrue(result is LoopResult.Failed, "Expected Failed for sub-agent but got $result")
+            assertTrue((result as LoopResult.Failed).error.contains("Rate limit"))
+        }
+
+        @Test
         fun `does not retry on non-retryable errors`() = runTest {
             val brain = SequenceBrain(listOf(
                 ApiResult.Error(ErrorType.AUTH_FAILED, "Authentication failed")
@@ -645,11 +770,12 @@ class AgentLoopTest {
     inner class LoopDetectionTests {
 
         @Test
-        fun `fails after 5 consecutive identical tool calls`() = runTest {
-            // 5 identical read_file calls with same args
+        fun `fails after 5 consecutive identical tool calls without userInputChannel`() = runTest {
+            // 5 identical read_file calls with same args, then a text-only response
+            // that triggers the Case B failure path (no userInputChannel = sub-agent)
             val responses = (1..5).map {
                 toolCallResponse("read_file" to """{"path":"a.kt"}""")
-            }
+            } + textResponse("I'm stuck in a loop.")
             val brain = SequenceBrain(responses.map { ApiResult.Success(it) })
 
             val tools = listOf(
@@ -662,8 +788,8 @@ class AgentLoopTest {
             assertTrue(result is LoopResult.Failed, "Expected Failed after loop detection but got $result")
             val failed = result as LoopResult.Failed
             assertTrue(
-                failed.error.contains("Loop detected", ignoreCase = true),
-                "Error should mention loop detection, got: ${failed.error}"
+                failed.error.contains("Loop", ignoreCase = true) || failed.error.contains("tools", ignoreCase = true),
+                "Error should mention loop or tool failure, got: ${failed.error}"
             )
         }
 
@@ -698,6 +824,76 @@ class AgentLoopTest {
         }
 
         @Test
+        fun `hard loop limit waits for user input instead of failing`() = runTest {
+            // 5 identical read_file calls hit the hard limit.
+            // After the fix, the 5th call EXECUTES (moved to after-execution),
+            // then consecutiveMistakes is set to max. On the next LLM call
+            // the model responds with text-only (seeing the LOOP_HARD_FAILURE message),
+            // which triggers Case B -> max mistakes -> waits for user input.
+            // After user input, the model recovers and completes.
+            val responses = listOf(
+                // Calls 1-5: identical read_file
+                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
+                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
+                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
+                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
+                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
+                // After hard limit + user feedback, LLM responds with text (triggers Case B)
+                textResponse("I see the problem now, let me try a different approach."),
+                // After user feedback is injected, model recovers
+                toolCallResponse("attempt_completion" to """{"result":"Fixed after user guidance."}""")
+            )
+            val brain = SequenceBrain(responses.map { ApiResult.Success(it) })
+
+            val userChannel = Channel<String>(Channel.UNLIMITED)
+            // Pre-load user feedback that will be received when the loop waits
+            userChannel.send("Try reading b.kt instead")
+
+            val tools = listOf(
+                fakeTool("read_file"),
+                completionTool("Fixed after user guidance.")
+            )
+            val loop = buildLoop(brain, tools, userInputChannel = userChannel)
+            val result = loop.run("Read the file")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed after user feedback, but got $result")
+            assertEquals("Fixed after user guidance.", (result as LoopResult.Completed).summary)
+        }
+
+        @Test
+        fun `hard loop limit fails immediately for sub-agents (no userInputChannel)`() = runTest {
+            // 5 identical read_file calls with no userInputChannel = sub-agent mode.
+            // The 5th call executes, then consecutiveMistakes is set to max.
+            // On the next LLM call, text-only response triggers Case B with max mistakes
+            // and no userInputChannel -> fails immediately.
+            val responses = listOf(
+                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
+                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
+                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
+                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
+                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
+                // After hard limit, LLM responds with text (triggers Case B)
+                textResponse("I'm stuck.")
+            )
+            val brain = SequenceBrain(responses.map { ApiResult.Success(it) })
+
+            val tools = listOf(
+                fakeTool("read_file"),
+                completionTool()
+            )
+            // No userInputChannel = sub-agent mode
+            val loop = buildLoop(brain, tools)
+            val result = loop.run("Read the file")
+
+            assertTrue(result is LoopResult.Failed, "Expected Failed for sub-agent after loop detection but got $result")
+            val failed = result as LoopResult.Failed
+            assertTrue(
+                failed.error.contains("Loop", ignoreCase = true) || failed.error.contains("tools", ignoreCase = true),
+                "Error should mention loop or tool failure, got: ${failed.error}"
+            )
+        }
+
+        @Test
         fun `different tool calls do not trigger loop detection`() = runTest {
             // All different files
             val responses = listOf(
@@ -718,6 +914,27 @@ class AgentLoopTest {
             val result = loop.run("Read all files")
 
             assertTrue(result is LoopResult.Completed, "Expected Completed with different args, but got $result")
+        }
+
+        @Test
+        fun `hard loop fails after model ignores warning for one more iteration`() = runTest {
+            // 6 identical calls — 5th triggers warning + consecutiveMistakes=max,
+            // but Case A resets consecutiveMistakes=0 on the 6th tool-call iteration.
+            // The secondary cutoff (currentCount > HARD_THRESHOLD) catches this and
+            // returns makeFailed immediately.
+            val responses = (1..6).map {
+                toolCallResponse("read_file" to """{"path":"same.kt"}""")
+            }
+            val brain = SequenceBrain(responses.map { ApiResult.Success(it) })
+
+            val tools = listOf(fakeTool("read_file"), completionTool())
+            val loop = buildLoop(brain, tools) // no userInputChannel
+            val result = loop.run("Do something")
+
+            assertTrue(result is LoopResult.Failed, "Expected Failed after 6 identical calls but got $result")
+            val failed = result as LoopResult.Failed
+            assertTrue(failed.error.contains("Loop detected", ignoreCase = true),
+                "Error should mention loop detection, got: ${failed.error}")
         }
     }
 

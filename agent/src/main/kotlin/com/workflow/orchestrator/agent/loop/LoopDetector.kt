@@ -23,8 +23,9 @@ class LoopDetector(
     /**
      * Record a tool call and check for loops.
      *
-     * Must be called BEFORE processing the tool result, matching Cline's
-     * "call before updating lastToolName/lastToolParams" pattern.
+     * Called after tool execution and result processing. The tool always
+     * runs first, then the returned [LoopStatus] determines follow-up action
+     * (soft warning → inject nudge, hard limit → escalate to user feedback).
      *
      * @param toolName the name of the tool being called
      * @param arguments the raw JSON arguments string from the tool call

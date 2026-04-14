@@ -55,4 +55,32 @@ class AttemptCompletionToolTest {
         }, project)
         assertEquals("./gradlew test", result.verifyCommand)
     }
+
+    @Test
+    fun `accepts response param as alias for result`() = runTest {
+        val result = tool.execute(buildJsonObject {
+            put("response", "Task completed successfully.")
+        }, project)
+        assertFalse(result.isError)
+        assertTrue(result.isCompletion)
+        assertEquals("Task completed successfully.", result.content)
+    }
+
+    @Test
+    fun `result param takes priority over response`() = runTest {
+        val result = tool.execute(buildJsonObject {
+            put("result", "From result.")
+            put("response", "From response.")
+        }, project)
+        assertEquals("From result.", result.content)
+    }
+
+    @Test
+    fun `fails when neither result nor response provided`() = runTest {
+        val result = tool.execute(buildJsonObject {
+            put("command", "echo hello")
+        }, project)
+        assertTrue(result.isError)
+        assertTrue(result.content.contains("Missing required parameter"))
+    }
 }

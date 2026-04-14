@@ -6,6 +6,9 @@ import kotlinx.serialization.json.jsonPrimitive
 
 object ResumeHelper {
 
+    /** Threshold for "recent" resume — matches Cline's 30-second check. */
+    const val RECENT_RESUME_THRESHOLD_MS = 30_000L
+
     private val json = Json { ignoreUnknownKeys = true }
 
     data class PopResult(
@@ -79,18 +82,26 @@ object ResumeHelper {
         agoText: String,
         cwd: String,
         userText: String? = null,
+        wasRecent: Boolean = false,
     ): String {
         val modeStr = if (mode == "plan") "Plan Mode" else "Act Mode"
         return buildString {
             appendLine("[TASK RESUMPTION] This task was interrupted $agoText. The conversation history has been preserved.")
             appendLine("Mode: $modeStr")
             appendLine("Working directory: $cwd")
+            if (!wasRecent) {
+                appendLine("Be aware that the project state may have changed since then.")
+            }
             if (!userText.isNullOrBlank()) {
                 appendLine()
                 appendLine("User message on resume: $userText")
             }
             appendLine()
-            appendLine("Continue where you left off. Do not repeat completed work. If you were mid-task, pick up from the last tool result in the conversation history.")
+            if (wasRecent) {
+                appendLine("Continue where you left off.")
+            } else {
+                appendLine("Continue where you left off. Do not repeat completed work. If you were mid-task, pick up from the last tool result in the conversation history.")
+            }
         }
     }
 

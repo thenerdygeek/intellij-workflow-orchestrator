@@ -26,7 +26,8 @@ data class ChatMessage(
     val role: String, // "system", "user", "assistant", "tool"
     val content: String? = null,
     @SerialName("tool_calls") val toolCalls: List<ToolCall>? = null,
-    @SerialName("tool_call_id") val toolCallId: String? = null
+    @SerialName("tool_call_id") val toolCallId: String? = null,
+    val reasoning: String? = null
 )
 
 @Serializable

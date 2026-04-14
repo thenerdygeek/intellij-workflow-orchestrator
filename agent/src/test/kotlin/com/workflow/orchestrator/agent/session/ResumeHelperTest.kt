@@ -75,6 +75,27 @@ class ResumeHelperTest {
     }
 
     @Test
+    fun `recent resume skips state-change warning`() {
+        val preamble = ResumeHelper.buildTaskResumptionPreamble(
+            mode = "act", agoText = "5s ago", cwd = "/project", wasRecent = true
+        )
+        assertFalse(preamble.contains("project state may have changed"))
+        assertTrue(preamble.contains("[TASK RESUMPTION]"))
+        assertTrue(preamble.contains("Continue where you left off."))
+        // Should NOT have the longer instruction
+        assertFalse(preamble.contains("Do not repeat completed work"))
+    }
+
+    @Test
+    fun `old resume includes full state-change warning`() {
+        val preamble = ResumeHelper.buildTaskResumptionPreamble(
+            mode = "act", agoText = "2 hours ago", cwd = "/project", wasRecent = false
+        )
+        assertTrue(preamble.contains("project state may have changed"))
+        assertTrue(preamble.contains("Do not repeat completed work"))
+    }
+
+    @Test
     fun `determines resume ask type from last message`() {
         val withCompletion = listOf(
             UiMessage(ts = 1000L, type = UiMessageType.ASK, ask = UiAsk.COMPLETION_RESULT, text = "Done!")

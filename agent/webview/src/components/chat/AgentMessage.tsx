@@ -163,7 +163,7 @@ export const AgentMessage = memo(function AgentMessage({
         )}
 
         {isUser ? (
-          <UserContent content={content} mentions={message.mentions} />
+          <UserContent content={content} />
         ) : (
           <MarkdownRenderer content={content} isStreaming={isStreaming} />
         )}

@@ -352,8 +352,6 @@ export interface UiMessage {
   questionData?: UiMessageQuestionData;
   subagentData?: UiMessageSubagentData;
   toolCallData?: UiMessageToolCallData;
-  /** Mentions attached to a USER_MESSAGE (ticket chips, file refs, etc.) */
-  mentions?: Mention[];
 }
 
 /** Mirrors Kotlin HistoryItem from sessions.json */

@@ -30,7 +30,7 @@ Plugin ID: `com.workflow.orchestrator.plugin` | Kotlin 2.1.10 | Gradle + Intelli
 | `:pullrequest` | PR list/detail dashboard, merge actions, Bitbucket PR management |
 | `:automation` | Docker tag staging, queue management, drift/conflict detection |
 | `:handover` | Jira closure, copyright fixes, AI pre-review, QA clipboard, time logging |
-| `:agent` | AI coding agent faithfully ported from Cline (VS Code) — ReAct loop (AgentLoop), 3-tier ToolRegistry (~30 core + ~50 deferred via `tool_search`, conditional integration loading), Cline-ported 11-section system prompt (SystemPrompt), 3-stage ContextManager (file read dedup + conversation truncation + LLM summarization), loop detection (3 soft/5 hard), 8 lifecycle hooks (HookManager), explicit completion via `attempt_completion`, plan mode with `plan_mode_respond` (user-controlled act switch), skill system (`use_skill` + InstructionLoader), session handoff (`new_task`), two-file JSON session persistence with streaming crash safety (MessageStateHandler), task progress (markdown checklist), cost tracking, diff view, sub-agent delegation (`agent` tool, 3 scopes: research/implement/review, parallel research up to 5 concurrent, configurable context budget), 8 bundled specialist agent personas + user-defined YAML agents via AgentConfigLoader, tool approval gate with diff preview, JCEF chat UI |
+| `:agent` | AI coding agent faithfully ported from Cline (VS Code) — ReAct loop (AgentLoop), 3-tier ToolRegistry (~22 core + ~48 deferred via `tool_search`, conditional integration loading), Cline-ported 11-section system prompt (SystemPrompt), 3-stage ContextManager (file read dedup + conversation truncation + LLM summarization), loop detection (3 soft/5 hard), 8 lifecycle hooks (HookManager), explicit completion via `attempt_completion`, plan mode with `plan_mode_respond` (user-controlled act switch), skill system (`use_skill` + InstructionLoader), session handoff (`new_task`), two-file JSON session persistence with streaming crash safety (MessageStateHandler), task progress (markdown checklist), cost tracking, diff view, sub-agent delegation (`agent` tool, 3 scopes: research/implement/review, parallel research up to 5 concurrent, configurable context budget), 8 bundled specialist agent personas + user-defined YAML agents via AgentConfigLoader, tool approval gate with diff preview, JCEF chat UI |
 
 **Dependency rule:** Feature modules depend ONLY on `:core`. Cross-module communication uses `EventBus` (`SharedFlow<WorkflowEvent>` in `:core`).
 
@@ -134,10 +134,10 @@ Explore -> plan -> revise -> act flow ported from Cline. Two enforcement layers:
 
 1. **Schema filtering** (AgentService): write tools (`edit_file`, `create_file`, `run_command`, `revert_file`,
    `kill_process`, `send_stdin`, `format_code`, `optimize_imports`, `refactor_rename`)
-   and `enable_plan_mode` removed from tool definitions in plan mode; `plan_mode_respond` removed in act mode
+   removed from tool definitions in plan mode; `plan_mode_respond` removed in act mode
 2. **Execution guard** (AgentLoop): `WRITE_TOOLS` set blocked even if LLM hallucinates them past schema filtering
 
-- **Activation:** UI Plan button toggle OR LLM calls `enable_plan_mode` tool
+- **Activation:** UI Plan button toggle
 - **Deactivation:** User approves plan (switches to act), user unclicks Plan button, new chat, or cancel
 - **State:** `AgentService.planModeActive` (AtomicBoolean) — single source of truth
 - **Plan flow:** LLM uses read/search tools to explore, calls `plan_mode_respond` with plan.

@@ -21,7 +21,8 @@ data class StreamChoice(
 data class StreamDelta(
     val role: String? = null,
     val content: String? = null,
-    @SerialName("tool_calls") val toolCalls: List<StreamToolCallDelta>? = null
+    @SerialName("tool_calls") val toolCalls: List<StreamToolCallDelta>? = null,
+    val reasoning: String? = null
 )
 
 @Serializable

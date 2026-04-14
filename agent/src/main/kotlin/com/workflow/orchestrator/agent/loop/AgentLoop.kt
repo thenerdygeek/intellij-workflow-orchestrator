@@ -276,6 +276,14 @@ class AgentLoop(
     /** Loop detector: tracks repeated identical tool calls (from Cline). */
     private val loopDetector = LoopDetector()
 
+    /**
+     * Tracks text-only (no tool) responses — Cline: consecutiveMistakeCount.
+     * Class-level so that executeToolCalls can set it on hard loop limit
+     * (triggering user feedback on the next text-only iteration).
+     */
+    private var consecutiveMistakes = 0
+    private val maxConsecutiveMistakes = 3  // Cline: configurable via settings. At max, asks user for feedback.
+
     /** Tools the user has allowed for the rest of this session (via ALLOWED_FOR_SESSION). */
     private val approvedForSession = mutableSetOf<String>()
 
@@ -305,6 +313,8 @@ class AgentLoop(
         private const val INITIAL_RETRY_DELAY_MS = 1000L
         /** Cap on retry-after header delay to prevent unreasonable waits (Cline: maxDelay 10s). */
         private const val MAX_RETRY_DELAY_MS = 30_000L
+        /** Base delay for empty response retries (Cline: 2000ms). Exponential: 2s, 4s, 8s. */
+        private const val EMPTY_RETRY_BASE_DELAY_MS = 2000L
         /** Timeout errors — worth fewer retries than rate limits / server errors. */
         private val TIMEOUT_ERRORS = setOf(ErrorType.NETWORK_ERROR, ErrorType.TIMEOUT)
         /**
@@ -409,8 +419,7 @@ class AgentLoop(
         /** Tracks the last accumulated assistant text across iterations for abort persistence. */
         var lastAccumulatedText = ""
         var consecutiveEmpties = 0
-        var consecutiveMistakes = 0  // Cline: consecutiveMistakeCount — tracks text-only (no tool) responses
-        val maxConsecutiveMistakes = 3  // Cline: configurable via settings. At max, asks user for feedback.
+        consecutiveMistakes = 0  // Reset class-level counter at start of each run
         var apiRetryCount = 0
         var contextOverflowRetries = 0
         var pendingEscalation = false
@@ -435,6 +444,10 @@ class AgentLoop(
          * didn't pick. The L2 guard checks `l2TierIdx >= 0` before any index arithmetic.
          */
         var l2TierIdx = cachedFallbackChain?.indexOf(brain.modelId) ?: -1
+        // Tracks the index of the most recent api_req_started UI message so abortStream
+        // can finalize it with cost/cancelReason even when the loop exits via the post-loop
+        // cancellation check (which is outside the while body where the val is declared).
+        var lastApiReqStartedIdx = -1
 
         while (!cancelled.get() && iteration < maxIterations) {
             iteration++
@@ -492,6 +505,7 @@ class AgentLoop(
                 text = "{}"  // Updated with cost info after response
             ))
             val apiReqStartedIdx = messageStateHandler?.getClineMessages()?.lastIndex ?: -1
+            lastApiReqStartedIdx = apiReqStartedIdx
             var isFirstStreamChunk = true
 
             val apiResult = brain.chatStream(
@@ -717,8 +731,22 @@ class AgentLoop(
                     iteration-- // Don't count as iteration
                     continue
                 }
+                // All retries + recovery layers exhausted — ask user before failing (Cline index.ts:2100-2178)
+                if (userInputChannel != null) {
+                    LOG.warn("[Loop] API retries exhausted — waiting for user to retry or give up")
+                    contextManager.addUserMessage(withEnvDetails(userInputChannel.receive()))
+                    // Reset all retry/error state for fresh attempt
+                    apiRetryCount = 0
+                    compactionRetries = 0
+                    sameTierRecycles = 0
+                    consecutiveEmpties = 0
+                    consecutiveMistakes = 0
+                    loopDetector.reset()
+                    iteration-- // Don't count this as an iteration
+                    continue
+                }
                 LOG.warn("[Loop] Task failed after $iteration iterations: ${apiResult.message.take(200)}")
-                abortStream(lastAccumulatedText, "streaming_failed")
+                abortStream(lastAccumulatedText, "streaming_failed", apiReqStartedIdx)
                 return makeFailed(apiResult.message, iteration)
             }
 
@@ -816,7 +844,8 @@ class AgentLoop(
                 // Case A: Tool calls present — execute them
                 hasToolCalls -> {
                     consecutiveEmpties = 0
-                    consecutiveMistakes = 0  // Tool use resets mistake count
+                    // consecutiveMistakes is managed inside executeToolCalls:
+                    // incremented when ALL calls fail, reset to 0 when at least one succeeds.
                     val completionResult = executeToolCalls(assistantMessage.toolCalls!!, iteration)
                     if (completionResult != null) return completionResult
                 }
@@ -831,12 +860,18 @@ class AgentLoop(
                     if (planMode && userInputChannel != null) {
                         // In plan mode, text-only responses are conversational turns.
                         contextManager.addUserMessage(withEnvDetails(userInputChannel.receive()))
+                        // GAP 5: Reset ALL error state on user feedback (Cline resets everything)
                         consecutiveMistakes = 0
+                        consecutiveEmpties = 0
+                        loopDetector.reset()
                     } else if (consecutiveMistakes >= maxConsecutiveMistakes && userInputChannel != null) {
                         // Cline pattern: at max mistakes, ask user for feedback instead of failing
                         LOG.warn("[Loop] Max consecutive mistakes ($maxConsecutiveMistakes) — waiting for user feedback")
                         contextManager.addUserMessage(withEnvDetails(userInputChannel.receive()))
+                        // GAP 5: Reset ALL error state on user feedback (Cline resets everything)
                         consecutiveMistakes = 0
+                        consecutiveEmpties = 0
+                        loopDetector.reset()
                     } else if (consecutiveMistakes >= maxConsecutiveMistakes) {
                         // No user input channel (sub-agent) — fail
                         return makeFailed("Agent failed to use tools after $maxConsecutiveMistakes attempts.", iteration)
@@ -852,19 +887,35 @@ class AgentLoop(
                     consecutiveEmpties++
                     LOG.warn("[Loop] Empty response from LLM — provider error (attempt $consecutiveEmpties/$MAX_CONSECUTIVE_EMPTIES)")
                     if (consecutiveEmpties >= MAX_CONSECUTIVE_EMPTIES) {
-                        return makeFailed(
-                            "Provider returned $MAX_CONSECUTIVE_EMPTIES consecutive empty responses. Check model/provider configuration.",
-                            iteration
-                        )
+                        if (userInputChannel != null) {
+                            // Cline pattern: ask user to retry after max empties (index.ts:3267-3310)
+                            LOG.warn("[Loop] Max empty retries ($MAX_CONSECUTIVE_EMPTIES) — waiting for user to retry")
+                            contextManager.addUserMessage(withEnvDetails(userInputChannel.receive()))
+                            // Reset all error state on user feedback
+                            consecutiveMistakes = 0
+                            consecutiveEmpties = 0
+                            loopDetector.reset()
+                        } else {
+                            return makeFailed(
+                                "Provider returned $MAX_CONSECUTIVE_EMPTIES consecutive empty responses. Check model/provider configuration.",
+                                iteration
+                            )
+                        }
+                    } else {
+                        // Exponential delay: 2s, 4s, 8s (Cline: delay = 2000 * 2^(attempt-1))
+                        val delayMs = EMPTY_RETRY_BASE_DELAY_MS * (1L shl (consecutiveEmpties - 1))
+                        LOG.info("[Loop] Waiting ${delayMs}ms before retrying (empty response backoff)")
+                        onRetry?.invoke(consecutiveEmpties, MAX_CONSECUTIVE_EMPTIES, "Empty response from provider", delayMs)
+                        delay(delayMs)
+                        contextManager.addUserMessage(EMPTY_RESPONSE_ERROR)
                     }
-                    contextManager.addUserMessage(EMPTY_RESPONSE_ERROR)
                 }
             }
         }
 
         if (cancelled.get()) {
             LOG.info("[Loop] Task cancelled at iteration $iteration")
-            abortStream(lastAccumulatedText, "user_cancelled")
+            abortStream(lastAccumulatedText, "user_cancelled", lastApiReqStartedIdx)
             return makeCancelled(iteration)
         }
 
@@ -907,11 +958,13 @@ class AgentLoop(
      * Returns a LoopResult if a completion tool was called, null otherwise.
      *
      * Integrates loop detection (from Cline):
-     * - Before each tool execution, check for repeated identical calls
+     * - After each tool execution, check for repeated identical calls
      * - At soft threshold (3): inject warning into context
-     * - At hard threshold (5): return Failed result
+     * - At hard threshold (5): set consecutiveMistakes to max so the next text-only
+     *   response triggers user feedback (or fails for sub-agents without userInputChannel)
      */
     private suspend fun executeToolCalls(toolCalls: List<ToolCall>, iteration: Int): LoopResult? {
+        var errorCount = 0
         for (call in toolCalls) {
             if (cancelled.get()) {
                 return makeCancelled(iteration)
@@ -921,33 +974,12 @@ class AgentLoop(
             val toolCallId = call.id
             val startTime = System.currentTimeMillis()
 
-            // Loop detection (from Cline) — check BEFORE executing
-            when (loopDetector.recordToolCall(toolName, call.function.arguments)) {
-                LoopStatus.HARD_LIMIT -> {
-                    LOG.warn("[Loop] Hard loop limit reached: '$toolName' called ${loopDetector.currentCount} times consecutively")
-                    fileLogger?.logLoopDetection(sessionId ?: "", toolName, loopDetector.currentCount, isHard = true)
-                    onDebugLog?.invoke("error", "loop", "Loop HARD limit: $toolName — aborting", null)
-                    reportToolError(call, startTime, LOOP_HARD_FAILURE)
-                    return makeFailed(
-                        "Loop detected: '$toolName' called ${loopDetector.currentCount} times with identical arguments.",
-                        iteration
-                    )
-                }
-                LoopStatus.SOFT_WARNING -> {
-                    LOG.warn("[Loop] Soft loop warning: '$toolName' called ${loopDetector.currentCount} times consecutively")
-                    fileLogger?.logLoopDetection(sessionId ?: "", toolName, loopDetector.currentCount, isHard = false)
-                    onDebugLog?.invoke("warn", "loop", "Loop warning: $toolName called ${loopDetector.currentCount}x", null)
-                    // Inject warning but continue execution (give the model a chance to self-correct)
-                    contextManager.addUserMessage(LOOP_SOFT_WARNING)
-                }
-                LoopStatus.OK -> { /* no action */ }
-            }
-
             val tool = toolResolver?.invoke(toolName) ?: tools[toolName]
             if (tool == null) {
                 // Unknown tool
                 val allToolNames = if (toolResolver != null) "use tool_search to find tools" else tools.keys.joinToString(", ")
                 reportToolError(call, startTime, "Unknown tool: '$toolName'. Available tools: $allToolNames")
+                errorCount++
                 continue
             }
 
@@ -957,6 +989,7 @@ class AgentLoop(
                     call, startTime,
                     "Error: '$toolName' is blocked in plan mode. You can only read, search, and analyze code."
                 )
+                errorCount++
                 continue
             }
 
@@ -969,6 +1002,7 @@ class AgentLoop(
                 when (result) {
                     ApprovalResult.DENIED -> {
                         reportToolError(call, startTime, "Tool execution denied by user.")
+                        errorCount++
                         continue
                     }
                     ApprovalResult.ALLOWED_FOR_SESSION -> approvedForSession.add(toolName)
@@ -981,6 +1015,7 @@ class AgentLoop(
                 json.decodeFromString<JsonObject>(call.function.arguments)
             } catch (e: Exception) {
                 reportToolError(call, startTime, "Invalid JSON arguments for '$toolName': ${e.message}")
+                errorCount++
                 continue
             }
 
@@ -1008,6 +1043,7 @@ class AgentLoop(
                 )
                 if (preHookResult is HookResult.Cancel) {
                     reportToolError(call, startTime, "Tool '$toolName' blocked by PreToolUse hook: ${preHookResult.reason}")
+                    errorCount++
                     continue
                 }
             }
@@ -1040,6 +1076,7 @@ class AgentLoop(
                 onDebugLog?.invoke("error", "tool_call", "$toolName EXCEPTION (${exceptionDurationMs}ms)",
                     mapOf("tool" to toolName, "error" to errorMsg.take(200)))
                 reportToolError(call, startTime, errorMsg)
+                errorCount++
                 continue
             }
 
@@ -1075,6 +1112,41 @@ class AgentLoop(
                 isError = toolResult.isError,
                 toolName = toolName
             )
+
+            // Loop detection — AFTER tool execution and result in context (Cline pattern).
+            // The 5th identical call EXECUTES, then we record + evaluate. On hard limit, we set
+            // consecutiveMistakes to max so the next text-only response triggers user feedback
+            // (or fails for sub-agents without userInputChannel).
+            val loopStatus = loopDetector.recordToolCall(toolName, call.function.arguments)
+            when (loopStatus) {
+                LoopStatus.HARD_LIMIT -> {
+                    LOG.warn("[Loop] Hard loop limit reached: '$toolName' called ${loopDetector.currentCount} times consecutively")
+                    fileLogger?.logLoopDetection(sessionId ?: "", toolName, loopDetector.currentCount, isHard = true)
+                    if (loopDetector.currentCount > LoopDetector.HARD_THRESHOLD_DEFAULT) {
+                        // Second+ hard limit hit — model ignored the warning, terminate immediately.
+                        // Without this, the tool-success path resets consecutiveMistakes=0 after each
+                        // identical call, so the escalation to user feedback (Case B) never triggers.
+                        onDebugLog?.invoke("error", "loop", "Loop HARD limit exceeded (${loopDetector.currentCount}x) — aborting", null)
+                        reportToolError(call, startTime, LOOP_HARD_FAILURE)
+                        return makeFailed(
+                            "Loop detected: '$toolName' called ${loopDetector.currentCount} times with identical arguments. Model ignored loop warning.",
+                            iteration
+                        )
+                    }
+                    // First hard limit hit (exactly threshold) — escalate to user feedback via consecutiveMistakes
+                    onDebugLog?.invoke("error", "loop", "Loop HARD limit: $toolName — escalating to user", null)
+                    contextManager.addUserMessage(LOOP_HARD_FAILURE)
+                    consecutiveMistakes = maxConsecutiveMistakes
+                }
+                LoopStatus.SOFT_WARNING -> {
+                    LOG.warn("[Loop] Soft loop warning: '$toolName' called ${loopDetector.currentCount} times consecutively")
+                    fileLogger?.logLoopDetection(sessionId ?: "", toolName, loopDetector.currentCount, isHard = false)
+                    onDebugLog?.invoke("warn", "loop", "Loop warning: $toolName called ${loopDetector.currentCount}x", null)
+                    // Inject warning but continue execution (give the model a chance to self-correct)
+                    contextManager.addUserMessage(LOOP_SOFT_WARNING)
+                }
+                LoopStatus.OK -> { /* no action */ }
+            }
 
             // Persist tool result to both files (Cline pattern — awaited inline).
             messageStateHandler?.addToApiConversationHistory(ApiMessage(
@@ -1148,21 +1220,32 @@ class AgentLoop(
             // POST_TOOL_USE hook (ported from Cline's PostToolUse hook)
             // Observation-only: runs after tool execution, cannot change the result.
             // Cline: fires PostToolUse with tool name, parameters, result, success, durationMs.
+            // contextModification is injected into the conversation as <hook_context> XML.
+            // Cline reference: ToolExecutor.ts:500-503
             if (hookManager != null && hookManager.hasHooks(HookType.POST_TOOL_USE)) {
                 try {
-                    hookManager.dispatch(
+                    val postResult = hookManager.dispatch(
                         HookEvent(
                             type = HookType.POST_TOOL_USE,
                             data = mapOf(
                                 "toolName" to toolName,
                                 "arguments" to call.function.arguments,
-                                "result" to toolResult.summary,
-                                "durationMs" to durationMs,
+                                "result" to truncatedContent,
                                 "isError" to toolResult.isError,
+                                "durationMs" to durationMs,
+                                "iteration" to iteration,
                                 "sessionId" to sessionId
                             )
                         )
                     )
+                    // Cline pattern: inject contextModification from hook (ToolExecutor.ts:500-503)
+                    val contextMod = when (postResult) {
+                        is HookResult.Proceed -> postResult.contextModification
+                        is HookResult.Cancel -> postResult.contextModification
+                    }
+                    if (!contextMod.isNullOrBlank()) {
+                        contextManager.addUserMessage("<hook_context source=\"PostToolUse\" tool=\"$toolName\">\n$contextMod\n</hook_context>")
+                    }
                 } catch (e: Exception) {
                     // POST_TOOL_USE is observation-only; failures are non-fatal
                     LOG.warn("[Loop] POST_TOOL_USE hook failed (non-fatal): ${e.message}")
@@ -1280,6 +1363,27 @@ class AgentLoop(
                 contextManager.setActiveSkill(toolResult.activatedSkillContent)
             }
         }
+
+        // Cline pattern: increment consecutiveMistakes when all tool calls failed,
+        // reset to 0 when at least one succeeded. This ensures repeated tool failures
+        // escalate to user feedback (or sub-agent failure) via the Case B mistake counter.
+        // Update mistake counter based on tool error rate.
+        // Guard: don't overwrite if loop detection already escalated consecutiveMistakes
+        // to maxConsecutiveMistakes (HARD_LIMIT path). Without this guard, a successful
+        // 5th identical call would reset the counter, defeating the loop escalation.
+        val loopEscalated = consecutiveMistakes >= maxConsecutiveMistakes
+        if (!loopEscalated) {
+            if (errorCount > 0 && errorCount == toolCalls.size) {
+                // ALL tool calls failed — count as a mistake
+                consecutiveMistakes++
+                LOG.info("[Loop] All ${toolCalls.size} tool call(s) failed — mistake $consecutiveMistakes/$maxConsecutiveMistakes")
+            } else if (errorCount == 0) {
+                // At least one tool succeeded — reset mistake count
+                consecutiveMistakes = 0
+            }
+            // Mixed (some success, some failure): leave consecutiveMistakes unchanged
+        }
+
         return null
     }
 
@@ -1322,8 +1426,17 @@ class AgentLoop(
      * - User cancellation: cancelReason = "user_cancelled"
      * - API error after retries exhausted: cancelReason = "streaming_failed"
      */
-    private suspend fun abortStream(assistantText: String, cancelReason: String) {
+    private suspend fun abortStream(assistantText: String, cancelReason: String, apiReqStartedIdx: Int = -1) {
         messageStateHandler?.let { handler ->
+            // 0. Finalize api_req_started with cost/cancelReason (Cline: finalizeApiReqMsg)
+            if (apiReqStartedIdx >= 0) {
+                val msgs = handler.getClineMessages()
+                if (apiReqStartedIdx <= msgs.lastIndex) {
+                    val costJson = """{"tokensIn":$totalInputTokens,"tokensOut":$totalOutputTokens,"cancelReason":"$cancelReason"}"""
+                    handler.updateClineMessage(apiReqStartedIdx, msgs[apiReqStartedIdx].copy(text = costJson))
+                }
+            }
+
             // 1. Flip last partial message to non-partial
             val msgs = handler.getClineMessages()
             val lastIdx = msgs.lastIndex
@@ -1363,6 +1476,9 @@ class AgentLoop(
      */
     private fun buildApiContentBlocks(msg: ChatMessage): List<ContentBlock> {
         val blocks = mutableListOf<ContentBlock>()
+        if (!msg.reasoning.isNullOrBlank()) {
+            blocks.add(ContentBlock.Thinking(thinking = msg.reasoning!!))
+        }
         val textContent = msg.content
         if (!textContent.isNullOrBlank()) {
             blocks.add(ContentBlock.Text(textContent))
