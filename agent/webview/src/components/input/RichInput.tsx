@@ -41,8 +41,8 @@ function ensureGlowStyle() {
   glowStyleInjected = true;
 }
 
-/** Matches #PROJ-123 style ticket references in pasted text (alphanumeric project keys like TICKET8IN-12345) */
-const PASTED_TICKET_PATTERN = /#([A-Za-z][A-Za-z0-9]+-\d+)/g;
+/** Matches #PROJ-123 style ticket references in pasted text */
+const PASTED_TICKET_PATTERN = /#([A-Za-z]+-\d+)/g;
 
 export interface RichInputHandle {
   focus: () => void;

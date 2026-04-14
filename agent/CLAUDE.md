@@ -1,6 +1,6 @@
 # :agent Module
 
-AI coding agent with ReAct loop, LLM-controlled delegation, interactive planning, and ~80 tools.
+AI coding agent with ReAct loop, LLM-controlled delegation, interactive planning, and 110 tools.
 
 ## LLM API
 
@@ -9,246 +9,277 @@ Uses Sourcegraph Enterprise's OpenAI-compatible API:
 - Auth: `token` scheme via `Authorization: token <sourcegraph-access-token>`
 - Constraints: 190K input tokens (configurable), no `system` role (converted to user with `<system_instructions>` tags), no `tool_choice`, strict user/assistant alternation
 - Output limit varies per model — no hardcoded clamp. User configures maxOutputTokens in settings.
-- Model: Auto-resolved from `GET /.api/llm/models` on first use via `ModelCache` (in `:core`). Priority: Anthropic Opus thinking > Opus > Sonnet. No hardcoded defaults.
-- Message sanitization in `SourcegraphChatClient.sanitizeMessages()` (in `:core`): system→user, tool→user with plain text prefix "RESULT of {toolName}:" (not XML — prevents LLM echo hallucination), consecutive same-role merging, zero-width space for empty assistant tool-call messages
+- Model: Auto-resolved from `GET /.api/llm/models` on first use via `ModelCache`. Priority: Anthropic Opus thinking > Opus > Sonnet. No hardcoded defaults.
+- Message sanitization in `SourcegraphChatClient.sanitizeMessages()`: system→user, tool→user with plain text prefix "RESULT of {toolName}:" (not XML — prevents LLM echo hallucination), consecutive same-role merging, zero-width space for empty assistant tool-call messages
 
 ## Architecture
 
 ```
-AgentController (UI entry point, owns AgentCefPanel + JCEF bridges)
-  → AgentService (orchestration, tool registration, session management)
-    → AgentLoop.run() (ReAct loop, maxIterations=200)
-      → ContextManager (3-stage compaction: dedup → truncation → LLM summarization)
-      → LoopDetector (doom loop detection: 3 soft warning, 5 hard failure)
-      → Tool execution with optional approval gate
-      → Steering messages (ConcurrentLinkedQueue, drained at iteration boundary)
+AgentController (UI entry point)
+  → ConversationSession (long-lived, owns EventSourcedContextBridge + plan + question managers)
+    → AgentOrchestrator.executeTask()
+      → SingleAgentSession.execute() (ReAct loop, no iteration limit — bounded by context budget)
+        → EventSourcedContextBridge (EventStore + CondenserPipeline + ConversationMemory)
+        → BudgetEnforcer (reads from bridge, COMPRESS/TERMINATE)
+        → LoopGuard (loop detection, condensation loop detection)
+        → Tool execution with optional ApprovalGate
+        → SteeringChannel (boundary-aware user message injection)
 ```
 
 ## Key Components
 
-- **AgentLoop** (`loop/AgentLoop.kt`, ~1471 lines) — Core ReAct loop. Tool call processing, context compaction on overflow, parallel read-only tool execution (via coroutineScope+async), sequential write tool execution. Truncated tool call recovery — detects invalid JSON when finishReason=length, asks LLM to retry with smaller operation. Mid-loop cancellation support. Context overflow replay (compress + retry same request). Doom loop detection before each tool call. Streaming token estimate when usage is null. Plan mode execution guard (blocks `WRITE_TOOLS` even if LLM hallucinates them).
-- **AgentService** (`AgentService.kt`, ~1549 lines) — Main orchestration service. Manages tool registration, session lifecycle, plan mode state (`planModeActive: AtomicBoolean`), model fallback, context management setup. Builds `AgentLoop` with all callbacks wired. Schema filtering for plan mode (removes write tools + `enable_plan_mode` from tool definitions before LLM call). Dynamic tool definition provider rebuilds system prompt when tool set changes.
-- **AgentController** (`ui/AgentController.kt`) — UI entry point. Owns `AgentCefPanel`, routes user messages, handles steering, dispatches JCEF bridge callbacks (tool approval, plan approval, session history, artifact results). Wires `AgentService.executeTask()` with UI callbacks.
-- **ContextManager** (`loop/ContextManager.kt`, ~891 lines) — 3-stage compaction pipeline ported from Cline:
-  - Stage 1: Duplicate file read detection — tracks files read by path, replaces older reads with placeholder, keeps most recent read. If savings ≥ 30%, stop here.
-  - Stage 2: Conversation truncation (Cline's `getNextTruncationRange`) — preserves first user-assistant exchange and last N messages, removes middle messages in even-count blocks.
-  - Stage 3: LLM summarization (our addition) — summary chaining includes previous summary in next compaction, inserts summary as assistant message.
-  - Tracks active skill content, task progress, file read indices.
-- **LoopDetector** (`loop/LoopDetector.kt`, ~118 lines) — Detects identical consecutive tool calls. 3 identical = soft warning injected as system message. 5 identical = hard failure stops the loop.
-- **MessageStateHandler** (`session/MessageStateHandler.kt`, ~302 lines) — Two-file JSON persistence (api_conversation_history.json + ui_messages.json). Atomic file writes via write-then-rename, per-session `kotlinx.coroutines.sync.Mutex`.
-- **SessionLock** (`session/SessionLock.kt`) — `java.nio.channels.FileLock` on `.lock` file to prevent dual-instance access.
-- **ToolRegistry** (`tools/ToolRegistry.kt`, ~229 lines) — Three-tier registry: core (always sent to LLM), deferred (available via `tool_search`), active-deferred (loaded during session). Reduces per-call schema tokens from ~10K to ~4K.
-- **SystemPrompt** (`prompt/SystemPrompt.kt`, ~507 lines) — Builds the system prompt per turn. 11 sections following Cline's generic variant template: Agent Role → Task Progress → Editing Files → Act vs Plan Mode → Capabilities → Skills → Deferred Tool Catalog → Rules → System Info → Objective → Memory → User Instructions.
-- **InstructionLoader** (`prompt/InstructionLoader.kt`, ~453 lines) — Loads skill and agent config files from resources and disk. Handles YAML frontmatter parsing, substitution variable expansion (`$ARGUMENTS`, `$1`-`$N`, `${CLAUDE_SKILL_DIR}`). Dynamic injection via `` !`command` `` for preprocessing.
-- **SpawnAgentTool** (`tools/builtin/SpawnAgentTool.kt`) — Primary tool for spawning subagents. Only `description` and `prompt` required. Optional `name` makes agents addressable for resume/send. `subagent_type` selects built-in or custom agents. Defaults to general-purpose. Explorer type restricted to read-only tools.
-- **SubagentRunner** (`tools/subagent/SubagentRunner.kt`, ~311 lines) — Executes subagent with isolated context and budget. Handles tool availability filtering, file ownership registry, worker message bus.
-- **ModelFallbackManager** (`loop/ModelFallbackManager.kt`) — Opt-in model fallback. On NETWORK_ERROR/TIMEOUT, advances through fallback chain (Opus thinking → Opus → Sonnet thinking → Sonnet). After 3 successful iterations on fallback, attempts escalation back to primary.
-- **HookManager** (`hooks/HookManager.kt`) — 8 lifecycle hook types (TaskStart, UserPromptSubmit, TaskResume, PreCompact, TaskCancel, PreToolUse, PostToolUse, TaskComplete). Config: `.agent-hooks.json` in project root.
-- **AttemptCompletionTool** (`attempt_completion`) — Explicit completion signal. LLM must call this to end the session. Text-only responses (no tool calls) trigger escalating nudges (up to `MAX_NO_TOOL_NUDGES=4`) demanding `attempt_completion`.
-- **StreamBatcher** (`ui/StreamBatcher.kt`) — 16ms EDT timer coalesces rapid SSE chunks into single JCEF bridge calls (~5000 → ~300 per response).
+- **SingleAgentSession** — Core ReAct loop. Budget enforcement, tool call processing, context reduction on API errors. Truncated tool call recovery — detects invalid JSON when finishReason=length, asks LLM to retry with smaller operation. No iteration limit — loop runs until task completion or context budget exhaustion (no nudging, no "hurry up" messages). Mid-loop cancellation support. Parallel read-only tool execution (via coroutineScope+async). Context overflow replay (compress + retry same request). Doom loop detection before each tool call. Streaming token estimate when usage is null.
+- **ConversationSession** — Long-lived session across user messages. Owns `EventSourcedContextBridge`, `PlanManager`, `QuestionManager`, `WorkingSet`, `RollbackManager`. Persisted via two-file JSON (api_conversation_history.json + ui_messages.json) through `MessageStateHandler`.
+- **EventSourcedContextBridge** — The sole context management system. Owns `EventStore`, `CondenserPipeline`, `ConversationMemory`, all anchors (facts, skills, guardrails, mentions, plan, changeLedger), token tracking, and `ToolOutputStore`. Every mutation is recorded as a typed event in `EventStore`. Before each LLM call, `getMessagesViaCondenser()` runs the full `EventStore → View → CondenserPipeline → ConversationMemory → List<ChatMessage>` pipeline. Exposes `currentTokens`, `effectiveMaxInputTokens`, `updateTokensFromUsage()`, `updateReservedTokens()`, and all anchor slots.
+- **EventStore** — Append-only log of typed agent events (MessageAction, ToolAction, ToolResultObservation, SystemMessageAction, FactRecordedAction, PlanUpdatedAction, etc.). Persisted as JSONL under `{sessionDir}/events.jsonl`. Loaded and replayed on session resume. Single source of truth.
+- **View** — Immutable projection of all EventStore events at a point in time. Produced by `View.fromEvents(eventStore.all())`. Carries `events` (ordered list), `forgottenEventIds` (from condensation actions), and token estimates. Passed to the CondenserPipeline as the input for each condensation decision.
+- **CondenserPipeline** — Ordered chain of condensers applied to a View. Returns either `CondenserView` (view is ready for LLM call) or `Condensation` (condensation action needed before proceeding). Created by `CondenserFactory` using `ContextManagementConfig`. Default pipeline: SmartPrunerCondenser → ObservationMaskingCondenser → ConversationWindowCondenser → LLMSummarizingCondenser.
+- **ContextManagementConfig** — Single config object for the entire condenser pipeline. Fields: `observationMaskingThreshold` (0.60), `observationMaskingInnerWindowTokens` (40K), `observationMaskingOuterWindowTokens` (60K), `smartPrunerEnabled`, `conversationWindowThreshold` (0.75), `llmSummarizingTokenThreshold` (0.85), `llmSummarizingMaxSize` (150), `llmSummarizingKeepFirst` (4), `condensationLoopThreshold` (10). Defaults in `ContextManagementConfig.DEFAULT`. Worker config has stricter thresholds (0.50/0.65/0.75). Passed through `EventSourcedContextBridge.create()`.
+- **ConversationMemory** — Converts a filtered View (post-condensation) into `List<ChatMessage>` ready for an LLM call. Handles role assignment, forgotten-event suppression, and proper message ordering. Invoked by `EventSourcedContextBridge.getMessagesViaCondenser()` after the pipeline returns a `CondenserView`.
+- **BudgetEnforcer** — Three-status budget monitoring (Cline-inspired single compression threshold): OK (<80%), COMPRESS (80-97%), TERMINATE (>97%). COMPRESS fires once per crossing (re-arms when utilization drops back below 80%). Reads token counts from `EventSourcedContextBridge`.
+- **GuardrailStore** — Persistent learned constraints (`~/.workflow-orchestrator/{proj}/agent/guardrails.md`). Auto-recorded from doom loops/circuit breakers, loaded into system prompt and compression-proof anchor.
+- **BackpressureGate** — Edit-count tracker that injects verification nudges after N edits without running diagnostics/tests.
+- **SelfCorrectionGate** — Verify-reflect-retry loop. Tracks per-file edit→verification pairs. After each edit, demands diagnostics. On verification failure, injects structured `<self_correction>` reflection prompt with error details and retry guidance. Blocks task completion until all edited files are verified or max retries (3) exhausted. Works alongside BackpressureGate and LoopGuard.
+- **CompletionGatekeeper** — Orchestrates 3 completion gates before accepting task completion: Plan (blocks if plan has incomplete steps, escalates after 3 blocks without progress), SelfCorrectionGate (blocks if unverified edits), LoopGuard (blocks if unverified files). Force-accepts after 5 total blocked attempts. Never suggests marking steps as "skipped" — always directs agent to continue working. `attempt_completion` tool delegates to this.
+- **AttemptCompletionTool** (`attempt_completion`) — Explicit completion signal. LLM must call this to end the session. In normal mode, text-only responses (no tool calls) trigger escalating nudges (up to `MAX_NO_TOOL_NUDGES=4`) demanding `attempt_completion`. Implicit completion via CompletionGatekeeper is only allowed in `forceTextOnly` mode (activated after 4 nudges ignored, malformed retries exhausted, or iteration 95%+). Not available to WorkerSession — workers use `worker_complete` instead.
+- **WorkerCompleteTool** (`worker_complete`) — Lightweight completion signal for worker sessions (subagents). Analogous to `attempt_completion` but without CompletionGatekeeper dependency. Returns `isCompletion=true` to exit the WorkerSession ReAct loop immediately. Available to all WorkerTypes (ORCHESTRATOR, ANALYZER, CODER, REVIEWER, TOOLER). No collision with `attempt_completion` — that tool is injected directly into SingleAgentSession's tool set, not registered in ToolRegistry.
+- **RotationState** — Serializable context handoff state for graceful session rotation when budget is exhausted.
+- **SpawnAgentTool** (`agent`) — Primary tool for spawning subagents, matching Claude Code's Agent tool design. Only `description` and `prompt` required. Optional `name` makes agents addressable for resume/send. `subagent_type` selects built-in (general-purpose/explorer/coder/reviewer/tooler) or custom agents from `.workflow/agents/`. Defaults to general-purpose. Explorer type uses PSI-first search strategy with thoroughness calibration (quick/medium/very thorough) and is restricted to read-only tools only (no debug, config, or edit tools).
+- **WorkerSession** — Scoped ReAct loop (max 32 iterations) with parent Job cancellation support.
 
-## System Prompt Structure (`SystemPrompt`)
+## System Prompt Structure (`PromptAssembler`)
 
-Built by `SystemPrompt.build()`, called from `AgentService` at task start and when tool set changes. 11 sections following Cline's section ordering:
+Assembled dynamically per turn. Section order follows primacy/recency attention patterns:
 
-1. **Agent Role** — role, capabilities (IDE, debugger, integrations)
-2. **Task Progress** (optional) — Markdown checklist via `task_progress` parameter on every tool call
-3. **Editing Files** — edit_file vs create_file guidance, multi-change batching rules
-4. **Act vs Plan Mode** — mode descriptions, blocked tools in plan mode, switching rules
-5. **Capabilities** — core tools listing, deferred tool workflow hints, usage tips (database, sonar, project_context, render_artifact)
-6. **Skills** (optional) — meta-skill auto-injection + available skills listing + active skill content (for compaction survival)
-6b. **Deferred Tool Catalog** (optional) — categorized one-liner descriptions of deferred tools
-6c. **Tool Definitions** — XML-format tool schemas (always on — tools are defined in the system prompt, not via API `tools` parameter)
-7. **Rules** — IDE tool preference, read-before-edit, environment, communication, code changes, safety, task execution, subagent delegation
-8. **System Info** — OS, IDE, shell, home dir, working directory
-9. **Objective** — iterative task execution instructions, `<thinking>` tag usage
-10. **Memory** — 3-tier memory explanation, manual tool guidelines, recalled memory usage
-11. **User Instructions** (optional) — project name, repo structure, custom instructions
+**Primacy zone** (highest compliance):
+1. `CORE_IDENTITY` — role, capabilities, persona
+2. `PERSISTENCE_AND_COMPLETION` — session durability, `attempt_completion` requirement
+3. `TOOL_POLICY` — tool usage rules, read-before-edit, verification
+4. `<skill_rules>` — **skill-first behavioral rule**: skill list with trigger descriptions + mandatory loading rule. Positioned in primacy zone so LLM sees skills before context data and can't bypass them with inline instructions.
 
-## Tools (~30 core + ~50 deferred = ~80 total)
+**Context zone** (reference data, conditionally included):
+5. `<project_context>` — name, path, framework
+6. `<project_repositories>` — repo info
+7. `<repo_map>` — file structure
+8. `<core_memory>` — tier-1 memory (always if non-empty)
+9. Guardrails context
+10. `<available_agents>` — **always injected**: built-in agents (general-purpose, explorer, coder, reviewer, tooler) + any custom agents from `.workflow/agents/`
+11. `<previous_results>` — orchestration step context
 
-### Core Tools (always sent to LLM)
+**Recency zone** (highest recall):
+12. `PLANNING_RULES` (or `FORCED_PLANNING_RULES` in plan mode) — decision tree only: when to plan vs act directly. No inline workflow details — defers to skills.
+13. `DELEGATION_RULES` — when/how to spawn subagents
+14. `MEMORY_RULES` — when to save to each memory tier
+15. `CONTEXT_MANAGEMENT_RULES` — budget awareness
+16. `RENDERING_RULES_COMPACT` — rich UI formatting (skipped in plain-text mode)
+17. `FEW_SHOT_EXAMPLES` — concrete tool call examples including skill-matching patterns
+18. `RULES` — general behavioral rules
+19. `STEERING_RULES` — real-time user steering protocol
+20. `<integration_rules>` — **conditional**: niche tips for Jira/Bamboo/Sonar/Bitbucket/PSI/Debug tools, only included when those tools are active
+21. `COMMUNICATION` — response style guidelines
+22. `BOOKEND` — closing reinforcement of identity + key constraints
 
-Registered in `AgentService.registerAllTools()`:
+**Removed sections** (consolidated or eliminated): `EFFICIENCY_RULES`, `THINKING_RULES`, `MENTION_RULES`, `critical_reminders`, verbose `RENDERING_RULES`.
 
-| Tool Name | Class | Purpose |
-|-----------|-------|---------|
-| `read_file` | ReadFileTool | Read file contents |
-| `edit_file` | EditFileTool | SEARCH/REPLACE block edits |
-| `create_file` | CreateFileTool | Create new files |
-| `search_code` | SearchCodeTool | Regex search with output modes |
-| `glob_files` | GlobFilesTool | Glob-pattern file discovery |
-| `run_command` | RunCommandTool | Shell command execution |
-| `revert_file` | RevertFileTool | Single-file revert |
-| `attempt_completion` | AttemptCompletionTool | Explicit task completion signal |
-| `think` | ThinkTool | No-op reasoning scratchpad |
-| `ask_followup_question` | AskQuestionsTool | Ask user questions (simple or wizard mode) |
-| `plan_mode_respond` | PlanModeRespondTool | Present plan in plan mode |
-| `enable_plan_mode` | EnablePlanModeTool | Switch to plan mode |
-| `use_skill` | UseSkillTool | Load and activate a skill |
-| `new_task` | NewTaskTool | Session handoff with structured context |
-| `render_artifact` | RenderArtifactTool | Interactive React component in chat |
-| `git_status` | GitStatusTool | Git working tree status |
-| `git_diff` | GitDiffTool | Git diff (staged/unstaged) |
-| `git_log` | GitLogTool | Git commit log |
-| `find_definition` | FindDefinitionTool | PSI go-to-definition |
-| `find_references` | FindReferencesTool | PSI find usages |
-| `diagnostics` | SemanticDiagnosticsTool | IDE error/warning diagnostics |
-| `tool_search` | ToolSearchTool | Search and activate deferred tools |
-| `agent` | SpawnAgentTool | Spawn/resume/send/kill subagents |
-
-**Conditional core** (registered when memory/storage is initialized):
-- `core_memory_read`, `core_memory_append`, `core_memory_replace` — core memory tools
-- `archival_memory_insert`, `archival_memory_search` — archival memory tools
-- `conversation_search` — past session search
-- `save_memory` — legacy markdown memory
-
-### Deferred Tools (loaded via `tool_search`)
+## Tools (68 registered, 15 meta-tools consolidating 144 actions)
 
 | Category | Tools |
 |----------|-------|
-| Code Intelligence | find_implementations, file_structure, type_hierarchy, call_hierarchy, type_inference, dataflow_analysis, get_method_body, get_annotations, test_finder, structural_search, read_write_access |
-| Code Quality | format_code, optimize_imports, refactor_rename, run_inspections, problem_view, list_quickfixes |
-| Git | git_blame, git_branches, git_show_commit, git_show_file, git_stash_list, git_file_history, git_merge_base, changelist_shelve, generate_explanation |
-| Build & Run | build, spring, runtime_exec, runtime_config, coverage |
-| Database | db_list_profiles, db_list_databases, db_query, db_schema |
-| Utilities | project_context, current_time, kill_process, send_stdin, ask_user_input |
-| Debug | debug_step, debug_inspect, debug_breakpoints |
-| Integration (conditional) | jira, bamboo_builds, bamboo_plans, sonar, bitbucket_pr, bitbucket_repo, bitbucket_review |
+| Core (always active) | read_file, edit_file, create_file, search_code, run_command, glob_files, diagnostics, problem_view, format_code, optimize_imports, file_structure, find_definition, find_references, type_hierarchy, call_hierarchy, get_annotations, get_method_body, agent, think, request_tools, project_context |
+| Change Tracking | list_changes (always active, read-only), rollback_changes (reverts to LocalHistory checkpoint, git fallback), revert_file (single-file revert) |
+| Process Interaction | send_stdin, kill_process, ask_user_input, send_message_to_parent |
+| PSI / Code Intelligence | type_inference, structural_search, dataflow_analysis, read_write_access, test_finder |
+| IDE Intelligence | run_inspections, refactor_rename, list_quickfixes, find_implementations |
+| Runtime | **runtime_config** (4 actions: get_run_configurations, create/modify/delete_run_config), **runtime_exec** (5 actions: get_running_processes, get_run_output, get_test_results, run_tests, compile_module) |
+| Coverage | **coverage** (2 actions: run_with_coverage, get_file_coverage) |
+| Debug | **debug_breakpoints** (8 actions: add_breakpoint, method_breakpoint, exception_breakpoint, field_watchpoint, remove_breakpoint, list_breakpoints, start_session, attach_to_process), **debug_step** (8 actions: get_state, step_over, step_into, step_out, resume, pause, run_to_cursor, stop), **debug_inspect** (8 actions: evaluate, get_stack_frames, get_variables, thread_dump, memory_view, hotswap, force_return, drop_frame) |
+| VCS | **git** (11 actions: status, blame, diff, log, branches, show_file, show_commit, stash_list, merge_base, file_history, shelve) |
+| Spring & Framework | **spring** (15 actions: context, endpoints, bean_graph, config, version_info, profiles, repositories, security_config, scheduled_tasks, event_listeners, boot_endpoints/autoconfig/config_properties/actuator, jpa_entities) |
+| Build Systems | **build** (11 actions: maven_dependencies/properties/plugins/profiles/dependency_tree/effective_pom, gradle_dependencies/tasks/properties, project_modules, module_dependency_graph) |
+| Jira | **jira** (17 actions: get_ticket, search_issues, search_tickets, transition, comment, log_work, get_worklogs, get_sprints, get_boards, get_sprint/board_issues, get_linked_prs, get_dev_branches, start_work, download_attachment) |
+| CI/CD — Bamboo | **bamboo_builds** (11 actions: build_status, get_build, trigger_build, stop_build, cancel_build, get_build_log, get_test_results, get_artifacts, download_artifact, recent_builds, get_running_builds), **bamboo_plans** (8 actions: get_plans, get_project_plans, search_plans, get_plan_branches, get_build_variables, get_plan_variables, rerun_failed_jobs, trigger_stage) |
+| Quality — SonarQube | **sonar** (12 actions: issues, quality_gate, coverage, search_projects, analysis_tasks, branches, project_measures, source_lines, issues_paged, security_hotspots, duplications, branch_quality_report) |
+| Pull Requests — Bitbucket | **bitbucket_pr** (14 actions: create/approve/merge/decline_pr, get_pr_detail/commits/activities/changes/diff, check_merge_status, update_pr_title/description, get_my_prs, get_reviewing_prs), **bitbucket_review** (6 actions: add_pr_comment, add_inline_comment, reply_to_comment, add/remove_reviewer, set_reviewer_status), **bitbucket_repo** (6 actions: get_branches, create_branch, search_users, get_file_content, get_build_statuses, list_repos) |
+| Memory | core_memory_read, core_memory_append, core_memory_replace, archival_memory_insert, archival_memory_search, conversation_search, save_memory |
+| Skills | skill |
+| Database | db_list_profiles, db_query, db_schema |
+| Planning | enable_plan_mode, create_plan, update_plan_step, ask_questions, attempt_completion |
 
-Integration tools are only registered when their service URL is configured in ConnectionSettings.
+## Tool Selection (Hybrid)
 
-### Meta-Tools (single tool with `action` parameter)
-
-These tools consolidate multiple operations behind an `action` enum:
-
-| Meta-Tool | Action Count | Examples |
-|-----------|-------------|----------|
-| **runtime_exec** | 5 | run_tests, compile_module, get_test_results, get_running_processes, get_run_output |
-| **runtime_config** | 4 | get_run_configurations, create/modify/delete_run_config |
-| **coverage** | 2 | run_with_coverage, get_file_coverage |
-| **debug_breakpoints** | 8 | add_breakpoint, method_breakpoint, exception_breakpoint, field_watchpoint, remove_breakpoint, list_breakpoints, start_session, attach_to_process |
-| **debug_step** | 8 | get_state, step_over, step_into, step_out, resume, pause, run_to_cursor, stop |
-| **debug_inspect** | 8 | evaluate, get_stack_frames, get_variables, thread_dump, memory_view, hotswap, force_return, drop_frame |
-| **spring** | 15 | context, endpoints, bean_graph, config, version_info, profiles, etc. |
-| **build** | 11 | maven_dependencies, gradle_tasks, project_modules, module_dependency_graph, etc. |
-| **jira** | 17 | get_ticket, search_issues, transition, comment, log_work, etc. |
-| **bamboo_builds** | 11 | build_status, trigger_build, get_build_log, get_test_results, etc. |
-| **bamboo_plans** | 8 | get_plans, search_plans, get_plan_branches, rerun_failed_jobs, etc. |
-| **sonar** | 13 | issues, quality_gate, coverage, branch_quality_report, local_analysis, etc. |
-| **bitbucket_pr** | 14 | create/approve/merge/decline_pr, get_pr_detail, check_merge_status, etc. |
-| **bitbucket_review** | 6 | add_pr_comment, add_inline_comment, reply_to_comment, etc. |
-| **bitbucket_repo** | 6 | get_branches, create_branch, search_users, get_file_content, etc. |
-
-## Tool Selection
-
-Two mechanisms:
-1. **ToolRegistry three-tier** — Core tools always sent. Deferred tools loaded via `tool_search` during session. Active-deferred tools persist for the rest of the session.
-2. **Schema filtering** — `AgentService` builds tool definitions dynamically per iteration. Plan mode removes write tools + `enable_plan_mode`. Act mode removes `plan_mode_respond`. `use_skill` removed when no skills are available.
-
-Tool set stabilizes per session — tools only expand across messages, never shrink (deferred tools once activated stay active).
+Three layers:
+1. **DynamicToolSelector** — keyword scan of last 3 user messages triggers relevant tool groups
+2. **RequestToolsTool** (`request_tools`) — LLM activates categories on demand (always available)
+3. **ToolPreferences** — user checkboxes in Tools panel, persisted per project
+4. **agent** and **request_tools** cannot be disabled (added after `removeAll(disabledTools)`)
+5. Tool set stabilizes per session — tools only expand across messages, never shrink
 
 ## Context Management
 
-All context management runs through `ContextManager` — a 3-stage compaction pipeline ported from Cline.
+All context management runs through `EventSourcedContextBridge`. There is no separate legacy path.
 
-### Pipeline
+### Event-Sourced Pipeline
 
-1. **Stage 1 — Duplicate file read detection** (from Cline): Tracks files read by path. Replaces older reads with `"[File content for '{path}' — see latest read below]"`. Keeps most recent read. If savings ≥ 30%, stop here.
-2. **Stage 2 — Conversation truncation** (from Cline's `getNextTruncationRange`): Preserves first user-assistant exchange (task description) and last N messages (recent work). Removes middle messages in even-count blocks to maintain user-assistant role alternation.
-3. **Stage 3 — LLM summarization** (our addition — Cline doesn't have this): Optional fallback when truncation alone isn't enough. Summary chaining: includes previous summary in next compaction. Inserts summary as assistant message to avoid consecutive user messages.
+The pipeline is: **EventStore → View → CondenserPipeline → ConversationMemory → List<ChatMessage>**
 
-### Key details
-- **Compaction threshold**: 85% of `maxInputTokens` (default 150K)
-- **Token tracking**: `lastPromptTokens` from API response, invalidated after compaction
-- **Tool output**: Full content in context. `truncateOutput()` middle-truncates at 50KB (60% head + 40% tail).
-- **Active skill**: Stored in `ContextManager`, re-injected into system prompt after compaction
-- **Task progress**: Stored in `ContextManager`, survives compaction via system prompt rebuild
-- **History overwrite callback**: After compaction, `onHistoryOverwrite` persists modified conversation via `MessageStateHandler`
+1. All agent actions are recorded as typed events in `EventStore` (append-only JSONL).
+2. Before each LLM call, `View.fromEvents(eventStore.all())` projects the full event log into an ordered view with token estimates.
+3. The `CondenserPipeline` (created by `CondenserFactory` from `ContextManagementConfig`) runs the view through condensers in order:
+   - **SmartPrunerCondenser** (Stage 1, zero-loss): Deduplication (keep latest file read, respects edit boundaries), error purging (truncate failed tool args after 4 turns), write superseding (compact writes confirmed by subsequent reads). Runs if `smartPrunerEnabled = true` (default).
+   - **ObservationMaskingCondenser** (Stage 2, cheap): Replaces large tool result bodies with rich placeholders (tool name, args, content preview, disk path, recovery hint). Three tiers: FULL (within 40K window), COMPRESSED (within 60K window, first 20 + last 5 lines), METADATA (beyond both). Activates above `observationMaskingThreshold` (default: 0.60 utilization).
+   - **ConversationWindowCondenser** (Stage 3, proactive): Sliding window — removes oldest 50% of eligible messages (after protecting system prompt and first user-assistant exchange). Returns `Condensation` action to be stored in EventStore. Activates above `conversationWindowThreshold` (default: 0.75 utilization) OR on context window overflow error.
+   - **LLMSummarizingCondenser** (Stage 4, expensive): LLM-powered structured summary (Goal/Instructions/Discoveries/Accomplished/Files template) with [APPROX] markers. Falls back to truncation summarizer on LLM error. Activates above `llmSummarizationThreshold` (default: 0.85 utilization).
+4. If the pipeline returns `CondenserView`, `ConversationMemory.processEvents()` converts filtered events → `List<ChatMessage>` for the LLM call.
+5. If the pipeline returns `Condensation`, the condensation action is added to the EventStore and the condenser runs again (guarded against infinite loops by `condensationLoopCount > condensationLoopThreshold`).
+
+- **Tool results**: Full content in context (2000 lines / 50KB cap via ToolOutputStore). Full content saved to disk for re-reads after condensation.
+- **Facts Store**: Compression-proof append-only log of verified findings (FILE_READ, EDIT_MADE, CODE_PATTERN, ERROR_FOUND, COMMAND_RESULT, DISCOVERY). Injected as `factsAnchor`. Deduped by (type, path), capped at 50 entries. Think tool also records DISCOVERY facts.
+- **Compression boundary**: `[CONTEXT COMPRESSED]` marker after any condensation action.
+- **System messages**: Old LoopGuard/budget warnings are compressible, capped at 2 active warnings.
+- **Orphan protection**: When condensation drops an assistant tool_call, its tool result is also dropped.
+- **Budget thresholds**: OK (<80%), COMPRESS (80-97%), TERMINATE (>97%)
+- **Token reconciliation**: After each LLM call, `bridge.updateTokensFromUsage(promptTokens)` updates `lastReportedPromptTokens` (used by condenser for accurate utilization). API's `promptTokens` is authoritative.
+- **Middle-truncation**: Command and git output keeps first 60% + last 40%, truncating verbose middle.
+- **Re-read tracking**: Cleared after condensation events so agent can re-read condensed files.
 
 ## Real-Time Steering
 
-Users can send messages while the agent is working. Messages are injected at iteration boundaries (between tool calls), not mid-tool.
+Users can send messages while the agent is working. Messages are injected at iteration boundaries (between tool calls), not mid-tool — this is boundary-aware queuing, matching Claude Code's pattern.
 
 **Flow:**
 1. User types in chat input during agent execution (input stays enabled in "steering mode")
-2. `AgentController` routes message to `AgentLoop`'s steering queue (`ConcurrentLinkedQueue<SteeringMessage>`)
-3. At the top of each ReAct loop iteration, `AgentLoop` drains the queue
-4. Drained messages added to `ContextManager` as user messages
-5. LLM sees the steering context on the next call and adjusts its approach
+2. `AgentController.executeTask()` routes message to `SteeringChannel.enqueue()`
+3. At the top of each ReAct loop iteration, `SingleAgentSession` calls `steeringChannel.drain()`
+4. Drained messages recorded as `UserSteeringAction` events in `EventSourcedContextBridge`
+5. `ConversationMemory` renders them as `<user_steering>` tagged user messages
+6. LLM sees the steering context on the next call and adjusts its approach
+
+**Key files:**
+- `SteeringChannel.kt` — Thread-safe ConcurrentLinkedQueue wrapper
+- `Actions.kt` — `UserSteeringAction` event type
+- `SingleAgentSession.kt` — Drain + inject at iteration boundary (after worker messages, before budget check)
+- `InputBar.tsx` — Input enabled during `steeringMode` with visual indicator
 
 ## Tool Execution
 
-- **Read-only tools**: Execute in parallel via `coroutineScope { async { ... } }` (read_file, search_code, diagnostics, etc.)
-- **Write tools**: Execute sequentially (edit_file, run_command, etc.)
-- **Write tools set** (`WRITE_TOOLS` in `AgentLoop`): edit_file, create_file, run_command, revert_file, kill_process, send_stdin, format_code, optimize_imports, refactor_rename
-- **Approval tools** (`APPROVAL_TOOLS`): edit_file, create_file, run_command, revert_file — require user approval unless already allowed for session
-- **Doom loop detection**: 3 identical consecutive tool calls = warning. 5 = hard failure.
-- **Context overflow**: Compress via `ContextManager` + REPLAY the failed request (OpenCode pattern)
-- **Task progress**: Extracted from `task_progress` parameter on every tool call (Cline's FocusChain pattern), injected via `AgentTool.injectTaskProgress()` into every tool schema
+- **Read-only tools**: Execute in parallel (read_file, search_code, diagnostics, etc.)
+- **Write tools**: Execute sequentially (edit_file, run_command)
+- **Doom loop detection**: 3 identical tool calls = warning injected as system message
+- **File re-read detection**: Warns when reading a file already in context; cleared on edit
+- **Context overflow**: Compress + REPLAY the failed request (OpenCode pattern)
 
 ## Plan Mode Enforcement
 
-Two-layer enforcement:
+Two-layer enforcement (Claude Code style + Cline safety net):
 
-1. **Schema filtering** (`AgentService` tool definition provider, ~line 834) — Removes write tools and `enable_plan_mode` from tool definitions before each LLM call. The LLM never sees blocked tools. In act mode, removes `plan_mode_respond`.
-2. **Execution guard** (`AgentLoop.run()`, ~line 955) — Checks `planMode && toolName in WRITE_TOOLS` as a safety net for cached tool calls from before mode switch.
+1. **Schema filtering** — `SingleAgentSession.execute()` removes `PLAN_MODE_BLOCKED_TOOLS` from
+   `activeToolDefs`/`activeTools` before each LLM call. The LLM never sees blocked tools.
+2. **Execution guard** — `executeSingleToolRaw()` checks `isPlanModeBlocked()` as a safety net
+   for cached tool calls from before mode switch.
+3. **Meta-tool action filtering** — Write actions within `jira`/`bamboo_builds`/`bamboo_plans`/`bitbucket_pr`/`bitbucket_review`/`bitbucket_repo`/`git`
+   meta-tools are blocked at execution time via `PLAN_MODE_BLOCKED_ACTIONS`.
 
-**Blocked in plan mode:** edit_file, create_file, run_command, revert_file, kill_process, send_stdin, format_code, optimize_imports, refactor_rename, enable_plan_mode
-**Always available:** read_file, search_code, glob_files, diagnostics, find_definition, find_references, think, agent, tool_search, ask_followup_question, plan_mode_respond, memory tools, etc.
+**Blocked tools:** edit_file, create_file, format_code, optimize_imports, refactor_rename, rollback_changes
+**Always available:** read_file, search_code, run_command, runtime_config, runtime_exec, debug_breakpoints, debug_step, debug_inspect, think, create_plan, agent, etc.
 
-**Transition:** `AgentService.planModeActive.set(false)` → tools restored on next LLM call → dashboard UI updated.
+**Transition:** `PlanManager.approvePlan()` → `AgentService.planModeActive.set(false)` → tools restored on next LLM call → `dashboard.setPlanMode(false)` unclicks UI button.
 
 ## Error Handling
 
-- **API retry**: 5 attempts, exponential backoff with jitter (base 1s, max 30s), retries on 429, 5xx, NETWORK_ERROR, TIMEOUT
-- **Context overflow**: ContextManager compaction triggered + replay
+- **API retry**: 5 attempts, exponential backoff with jitter (base 1s, max 30s), retries on 429 AND 5xx. After all retry layers exhausted (L1-fallback, L1-recycle, L2-escalation), asks user for input instead of hard-failing (sub-agents fail immediately).
+- **Context overflow**: Condenser pipeline triggered + replay (OpenCode pattern)
 - **Streaming**: Heuristic token estimate when API returns usage: null
-- **Truncated tool calls**: When finishReason=length produces invalid JSON, asks LLM to retry with smaller operation
-- **Model fallback**: Opt-in (`AgentSettings.enableModelFallback`). `ModelFallbackManager` advances through fallback chain (Opus thinking → Opus → Sonnet thinking → Sonnet, no Haiku). After 3 successful iterations on fallback, attempts escalation. If escalation fails, waits 6 iterations.
+- **Empty responses**: Exponential backoff (2s, 4s, 8s) between retries (Cline pattern). After 3 consecutive empties, asks user to retry (sub-agents fail immediately). Resets all error state on user input.
+- **Loop detection**: Runs AFTER tool execution (Cline pattern — tool always executes, then check). Soft warning at 3 identical calls. Hard limit at 5: sets `consecutiveMistakes = max` to trigger user feedback. Secondary hard cutoff at 6 (model ignored warning) → `makeFailed()`. All error state (`consecutiveMistakes`, `consecutiveEmpties`, `loopDetector`) reset when user provides feedback.
+- **Tool errors**: When ALL tool calls in a response fail (unknown tool, malformed JSON, exception), increments `consecutiveMistakes`. After 3 all-error iterations, escalates to user feedback. Successful tool calls reset the counter. Loop detection escalation takes priority over error counting.
+- **attempt_completion canonicalization**: `response` param accepted as alias for `result` (Cline ToolExecutor.ts:34-41).
+- **Hook context modification**: PostToolUse hooks can return `contextModification` which is injected as `<hook_context>` XML into the conversation (Cline ToolExecutor.ts:500-503).
+- **Tool result correlation**: Native tool call results (with `toolCallId`) preserve `role=tool` in API requests for multi-tool correlation. XML-based results (no `toolCallId`) fall back to `role=user` with `"TOOL RESULT:"` prefix.
+- **Model fallback**: Opt-in (`AgentSettings.enableModelFallback`). On NETWORK_ERROR/TIMEOUT, `ModelFallbackManager` advances through fallback chain (Opus thinking → Opus → Sonnet thinking → Sonnet, no Haiku). After 3 successful iterations on fallback, attempts escalation back to primary. If escalation fails, waits 6 iterations. `brainFactory` creates fresh `OpenAiCompatBrain` per switch. `onModelSwitch` callback updates the model chip via `dashboard.setModelName()` and toggles a subtle in-chip fallback indicator (amber border + Zap icon + tooltip showing the reason) via `dashboard.setModelFallbackState()`. Silent recovery on escalation back to primary — no chat status spam.
+
+## Ralph Loop Patterns
+
+Four structural patterns integrated from the Ralph Loop technique for improved reliability:
+
+1. **Learned Guardrails** — `GuardrailStore` persists failure patterns to `~/.workflow-orchestrator/{proj}/agent/guardrails.md`. Auto-recorded from doom loops and circuit breakers. Manually recorded via `save_memory(type="guardrail")`. Loaded into system prompt and compression-proof `guardrailsAnchor`.
+
+2. **Pre-Edit Search Enforcement** — `LoopGuard.checkPreEditRead()` hard-gates `edit_file` calls. If the file hasn't been read in the current session, the edit returns an error forcing the LLM to read first. Always on, not configurable.
+
+3. **Backpressure Gates** — `BackpressureGate` tracks edits and injects verification nudges after every N edits (default 3). Escalates to stronger nudge if ignored. Test/build failures generate structured `<backpressure_error>` feedback.
+
+5. **Self-Correction Loop** — `SelfCorrectionGate` enforces verify-reflect-retry per edited file. After each `edit_file`, demands `diagnostics`. On failure, injects `<self_correction>` reflection prompt (what failed, why, how to fix). Caps at 3 retries per file. Blocks completion until all edits verified or retries exhausted.
+
+4. **Context Rotation** — When budget hits TERMINATE (97%), instead of hard-failing, externalizes state to `rotation-state.json` (goal, accomplishments, remaining work, files, guardrails, facts) and returns `ContextRotated`. AgentController shows rotation summary. Only works when an active plan exists; falls back to `Failed` otherwise.
 
 ## Token Management
 
-- Token display shows current context window fill via `ContextManager`, not cumulative API total
-- `lastPromptTokens` updated from API response after each call — authoritative source
-- Invalidated after any compaction to force fresh estimate
-- `toolDefinitionTokens` tracks schema overhead, updated by `AgentLoop`
+- Token display shows current context window fill via `bridge.currentTokens`, not cumulative API total
+- Token reconciliation: `bridge.updateTokensFromUsage(promptTokens)` updates `lastReportedPromptTokens` for accurate condenser utilization. API's `promptTokens` is authoritative (no stale reservation subtraction).
+- `lastReportedPromptTokens` is used by `getMessagesViaCondenser()` to build `CondenserContext.currentTokens`.
+- reservedTokens recalculated when tool set changes (via `bridge.updateReservedTokens()`)
 
 ## Interactive UI
 
-- **Plan card** — `plan_mode_respond` renders JCEF plan card with step status icons, per-step comments, approve/revise buttons. Uses `suspendCancellableCoroutine` for non-blocking approval.
-- **Plan editor tab** — Full-screen `FileEditor` with `JBCefBrowser`, clickable file links, comment textareas.
-- **Question wizard** — `ask_followup_question` (wizard mode) renders inline wizard with single/multi-select options, back/skip/next navigation, "Chat about this" textarea, summary page.
-- **Interactive artifacts** — `render_artifact` renders LLM-generated React components in a sandboxed iframe (`react-runner` via `agent/webview/src/sandbox-main.ts`). See `RenderArtifactTool.SCOPE_HINT` and `sandbox-main.ts` `fullScope` for the canonical list.
-  - **React hooks**: useState, useEffect, useCallback, useMemo, useRef, useReducer, useLayoutEffect, useId, useTransition, Fragment
+- **Plan card** — `create_plan` renders JCEF plan card with step status icons (○◉✓✗), per-step comments, approve/revise buttons. Uses `suspendCancellableCoroutine` for non-blocking approval.
+- **Plan editor tab** — Full-screen `FileEditor` with `JBCefBrowser`, clickable file links, comment textareas. Opens alongside plan card.
+- **Question wizard** — `ask_questions` renders inline wizard with single/multi-select options, back/skip/next navigation, "Chat about this" (JCEF textarea), summary page with edit-any-question.
+- **Tools panel** — Categorized tool checkboxes with 4-tab detail view (Description, Parameters, Schema, Example).
+- **Interactive artifacts** — `render_artifact` renders an LLM-generated React component in a sandboxed iframe (`react-runner` via `agent/webview/src/sandbox-main.ts`). Sandbox exposes a fixed scope of shadcn-compatible primitives, viz libraries, and utilities. See `RenderArtifactTool.SCOPE_HINT` and the `sandbox-main.ts` `fullScope` object for the canonical list (kept in sync by hand). Summary of what's available:
+  - **React hooks**: `useState`, `useEffect`, `useCallback`, `useMemo`, `useRef`, `useReducer`, `useLayoutEffect`, `useId`, `useTransition`, `Fragment`
   - **UI primitives (shadcn-compatible, Radix-backed)**: Card family, Badge, Button, Alert family, Skeleton, Separator, ScrollArea, Tabs, Accordion, Breadcrumb, Dialog, Sheet, Popover, HoverCard, DropdownMenu, Tooltip, Select, Switch, Checkbox, Slider, Toggle, Avatar, Input, Label, Textarea, Progress
   - **Charts**: Recharts (all chart types + polar primitives)
   - **Icons**: All Lucide icons by name
-  - **Animation**: motion/react (motion, AnimatePresence, useMotionValue, useTransform, useSpring, useInView, useScroll, useAnimation)
-  - **Viz**: d3 (full namespace), cobe createGlobe, roughjs, react-simple-maps
-  - **Node-edge graphs**: @xyflow/react (React Flow) — ReactFlowCanvas, Background, Controls, MiniMap, Handle, hooks
-  - **Headless tables**: @tanstack/react-table — useReactTable, row models, flexRender, createColumnHelper
-  - **Date/time**: date-fns — format, formatDistance, parseISO, addDays, etc.
-  - **Color**: colord for color manipulation
-  - **Bridge**: bridge.navigateToFile(path, line), bridge.isDark, bridge.colors, bridge.projectName
+  - **Animation**: motion/react (`motion`, `AnimatePresence`, `useMotionValue`, `useTransform`, `useSpring`, `useInView`, `useScroll`, `useAnimation`)
+  - **Viz**: d3 (full namespace), cobe `createGlobe`, roughjs, react-simple-maps
+  - **Node-edge graphs**: `@xyflow/react` (React Flow) — `ReactFlowCanvas`, `Background`, `Controls`, `MiniMap`, `Handle`, hooks
+  - **Headless tables**: `@tanstack/react-table` — `useReactTable`, row models, `flexRender`, `createColumnHelper`
+  - **Date/time**: `date-fns` — `format`, `formatDistance`, `parseISO`, `addDays`, etc.
+  - **Color**: `colord` for color manipulation
+  - **Bridge**: `bridge.navigateToFile(path, line)`, `bridge.isDark`, `bridge.colors`, `bridge.projectName`
 
-  Sandbox uses Tailwind Play CDN with CSS variables from `artifact-sandbox.html`. No network access — all data must be inline.
+  The sandbox uses Tailwind Play CDN with the CSS variables declared in `artifact-sandbox.html` (`--bg`, `--fg`, `--fg-muted`, `--border`, `--code-bg`, `--hover-overlay`, `--accent`, `--success`, `--warning`, `--error`) — primitives are styled against these, not the main app's shadcn theme variables. Sandbox bundle is ~50 KB gz base + shared Radix/xyflow/react-table/date-fns chunks (cached after first load).
 
 ## Interactive Artifact Pipeline (Self-Repair Loop)
 
-`render_artifact` is **not** fire-and-forget — the tool suspends until the sandbox iframe reports the actual render outcome, so the LLM sees missing-symbol / runtime errors as tool results and can self-correct.
+`render_artifact` is **not** fire-and-forget — the tool suspends until the sandbox iframe reports the actual render outcome, so the LLM sees missing-symbol / runtime errors as tool results and can self-correct on the next ReAct iteration. This closes the "LLM references a shadcn symbol not in the bundled scope → silent chat-UI error → no feedback → infinite retry" loop.
 
-**Correlation.** Each `render_artifact` call generates a UUID `renderId` that threads through: `RenderArtifactTool` → `ArtifactResultRegistry` → `AgentCefPanel.renderArtifact()` → `chatStore.addArtifact` → `<ArtifactRenderer>` → iframe `postMessage` → iframe echoes result → `ArtifactRenderer.reportToKotlin` → JCEF bridge → `AgentController.parseAndDispatchArtifactResult` → `ArtifactResultRegistry.reportResult()` → suspended `CompletableDeferred` completes → tool returns structured `ToolResult`.
+**Correlation.** Each `render_artifact` call generates a UUID `renderId` that threads through the whole chain: `RenderArtifactTool` → `ArtifactResultRegistry` → `AgentCefPanel.renderArtifact(title, source, renderId)` → `chatStore.addArtifact` → `<ArtifactRenderer renderId=.../>` → iframe `postMessage({type:'render', ..., renderId})` → iframe echoes in `{type:'rendered'|'error', ..., renderId}` → `ArtifactRenderer.reportToKotlin` → `kotlinBridge.reportArtifactResult` → `window._reportArtifactResult` JCEF bridge → `AgentController.parseAndDispatchArtifactResult` → `ArtifactResultRegistry.reportResult(renderId, result)` → the suspended `CompletableDeferred` in `renderAndAwait` completes → tool returns a structured `ToolResult`.
 
 **Key components:**
-- **`ArtifactResultRegistry`** (`@Service(Service.Level.PROJECT)` in `tools/builtin/`) — owns `ConcurrentHashMap<String, CompletableDeferred<ArtifactRenderResult>>`. `renderAndAwait(payload, timeout=30s)`.
-- **`ArtifactRenderResult`** (sealed class in `tools/AgentTool.kt`) — `Success(heightPx)`, `RenderError(phase, message, missingSymbols, line)`, `Timeout(timeoutMillis)`, `Skipped(reason)`.
-- **Missing-symbol extraction** (`extractMissingSymbols` in `sandbox-main.ts`) — regex-parses V8 ReferenceError/TypeError phrasings to produce `missingSymbols: string[]`.
-- **Exactly-once reporting**: `ArtifactRenderer` holds `reportedRef`, reset on source/renderId change. Stale iframe messages rejected by `isForCurrentRender` guard.
+- **`ArtifactResultRegistry`** (`@Service(Service.Level.PROJECT)` in `tools/builtin/`) — owns `ConcurrentHashMap<String, CompletableDeferred<ArtifactRenderResult>>` keyed by renderId. `renderAndAwait(payload, timeout=30s)` registers a deferred, invokes the push callback, and suspends on `deferred.await()` under `withTimeoutOrNull`. Push callback is set by `AgentController.init` and cleared in `dispose`.
+- **`ArtifactRenderResult`** (sealed class in `tools/AgentTool.kt`) — `Success(heightPx)`, `RenderError(phase, message, missingSymbols, line)`, `Timeout(timeoutMillis)`, `Skipped(reason)`. The LLM sees structured content reflecting the actual outcome.
+- **Missing-symbol extraction** (`extractMissingSymbols` in `sandbox-main.ts`) — regex-parses three common V8 ReferenceError/TypeError phrasings to produce `missingSymbols: string[]` in the error payload. This is the primary signal for self-repair: `RenderArtifactTool` includes the list verbatim plus `SCOPE_HINT` in the failure tool result so the LLM has everything it needs to rewrite the component on the next turn.
+- **`_reportArtifactResult`** JCEF JS→Kotlin bridge, registered in `AgentCefPanel` alongside other `JBCefJSQuery`s. Forwards the JSON payload to `AgentController.parseAndDispatchArtifactResult`, which never throws (malformed payloads are dropped with a warning).
 
-## Revert Architecture
+**Exactly-once reporting.** `ArtifactRenderer` holds a `reportedRef` to ensure each render round-trip fires exactly one Kotlin report. Reset on source/renderId change for a fresh slot. Kotlin side is also idempotent on unknown renderId (late postbacks after timeout are no-ops). Stale iframe messages (from a previous render still in flight when props change) are rejected by an `isForCurrentRender` guard that compares `data.renderId` to the current closure.
 
-`revert_file` tool provides single-file revert. `RunCommandTool` blocks destructive git commands (`git checkout`, `git reset`, `git restore`, `git clean`) via `SAFE_GIT_SUBCOMMANDS` allowlist and guides the LLM toward `revert_file`.
+**Inline markdown fences.** The `MarkdownRenderer` path (```artifact``` code fence in LLM text) renders via the same `ArtifactRenderer` component but without a renderId — the component renders locally and does not report back to Kotlin (no suspended tool call to resolve).
+
+## Plan Persistence (Three Layers)
+
+1. **Disk** — `plan.json` in session directory (`PlanPersistence`)
+2. **Context** — `<active_plan>` system message with structured summary, updated in-place via `bridge.planAnchor`; also recorded as `PlanUpdatedAction` in EventStore
+3. **UI** — Editor tab + chat card, real-time step updates
+
+## Checkpoint/Revert Architecture
+
+Three revert paths, one notification flow:
+
+1. **LLM tool** — `rollback_changes` (full checkpoint) or `revert_file` (single file)
+2. **User revert button** — Checkpoint timeline revert in EditStatsBar
+3. **User undo button** — Footer undo button in chat UI
+
+All paths:
+- Use `AgentRollbackManager` (LocalHistory primary, git checkout per-file fallback)
+- Record `RollbackEntry` in `ChangeLedger` (append-only, persisted to changes.jsonl)
+- Update context anchor (LLM sees effective stats excluding rolled-back entries)
+- Push to UI via `notifyRollback()` bridge (greyed-out tool calls + RollbackCard)
+
+**Stats computation:** `totalStats()` and `fileStats()` exclude entries whose IDs appear in any `RollbackEntry.rolledBackEntryIds`.
+
+**Git command blocking:** `RunCommandTool` blocks `git checkout`, `git reset`, `git restore`, `git clean` via `SAFE_GIT_SUBCOMMANDS` allowlist, and guides the LLM toward `rollback_changes` / `revert_file`.
+
+**Created files:** `AgentRollbackManager.trackFileCreation()` ensures new files are deleted (not git-checkout'd) on rollback.
 
 ## Conversation Persistence & Durable Execution
 
@@ -263,25 +294,38 @@ Faithful port of Cline's two-file session persistence (message-state.ts + disk.t
         ├── api_conversation_history.json  # List<ApiMessage> — what goes to the LLM
         ├── ui_messages.json               # List<UiMessage> — what the chat UI shows
         ├── .lock                          # Per-session FileLock (prevents dual-instance)
-        └── plan.json                      # Plan state (if active)
+        ├── plan.json                      # Plan state (if active)
+        └── checkpoints/                   # Named checkpoints after write operations
 ```
 
 **Save cadence:** Per-change under `kotlinx.coroutines.sync.Mutex` (ports Cline's p-mutex). Every `addToClineMessages`, `updateClineMessage`, `addToApiConversationHistory` atomically rewrites the file via write-then-rename. No timer, no batching.
 
 **Key classes:**
 - `MessageStateHandler` — owns both in-memory arrays + mutex + save logic
+- `AtomicFileWriter` — write to temp then `Files.move(ATOMIC_MOVE)`
 - `SessionLock` — `java.nio.channels.FileLock` on `.lock` file
+- `ResumeHelper` — trim logic + taskResumption preamble builder
+- `SessionMigrator` — converts old JSONL sessions on startup (idempotent)
 
-**Streaming persistence:** Every LLM chunk persists with `partial: true`. On stream end, flipped to `partial: false`. On abort: synthetic assistant turn with `[Response interrupted by user]` marker.
+**Streaming persistence:** Every LLM chunk persists with `partial: true`. On stream end, flipped to `partial: false`. On abort: synthetic assistant turn with `[Response interrupted by user]` marker. Crash at any point leaves consistent state.
 
-**Resume flow:**
+**Resume flow (port of Cline's resumeTaskFromHistory):**
 1. Load `ui_messages.json` then trim trailing resume/cost-less messages
-2. Load `api_conversation_history.json` then pop trailing user message if interrupted
+2. Load `api_conversation_history.json` then pop trailing user message if interrupted mid-submission
 3. Acquire session lock
-4. Push full `ui_messages` to webview via `_loadSessionState` bridge
+4. Push full `ui_messages` to webview via `_loadSessionState` bridge (rehydrates every bubble)
 5. Build `[TASK RESUMPTION]` preamble with time-ago and optional user text
-6. Rebuild ContextManager with `ApiMessage.toChatMessage()` conversion
+6. Rebuild ContextManager with lossless `ApiMessage.toChatMessage()` conversion
 7. Continue execution via `initiateTaskLoop(newUserContent)`
+
+**Mid-stream abort (port of Cline's abortStream):**
+- Flip last `partial` message to `partial=false`
+- Append synthetic assistant: `text + "\n\n[Response interrupted by user]"`
+- Never replay an in-flight tool call
+
+**UiMessage cross-link:** `conversationHistoryIndex = apiHistory.size - 1` set on every `addToClineMessages`. Maps each UI bubble to its corresponding API message for edit-from-here and checkpoint reversion.
+
+**Global index:** `sessions.json` (List<HistoryItem>) updated atomically under a separate `globalIndexMutex` on every state change. History panel reads this for the session list.
 
 ## Three-Tier Memory System
 
@@ -289,24 +333,31 @@ Faithful port of Cline's two-file session persistence (message-state.ts + disk.t
 - Location: `~/.workflow-orchestrator/{proj}/agent/core-memory.json`
 - Fixed-size key-value store, injected as `<core_memory>` in system prompt
 - Self-editable by agent via `core_memory_read`, `core_memory_append`, `core_memory_replace` tools
+- Use for: build system quirks, key file paths, user preferences, active constraints
 - Loaded at session start by `CoreMemory.forProject()`
 
 ### Tier 2: Archival Memory (searchable, unlimited)
 - Location: `~/.workflow-orchestrator/{proj}/agent/archival/store.json`
 - JSON-backed store with LLM-generated tags for keyword search
-- Insert via `archival_memory_insert`, search via `archival_memory_search`
-- Tag-boosted keyword matching (3x tag boost, sub-millisecond for <5K entries)
+- Insert via `archival_memory_insert` (requires tags for searchability)
+- Search via `archival_memory_search` (keyword matching with 3x tag boost)
+- Types: error_resolution, code_pattern, decision, api_behavior, project_convention, agent_memory
 - Cap: 5000 entries, oldest evicted when full
+- No ML models — uses tag-boosted keyword matching (sub-millisecond for <5K entries)
 
 ### Tier 3: Conversation Recall (past session search)
-- `conversation_search` tool for keyword search across past session transcripts
+- Searches api_conversation_history.json across all past sessions
+- `conversation_search` tool for keyword search
+- Returns matching messages with session context
 - Read-only — sessions persisted by MessageStateHandler
 
 ### Legacy: Markdown Memory
 - Location: `~/.workflow-orchestrator/{proj}/agent/memory/`
-- `save_memory` tool, loaded via `AgentMemoryStore.loadMemories()`
+- Index: `MEMORY.md` (first 200 lines loaded at session start)
+- LLM saves via `save_memory` tool, loaded via `AgentMemoryStore.loadMemories()`
+- Injected as `<agent_memory>` section (kept for backward compatibility)
 
-### Memory Tools (7 total)
+### Memory Tools (6 new + 1 legacy)
 | Tool | Tier | Description |
 |------|------|-------------|
 | `core_memory_read` | Core | Read current core memory block |
@@ -319,20 +370,36 @@ Faithful port of Cline's two-file session persistence (message-state.ts + disk.t
 
 ### Auto-Memory System (Retrieval-Only)
 
-One automatic trigger — session-start retrieval (keyword extraction + archival search + staleness filter, zero LLM cost). No automatic session-end extraction.
+Memory is user-managed, not system-extracted. There is one automatic trigger:
+
+| Trigger | When | Mechanism | Cost |
+|---------|------|-----------|------|
+| Session-start retrieval | Before first LLM call | Keyword extraction + archival search + staleness filter | Zero (no LLM) |
+
+There is NO automatic session-end extraction. Users populate memory manually via the memory tools (`core_memory_append`, `archival_memory_insert`, etc.) or by editing the Memory settings page directly. This avoids the silent-poisoning risk where a cheap extractor saves misread facts that the user never sees or approves.
 
 **Key files:**
 - `memory/auto/AutoMemoryManager.kt` — retrieval-only wrapper around `RelevanceRetriever`
-- `memory/auto/RelevanceRetriever.kt` — keyword-based archival search with staleness filter (suppresses entries mentioning missing file paths)
+- `memory/auto/RelevanceRetriever.kt` — keyword-based archival search with staleness filter for prompt injection
 
-Gated by `AgentSettings.state.autoMemoryEnabled` (default true).
+**Lifecycle:** `AutoMemoryManager` is lazily initialized in `AgentService.ensureAutoMemory()`. No LLM client is required. Gated by `AgentSettings.state.autoMemoryEnabled` (default true — disabling turns off the `<recalled_memory>` injection).
+
+**Staleness filter:** `RelevanceRetriever` takes an injected `pathExists: (String) -> Boolean` predicate. If a recalled archival entry mentions file paths AND all mentioned paths are missing under `project.basePath`, the entry is suppressed. The path-extraction regex excludes URL fragments so URL-only archival entries (Jira board links, etc.) pass through untouched.
+
+**System prompt:** `<recalled_memory>` section injected after `<core_memory>` when relevant archival entries are found. `SystemPrompt.memory()` tells the agent to treat manual memory tools as a last resort ("only when the user literally says 'remember this'") and to trust the file over recalled memory on contradiction.
 
 ### Memory Management UI
 
-**Settings page:** Tools → Workflow Orchestrator → AI Agent → Memory
-- Toggle retrieval on/off, view/edit core memory blocks, clear memory with confirmation
+**Settings page:** Tools → Workflow Orchestrator → AI Agent → Memory (`AgentMemoryConfigurable`)
+- Toggle retrieval on/off
+- View and edit core memory blocks (user, project, patterns) as editable text areas — saved on Apply
+- View archival memory entry count
+- Clear core memory / archival memory / all memory (each with confirmation dialog)
+- Reloads memory from disk each time the page is opened, so it always reflects the latest state on disk
 
-**TopBar indicator:** Badge showing `◆ {coreKB} | {archivalCount}`. Click opens Settings.
+**TopBar indicator:** Small badge in the agent chat TopBar showing `◆ {coreKB} | {archivalCount}` — core memory character count (displayed as N below 1000, X.XK at/above 1000) and archival entry count. Click opens the Settings dialog. Stats pushed from `AgentController.pushMemoryStats()` at task start and on completion.
+
+- `think` tool: no-op reasoning pause, proven 54% improvement on complex tasks (Anthropic data)
 
 ## Interactive Debugging
 
@@ -342,7 +409,7 @@ Agent has full programmatic access to IntelliJ's debugger via `AgentDebugControl
 - **Inspection**: Get debug state, stack frames, variables (recursive with depth control), evaluate expressions
 - **Run configs**: Create/modify/delete IntelliJ run configurations (`[Agent]` prefix for safety)
 - **Async pattern**: `MutableSharedFlow(replay=1)` wraps XDebugger's callback-based API into coroutines
-- **Skills**: `systematic-debugging` (with escalation) + `interactive-debugging` (LLM-only, activated on escalation)
+- **Skills**: `systematic-debugging` (updated with escalation) + `interactive-debugging` (LLM-only, activated on escalation)
 
 ## User-Extensible Skills
 
@@ -351,9 +418,10 @@ Agent has full programmatic access to IntelliJ's debugger via `AgentDebugControl
 - User: `~/.workflow-orchestrator/skills/{name}/SKILL.md`
 - Project overrides user if same name
 - Discovery: descriptions loaded at session start, full content on activation
-- Invocation: `/skill-name args` in chat, toolbar dropdown, or LLM calls `use_skill(skill_name="name")`
-- Active skill injected into system prompt (survives compaction via rebuild)
-- Built-in skills: `systematic-debugging`, `interactive-debugging`, `create-skill`, `git-workflow`, `brainstorm`, `writing-plans`, `tdd`, `subagent-driven`
+- Invocation: `/skill-name args` in chat, toolbar dropdown, or LLM calls `skill(skill="name")`
+- Active skill injected as `<active_skill>` system message (compression-proof via `skillAnchor`)
+- Built-in skills: `systematic-debugging`, `interactive-debugging`, `create-skill`, `git-workflow`, `brainstorm`, `writing-plans`, `tdd`, `subagent-driven` ship with the plugin from resources
+- Supporting files: non-SKILL.md files in skill directory listed via `getSupportingFiles()`
 
 **Frontmatter fields:**
 | Field | Default | Description |
@@ -362,15 +430,16 @@ Agent has full programmatic access to IntelliJ's debugger via `AgentDebugControl
 | `description` | -- | When to use. LLM uses this for auto-invocation |
 | `disable-model-invocation` | false | true = only user can invoke, hidden from LLM |
 | `user-invocable` | true | false = only LLM can invoke, hidden from / menu |
-| `allowed-tools` | null | Hard tool whitelist when skill active |
-| `preferred-tools` | [] | Soft tool preference (additive) |
-| `context` | -- | "fork" = run in isolated subagent |
+| `allowed-tools` | null | Hard tool whitelist when skill active (overrides all selection) |
+| `preferred-tools` | [] | Soft tool preference (additive, not restrictive) |
+| `context` | -- | "fork" = run in isolated WorkerSession (10 iter, 5 min timeout) |
 | `agent` | -- | Subagent type when context: fork |
 | `argument-hint` | -- | Autocomplete hint for arguments |
 
 **Substitutions:** `$ARGUMENTS`, `$1`-`$N`, `${CLAUDE_SKILL_DIR}`
 **Dynamic injection:** `` !`command` `` runs shell at preprocessing time (10s per cmd, 30s total, 10K cap)
-**Description budget:** 2% of context window (max 16K chars).
+**Description budget:** 2% of context window (max 16K chars). Excess skills hidden with warning.
+**Context fork:** Skills with `context: fork` execute in a fresh `WorkerSession` with scoped tools, returning a summary to the orchestrator.
 
 ## Agent Tool (Subagent Management)
 
@@ -382,23 +451,36 @@ The `agent` tool spawns, resumes, and manages subagent workers:
 **Kill:** `agent(kill="agentId")` — cancels a running background agent
 **Send:** `agent(send="agentId", message="focus on service layer")` — sends instruction to running worker
 
+**Transcript persistence:** All worker conversations are saved to `~/.workflow-orchestrator/{proj}/agent/sessions/{sessionId}/subagents/agent-{id}.jsonl`. Resume reconstructs the full conversation context from the transcript.
+
+**Background notifications:** When a background agent completes, the parent is notified via a system message injected into the conversation context (`<background_agent_completed>` tag) and a UI status message in the chat panel.
+
 **Built-in types:** general-purpose, explorer (PSI-powered, read-only, thoroughness: quick/medium/very thorough), coder, reviewer, tooler
-**Bundled specialist agents** (from `agent/src/main/resources/agents/`): code-reviewer, architect-reviewer, test-automator, spring-boot-engineer, refactoring-specialist, devops-engineer, security-auditor, performance-engineer — overridable by user/project agents
-**Custom types:** Any agent defined in `.workflow/agents/{name}.md` or `~/.workflow-orchestrator/agents/{name}.md`
+**Bundled specialist agents:** code-reviewer, architect-reviewer, test-automator, spring-boot-engineer, refactoring-specialist, devops-engineer, security-auditor, performance-engineer (loaded from plugin resources, overridable by user/project agents)
+**Custom types:** Any agent defined in `.workflow/agents/{name}.md`
 
 ## Subagent Coordination
 
 ### File Ownership
-`FileOwnershipRegistry` (in `SubagentModels.kt`) prevents concurrent workers from editing the same file. Write tools acquire ownership before proceeding; `read_file` warns if owned by another worker. Released on worker completion/failure/kill. Orchestrator exempt, whole-file granularity.
+`FileOwnershipRegistry` prevents concurrent workers from editing the same file. Write tools (`edit_file`, `create_file`) acquire ownership before proceeding; `read_file` warns if the file is owned by another worker. Ownership is released when workers complete, fail, or are killed.
+
+- Orchestrator is exempt from ownership checks
+- Whole-file granularity (not line-level)
+- Canonical paths prevent aliasing
 
 ### Parent↔Child Messaging
-`WorkerMessageBus` (in `SubagentModels.kt`) enables bidirectional communication via Kotlin `Channel(capacity=20, DROP_OLDEST)`. Messages consumed at ReAct loop iteration boundaries.
+`WorkerMessageBus` enables bidirectional communication via Kotlin `Channel(capacity=20, DROP_OLDEST)`:
+
+- **Parent → Child:** `agent(send="agentId", message="...")` sends `INSTRUCTION` to worker's inbox
+- **Child → Parent:** `send_message_to_parent(type="finding|status_update", content="...")` sends to orchestrator inbox
+- **System:** `FILE_CONFLICT` messages auto-sent on ownership denial
+- Messages consumed at ReAct loop iteration boundaries (not instant)
 
 ### WorkerContext
-Coroutine context element carrying `agentId`, `workerType`, `messageBus`, and `fileOwnership` to all tools within a worker's scope.
+Coroutine context element (`AbstractCoroutineContextElement`) carrying `agentId`, `workerType`, `messageBus`, and `fileOwnership` to all tools within a worker's scope. Set via `withContext(WorkerContext(...))` in `WorkerSession.execute()`.
 
 ### No Wall-Clock Timeouts
-Workers are bounded by iteration limits (default 32) and context budget, not wall-clock timeouts.
+Workers are bounded by iteration limits (default 32) and context budget (150K), not wall-clock timeouts. This matches Claude Code, Codex CLI, Cursor, and Cline — no enterprise coding agent uses hard timeouts on sub-agents.
 
 ## Custom Subagents
 
@@ -418,45 +500,90 @@ User-definable agent definitions via markdown files with YAML frontmatter:
 | `skills` | [] | Skills preloaded at startup |
 | `memory` | none | Persistent memory: user/project/local |
 
-## Observability
+**Memory locations:**
+- `user`: `~/.workflow-orchestrator/agent-memory/{name}/`
+- `project`: `.workflow/agent-memory/{name}/`
+- `local`: `.workflow/agent-memory-local/{name}/`
 
-### SessionMetrics
-Per-session metrics accumulator (`observability/SessionMetrics.kt`). Records tool durations, API latencies, counts.
+Invoked via `agent(subagent_type="name", prompt="...")`. LLM sees available subagent descriptions in system prompt.
 
-### AgentFileLogger
-Structured JSONL agent logs (`observability/AgentFileLogger.kt`). Location: `~/.workflow-orchestrator/{proj}/logs/agent-YYYY-MM-DD.jsonl`. 7-day retention.
+## Evaluation & Observability
+
+### SessionScorecard
+
+End-of-session quality scorecard computed at every session exit point (completed, failed, cancelled, rotated). Captures:
+
+- **SessionScorecardMetrics** — iterations, tool calls (total + unique), errors, compressions, input/output tokens, estimated cost (Claude Sonnet pricing baseline), plan progress, self-correction stats, approvals, subagent count, duration
+- **QualitySignals** — hallucination flags (OutputValidator), credential leak attempts (CredentialRedactor), doom loop triggers (LoopGuard), circuit breaker trips (AgentMetrics), guardrail hits, files edited/verified/exhausted (SelfCorrectionGate)
+
+Computed via `SessionScorecard.compute()` which pulls from `AgentMetrics.snapshot()`, `SelfCorrectionGate.getFileStates()`, and `PlanManager.currentPlan`. Wired into `SingleAgentResult.Completed`, `Failed`, and `ContextRotated`.
+
+### MetricsStore
+
+Persists scorecards as JSON files for trend analysis:
+- Location: `~/.workflow-orchestrator/{proj}/agent/metrics/scorecard-{sessionId}.json`
+- `save(scorecard)` / `load(sessionId)` / `loadAll()` / `loadRecent(limit)`
+- `getSummaryStats()` — aggregate: completion rate, avg cost, avg iterations, total quality signal counts
+- `cleanup(maxAge, maxCount)` — evicts old scorecards (default: 30 days, 100 max)
+
+Auto-persisted by `AgentOrchestrator` after each `SingleAgentSession.execute()` returns.
 
 ## Security
 
-- **PathValidator** (`tools/builtin/PathValidator.kt`) — canonical path comparison prevents traversal (`../../etc/passwd`)
-- **CommandSafetyAnalyzer** (`security/CommandSafetyAnalyzer.kt`) — risk classification for shell commands
-- **SAFE_GIT_SUBCOMMANDS** (`RunCommandTool`) — allowlist blocks destructive git commands
+- **PathValidator** — canonical path comparison prevents traversal (`../../etc/passwd`)
+- **CredentialRedactor** — redacts private keys, AWS/GitHub/Sourcegraph tokens from output
+- **OutputValidator** — flags sensitive data in LLM responses
+- **InputSanitizer** — validates tool input parameters
+- **External data tags** — tool results wrapped in `<external_data>` for prompt injection defense
+- **Plan editor** — file click handler validates path within project basePath
 
 ## Rich Chat UI
 
 **Full JCEF Architecture:**
 - Entire agent tab is a single `JBCefBrowser` — toolbar, chat, and input all rendered in HTML/CSS/JS
 - `AgentDashboardPanel` is a thin Swing wrapper hosting `AgentCefPanel`
-- 24+ `JBCefJSQuery` bridges for JS→Kotlin communication
+- 24 `JBCefJSQuery` bridges for JS→Kotlin communication
+- Same HTML page reusable in editor tabs and popup windows
 - Bolt-style glassmorphic input bar with gradient glow, auto-expand, model/plan/skills chips
 
 JCEF-based (Chromium) rendering with bundled libraries (zero CDN dependency):
 
-**Core (always loaded):** marked.js, Prism.js, DOMPurify, ansi_up
-**Lazy-loaded:** dagre.js (flow diagrams), Mermaid.js, KaTeX (math), Chart.js, diff2html
+**Core (always loaded, ~32KB gzipped):**
+- marked.js — Markdown parsing with GFM, custom renderers
+- Prism.js — Syntax highlighting (297 languages, on-demand autoloader)
+- DOMPurify — XSS prevention on all LLM-rendered HTML
+- ansi_up — ANSI terminal colors in command output
 
-**Animated visualization formats:**
-- ```flow — dagre-laid-out SVG with animated particle dots
-- ```mermaid — staggered entrance + flowing dash animation
-- ```chart — Chart.js with easeOutQuart animation
-- ```visualization / ```viz — sandboxed iframe
-- ```diff / ```patch — side-by-side diffs via diff2html
+**Lazy-loaded (on first use):**
+- dagre.js (~284KB) — Graph layout engine for ```flow animated data flow diagrams
+- Mermaid.js (~250KB) — Diagrams from ```mermaid code blocks (animated entrance + flowing edges)
+- KaTeX (~320KB) — LaTeX math from $...$ and $$...$$ expressions
+- Chart.js (~65KB) — Interactive animated charts from ```chart JSON configs
+- diff2html (~40KB) — Side-by-side diffs from ```diff code blocks
 
-**Streaming-aware rendering:** Open code blocks during streaming show skeleton placeholders. `_detectOpenRichBlock()` tracks fence pairs.
+**Animated visualization formats (all have animations — no static output):**
+- ```flow — Animated data flow diagrams: dagre-laid-out SVG with node entrance, edge draw, and glowing particle dots that continuously flow along paths (via SVG `<animateMotion>`). LLM outputs JSON `{nodes, edges, title, direction}`.
+- ```mermaid — Staggered node entrance + edge draw animation, then persistent subtle flowing dash animation on all edges after entrance completes.
+- ```chart — Chart.js with injected `easeOutQuart` animation, staggered per data point (80ms) and dataset (200ms).
+- ```visualization / ```viz — Custom HTML/CSS/JS in sandboxed iframe with theme variables.
+- ```diff / ```patch — Side-by-side diffs via diff2html.
 
-**IDE-native features:** click-to-navigate file paths, Jira card embeds, Sonar badges, @ mention autocomplete (files, folders, symbols, tools, skills), toast notifications
+**Streaming-aware rendering:** Open (unclosed) rich code blocks during streaming show skeleton placeholders instead of raw syntax. `_detectOpenRichBlock()` tracks fence pairs; `_renderStreamingMarkdown()` renders completed content normally and shows shimmer skeleton for in-progress blocks.
 
-**Resource serving:** `CefResourceSchemeHandler` serves from plugin JAR via `http://workflow-agent/` scheme. CSP: `connect-src: 'none'`.
+**Working indicator:** Bouncing dots + rotating text ("Working", "Thinking", "Analyzing"...) above input bar. Shows on sendMessage(), hides on first token/tool call.
+
+**IDE-native features:**
+- Click-to-navigate file paths (opens file at line in IDE editor)
+- Jira card embeds with status/priority/assignee
+- Sonar quality gate badges with metrics
+- @ mention autocomplete: type @ to reference files, folders, symbols, tools, skills.
+  @file reads content via Document API (sees unsaved changes) and injects into LLM context.
+  @folder injects directory tree. Content stored as compression-proof mentionAnchor.
+  Budget: 500 lines / 20K per file, 50K total.
+- Toast notifications, skeleton loading, timeline visualization
+- Sortable/filterable tables, tabbed content, progress bars
+
+**Resource serving:** `CefResourceSchemeHandler` serves all resources from plugin JAR via `http://workflow-agent/` scheme, loading from `webview/dist/` (Vite build output). CSP enforced: `connect-src: 'none'` (no outbound network).
 
 ## React Webview Architecture
 
@@ -469,32 +596,58 @@ The chat UI is a React + TypeScript app built with Vite, located in `agent/webvi
 cd agent/webview && npm run build    # Output: agent/src/main/resources/webview/dist/
 ```
 
+**Directory structure:**
+```
+agent/webview/
+  src/
+    bridge/         # JCEF bridge protocol (jcef-bridge.ts, globals.d.ts, types.ts)
+    components/     # React components (chat/, rich/, common/, input/)
+    stores/         # Zustand stores (chatStore, themeStore, settingsStore)
+    styles/         # Tailwind + theme CSS
+    App.tsx         # Root component
+    main.tsx        # Entry point
+  vite.config.ts    # Vite config (outputs to ../src/main/resources/webview/dist/)
+```
+
 **Bridge protocol:**
-- **Kotlin → JS:** `AgentCefPanel.callJs()` invokes global JS functions registered by `initBridge()` in `jcef-bridge.ts`
-- **JS → Kotlin:** `kotlinBridge` object wraps `JBCefJSQuery` bridges injected as `window._xxx` globals
+- **Kotlin -> JS (42 functions):** `AgentCefPanel.callJs()` invokes global JS functions registered by `initBridge()` in `jcef-bridge.ts`. Functions map directly to Zustand store actions.
+- **JS -> Kotlin (26 functions):** `kotlinBridge` object wraps `JBCefJSQuery` bridges injected as `window._xxx` globals. React components call `kotlinBridge.sendMessage()`, etc.
+- **Editor tab popout:** `openInEditorTab(type, content)` sends visualization content to Kotlin via `_openInEditorTab` bridge, which opens an `AgentVisualizationEditor` tab.
 
 **Key files:**
 - `bridge/jcef-bridge.ts` — All bridge function definitions and initialization
 - `bridge/globals.d.ts` — TypeScript declarations for Kotlin-injected window globals
 - `stores/chatStore.ts` — Primary state: messages, streaming, plans, questions, tool calls
 - `stores/themeStore.ts` — IDE theme variables synced from Kotlin
+- `stores/settingsStore.ts` — Visualization settings (per-type expanded/collapsed + max-height)
 
 ## Streaming Text Pipeline
 
-Two layers between raw SSE token and rendered DOM:
+Two layers sit between a raw SSE token and the rendered DOM; both are required to keep the UI responsive without flashing on stream end.
 
-1. **StreamBatcher** (Kotlin, `agent/ui/StreamBatcher.kt`): 16ms EDT timer coalesces rapid chunks into single bridge calls (~5000 → ~300 per response).
-2. **chatStore streaming-message model**: `appendToken()` creates/updates a placeholder `Message` in-place. `endStream()` just clears `activeStream`. Same `AgentMessage` component renders both streaming and finalized — no mount/unmount flash.
+1. **StreamBatcher** (Kotlin, `agent/ui/StreamBatcher.kt`): 16ms EDT timer coalesces rapid chunks into single bridge calls (~5000 → ~300 per response). Disposer-registered lifecycle. The purpose is to keep JCEF bridge cost bounded, not to smooth visible animation.
+2. **chatStore streaming-message model**: `appendToken()` creates a placeholder `Message` in `chatStore.messages` on the first token and stores its id in `activeStream.messageId`. Subsequent tokens update that specific message's `content` in place via `messages.map(m => m.id === id ? {...m, content: m.content + token} : m)`, which returns every other message by reference so `React.memo` on `AgentMessage` skips re-rendering them. `endStream()` just clears `activeStream`. The placeholder stays in `messages`.
 
-**Incomplete code fences** render as plain `<pre class="streaming-code-plain">` until closed, then swap to Shiki-backed `CodeBlock`.
-**Module-scope invariant:** `MarkdownRenderer.tsx` declares `COMPONENTS`, `REMARK_PLUGINS`, `REHYPE_PLUGINS` at module scope (inline literals defeat Streamdown's per-block `React.memo`).
+`ChatView` renders every agent message — streaming or finalized — through the same `AgentMessage` component, passing `isStreaming={activeStream?.messageId === msg.id}`. Because there is only one render path, the stream→finalized transition is a prop update on a stable component instance: no mount/unmount, no DOM structure change, no flash. Regression tests in `agent/webview/src/__tests__/streaming-markdown.test.tsx` lock this in via DOM `Element` object identity and a `useEffect` mount counter; `chat-store-streaming.test.ts` locks in the store-level contract (single placeholder, in-place updates, `endStream` as a no-op on `messages`, non-streaming messages keep reference identity).
+
+**Incomplete code fences** render as plain `<pre class="streaming-code-plain">` until the fence closes; once closed they swap to the Shiki-backed `CodeBlock`. Gated by `streamdown`'s `useIsCodeFenceIncomplete()` hook, which tracks whether the currently-last block still has an open fence.
+
+**Module-scope invariant.** `MarkdownRenderer.tsx` declares `COMPONENTS`, `REMARK_PLUGINS`, and `REHYPE_PLUGINS` at module scope. Inline literals defeat Streamdown's per-block `React.memo` and cause every token to re-render every block — documented in the Streamdown 2.x changelog for `linkSafety`.
+
+**What we removed (from the earlier 5-layer pipeline):**
+- `usePresentationBuffer` — RAF character drip. Released chars slower than the LLM's actual stream rate, creating growing visible latency. Streamdown + the Kotlin batcher give real-time rendering without drift.
+- `BlurTextStream` — `motion/react` per-char animation with `filter: blur(2px)`. Under CEF off-screen rendering (which JCEF uses), there is no GPU-accelerated compositing, so `filter: blur()` runs on the CPU every frame. This was the dominant cost of the old pipeline.
+- `useBlockSplitter` — ad-hoc blank-line + closed-fence scanner. Streamdown's `parseMarkdownIntoBlocks` (via `marked.lexer`) is GFM-aware and handles HTML, math, tables, and footnotes correctly.
+- `chatAnimationsEnabled` — the setting and its full bridge plumbing (webview `settingsStore`, `jcef-bridge`, Kotlin `AgentSettings`, `AgentAdvancedConfigurable`, `AgentDashboardPanel`, `AgentCefPanel`, `AgentController`) were removed. If motion comes back in the future, it should be a new setting with a clear purpose (e.g., `streamdownWordFadeEnabled`) rather than a reanimated legacy flag.
+
+**Visualization popout:** `AgentVisualizationTab.kt` provides `FileEditor` + `FileEditorProvider` + `LightVirtualFile` for opening visualizations (mermaid, chart, flow, etc.) in IDE editor tabs.
 
 ## Testing
 
 ```bash
-./gradlew :agent:test                    # All agent tests (~112 test files)
+./gradlew :agent:test                    # All agent tests (~470)
 ./gradlew :agent:test --tests "...Test"  # Specific test class
-./gradlew :agent:clean :agent:test --rerun --no-build-cache  # Clean rebuild
+./gradlew :agent:clean :agent:test --rerun --no-build-cache  # Clean rebuild (needed after constructor changes)
 ```
 
 Key test patterns: JUnit 5 + MockK + `@TempDir` for file I/O, `runTest` for coroutines, `mockk<Project>` for IntelliJ services.

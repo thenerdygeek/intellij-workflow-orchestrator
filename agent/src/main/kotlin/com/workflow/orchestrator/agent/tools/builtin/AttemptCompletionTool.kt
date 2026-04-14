@@ -32,7 +32,9 @@ class AttemptCompletionTool : AgentTool {
     override val allowedWorkers = setOf(WorkerType.ORCHESTRATOR)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+        // Cline pattern: canonicalize "response" → "result" (ToolExecutor.ts:34-41)
         val result = params["result"]?.jsonPrimitive?.content
+            ?: params["response"]?.jsonPrimitive?.content
             ?: return ToolResult(
                 content = "Missing required parameter: result",
                 summary = "attempt_completion failed: missing result",

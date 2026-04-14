@@ -1211,9 +1211,10 @@ class AgentService(private val project: Project) : Disposable {
         // Build task resumption preamble
         val lastActivityTs = savedUiMessages.lastOrNull()?.ts ?: System.currentTimeMillis()
         val agoText = ResumeHelper.formatTimeAgo(lastActivityTs)
+        val wasRecent = lastActivityTs > 0 && System.currentTimeMillis() - lastActivityTs < ResumeHelper.RECENT_RESUME_THRESHOLD_MS
         val mode = if (planModeActive.get()) "plan" else "act"
         val cwd = project.basePath ?: ""
-        val preamble = ResumeHelper.buildTaskResumptionPreamble(mode, agoText, cwd, userText)
+        val preamble = ResumeHelper.buildTaskResumptionPreamble(mode, agoText, cwd, userText, wasRecent)
 
         // Build new user content: preamble + any popped content
         val newUserContent = buildList {

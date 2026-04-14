@@ -240,4 +240,83 @@ class AgentLoopHookIntegrationTest {
         val result = loop.run("Complete task")
         assertTrue(result is LoopResult.Completed)
     }
+
+    // ── POST_TOOL_USE contextModification is injected into context ───────
+
+    @Test
+    fun `PostToolUse hook contextModification is injected into context`() = runTest {
+        val fakeRunner = FakeHookRunner()
+        // Return contextModification from the POST_TOOL_USE hook
+        fakeRunner.nextResult = HookResult.Proceed(contextModification = "Lint: 2 warnings in a.kt")
+
+        val hookManager = HookManager(fakeRunner)
+        hookManager.register(HookConfig(type = HookType.POST_TOOL_USE, command = "lint-check"))
+
+        val brain = SequenceBrain(listOf(
+            ApiResult.Success(toolCallResponse("attempt_completion"))
+        ))
+
+        val loop = AgentLoop(
+            brain = brain,
+            tools = mapOf("attempt_completion" to completionTool()),
+            toolDefinitions = emptyList(),
+            contextManager = contextManager,
+            project = project,
+            hookManager = hookManager,
+            sessionId = "test-session"
+        )
+
+        loop.run("Complete the task")
+
+        // POST_TOOL_USE hook must have fired
+        assertEquals(1, fakeRunner.executionCount)
+
+        // contextModification must be injected as a user message with <hook_context> wrapper
+        val messages = contextManager.getMessages()
+        val hookContextMessage = messages.find { msg ->
+            msg.role == "user" && msg.content?.contains("Lint: 2 warnings in a.kt") == true
+        }
+        assertNotNull(hookContextMessage, "Expected <hook_context> user message with contextModification in context")
+        assertTrue(
+            hookContextMessage!!.content!!.contains("<hook_context source=\"PostToolUse\" tool=\"attempt_completion\">"),
+            "Expected hook_context XML wrapper with source and tool attributes"
+        )
+    }
+
+    @Test
+    fun `PostToolUse hook with null contextModification does not inject extra message`() = runTest {
+        val fakeRunner = FakeHookRunner()
+        // Proceed with no contextModification (default)
+        fakeRunner.nextResult = HookResult.Proceed(contextModification = null)
+
+        val hookManager = HookManager(fakeRunner)
+        hookManager.register(HookConfig(type = HookType.POST_TOOL_USE, command = "no-context-mod"))
+
+        val brain = SequenceBrain(listOf(
+            ApiResult.Success(toolCallResponse("attempt_completion"))
+        ))
+
+        val loop = AgentLoop(
+            brain = brain,
+            tools = mapOf("attempt_completion" to completionTool()),
+            toolDefinitions = emptyList(),
+            contextManager = contextManager,
+            project = project,
+            hookManager = hookManager,
+            sessionId = "test-session"
+        )
+
+        val messageCountBefore = contextManager.getMessages().size
+        loop.run("Complete the task")
+        val messageCountAfter = contextManager.getMessages().size
+
+        // POST_TOOL_USE hook must have fired
+        assertEquals(1, fakeRunner.executionCount)
+
+        // No extra hook_context message should be injected when contextModification is null
+        val hookContextMessages = contextManager.getMessages().filter { msg ->
+            msg.role == "user" && msg.content?.contains("<hook_context") == true
+        }
+        assertTrue(hookContextMessages.isEmpty(), "Expected no <hook_context> injection when contextModification is null")
+    }
 }

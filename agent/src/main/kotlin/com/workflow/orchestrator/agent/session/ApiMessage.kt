@@ -26,6 +26,14 @@ sealed interface ContentBlock {
     @Serializable
     @SerialName("image")
     data class Image(val mediaType: String, val data: String) : ContentBlock
+
+    @Serializable
+    @SerialName("thinking")
+    data class Thinking(val thinking: String, val summary: String? = null) : ContentBlock
+
+    @Serializable
+    @SerialName("redacted_thinking")
+    data class RedactedThinking(val data: String) : ContentBlock
 }
 
 @Serializable
@@ -53,6 +61,10 @@ fun ApiMessage.toChatMessage(): ChatMessage {
         .joinToString("\n") { it.text }
         .takeIf { it.isNotBlank() }
 
+    val thinkingContent = content.filterIsInstance<ContentBlock.Thinking>()
+        .joinToString("\n") { it.thinking }
+        .takeIf { it.isNotBlank() }
+
     val toolUses = content.filterIsInstance<ContentBlock.ToolUse>()
     val toolResults = content.filterIsInstance<ContentBlock.ToolResult>()
 
@@ -63,7 +75,8 @@ fun ApiMessage.toChatMessage(): ChatMessage {
             content = textContent,
             toolCalls = toolUses.map { tu ->
                 CoreToolCall(id = tu.id, function = FunctionCall(name = tu.name, arguments = tu.input))
-            }
+            },
+            reasoning = thinkingContent
         )
         // Tool result message (role="tool" in OpenAI format)
         toolResults.isNotEmpty() -> ChatMessage(
@@ -74,7 +87,8 @@ fun ApiMessage.toChatMessage(): ChatMessage {
         // Plain text message
         else -> ChatMessage(
             role = role.name.lowercase(),
-            content = textContent ?: ""
+            content = textContent ?: "",
+            reasoning = thinkingContent
         )
     }
 }
@@ -84,6 +98,7 @@ fun ApiMessage.toChatMessage(): ChatMessage {
  */
 fun ChatMessage.toApiMessage(): ApiMessage {
     val blocks = mutableListOf<ContentBlock>()
+    if (!reasoning.isNullOrBlank()) blocks.add(ContentBlock.Thinking(thinking = reasoning!!))
     if (!content.isNullOrBlank()) blocks.add(ContentBlock.Text(content!!))
     toolCalls?.forEach { tc ->
         blocks.add(ContentBlock.ToolUse(id = tc.id, name = tc.function.name, input = tc.function.arguments))
