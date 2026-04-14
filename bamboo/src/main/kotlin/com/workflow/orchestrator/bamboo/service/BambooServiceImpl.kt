@@ -284,24 +284,58 @@ class BambooServiceImpl(private val project: Project) : BambooService {
             hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
         )
 
-        return when (val result = api.getVariables(planKey)) {
-            is ApiResult.Success -> {
-                val data = result.data.map { PlanVariableData(name = it.name, value = it.value) }
-                ToolResult.success(
-                    data = data,
-                    summary = "Plan $planKey has ${data.size} variable(s): ${data.joinToString { it.name }}"
-                )
-            }
-            is ApiResult.Error -> {
-                log.warn("[BambooService] Failed to fetch plan variables for $planKey: ${result.message}")
-                ToolResult(
-                    data = emptyList(),
-                    summary = "Error fetching plan variables for $planKey: ${result.message}",
-                    isError = true,
-                    hint = "Check Bamboo connection in Settings."
-                )
+        // Strategy A: variableContext expand (works on all Bamboo versions)
+        val contextResult = api.getPlanVariableContext(planKey)
+        if (contextResult is ApiResult.Success && contextResult.data.isNotEmpty()) {
+            val data = contextResult.data.map { PlanVariableData(name = it.name, value = it.value) }
+            log.info("[BambooService] Got ${data.size} plan variable(s) via variableContext for $planKey")
+            return ToolResult.success(
+                data = data,
+                summary = "Plan $planKey has ${data.size} variable(s): ${data.joinToString { it.name }}"
+            )
+        }
+
+        // Strategy B: /variable sub-resource (404 on some servers)
+        val directResult = api.getPlanVariableDirect(planKey)
+        if (directResult is ApiResult.Success && directResult.data.isNotEmpty()) {
+            val data = directResult.data.map { PlanVariableData(name = it.name, value = it.value) }
+            log.info("[BambooService] Got ${data.size} plan variable(s) via /variable for $planKey")
+            return ToolResult.success(
+                data = data,
+                summary = "Plan $planKey has ${data.size} variable(s): ${data.joinToString { it.name }}"
+            )
+        }
+
+        // Strategy C: fall back to most recent build's variables
+        log.info("[BambooService] Plan variable endpoints failed for $planKey, falling back to last build's variables")
+        val recentResult = api.getRecentResults(planKey, maxResults = 1)
+        if (recentResult is ApiResult.Success) {
+            val latestBuild = recentResult.data.firstOrNull()
+            if (latestBuild != null) {
+                val resultKey = "${planKey}-${latestBuild.buildNumber}"
+                val varsResult = api.getBuildVariables(resultKey)
+                if (varsResult is ApiResult.Success) {
+                    val data = varsResult.data.entries.map { PlanVariableData(name = it.key, value = it.value) }
+                    log.info("[BambooService] Got ${data.size} variable(s) from last build $resultKey as fallback")
+                    return ToolResult.success(
+                        data = data,
+                        summary = "Plan $planKey: ${data.size} variable(s) from last build #${latestBuild.buildNumber}"
+                    )
+                }
             }
         }
+
+        val errorMsg = when (contextResult) {
+            is ApiResult.Error -> contextResult.message
+            else -> "variableContext returned empty"
+        }
+        log.warn("[BambooService] All strategies failed for plan variables of $planKey: $errorMsg")
+        return ToolResult(
+            data = emptyList(),
+            summary = "Error fetching plan variables for $planKey: $errorMsg",
+            isError = true,
+            hint = "Check Bamboo connection in Settings."
+        )
     }
 
     override suspend fun triggerStage(

@@ -101,9 +101,19 @@ class BambooApiClient(
         return get("/rest/api/latest/result/$jobResultKey?expand=testResults.failedTests.testResult,testResults.successfulTests.testResult")
     }
 
-    suspend fun getVariables(planKey: String): ApiResult<List<BambooPlanVariableDto>> =
-        get<BambooVariableListResponse>("/rest/api/latest/plan/$planKey/variable")
+    /** Primary: plan variables via variableContext expand (works on all Bamboo versions). */
+    suspend fun getPlanVariableContext(planKey: String): ApiResult<List<BambooPlanVariableDto>> {
+        log.info("[Bamboo:API] getPlanVariableContext: GET /plan/$planKey?expand=variableContext")
+        return get<BambooPlanDetailResponse>("/rest/api/latest/plan/$planKey?expand=variableContext")
+            .map { it.variableContext.variable }
+    }
+
+    /** Fallback: plan variables via /variable sub-resource (404 on some Bamboo servers). */
+    suspend fun getPlanVariableDirect(planKey: String): ApiResult<List<BambooPlanVariableDto>> {
+        log.info("[Bamboo:API] getPlanVariableDirect: GET /plan/$planKey/variable")
+        return get<BambooVariableListResponse>("/rest/api/latest/plan/$planKey/variable")
             .map { it.variables.variable }
+    }
 
     suspend fun triggerBuild(
         planKey: String,
