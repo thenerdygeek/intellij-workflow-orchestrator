@@ -591,7 +591,7 @@ export const InputBar = memo(function InputBar() {
       // second time, creating an orphaned timeout that removes the chip after 5s.
       const prevQuery = prevTicketQueryRef.current;
       prevTicketQueryRef.current = '';
-      if (prevQuery && /^[A-Za-z]+-\d+$/.test(prevQuery)) {
+      if (prevQuery && /^[A-Za-z][A-Za-z0-9]+-\d+$/.test(prevQuery)) {
         const ticketKey = prevQuery.toUpperCase();
         const mention: Mention = { type: 'ticket', label: ticketKey, path: ticketKey };
         richInputRef.current?.insertChip(mention, '#', 'pending');

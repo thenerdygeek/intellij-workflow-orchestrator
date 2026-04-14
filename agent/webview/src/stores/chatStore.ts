@@ -401,8 +401,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  addUserMessage(text: string, _mentions?: Mention[]) {
-    const msg: UiMessage = { ts: uniqueTs(), type: 'SAY', say: 'USER_MESSAGE', text };
+  addUserMessage(text: string, mentions?: Mention[]) {
+    const msg: UiMessage = {
+      ts: uniqueTs(), type: 'SAY', say: 'USER_MESSAGE', text,
+      ...(mentions && mentions.length > 0 ? { mentions } : {}),
+    };
     set(state => ({ messages: [...state.messages, msg] }));
   },
 

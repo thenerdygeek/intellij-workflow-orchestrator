@@ -111,6 +111,10 @@ describe('Trigger detection patterns', () => {
     expect(detectTrigger('fix #PROJ-123')).toEqual({ type: '#', query: 'PROJ-123' });
   });
 
+  it('# with digits in project key triggers ticket search', () => {
+    expect(detectTrigger('fix #TICKET8IN-12345')).toEqual({ type: '#', query: 'TICKET8IN-12345' });
+  });
+
   it('/ at start triggers skill picker', () => {
     expect(detectTrigger('/com')).toEqual({ type: '/', query: 'com' });
   });
@@ -126,6 +130,37 @@ describe('Trigger detection patterns', () => {
   it('@ in middle of word does not trigger', () => {
     // email-like text should not trigger
     expect(detectTrigger('user@example.com ')).toBeNull();
+  });
+});
+
+// ── Pasted ticket pattern ──
+
+describe('Pasted ticket pattern matching', () => {
+  // Must match the pattern in RichInput.tsx
+  const PASTED_TICKET_PATTERN = /#([A-Za-z][A-Za-z0-9]+-\d+)/g;
+
+  function findTickets(text: string): string[] {
+    return [...text.matchAll(PASTED_TICKET_PATTERN)].map(m => m[1]);
+  }
+
+  it('matches standard ticket key', () => {
+    expect(findTickets('fix #PROJ-123')).toEqual(['PROJ-123']);
+  });
+
+  it('matches ticket key with digits in project key', () => {
+    expect(findTickets('fix #TICKET8IN-12345')).toEqual(['TICKET8IN-12345']);
+  });
+
+  it('matches ticket key with mixed alphanumeric project key', () => {
+    expect(findTickets('#PRJ2-99 and #A1B2C3-1')).toEqual(['PRJ2-99', 'A1B2C3-1']);
+  });
+
+  it('does not match pure numeric prefix', () => {
+    expect(findTickets('#123-456')).toEqual([]);
+  });
+
+  it('does not match key without digits after hyphen', () => {
+    expect(findTickets('#PROJ-abc')).toEqual([]);
   });
 });
 
