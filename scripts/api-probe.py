@@ -519,8 +519,10 @@ def probe_bitbucket(cfg: dict, output_dir: Path):
 
 
 def probe_docker_registry(cfg: dict, output_dir: Path):
-    """Probe Docker Registry v2 endpoints."""
-    cred = base64.b64encode(f"{cfg['token']}:".encode()).decode()
+    """Probe Docker Registry v2 endpoints (Nexus uses Basic auth with username:passcode)."""
+    username = cfg.get("username", "")
+    passcode = cfg.get("passcode", "")
+    cred = base64.b64encode(f"{username}:{passcode}".encode()).decode()
     client = ApiClient(
         cfg["url"], {"Authorization": f"Basic {cred}"}, "docker"
     )
@@ -610,7 +612,8 @@ CONFIG_TEMPLATE = {
     },
     "docker_registry": {
         "url": "https://registry.example.com",
-        "token": "YOUR_NEXUS_TOKEN",
+        "username": "YOUR_NEXUS_USER_TOKEN",
+        "passcode": "YOUR_NEXUS_USER_TOKEN_PASSCODE",
         "repo_name": "my-service",
         "tag": "1.0.0"
     }
@@ -678,8 +681,16 @@ def main():
             continue
         probe_fn, cfg_key = probes[svc]
         cfg = config.get(cfg_key, {})
-        if not cfg.get("url") or not cfg.get("token"):
-            print(f"\n  [SKIP] {svc}: no url/token configured")
+        if not cfg.get("url"):
+            print(f"\n  [SKIP] {svc}: no url configured")
+            continue
+        # Docker registry uses username+passcode, others use token
+        if cfg_key == "docker_registry":
+            if not cfg.get("username") or not cfg.get("passcode"):
+                print(f"\n  [SKIP] {svc}: no username/passcode configured")
+                continue
+        elif not cfg.get("token"):
+            print(f"\n  [SKIP] {svc}: no token configured")
             continue
         try:
             probe_fn(cfg, output_dir)
