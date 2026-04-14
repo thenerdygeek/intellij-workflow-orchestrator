@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.tools.runtime
 
 import com.intellij.execution.testframework.sm.runner.SMTestProxy
+import com.intellij.execution.testframework.sm.runner.states.TestStateInfo
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.truncateOutput
 
@@ -66,17 +67,27 @@ internal fun collectTestResults(root: SMTestProxy): List<TestResultEntry> {
 /**
  * Map a single test leaf to a [TestResultEntry].
  *
- * `proxy.wasTerminated()` takes precedence over `isDefect`: a terminated test was
- * killed (e.g. by watchdog timeout) and should surface as ERROR even if JUnit itself
- * did not mark it defect.
+ * Uses `getMagnitudeInfo()` — IntelliJ's own state model — to distinguish test
+ * failures (assertion errors) from test errors (unexpected exceptions):
+ *
+ *   TestFailedState       → FAILED_INDEX → TestStatus.FAILED
+ *   TestComparisonFailedState (extends TestFailedState) → FAILED_INDEX → FAILED
+ *   TestErrorState        → ERROR_INDEX  → TestStatus.ERROR
+ *
+ * String matching on the stacktrace is NOT used: it breaks for JUnit 4's
+ * `ComparisonFailure` (from `assertEquals`) because the class name does not
+ * contain "AssertionError" even though IntelliJ correctly marks it as FAILED_INDEX.
+ * `proxy.wasTerminated()` takes precedence over `isDefect`.
  */
 internal fun mapToTestResultEntry(proxy: SMTestProxy): TestResultEntry {
     val status = when {
         proxy.wasTerminated() -> TestStatus.ERROR
         proxy.isDefect -> {
-            if (proxy.stacktrace?.contains("AssertionError") == true ||
-                proxy.stacktrace?.contains("AssertionFailedError") == true
-            ) TestStatus.FAILED else TestStatus.ERROR
+            when (proxy.getMagnitudeInfo()) {
+                TestStateInfo.Magnitude.FAILED_INDEX -> TestStatus.FAILED
+                TestStateInfo.Magnitude.ERROR_INDEX  -> TestStatus.ERROR
+                else                                 -> TestStatus.ERROR
+            }
         }
         proxy.isIgnored -> TestStatus.SKIPPED
         else -> TestStatus.PASSED

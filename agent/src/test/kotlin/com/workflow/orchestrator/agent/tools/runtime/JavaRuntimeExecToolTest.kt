@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.tools.runtime
 
 import com.intellij.execution.testframework.sm.runner.SMTestProxy
+import com.intellij.execution.testframework.sm.runner.states.TestStateInfo
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.tools.WorkerType
 import io.mockk.every
@@ -110,6 +111,7 @@ class JavaRuntimeExecToolTest {
         every { leaf.isDefect } returns false
         every { leaf.wasTerminated() } returns false
         every { leaf.isIgnored } returns false
+        every { leaf.getMagnitudeInfo() } returns TestStateInfo.Magnitude.PASSED_INDEX
         every { leaf.name } returns name
         every { leaf.duration } returns 10
         every { leaf.stacktrace } returns null
@@ -196,6 +198,7 @@ class JavaRuntimeExecToolTest {
         every { leaf.wasTerminated() } returns true
         every { leaf.isDefect } returns false
         every { leaf.isIgnored } returns false
+        every { leaf.getMagnitudeInfo() } returns TestStateInfo.Magnitude.TERMINATED_INDEX
         every { leaf.name } returns "terminatedTest"
         every { leaf.duration } returns 5
         every { leaf.stacktrace } returns null
@@ -221,11 +224,55 @@ class JavaRuntimeExecToolTest {
         every { leaf.isDefect } returns true
         every { leaf.wasTerminated() } returns false
         every { leaf.isIgnored } returns false
+        // TestFailedState.getMagnitude() returns FAILED_INDEX — assertion failure
+        every { leaf.getMagnitudeInfo() } returns TestStateInfo.Magnitude.FAILED_INDEX
         every { leaf.name } returns name
         every { leaf.duration } returns 15
-        every { leaf.stacktrace } returns "java.lang.AssertionError: expected <1> but was <2>\n  at com.example.FooTest.$name(FooTest.java:42)"
-        every { leaf.errorMessage } returns "expected <1> but was <2>"
+        every { leaf.stacktrace } returns "org.junit.ComparisonFailure: expected:<1> but was:<2>\n  at org.junit.Assert.assertEquals(Assert.java:117)"
+        every { leaf.errorMessage } returns "expected:<1> but was:<2>"
         return leaf
+    }
+
+    /** A leaf that threw an unexpected exception (NPE, IAE, etc.) — ERROR state. */
+    private fun makeErrorLeaf(name: String): SMTestProxy {
+        val leaf = mockk<SMTestProxy>(relaxed = true)
+        every { leaf.isLeaf } returns true
+        every { leaf.locationUrl } returns "java:test://com.example.Foo/$name"
+        every { leaf.isDefect } returns true
+        every { leaf.wasTerminated() } returns false
+        every { leaf.isIgnored } returns false
+        // TestErrorState.getMagnitude() returns ERROR_INDEX — unexpected exception
+        every { leaf.getMagnitudeInfo() } returns TestStateInfo.Magnitude.ERROR_INDEX
+        every { leaf.name } returns name
+        every { leaf.duration } returns 5
+        every { leaf.stacktrace } returns "java.lang.NullPointerException\n  at com.example.FooTest.$name(FooTest.java:10)"
+        every { leaf.errorMessage } returns "NullPointerException"
+        return leaf
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // mapToTestResultEntry — magnitude-based FAILED vs ERROR classification
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `mapToTestResultEntry — FAILED_INDEX magnitude maps to FAILED (JUnit 4 ComparisonFailure)`() {
+        // THE KEY REGRESSION: JUnit 4 assertEquals throws ComparisonFailure which does
+        // NOT contain "AssertionError" in its class name. The old string-matching code
+        // returned ERROR for this case. getMagnitudeInfo() == FAILED_INDEX is the fix.
+        val leaf = makeFailedLeaf("testEquality")
+        // makeFailedLeaf stubs getMagnitudeInfo() → FAILED_INDEX and uses ComparisonFailure stacktrace
+
+        val entry = mapToTestResultEntry(leaf)
+        assertEquals(TestStatus.FAILED, entry.status,
+            "TestFailedState (FAILED_INDEX) must map to FAILED regardless of stacktrace class name")
+    }
+
+    @Test
+    fun `mapToTestResultEntry — ERROR_INDEX magnitude maps to ERROR (NullPointerException)`() {
+        val leaf = makeErrorLeaf("testUnexpected")
+        val entry = mapToTestResultEntry(leaf)
+        assertEquals(TestStatus.ERROR, entry.status,
+            "TestErrorState (ERROR_INDEX) must map to ERROR")
     }
 
     @Test
