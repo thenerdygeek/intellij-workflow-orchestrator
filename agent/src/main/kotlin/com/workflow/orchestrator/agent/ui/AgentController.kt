@@ -860,6 +860,7 @@ class AgentController(
         // Show user message in the chat UI
         displayUserMessage(uiText, displayMentionsJson)
         dashboard.setBusy(true)
+        dashboard.setSteeringMode(true)
         // Input is NOT locked — user can always type (Cline behavior)
         taskStartTime = System.currentTimeMillis()
 
