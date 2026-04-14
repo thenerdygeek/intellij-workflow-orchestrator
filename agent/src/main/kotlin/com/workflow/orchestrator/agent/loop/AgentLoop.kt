@@ -563,11 +563,29 @@ class AgentLoop(
                         AssistantMessageParser.stripPartialTag(base)
                             .also { cachedStrippedText = it }
                     } else {
-                        (cachedStrippedText + text).also { cachedStrippedText = it }
+                        // Skip-parse path: only append plain text when no tool call is in flight.
+                        //
+                        // BUG FIXED: if a partial tool call is in cachedBlocks, `text` is raw
+                        // parameter content (e.g. file path bytes inside <path>...</path>). Appending
+                        // it to cachedStrippedText inflates lastPresentedTextLength. When the tool
+                        // close tag arrives and triggers a real parse, stripped = visibleText (just
+                        // pre-tool text) < lastPresentedTextLength → the condition below is forever
+                        // false → all text after the tool call becomes invisible ("stops abruptly").
+                        val hasPendingTool = cachedBlocks?.any { it is ToolUseContent && it.partial } == true
+                        if (hasPendingTool) {
+                            cachedStrippedText  // tool param in flight — don't leak it to the display
+                        } else {
+                            (cachedStrippedText + text).also { cachedStrippedText = it }
+                        }
                     }
                     if (stripped.length > lastPresentedTextLength) {
                         val delta = stripped.substring(lastPresentedTextLength)
                         onStreamChunk(delta)
+                        lastPresentedTextLength = stripped.length
+                    } else if (needsParse && stripped.length < lastPresentedTextLength) {
+                        // Safety reset: a fresh parse gave shorter text than the watermark, meaning
+                        // the skip-parse path previously leaked content that isn't real visible text.
+                        // Reset so subsequent deltas are calculated correctly.
                         lastPresentedTextLength = stripped.length
                     }
 

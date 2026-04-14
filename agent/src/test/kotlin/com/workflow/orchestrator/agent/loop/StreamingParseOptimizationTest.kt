@@ -33,15 +33,27 @@ class StreamingParseOptimizationTest {
             }
             val visibleText = blocks.filterIsInstance<TextContent>()
                 .joinToString("\n\n") { it.content }
+
+            // FIXED: on the skip-parse path, don't append tool-param content to the
+            // display buffer. A partial ToolUseContent in cachedBlocks means we're
+            // inside a tool call — `chunk` is a parameter value, not visible text.
             val stripped = if (needsParse) {
                 val hasToolCalls = blocks.any { it is ToolUseContent }
                 val base = if (hasToolCalls) visibleText else accumulated.toString()
                 AssistantMessageParser.stripPartialTag(base).also { cachedStrippedText = it }
             } else {
-                (cachedStrippedText + chunk).also { cachedStrippedText = it }
+                val hasPendingTool = cachedBlocks?.any { it is ToolUseContent && it.partial } == true
+                if (hasPendingTool) {
+                    cachedStrippedText  // tool param in flight — don't leak to display
+                } else {
+                    (cachedStrippedText + chunk).also { cachedStrippedText = it }
+                }
             }
             if (stripped.length > lastPresentedLength) {
                 outputChunks.add(stripped.substring(lastPresentedLength))
+                lastPresentedLength = stripped.length
+            } else if (needsParse && stripped.length < lastPresentedLength) {
+                // Safety reset: stale watermark from leaked skip-parse content.
                 lastPresentedLength = stripped.length
             }
         }
@@ -151,5 +163,92 @@ class StreamingParseOptimizationTest {
         val (output, parseCount) = simulateOptimizedStreaming(chunks)
         assertEquals("Hello world", output)
         assertEquals(1, parseCount, "No angle brackets means parse only once")
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Regression: "stops abruptly in between" — skip-parse path leaked
+    // tool-param content into cachedStrippedText, inflating lastPresentedLength
+    // past the actual visible-text length, making all subsequent text invisible.
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `text after tool call is visible — no stops-abruptly regression`() {
+        // THE KEY REGRESSION: pre-fix, "Based on the file..." was never shown
+        // because lastPresentedLength was inflated by the param value "src/main.kt".
+        val toolNames = setOf("read_file")
+        val paramNames = setOf("path")
+        val chunks = listOf(
+            "Let me read the file.",      // plain text — shown
+            "<read_file>",                // tool open — parse triggered
+            "<path>",                     // param open — parse triggered
+            "src/main.kt",               // param VALUE — no <>, skip-parse path
+            "</path>",                   // param close — parse triggered
+            "</read_file>",              // tool close — parse triggered
+            " Based on the file,",       // post-tool text — MUST be visible
+            " the answer is 42.",        // continuation
+        )
+        val (output, _) = simulateOptimizedStreaming(chunks, toolNames, paramNames)
+
+        assertFalse(
+            output.contains("src/main.kt"),
+            "Tool parameter value must NOT appear in the stream display"
+        )
+        assertTrue(
+            output.contains("Let me read the file"),
+            "Pre-tool text must be shown"
+        )
+        assertTrue(
+            output.contains("Based on the file") && output.contains("the answer is 42"),
+            "Post-tool text must be shown — was invisible before the fix. Output was: '$output'"
+        )
+    }
+
+    @Test
+    fun `param content with no angle brackets does not inflate lastPresentedLength`() {
+        // Verify the specific mechanism: the skip-parse path must not add param bytes
+        // to the display buffer when a partial tool call is in progress.
+        val toolNames = setOf("edit_file")
+        val paramNames = setOf("path", "old_string", "new_string")
+        val chunks = listOf(
+            "Editing the file.",
+            "<edit_file><path>",
+            "src/Foo.kt",            // param value — must NOT appear in output
+            "</path><old_string>",
+            "old code",              // param value — must NOT appear in output
+            "</old_string><new_string>",
+            "new code",              // param value — must NOT appear in output
+            "</new_string></edit_file>",
+            " Done editing.",        // post-tool — must appear
+        )
+        val (output, _) = simulateOptimizedStreaming(chunks, toolNames, paramNames)
+
+        assertFalse(output.contains("src/Foo.kt"), "Path param must not leak to display")
+        assertFalse(output.contains("old code"), "old_string param must not leak to display")
+        assertFalse(output.contains("new code"), "new_string param must not leak to display")
+        assertTrue(output.contains("Editing the file"), "Pre-tool text must show")
+        assertTrue(output.contains("Done editing"), "Post-tool text must show — was invisible before fix")
+    }
+
+    @Test
+    fun `two consecutive tool calls — text between them is visible`() {
+        val toolNames = setOf("read_file")
+        val paramNames = setOf("path")
+        val chunks = listOf(
+            "First: ",
+            "<read_file><path>",
+            "foo.kt",
+            "</path></read_file>",
+            " then second: ",         // text between tools — must be visible
+            "<read_file><path>",
+            "bar.kt",
+            "</path></read_file>",
+            " all done.",             // text after second tool
+        )
+        val (output, _) = simulateOptimizedStreaming(chunks, toolNames, paramNames)
+        assertTrue(output.contains("First"), "First pre-tool text must show")
+        assertTrue(output.contains("then second"), "Text between tools must show")
+        assertTrue(output.contains("all done"), "Post-tool text must show")
+        assertFalse(output.contains("foo.kt"), "First param must not leak")
+        assertFalse(output.contains("bar.kt"), "Second param must not leak")
     }
 }
