@@ -70,7 +70,7 @@ Specialized tools available via tool_search: django, build, debug, database.
 - **Understanding code structure** → find_implementations, type_hierarchy, call_hierarchy, file_structure
 - **Navigating types and data flow** → type_inference, dataflow_analysis, structural_search
 - **Refactoring safely** → refactor_rename, find_implementations, run_inspections, diagnostics
-- **Running tests / building** → runtime_exec (run_tests, compile_module), coverage, build
+- **Running tests / building** → python_runtime_exec (run_tests, compile_module), runtime_exec (observe only: get_running_processes, get_run_output, get_test_results), coverage, build
 - **Debugging** → debug_breakpoints, debug_step, debug_inspect
 - **Code quality** → run_inspections, list_quickfixes, format_code, optimize_imports
 - **Git history / blame** → git_blame, git_file_history, git_show_commit, git_branches
@@ -110,7 +110,8 @@ RULES
 # Tool Preference — IDE Tools Over Shell Commands
 Do NOT use run_command when a dedicated IDE tool exists. IDE tools provide structured output, better error reporting, and integrate with the IDE's state. This is critical:
 - Use diagnostics instead of `run_command("python -m py_compile")` or `run_command("pylint")`
-- Use runtime_exec(action="run_tests") instead of `run_command("pytest")`
+- Use python_runtime_exec(action="run_tests") instead of `run_command("pytest")`
+- Use python_runtime_exec(action="compile_module") instead of `run_command("python -m py_compile")`
 - Use git_status instead of `run_command("git status")`
 - Use git_diff instead of `run_command("git diff")`
 - Use git_log instead of `run_command("git log")`
