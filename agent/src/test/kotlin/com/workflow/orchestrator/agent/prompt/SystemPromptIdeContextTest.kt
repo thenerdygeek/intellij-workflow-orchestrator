@@ -136,18 +136,13 @@ class SystemPromptIdeContextTest {
     }
 
     @Test
-    fun `build with minimal params produces valid prompt and saves snapshot`() {
+    fun `build with minimal params produces valid prompt`() {
         val prompt = SystemPrompt.build(
             projectName = "TestProject",
             projectPath = "/test/project",
             osName = "Linux",
             shell = "/bin/bash"
         )
-
-        // Save snapshot to test resources
-        val snapshotFile = File("src/test/resources/prompt-snapshot-intellij-ultimate.txt")
-        snapshotFile.parentFile.mkdirs()
-        snapshotFile.writeText(prompt)
 
         // Structural invariants
         assertTrue(prompt.contains("===="), "Prompt must contain section separators (====)")
