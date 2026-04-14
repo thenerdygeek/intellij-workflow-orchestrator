@@ -175,20 +175,19 @@ class SourcegraphChatClient(
                     } else content
                 }
                 "tool" -> {
-                    if (!msg.toolCallId.isNullOrBlank()) {
-                        // Native tool call result — preserve role + toolCallId for API correlation.
-                        if (pendingSystemContent != null) {
-                            converted.add(ChatMessage(role = "user", content = "<system_instructions>\n$pendingSystemContent\n</system_instructions>"))
-                            pendingSystemContent = null
-                        }
-                        converted.add(msg)
-                    } else {
-                        // XML-based tool result (no toolCallId) — convert to user role with plain text prefix.
-                        // Do NOT use XML tags like <tool_result> — they prime the LLM to
-                        // generate <tool_calls> as text instead of using the structured API.
-                        val toolContent = "TOOL RESULT:\n${msg.content ?: ""}"
-                        converted.add(ChatMessage(role = "user", content = toolContent))
+                    // Sourcegraph proxy rejects "tool" role entirely (HTTP 400:
+                    // "invalid value for MessageRole: tool"). Always convert to "user".
+                    if (pendingSystemContent != null) {
+                        converted.add(ChatMessage(role = "user", content = "<system_instructions>\n$pendingSystemContent\n</system_instructions>"))
+                        pendingSystemContent = null
                     }
+                    val prefix = if (!msg.toolCallId.isNullOrBlank()) {
+                        "TOOL RESULT (id=${msg.toolCallId}):"
+                    } else {
+                        "TOOL RESULT:"
+                    }
+                    val toolContent = "$prefix\n${msg.content ?: ""}"
+                    converted.add(ChatMessage(role = "user", content = toolContent))
                 }
                 "user" -> {
                     // Merge any pending system content into this user message
