@@ -187,7 +187,15 @@ class BuildMonitorService : Disposable {
             // Automation tab get the current state when they subscribe.
             if (isTerminal && dto.buildNumber != lastLogFetchedForBuild) {
                 lastLogFetchedForBuild = dto.buildNumber
-                val resultKey = "${planKey}-${dto.buildNumber}"
+                // Use job-level result key for log fetching — plan-level logs are
+                // either 404 or tiny (~101 bytes). The real log (~29KB) with docker
+                // tags is at the job level (e.g. PROJECT-REPO-JOBKEY-571).
+                val jobResultKey = buildState.stages
+                    .firstOrNull { it.resultKey.isNotBlank() }?.resultKey
+                val resultKey = jobResultKey ?: run {
+                    log.debug("[Bamboo:Monitor] No job-level resultKey in stages, falling back to plan-level: $planKey-${dto.buildNumber}")
+                    "${planKey}-${dto.buildNumber}"
+                }
                 val eventStatus = when (buildState.overallStatus) {
                     BuildStatus.SUCCESS -> WorkflowEvent.BuildEventStatus.SUCCESS
                     else -> WorkflowEvent.BuildEventStatus.FAILED

@@ -4,6 +4,8 @@ import app.cash.turbine.test
 import com.workflow.orchestrator.bamboo.api.BambooApiClient
 import com.workflow.orchestrator.bamboo.api.dto.BambooResultDto
 import com.workflow.orchestrator.bamboo.api.dto.BambooStageCollection
+import com.workflow.orchestrator.bamboo.api.dto.BambooJobResultCollection
+import com.workflow.orchestrator.bamboo.api.dto.BambooJobResultDto
 import com.workflow.orchestrator.bamboo.api.dto.BambooStageDto
 import com.workflow.orchestrator.bamboo.model.BuildStatus
 import com.workflow.orchestrator.core.events.EventBus
@@ -32,8 +34,36 @@ class BuildMonitorServiceTest {
             stages = BambooStageCollection(
                 size = 2,
                 stage = listOf(
-                    BambooStageDto(name = "Compile", state = "Successful", lifeCycleState = "Finished"),
-                    BambooStageDto(name = "Test", state = state, lifeCycleState = lifeCycle)
+                    BambooStageDto(
+                        name = "Compile",
+                        state = "Successful",
+                        lifeCycleState = "Finished",
+                        results = BambooJobResultCollection(
+                            size = 1,
+                            result = listOf(
+                                BambooJobResultDto(
+                                    buildResultKey = "PROJ-BUILD-JOB1-$buildNumber",
+                                    state = "Successful",
+                                    lifeCycleState = "Finished"
+                                )
+                            )
+                        )
+                    ),
+                    BambooStageDto(
+                        name = "Test",
+                        state = state,
+                        lifeCycleState = lifeCycle,
+                        results = BambooJobResultCollection(
+                            size = 1,
+                            result = listOf(
+                                BambooJobResultDto(
+                                    buildResultKey = "PROJ-BUILD-JOB2-$buildNumber",
+                                    state = state,
+                                    lifeCycleState = lifeCycle
+                                )
+                            )
+                        )
+                    )
                 )
             )
         )
@@ -43,7 +73,7 @@ class BuildMonitorServiceTest {
     fun `pollOnce updates stateFlow with build result`() = runTest {
         val result = makeResult("Successful", "Finished")
         coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(result)
-        coEvery { apiClient.getBuildLog("PROJ-BUILD-42") } returns ApiResult.Success("log content")
+        coEvery { apiClient.getBuildLog("PROJ-BUILD-JOB1-42") } returns ApiResult.Success("log content")
 
         val service = BuildMonitorService(apiClient, eventBus, this)
 
@@ -76,7 +106,7 @@ class BuildMonitorServiceTest {
         // Second poll returns completed build → status changed → event emitted
         val successResult = makeResult("Successful", "Finished")
         coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(successResult)
-        coEvery { apiClient.getBuildLog("PROJ-BUILD-42") } returns ApiResult.Success("log content")
+        coEvery { apiClient.getBuildLog("PROJ-BUILD-JOB1-42") } returns ApiResult.Success("log content")
 
         eventBus.events.test {
             service.pollOnce("PROJ-BUILD", "main")
@@ -95,7 +125,7 @@ class BuildMonitorServiceTest {
     fun `pollOnce does not emit event when status unchanged`() = runTest {
         val result = makeResult("Successful", "Finished")
         coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(result)
-        coEvery { apiClient.getBuildLog("PROJ-BUILD-42") } returns ApiResult.Success("log content")
+        coEvery { apiClient.getBuildLog("PROJ-BUILD-JOB1-42") } returns ApiResult.Success("log content")
 
         val service = BuildMonitorService(apiClient, eventBus, this)
 
@@ -122,7 +152,7 @@ class BuildMonitorServiceTest {
         // Second poll returns failed build → status changed → event emitted
         val failedResult = makeResult("Failed", "Finished")
         coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(failedResult)
-        coEvery { apiClient.getBuildLog("PROJ-BUILD-42") } returns ApiResult.Success("build failed log")
+        coEvery { apiClient.getBuildLog("PROJ-BUILD-JOB1-42") } returns ApiResult.Success("build failed log")
 
         eventBus.events.test {
             service.pollOnce("PROJ-BUILD", "main")
@@ -138,7 +168,7 @@ class BuildMonitorServiceTest {
     fun `pollOnce emits BuildLogReady on first terminal poll`() = runTest {
         val result = makeResult("Successful", "Finished")
         coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(result)
-        coEvery { apiClient.getBuildLog("PROJ-BUILD-42") } returns ApiResult.Success("Unique Docker Tag : my-tag-123")
+        coEvery { apiClient.getBuildLog("PROJ-BUILD-JOB1-42") } returns ApiResult.Success("Unique Docker Tag : my-tag-123")
 
         val service = BuildMonitorService(apiClient, eventBus, this)
 
@@ -151,7 +181,7 @@ class BuildMonitorServiceTest {
             val logEvent = event as WorkflowEvent.BuildLogReady
             assertEquals("PROJ-BUILD", logEvent.planKey)
             assertEquals(42, logEvent.buildNumber)
-            assertEquals("PROJ-BUILD-42", logEvent.resultKey)
+            assertEquals("PROJ-BUILD-JOB1-42", logEvent.resultKey)
             assertEquals(WorkflowEvent.BuildEventStatus.SUCCESS, logEvent.status)
             assertEquals("Unique Docker Tag : my-tag-123", logEvent.logText)
 
@@ -163,7 +193,7 @@ class BuildMonitorServiceTest {
     fun `pollOnce emits BuildLogReady with empty text on log fetch failure`() = runTest {
         val result = makeResult("Successful", "Finished")
         coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(result)
-        coEvery { apiClient.getBuildLog("PROJ-BUILD-42") } returns
+        coEvery { apiClient.getBuildLog("PROJ-BUILD-JOB1-42") } returns
             ApiResult.Error(com.workflow.orchestrator.core.model.ErrorType.NETWORK_ERROR, "timeout")
 
         val service = BuildMonitorService(apiClient, eventBus, this)
@@ -183,7 +213,7 @@ class BuildMonitorServiceTest {
     fun `pollOnce does not re-fetch log for same build number`() = runTest {
         val result = makeResult("Successful", "Finished")
         coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(result)
-        coEvery { apiClient.getBuildLog("PROJ-BUILD-42") } returns ApiResult.Success("log")
+        coEvery { apiClient.getBuildLog("PROJ-BUILD-JOB1-42") } returns ApiResult.Success("log")
 
         val service = BuildMonitorService(apiClient, eventBus, this)
 
@@ -208,7 +238,7 @@ class BuildMonitorServiceTest {
 
         val failed = makeResult("Failed", "Finished")
         coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(failed)
-        coEvery { apiClient.getBuildLog("PROJ-BUILD-42") } returns ApiResult.Success("build failed")
+        coEvery { apiClient.getBuildLog("PROJ-BUILD-JOB1-42") } returns ApiResult.Success("build failed")
 
         eventBus.events.test {
             service.pollOnce("PROJ-BUILD", "main")
@@ -221,6 +251,34 @@ class BuildMonitorServiceTest {
             val logEvent = awaitItem()
             assertTrue(logEvent is WorkflowEvent.BuildLogReady)
             assertEquals(WorkflowEvent.BuildEventStatus.FAILED, (logEvent as WorkflowEvent.BuildLogReady).status)
+
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `pollOnce falls back to plan-level key when stages have no job resultKey`() = runTest {
+        val result = BambooResultDto(
+            key = "PROJ-BUILD-42",
+            buildNumber = 42,
+            state = "Successful",
+            lifeCycleState = "Finished",
+            buildDurationInSeconds = 120,
+            stages = BambooStageCollection(size = 0, stage = emptyList())
+        )
+        coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(result)
+        coEvery { apiClient.getBuildLog("PROJ-BUILD-42") } returns ApiResult.Success("fallback log")
+
+        val service = BuildMonitorService(apiClient, eventBus, this)
+
+        eventBus.events.test {
+            service.pollOnce("PROJ-BUILD", "main")
+
+            val event = awaitItem()
+            assertTrue(event is WorkflowEvent.BuildLogReady)
+            val logEvent = event as WorkflowEvent.BuildLogReady
+            assertEquals("PROJ-BUILD-42", logEvent.resultKey)
+            assertEquals("fallback log", logEvent.logText)
 
             cancelAndIgnoreRemainingEvents()
         }
