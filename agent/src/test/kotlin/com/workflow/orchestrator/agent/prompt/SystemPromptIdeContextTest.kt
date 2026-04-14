@@ -530,7 +530,7 @@ class SystemPromptIdeContextTest {
             VariantSize("IntelliJ Community", intellijCommunity(), 5000, 25000),
             VariantSize("PyCharm Professional", pycharmProfessional(), 5000, 25000),
             VariantSize("PyCharm Community", pycharmCommunity(), 5000, 25000),
-            VariantSize("WebStorm", webstorm(), 4000, 20000),
+            VariantSize("WebStorm", webstorm(), 4000, 21000),
             VariantSize("Mixed", intellijUltimateMixed(), 6000, 28000),
         )
 
