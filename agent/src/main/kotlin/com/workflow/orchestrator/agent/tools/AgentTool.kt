@@ -167,52 +167,86 @@ interface AgentTool {
     }
 }
 
+sealed class ToolResultType {
+    data object Standard : ToolResultType()
+    data object Error : ToolResultType()
+    data object Completion : ToolResultType()
+    data class PlanResponse(val needsMoreExploration: Boolean, val steps: List<String> = emptyList()) : ToolResultType()
+    data class SkillActivation(val skillName: String, val skillContent: String) : ToolResultType()
+    data class SessionHandoff(val context: String) : ToolResultType()
+    data object PlanModeToggle : ToolResultType()
+}
+
 data class ToolResult(
     val content: String,
     val summary: String,
     val tokenEstimate: Int,
     val artifacts: List<String> = emptyList(),
     val isError: Boolean = false,
-    val isCompletion: Boolean = false,
+    @Deprecated("Use ToolResult.type instead") val isCompletion: Boolean = false,
     val verifyCommand: String? = null,
     /** True when this result is a plan_mode_respond output (plan presentation). */
-    val isPlanResponse: Boolean = false,
+    @Deprecated("Use ToolResult.type instead") val isPlanResponse: Boolean = false,
     /** True when the LLM needs more exploration before finalizing the plan. */
-    val needsMoreExploration: Boolean = false,
+    @Deprecated("Use ToolResult.type instead") val needsMoreExploration: Boolean = false,
     /** Structured plan step titles provided by the LLM via plan_mode_respond. */
-    val planSteps: List<String> = emptyList(),
+    @Deprecated("Use ToolResult.type instead") val planSteps: List<String> = emptyList(),
     /** True when this result activates a skill via use_skill tool. */
-    val isSkillActivation: Boolean = false,
+    @Deprecated("Use ToolResult.type instead") val isSkillActivation: Boolean = false,
     /** The skill name that was activated (set by UseSkillTool). */
-    val activatedSkillName: String? = null,
+    @Deprecated("Use ToolResult.type instead") val activatedSkillName: String? = null,
     /** The full skill content that was loaded (set by UseSkillTool). */
-    val activatedSkillContent: String? = null,
+    @Deprecated("Use ToolResult.type instead") val activatedSkillContent: String? = null,
     /**
      * True when this result signals a session handoff via new_task tool.
      * Ported from Cline: the LLM creates a structured context summary and
      * hands off to a fresh session to escape context exhaustion.
      */
-    val isSessionHandoff: Boolean = false,
+    @Deprecated("Use ToolResult.type instead") val isSessionHandoff: Boolean = false,
     /**
      * The structured handoff context for the new session.
      * Contains: Current Work, Key Technical Concepts, Relevant Files and Code,
      * Problem Solving, Pending Tasks and Next Steps.
      */
-    val handoffContext: String? = null,
+    @Deprecated("Use ToolResult.type instead") val handoffContext: String? = null,
     /**
      * Unified diff for file changes (edit_file, create_file).
      * Sent to the UI for before/after diff display.
      */
     val diff: String? = null,
     /** True when the LLM requests switching to plan mode via enable_plan_mode tool. */
-    val enablePlanMode: Boolean = false,
+    @Deprecated("Use ToolResult.type instead") val enablePlanMode: Boolean = false,
     /** Interactive React artifact to render in the chat UI (set by RenderArtifactTool). */
-    val artifact: ArtifactPayload? = null
+    val artifact: ArtifactPayload? = null,
+    val type: ToolResultType = when {
+        isCompletion -> ToolResultType.Completion
+        isSessionHandoff -> ToolResultType.SessionHandoff(handoffContext ?: "")
+        isPlanResponse -> ToolResultType.PlanResponse(needsMoreExploration, planSteps)
+        isSkillActivation -> ToolResultType.SkillActivation(activatedSkillName ?: "", activatedSkillContent ?: "")
+        enablePlanMode -> ToolResultType.PlanModeToggle
+        isError -> ToolResultType.Error
+        else -> ToolResultType.Standard
+    },
 ) {
     companion object {
         const val ERROR_TOKEN_ESTIMATE = 5
 
         fun error(message: String, summary: String = message): ToolResult =
             ToolResult(message, summary, ERROR_TOKEN_ESTIMATE, isError = true)
+
+        fun completion(content: String, summary: String, tokenEstimate: Int, verifyCommand: String? = null) =
+            ToolResult(content, summary, tokenEstimate, isCompletion = true, verifyCommand = verifyCommand, type = ToolResultType.Completion)
+
+        fun planResponse(content: String, summary: String, tokenEstimate: Int, needsMoreExploration: Boolean, steps: List<String> = emptyList()) =
+            ToolResult(content, summary, tokenEstimate, isPlanResponse = true, needsMoreExploration = needsMoreExploration, planSteps = steps, type = ToolResultType.PlanResponse(needsMoreExploration, steps))
+
+        fun skillActivation(content: String, summary: String, tokenEstimate: Int, skillName: String, skillContent: String) =
+            ToolResult(content, summary, tokenEstimate, isSkillActivation = true, activatedSkillName = skillName, activatedSkillContent = skillContent, type = ToolResultType.SkillActivation(skillName, skillContent))
+
+        fun sessionHandoff(content: String, summary: String, tokenEstimate: Int, context: String) =
+            ToolResult(content, summary, tokenEstimate, isSessionHandoff = true, handoffContext = context, type = ToolResultType.SessionHandoff(context))
+
+        fun planModeToggle(content: String, summary: String, tokenEstimate: Int) =
+            ToolResult(content, summary, tokenEstimate, enablePlanMode = true, type = ToolResultType.PlanModeToggle)
     }
 }

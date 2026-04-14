@@ -88,12 +88,11 @@ class NewTaskTool : AgentTool {
             )
         }
 
-        return ToolResult(
+        return ToolResult.sessionHandoff(
             content = context,
             summary = "Session handoff: context preserved (${context.length} chars)",
             tokenEstimate = context.length / 4,
-            isSessionHandoff = true,
-            handoffContext = context
+            context = context
         )
     }
 }

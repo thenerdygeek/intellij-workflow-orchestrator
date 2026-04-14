@@ -110,14 +110,12 @@ ${skillContent.instructions}
 ---
 IMPORTANT: The skill is now loaded. Do NOT call use_skill again for this task. Simply follow the instructions above to complete the user's request. You may access other files in the skill directory at: $skillDirPath"""
 
-        return ToolResult(
+        return ToolResult.skillActivation(
             content = response,
             summary = "Activated skill: $skillName",
             tokenEstimate = response.length / 4,
-            // Our addition: flags for compaction survival (not in Cline)
-            isSkillActivation = true,
-            activatedSkillName = skillName,
-            activatedSkillContent = skillContent.instructions
+            skillName = skillName,
+            skillContent = skillContent.instructions
         )
     }
 }

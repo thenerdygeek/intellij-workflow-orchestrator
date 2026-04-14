@@ -41,11 +41,10 @@ class AttemptCompletionTool : AgentTool {
             )
         val command = params["command"]?.jsonPrimitive?.content
 
-        return ToolResult(
+        return ToolResult.completion(
             content = result,
             summary = "Task completed: ${result.take(200)}",
             tokenEstimate = result.length / 4,
-            isCompletion = true,
             verifyCommand = command
         )
     }

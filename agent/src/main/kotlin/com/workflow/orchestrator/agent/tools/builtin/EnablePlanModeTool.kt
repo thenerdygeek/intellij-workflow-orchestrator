@@ -56,13 +56,12 @@ class EnablePlanModeTool : AgentTool {
                 isError = true
             )
 
-        return ToolResult(
+        return ToolResult.planModeToggle(
             content = "Switched to PLAN MODE. Reason: $reason\n\n" +
                 "You are now in PLAN MODE. Use plan_mode_respond to present your plan. " +
                 "Read and explore relevant files first, then present a concrete plan.",
             summary = "Switched to plan mode: $reason",
-            tokenEstimate = 20,
-            enablePlanMode = true
+            tokenEstimate = 20
         )
     }
 }
