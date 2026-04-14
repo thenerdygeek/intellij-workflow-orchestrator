@@ -81,27 +81,8 @@ class RunCommandTool : AgentTool {
          */
         var currentToolCallId: ThreadLocal<String?> = ThreadLocal.withInitial { null }
 
-        // ── Backward-compat shims ──────────────────
-
-        @Deprecated("Use DefaultCommandFilter().check() instead")
-        fun isBlocked(command: String): Boolean =
-            DefaultCommandFilter().check(command, ShellType.BASH) is FilterResult.Reject
-
-        @Deprecated("Use DefaultCommandFilter().check() instead")
-        fun isHardBlocked(command: String): Boolean = isBlocked(command)
-
-        @Deprecated("Use ShellResolver.isLikelyBuildCommand() instead")
-        fun isLikelyBuildCommand(command: String): Boolean = ShellResolver.isLikelyBuildCommand(command)
-
-        @Deprecated("Use OutputCollector.stripAnsi() instead")
-        fun stripAnsi(text: String): String = OutputCollector.stripAnsi(text)
-
-        @Deprecated("Use ShellResolver.isLikelyPasswordPrompt() instead")
-        fun isLikelyPasswordPrompt(lastOutput: String): Boolean = ShellResolver.isLikelyPasswordPrompt(lastOutput)
-
-        @Deprecated("Use ShellResolver.detectAvailableShells() instead")
-        fun detectAvailableShells(project: Project? = null): List<String> =
-            ShellResolver.detectAvailableShells(project).map { it.shellType.name.lowercase() }
+        // streamCallback and currentToolCallId are still read by RuntimeExecTool
+        // and SonarTool. Remove once those tools are migrated to explicit parameters.
     }
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
