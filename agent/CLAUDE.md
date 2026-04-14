@@ -10,7 +10,7 @@ Uses Sourcegraph Enterprise's OpenAI-compatible API:
 - Constraints: 190K input tokens (configurable), no `system` role (converted to user with `<system_instructions>` tags), no `tool_choice`, strict user/assistant alternation
 - Output limit varies per model — no hardcoded clamp. User configures maxOutputTokens in settings.
 - Model: Auto-resolved from `GET /.api/llm/models` on first use via `ModelCache`. Priority: Anthropic Opus thinking > Opus > Sonnet. No hardcoded defaults.
-- Message sanitization in `SourcegraphChatClient.sanitizeMessages()`: system→user, tool→user with plain text prefix "RESULT of {toolName}:" (not XML — prevents LLM echo hallucination), consecutive same-role merging, zero-width space for empty assistant tool-call messages
+- Message sanitization in `SourcegraphChatClient.sanitizeMessages()`: system→user, tool→user with plain text prefix "TOOL RESULT:" (Sourcegraph rejects role="tool" entirely), assistant toolCalls stripped and inlined as text (Sourcegraph may reject tool_calls when tools=null), reasoning field stripped (non-standard OpenAI field), consecutive same-role merging, zero-width space for empty assistant content
 
 ## Architecture
 
@@ -194,7 +194,7 @@ Two-layer enforcement (Claude Code style + Cline safety net):
 - **Tool errors**: When ALL tool calls in a response fail (unknown tool, malformed JSON, exception), increments `consecutiveMistakes`. After 3 all-error iterations, escalates to user feedback. Successful tool calls reset the counter. Loop detection escalation takes priority over error counting.
 - **attempt_completion canonicalization**: `response` param accepted as alias for `result` (Cline ToolExecutor.ts:34-41).
 - **Hook context modification**: PostToolUse hooks can return `contextModification` which is injected as `<hook_context>` XML into the conversation (Cline ToolExecutor.ts:500-503).
-- **Tool result correlation**: Native tool call results (with `toolCallId`) preserve `role=tool` in API requests for multi-tool correlation. XML-based results (no `toolCallId`) fall back to `role=user` with `"TOOL RESULT:"` prefix.
+- **Tool result correlation**: ALL tool results are converted to `role=user` with `"TOOL RESULT:"` prefix by `sanitizeMessages()` — Sourcegraph gateway rejects `role=tool` entirely (400: "invalid value for MessageRole: tool"). Assistant `toolCalls` are converted to inline text summaries.
 - **Model fallback**: Opt-in (`AgentSettings.enableModelFallback`). On NETWORK_ERROR/TIMEOUT, `ModelFallbackManager` advances through fallback chain (Opus thinking → Opus → Sonnet thinking → Sonnet, no Haiku). After 3 successful iterations on fallback, attempts escalation back to primary. If escalation fails, waits 6 iterations. `brainFactory` creates fresh `OpenAiCompatBrain` per switch. `onModelSwitch` callback updates the model chip via `dashboard.setModelName()` and toggles a subtle in-chip fallback indicator (amber border + Zap icon + tooltip showing the reason) via `dashboard.setModelFallbackState()`. Silent recovery on escalation back to primary — no chat status spam.
 
 ## Ralph Loop Patterns

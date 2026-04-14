@@ -149,14 +149,17 @@ class SourcegraphChatClient(
     /**
      * Convert messages to Sourcegraph/Anthropic-compatible format.
      *
-     * Constraints:
+     * Constraints (proven by streaming_lab.py probe against real gateway):
      * 1. Sourcegraph rejects "system" role (400: "system role is not supported")
      * 2. Anthropic requires strict user/assistant alternation (no consecutive same-role messages)
-     * 3. "tool" role may not pass through the proxy
+     * 3. Sourcegraph rejects "tool" role (400: "invalid value for MessageRole: tool")
+     * 4. Assistant messages with tool_calls may be rejected when tools=null in request
+     * 5. Unknown fields (e.g. "reasoning") may be rejected by strict gateway validation
      *
      * Strategy:
      * - System messages: merge into the next user message as a prefix
-     * - Tool messages: merge into a synthetic user message
+     * - Tool messages: ALL converted to role="user" with "TOOL RESULT:" prefix
+     * - Assistant messages: strip toolCalls (convert to inline text), strip reasoning
      * - Consecutive same-role messages: merge into one message
      * - Ensure conversation starts with "user" and alternates
      */
@@ -175,20 +178,16 @@ class SourcegraphChatClient(
                     } else content
                 }
                 "tool" -> {
-                    if (!msg.toolCallId.isNullOrBlank()) {
-                        // Native tool call result — preserve role + toolCallId for API correlation.
-                        if (pendingSystemContent != null) {
-                            converted.add(ChatMessage(role = "user", content = "<system_instructions>\n$pendingSystemContent\n</system_instructions>"))
-                            pendingSystemContent = null
-                        }
-                        converted.add(msg)
-                    } else {
-                        // XML-based tool result (no toolCallId) — convert to user role with plain text prefix.
-                        // Do NOT use XML tags like <tool_result> — they prime the LLM to
-                        // generate <tool_calls> as text instead of using the structured API.
-                        val toolContent = "TOOL RESULT:\n${msg.content ?: ""}"
-                        converted.add(ChatMessage(role = "user", content = toolContent))
+                    // Sourcegraph gateway rejects role="tool" entirely
+                    // (400: "invalid value for MessageRole: tool").
+                    // Streaming lab probe confirmed only role="user" with text content works
+                    // for tool results (formats C/D in tool_result_formats probe).
+                    if (pendingSystemContent != null) {
+                        converted.add(ChatMessage(role = "user", content = "<system_instructions>\n$pendingSystemContent\n</system_instructions>"))
+                        pendingSystemContent = null
                     }
+                    val toolContent = "TOOL RESULT:\n${msg.content ?: ""}"
+                    converted.add(ChatMessage(role = "user", content = toolContent))
                 }
                 "user" -> {
                     // Merge any pending system content into this user message
@@ -207,7 +206,25 @@ class SourcegraphChatClient(
                         converted.add(ChatMessage(role = "user", content = "<system_instructions>\n$pendingSystemContent\n</system_instructions>"))
                         pendingSystemContent = null
                     }
-                    converted.add(msg)
+                    // Strip fields that Sourcegraph gateway may reject:
+                    // - toolCalls: gateway may reject tool_calls on assistant messages when
+                    //   no tools are defined in the request (XML mode sends tools=null).
+                    //   Convert tool call info to inline text so the LLM retains context
+                    //   about what it called.
+                    // - reasoning: not a standard OpenAI chat completions field; strict
+                    //   gateway validation may reject unknown fields.
+                    val sanitizedMsg = if (!msg.toolCalls.isNullOrEmpty() || msg.reasoning != null) {
+                        val toolCallText = msg.toolCalls?.joinToString("\n") { tc ->
+                            "[Calling tool ${tc.function.name}(${tc.function.arguments})]"
+                        }
+                        val combinedContent = listOfNotNull(msg.content, toolCallText)
+                            .joinToString("\n\n")
+                            .ifBlank { "\u200B" } // ZWS placeholder if content is blank
+                        msg.copy(content = combinedContent, toolCalls = null, reasoning = null)
+                    } else {
+                        msg
+                    }
+                    converted.add(sanitizedMsg)
                 }
                 else -> converted.add(msg)
             }
@@ -218,12 +235,12 @@ class SourcegraphChatClient(
             converted.add(ChatMessage(role = "user", content = "<system_instructions>\n$pendingSystemContent\n</system_instructions>"))
         }
 
-        // Phase 2: merge consecutive same-role messages (Anthropic requirement)
-        // Skip merging tool messages — each must keep its own toolCallId for API correlation.
+        // Phase 2: merge consecutive same-role messages (Anthropic requirement).
+        // After Phase 1, only "user" and "assistant" roles remain.
         val merged = mutableListOf<ChatMessage>()
         for (msg in converted) {
             val last = merged.lastOrNull()
-            if (last != null && last.role == msg.role && last.role != "tool" && last.toolCalls == null && msg.toolCalls == null) {
+            if (last != null && last.role == msg.role && last.toolCalls == null && msg.toolCalls == null) {
                 // Merge into previous message
                 merged[merged.size - 1] = ChatMessage(
                     role = msg.role,
@@ -264,12 +281,12 @@ class SourcegraphChatClient(
             merged.add(0, ChatMessage(role = "user", content = "[Context follows]"))
         }
 
-        // Phase 5: ensure no two consecutive same-role messages after removals
-        // Skip merging tool messages — each must keep its own toolCallId for API correlation.
+        // Phase 5: ensure no two consecutive same-role messages after removals.
+        // After Phase 1, only "user" and "assistant" roles remain.
         val result = mutableListOf<ChatMessage>()
         for (msg in merged) {
             val last = result.lastOrNull()
-            if (last != null && last.role == msg.role && last.role != "tool" && last.toolCalls == null && msg.toolCalls == null) {
+            if (last != null && last.role == msg.role && last.toolCalls == null && msg.toolCalls == null) {
                 result[result.size - 1] = ChatMessage(
                     role = msg.role,
                     content = "${last.content ?: ""}\n\n${msg.content ?: ""}"

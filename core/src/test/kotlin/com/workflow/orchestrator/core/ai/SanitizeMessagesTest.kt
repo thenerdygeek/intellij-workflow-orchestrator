@@ -12,10 +12,15 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
 /**
- * Tests for SourcegraphChatClient.sanitizeMessages() — verifies that
- * native tool results (with toolCallId) are preserved as role=tool,
- * XML-based tool results (without toolCallId) are converted to user role,
- * and tool messages are never merged together.
+ * Tests for SourcegraphChatClient.sanitizeMessages() — verifies that messages
+ * are converted to a format the Sourcegraph gateway actually accepts.
+ *
+ * Constraints proven by streaming_lab.py probe:
+ * - role="tool" is REJECTED (400: "invalid value for MessageRole: tool")
+ * - role="system" is REJECTED (400: "system role is not supported")
+ * - Only role="user" and role="assistant" are accepted
+ * - tool_calls on assistant messages may be rejected when tools=null
+ * - Unknown fields (e.g., "reasoning") may be rejected
  *
  * Since sanitizeMessages() is private, we test indirectly by sending
  * messages through sendMessageStream() and inspecting the serialized
@@ -67,15 +72,17 @@ class SanitizeMessagesTest {
         return parsed.messages
     }
 
+    // ── Tool role is always converted to user ──────────────────────────
+
     @Test
-    fun `tool message WITH toolCallId is preserved as role=tool`() = runTest {
+    fun `tool message WITH toolCallId is converted to user role`() = runTest {
         server.enqueue(minimalStreamResponse())
 
         val messages = listOf(
             ChatMessage(role = "user", content = "read the file"),
             ChatMessage(
                 role = "assistant",
-                content = "\u200B",
+                content = "I'll read that",
                 toolCalls = listOf(
                     ToolCall(id = "call_1", function = FunctionCall(name = "read_file", arguments = """{"path":"Foo.kt"}"""))
                 )
@@ -86,15 +93,19 @@ class SanitizeMessagesTest {
         client.sendMessageStream(messages = messages, tools = null, onChunk = {})
         val sent = captureRequestMessages()
 
-        // Find the tool message in the sent request
-        val toolMsg = sent.find { it.role == "tool" }
-        assertNotNull(toolMsg, "Native tool message with toolCallId should be preserved as role=tool")
-        assertEquals("call_1", toolMsg!!.toolCallId)
-        assertEquals("file contents here", toolMsg.content)
+        // No role="tool" messages should exist — Sourcegraph rejects them
+        val toolMsgs = sent.filter { it.role == "tool" }
+        assertTrue(toolMsgs.isEmpty(), "role='tool' must NEVER be sent — Sourcegraph rejects it with 400")
+
+        // Should appear as user message with TOOL RESULT prefix
+        val toolResultMsg = sent.find { it.content?.contains("TOOL RESULT:") == true }
+        assertNotNull(toolResultMsg, "Tool result should be converted to user message with TOOL RESULT prefix")
+        assertEquals("user", toolResultMsg!!.role)
+        assertTrue(toolResultMsg.content!!.contains("file contents here"))
     }
 
     @Test
-    fun `tool message WITHOUT toolCallId is converted to user role`() = runTest {
+    fun `tool message WITHOUT toolCallId is also converted to user role`() = runTest {
         server.enqueue(minimalStreamResponse())
 
         val messages = listOf(
@@ -106,14 +117,11 @@ class SanitizeMessagesTest {
         client.sendMessageStream(messages = messages, tools = null, onChunk = {})
         val sent = captureRequestMessages()
 
-        // No tool-role messages should remain
         val toolMsgs = sent.filter { it.role == "tool" }
-        assertTrue(toolMsgs.isEmpty(), "XML-based tool result (no toolCallId) should be converted to user role")
+        assertTrue(toolMsgs.isEmpty(), "role='tool' must NEVER be sent")
 
-        // Should appear as user message with TOOL RESULT prefix
-        val userMsgs = sent.filter { it.role == "user" }
-        val toolResultMsg = userMsgs.find { it.content?.contains("TOOL RESULT:") == true }
-        assertNotNull(toolResultMsg, "XML tool result should be converted to user message with TOOL RESULT prefix")
+        val toolResultMsg = sent.find { it.content?.contains("TOOL RESULT:") == true }
+        assertNotNull(toolResultMsg, "XML tool result should be converted to user message")
         assertTrue(toolResultMsg!!.content!!.contains("xml tool output"))
     }
 
@@ -134,15 +142,17 @@ class SanitizeMessagesTest {
         assertTrue(toolMsgs.isEmpty(), "Tool message with blank toolCallId should be converted to user role")
     }
 
+    // ── Multiple tool results are merged as consecutive user messages ──
+
     @Test
-    fun `multiple tool messages are NOT merged together`() = runTest {
+    fun `multiple tool results become user messages and merge correctly`() = runTest {
         server.enqueue(minimalStreamResponse())
 
         val messages = listOf(
             ChatMessage(role = "user", content = "read two files"),
             ChatMessage(
                 role = "assistant",
-                content = "\u200B",
+                content = "Reading both",
                 toolCalls = listOf(
                     ToolCall(id = "call_1", function = FunctionCall(name = "read_file", arguments = """{"path":"A.kt"}""")),
                     ToolCall(id = "call_2", function = FunctionCall(name = "read_file", arguments = """{"path":"B.kt"}"""))
@@ -155,56 +165,105 @@ class SanitizeMessagesTest {
         client.sendMessageStream(messages = messages, tools = null, onChunk = {})
         val sent = captureRequestMessages()
 
-        // Both tool messages should be preserved separately
+        // No tool messages
         val toolMsgs = sent.filter { it.role == "tool" }
-        assertEquals(2, toolMsgs.size, "Multiple tool messages must NOT be merged — each has its own toolCallId")
-        assertEquals("call_1", toolMsgs[0].toolCallId)
-        assertEquals("call_2", toolMsgs[1].toolCallId)
-        assertEquals("contents of A", toolMsgs[0].content)
-        assertEquals("contents of B", toolMsgs[1].content)
+        assertTrue(toolMsgs.isEmpty(), "No role='tool' messages should remain")
+
+        // Both tool results should appear as user content (merged by consecutive-role merge)
+        val userMsgs = sent.filter { it.role == "user" }
+        val combined = userMsgs.joinToString(" ") { it.content ?: "" }
+        assertTrue(combined.contains("contents of A"), "First tool result should be in user content")
+        assertTrue(combined.contains("contents of B"), "Second tool result should be in user content")
     }
 
+    // ── Assistant toolCalls are stripped and converted to inline text ──
+
     @Test
-    fun `mixed native and XML tool results are handled correctly`() = runTest {
+    fun `assistant toolCalls are stripped and converted to inline text`() = runTest {
         server.enqueue(minimalStreamResponse())
 
         val messages = listOf(
-            ChatMessage(role = "user", content = "do things"),
+            ChatMessage(role = "user", content = "read src/main.kt"),
             ChatMessage(
                 role = "assistant",
-                content = "\u200B",
+                content = "Let me read that",
                 toolCalls = listOf(
-                    ToolCall(id = "call_1", function = FunctionCall(name = "read_file", arguments = """{"path":"A.kt"}"""))
+                    ToolCall(id = "call_1", function = FunctionCall(name = "read_file", arguments = """{"path":"src/main.kt"}"""))
                 )
             ),
-            ChatMessage(role = "tool", content = "native result", toolCallId = "call_1"),
-            ChatMessage(role = "assistant", content = "and now XML"),
-            ChatMessage(role = "tool", content = "xml result", toolCallId = null),
+            ChatMessage(role = "tool", content = "file contents", toolCallId = "call_1"),
         )
 
         client.sendMessageStream(messages = messages, tools = null, onChunk = {})
         val sent = captureRequestMessages()
 
-        // Native tool result should be preserved
-        val toolMsgs = sent.filter { it.role == "tool" }
-        assertEquals(1, toolMsgs.size, "Only the native tool result should remain as role=tool")
-        assertEquals("call_1", toolMsgs[0].toolCallId)
+        // Assistant message should have no tool_calls field
+        val assistantMsg = sent.find { it.role == "assistant" }
+        assertNotNull(assistantMsg)
+        assertNull(assistantMsg!!.toolCalls, "toolCalls must be stripped — Sourcegraph may reject them with tools=null")
 
-        // XML tool result should be converted to user
-        val userMsgs = sent.filter { it.content?.contains("TOOL RESULT:") == true }
-        assertEquals(1, userMsgs.size, "XML tool result should become a user message")
-        assertTrue(userMsgs[0].content!!.contains("xml result"))
+        // But the tool call info should be inlined as text
+        assertTrue(assistantMsg.content!!.contains("read_file"), "Tool call name should appear in assistant content")
+        assertTrue(assistantMsg.content!!.contains("src/main.kt"), "Tool call args should appear in assistant content")
     }
 
     @Test
-    fun `pending system content is flushed before native tool message`() = runTest {
+    fun `assistant message with toolCalls but blank content gets placeholder`() = runTest {
+        server.enqueue(minimalStreamResponse())
+
+        val messages = listOf(
+            ChatMessage(role = "user", content = "read it"),
+            ChatMessage(
+                role = "assistant",
+                content = null,
+                toolCalls = listOf(
+                    ToolCall(id = "call_1", function = FunctionCall(name = "read_file", arguments = """{"path":"A.kt"}"""))
+                )
+            ),
+            ChatMessage(role = "tool", content = "result", toolCallId = "call_1"),
+        )
+
+        client.sendMessageStream(messages = messages, tools = null, onChunk = {})
+        val sent = captureRequestMessages()
+
+        val assistantMsg = sent.find { it.role == "assistant" }
+        assertNotNull(assistantMsg)
+        assertNull(assistantMsg!!.toolCalls)
+        // Content should have tool call info (not be blank)
+        assertTrue(assistantMsg.content!!.contains("read_file"))
+    }
+
+    // ── Reasoning field is stripped ───────────────────────────────────
+
+    @Test
+    fun `reasoning field is stripped from assistant messages`() = runTest {
+        server.enqueue(minimalStreamResponse())
+
+        val messages = listOf(
+            ChatMessage(role = "user", content = "think about this"),
+            ChatMessage(role = "assistant", content = "Here's my answer", reasoning = "Let me think step by step..."),
+        )
+
+        client.sendMessageStream(messages = messages, tools = null, onChunk = {})
+        val sent = captureRequestMessages()
+
+        val assistantMsg = sent.find { it.role == "assistant" }
+        assertNotNull(assistantMsg)
+        assertNull(assistantMsg!!.reasoning, "reasoning field must be stripped — not a standard OpenAI field")
+        assertEquals("Here's my answer", assistantMsg.content)
+    }
+
+    // ── System role is still converted to user ──────────────────────
+
+    @Test
+    fun `pending system content is flushed before tool result`() = runTest {
         server.enqueue(minimalStreamResponse())
 
         val messages = listOf(
             ChatMessage(role = "user", content = "start"),
             ChatMessage(
                 role = "assistant",
-                content = "\u200B",
+                content = "I'll read it",
                 toolCalls = listOf(
                     ToolCall(id = "call_1", function = FunctionCall(name = "read_file", arguments = """{"path":"A.kt"}"""))
                 )
@@ -216,14 +275,45 @@ class SanitizeMessagesTest {
         client.sendMessageStream(messages = messages, tools = null, onChunk = {})
         val sent = captureRequestMessages()
 
-        // System content should be flushed as a user message before the tool message
-        val toolIdx = sent.indexOfFirst { it.role == "tool" }
-        assertTrue(toolIdx > 0, "Tool message should exist in output")
+        // No system or tool role messages
+        assertTrue(sent.none { it.role == "system" }, "No system messages should remain")
+        assertTrue(sent.none { it.role == "tool" }, "No tool messages should remain")
 
-        // There should be a user message with system_instructions before the tool message
-        val systemUserMsg = sent.find { it.content?.contains("system_instructions") == true && it.content?.contains("system instruction") == true }
-        assertNotNull(systemUserMsg, "System content should be flushed before native tool message")
-        val systemIdx = sent.indexOf(systemUserMsg)
-        assertTrue(systemIdx < toolIdx, "System message should appear before the tool message")
+        // System content should be present as user message with system_instructions tag
+        val systemUserMsg = sent.find { it.content?.contains("system_instructions") == true }
+        assertNotNull(systemUserMsg, "System content should be flushed as user message")
+    }
+
+    // ── Only user and assistant roles in output ─────────────────────
+
+    @Test
+    fun `output contains only user and assistant roles`() = runTest {
+        server.enqueue(minimalStreamResponse())
+
+        val messages = listOf(
+            ChatMessage(role = "system", content = "You are helpful"),
+            ChatMessage(role = "user", content = "read it"),
+            ChatMessage(
+                role = "assistant",
+                content = "Sure",
+                toolCalls = listOf(
+                    ToolCall(id = "c1", function = FunctionCall(name = "read_file", arguments = """{"path":"x.kt"}"""))
+                ),
+                reasoning = "Thinking..."
+            ),
+            ChatMessage(role = "tool", content = "file data", toolCallId = "c1"),
+            ChatMessage(role = "user", content = "thanks"),
+            ChatMessage(role = "assistant", content = "Done"),
+        )
+
+        client.sendMessageStream(messages = messages, tools = null, onChunk = {})
+        val sent = captureRequestMessages()
+
+        val roles = sent.map { it.role }.toSet()
+        assertEquals(setOf("user", "assistant"), roles, "Only user and assistant roles should remain")
+
+        // No toolCalls or reasoning on any message
+        assertTrue(sent.all { it.toolCalls == null }, "No toolCalls should remain on any message")
+        assertTrue(sent.all { it.reasoning == null }, "No reasoning should remain on any message")
     }
 }
