@@ -266,7 +266,7 @@ In each user message, the environment_details will specify the current mode. The
         appendLine()
         appendLine("**Usage tips:**")
         appendLine("- Use glob_files with patterns like '**/*.kt' (recursive) or '*.xml' (top-level) to explore the project at '$projectPath'. Use search_code with output_mode='content' for regex searches with surrounding code.")
-        appendLine("- run_command executes shell commands. The environment sets PAGER=cat, GIT_PAGER=cat, EDITOR=cat. Prefer non-interactive commands. Each command runs in a new terminal. Redirect stderr with 2>&1 for error visibility.")
+        appendLine("- run_command executes shell commands (10min timeout). The environment sets PAGER=cat, GIT_PAGER=cat, EDITOR=cat. Prefer non-interactive commands. Each command runs in a new terminal. Redirect stderr with 2>&1 for error visibility. Use grep_pattern to filter large output.")
 
         // Curl tip — adapt to detected frameworks
         val endpointType = when {
@@ -314,6 +314,7 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("| Inspect database schema | \"db_schema\" | Reading migration files |")
         appendLine("| Check code quality issues | \"run_inspections\" | Running linter via run_command |")
         appendLine("| Rename across codebase | \"refactor_rename\" | Find-and-replace via edit_file |")
+        appendLine("| Extract specific lines from large output | grep_pattern param | Piping through grep via run_command |")
     }.trimEnd()
 
     /**
@@ -453,6 +454,8 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("- API responses: Use grep_pattern for specific fields")
         appendLine("- Git logs: Use grep_pattern for relevant commits")
         appendLine()
+        appendLine("Outputs exceeding 30K characters are automatically saved to disk — you'll receive a preview with the file path. Use read_file or search_code on the saved file to explore the full output.")
+        appendLine()
         appendLine("Prefer dedicated tools over raw commands: Use search_code instead of run_command with grep. Use glob_files instead of run_command with find.")
         appendLine()
 
@@ -492,6 +495,7 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("- Before executing actions, consider reversibility and blast radius. Freely take local, reversible actions (edit files, run tests). For hard-to-reverse actions (force push, delete branches, drop tables, kill processes), confirm with the user first.")
         appendLine("- run_command with destructive operations (rm -rf, git reset --hard, DROP TABLE, kubectl delete) always requires user approval. Think before running.")
         appendLine("- When executing commands, do not assume success when output is missing. Run follow-up checks before proceeding.")
+        appendLine("- Tools have execution timeouts (120s default, 600s for run_command). If a tool times out, retry with a more focused query or smaller scope — split large operations into multiple targeted calls.")
         appendLine()
 
         // Task Execution
