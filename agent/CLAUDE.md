@@ -78,7 +78,7 @@ Registered in `AgentService.registerAllTools()`:
 | `create_file` | CreateFileTool | Create new files |
 | `search_code` | SearchCodeTool | Regex search with output modes |
 | `glob_files` | GlobFilesTool | Glob-pattern file discovery |
-| `run_command` | RunCommandTool | Shell command execution |
+| `run_command` | RunCommandTool | Shell command execution (ShellResolver + DefaultCommandFilter + OutputCollector + ProcessEnvironment) |
 | `revert_file` | RevertFileTool | Single-file revert |
 | `attempt_completion` | AttemptCompletionTool | Explicit task completion signal |
 | `think` | ThinkTool | No-op reasoning scratchpad |
@@ -301,6 +301,13 @@ Users can send messages while the agent is working. Messages are injected at ite
 - **Write tools set** (`WRITE_TOOLS` in `AgentLoop`): edit_file, create_file, run_command, revert_file, kill_process, send_stdin, format_code, optimize_imports, refactor_rename
 - **Approval tools** (`APPROVAL_TOOLS`): edit_file, create_file, run_command, revert_file — require user approval unless already allowed for session
 - **Per-tool timeouts**: `withTimeoutOrNull` wraps every execution — default 120s, `run_command` 600s, `agent` (SpawnAgentTool) unlimited. Timeout returns an error ToolResult; the LLM can retry or adjust.
+- **RunCommandTool component architecture**:
+  - **ShellResolver** (`tools/command/ShellResolver.kt`) — Platform-aware shell detection. Windows: Git Bash → PowerShell → cmd. Unix: `/bin/bash` → `$SHELL` → `/bin/sh`. macOS/Linux uses `/bin/bash` (not `sh` which is `zsh` on macOS). Login shell `-l` flag for PATH recovery.
+  - **DefaultCommandFilter** (`security/DefaultCommandFilter.kt`) — Hard-block pre-spawn patterns: fork bombs, `rm -rf /`, `sudo`, `mkfs`, etc. Returns rejection before process is created.
+  - **OutputCollector** (`tools/command/OutputCollector.kt`) — 50/50 line-based head/tail truncation, disk spill for large outputs, Unicode sanitization.
+  - **ProcessEnvironment** (`tools/command/ProcessEnvironment.kt`) — Strips 35+ sensitive vars (credentials, tokens, keys), blocks 25 vars from the LLM-provided `env` parameter, applies 15 anti-interactive overrides (TERM, PAGER, GIT_TERMINAL_PROMPT, etc.).
+- **RunCommandTool parameters**: `command` (required), `cwd` (optional), `env` (optional JSON object for LLM-provided environment variables, filtered through security blocklist), `separate_stderr` (optional boolean for separate stderr capture).
+- **Two distinct safety layers for commands**: (1) `DefaultCommandFilter` — hard-block patterns, pre-spawn, in `security/` package; (2) `CommandSafetyAnalyzer` — risk classification for the approval gate, called in `AgentLoop` not in `RunCommandTool`.
 - **CancellationException**: Always re-thrown (never swallowed) so coroutine scope cancellation propagates correctly through the loop.
 - **Registration failures**: Tracked and logged; no more silent swallowing of deferred activation errors.
 - **Token estimate**: Computed after output truncation, not before, so context fill is accurate.
@@ -392,7 +399,7 @@ Two-layer enforcement:
 
 ## Revert Architecture
 
-`revert_file` tool provides single-file revert. `RunCommandTool` blocks destructive git commands (`git checkout`, `git reset`, `git restore`, `git clean`) via `SAFE_GIT_SUBCOMMANDS` allowlist and guides the LLM toward `revert_file`.
+`revert_file` tool provides single-file revert. Git allowlist checks have been removed from `RunCommandTool` — destructive git command policy is deferred to a future policy layer. The system prompt guides the LLM toward `revert_file` for file reverts.
 
 ## Conversation Persistence & Durable Execution
 
@@ -594,8 +601,9 @@ Structured JSONL agent logs (`observability/AgentFileLogger.kt`). Location: `~/.
 ## Security
 
 - **PathValidator** (`tools/builtin/PathValidator.kt`) — canonical path comparison prevents traversal (`../../etc/passwd`)
-- **CommandSafetyAnalyzer** (`security/CommandSafetyAnalyzer.kt`) — risk classification for shell commands
-- **SAFE_GIT_SUBCOMMANDS** (`RunCommandTool`) — allowlist blocks destructive git commands
+- **DefaultCommandFilter** (`security/DefaultCommandFilter.kt`) — hard-block pre-spawn filter for dangerous patterns (fork bombs, `rm -rf /`, `sudo`, `mkfs`, etc.). Runs inside `RunCommandTool` before process creation.
+- **CommandSafetyAnalyzer** (`security/CommandSafetyAnalyzer.kt`) — risk classification for shell commands. Called in `AgentLoop` for the approval gate, NOT inside `RunCommandTool`.
+- **ProcessEnvironment** (`tools/command/ProcessEnvironment.kt`) — strips 35+ sensitive environment variables and blocks 25 vars from LLM-provided `env` parameter
 
 ## Rich Chat UI
 
