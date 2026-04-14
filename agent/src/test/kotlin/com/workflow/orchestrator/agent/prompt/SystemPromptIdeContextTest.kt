@@ -14,6 +14,127 @@ import java.io.File
  */
 class SystemPromptIdeContextTest {
 
+    companion object {
+        private val SNAPSHOT_DIR = "src/test/resources/prompt-snapshots"
+
+        /** Standard build params used for all snapshots (consistent, reproducible) */
+        private fun buildPrompt(ideContext: IdeContext? = null) = SystemPrompt.build(
+            projectName = "SnapshotProject",
+            projectPath = "/snapshot/project",
+            osName = "Linux",
+            shell = "/bin/bash",
+            ideContext = ideContext,
+        )
+
+        private fun saveSnapshot(name: String, content: String) {
+            val file = File("$SNAPSHOT_DIR/$name.txt")
+            file.parentFile.mkdirs()
+            file.writeText(content)
+        }
+
+        private fun loadSnapshot(name: String): String? {
+            val file = File("$SNAPSHOT_DIR/$name.txt")
+            return if (file.exists()) file.readText() else null
+        }
+
+        // ---- IDE Context Factories ----
+
+        fun intellijUltimate() = IdeContext(
+            product = IdeProduct.INTELLIJ_ULTIMATE,
+            productName = "IntelliJ IDEA 2025.1 Ultimate",
+            edition = Edition.ULTIMATE,
+            languages = setOf(Language.JAVA, Language.KOTLIN),
+            hasJavaPlugin = true,
+            hasPythonPlugin = false,
+            hasPythonCorePlugin = false,
+            hasSpringPlugin = true,
+            detectedFrameworks = setOf(Framework.SPRING),
+            detectedBuildTools = setOf(BuildTool.GRADLE),
+        )
+
+        fun intellijCommunity() = IdeContext(
+            product = IdeProduct.INTELLIJ_COMMUNITY,
+            productName = "IntelliJ IDEA 2025.1 Community",
+            edition = Edition.COMMUNITY,
+            languages = setOf(Language.JAVA, Language.KOTLIN),
+            hasJavaPlugin = true,
+            hasPythonPlugin = false,
+            hasPythonCorePlugin = false,
+            hasSpringPlugin = false,
+            detectedFrameworks = emptySet(),
+            detectedBuildTools = setOf(BuildTool.MAVEN),
+        )
+
+        fun pycharmProfessional() = IdeContext(
+            product = IdeProduct.PYCHARM_PROFESSIONAL,
+            productName = "PyCharm 2025.1 Professional",
+            edition = Edition.PROFESSIONAL,
+            languages = setOf(Language.PYTHON),
+            hasJavaPlugin = false,
+            hasPythonPlugin = true,
+            hasPythonCorePlugin = false,
+            hasSpringPlugin = false,
+            detectedFrameworks = setOf(Framework.DJANGO),
+            detectedBuildTools = setOf(BuildTool.POETRY),
+        )
+
+        fun pycharmCommunity() = IdeContext(
+            product = IdeProduct.PYCHARM_COMMUNITY,
+            productName = "PyCharm 2025.1 Community",
+            edition = Edition.COMMUNITY,
+            languages = setOf(Language.PYTHON),
+            hasJavaPlugin = false,
+            hasPythonPlugin = false,
+            hasPythonCorePlugin = true,
+            hasSpringPlugin = false,
+            detectedFrameworks = setOf(Framework.FASTAPI),
+            detectedBuildTools = setOf(BuildTool.UV),
+        )
+
+        fun webstorm() = IdeContext(
+            product = IdeProduct.OTHER,
+            productName = "WebStorm 2025.1",
+            edition = Edition.OTHER,
+            languages = emptySet(),
+            hasJavaPlugin = false,
+            hasPythonPlugin = false,
+            hasPythonCorePlugin = false,
+            hasSpringPlugin = false,
+            detectedFrameworks = emptySet(),
+            detectedBuildTools = emptySet(),
+        )
+
+        fun intellijUltimateMixed() = IdeContext(
+            product = IdeProduct.INTELLIJ_ULTIMATE,
+            productName = "IntelliJ IDEA 2025.1 Ultimate",
+            edition = Edition.ULTIMATE,
+            languages = setOf(Language.JAVA, Language.KOTLIN, Language.PYTHON),
+            hasJavaPlugin = true,
+            hasPythonPlugin = true,
+            hasPythonCorePlugin = false,
+            hasSpringPlugin = true,
+            detectedFrameworks = setOf(Framework.SPRING, Framework.DJANGO),
+            detectedBuildTools = setOf(BuildTool.GRADLE, BuildTool.POETRY),
+        )
+    }
+
+    @Test
+    fun `generate all golden snapshots`() {
+        saveSnapshot("null-context", buildPrompt(null))
+        saveSnapshot("intellij-ultimate", buildPrompt(intellijUltimate()))
+        saveSnapshot("intellij-community", buildPrompt(intellijCommunity()))
+        saveSnapshot("pycharm-professional", buildPrompt(pycharmProfessional()))
+        saveSnapshot("pycharm-community", buildPrompt(pycharmCommunity()))
+        saveSnapshot("webstorm", buildPrompt(webstorm()))
+        saveSnapshot("intellij-ultimate-mixed", buildPrompt(intellijUltimateMixed()))
+
+        // Verify all files were created
+        val dir = File(SNAPSHOT_DIR)
+        assertTrue(dir.exists())
+        assertEquals(7, dir.listFiles()?.count { it.extension == "txt" },
+            "Should have created 7 snapshot files")
+    }
+
     @Test
     fun `build with minimal params produces valid prompt and saves snapshot`() {
         val prompt = SystemPrompt.build(
