@@ -403,4 +403,154 @@ class SystemPromptIdeContextTest {
         assertTrue(rulesIdx < systemInfoIdx, "Rules before system info")
         assertTrue(systemInfoIdx < objectiveIdx, "System info before objective")
     }
+
+    // ==================== Golden Snapshot Regression Tests ====================
+
+    @Test
+    fun `SNAPSHOT null context matches golden file`() {
+        val prompt = buildPrompt(null)
+        val snapshot = loadSnapshot("null-context")
+        assertNotNull(snapshot, "Golden snapshot 'null-context.txt' not found — run 'generate all golden snapshots' first")
+        assertEquals(snapshot, prompt,
+            "Prompt for null context has changed from golden snapshot. " +
+            "If this change is intentional, re-run 'generate all golden snapshots' to update.")
+    }
+
+    @Test
+    fun `SNAPSHOT IntelliJ Ultimate matches golden file`() {
+        val prompt = buildPrompt(intellijUltimate())
+        val snapshot = loadSnapshot("intellij-ultimate")
+        assertNotNull(snapshot, "Golden snapshot 'intellij-ultimate.txt' not found")
+        assertEquals(snapshot, prompt,
+            "Prompt for IntelliJ Ultimate has changed from golden snapshot. " +
+            "If intentional, re-run 'generate all golden snapshots' to update.")
+    }
+
+    @Test
+    fun `SNAPSHOT IntelliJ Community matches golden file`() {
+        val prompt = buildPrompt(intellijCommunity())
+        val snapshot = loadSnapshot("intellij-community")
+        assertNotNull(snapshot, "Golden snapshot 'intellij-community.txt' not found")
+        assertEquals(snapshot, prompt,
+            "Prompt for IntelliJ Community has changed from golden snapshot. " +
+            "If intentional, re-run 'generate all golden snapshots' to update.")
+    }
+
+    @Test
+    fun `SNAPSHOT PyCharm Professional matches golden file`() {
+        val prompt = buildPrompt(pycharmProfessional())
+        val snapshot = loadSnapshot("pycharm-professional")
+        assertNotNull(snapshot, "Golden snapshot 'pycharm-professional.txt' not found")
+        assertEquals(snapshot, prompt,
+            "Prompt for PyCharm Professional has changed from golden snapshot. " +
+            "If intentional, re-run 'generate all golden snapshots' to update.")
+    }
+
+    @Test
+    fun `SNAPSHOT PyCharm Community matches golden file`() {
+        val prompt = buildPrompt(pycharmCommunity())
+        val snapshot = loadSnapshot("pycharm-community")
+        assertNotNull(snapshot, "Golden snapshot 'pycharm-community.txt' not found")
+        assertEquals(snapshot, prompt,
+            "Prompt for PyCharm Community has changed from golden snapshot. " +
+            "If intentional, re-run 'generate all golden snapshots' to update.")
+    }
+
+    @Test
+    fun `SNAPSHOT WebStorm matches golden file`() {
+        val prompt = buildPrompt(webstorm())
+        val snapshot = loadSnapshot("webstorm")
+        assertNotNull(snapshot, "Golden snapshot 'webstorm.txt' not found")
+        assertEquals(snapshot, prompt,
+            "Prompt for WebStorm has changed from golden snapshot. " +
+            "If intentional, re-run 'generate all golden snapshots' to update.")
+    }
+
+    @Test
+    fun `SNAPSHOT IntelliJ Ultimate mixed matches golden file`() {
+        val prompt = buildPrompt(intellijUltimateMixed())
+        val snapshot = loadSnapshot("intellij-ultimate-mixed")
+        assertNotNull(snapshot, "Golden snapshot 'intellij-ultimate-mixed.txt' not found")
+        assertEquals(snapshot, prompt,
+            "Prompt for IntelliJ Ultimate (mixed Java+Python) has changed from golden snapshot. " +
+            "If intentional, re-run 'generate all golden snapshots' to update.")
+    }
+
+    // ==================== Cross-Variant Isolation Tests ====================
+
+    @Test
+    fun `ISOLATION no Python content in IntelliJ-only snapshots`() {
+        val prompt = buildPrompt(intellijUltimate())
+        assertFalse(prompt.contains("pytest"), "IntelliJ Ultimate should not mention pytest")
+        assertFalse(prompt.contains("python-engineer"), "IntelliJ Ultimate should not mention python-engineer")
+        assertFalse(prompt.contains("Django URLs"), "IntelliJ Ultimate should not mention Django URLs")
+        assertFalse(prompt.contains("FastAPI routes"), "IntelliJ Ultimate should not mention FastAPI routes")
+        assertFalse(prompt.contains("Flask routes"), "IntelliJ Ultimate should not mention Flask routes")
+    }
+
+    @Test
+    fun `ISOLATION no Java content in PyCharm-only snapshots`() {
+        val prompt = buildPrompt(pycharmProfessional())
+        assertFalse(prompt.contains("spring-boot-engineer"), "PyCharm should not mention spring-boot-engineer")
+        assertFalse(prompt.contains("mvn compile"), "PyCharm should not mention mvn compile")
+        assertFalse(prompt.contains("gradlew"), "PyCharm should not mention gradlew")
+        assertFalse(prompt.contains("@PostMapping"), "PyCharm should not mention @PostMapping")
+        assertFalse(prompt.contains("@Bean"), "PyCharm should not mention @Bean")
+    }
+
+    @Test
+    fun `ISOLATION WebStorm has no language-specific content`() {
+        val prompt = buildPrompt(webstorm())
+        assertFalse(prompt.contains("spring-boot-engineer"))
+        assertFalse(prompt.contains("python-engineer"))
+        assertFalse(prompt.contains("mvn compile"))
+        assertFalse(prompt.contains("gradlew"))
+        assertFalse(prompt.contains("pytest"))
+        assertFalse(prompt.contains("Django"))
+        assertFalse(prompt.contains("FastAPI"))
+        assertFalse(prompt.contains("Flask"))
+        assertFalse(prompt.contains("@PostMapping"))
+    }
+
+    @Test
+    fun `ISOLATION mixed project has content from both languages`() {
+        val prompt = buildPrompt(intellijUltimateMixed())
+        // Should have Java content
+        assertTrue(prompt.contains("spring-boot-engineer"))
+        assertTrue(prompt.contains("mvn compile") || prompt.contains("gradlew"))
+        // Should also have Python content
+        assertTrue(prompt.contains("python-engineer"))
+        assertTrue(prompt.contains("pytest") || prompt.contains("Django"))
+    }
+
+    // ==================== Size Bounds Tests ====================
+
+    @Test
+    fun `all variants are within acceptable size bounds`() {
+        data class VariantSize(val name: String, val context: IdeContext?, val minChars: Int, val maxChars: Int)
+
+        val variants = listOf(
+            VariantSize("null", null, 5000, 25000),
+            VariantSize("IntelliJ Ultimate", intellijUltimate(), 5000, 25000),
+            VariantSize("IntelliJ Community", intellijCommunity(), 5000, 25000),
+            VariantSize("PyCharm Professional", pycharmProfessional(), 5000, 25000),
+            VariantSize("PyCharm Community", pycharmCommunity(), 5000, 25000),
+            VariantSize("WebStorm", webstorm(), 4000, 20000),
+            VariantSize("Mixed", intellijUltimateMixed(), 6000, 28000),
+        )
+
+        for ((name, context, min, max) in variants) {
+            val prompt = buildPrompt(context)
+            assertTrue(prompt.length in min..max,
+                "$name prompt size ${prompt.length} chars outside bounds [$min, $max]")
+        }
+    }
+
+    @Test
+    fun `WebStorm prompt is smaller than IntelliJ Ultimate prompt`() {
+        val webstormPrompt = buildPrompt(webstorm())
+        val intellijPrompt = buildPrompt(intellijUltimate())
+        assertTrue(webstormPrompt.length < intellijPrompt.length,
+            "WebStorm prompt (${webstormPrompt.length}) should be smaller than IntelliJ (${intellijPrompt.length}) — fewer language-specific sections")
+    }
 }
