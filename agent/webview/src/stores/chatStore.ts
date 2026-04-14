@@ -64,6 +64,13 @@ interface PendingProcessInput {
 }
 
 // ── Approval state ──
+export interface ApprovalCommandPreview {
+  command: string;
+  shell: string;
+  cwd: string;
+  env: Array<{ key: string; value: string }>;
+  separateStderr?: boolean;
+}
 interface PendingApproval {
   toolName: string;
   riskLevel: string;
@@ -71,6 +78,7 @@ interface PendingApproval {
   description?: string;
   metadata?: Array<{ key: string; value: string }>;
   diffContent?: string;
+  commandPreview?: ApprovalCommandPreview;
   /** Whether the UI should offer "Allow for session". False for run_command. */
   allowSessionApproval: boolean;
 }
@@ -211,7 +219,7 @@ interface ChatState {
   showToast(message: string, type: string, durationMs: number): void;
   dismissToast(id: string): void;
   receiveMentionResults(results: MentionSearchResult[]): void;
-  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string, allowSessionApproval?: boolean): void;
+  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string, commandPreview?: ApprovalCommandPreview, allowSessionApproval?: boolean): void;
   resolveApproval(decision: 'approve' | 'deny' | 'allowForSession'): void;
   showProcessInput(processId: string, description: string, prompt: string, command: string): void;
   resolveProcessInput(input: string): void;
@@ -984,7 +992,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ mentionResults: results });
   },
 
-  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string, allowSessionApproval: boolean = true) {
+  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string, commandPreview?: ApprovalCommandPreview, allowSessionApproval: boolean = true) {
     set(state => {
       const approval: PendingApproval = {
         toolName,
@@ -993,6 +1001,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         description,
         metadata,
         diffContent,
+        commandPreview,
         allowSessionApproval,
       };
 

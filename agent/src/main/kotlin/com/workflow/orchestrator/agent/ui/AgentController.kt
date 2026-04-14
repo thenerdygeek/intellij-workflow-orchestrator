@@ -1029,6 +1029,7 @@ class AgentController(
 
         val description: String
         val diffContent: String?
+        var commandPreviewJson: String? = null
 
         when (toolName) {
             "edit_file" -> {
@@ -1047,11 +1048,10 @@ class AgentController(
                 diffContent = com.workflow.orchestrator.agent.util.DiffUtil.unifiedDiff("", preview, path)
             }
             "run_command" -> {
-                val command = parsedArgs?.get("command")?.jsonPrimitive?.content ?: "unknown"
-                val shell = parsedArgs?.get("shell")?.jsonPrimitive?.content ?: ""
-                val cmdDesc = parsedArgs?.get("description")?.jsonPrimitive?.content
-                description = cmdDesc ?: "Run: $command"
-                diffContent = "$ $command\n(shell: $shell)"
+                val payload = com.workflow.orchestrator.agent.ui.approval.CommandApprovalPayload.build(parsedArgs, project)
+                description = payload.description
+                diffContent = null
+                commandPreviewJson = payload.commandPreviewJson
             }
             "revert_file" -> {
                 val path = parsedArgs?.get("path")?.jsonPrimitive?.content ?: "unknown"
@@ -1074,6 +1074,7 @@ class AgentController(
                 description = description,
                 metadataJson = metadataJson,
                 diffContent = diffContent,
+                commandPreviewJson = commandPreviewJson,
                 allowSessionApproval = allowSessionApproval
             )
         }
