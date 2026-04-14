@@ -165,67 +165,44 @@ def _extract_from_body(resp: dict, *keys):
     return val
 
 
-def probe_bamboo(cfg: dict, output_dir: Path, endpoint_filter: set = None):
-    """Probe Bamboo API endpoints. Auto-discovers job keys and branch keys."""
-    client = ApiClient(
-        cfg["url"], {"Authorization": f"Bearer {cfg['token']}"}, "bamboo"
-    )
-    plan_key = cfg.get("plan_key", "")
-    results = []
-    raw_names = {"plan_specs", "build_log_plan", "job_log"}
+def _probe_bamboo_plan(label: str, client: ApiClient, plan_key: str, branch: str,
+                       results: list, endpoint_filter: set, raw_names: set):
+    """Probe a single Bamboo plan — auto-discovers job keys and branch keys."""
+    prefix = f"{label}_" if label else ""
 
-    print(f"\n  [Bamboo] Base: {cfg['url']}")
-
-    # ── Phase 1: Connection + Discovery ──────────────────────────────────
-    phase1 = [
-        ("currentUser", "/rest/api/latest/currentUser", {}),
-        ("plans", "/rest/api/latest/plan", {"expand": "plans.plan", "max-results": "25"}),
-        ("projects", "/rest/api/latest/project", {"max-results": "25"}),
-    ]
-    _run_endpoints(client, phase1, results, endpoint_filter, raw_names)
-
-    if not plan_key:
-        save_results("bamboo", results, output_dir)
-        return
-
-    # ── Phase 2: Plan-specific (includes latest_result for auto-discovery) ──
-    phase2 = [
-        ("plan_branches", f"/rest/api/latest/plan/{plan_key}/branch", {"max-results": "100"}),
-        ("plan_specs", f"/rest/api/latest/plan/{plan_key}/specs", {"format": "YAML"}),
-        ("plan_variables", f"/rest/api/latest/plan/{plan_key}/variable", {}),
-        ("latest_result", f"/rest/api/latest/result/{plan_key}/latest",
+    # ── Plan-specific endpoints ──────────────────────────────────────────
+    endpoints = [
+        (f"{prefix}plan_branches", f"/rest/api/latest/plan/{plan_key}/branch", {"max-results": "100"}),
+        (f"{prefix}plan_variables", f"/rest/api/latest/plan/{plan_key}/variable", {}),
+        (f"{prefix}latest_result", f"/rest/api/latest/result/{plan_key}/latest",
          {"expand": "stages.stage.results.result"}),
-        ("recent_results", f"/rest/api/latest/result/{plan_key}",
+        (f"{prefix}recent_results", f"/rest/api/latest/result/{plan_key}",
          {"max-results": "5", "expand": "results.result.stages.stage,results.result.variables"}),
-        ("recent_results_minimal", f"/rest/api/latest/result/{plan_key}",
+        (f"{prefix}recent_results_minimal", f"/rest/api/latest/result/{plan_key}",
          {"max-results": "5"}),
-        ("running_queued", f"/rest/api/latest/result/{plan_key}",
+        (f"{prefix}running_queued", f"/rest/api/latest/result/{plan_key}",
          {"includeAllStates": "true", "max-results": "5"}),
-        ("search_plans", "/rest/api/latest/search/plans",
-         {"searchTerm": plan_key.split("-")[0], "fuzzy": "true", "max-results": "10"}),
     ]
 
-    branch = cfg.get("branch", "")
     if branch:
         encoded_branch = quote(branch, safe="")
-        phase2.append(
-            ("latest_result_branch",
+        endpoints.append(
+            (f"{prefix}latest_result_branch",
              f"/rest/api/latest/result/{plan_key}/branch/{encoded_branch}/latest",
              {"expand": "stages.stage.results.result"})
         )
 
-    _run_endpoints(client, phase2, results, endpoint_filter, raw_names)
+    _run_endpoints(client, endpoints, results, endpoint_filter, raw_names)
 
-    # ── Auto-discover from phase 2 results ───────────────────────────────
-    latest_resp = next((r for r in results if r["endpoint"] == "latest_result"
+    # ── Auto-discover from results ───────────────────────────────────────
+    latest_resp = next((r for r in results if r["endpoint"] == f"{prefix}latest_result"
                         and r.get("status_code") == 200), None)
-    branches_resp = next((r for r in results if r["endpoint"] == "plan_branches"
+    branches_resp = next((r for r in results if r["endpoint"] == f"{prefix}plan_branches"
                           and r.get("status_code") == 200), None)
 
-    # Extract job result key from latest_result → stages → first job
-    job_result_key = cfg.get("job_result_key", "")
-    if not job_result_key and latest_resp:
-        # Walk: body.stages.stage[0].results.result[0].buildResultKey
+    # Extract job result key from stages
+    job_result_key = None
+    if latest_resp:
         stages = _extract_from_body(latest_resp, "stages", "stage")
         if isinstance(stages, list):
             for stage in stages:
@@ -237,18 +214,18 @@ def probe_bamboo(cfg: dict, output_dir: Path, endpoint_filter: set = None):
                 if job_result_key:
                     break
         if job_result_key:
-            print(f"    [auto] job_result_key = {job_result_key}")
+            print(f"    [auto:{label or 'plan'}] job_result_key = {job_result_key}")
 
     # Extract build result key (plan-level)
-    result_key = cfg.get("result_key", "")
-    if not result_key and latest_resp:
-        result_key = _extract_from_body(latest_resp, "buildResultKey") or ""
+    result_key = None
+    if latest_resp:
+        result_key = _extract_from_body(latest_resp, "buildResultKey")
         if result_key:
-            print(f"    [auto] result_key = {result_key}")
+            print(f"    [auto:{label or 'plan'}] result_key = {result_key}")
 
-    # Extract first branch plan key
-    branch_plan_key = cfg.get("branch_plan_key", "")
-    if not branch_plan_key and branches_resp:
+    # Extract first enabled branch plan key
+    branch_plan_key = None
+    if branches_resp:
         branches_list = _extract_from_body(branches_resp, "branches", "branch")
         if isinstance(branches_list, list):
             for b in branches_list:
@@ -256,48 +233,86 @@ def probe_bamboo(cfg: dict, output_dir: Path, endpoint_filter: set = None):
                     branch_plan_key = b["key"]
                     break
         if branch_plan_key:
-            print(f"    [auto] branch_plan_key = {branch_plan_key}")
+            print(f"    [auto:{label or 'plan'}] branch_plan_key = {branch_plan_key}")
 
-    # ── Phase 3: Branch-specific ─────────────────────────────────────────
+    # ── Branch-specific ──────────────────────────────────────────────────
     if branch_plan_key:
-        phase3 = [
-            ("branch_latest_result", f"/rest/api/latest/result/{branch_plan_key}/latest",
+        branch_eps = [
+            (f"{prefix}branch_latest_result", f"/rest/api/latest/result/{branch_plan_key}/latest",
              {"expand": "stages.stage.results.result"}),
-            ("branch_recent_results", f"/rest/api/latest/result/{branch_plan_key}",
+            (f"{prefix}branch_recent_results", f"/rest/api/latest/result/{branch_plan_key}",
              {"max-results": "5", "expand": "results.result.stages.stage"}),
-            ("branch_recent_results_minimal", f"/rest/api/latest/result/{branch_plan_key}",
+            (f"{prefix}branch_recent_results_minimal", f"/rest/api/latest/result/{branch_plan_key}",
              {"max-results": "5"}),
-            ("branch_variables", f"/rest/api/latest/plan/{branch_plan_key}/variable", {}),
+            (f"{prefix}branch_variables", f"/rest/api/latest/plan/{branch_plan_key}/variable", {}),
         ]
-        _run_endpoints(client, phase3, results, endpoint_filter, raw_names)
+        _run_endpoints(client, branch_eps, results, endpoint_filter, raw_names)
 
-    # ── Phase 4: Build result (plan-level) ───────────────────────────────
+    # ── Build result (plan-level) ────────────────────────────────────────
     if result_key:
-        phase4 = [
-            ("build_result", f"/rest/api/latest/result/{result_key}",
+        build_eps = [
+            (f"{prefix}build_result", f"/rest/api/latest/result/{result_key}",
              {"expand": "stages.stage.results.result"}),
-            ("build_variables", f"/rest/api/latest/result/{result_key}",
+            (f"{prefix}build_variables", f"/rest/api/latest/result/{result_key}",
              {"expand": "variables.variable"}),
-            ("build_log_plan", f"/download/{result_key}/build_logs/{result_key}.log", {}),
-            ("build_artifacts", f"/rest/api/latest/result/{result_key}",
+            (f"{prefix}build_log_plan", f"/download/{result_key}/build_logs/{result_key}.log", {}),
+            (f"{prefix}build_artifacts", f"/rest/api/latest/result/{result_key}",
              {"expand": "artifacts.artifact"}),
-            ("test_results", f"/rest/api/latest/result/{result_key}",
-             {"expand": "testResults.failedTests.testResult,testResults.successfulTests.testResult"}),
         ]
-        _run_endpoints(client, phase4, results, endpoint_filter, raw_names)
+        _run_endpoints(client, build_eps, results, endpoint_filter, raw_names)
 
-    # ── Phase 5: Job-level (auto-discovered or from config) ──────────────
+    # ── Job-level ────────────────────────────────────────────────────────
     if job_result_key:
-        phase5 = [
-            ("job_result", f"/rest/api/latest/result/{job_result_key}",
+        job_eps = [
+            (f"{prefix}job_result", f"/rest/api/latest/result/{job_result_key}",
              {"expand": "stages.stage"}),
-            ("job_log", f"/download/{job_result_key}/build_logs/{job_result_key}.log", {}),
-            ("job_test_results", f"/rest/api/latest/result/{job_result_key}",
+            (f"{prefix}job_log", f"/download/{job_result_key}/build_logs/{job_result_key}.log", {}),
+            (f"{prefix}job_test_results", f"/rest/api/latest/result/{job_result_key}",
              {"expand": "testResults.failedTests.testResult,testResults.successfulTests.testResult"}),
-            ("job_artifacts", f"/rest/api/latest/result/{job_result_key}",
+            (f"{prefix}job_artifacts", f"/rest/api/latest/result/{job_result_key}",
              {"expand": "artifacts.artifact"}),
         ]
-        _run_endpoints(client, phase5, results, endpoint_filter, raw_names)
+        _run_endpoints(client, job_eps, results, endpoint_filter, raw_names)
+
+
+def probe_bamboo(cfg: dict, output_dir: Path, endpoint_filter: set = None):
+    """Probe Bamboo API endpoints for CI plan and automation suite plan."""
+    client = ApiClient(
+        cfg["url"], {"Authorization": f"Bearer {cfg['token']}"}, "bamboo"
+    )
+    results = []
+    raw_names = {"plan_specs", "build_log_plan", "job_log",
+                 "ci_build_log_plan", "ci_job_log",
+                 "suite_build_log_plan", "suite_job_log"}
+
+    print(f"\n  [Bamboo] Base: {cfg['url']}")
+
+    # ── Phase 1: Connection + Discovery ──────────────────────────────────
+    phase1 = [
+        ("currentUser", "/rest/api/latest/currentUser", {}),
+        ("plans", "/rest/api/latest/plan", {"expand": "plans.plan", "max-results": "25"}),
+        ("projects", "/rest/api/latest/project", {"max-results": "25"}),
+    ]
+    _run_endpoints(client, phase1, results, endpoint_filter, raw_names)
+
+    # ── Phase 2: CI plan (builds the service, has docker tag in job log) ──
+    ci_plan_key = cfg.get("ci_plan_key", "") or cfg.get("plan_key", "")
+    ci_branch = cfg.get("ci_branch", "") or cfg.get("branch", "")
+    if ci_plan_key:
+        print(f"    --- CI plan: {ci_plan_key} ---")
+        _probe_bamboo_plan("ci", client, ci_plan_key, ci_branch,
+                           results, endpoint_filter, raw_names)
+
+    # ── Phase 3: Automation suite plan (has dockerTagsAsJson in variables) ──
+    suite_plan_key = cfg.get("suite_plan_key", "")
+    suite_branch = cfg.get("suite_branch", "")
+    if suite_plan_key:
+        print(f"    --- Suite plan: {suite_plan_key} ---")
+        _probe_bamboo_plan("suite", client, suite_plan_key, suite_branch,
+                           results, endpoint_filter, raw_names)
+
+    if not ci_plan_key and not suite_plan_key:
+        print("    [SKIP] No ci_plan_key or suite_plan_key configured")
 
     save_results("bamboo", results, output_dir)
 
@@ -590,11 +605,10 @@ CONFIG_TEMPLATE = {
     "bamboo": {
         "url": "https://bamboo.example.com",
         "token": "YOUR_BAMBOO_PAT",
-        "plan_key": "PROJ-PLAN",
-        "branch": "develop",
-        "branch_plan_key": "",
-        "result_key": "PROJ-PLAN-123",
-        "job_result_key": ""
+        "ci_plan_key": "PROJ-BUILD",
+        "ci_branch": "develop",
+        "suite_plan_key": "PROJ-AUTOMATIONTESTS",
+        "suite_branch": ""
     },
     "jira": {
         "url": "https://jira.example.com",
