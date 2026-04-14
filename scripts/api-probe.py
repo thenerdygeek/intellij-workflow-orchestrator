@@ -14,11 +14,8 @@ Config file format (create from template):
 
 import argparse
 import base64
-import copy
-import hashlib
 import json
 import os
-import re
 import ssl
 import sys
 import time
@@ -32,140 +29,33 @@ from urllib.error import HTTPError, URLError
 
 # ─── Censoring ───────────────────────────────────────────────────────────────
 
-SENSITIVE_KEYS = {
-    # Auth / credentials
-    "password", "token", "secret", "credential", "authorization",
-    "access_token", "refresh_token", "api_key", "apikey", "pat",
-    # Personal info
-    "email", "emailAddress", "email_address", "mail",
-    # URLs that may contain tokens
-    "avatarUrl", "avatar_url", "profileUrl",
-}
-
-SENSITIVE_KEY_PATTERNS = [
-    re.compile(r"(?i).*password.*"),
-    re.compile(r"(?i).*secret.*"),
-    re.compile(r"(?i).*token.*"),
-    re.compile(r"(?i).*credential.*"),
-    re.compile(r"(?i).*api.?key.*"),
-]
-
-# Keys whose values are variable content that should be censored
-VARIABLE_VALUE_KEYS = {
-    # Build variables / parameters (these carry docker tags, env configs, etc.)
-    "value",
-}
-
-# Keys to preserve as-is (structural, non-sensitive)
-PRESERVE_KEYS = {
-    "key", "name", "shortName", "displayName", "description",
-    "state", "lifeCycleState", "status", "type", "enabled",
-    "buildNumber", "buildResultKey", "planKey",
-    "size", "start-index", "max-result", "startIndex", "maxResult",
-    "total", "failed", "passed", "quarantined", "successful",
-    "buildDurationInSeconds", "buildDuration",
-    "manual", "restartable", "continuable",
-    "id", "prId", "sprintId", "boardId", "issueId",
-    "summary", "issuetype", "priority", "resolution",
-    "role", "approved", "version",
-    "open", "closed", "merged", "declined",
-    "qualifiers", "qualifier",
-    "metric", "metricKeys", "component",
-    "severity", "rule", "ruleKey",
-    "line", "startLine", "endLine", "startOffset", "endOffset",
-    "period", "periods", "leakPeriodDate",
-    "canMerge", "vetoes",
-    "strategyId", "defaultStrategy",
-}
-
-
-def censor_string(val: str, key: str = "") -> str:
-    """Censor a string value, preserving structure hints."""
-    if not val:
-        return val
-    # Keep short structural values (statuses, types, booleans as strings)
-    if len(val) <= 30 and val in (
-        "true", "false", "null", "Successful", "Failed", "InProgress",
-        "Queued", "Pending", "Finished", "OPEN", "MERGED", "DECLINED",
-        "APPROVED", "UNAPPROVED", "NEEDS_WORK", "active", "closed",
-        "OK", "ERROR", "WARN", "NONE", "BUG", "VULNERABILITY",
-        "CODE_SMELL", "SECURITY_HOTSPOT", "BLOCKER", "CRITICAL",
-        "MAJOR", "MINOR", "INFO", "scrum", "kanban",
-    ):
-        return val
-    # Preserve plan key patterns (PROJ-PLAN, PROJ-PLAN-123)
-    if re.match(r"^[A-Z][A-Z0-9]+-[A-Z][A-Z0-9]+(-\d+)?$", val):
-        return val
-    # Preserve issue key patterns (PROJ-123)
-    if re.match(r"^[A-Z][A-Z0-9]+-\d+$", val):
-        return val
-    # Preserve numeric strings
-    if val.isdigit():
-        return val
-    # Preserve date-like strings
-    if re.match(r"^\d{4}-\d{2}-\d{2}", val):
-        return val
-
-    # Hash everything else for consistent but anonymous values
-    h = hashlib.sha256(val.encode()).hexdigest()[:8]
-    return f"<censored:{h}>"
-
-
-def censor_value(val: Any, key: str = "", depth: int = 0) -> Any:
-    """Recursively censor a JSON value."""
+def censor_value(val: Any, depth: int = 0) -> Any:
+    """Recursively censor all values. Preserves only keys, types, and array lengths."""
     if depth > 20:
-        return "<censored:deep>"
+        return "<...>"
 
     if isinstance(val, dict):
-        return censor_dict(val, depth + 1)
+        return {k: censor_value(v, depth + 1) for k, v in val.items()}
     elif isinstance(val, list):
-        # For large lists, keep first 3 items to show structure
-        censored = [censor_value(item, key, depth + 1) for item in val[:3]]
-        if len(val) > 3:
-            censored.append(f"<...{len(val) - 3} more items>")
-        return censored
+        if not val:
+            return []
+        # Show structure of first item only + count
+        sample = [censor_value(val[0], depth + 1)]
+        if len(val) > 1:
+            sample.append(f"<...{len(val) - 1} more>")
+        return sample
     elif isinstance(val, str):
-        return censor_string(val, key)
-    elif isinstance(val, (int, float, bool)) or val is None:
+        return "<str>"
+    elif isinstance(val, bool):
         return val
+    elif isinstance(val, int):
+        return "<int>"
+    elif isinstance(val, float):
+        return "<float>"
+    elif val is None:
+        return None
     else:
-        return str(val)
-
-
-def censor_dict(d: dict, depth: int = 0) -> dict:
-    """Censor a dictionary, handling sensitive keys and variable values."""
-    result = {}
-    for k, v in d.items():
-        k_lower = k.lower()
-
-        # Always censor sensitive keys
-        if k_lower in {s.lower() for s in SENSITIVE_KEYS}:
-            result[k] = "<redacted>"
-            continue
-
-        # Check pattern-based sensitive keys
-        if any(p.match(k) for p in SENSITIVE_KEY_PATTERNS):
-            result[k] = "<redacted>"
-            continue
-
-        # Censor variable values (build variables, env vars, etc.)
-        if k_lower in {s.lower() for s in VARIABLE_VALUE_KEYS}:
-            if isinstance(v, str):
-                result[k] = f"<variable:{hashlib.sha256(v.encode()).hexdigest()[:8]}>"
-            else:
-                result[k] = censor_value(v, k, depth)
-            continue
-
-        # Preserve known structural keys
-        if k in PRESERVE_KEYS:
-            if isinstance(v, (dict, list)):
-                result[k] = censor_value(v, k, depth)
-            else:
-                result[k] = v
-            continue
-
-        # Default: recurse
-        result[k] = censor_value(v, k, depth)
+        return "<...>"
 
     return result
 
@@ -562,12 +452,21 @@ def probe_docker_registry(cfg: dict, output_dir: Path):
 # ─── Output ──────────────────────────────────────────────────────────────────
 
 def save_results(service: str, results: list, output_dir: Path):
-    """Save censored results to file."""
+    """Save censored results to file. Only keys, types, status codes, and errors survive."""
     censored = []
     for r in results:
-        entry = copy.deepcopy(r)
-        if "body" in entry:
-            entry["body"] = censor_value(entry["body"])
+        entry = {}
+        for k, v in r.items():
+            if k == "body":
+                entry[k] = censor_value(v)
+            elif k in ("endpoint", "url", "method", "status_code", "content_type",
+                        "error", "body_type", "body_length"):
+                # Structural metadata — keep as-is
+                entry[k] = v
+            elif k in ("body_preview", "error_body_preview"):
+                entry[k] = "<censored>"
+            else:
+                entry[k] = v
         censored.append(entry)
 
     filepath = output_dir / f"{service}.json"
