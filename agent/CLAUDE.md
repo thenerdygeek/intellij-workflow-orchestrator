@@ -110,7 +110,7 @@ Registered in `AgentService.registerAllTools()`:
 | Code Intelligence | find_implementations, file_structure, type_hierarchy, call_hierarchy, type_inference, dataflow_analysis, get_method_body, get_annotations, test_finder, structural_search, read_write_access |
 | Code Quality | format_code, optimize_imports, refactor_rename, run_inspections, problem_view, list_quickfixes |
 | Git | git_blame, git_branches, git_show_commit, git_show_file, git_stash_list, git_file_history, git_merge_base, changelist_shelve, generate_explanation |
-| Build & Run | build, spring, django, fastapi, flask, runtime_exec, runtime_config, coverage |
+| Build & Run | build, spring, django, fastapi, flask, runtime_exec, java_runtime_exec (Java only), python_runtime_exec (Python only), runtime_config, coverage |
 | Database | db_list_profiles, db_list_databases, db_query, db_schema |
 | Utilities | project_context, current_time, kill_process, send_stdin, ask_user_input |
 | Debug | debug_step, debug_inspect, debug_breakpoints |
@@ -124,7 +124,9 @@ These tools consolidate multiple operations behind an `action` enum:
 
 | Meta-Tool | Action Count | Examples |
 |-----------|-------------|----------|
-| **runtime_exec** | 5 | run_tests, compile_module, get_test_results, get_running_processes, get_run_output |
+| **runtime_exec** | 3 | get_test_results, get_running_processes, get_run_output (universal observation) |
+| **java_runtime_exec** | 2 | run_tests (JUnit/TestNG), compile_module (CompilerManager) — registered only when Java plugin present |
+| **python_runtime_exec** | 2 | run_tests (pytest via PytestActions), compile_module (python -m py_compile) — registered only when Python plugin present |
 | **runtime_config** | 4 | get_run_configurations, create/modify/delete_run_config |
 | **coverage** | 2 | run_with_coverage, get_file_coverage |
 | **debug_breakpoints** | 8 | add_breakpoint, method_breakpoint, exception_breakpoint, field_watchpoint, remove_breakpoint, list_breakpoints, start_session, attach_to_process |
@@ -164,7 +166,9 @@ Result stored as `IdeContext` in `AgentService`. Tools that can't work in the cu
 - Spring tools → requires `hasSpringPlugin && hasJavaPlugin`
 - Build tools (Maven/Gradle) → requires `hasJavaPlugin`
 - Debug tools → requires `hasJavaPlugin`
-- Database, runtime, coverage, universal → always registered
+- `java_runtime_exec` (JUnit/TestNG runner + CompilerManager compile) → requires `shouldRegisterJavaBuildTools` (hasJavaPlugin)
+- `python_runtime_exec` (pytest runner + `python -m py_compile`) → requires `shouldRegisterPythonBuildTools` (supportsPython)
+- Database, runtime (observation), coverage, universal → always registered
 
 Key files: `ide/IdeContext.kt`, `ide/IdeContextDetector.kt`, `ide/ProjectScanner.kt`
 

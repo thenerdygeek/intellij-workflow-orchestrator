@@ -257,7 +257,21 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("- **Understanding code structure** → find_implementations, type_hierarchy, call_hierarchy, file_structure")
         appendLine("- **Navigating types and data flow** → type_inference, dataflow_analysis, structural_search")
         appendLine("- **Refactoring safely** → refactor_rename, find_implementations, run_inspections, diagnostics")
-        appendLine("- **Running tests / building** → runtime_exec (run_tests, compile_module), coverage, build")
+        val runtimeHint = buildString {
+            append("- **Running tests / building** → ")
+            val parts = mutableListOf<String>()
+            if (ideContext == null || ideContext.supportsJava) {
+                parts.add("java_runtime_exec (run_tests, compile_module)")
+            }
+            if (ideContext?.supportsPython == true) {
+                parts.add("python_runtime_exec (run_tests, compile_module)")
+            }
+            parts.add("runtime_exec (observe only: get_running_processes, get_run_output, get_test_results)")
+            parts.add("coverage")
+            parts.add("build")
+            append(parts.joinToString(", "))
+        }
+        appendLine(runtimeHint)
         appendLine("- **Debugging** → debug_breakpoints, debug_step, debug_inspect")
         appendLine("- **Code quality** → run_inspections, list_quickfixes, format_code, optimize_imports")
         appendLine("- **Git history / blame** → git_blame, git_file_history, git_show_commit, git_branches")
@@ -397,9 +411,9 @@ In each user message, the environment_details will specify the current mode. The
             // IDE-aware tool preference hint
             val preferenceHint = when {
                 ideContext == null || ideContext.supportsJava ->
-                    "Prefer IDE tools over shell commands: diagnostics over mvn compile, run_inspections over checkstyle, runtime_exec over mvn test, refactor_rename over find-and-replace. Use run_command only for tasks with no IDE equivalent (deploy, Docker, custom scripts)."
+                    "Prefer IDE tools over shell commands: diagnostics over mvn compile, run_inspections over checkstyle, java_runtime_exec over mvn test, refactor_rename over find-and-replace. Use run_command only for tasks with no IDE equivalent (deploy, Docker, custom scripts)."
                 ideContext.supportsPython ->
-                    "Prefer IDE tools over shell commands: diagnostics over pytest/pylint, run_inspections over flake8/mypy, runtime_exec over python -m pytest, refactor_rename over find-and-replace. Use run_command only for tasks with no IDE equivalent (deploy, Docker, custom scripts)."
+                    "Prefer IDE tools over shell commands: diagnostics over pytest/pylint, run_inspections over flake8/mypy, python_runtime_exec over python -m pytest, refactor_rename over find-and-replace. Use run_command only for tasks with no IDE equivalent (deploy, Docker, custom scripts)."
                 else ->
                     "Prefer IDE tools over shell commands: diagnostics over manual compilation, run_inspections over external linters, runtime_exec over shell test runners, refactor_rename over find-and-replace. Use run_command only for tasks with no IDE equivalent (deploy, Docker, custom scripts)."
             }
@@ -421,16 +435,17 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("Do NOT use run_command when a dedicated IDE tool exists. IDE tools provide structured output, better error reporting, and integrate with the IDE's state. This is critical:")
         if (ideContext == null || ideContext.supportsJava) {
             appendLine("- Use diagnostics instead of `run_command(\"mvn compile\")` or `run_command(\"./gradlew compileKotlin\")`")
-            appendLine("- Use runtime_exec(action=\"run_tests\") instead of `run_command(\"./gradlew test\")`")
-            appendLine("- Use runtime_exec(action=\"compile_module\") instead of `run_command(\"mvn compile\")`")
+            appendLine("- Use java_runtime_exec(action=\"run_tests\") instead of `run_command(\"./gradlew test\")`")
+            appendLine("- Use java_runtime_exec(action=\"compile_module\") instead of `run_command(\"mvn compile\")`")
         }
         if (ideContext?.supportsPython == true) {
             appendLine("- Use diagnostics instead of `run_command(\"python -m py_compile\")` or `run_command(\"pylint\")`")
-            appendLine("- Use runtime_exec(action=\"run_tests\") instead of `run_command(\"pytest\")`")
+            appendLine("- Use python_runtime_exec(action=\"run_tests\") instead of `run_command(\"pytest\")`")
+            appendLine("- Use python_runtime_exec(action=\"compile_module\") instead of `run_command(\"python -m py_compile\")`")
         }
         if (ideContext != null && !ideContext.supportsJava && !ideContext.supportsPython) {
             appendLine("- Use diagnostics instead of manual compilation commands")
-            appendLine("- Use runtime_exec(action=\"run_tests\") instead of shell test runners")
+            appendLine("- Use runtime_exec(action=\"get_test_results\") to observe test runs (dedicated IDE test runner tools are not available for this IDE)")
         }
         appendLine("- Use git_status instead of `run_command(\"git status\")`")
         appendLine("- Use git_diff instead of `run_command(\"git diff\")`")

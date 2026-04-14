@@ -19,15 +19,32 @@ class RuntimeExecToolTest {
     }
 
     @Test
-    fun `action enum contains all 5 actions`() {
+    fun `action enum contains only 3 universal actions`() {
         val actions = tool.parameters.properties["action"]?.enumValues
         assertNotNull(actions)
-        assertEquals(5, actions!!.size)
+        assertEquals(3, actions!!.size)
         assertTrue("get_running_processes" in actions)
         assertTrue("get_run_output" in actions)
         assertTrue("get_test_results" in actions)
-        assertTrue("run_tests" in actions)
-        assertTrue("compile_module" in actions)
+        // These two moved to java_runtime_exec / python_runtime_exec.
+        assertFalse("run_tests" in actions)
+        assertFalse("compile_module" in actions)
+    }
+
+    @Test
+    fun `description no longer mentions run_tests or compile_module as supported actions`() {
+        // Description should point the LLM at the IDE-specific variants for test/compile.
+        val desc = tool.description
+        assertTrue(desc.contains("java_runtime_exec"), "description should mention java_runtime_exec")
+        assertTrue(desc.contains("python_runtime_exec"), "description should mention python_runtime_exec")
+        assertFalse(
+            desc.lineSequence().any { it.trimStart().startsWith("- run_tests(") },
+            "run_tests should no longer appear as a supported action bullet"
+        )
+        assertFalse(
+            desc.lineSequence().any { it.trimStart().startsWith("- compile_module(") },
+            "compile_module should no longer appear as a supported action bullet"
+        )
     }
 
     @Test
@@ -67,11 +84,18 @@ class RuntimeExecToolTest {
     }
 
     @Test
-    fun `run_tests without class_name returns helpful error`() = runTest {
+    fun `run_tests returns routing error pointing at java and python variants`() = runTest {
         val result = tool.execute(buildJsonObject { put("action", "run_tests") }, project)
-        assertTrue(result.isError)
-        assertTrue(result.content.contains("class_name"), "Error should mention class_name parameter")
-        assertTrue(result.content.contains("test_finder"), "Error should suggest test_finder tool")
-        assertTrue(result.content.contains("fully qualified"), "Error should explain expected format")
+        assertTrue(result.isError, "run_tests should route to an error since it's not handled here")
+        assertTrue(result.content.contains("java_runtime_exec"), "error should direct LLM to java_runtime_exec")
+        assertTrue(result.content.contains("python_runtime_exec"), "error should direct LLM to python_runtime_exec")
+    }
+
+    @Test
+    fun `compile_module returns routing error pointing at java and python variants`() = runTest {
+        val result = tool.execute(buildJsonObject { put("action", "compile_module") }, project)
+        assertTrue(result.isError, "compile_module should route to an error since it's not handled here")
+        assertTrue(result.content.contains("java_runtime_exec"), "error should direct LLM to java_runtime_exec")
+        assertTrue(result.content.contains("python_runtime_exec"), "error should direct LLM to python_runtime_exec")
     }
 }
