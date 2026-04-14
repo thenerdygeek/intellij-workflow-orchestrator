@@ -69,11 +69,21 @@ class BuildMonitorServiceTest {
         )
     }
 
+    /** Sets up mocks for both job logs (makeResult creates JOB1 + JOB2). */
+    private fun mockJobLogs(
+        buildNumber: Int = 42,
+        job1Log: ApiResult<String> = ApiResult.Success(""),
+        job2Log: ApiResult<String> = ApiResult.Success("")
+    ) {
+        coEvery { apiClient.getBuildLog("PROJ-BUILD-JOB1-$buildNumber") } returns job1Log
+        coEvery { apiClient.getBuildLog("PROJ-BUILD-JOB2-$buildNumber") } returns job2Log
+    }
+
     @Test
     fun `pollOnce updates stateFlow with build result`() = runTest {
         val result = makeResult("Successful", "Finished")
         coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(result)
-        coEvery { apiClient.getBuildLog("PROJ-BUILD-JOB1-42") } returns ApiResult.Success("log content")
+        mockJobLogs(job1Log = ApiResult.Success("log content"))
 
         val service = BuildMonitorService(apiClient, eventBus, this)
 
@@ -106,7 +116,7 @@ class BuildMonitorServiceTest {
         // Second poll returns completed build → status changed → event emitted
         val successResult = makeResult("Successful", "Finished")
         coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(successResult)
-        coEvery { apiClient.getBuildLog("PROJ-BUILD-JOB1-42") } returns ApiResult.Success("log content")
+        mockJobLogs(job1Log = ApiResult.Success("log content"))
 
         eventBus.events.test {
             service.pollOnce("PROJ-BUILD", "main")
@@ -125,7 +135,7 @@ class BuildMonitorServiceTest {
     fun `pollOnce does not emit event when status unchanged`() = runTest {
         val result = makeResult("Successful", "Finished")
         coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(result)
-        coEvery { apiClient.getBuildLog("PROJ-BUILD-JOB1-42") } returns ApiResult.Success("log content")
+        mockJobLogs(job1Log = ApiResult.Success("log content"))
 
         val service = BuildMonitorService(apiClient, eventBus, this)
 
@@ -152,7 +162,7 @@ class BuildMonitorServiceTest {
         // Second poll returns failed build → status changed → event emitted
         val failedResult = makeResult("Failed", "Finished")
         coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(failedResult)
-        coEvery { apiClient.getBuildLog("PROJ-BUILD-JOB1-42") } returns ApiResult.Success("build failed log")
+        mockJobLogs(job1Log = ApiResult.Success("build failed log"))
 
         eventBus.events.test {
             service.pollOnce("PROJ-BUILD", "main")
@@ -168,7 +178,10 @@ class BuildMonitorServiceTest {
     fun `pollOnce emits BuildLogReady on first terminal poll`() = runTest {
         val result = makeResult("Successful", "Finished")
         coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(result)
-        coEvery { apiClient.getBuildLog("PROJ-BUILD-JOB1-42") } returns ApiResult.Success("Unique Docker Tag : my-tag-123")
+        mockJobLogs(
+            job1Log = ApiResult.Success("Compiling..."),
+            job2Log = ApiResult.Success("Unique Docker Tag : my-tag-123")
+        )
 
         val service = BuildMonitorService(apiClient, eventBus, this)
 
@@ -183,7 +196,9 @@ class BuildMonitorServiceTest {
             assertEquals(42, logEvent.buildNumber)
             assertEquals("PROJ-BUILD-JOB1-42", logEvent.resultKey)
             assertEquals(WorkflowEvent.BuildEventStatus.SUCCESS, logEvent.status)
-            assertEquals("Unique Docker Tag : my-tag-123", logEvent.logText)
+            // Logs from both jobs are concatenated — tag is in JOB2's log
+            assertTrue(logEvent.logText.contains("Compiling..."))
+            assertTrue(logEvent.logText.contains("Unique Docker Tag : my-tag-123"))
 
             cancelAndIgnoreRemainingEvents()
         }
@@ -193,8 +208,10 @@ class BuildMonitorServiceTest {
     fun `pollOnce emits BuildLogReady with empty text on log fetch failure`() = runTest {
         val result = makeResult("Successful", "Finished")
         coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(result)
-        coEvery { apiClient.getBuildLog("PROJ-BUILD-JOB1-42") } returns
-            ApiResult.Error(com.workflow.orchestrator.core.model.ErrorType.NETWORK_ERROR, "timeout")
+        mockJobLogs(
+            job1Log = ApiResult.Error(com.workflow.orchestrator.core.model.ErrorType.NETWORK_ERROR, "timeout"),
+            job2Log = ApiResult.Error(com.workflow.orchestrator.core.model.ErrorType.NETWORK_ERROR, "timeout")
+        )
 
         val service = BuildMonitorService(apiClient, eventBus, this)
 
@@ -213,7 +230,7 @@ class BuildMonitorServiceTest {
     fun `pollOnce does not re-fetch log for same build number`() = runTest {
         val result = makeResult("Successful", "Finished")
         coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(result)
-        coEvery { apiClient.getBuildLog("PROJ-BUILD-JOB1-42") } returns ApiResult.Success("log")
+        mockJobLogs(job1Log = ApiResult.Success("log"))
 
         val service = BuildMonitorService(apiClient, eventBus, this)
 
@@ -238,7 +255,7 @@ class BuildMonitorServiceTest {
 
         val failed = makeResult("Failed", "Finished")
         coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(failed)
-        coEvery { apiClient.getBuildLog("PROJ-BUILD-JOB1-42") } returns ApiResult.Success("build failed")
+        mockJobLogs(job1Log = ApiResult.Success("build failed"))
 
         eventBus.events.test {
             service.pollOnce("PROJ-BUILD", "main")
@@ -251,6 +268,30 @@ class BuildMonitorServiceTest {
             val logEvent = awaitItem()
             assertTrue(logEvent is WorkflowEvent.BuildLogReady)
             assertEquals(WorkflowEvent.BuildEventStatus.FAILED, (logEvent as WorkflowEvent.BuildLogReady).status)
+
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `pollOnce concatenates logs from all jobs so tag in any job is found`() = runTest {
+        val result = makeResult("Successful", "Finished")
+        coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(result)
+        // Docker tag only in JOB2 (e.g. Docker Build stage), not in JOB1 (Compile stage)
+        mockJobLogs(
+            job1Log = ApiResult.Success("Compiling source..."),
+            job2Log = ApiResult.Success("Publishing image\nUnique Docker Tag : feature-abc-789\nDone.")
+        )
+
+        val service = BuildMonitorService(apiClient, eventBus, this)
+
+        eventBus.events.test {
+            service.pollOnce("PROJ-BUILD", "main")
+
+            val event = awaitItem() as WorkflowEvent.BuildLogReady
+            // Concatenated log must contain content from both jobs
+            assertTrue(event.logText.contains("Compiling source..."))
+            assertTrue(event.logText.contains("Unique Docker Tag : feature-abc-789"))
 
             cancelAndIgnoreRemainingEvents()
         }
