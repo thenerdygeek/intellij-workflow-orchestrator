@@ -20,6 +20,12 @@ import javax.swing.Timer
  *
  * Insertion order is preserved via [LinkedHashMap]: when multiple tool calls have pending
  * text in a single timer tick they flush in first-seen order (deterministic in tests).
+ *
+ * **[invoker] EDT requirement:** In production the [invoker] parameter must dispatch work
+ * to the EDT (e.g. `{ block -> invokeLater { block() } }`). The default argument already
+ * does this. The injectable form `{ block -> block() }` (direct call, no EDT hop) is safe
+ * **in tests only** because the Swing [Timer] is never actually ticked in a headless test
+ * environment — callers drive flushing explicitly via [flush] or [flushIfNeeded].
  */
 class PerToolStreamBatcher(
     private val onFlush: (toolCallId: String, batched: String) -> Unit,
@@ -87,8 +93,19 @@ class PerToolStreamBatcher(
     /**
      * Full synchronous drain: stop the timer, then deliver all pending buffers to
      * [onFlush] in insertion order. Called on session end or cancel.
+     *
+     * The disposed check is performed once at entry (before the buffer snapshot), not
+     * per-entry inside the delivery loop. This guards against the two failure modes:
+     *
+     * - **Already disposed:** `dispose()` completed before this call started — bail out
+     *   immediately so data appended after dispose is not delivered.
+     * - **Race during execution:** `dispose()` fires *while* this method is mid-execution.
+     *   Bytes already extracted from the buffer (before `dispose()` cleared it) are
+     *   delivered unconditionally — the data was committed to `entries` before dispose
+     *   ran, and silently dropping it would break session-end guarantees.
      */
     fun flush() {
+        if (disposed.get()) return
         timer.stop()
         // Snapshot and clear all entries under lock
         val entries: List<Pair<String, String>>
@@ -96,9 +113,10 @@ class PerToolStreamBatcher(
             entries = buffers.entries.map { it.key to it.value.toString() }
             buffers.clear()
         }
-        // Deliver outside lock — no lock inversion risk
+        // Deliver unconditionally — these bytes were extracted before any concurrent
+        // dispose cleared the map. Do NOT re-check disposed here.
         for ((id, text) in entries) {
-            if (text.isNotEmpty() && !disposed.get()) {
+            if (text.isNotEmpty()) {
                 invoker { onFlush(id, text) }
             }
         }
@@ -109,19 +127,21 @@ class PerToolStreamBatcher(
     // ────────────────────────────────────────────
 
     private fun flushIfNeeded() {
-        // Snapshot non-empty entries and clear them under lock
+        // Snapshot ALL entries (not just non-empty) and clear the whole map under lock.
+        // Clearing all entries (not only non-empty ones) prevents empty StringBuilder
+        // entries from accumulating indefinitely when a tool call produces no output.
         val entries: List<Pair<String, String>>
         synchronized(lock) {
             if (buffers.isEmpty()) return
-            entries = buffers.entries
-                .filter { it.value.isNotEmpty() }
-                .map { it.key to it.value.toString() }
-            entries.forEach { (id, _) -> buffers.remove(id) }
+            entries = buffers.entries.map { it.key to it.value.toString() }
+            buffers.clear()  // always clear all, not just non-empty
         }
-        // Deliver outside lock
+        // Deliver outside lock; skip delivery if disposed (timer-driven path only)
         if (!disposed.get()) {
             for ((id, text) in entries) {
-                invoker { onFlush(id, text) }
+                if (text.isNotEmpty()) {
+                    invoker { onFlush(id, text) }
+                }
             }
         }
     }
