@@ -108,7 +108,7 @@ Registered in `AgentService.registerAllTools()`:
 | Code Quality | format_code, optimize_imports, refactor_rename, run_inspections, problem_view, list_quickfixes |
 | VCS | changelist_shelve |
 | Build & Run | build, spring, django, fastapi, flask, runtime_exec, java_runtime_exec (Java only), python_runtime_exec (Python only), runtime_config, coverage |
-| Database | db_list_profiles, db_list_databases, db_query, db_schema |
+| Database | db_list_profiles, db_list_databases, db_query, db_schema, db_stats, db_explain |
 | Utilities | project_context, current_time, kill_process, send_stdin, ask_user_input |
 | Debug | debug_step, debug_inspect, debug_breakpoints |
 | Integration (conditional) | jira, bamboo_builds, bamboo_plans, sonar, bitbucket_pr, bitbucket_repo, bitbucket_review |
