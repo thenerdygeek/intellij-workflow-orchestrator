@@ -34,14 +34,14 @@ internal fun executeResolveFile(params: JsonObject, project: Project): ToolResul
         (project.basePath?.trimEnd('/') ?: "") + "/" + rawPath
     }
 
-    // 3. Look up VirtualFile via LocalFileSystem
-    val vFile = LocalFileSystem.getInstance().findFileByPath(absolutePath)
-        ?: return ToolResult.error("File not found: $absolutePath")
-
-    // 4. Dumb mode guard — index not available during indexing
+    // 3. Dumb mode guard — check before VFS lookup so indexing callers get a clean message
     if (DumbService.isDumb(project)) {
         return ToolResult.error("Project is indexing — retry after indexing completes.")
     }
+
+    // 4. Look up VirtualFile via LocalFileSystem
+    val vFile = LocalFileSystem.getInstance().findFileByPath(absolutePath)
+        ?: return ToolResult.error("File not found: $absolutePath")
 
     // 5. All IntelliJ model reads inside ReadAction
     return ReadAction.compute<ToolResult, RuntimeException> {

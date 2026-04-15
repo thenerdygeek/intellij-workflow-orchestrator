@@ -31,9 +31,10 @@ import java.nio.file.Path
  * DumbService, ReadAction, ModuleUtilCore). These tests use MockK to stub the static
  * service lookups and verify the three key contracts:
  *
- *  1. testResolvesFileUnderModuleSourceRoot — happy path: no error, content has module + "source"
- *  2. testReturnsErrorForNonexistentPath    — LocalFileSystem returns null → isError + "not found"
- *  3. testReturnsErrorForMissingPath        — no "path" param → isError before any platform call
+ *  1. testResolvesFileUnderModuleSourceRoot  — happy path: no error, content has module + "source"
+ *  2. testReturnsErrorForNonexistentPath     — LocalFileSystem returns null → isError + "not found"
+ *  3. testReturnsErrorWhenProjectIsIndexing  — DumbService.isDumb=true → isError + "indexing"
+ *  4. testReturnsErrorForMissingPath         — no "path" param → isError before any platform call
  */
 class ResolveFileActionTest {
 
@@ -141,7 +142,28 @@ class ResolveFileActionTest {
     }
 
     // ────────────────────────────────────────────────────────────────────────
-    // Test 3 — Missing "path" param → isError before any platform call
+    // Test 3 — Dumb mode (indexing) → isError + "indexing" message
+    // ────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun testReturnsErrorWhenProjectIsIndexing() {
+        val fakePath = "/some/valid/path/Foo.kt"
+
+        mockkStatic(DumbService::class)
+        every { DumbService.isDumb(project) } returns true
+
+        val params = buildJsonObject { put("path", fakePath) }
+        val result = executeResolveFile(params, project)
+
+        assertTrue(result.isError, "Expected isError=true during indexing")
+        assertTrue(
+            result.content.lowercase().contains("indexing"),
+            "Expected 'indexing' in error message but got: ${result.content}"
+        )
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Test 4 — Missing "path" param → isError before any platform call
     // ────────────────────────────────────────────────────────────────────────
 
     @Test
