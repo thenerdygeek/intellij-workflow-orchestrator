@@ -125,9 +125,7 @@ Actions and their parameters:
 
 // ── Read action stubs ─────────────────────────────────────────────────────────
 // Signature: executeXxx(params: JsonObject, project: Project): ToolResult
-
-internal fun executeResolveFile(params: JsonObject, project: Project): ToolResult =
-    ToolResult("Action 'resolve_file' is not yet implemented.", "Stub", 10, isError = true)
+// NOTE: executeResolveFile is implemented in ResolveFileAction.kt
 
 internal fun executeModuleDetail(params: JsonObject, project: Project): ToolResult =
     ToolResult("Action 'module_detail' is not yet implemented.", "Stub", 10, isError = true)
