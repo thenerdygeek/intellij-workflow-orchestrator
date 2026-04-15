@@ -226,7 +226,6 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("- File operations: read_file, edit_file, create_file, search_code, glob_files, revert_file")
         appendLine("- Execution: run_command (shell), think (reasoning scratchpad)")
         appendLine("- Code intelligence: find_definition, find_references, diagnostics")
-        appendLine("- VCS: git_status, git_diff, git_log")
         appendLine("- Communication: ask_followup_question, attempt_completion, plan_mode_respond, enable_plan_mode")
         appendLine("- Visualization: render_artifact (interactive React components in chat)")
         appendLine("- Session: new_task (hand off to fresh session with structured context)")
@@ -274,7 +273,7 @@ In each user message, the environment_details will specify the current mode. The
         appendLine(runtimeHint)
         appendLine("- **Debugging** → debug_breakpoints, debug_step, debug_inspect")
         appendLine("- **Code quality** → run_inspections, list_quickfixes, format_code, optimize_imports")
-        appendLine("- **Git history / blame** → git_blame, git_file_history, git_show_commit, git_branches")
+        appendLine("- **Git operations** → use run_command (e.g. `git log --oneline -20`, `git diff HEAD~1`, `git blame -L 10,30 path/to/file`); use changelist_shelve for IntelliJ changelist/shelve operations")
         appendLine("- **Project integrations** → jira, bamboo_builds, sonar, bitbucket_pr, bitbucket_repo")
         appendLine("- **Database** → db_list_profiles, db_list_databases, db_schema, db_query")
         appendLine()
@@ -447,9 +446,7 @@ In each user message, the environment_details will specify the current mode. The
             appendLine("- Use diagnostics instead of manual compilation commands")
             appendLine("- Use runtime_exec(action=\"get_test_results\") to observe test runs (dedicated IDE test runner tools are not available for this IDE)")
         }
-        appendLine("- Use git_status instead of `run_command(\"git status\")`")
-        appendLine("- Use git_diff instead of `run_command(\"git diff\")`")
-        appendLine("- Use git_log instead of `run_command(\"git log\")`")
+
         appendLine("- Use search_code instead of `run_command(\"grep -r ...\")`")
         appendLine("- Use glob_files instead of `run_command(\"find ...\")`")
         appendLine("- Use refactor_rename instead of find-and-replace via run_command")

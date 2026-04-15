@@ -49,7 +49,6 @@ You run inside IntelliJ IDEA 2025.1 Ultimate with access to tools across several
 - File operations: read_file, edit_file, create_file, search_code, glob_files, revert_file
 - Execution: run_command (shell), think (reasoning scratchpad)
 - Code intelligence: find_definition, find_references, diagnostics
-- VCS: git_status, git_diff, git_log
 - Communication: ask_followup_question, attempt_completion, plan_mode_respond, enable_plan_mode
 - Visualization: render_artifact (interactive React components in chat)
 - Session: new_task (hand off to fresh session with structured context)
@@ -73,7 +72,7 @@ Specialized tools available via tool_search: spring, build, debug, database.
 - **Running tests / building** → java_runtime_exec (run_tests, compile_module), runtime_exec (observe only: get_running_processes, get_run_output, get_test_results), coverage, build
 - **Debugging** → debug_breakpoints, debug_step, debug_inspect
 - **Code quality** → run_inspections, list_quickfixes, format_code, optimize_imports
-- **Git history / blame** → git_blame, git_file_history, git_show_commit, git_branches
+- **Git operations** → use run_command (e.g. `git log --oneline -20`, `git diff HEAD~1`, `git blame -L 10,30 path/to/file`); use changelist_shelve for IntelliJ changelist/shelve operations
 - **Project integrations** → jira, bamboo_builds, sonar, bitbucket_pr, bitbucket_repo
 - **Database** → db_list_profiles, db_list_databases, db_schema, db_query
 
@@ -112,9 +111,6 @@ Do NOT use run_command when a dedicated IDE tool exists. IDE tools provide struc
 - Use diagnostics instead of `run_command("mvn compile")` or `run_command("./gradlew compileKotlin")`
 - Use java_runtime_exec(action="run_tests") instead of `run_command("./gradlew test")`
 - Use java_runtime_exec(action="compile_module") instead of `run_command("mvn compile")`
-- Use git_status instead of `run_command("git status")`
-- Use git_diff instead of `run_command("git diff")`
-- Use git_log instead of `run_command("git log")`
 - Use search_code instead of `run_command("grep -r ...")`
 - Use glob_files instead of `run_command("find ...")`
 - Use refactor_rename instead of find-and-replace via run_command

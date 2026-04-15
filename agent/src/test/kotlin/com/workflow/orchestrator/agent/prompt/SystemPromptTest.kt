@@ -417,8 +417,8 @@ class SystemPromptTest {
                 "find_implementations" to "Find all implementations of an interface",
                 "type_hierarchy" to "Show supertype/subtype hierarchy"
             ),
-            "Git" to listOf(
-                "git_blame" to "Show line-by-line blame info"
+            "VCS" to listOf(
+                "changelist_shelve" to "Manage IntelliJ changelists and shelve operations"
             )
         )
         val prompt = SystemPrompt.build(
@@ -431,12 +431,12 @@ class SystemPromptTest {
             "should contain tool name with description")
         assertTrue(prompt.contains("type_hierarchy — Show supertype/subtype hierarchy"),
             "should contain second tool with description")
-        assertTrue(prompt.contains("git_blame — Show line-by-line blame info"),
-            "should contain git tool with description")
+        assertTrue(prompt.contains("changelist_shelve — Manage IntelliJ changelists and shelve operations"),
+            "should contain VCS tool with description")
         assertTrue(prompt.contains("**Code Intelligence:**"),
             "should contain category heading")
-        assertTrue(prompt.contains("**Git:**"),
-            "should contain git category heading")
+        assertTrue(prompt.contains("**VCS:**"),
+            "should contain VCS category heading")
     }
 
     @Test

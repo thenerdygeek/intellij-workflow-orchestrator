@@ -87,10 +87,7 @@ class SpawnAgentToolTest {
 
         // VCS tools
         for (name in listOf(
-            "git_status", "git_diff", "git_log", "git_blame",
-            "git_show_file", "git_file_history", "git_show_commit",
-            "git_branches", "changelist_shelve", "git_stash_list",
-            "git_merge_base", "git"
+            "changelist_shelve"
         )) reg.register(stubTool(name))
 
         // IDE tools

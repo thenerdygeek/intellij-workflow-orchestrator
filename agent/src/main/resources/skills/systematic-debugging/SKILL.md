@@ -2,7 +2,7 @@
 name: systematic-debugging
 description: Structured root-cause investigation that must be loaded before attempting any fix. Use this whenever you encounter any bug, test failure, build failure, runtime error, or unexpected behavior — trigger phrases include "failing", "broken", "NPE", "exception", "not working", "error", "bug", "wrong output", "unexpected", "why does this", "crash", "null pointer", as well as test failures, build failures, stack traces, CI failures, and flaky tests. You must always load this skill before proposing or attempting fixes, even if the fix seems obvious, because guessing at solutions without investigation leads to wasted iterations and incomplete fixes. For example, if the user says "Tests are failing", "This returns wrong results", or "Build broke after my change", load this skill immediately before doing anything else. It walks you through a structured investigate-hypothesize-verify workflow that uses IDE diagnostics, call hierarchy analysis, dataflow tracing, and git blame to systematically identify the actual root cause rather than treating symptoms.
 user-invocable: true
-preferred-tools: [diagnostics, search_code, read_file, run_command, find_references, find_definition, think, git_status, git_diff, git_log, runtime_exec, call_hierarchy, coverage]
+preferred-tools: [diagnostics, search_code, read_file, run_command, find_references, find_definition, think, runtime_exec, call_hierarchy, coverage]
 ---
 
 # Systematic Debugging
@@ -59,8 +59,8 @@ Complete each phase before proceeding to the next.
    - Can you trigger it reliably? What are the exact steps?
 
 3. **Check Recent Changes**
-   - Use `git_status()` to see uncommitted changes
-   - Use `git_blame(path="<failing-file>")` on the failing file to see who changed what and when
+   - Use `run_command("git status")` to see uncommitted changes
+   - Use `run_command("git blame <failing-file>")` on the failing file to see who changed what and when
    - What changed that could cause this?
 
 4. **Use `think` Tool to Reason**
@@ -98,10 +98,10 @@ If Phase 1 didn't reveal a clear root cause, narrow the suspect area using bisec
 4. Repeat until the suspect region is small enough to read
 
 **Change bisection** — find the commit that introduced the bug:
-1. `git_log(max_count=20)` — find recent commits
-2. Pick the midpoint commit, checkout the code at that ref via `git_show_file`
+1. `run_command("git log --oneline -20")` — find recent commits
+2. Pick the midpoint commit, read the code at that ref via `run_command("git show <ref>:<path>")`
 3. Is the bug present? Binary search through the commit history.
-4. Once found: `git_show_commit(commit="<hash>", include_diff=true)` — read the exact change
+4. Once found: `run_command("git show <hash>")` — read the exact change
 
 **Coverage-guided narrowing** — when you have a failing test:
 1. `coverage(action="run_with_coverage", test_class="FailingTest")` — see which lines the failing test covers
@@ -259,7 +259,7 @@ When forming hypotheses in Phase 1 step 4, use this priority order (research-bac
 
 1. **Null / missing data** — an input, config value, or dependency is null or absent
 2. **Wrong configuration** — property file, environment variable, Spring profile, or feature flag
-3. **Recent change** — regression from the most recently modified code (`git_blame` the failing area)
+3. **Recent change** — regression from the most recently modified code (`run_command("git blame <failing-file>")` the failing area)
 4. **State mutation** — shared mutable state modified by another thread or call path
 5. **API contract violation** — caller passing wrong types, wrong order, or missing required fields
 6. **Race condition** — timing-dependent behavior that's inconsistent across runs
@@ -283,8 +283,8 @@ If you catch yourself thinking:
 
 | Phase | Primary Tools | Purpose |
 |-------|--------------|---------|
-| 1. Root Cause | `runtime_exec(action="get_test_results")`, `runtime_exec(action="get_run_output")`, `diagnostics`, `git_blame(path=...)`, `find_references`, `search_code`, `think` | Understand WHAT and WHY |
-| 1.5 Bisection | `git_log`, `git_show_commit`, `coverage(action="run_with_coverage")`, `think` | Narrow suspect area |
+| 1. Root Cause | `runtime_exec(action="get_test_results")`, `runtime_exec(action="get_run_output")`, `diagnostics`, `run_command("git blame <file>")`, `find_references`, `search_code`, `think` | Understand WHAT and WHY |
+| 1.5 Bisection | `run_command("git log --oneline -20")`, `run_command("git show <hash>")`, `coverage(action="run_with_coverage")`, `think` | Narrow suspect area |
 | 2. Pattern | `search_code`, `read_file`, `find_definition`, `type_hierarchy`, `think` | Find working patterns |
 | 3. Hypothesis | `think`, `runtime_exec(action="run_tests")`, `runtime_exec(action="compile_module")`, `diagnostics` | Test theory minimally |
 | 4. Implementation | `edit_file`, `runtime_exec(action="run_tests")`, `runtime_exec(action="compile_module")`, `diagnostics`, `sonar(action="issues")` | Fix and verify |

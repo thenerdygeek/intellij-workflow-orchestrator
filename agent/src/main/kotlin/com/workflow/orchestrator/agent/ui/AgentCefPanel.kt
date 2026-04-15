@@ -699,7 +699,6 @@ class AgentCefPanel(
 
     /**
      * Push a diff explanation to the chat — renders immediately as DiffHtml.
-     * Used by generate_explanation tool to show the diff without waiting for LLM response.
      */
     fun appendDiffExplanation(title: String, diffSource: String) {
         callJs("appendDiffExplanation(${JsEscape.toJsString(title)},${JsEscape.toJsString(diffSource)})")

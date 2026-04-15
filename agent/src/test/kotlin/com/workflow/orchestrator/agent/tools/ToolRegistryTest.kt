@@ -179,11 +179,11 @@ class ToolRegistryTest {
 
         @Test
         fun `searchDeferred respects maxResults`() {
-            registry.registerDeferred(FakeAgentTool("git_blame", description = "Git blame info"))
-            registry.registerDeferred(FakeAgentTool("git_branches", description = "Git branch list"))
-            registry.registerDeferred(FakeAgentTool("git_stash_list", description = "Git stash entries"))
+            registry.registerDeferred(FakeAgentTool("tool_alpha", description = "Alpha tool description"))
+            registry.registerDeferred(FakeAgentTool("tool_beta", description = "Beta tool description"))
+            registry.registerDeferred(FakeAgentTool("tool_gamma", description = "Gamma tool description"))
 
-            val results = registry.searchDeferred("git", maxResults = 2)
+            val results = registry.searchDeferred("tool_", maxResults = 2)
             assertEquals(2, results.size)
         }
 
@@ -352,22 +352,22 @@ class ToolRegistryTest {
         fun `groups tools by category with descriptions`() {
             registry.registerDeferred(FakeAgentTool("find_implementations", description = "Find all implementations of an interface"), "Code Intelligence")
             registry.registerDeferred(FakeAgentTool("type_hierarchy", description = "Show supertype/subtype hierarchy"), "Code Intelligence")
-            registry.registerDeferred(FakeAgentTool("git_blame", description = "Show line-by-line blame info"), "Git")
+            registry.registerDeferred(FakeAgentTool("tool_alpha", description = "Alpha tool description"), "Utilities")
 
             val grouped = registry.getDeferredCatalogGroupedWithDescriptions()
 
             assertEquals(2, grouped.size)
             assertTrue(grouped.containsKey("Code Intelligence"))
-            assertTrue(grouped.containsKey("Git"))
+            assertTrue(grouped.containsKey("Utilities"))
 
             val codeIntel = grouped["Code Intelligence"]!!
             assertEquals(2, codeIntel.size)
             assertEquals("find_implementations" to "Find all implementations of an interface", codeIntel[0])
             assertEquals("type_hierarchy" to "Show supertype/subtype hierarchy", codeIntel[1])
 
-            val git = grouped["Git"]!!
-            assertEquals(1, git.size)
-            assertEquals("git_blame" to "Show line-by-line blame info", git[0])
+            val utilities = grouped["Utilities"]!!
+            assertEquals(1, utilities.size)
+            assertEquals("tool_alpha" to "Alpha tool description", utilities[0])
         }
 
         @Test
@@ -417,16 +417,16 @@ class ToolRegistryTest {
         fun `allToolNames includes core, activeDeferred, and deferred tools`() {
             registry.registerCore(FakeAgentTool("read_file"))
             registry.registerCore(FakeAgentTool("edit_file"))
-            registry.registerDeferred(FakeAgentTool("git_show_commit"))
+            registry.registerDeferred(FakeAgentTool("tool_delta"))
             registry.registerDeferred(FakeAgentTool("jira"))
             registry.activateDeferred("jira") // moves to activeDeferred
 
             val names = registry.allToolNames()
             assertEquals(4, names.size)
-            assertTrue(names.contains("read_file"))     // core
-            assertTrue(names.contains("edit_file"))      // core
-            assertTrue(names.contains("jira"))           // activeDeferred
-            assertTrue(names.contains("git_show_commit")) // still deferred
+            assertTrue(names.contains("read_file"))   // core
+            assertTrue(names.contains("edit_file"))   // core
+            assertTrue(names.contains("jira"))        // activeDeferred
+            assertTrue(names.contains("tool_delta"))  // still deferred
         }
 
         @Test
@@ -441,7 +441,7 @@ class ToolRegistryTest {
                 parameters = FunctionParameters(properties = mapOf("path" to ParameterProperty(type = "string", description = "File path")))
             ))
             registry.registerDeferred(FakeAgentTool(
-                "git_show_commit",
+                "tool_delta",
                 parameters = FunctionParameters(properties = mapOf(
                     "commit" to ParameterProperty(type = "string", description = "Commit hash"),
                     "include_diff" to ParameterProperty(type = "boolean", description = "Include diff")
@@ -483,7 +483,7 @@ class ToolRegistryTest {
             // registry.get() resolves tools for execution.
             // These MUST agree: every name in allToolNames must be resolvable by get().
             registry.registerCore(FakeAgentTool("read_file"))
-            registry.registerDeferred(FakeAgentTool("git_show_commit"))
+            registry.registerDeferred(FakeAgentTool("tool_delta"))
             registry.registerDeferred(FakeAgentTool("jira"))
             registry.activateDeferred("jira")
 

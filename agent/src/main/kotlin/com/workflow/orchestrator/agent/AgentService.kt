@@ -69,7 +69,7 @@ import com.workflow.orchestrator.agent.tools.subagent.AgentConfigLoader
 import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
 import com.workflow.orchestrator.agent.tools.psi.*
 import com.workflow.orchestrator.agent.tools.runtime.*
-import com.workflow.orchestrator.agent.tools.vcs.*
+import com.workflow.orchestrator.agent.tools.vcs.ChangelistShelveTool
 import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.LlmBrainFactory
 import com.workflow.orchestrator.core.ai.ModelCache
@@ -350,8 +350,8 @@ class AgentService(private val project: Project) : Disposable {
      * - Conditional: integration tools only registered when their service URL is configured
      *
      * This reduces per-call schema tokens from ~10K to ~4K.
-     * The GitTool meta-tool is removed — individual git_status/git_diff/git_log
-     * are core, and remaining git tools are deferred.
+     * Git subprocess tools removed — the LLM uses run_command for git operations.
+     * Only changelist_shelve is kept (uses IntelliJ VCS API, not a git subprocess).
      */
     private fun registerAllTools() {
         ideContext = IdeContextDetector.detect(project)
@@ -390,11 +390,6 @@ class AgentService(private val project: Project) : Disposable {
         safeRegisterCore { UseSkillTool() }
         safeRegisterCore { NewTaskTool() }
         safeRegisterCore { RenderArtifactTool() }
-
-        // Core VCS — the three most commonly needed git tools
-        safeRegisterCore { GitStatusTool() }
-        safeRegisterCore { GitDiffTool() }
-        safeRegisterCore { GitLogTool() }
 
         // Core PSI — essential navigation tools (guarded by IDE context)
         val hasPsiSupport = ToolRegistrationFilter.shouldRegisterJavaPsiTools(ideContext) ||
@@ -444,16 +439,8 @@ class AgentService(private val project: Project) : Disposable {
         safeRegisterDeferred("Code Quality") { ProblemViewTool() }
         safeRegisterDeferred("Code Quality") { ListQuickFixesTool() }
 
-        // Git — history, branches, blame, shelve
-        safeRegisterDeferred("Git") { GitBlameTool() }
-        safeRegisterDeferred("Git") { GitBranchesTool() }
-        safeRegisterDeferred("Git") { GitShowCommitTool() }
-        safeRegisterDeferred("Git") { GitShowFileTool() }
-        safeRegisterDeferred("Git") { GitStashListTool() }
-        safeRegisterDeferred("Git") { GitFileHistoryTool() }
-        safeRegisterDeferred("Git") { GitMergeBaseTool() }
-        safeRegisterDeferred("Git") { ChangelistShelveTool() }
-        safeRegisterDeferred("Git") { GenerateExplanationTool() }
+        // VCS — IntelliJ changelist/shelve operations (git subprocess tools removed; use run_command for git)
+        safeRegisterDeferred("VCS") { ChangelistShelveTool() }
 
         // Build & Run — project build, run configs, coverage
         // Build tool — register if Java OR Python build tools available
@@ -1132,6 +1119,21 @@ class AgentService(private val project: Project) : Disposable {
                 // Write checkpoint counter — create checkpoint after write operations
                 var writeCheckpointCounter = 0
 
+                // Resolve default target branch asynchronously — DefaultBranchResolver.resolve()
+                // is suspend, but environmentDetailsProvider is a non-suspend lambda.
+                // Capture result once at task start; lambda reads the var once it is populated.
+                val resolvedDefaultBranch = AtomicReference<String?>(null)
+                launch(Dispatchers.IO) {
+                    try {
+                        val repos = git4idea.repo.GitRepositoryManager.getInstance(project).repositories
+                        val primary = repos.firstOrNull() ?: return@launch
+                        resolvedDefaultBranch.set(kotlinx.coroutines.withTimeoutOrNull(3000L) {
+                            com.workflow.orchestrator.core.util.DefaultBranchResolver
+                                .getInstance(project).resolve(primary)
+                        })
+                    } catch (_: Exception) { /* leave null if branch resolution fails */ }
+                }
+
                 val loop = AgentLoop(
                     brain = brain,
                     tools = tools,
@@ -1182,12 +1184,18 @@ class AgentService(private val project: Project) : Disposable {
                     sessionMetrics = sessionMetrics,
                     environmentDetailsProvider = {
                         val pluginSettings = PluginSettings.getInstance(project)
+                        val branch = try {
+                            git4idea.repo.GitRepositoryManager.getInstance(project)
+                                .repositories.firstOrNull()?.currentBranch?.name
+                        } catch (_: Exception) { null }
                         EnvironmentDetailsBuilder.build(
                             project = project,
                             planModeEnabled = planModeActive.get(),
                             contextManager = ctx,
                             activeTicketId = pluginSettings.state.activeTicketId,
-                            activeTicketSummary = pluginSettings.state.activeTicketSummary
+                            activeTicketSummary = pluginSettings.state.activeTicketSummary,
+                            currentBranch = branch,
+                            defaultTargetBranch = resolvedDefaultBranch.get(),
                         )
                     },
                     steeringQueue = steeringQueue,

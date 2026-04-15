@@ -88,9 +88,6 @@ Registered in `AgentService.registerAllTools()`:
 | `use_skill` | UseSkillTool | Load and activate a skill |
 | `new_task` | NewTaskTool | Session handoff with structured context |
 | `render_artifact` | RenderArtifactTool | Interactive React component in chat |
-| `git_status` | GitStatusTool | Git working tree status |
-| `git_diff` | GitDiffTool | Git diff (staged/unstaged) |
-| `git_log` | GitLogTool | Git commit log |
 | `find_definition` | FindDefinitionTool | PSI go-to-definition |
 | `find_references` | FindReferencesTool | PSI find usages |
 | `diagnostics` | SemanticDiagnosticsTool | IDE error/warning diagnostics |
@@ -109,7 +106,7 @@ Registered in `AgentService.registerAllTools()`:
 |----------|-------|
 | Code Intelligence | find_implementations, file_structure, type_hierarchy, call_hierarchy, type_inference, dataflow_analysis, get_method_body, get_annotations, test_finder, structural_search, read_write_access |
 | Code Quality | format_code, optimize_imports, refactor_rename, run_inspections, problem_view, list_quickfixes |
-| Git | git_blame, git_branches, git_show_commit, git_show_file, git_stash_list, git_file_history, git_merge_base, changelist_shelve, generate_explanation |
+| VCS | changelist_shelve |
 | Build & Run | build, spring, django, fastapi, flask, runtime_exec, java_runtime_exec (Java only), python_runtime_exec (Python only), runtime_config, coverage |
 | Database | db_list_profiles, db_list_databases, db_query, db_schema |
 | Utilities | project_context, current_time, kill_process, send_stdin, ask_user_input |
