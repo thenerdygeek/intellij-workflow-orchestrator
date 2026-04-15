@@ -73,6 +73,7 @@ class RunCommandTool : AgentTool {
          * Set by the session/controller before tool execution.
          * Receives (toolCallId, chunk) pairs as output lines arrive.
          */
+        @Volatile
         var streamCallback: ((toolCallId: String, chunk: String) -> Unit)? = null
 
         /**

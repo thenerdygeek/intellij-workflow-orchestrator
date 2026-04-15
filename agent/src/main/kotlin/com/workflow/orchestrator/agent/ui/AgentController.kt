@@ -10,6 +10,7 @@ import com.intellij.openapi.util.Disposer
 import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.tools.ArtifactRenderResult
 import com.workflow.orchestrator.agent.tools.builtin.ArtifactResultRegistry
+import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
 import com.workflow.orchestrator.agent.hooks.HookEvent
 import com.workflow.orchestrator.agent.hooks.HookResult
 import com.workflow.orchestrator.agent.hooks.HookType
@@ -517,7 +518,10 @@ class AgentController(
         dashboard.setCefPageReadyCallback { pushInitialState() }
 
         // Route tool process output to per-tool-call Terminal blocks via toolStreamBatcher
-        com.workflow.orchestrator.agent.tools.builtin.RunCommandTool.streamCallback = { toolCallId, chunk ->
+        // TODO: RunCommandTool.streamCallback is a JVM-static field — if two projects are open
+        //       simultaneously, the second controller overwrites the first's callback. Migrate to
+        //       passing the callback explicitly via AgentService/AgentLoop context to fix multi-project routing.
+        RunCommandTool.streamCallback = { toolCallId, chunk ->
             toolStreamBatcher.append(toolCallId, chunk)
         }
     }
@@ -1287,6 +1291,11 @@ class AgentController(
             }
         }
 
+        // Flush any in-flight tool output chunks BEFORE the EDT dispatch, so terminal output
+        // arrives before the result card is committed. flush() is thread-safe.
+        if (progress.result.isNotEmpty() || progress.durationMs != 0L) {
+            toolStreamBatcher.flush(progress.toolCallId)
+        }
         invokeLater {
             if (progress.result.isEmpty() && progress.durationMs == 0L) {
                 // Tool call starting
@@ -1303,8 +1312,6 @@ class AgentController(
                 } else {
                     RichStreamingPanel.ToolCallStatus.SUCCESS
                 }
-                // Flush any in-flight tool output chunks for this tool call before finalising the result card
-                toolStreamBatcher.flush(progress.toolCallId)
                 dashboard.updateLastToolCall(
                     status = status,
                     result = progress.result,
@@ -1529,6 +1536,8 @@ class AgentController(
         loopWaitingForInput = false
         steeringQueue.clear()
         streamBatcher.clear()
+        toolStreamBatcher.flush()   // drain any buffered output on cancel
+        RunCommandTool.streamCallback = null
     }
 
     fun newChat() {
