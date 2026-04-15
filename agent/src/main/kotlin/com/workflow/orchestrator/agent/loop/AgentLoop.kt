@@ -960,10 +960,12 @@ class AgentLoop(
 
                 // Case B: Text only (no tool calls) — Cline pattern: inject nudge, increment mistake count
                 // Ported from Cline index.ts line 3201-3207: noToolsUsed + consecutiveMistakeCount++
-                // NOTE: We do NOT reset consecutiveEmpties here. A text-only response between two
-                // empty responses is still part of an empty/stall cycle — resetting the empty counter
-                // allows alternating text-only ↔ empty to cycle past MAX_CONSECUTIVE_EMPTIES.
-                // Only a real tool call (Case A) resets both counters.
+                // NOTE: We do NOT reset consecutiveEmpties in the general Case B. A text-only response
+                // between two empty responses is still part of an empty/stall cycle — resetting the
+                // counter allows alternating text-only ↔ empty to cycle past MAX_CONSECUTIVE_EMPTIES.
+                // Exception: plan-mode conversational turns (see inner branch below) are genuine user
+                // exchanges; both counters are reset there.
+                // Only a real tool call (Case A) resets both counters in act mode.
                 hasContent -> {
                     consecutiveMistakes++
                     LOG.info("[Loop] Text-only response (no tool calls) — mistake $consecutiveMistakes/$maxConsecutiveMistakes")
@@ -976,6 +978,7 @@ class AgentLoop(
                         onAwaitingUserInput?.invoke(reason)
                         contextManager.addUserMessage(withEnvDetails(userInputChannel.receive()))
                         consecutiveMistakes = 0
+                        consecutiveEmpties = 0  // reset: plan-mode chat is a genuine exchange, not a stall
                     } else if (consecutiveMistakes >= maxConsecutiveMistakes && userInputChannel != null) {
                         // Cline pattern: at max mistakes, ask user for feedback instead of failing.
                         // Without onAwaitingUserInput the UI would silently spin forever here.

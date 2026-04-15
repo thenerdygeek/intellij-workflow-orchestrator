@@ -36,7 +36,11 @@ class PlanModeRespondTool : AgentTool {
 
     override val name = "plan_mode_respond"
 
-    override val description = "Present a concrete implementation plan to the user for review and approval. " +
+    override val description = "Call this ONLY when presenting a new or materially revised implementation plan. " +
+        "For conversational replies (answering questions, acknowledging feedback, discussing whether to plan) " +
+        "reply with plain text — do not call this tool. If a previously presented plan has become invalid and " +
+        "you do not have a replacement ready, call discard_plan to clear it.\n\n" +
+        "Present a concrete implementation plan to the user for review and approval. " +
         "This tool should ONLY be used when you have already explored the relevant files and are ready to present " +
         "a plan. DO NOT use this tool to announce what files you're going to read — just read them first. " +
         "This tool is only available in PLAN MODE.\n\n" +
