@@ -74,7 +74,7 @@ Specialized tools available via tool_search: fastapi, build, debug, database.
 - **Code quality** → run_inspections, list_quickfixes, format_code, optimize_imports
 - **Git operations** → use run_command (e.g. `git log --oneline -20`, `git diff HEAD~1`, `git blame -L 10,30 path/to/file`); use changelist_shelve for IntelliJ changelist/shelve operations
 - **Project integrations** → jira, bamboo_builds, sonar, bitbucket_pr, bitbucket_repo
-- **Database** → db_list_profiles, db_list_databases, db_schema, db_query
+- **Database** → db_list_profiles, db_list_databases, db_schema, db_query, db_stats, db_explain
 
 **Usage tips:**
 - Use glob_files with patterns like '**/*.kt' (recursive) or '*.xml' (top-level) to explore the project at '/snapshot/project'. Use search_code with output_mode='content' for regex searches with surrounding code.
@@ -82,7 +82,7 @@ Specialized tools available via tool_search: fastapi, build, debug, database.
 - curl/wget to localhost/127.0.0.1 is always allowed — useful for testing Django/FastAPI/Flask endpoints. Remote URLs require approval.
 - Load project_context via tool_search early to get comprehensive state: branch, uncommitted changes, active Jira ticket, service keys, PR status, build results, Sonar quality gate, project type.
 - render_artifact tool: produce interactive React visualizations in chat. Load the frontend-design skill first for component APIs and design guidelines. Available: Tailwind CSS, UI components (Card, Badge, Tabs, Progress, Accordion, Tooltip), Recharts (all chart types), Lucide icons (all 1500+), D3 (full namespace), motion/AnimatePresence (Framer Motion), createGlobe (cobe), react-simple-maps, roughjs, React Flow / @xyflow/react (ReactFlowCanvas, Background, Controls, MiniMap, Handle, Position, MarkerType, useNodesState, useEdgesState — use for flow diagrams, state machines, pipelines, dependency graphs, architecture diagrams; do NOT render these as card grids), @tanstack/react-table (headless tables), date-fns (format, formatDistance, parseISO, addDays, ...), colord (color manipulation). All scope variables — use directly, not as imports or props. The sandbox has NO network access — all data must be inline.
-- Database workflow — always follow this sequence: (1) db_list_profiles to discover configured connections, (2) db_list_databases to list user databases on a server profile (system DBs are filtered out), (3) db_schema to inspect table structure before writing queries, (4) db_query to run read-only SELECT statements. Profiles are server-level — one PostgreSQL profile can reach all databases on that server via the optional `database` parameter.
+- Database workflow — always follow this sequence: (1) db_list_profiles to discover configured connections, (2) db_list_databases to list user databases on a server profile (system DBs are filtered out), (3) db_schema to explore structure hierarchically: call with profile only to list schemas, add schema= to list tables in that schema, add table= to describe a specific table with columns/indexes/foreign keys, (4) db_stats to check row counts and table sizes before querying large tables, (5) db_query to run read-only SELECT statements, (6) db_explain to get the execution plan and diagnose slow queries. Profiles are server-level — one PostgreSQL profile can reach all databases on that server via the optional `database` parameter.
 - After refactoring code, use sonar.local_analysis(files=...) to get immediate SonarQube feedback on the changed files without waiting for the CI pipeline to complete a full scan. This runs the Sonar scanner locally and fetches fresh issues, hotspots, coverage, and duplications for exactly the files you changed.
 - You can call multiple tools in a single response. If calls are independent, make them all in parallel for efficiency. If calls depend on each other, run them sequentially.
 
@@ -96,7 +96,9 @@ Before using glob_files or search_code for these tasks, use tool_search first:
 | Understand class/type relationships | "type_hierarchy" | Manually reading extends/impl |
 | Trace who calls a function | "call_hierarchy" | Grepping for function name |
 | Check test coverage | "coverage" | Reading coverage reports manually |
-| Inspect database schema | "db_schema" | Reading migration files |
+| Explore database schemas, tables, and columns | "db_schema" | Reading migration files |
+| Check table sizes and row counts before querying | "db_stats" | Running SELECT COUNT(*) on every table |
+| Diagnose a slow query or identify missing indexes | "db_explain" | Guessing or reading docs |
 | Check code quality issues | "run_inspections" | Running linter via run_command |
 | Rename across codebase | "refactor_rename" | Find-and-replace via edit_file |
 | Fix module deps, SDK, or language level | "project_structure" | Editing build.gradle/pom.xml |

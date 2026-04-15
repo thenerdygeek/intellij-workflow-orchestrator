@@ -511,6 +511,8 @@ class AgentService(private val project: Project) : Disposable {
         safeRegisterDeferred("Database") { DbListDatabasesTool() }
         safeRegisterDeferred("Database") { DbQueryTool() }
         safeRegisterDeferred("Database") { DbSchemaTool() }
+        safeRegisterDeferred("Database") { DbStatsTool() }
+        safeRegisterDeferred("Database") { DbExplainTool() }
 
         // Utilities
         safeRegisterDeferred("Utilities") { ProjectContextTool() }
