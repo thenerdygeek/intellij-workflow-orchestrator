@@ -326,7 +326,7 @@ export function ToolCallView({ toolCall, isLatest, rolledBack }: ToolCallViewPro
         <div className="px-3 pb-3 -mt-1" style={{ backgroundColor: 'var(--tool-bg)' }}>
           <Terminal
             command={extractCommand(toolCall.args)}
-            stdout={isRunning ? streamOutput : (parseStdout(toolCall.result) || streamOutput)}
+            stdout={isRunning ? streamOutput : (parseStdout(toolCall.result) || toolCall.output || streamOutput)}
             exitCode={isCompleted || isError ? parseExitCode(toolCall.result) : undefined}
             durationMs={durationMs}
           />
