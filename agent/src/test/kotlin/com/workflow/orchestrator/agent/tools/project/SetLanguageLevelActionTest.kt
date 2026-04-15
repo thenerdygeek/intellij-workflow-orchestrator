@@ -32,12 +32,9 @@ import org.junit.jupiter.api.Test
  * ModuleRootModificationUtil) are static and mocked via mockkStatic.
  * [AgentTool] is mocked via MockK coEvery so requestApproval returns a controlled value.
  * [moduleExternalSystemId] is mocked via mockkStatic on the helpers file.
+ * [applyLanguageLevelToModule] is mocked via mockkStatic on SetLanguageLevelActionKt so
+ * the reflection path (which cannot succeed against MockK mock objects) returns null (success).
  * No real IntelliJ services are used.
- *
- * The write-path reflection block (Class.forName + getModuleExtension) runs inside the
- * updateModel consumer; in tests we just let it throw/swallow silently inside the mock —
- * the important assertions are on the ToolResult content and isError flag, not on
- * whether the language level was actually set on the mock model.
  *
  * Test 1 — testMissingModuleParamReturnsError: no "module" param → isError=true
  * Test 2 — testInvalidLanguageLevelReturnsError: levelRaw="Java99" → parseLanguageLevel returns null → isError=true, content contains "Java99"
@@ -173,7 +170,7 @@ class SetLanguageLevelActionTest {
     //
     // Full mock chain: module found → not external → level parsed →
     // approval=APPROVED → WriteCommandAction runs Runnable → updateModel runs consumer
-    // → reflection block runs inside consumer (fails silently on mock) → success result
+    // → applyLanguageLevelToModule mocked to return null (success) → success result
     // ────────────────────────────────────────────────────────────────────────
 
     @Test
@@ -208,7 +205,6 @@ class SetLanguageLevelActionTest {
         }
 
         // Mock ModuleRootModificationUtil.updateModel to run the consumer directly
-        // The consumer's reflection block will fail silently on the mock model (expected in tests)
         mockkStatic(ModuleRootModificationUtil::class)
         val consumerSlot = slot<com.intellij.util.Consumer<ModifiableRootModel>>()
         every {
@@ -216,6 +212,11 @@ class SetLanguageLevelActionTest {
         } answers {
             consumerSlot.captured.consume(mockk(relaxed = true))
         }
+
+        // Mock the reflection helper to return null (success) — real reflection cannot
+        // succeed against MockK mock objects (the mock class has no getModuleExtension method).
+        mockkStatic("com.workflow.orchestrator.agent.tools.project.SetLanguageLevelActionKt")
+        every { applyLanguageLevelToModule(any(), any(), any()) } returns null
 
         val params = buildJsonObject {
             put("module", "my-module")
@@ -233,7 +234,7 @@ class SetLanguageLevelActionTest {
     // Test 6 — Empty languageLevel (inherit) → approval=APPROVED → isError=false, content contains "inherit"
     //
     // No languageLevel param → inherit path → level=null → descr="inherit from project"
-    // → approval=APPROVED → write runs → success
+    // → approval=APPROVED → write runs → applyLanguageLevelToModule mocked null → success
     // ────────────────────────────────────────────────────────────────────────
 
     @Test
@@ -275,6 +276,11 @@ class SetLanguageLevelActionTest {
         } answers {
             consumerSlot.captured.consume(mockk(relaxed = true))
         }
+
+        // Mock the reflection helper to return null (success) — real reflection cannot
+        // succeed against MockK mock objects (the mock class has no getModuleExtension method).
+        mockkStatic("com.workflow.orchestrator.agent.tools.project.SetLanguageLevelActionKt")
+        every { applyLanguageLevelToModule(any(), any(), any()) } returns null
 
         // No languageLevel param → inherit
         val params = buildJsonObject {

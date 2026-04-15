@@ -96,32 +96,51 @@ internal suspend fun executeSetLanguageLevel(
     }
 
     // ── Step 6: write action (reflection — LanguageLevelModuleExtensionImpl not on compile CP) ──
+    var extensionError: String? = null
     WriteCommandAction.runWriteCommandAction(project, "Agent: set language level", null, Runnable {
         ModuleRootModificationUtil.updateModel(module) { model ->
-            try {
-                val extClass = Class.forName(
-                    "com.intellij.openapi.roots.LanguageLevelModuleExtension"
-                )
-                val getExtMethod = model.javaClass.getMethod(
-                    "getModuleExtension",
-                    Class::class.java
-                )
-                val ext = getExtMethod.invoke(model, extClass) ?: return@updateModel
-                val setLevelMethod = ext.javaClass.getMethod(
-                    "setLanguageLevel",
-                    LanguageLevel::class.java
-                )
-                setLevelMethod.invoke(ext, level)  // null = inherit from project
-            } catch (_: Exception) {
-                // Extension not available (non-Java module or missing plugin) — silently skip
-            }
+            extensionError = applyLanguageLevelToModule(model, level, moduleName)
         }
     })
 
     // ── Step 7: result ────────────────────────────────────────────────────────
+    if (extensionError != null) {
+        return ToolResult(
+            content = extensionError!!,
+            summary = "Language level extension unavailable",
+            tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+            isError = true
+        )
+    }
     return ToolResult(
         content = "Module '$moduleName' language level set to: $descr.",
         summary = "Language level set to $descr",
         tokenEstimate = 20
     )
+}
+
+/**
+ * Applies [level] (null = inherit from project) to the `LanguageLevelModuleExtension`
+ * on [model] via reflection. The extension's `Impl` class lives in an internal IntelliJ
+ * package not available at plugin compile time.
+ *
+ * Returns `null` on success, or a non-null error message string on failure.
+ * Extracted as a package-level function so tests can mock it via `mockkStatic`.
+ */
+internal fun applyLanguageLevelToModule(
+    model: com.intellij.openapi.roots.ModifiableRootModel,
+    level: LanguageLevel?,
+    moduleName: String,
+): String? {
+    return try {
+        val extClass = Class.forName("com.intellij.openapi.roots.LanguageLevelModuleExtension")
+        val getExtMethod = model.javaClass.getMethod("getModuleExtension", Class::class.java)
+        val ext = getExtMethod.invoke(model, extClass)
+            ?: return "LanguageLevelModuleExtension not present on module '$moduleName' — module may not be a Java module."
+        val setLevelMethod = ext.javaClass.getMethod("setLanguageLevel", LanguageLevel::class.java)
+        setLevelMethod.invoke(ext, level) // null = inherit from project
+        null // success
+    } catch (e: Exception) {
+        "Failed to set language level via reflection: ${e.message}"
+    }
 }
