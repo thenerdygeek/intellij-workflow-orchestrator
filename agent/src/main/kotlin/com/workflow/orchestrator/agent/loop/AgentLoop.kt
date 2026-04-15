@@ -211,7 +211,7 @@ class AgentLoop(
      * The UI uses this to clear the active plan card without presenting a replacement.
      * Only callable in plan mode; the loop continues after dismissal.
      */
-    private val onPlanDiscarded: (() -> Unit)? = null,
+    private val onPlanDiscarded: (suspend () -> Unit)? = null,
     /**
      * Optional callback for real-time debug log entries.
      * Pushed to the JCEF debug panel when showDebugLog setting is enabled.

@@ -70,6 +70,40 @@ class MessageStateHandler(
         saveInternal()
     }
 
+    /**
+     * Rewrites the content of the most recent tool-result message for a given tool name.
+     * Used by the plan discard flow to prevent the LLM from re-surfacing a discarded plan.
+     *
+     * Finds the most recent ASSISTANT message with a ToolUse of [toolName], then finds
+     * the corresponding USER message with a matching ToolResult, and replaces its content
+     * with [newContent]. Uses the existing mutex + atomic-write mechanism.
+     *
+     * @return true if a matching tool result was found and rewritten, false otherwise.
+     */
+    suspend fun rewriteMostRecentToolResult(toolName: String, newContent: String): Boolean = mutex.withLock {
+        // Find most recent assistant message with a ToolUse of this name
+        val toolUseId = apiHistory.lastOrNull { msg ->
+            msg.role == ApiRole.ASSISTANT && msg.content.any { it is ContentBlock.ToolUse && it.name == toolName }
+        }?.content?.filterIsInstance<ContentBlock.ToolUse>()?.lastOrNull { it.name == toolName }?.id
+            ?: return@withLock false
+
+        // Find the most recent user message containing the matching ToolResult
+        val idx = apiHistory.indexOfLast { msg ->
+            msg.role == ApiRole.USER && msg.content.any { it is ContentBlock.ToolResult && it.toolUseId == toolUseId }
+        }
+        if (idx < 0) return@withLock false
+
+        val msg = apiHistory[idx]
+        apiHistory[idx] = msg.copy(
+            content = msg.content.map { block ->
+                if (block is ContentBlock.ToolResult && block.toolUseId == toolUseId) block.copy(content = newContent)
+                else block
+            }
+        )
+        saveApiHistoryInternal()
+        true
+    }
+
     /** Call ONLY during initialization, before any concurrent access begins. */
     fun setClineMessages(messages: List<UiMessage>) {
         check(!mutex.isLocked) { "setClineMessages must only be called during init, before concurrent access" }

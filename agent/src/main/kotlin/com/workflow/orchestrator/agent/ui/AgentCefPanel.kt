@@ -61,6 +61,7 @@ class AgentCefPanel(
     private var promptQuery: JBCefJSQuery? = null
     private var planApproveQuery: JBCefJSQuery? = null
     private var planReviseQuery: JBCefJSQuery? = null
+    private var planDismissQuery: JBCefJSQuery? = null
     private var toolToggleQuery: JBCefJSQuery? = null
     private var questionAnsweredQuery: JBCefJSQuery? = null
     private var questionSkippedQuery: JBCefJSQuery? = null
@@ -137,6 +138,9 @@ class AgentCefPanel(
 
     /** Callback when user clicks "Revise with Comments" on a plan card. JSON string of {stepId: comment}. */
     var onPlanRevised: ((String) -> Unit)? = null
+
+    /** Callback when user clicks "Dismiss" on a plan card. */
+    var onPlanDismissed: (() -> Unit)? = null
 
     /** Callback when user toggles a tool checkbox in the Tools panel. */
     var onToolToggled: ((String, Boolean) -> Unit)? = null
@@ -306,6 +310,7 @@ class AgentCefPanel(
         promptQuery = registerQuery(b) { text -> onPromptSubmitted?.invoke(text); JBCefJSQuery.Response("ok") }
         planApproveQuery = registerQuery(b) { _ -> onPlanApproved?.invoke(); JBCefJSQuery.Response("ok") }
         planReviseQuery = registerQuery(b) { commentsJson -> onPlanRevised?.invoke(commentsJson); JBCefJSQuery.Response("ok") }
+        planDismissQuery = registerQuery(b) { _ -> onPlanDismissed?.invoke(); JBCefJSQuery.Response("ok") }
         toolToggleQuery = registerQuery(b) { data ->
             // data format: "tool_name:1" or "tool_name:0"
             val colonIdx = data.lastIndexOf(':')
@@ -517,6 +522,7 @@ class AgentCefPanel(
                     // Each is wrapped in injectBridge so one failure doesn't skip the rest.
                     injectBridge("_approvePlan") { planApproveQuery?.let { q -> js("window._approvePlan = function() { ${q.inject("'approve'")} }") } }
                     injectBridge("_revisePlan") { planReviseQuery?.let { q -> js("window._revisePlan = function(comments) { ${q.inject("comments")} }") } }
+                    injectBridge("_dismissPlan") { planDismissQuery?.let { q -> js("window._dismissPlan = function() { ${q.inject("'dismiss'")} }") } }
                     injectBridge("_toggleTool") { toolToggleQuery?.let { q -> js("window._toggleTool = function(data) { ${q.inject("data")} }") } }
                     injectBridge("_questionAnswered") { questionAnsweredQuery?.let { q -> js("window._questionAnswered = function(qid, opts) { ${q.inject("qid + ':' + opts")} }") } }
                     injectBridge("_questionSkipped") { questionSkippedQuery?.let { q -> js("window._questionSkipped = function(qid) { ${q.inject("qid")} }") } }
@@ -741,6 +747,10 @@ class AgentCefPanel(
 
     fun approvePlanInUi() {
         callJs("approvePlan()")
+    }
+
+    fun clearPlanInUi() {
+        callJs("clearPlan()")
     }
 
     fun updatePlanStep(stepId: String, status: String) {

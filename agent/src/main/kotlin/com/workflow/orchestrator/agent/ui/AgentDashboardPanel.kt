@@ -259,6 +259,15 @@ class AgentDashboardPanel(
         cefPanel?.onPlanRevised = onRevise
     }
 
+    fun setCefPlanDismissCallback(onDismiss: () -> Unit) {
+        cefPanel?.onPlanDismissed = onDismiss
+    }
+
+    fun clearPlanInUi() {
+        cefPanel?.clearPlanInUi()
+        broadcast(replay = false) { it.clearPlanInUi() }
+    }
+
     fun showToolsPanel(toolsJson: String) {
         cefPanel?.showToolsPanel(toolsJson)
         broadcast(replay = false) { it.showToolsPanel(toolsJson) }

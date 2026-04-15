@@ -177,6 +177,10 @@ class AgentService(private val project: Project) : Disposable {
         com.intellij.openapi.util.Disposer.register(this, configLoader)
     }
 
+    /** Current session's message state handler — non-null while a task is running. */
+    @Volatile var activeMessageStateHandler: MessageStateHandler? = null
+        private set
+
     // ── Auto Memory ────────────────────────────────────────────────────────
 
     /**
@@ -1118,6 +1122,9 @@ class AgentService(private val project: Project) : Disposable {
                     handler
                 }
 
+                // Expose active handler so AgentController.dismissPlan() can rewrite history.
+                activeMessageStateHandler = messageState
+
                 // Wire onHistoryOverwrite callback so compaction persists truncated history.
                 // Ported from Cline's conversationHistoryDeletedRange pattern: after context
                 // truncation/summarization, the modified api_conversation_history is overwritten.
@@ -1166,7 +1173,16 @@ class AgentService(private val project: Project) : Disposable {
                         planModeActive.set(enabled)
                         onPlanModeToggled?.invoke(enabled)
                     },
-                    onPlanDiscarded = onPlanDiscarded,
+                    onPlanDiscarded = {
+                        // Rewrite the prior plan_mode_respond result in history so the LLM
+                        // won't re-surface the discarded plan on the next turn.
+                        messageState.rewriteMostRecentToolResult(
+                            "plan_mode_respond",
+                            "[Plan discarded — do not reference]"
+                        )
+                        // Then notify the UI (clear the plan card, etc.)
+                        onPlanDiscarded?.invoke()
+                    },
                     userInputChannel = userInputChannel,
                     approvalGate = approvalGate,
                     sessionApprovalStore = sessionApprovalStore,
@@ -1325,6 +1341,7 @@ class AgentService(private val project: Project) : Disposable {
                 onComplete(LoopResult.Failed(error = e.message ?: "Unknown error"))
             } finally {
                 activeTask.set(null)
+                activeMessageStateHandler = null
                 // Clear API debug dir so the brain doesn't dump after task ends
                 (brainRef as? OpenAiCompatBrain)?.setApiDebugDir(null)
                 // Clear per-task sub-agent callbacks. Leaving any of these attached

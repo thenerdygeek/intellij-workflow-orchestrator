@@ -255,6 +255,7 @@ class AgentController(
             onApprove = ::approvePlan,
             onRevise = ::revisePlan
         )
+        dashboard.setCefPlanDismissCallback { dismissPlan() }
 
         // "View Plan" button — opens the plan in a full JCEF editor tab
         dashboard.setCefFocusPlanEditorCallback {
@@ -970,6 +971,7 @@ class AgentController(
             },
             onPlanResponse = { text, explore, steps -> onPlanResponse(text, explore, steps) },
             onPlanModeToggled = { enabled -> invokeLater { togglePlanMode(enabled) } },
+            onPlanDiscarded = { invokeLater { onPlanDiscardedByLlm() } },
             userInputChannel = userInputChannel,
             approvalGate = ::approvalGate,
             sessionApprovalStore = sessionApprovalStore,
@@ -1903,6 +1905,7 @@ class AgentController(
             },
             onPlanResponse = { text, explore, steps -> onPlanResponse(text, explore, steps) },
             onPlanModeToggled = { enabled -> invokeLater { togglePlanMode(enabled) } },
+            onPlanDiscarded = { invokeLater { onPlanDiscardedByLlm() } },
             userInputChannel = userInputChannel,
             approvalGate = ::approvalGate,
             onCheckpointSaved = ::onCheckpointSaved,
@@ -2198,6 +2201,51 @@ class AgentController(
             LOG.warn("AgentController.revisePlan: no active loop to receive revision")
             dashboard.setBusy(false)
         }
+    }
+
+    /**
+     * Shared discard logic used by both LLM-initiated (via discard_plan tool)
+     * and user-initiated (via Dismiss button) plan discard flows.
+     *
+     * @param userInitiated If true, also injects a user-role conversation marker
+     *   so the LLM understands the user chose to dismiss the plan.
+     */
+    private fun performPlanDiscard(userInitiated: Boolean) {
+        LOG.info("AgentController.performPlanDiscard(userInitiated=$userInitiated)")
+        currentPlanData = null
+        invokeLater { dashboard.clearPlanInUi() }
+
+        if (userInitiated) {
+            val marker = "[User dismissed the pending plan. Continue the conversation in plan mode — do not re-present the dismissed plan unless explicitly asked.]"
+            // Route through channel if loop is suspended waiting for input,
+            // otherwise through steering queue (mirrors revisePlan pattern).
+            val channel = userInputChannel
+            if (loopWaitingForInput && channel != null && currentJob?.isActive == true) {
+                loopWaitingForInput = false
+                runBlocking { channel.send(marker) }
+            } else if (currentJob?.isActive == true) {
+                val steeringId = "steer-dismiss-${System.currentTimeMillis()}"
+                steeringQueue.offer(SteeringMessage(id = steeringId, text = marker))
+            }
+        }
+    }
+
+    /** User clicked Dismiss on the plan card. */
+    private fun dismissPlan() {
+        LOG.info("AgentController.dismissPlan — user-initiated plan dismissal")
+        // Rewrite history asynchronously so the LLM won't re-surface the discarded plan.
+        CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+            service.activeMessageStateHandler
+                ?.rewriteMostRecentToolResult("plan_mode_respond", "[Plan discarded — do not reference]")
+        }
+        performPlanDiscard(userInitiated = true)
+    }
+
+    /** Called when LLM uses the discard_plan tool. */
+    internal fun onPlanDiscardedByLlm() {
+        LOG.info("AgentController.onPlanDiscardedByLlm — LLM-initiated plan dismissal")
+        // History rewrite already done inside AgentService executeTask closure
+        performPlanDiscard(userInitiated = false)
     }
 
     private fun togglePlanMode(enabled: Boolean) {
