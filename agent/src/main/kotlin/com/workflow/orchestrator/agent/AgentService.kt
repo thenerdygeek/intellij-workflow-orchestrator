@@ -778,7 +778,13 @@ class AgentService(private val project: Project) : Disposable {
          * When provided, skips internal MessageStateHandler creation and initial message recording.
          * Used by resumeSession which pre-loads state from persisted files.
          */
-        messageStateHandler: MessageStateHandler? = null
+        messageStateHandler: MessageStateHandler? = null,
+        /**
+         * Fires when the loop suspends on userInputChannel waiting for the user
+         * (plan-mode reply turn or consecutive-mistakes recovery). The UI must
+         * drop the working spinner, enable steering, and surface the reason.
+         */
+        onAwaitingUserInput: ((reason: String) -> Unit)? = null
     ): Job {
         val sid = sessionId ?: UUID.randomUUID().toString()
 
@@ -1186,6 +1192,7 @@ class AgentService(private val project: Project) : Disposable {
                     },
                     steeringQueue = steeringQueue,
                     onSteeringDrained = onSteeringDrained,
+                    onAwaitingUserInput = onAwaitingUserInput,
                     fallbackManager = fallbackManager,
                     brainFactory = brainFactory,
                     cachedFallbackChain = cachedFallbackChain,
@@ -1366,6 +1373,7 @@ class AgentService(private val project: Project) : Disposable {
         steeringQueue: java.util.concurrent.ConcurrentLinkedQueue<SteeringMessage>? = null,
         onSteeringDrained: ((drainedIds: List<String>) -> Unit)? = null,
         sessionApprovalStore: com.workflow.orchestrator.agent.loop.SessionApprovalStore = com.workflow.orchestrator.agent.loop.SessionApprovalStore(),
+        onAwaitingUserInput: ((reason: String) -> Unit)? = null,
     ): Job? {
         val basePath = project.basePath ?: System.getProperty("user.home")
         val sessionBaseDir = ProjectIdentifier.agentDir(basePath)
@@ -1521,6 +1529,7 @@ class AgentService(private val project: Project) : Disposable {
                 steeringQueue = steeringQueue,
                 onSteeringDrained = onSteeringDrained,
                 sessionApprovalStore = sessionApprovalStore,
+                onAwaitingUserInput = onAwaitingUserInput,
             )
             innerJob.join()
         }

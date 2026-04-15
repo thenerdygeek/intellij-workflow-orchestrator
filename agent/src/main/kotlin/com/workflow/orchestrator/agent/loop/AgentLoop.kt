@@ -281,6 +281,16 @@ class AgentLoop(
      * output_file=true are written to disk and a preview is returned to the LLM.
      */
     private val outputSpiller: ToolOutputSpiller? = null,
+    /**
+     * Callback fired when the loop is about to suspend on [userInputChannel] waiting
+     * for user input (plan-mode text turns, consecutive-mistakes recovery). Without
+     * this signal the UI keeps showing the "working" spinner even though nothing is
+     * happening server-side. The controller should clear busy, enable steering mode,
+     * unlock input, and surface [reason] so the user knows the loop is idle and why.
+     *
+     * Fires from the AgentLoop coroutine; invoke UI work via invokeLater on the EDT.
+     */
+    private val onAwaitingUserInput: ((reason: String) -> Unit)? = null,
 ) {
     private val cancelled = AtomicBoolean(false)
     private var totalTokensUsed = 0
@@ -423,6 +433,7 @@ class AgentLoop(
      */
     suspend fun run(task: String): LoopResult {
         if (cancelled.get()) {
+            onDebugLog?.invoke("info", "loop_exit", "Exit: cancelled_before_start", null)
             return makeCancelled(0)
         }
 
@@ -785,6 +796,12 @@ class AgentLoop(
                 }
                 LOG.warn("[Loop] Task failed after $iteration iterations: ${apiResult.message.take(200)}")
                 abortStream(lastAccumulatedText, "streaming_failed")
+                onDebugLog?.invoke("error", "loop_exit", "Exit: api_retries_exhausted (${apiResult.type.name})", mapOf(
+                    "errorType" to apiResult.type.name,
+                    "iteration" to iteration,
+                    "apiRetryCount" to apiRetryCount,
+                    "message" to apiResult.message.take(200)
+                ))
                 return makeFailed(apiResult.message, iteration)
             }
 
@@ -885,6 +902,12 @@ class AgentLoop(
                     consecutiveMistakes = 0  // Tool use resets mistake count
                     brain.temperature = 0.0  // Reset temperature escalation after successful tool use
 
+                    // Real tool call arrived — remove any stale trailing nudge chain that
+                    // preceded this turn. The nudges served their purpose; leaving them in
+                    // context just trains the next turn on the repeated [ERROR] pattern.
+                    contextManager.pruneTrailingNudgePairs(TEXT_ONLY_NUDGE)
+                    contextManager.pruneTrailingNudgePairs(EMPTY_RESPONSE_ERROR)
+
                     // Batch guard: if attempt_completion co-occurs with other tools in the
                     // same LLM turn, strip it and nudge. Reason: the LLM cannot legitimately
                     // conclude a task in the same turn it issued the reads it wants to
@@ -931,18 +954,32 @@ class AgentLoop(
 
                     if (planMode && userInputChannel != null) {
                         // In plan mode, text-only responses are conversational turns.
+                        // Signal UI to drop the working spinner — we're idle awaiting user reply.
+                        val reason = "Plan-mode reply — waiting for your next message."
+                        onDebugLog?.invoke("info", "await_user", reason, null)
+                        onAwaitingUserInput?.invoke(reason)
                         contextManager.addUserMessage(withEnvDetails(userInputChannel.receive()))
                         consecutiveMistakes = 0
                     } else if (consecutiveMistakes >= maxConsecutiveMistakes && userInputChannel != null) {
-                        // Cline pattern: at max mistakes, ask user for feedback instead of failing
+                        // Cline pattern: at max mistakes, ask user for feedback instead of failing.
+                        // Without onAwaitingUserInput the UI would silently spin forever here.
                         LOG.warn("[Loop] Max consecutive mistakes ($maxConsecutiveMistakes) — waiting for user feedback")
+                        val reason = "The model keeps replying without using a tool. Send guidance to continue."
+                        onDebugLog?.invoke("warn", "await_user", reason, mapOf("consecutiveMistakes" to consecutiveMistakes))
+                        onAwaitingUserInput?.invoke(reason)
                         contextManager.addUserMessage(withEnvDetails(userInputChannel.receive()))
                         consecutiveMistakes = 0
                     } else if (consecutiveMistakes >= maxConsecutiveMistakes) {
                         // No user input channel (sub-agent) — fail
+                        onDebugLog?.invoke("error", "loop_exit", "Exit: max_consecutive_mistakes (sub-agent, no user channel)", mapOf("max" to maxConsecutiveMistakes))
                         return makeFailed("Agent failed to use tools after $maxConsecutiveMistakes attempts.", iteration)
                     } else {
-                        // Below max — inject nudge and continue (Cline: noToolsUsed message)
+                        // Below max — inject nudge and continue (Cline: noToolsUsed message).
+                        // Collapse any earlier trailing nudge chain first so we never have
+                        // more than one "[ERROR] You did not use a tool..." at the tail of
+                        // context. Repeated identical nudges can prime the LLM to mimic the
+                        // error-response pattern instead of breaking out of it.
+                        contextManager.pruneTrailingNudgePairs(TEXT_ONLY_NUDGE)
                         contextManager.addUserMessage(TEXT_ONLY_NUDGE)
                     }
                 }
@@ -960,11 +997,18 @@ class AgentLoop(
                     brain.temperature = 1.0
                     LOG.warn("[Loop] Empty response from LLM — provider error (attempt $consecutiveEmpties/$MAX_CONSECUTIVE_EMPTIES, temperature escalated to 1.0)")
                     if (consecutiveEmpties >= MAX_CONSECUTIVE_EMPTIES) {
+                        onDebugLog?.invoke("error", "loop_exit", "Exit: max_empty_responses ($MAX_CONSECUTIVE_EMPTIES consecutive empties)", mapOf(
+                            "consecutiveEmpties" to consecutiveEmpties,
+                            "iteration" to iteration
+                        ))
                         return makeFailed(
                             "Provider returned $MAX_CONSECUTIVE_EMPTIES consecutive empty responses. Check model/provider configuration.",
                             iteration
                         )
                     }
+                    // Same rationale as TEXT_ONLY_NUDGE: collapse any trailing chain first
+                    // so identical empty-response errors don't stack in context.
+                    contextManager.pruneTrailingNudgePairs(EMPTY_RESPONSE_ERROR)
                     contextManager.addUserMessage(EMPTY_RESPONSE_ERROR)
                 }
             }
@@ -973,10 +1017,12 @@ class AgentLoop(
         if (cancelled.get()) {
             LOG.info("[Loop] Task cancelled at iteration $iteration")
             abortStream(lastAccumulatedText, "user_cancelled")
+            onDebugLog?.invoke("info", "loop_exit", "Exit: user_cancelled", mapOf("iteration" to iteration))
             return makeCancelled(iteration)
         }
 
         LOG.warn("[Loop] Task failed after $iteration iterations: exceeded maximum iterations ($maxIterations)")
+        onDebugLog?.invoke("error", "loop_exit", "Exit: max_iterations ($maxIterations)", mapOf("iteration" to iteration))
         return makeFailed(
             "Exceeded maximum iterations ($maxIterations). The task may be too complex or the model is stuck.",
             iteration
@@ -1022,6 +1068,7 @@ class AgentLoop(
     private suspend fun executeToolCalls(toolCalls: List<ToolCall>, iteration: Int): LoopResult? {
         for (call in toolCalls) {
             if (cancelled.get()) {
+                onDebugLog?.invoke("info", "loop_exit", "Exit: user_cancelled (between tool calls)", mapOf("iteration" to iteration))
                 return makeCancelled(iteration)
             }
 
@@ -1036,6 +1083,11 @@ class AgentLoop(
                     fileLogger?.logLoopDetection(sessionId ?: "", toolName, loopDetector.currentCount, isHard = true)
                     onDebugLog?.invoke("error", "loop", "Loop HARD limit: $toolName — aborting", null)
                     reportToolError(call, startTime, LOOP_HARD_FAILURE)
+                    onDebugLog?.invoke("error", "loop_exit", "Exit: doom_loop_hard_limit ($toolName x${loopDetector.currentCount})", mapOf(
+                        "tool" to toolName,
+                        "repeatCount" to loopDetector.currentCount,
+                        "iteration" to iteration
+                    ))
                     return makeFailed(
                         "Loop detected: '$toolName' called ${loopDetector.currentCount} times with identical arguments.",
                         iteration
@@ -1410,6 +1462,7 @@ class AgentLoop(
                         ask = UiAsk.COMPLETION_RESULT,
                         text = toolResult.content
                     ))
+                    onDebugLog?.invoke("info", "loop_exit", "Exit: attempt_completion", mapOf("iteration" to iteration))
                     return LoopResult.Completed(
                         summary = toolResult.content,
                         iterations = iteration,
@@ -1424,6 +1477,7 @@ class AgentLoop(
                 }
                 is ToolResultType.SessionHandoff -> {
                     val handoff = toolResult.type
+                    onDebugLog?.invoke("info", "loop_exit", "Exit: new_task_session_handoff", mapOf("iteration" to iteration))
                     return LoopResult.SessionHandoff(
                         context = handoff.context,
                         iterations = iteration,

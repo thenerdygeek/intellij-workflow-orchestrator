@@ -970,7 +970,8 @@ class AgentController(
                 invokeLater {
                     dashboard.promoteQueuedSteeringMessages(drainedIds)
                 }
-            }
+            },
+            onAwaitingUserInput = ::onLoopAwaitingUserInput,
         )
 
         // Start 30s Haiku phrase timer (if smart working indicator is enabled)
@@ -1323,6 +1324,30 @@ class AgentController(
         }
     }
 
+    /**
+     * Fires when the AgentLoop is about to suspend on [userInputChannel] waiting for
+     * the user (consecutive text-only mistakes recovery, plan-mode reply turn).
+     *
+     * Without this the UI keeps showing the working spinner even though the loop is
+     * idle — the coroutine is parked on `channel.receive()` with nothing to log.
+     *
+     * Mirrors the unlock dance used by `ask_followup_question`: drop busy, enable
+     * steering mode (so typed text feeds the channel instead of being queued as a
+     * mid-turn steering message), unlock input, surface [reason] so the user knows
+     * what happened.
+     */
+    private fun onLoopAwaitingUserInput(reason: String) {
+        LOG.info("AgentController: loop awaiting user input — $reason")
+        loopWaitingForInput = true
+        invokeLater {
+            dashboard.setBusy(false)
+            dashboard.setSteeringMode(true)
+            dashboard.setInputLocked(false)
+            dashboard.appendStatus(reason, RichStreamingPanel.StatusType.INFO)
+            dashboard.focusInput()
+        }
+    }
+
     private fun onComplete(result: LoopResult) {
         phraseTimerJob?.cancel()
         phraseTimerJob = null
@@ -1342,6 +1367,11 @@ class AgentController(
             // Clear working phrase
             dashboard.setSmartWorkingPhrase("")
 
+            // The spinner-cleanup footer below MUST run even if rendering inside the
+            // when-block throws (e.g. a bad completion summary breaks appendCompletionSummary).
+            // Without this guard, the UI was left "working" forever after any UI-side error.
+            var handledHandoff = false
+            try {
             when (result) {
                 is LoopResult.Completed -> {
                     dashboard.appendCompletionSummary(result.summary, result.verifyCommand)
@@ -1432,9 +1462,16 @@ class AgentController(
                         onTaskProgress = ::onTaskProgress,
                         onComplete = ::onComplete
                     )
-                    // Don't unlock input — the new session is running
-                    return@invokeLater
+                    handledHandoff = true
                 }
+            }
+            } catch (e: Throwable) {
+                LOG.error("onComplete: UI render failed — clearing spinner anyway", e)
+            }
+
+            if (handledHandoff) {
+                // Handoff started a fresh session — it owns the spinner from here.
+                return@invokeLater
             }
 
             LOG.info("onComplete: clearing busy, unlocking input, disabling steering")
@@ -1869,6 +1906,7 @@ class AgentController(
                 }
             },
             sessionApprovalStore = sessionApprovalStore,
+            onAwaitingUserInput = ::onLoopAwaitingUserInput,
         )
 
         if (job != null) {

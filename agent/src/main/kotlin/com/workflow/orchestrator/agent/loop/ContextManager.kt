@@ -119,6 +119,48 @@ class ContextManager(
     }
 
     /**
+     * Remove contiguous trailing `[assistant-text-only, user-nudge]` pairs sitting
+     * immediately before the last message.
+     *
+     * Rationale: when the model keeps replying with text-only (or empty) responses,
+     * we inject an identical error/nudge each turn. The chain
+     * `(assistant-text, [ERROR] nudge, assistant-text, [ERROR] nudge, ...)` accumulates
+     * in context and can prime the model to keep mimicking the "no tool" pattern it
+     * sees repeated. Collapsing the chain keeps at most one visible nudge at the tail.
+     *
+     * Scope is intentionally narrow: only CONTIGUOUS trailing pairs whose user content
+     * equals `nudgeText` are removed. Legitimate older nudges that are no longer at the
+     * tail (because real work happened after) stay untouched.
+     *
+     * Not persisted via `onHistoryOverwrite` because nudges are never written to
+     * api_conversation_history (they live only in this in-memory context).
+     *
+     * @return number of pairs removed
+     */
+    fun pruneTrailingNudgePairs(nudgeText: String): Int {
+        var pairsRemoved = 0
+        var end = messages.size - 2
+        while (end >= 1) {
+            val user = messages[end]
+            val prev = messages[end - 1]
+            val isNudge = user.role == "user" && user.content == nudgeText
+            val isTextOnlyAssistant = prev.role == "assistant" && prev.toolCalls.isNullOrEmpty()
+            if (isNudge && isTextOnlyAssistant) {
+                messages.removeAt(end)
+                messages.removeAt(end - 1)
+                pairsRemoved++
+                end -= 2
+            } else {
+                break
+            }
+        }
+        if (pairsRemoved > 0) {
+            LOG.info("[Context] Pruned $pairsRemoved trailing nudge pair(s) to avoid LLM mimicry of the error pattern")
+        }
+        return pairsRemoved
+    }
+
+    /**
      * Add a tool result and track file reads for deduplication.
      *
      * When a tool result contains file content, we track which file was read
