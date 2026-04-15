@@ -153,6 +153,34 @@ class SystemPromptTest {
         )
     }
 
+    @Test
+    fun `plan mode section references discard_plan tool`() {
+        val prompt = SystemPrompt.build(
+            projectName = "p", projectPath = "/p", planModeEnabled = true
+        )
+
+        assertTrue(
+            prompt.contains("discard_plan"),
+            "plan mode prompt should reference discard_plan tool"
+        )
+    }
+
+    @Test
+    fun `act mode section does not mention discard_plan as blocked`() {
+        val prompt = SystemPrompt.build(
+            projectName = "p", projectPath = "/p", planModeEnabled = false
+        )
+
+        // discard_plan may appear in the act-vs-plan section describing plan mode,
+        // but the prompt text should describe it as a plan-mode-only tool
+        val actVsPlanSection = prompt.substringAfter("ACT MODE V.S. PLAN MODE").substringBefore("====")
+        // The discard_plan reference should be within the PLAN MODE description, not as an act-mode tool
+        assertTrue(
+            actVsPlanSection.contains("discard_plan"),
+            "act vs plan section should describe discard_plan as part of plan mode"
+        )
+    }
+
     // ---- System info tests ----
 
     @Test

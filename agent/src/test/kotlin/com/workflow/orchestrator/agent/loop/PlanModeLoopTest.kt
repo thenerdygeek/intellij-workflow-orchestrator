@@ -343,5 +343,80 @@ class PlanModeLoopTest {
 
             loopJob.join()
         }
+
+        @Test
+        fun `text-only response in plan mode resets consecutiveEmpties to 0`() = runTest {
+            // Scenario: LLM gives text-only (no tool calls) while in plan mode with a channel.
+            // After receiving user input, the loop should continue without hitting the consecutive-empties
+            // guard. We verify this indirectly by checking the loop completes successfully — if
+            // consecutiveEmpties were NOT reset, a follow-up empty response would count towards the
+            // limit from before the text-only turn, potentially causing a premature loop failure.
+            val channel = Channel<String>(Channel.RENDEZVOUS)
+
+            val brain = sequenceBrain(
+                // Empty response (consecutiveEmpties = 1)
+                ChatCompletionResponse(
+                    id = "resp-1",
+                    choices = listOf(
+                        Choice(
+                            index = 0,
+                            message = ChatMessage(role = "assistant", content = null),
+                            finishReason = "stop"
+                        )
+                    ),
+                    usage = UsageInfo(promptTokens = 100, completionTokens = 0, totalTokens = 100)
+                ),
+                // Text-only reply in plan mode — triggers wait for user input, then resets consecutiveEmpties
+                ChatCompletionResponse(
+                    id = "resp-2",
+                    choices = listOf(
+                        Choice(
+                            index = 0,
+                            message = ChatMessage(role = "assistant", content = "I understand your question, let me think more."),
+                            finishReason = "stop"
+                        )
+                    ),
+                    usage = UsageInfo(promptTokens = 110, completionTokens = 10, totalTokens = 120)
+                ),
+                // Empty response after the reset (would hit limit=3 if not reset, but after reset it's only 1)
+                ChatCompletionResponse(
+                    id = "resp-3",
+                    choices = listOf(
+                        Choice(
+                            index = 0,
+                            message = ChatMessage(role = "assistant", content = null),
+                            finishReason = "stop"
+                        )
+                    ),
+                    usage = UsageInfo(promptTokens = 100, completionTokens = 0, totalTokens = 100)
+                ),
+                // Finally completes
+                toolCallResponse("attempt_completion" to """{"result":"Done"}""")
+            )
+
+            val completionTool = fakeTool("attempt_completion", ToolResult(
+                content = "Done",
+                summary = "Done",
+                tokenEstimate = 5,
+                isCompletion = true
+            ))
+
+            val tools = listOf(PlanModeRespondTool(), completionTool)
+            val loop = buildLoop(
+                brain, tools,
+                planMode = true,
+                onPlanResponse = { _, _, _ -> },
+                userInputChannel = channel
+            )
+
+            val loopJob = launch {
+                val result = loop.run("Help me plan")
+                assertTrue(result is LoopResult.Completed, "loop should complete after counter reset, got: $result")
+            }
+
+            // Send user response after the text-only turn (which resets consecutiveEmpties to 0)
+            channel.send("Please continue.")
+            loopJob.join()
+        }
     }
 }

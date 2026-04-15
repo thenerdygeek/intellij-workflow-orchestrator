@@ -242,4 +242,90 @@ class MessageStateHandlerTest {
         assertTrue(loaded.any { it.id == "session-1" })
         assertTrue(loaded.any { it.id == "session-2" })
     }
+
+    // ---- rewriteMostRecentToolResult tests ----
+
+    @Test
+    fun `rewriteMostRecentToolResult rewrites matching tool result and returns true`() = runTest {
+        val h = handler()
+        // ASSISTANT message with a ToolUse
+        h.addToApiConversationHistory(ApiMessage(
+            role = ApiRole.ASSISTANT,
+            content = listOf(ContentBlock.ToolUse(id = "t1", name = "plan_mode_respond", input = "{}"))
+        ))
+        // USER message with matching ToolResult
+        h.addToApiConversationHistory(ApiMessage(
+            role = ApiRole.USER,
+            content = listOf(ContentBlock.ToolResult(toolUseId = "t1", content = "Original plan content", isError = false))
+        ))
+
+        val rewritten = h.rewriteMostRecentToolResult("plan_mode_respond", "[discarded]")
+
+        assertTrue(rewritten, "should return true when a matching tool result is found")
+        val history = h.getApiConversationHistory()
+        val userMsg = history.last { it.role == ApiRole.USER }
+        val toolResult = userMsg.content.filterIsInstance<ContentBlock.ToolResult>().first()
+        assertEquals("[discarded]", toolResult.content)
+    }
+
+    @Test
+    fun `rewriteMostRecentToolResult returns false when no match found`() = runTest {
+        val h = handler()
+        h.addToApiConversationHistory(ApiMessage(
+            role = ApiRole.USER,
+            content = listOf(ContentBlock.Text("some user message"))
+        ))
+
+        val rewritten = h.rewriteMostRecentToolResult("nonexistent_tool", "[discarded]")
+
+        assertFalse(rewritten, "should return false when no matching tool result exists")
+    }
+
+    @Test
+    fun `rewriteMostRecentToolResult returns false on empty history`() = runTest {
+        val h = handler()
+
+        val rewritten = h.rewriteMostRecentToolResult("plan_mode_respond", "[discarded]")
+
+        assertFalse(rewritten, "should return false on empty history")
+        assertEquals(0, h.getApiConversationHistory().size, "history should remain empty")
+    }
+
+    @Test
+    fun `rewriteMostRecentToolResult rewrites only the most recent match when multiple exist`() = runTest {
+        val h = handler()
+        // First assistant + user pair (id t1)
+        h.addToApiConversationHistory(ApiMessage(
+            role = ApiRole.ASSISTANT,
+            content = listOf(ContentBlock.ToolUse(id = "t1", name = "plan_mode_respond", input = "{}"))
+        ))
+        h.addToApiConversationHistory(ApiMessage(
+            role = ApiRole.USER,
+            content = listOf(ContentBlock.ToolResult(toolUseId = "t1", content = "First plan", isError = false))
+        ))
+        // Second assistant + user pair (id t2)
+        h.addToApiConversationHistory(ApiMessage(
+            role = ApiRole.ASSISTANT,
+            content = listOf(ContentBlock.ToolUse(id = "t2", name = "plan_mode_respond", input = "{}"))
+        ))
+        h.addToApiConversationHistory(ApiMessage(
+            role = ApiRole.USER,
+            content = listOf(ContentBlock.ToolResult(toolUseId = "t2", content = "Second plan", isError = false))
+        ))
+
+        val rewritten = h.rewriteMostRecentToolResult("plan_mode_respond", "[discarded]")
+
+        assertTrue(rewritten, "should return true when a matching tool result is found")
+        val history = h.getApiConversationHistory()
+
+        // The most recent USER message (t2) should be rewritten
+        val lastUserMsg = history.last { it.role == ApiRole.USER }
+        val lastResult = lastUserMsg.content.filterIsInstance<ContentBlock.ToolResult>().first()
+        assertEquals("[discarded]", lastResult.content, "most recent tool result should be rewritten")
+
+        // The first USER message (t1) should be unchanged
+        val firstUserMsg = history.first { it.role == ApiRole.USER }
+        val firstResult = firstUserMsg.content.filterIsInstance<ContentBlock.ToolResult>().first()
+        assertEquals("First plan", firstResult.content, "earlier tool result should NOT be rewritten")
+    }
 }
