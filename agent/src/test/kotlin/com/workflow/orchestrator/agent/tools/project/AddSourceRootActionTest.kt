@@ -4,8 +4,12 @@ import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.roots.ContentEntry
+import com.intellij.openapi.roots.ModuleRootManager
 import com.intellij.openapi.util.ThrowableComputable
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.VfsUtilCore
+import com.intellij.openapi.vfs.VirtualFile
 import com.workflow.orchestrator.agent.loop.ApprovalResult
 import com.workflow.orchestrator.agent.tools.AgentTool
 import io.mockk.coEvery
@@ -34,7 +38,8 @@ import org.junit.jupiter.api.Test
  * Test 2 — testMissingPathParamReturnsError: no "path" param → isError=true
  * Test 3 — testInvalidKindReturnsError: kind="bogus" → isError=true with "bogus" in content
  * Test 4 — testExternalSystemModuleBlocksAddition: moduleExternalSystemId returns "GRADLE" → isError=true with "external system"
- * Test 5 — testApprovalDeniedReturnsError: approval=DENIED → isError=true with "denied" in content
+ * Test 5 — testApprovalDeniedReturnsError: full mock chain reaches approval gate → approval=DENIED → isError=true with "denied"
+ * Test 6 — testModuleNotFoundReturnsError: findModuleByName returns null → isError=true with module name in content
  */
 class AddSourceRootActionTest {
 
@@ -143,13 +148,9 @@ class AddSourceRootActionTest {
     // ────────────────────────────────────────────────────────────────────────
     // Test 5 — Approval denied → isError=true with "denied" in content
     //
-    // Mocks the full call chain up to and including the approval gate:
-    //   module found → not external → VFS returns null (path not found) → isError
-    // Since VFS returns null, the function returns "Path not found" before the
-    // approval gate. This confirms the function is guarded end-to-end.
-    // We then verify isError=true and content contains the expected keywords.
-    // The denial gate itself is exercised structurally: if approval=DENIED and path
-    // resolved successfully, the gate rejects. We verify at minimum isError=true.
+    // Mocks the full call chain through to the approval gate:
+    //   module found → not external → VFS returns vFile → content entry found
+    //   → approval=DENIED → isError=true with "denied" in content
     // ────────────────────────────────────────────────────────────────────────
 
     @Test
@@ -157,6 +158,9 @@ class AddSourceRootActionTest {
         val fakeModule = mockk<Module>(relaxed = true)
         val fakeModuleManager = mockk<ModuleManager>(relaxed = true)
         val fakeLocalFileSystem = mockk<LocalFileSystem>(relaxed = true)
+        val fakeVirtualFile = mockk<VirtualFile>(relaxed = true)
+        val fakeContentEntry = mockk<ContentEntry>(relaxed = true)
+        val fakeModuleRootManager = mockk<ModuleRootManager>(relaxed = true)
 
         mockkStatic(ModuleManager::class)
         every { ModuleManager.getInstance(project) } returns fakeModuleManager
@@ -172,10 +176,21 @@ class AddSourceRootActionTest {
         mockkStatic("com.workflow.orchestrator.agent.tools.project.ProjectStructureHelpersKt")
         every { moduleExternalSystemId(fakeModule) } returns null
 
-        // Mock LocalFileSystem.getInstance() to return a mock that returns null for any file
+        // VFS resolves successfully to a mock VirtualFile
         mockkStatic(LocalFileSystem::class)
         every { LocalFileSystem.getInstance() } returns fakeLocalFileSystem
-        every { fakeLocalFileSystem.refreshAndFindFileByIoFile(any()) } returns null
+        every { fakeLocalFileSystem.refreshAndFindFileByIoFile(any()) } returns fakeVirtualFile
+
+        // Content entry is found — file is under a content root
+        mockkStatic(ModuleRootManager::class)
+        every { ModuleRootManager.getInstance(fakeModule) } returns fakeModuleRootManager
+        every { fakeContentEntry.file } returns fakeVirtualFile
+        every { fakeModuleRootManager.contentEntries } returns arrayOf(fakeContentEntry)
+
+        mockkStatic(VfsUtilCore::class)
+        every {
+            VfsUtilCore.isAncestor(any<VirtualFile>(), any<VirtualFile>(), any<Boolean>())
+        } returns true
 
         // Approval denied
         coEvery {
@@ -184,16 +199,47 @@ class AddSourceRootActionTest {
 
         val params = buildJsonObject {
             put("module", "my-module")
-            put("path", "/nonexistent/path/for/test")
+            put("path", "/some/path/for/test")
             put("kind", "source")
         }
         val result = executeAddSourceRoot(params, project, tool)
         assertTrue(result.isError, "Expected isError=true when approval is denied, got: ${result.content}")
-        // VFS returns null → "not found" before gate, which is still isError=true
-        val contentLower = result.content.lowercase()
         assertTrue(
-            contentLower.contains("denied") || contentLower.contains("not found") || contentLower.contains("not under"),
-            "Expected 'denied', 'not found', or 'not under' in error content, got: ${result.content}"
+            result.content.contains("denied", ignoreCase = true),
+            "Expected 'denied' in error content, got: ${result.content}"
+        )
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Test 6 — Module not found → isError=true with module name in content
+    // ────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun testModuleNotFoundReturnsError() = runTest {
+        val fakeModuleManager = mockk<ModuleManager>(relaxed = true)
+
+        mockkStatic(ModuleManager::class)
+        every { ModuleManager.getInstance(project) } returns fakeModuleManager
+        every { fakeModuleManager.findModuleByName("no-such-module") } returns null
+
+        // Mock ReadAction to execute the lambda directly
+        mockkStatic(ReadAction::class)
+        val computeSlot = slot<ThrowableComputable<Any, RuntimeException>>()
+        every { ReadAction.compute(capture(computeSlot)) } answers {
+            computeSlot.captured.compute()
+        }
+
+        val params = buildJsonObject {
+            put("action", "add_source_root")
+            put("module", "no-such-module")
+            put("path", "/any/path")
+            put("kind", "source")
+        }
+        val res = executeAddSourceRoot(params, project, tool)
+        assertTrue(res.isError, "Expected isError=true when module is not found, got: ${res.content}")
+        assertTrue(
+            res.content.contains("no-such-module"),
+            "Expected module name 'no-such-module' in error content, got: ${res.content}"
         )
     }
 }

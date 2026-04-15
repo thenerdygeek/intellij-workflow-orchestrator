@@ -158,8 +158,8 @@ internal suspend fun executeAddSourceRoot(
     // ── Step 9: result ────────────────────────────────────────────────────────
     val relative = relativizeToProject(absolute, project.basePath)
     return ToolResult(
-        content = "Added [$kindStr] source folder to '$moduleName': $relative",
-        summary = "Added $kindStr root to $moduleName",
+        content = "Added [${sourceRootKindLabel(kind)}] source folder to '$moduleName': $relative",
+        summary = "Added ${sourceRootKindLabel(kind)} root to $moduleName",
         tokenEstimate = 20
     )
 }
