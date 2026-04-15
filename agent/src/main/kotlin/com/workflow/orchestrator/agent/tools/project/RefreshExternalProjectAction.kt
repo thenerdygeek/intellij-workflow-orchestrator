@@ -139,7 +139,7 @@ internal suspend fun executeRefreshExternalProject(
 
     return ToolResult(
         content = sb.toString(),
-        summary = "${targets.size} refresh(es) triggered",
+        summary = "${triggered.size} refresh(es) triggered",
         tokenEstimate = (sb.length / 4) + 1
     )
 }
