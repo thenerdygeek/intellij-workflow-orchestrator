@@ -1173,7 +1173,7 @@ class AgentService(private val project: Project) : Disposable {
                         planModeActive.set(enabled)
                         onPlanModeToggled?.invoke(enabled)
                     },
-                    onPlanDiscarded = {
+                    onPlanDiscarded = suspend {
                         // Rewrite the prior plan_mode_respond result in history so the LLM
                         // won't re-surface the discarded plan on the next turn.
                         messageState.rewriteMostRecentToolResult(

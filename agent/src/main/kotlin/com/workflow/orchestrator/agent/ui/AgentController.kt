@@ -2233,8 +2233,11 @@ class AgentController(
     /** User clicked Dismiss on the plan card. */
     private fun dismissPlan() {
         LOG.info("AgentController.dismissPlan — user-initiated plan dismissal")
-        // Rewrite history asynchronously so the LLM won't re-surface the discarded plan.
-        CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+        // Rewrite history synchronously (JCEF thread, not EDT) so the mutation inside
+        // MessageStateHandler's mutex completes before performPlanDiscard sends the
+        // steering/channel message — eliminates the race where the LLM could see the
+        // old plan_mode_respond result on the very next turn.
+        runBlocking(Dispatchers.IO) {
             service.activeMessageStateHandler
                 ?.rewriteMostRecentToolResult("plan_mode_respond", "[Plan discarded — do not reference]")
         }
