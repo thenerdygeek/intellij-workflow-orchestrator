@@ -123,21 +123,10 @@ Actions and their parameters:
     }
 }
 
-// ── Read action stubs ─────────────────────────────────────────────────────────
-// Signature: executeXxx(params: JsonObject, project: Project): ToolResult
+// ── Read action implementations ───────────────────────────────────────────────
 // NOTE: executeResolveFile is implemented in ResolveFileAction.kt
 // NOTE: executeModuleDetail is implemented in ModuleDetailAction.kt
 
-// ── Write action stubs ────────────────────────────────────────────────────────
-// Signature: suspend executeXxx(params: JsonObject, project: Project, tool: AgentTool): ToolResult
-
-/**
- * Write actions take [tool] so they can call [AgentTool.requestApproval] for the
- * in-action approval gate (added in the shared-helpers task). Read actions do not
- * need approval and omit the parameter — consistent with every other action in this
- * package.
- */
+// ── Write action implementations ──────────────────────────────────────────────
 // NOTE: executeRefreshExternalProject is implemented in RefreshExternalProjectAction.kt
-
-internal suspend fun executeAddSourceRoot(params: JsonObject, project: Project, tool: AgentTool): ToolResult =
-    ToolResult("Action 'add_source_root' is not yet implemented.", "Stub", 10, isError = true)
+// NOTE: executeAddSourceRoot is implemented in AddSourceRootAction.kt
