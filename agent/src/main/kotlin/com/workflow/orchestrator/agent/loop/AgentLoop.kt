@@ -207,6 +207,12 @@ class AgentLoop(
      */
     private val onPlanModeToggle: ((Boolean) -> Unit)? = null,
     /**
+     * Callback fired when the LLM discards the current plan via discard_plan tool.
+     * The UI uses this to clear the active plan card without presenting a replacement.
+     * Only callable in plan mode; the loop continues after dismissal.
+     */
+    private val onPlanDiscarded: (() -> Unit)? = null,
+    /**
      * Optional callback for real-time debug log entries.
      * Pushed to the JCEF debug panel when showDebugLog setting is enabled.
      */
@@ -376,8 +382,10 @@ class AgentLoop(
          *
          * NOTE: Must include the tool-use directive. Without it, the model reads
          * "Please retry" and responds with a text-only explanation of the error,
-         * which drops into Case B (TEXT_ONLY_NUDGE) and resets consecutiveEmpties
-         * to 0 — the alternating text-only ↔ empty cycle continues indefinitely.
+         * which drops into Case B (TEXT_ONLY_NUDGE). Case B does NOT reset
+         * consecutiveEmpties (except in plan-mode conversational branches where a
+         * text-only response is a genuine exchange, not a stall) — without this
+         * guard the alternating text-only ↔ empty cycle would continue indefinitely.
          */
         private const val EMPTY_RESPONSE_ERROR =
             "Invalid API Response: The provider returned an empty or unparsable response. " +
@@ -1526,6 +1534,10 @@ class AgentLoop(
                 is ToolResultType.PlanModeToggle -> {
                     LOG.info("[Loop] Plan mode enabled by LLM via enable_plan_mode tool")
                     onPlanModeToggle?.invoke(true)
+                }
+                is ToolResultType.PlanDiscarded -> {
+                    LOG.info("[Loop] Plan discarded by LLM via discard_plan tool")
+                    onPlanDiscarded?.invoke()
                 }
                 is ToolResultType.SkillActivation -> {
                     val activation = toolResult.type

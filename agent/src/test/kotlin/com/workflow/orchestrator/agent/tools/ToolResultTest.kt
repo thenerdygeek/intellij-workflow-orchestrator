@@ -140,6 +140,7 @@ class ToolResultTest {
             ToolResultType.SkillActivation("s", "c"),
             ToolResultType.SessionHandoff("ctx"),
             ToolResultType.PlanModeToggle,
+            ToolResultType.PlanDiscarded,
         )
         for (t in allTypes) {
             val label = when (t) {
@@ -150,6 +151,7 @@ class ToolResultTest {
                 is ToolResultType.SkillActivation -> "skill"
                 is ToolResultType.SessionHandoff -> "handoff"
                 is ToolResultType.PlanModeToggle -> "toggle"
+                is ToolResultType.PlanDiscarded -> "discarded"
             }
             assertNotNull(label)
         }

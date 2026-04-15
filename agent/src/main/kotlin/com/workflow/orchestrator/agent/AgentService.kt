@@ -387,6 +387,7 @@ class AgentService(private val project: Project) : Disposable {
         safeRegisterCore { AskQuestionsTool() }
         safeRegisterCore { PlanModeRespondTool() }
         safeRegisterCore { EnablePlanModeTool() }
+        safeRegisterCore { DiscardPlanTool() }
         safeRegisterCore { UseSkillTool() }
         safeRegisterCore { NewTaskTool() }
         safeRegisterCore { RenderArtifactTool() }
@@ -697,6 +698,11 @@ class AgentService(private val project: Project) : Disposable {
          * Used by the UI to update the plan mode button and rebuild tool definitions.
          */
         onPlanModeToggled: ((Boolean) -> Unit)? = null,
+        /**
+         * Callback fired when the LLM discards the current plan via discard_plan tool.
+         * The UI uses this to clear the active plan card without presenting a replacement.
+         */
+        onPlanDiscarded: (() -> Unit)? = null,
         /**
          * Channel for feeding user input into a running loop.
          * Used in plan mode: after plan presentation, the loop waits on this channel
@@ -1014,7 +1020,7 @@ class AgentService(private val project: Project) : Disposable {
                             if (isPlanMode) {
                                 tool.name !in writeToolNames && tool.name != "enable_plan_mode"
                             } else {
-                                tool.name != "plan_mode_respond"
+                                tool.name != "plan_mode_respond" && tool.name != "discard_plan"
                             }
                         }
                         .map { AgentTool.injectTaskProgress(it.toToolDefinition()) }
@@ -1160,6 +1166,7 @@ class AgentService(private val project: Project) : Disposable {
                         planModeActive.set(enabled)
                         onPlanModeToggled?.invoke(enabled)
                     },
+                    onPlanDiscarded = onPlanDiscarded,
                     userInputChannel = userInputChannel,
                     approvalGate = approvalGate,
                     sessionApprovalStore = sessionApprovalStore,
@@ -1376,6 +1383,7 @@ class AgentService(private val project: Project) : Disposable {
         onModelSwitch: ((fromModel: String, toModel: String, reason: String) -> Unit)? = null,
         onPlanResponse: ((planText: String, needsMoreExploration: Boolean, planSteps: List<String>) -> Unit)? = null,
         onPlanModeToggled: ((Boolean) -> Unit)? = null,
+        onPlanDiscarded: (() -> Unit)? = null,
         userInputChannel: Channel<String>? = null,
         approvalGate: (suspend (toolName: String, args: String, riskLevel: String, allowSessionApproval: Boolean) -> com.workflow.orchestrator.agent.loop.ApprovalResult)? = null,
         onCheckpointSaved: ((sessionId: String) -> Unit)? = null,
@@ -1532,6 +1540,7 @@ class AgentService(private val project: Project) : Disposable {
                 onModelSwitch = onModelSwitch,
                 onPlanResponse = onPlanResponse,
                 onPlanModeToggled = onPlanModeToggled,
+                onPlanDiscarded = onPlanDiscarded,
                 userInputChannel = userInputChannel,
                 approvalGate = approvalGate,
                 onCheckpointSaved = onCheckpointSaved,

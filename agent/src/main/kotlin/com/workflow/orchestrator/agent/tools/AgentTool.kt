@@ -189,6 +189,7 @@ sealed class ToolResultType {
     data class SkillActivation(val skillName: String, val skillContent: String) : ToolResultType()
     data class SessionHandoff(val context: String) : ToolResultType()
     data object PlanModeToggle : ToolResultType()
+    data object PlanDiscarded : ToolResultType()
 }
 
 data class ToolResult(
@@ -262,5 +263,8 @@ data class ToolResult(
 
         fun planModeToggle(content: String, summary: String, tokenEstimate: Int) =
             ToolResult(content, summary, tokenEstimate, enablePlanMode = true, type = ToolResultType.PlanModeToggle)
+
+        fun planDiscarded(content: String, summary: String) =
+            ToolResult(content, summary, ERROR_TOKEN_ESTIMATE, type = ToolResultType.PlanDiscarded)
     }
 }
