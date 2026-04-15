@@ -22,6 +22,7 @@ declare global {
     _submitPrompt?: (text: string) => void;
     _approvePlan?: () => void;
     _revisePlan?: (comments: string) => void;
+    _dismissPlan?: () => void;
     _toggleTool?: (data: string) => void;
     _questionAnswered?: (qid: string, opts: string) => void;
     _questionSkipped?: (qid: string) => void;

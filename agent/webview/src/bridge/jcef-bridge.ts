@@ -110,6 +110,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     const plan = JSON.parse(planJson);
     stores?.getChatStore().setPlan(plan);
   },
+  clearPlan() {
+    stores?.getChatStore().clearPlan();
+  },
   approvePlan() {
     stores?.getChatStore().approvePlan();
   },
@@ -491,6 +494,7 @@ export const kotlinBridge = {
   submitPrompt(text: string): void { callKotlin('_submitPrompt', text); },
   approvePlan(): void { callKotlin('_approvePlan'); },
   revisePlan(comments: string): void { callKotlin('_revisePlan', comments); },
+  dismissPlan(): void { callKotlin('_dismissPlan'); },
   toggleTool(toolName: string, enabled: boolean): void { callKotlin('_toggleTool', `${toolName}:${enabled ? '1' : '0'}`); },
   questionAnswered(questionId: string, selectedOptionsJson: string): void { callKotlin('_questionAnswered', questionId, selectedOptionsJson); },
   questionSkipped(questionId: string): void { callKotlin('_questionSkipped', questionId); },

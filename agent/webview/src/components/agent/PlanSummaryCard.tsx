@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { FileText, Check, RotateCcw, Loader2 } from 'lucide-react';
+import { FileText, Check, RotateCcw, Loader2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter } from '@/components/ui/card';
 import { PlanCompact } from '@/components/ui/tool-ui/plan';
 import type { Plan } from '@/bridge/types';
 import { Badge } from '@/components/ui/badge';
 import { useChatStore } from '@/stores/chatStore';
+import { kotlinBridge } from '@/bridge/jcef-bridge';
 
 interface PlanSummaryCardProps {
   plan: Plan;
@@ -89,6 +90,10 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
     (window as any)._revisePlanFromEditor?.();
   }, []);
 
+  const handleDismiss = useCallback(() => {
+    kotlinBridge.dismissPlan();
+  }, []);
+
   return (
     <Card
       className="my-3 gap-0 overflow-hidden py-0 border-[var(--border)] bg-[var(--tool-bg,hsl(var(--card)))]"
@@ -162,6 +167,18 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
 
       {/* Actions */}
       <CardFooter className="gap-2 px-4 py-3" style={{ borderTop: '1px solid var(--border)' }}>
+        <Button
+          onClick={handleDismiss}
+          className="text-[12px] font-medium shrink-0"
+          size="sm"
+          variant="ghost"
+          disabled={pending !== null}
+          style={{ color: 'var(--fg-secondary)' }}
+          title="Dismiss plan"
+        >
+          <X size={14} />
+          Dismiss
+        </Button>
         <Button
           onClick={handleViewPlan}
           className="flex-1 text-[12px] font-medium"

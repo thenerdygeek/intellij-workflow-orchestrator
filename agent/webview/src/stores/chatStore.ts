@@ -174,6 +174,7 @@ interface ChatState {
   addThinking(text: string): void;
   clearChat(): void;
   setPlan(plan: Plan): void;
+  clearPlan(): void;
   approvePlan(): void;
   updatePlanStep(stepId: string, status: string): void;
   replaceExecutionSteps(steps: PlanStep[]): void;
@@ -702,7 +703,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setPlan(plan: Plan) {
-    set({ plan, planCommentCount: 0 });
+    set(state => {
+      const current = state.plan;
+      const isIdentical = current !== null &&
+        plan.summary === current.summary &&
+        JSON.stringify(plan.steps) === JSON.stringify(current.steps) &&
+        plan.markdown === current.markdown;
+      if (isIdentical) {
+        // Content unchanged — update non-comment fields but keep planCommentCount
+        return { plan };
+      }
+      return { plan, planCommentCount: 0 };
+    });
+  },
+
+  clearPlan() {
+    set({ plan: null, planCommentCount: 0 });
   },
 
   approvePlan() {
