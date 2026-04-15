@@ -706,6 +706,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set(state => {
       const current = state.plan;
       const isIdentical = current !== null &&
+        plan.title === current.title &&
         plan.summary === current.summary &&
         JSON.stringify(plan.steps) === JSON.stringify(current.steps) &&
         plan.markdown === current.markdown;

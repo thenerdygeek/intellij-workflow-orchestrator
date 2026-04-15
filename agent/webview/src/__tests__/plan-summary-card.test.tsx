@@ -15,9 +15,12 @@ import type { Plan } from '@/bridge/types';
 // Mock the jcef-bridge module — openInEditorTab is the key function
 vi.mock('@/bridge/jcef-bridge', () => ({
   openInEditorTab: vi.fn(),
+  kotlinBridge: {
+    dismissPlan: vi.fn(),
+  },
 }));
 
-import { openInEditorTab } from '@/bridge/jcef-bridge';
+import { openInEditorTab, kotlinBridge } from '@/bridge/jcef-bridge';
 
 const mockPlan: Plan = {
   title: 'Fix NPE in PaymentService',
@@ -121,5 +124,23 @@ describe('PlanSummaryCard', () => {
     // Should show structured step list (PlanCompact) — step titles visible
     expect(screen.getByText('Fix NPE in PaymentService')).toBeInTheDocument();
     expect(screen.getByText(/3 steps planned/)).toBeInTheDocument();
+  });
+
+  it('Dismiss button calls kotlinBridge.dismissPlan', () => {
+    render(<PlanSummaryCard plan={mockPlan} />);
+    const dismissBtn = screen.getByRole('button', { name: /dismiss/i });
+    fireEvent.click(dismissBtn);
+
+    expect((kotlinBridge as any).dismissPlan).toHaveBeenCalledTimes(1);
+  });
+
+  it('Dismiss button is disabled while another action is pending', () => {
+    render(<PlanSummaryCard plan={mockPlan} />);
+    // Click Approve to put the card into a pending state
+    const approveBtn = screen.getByRole('button', { name: /approve/i });
+    fireEvent.click(approveBtn);
+
+    const dismissBtn = screen.getByRole('button', { name: /dismiss/i });
+    expect(dismissBtn).toBeDisabled();
   });
 });
