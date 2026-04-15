@@ -431,6 +431,9 @@ class AgentService(private val project: Project) : Disposable {
             safeRegisterDeferred("Code Intelligence") { ReadWriteAccessTool(providerRegistry) }
         }
 
+        // Project Structure — module/SDK/library model (always available, no PSI dependency)
+        safeRegisterDeferred("Code Intelligence") { com.workflow.orchestrator.agent.tools.project.ProjectStructureTool() }
+
         // Code Quality — formatting, refactoring, inspections
         safeRegisterDeferred("Code Quality") { FormatCodeTool() }
         safeRegisterDeferred("Code Quality") { OptimizeImportsTool() }
