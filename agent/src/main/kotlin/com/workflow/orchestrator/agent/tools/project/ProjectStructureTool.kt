@@ -147,6 +147,12 @@ internal fun executeListFacets(params: JsonObject, project: Project): ToolResult
 // ── Write action stubs ────────────────────────────────────────────────────────
 // Signature: suspend executeXxx(params: JsonObject, project: Project, tool: AgentTool): ToolResult
 
+/**
+ * Write actions take [tool] so they can call [AgentTool.requestApproval] for the
+ * in-action approval gate (added in the shared-helpers task). Read actions do not
+ * need approval and omit the parameter — consistent with every other action in this
+ * package.
+ */
 internal suspend fun executeRefreshExternalProject(params: JsonObject, project: Project, tool: AgentTool): ToolResult =
     ToolResult("Action 'refresh_external_project' is not yet implemented.", "Stub", 10, isError = true)
 

@@ -144,6 +144,20 @@ class ProjectStructureToolTest {
                 tool.allowedWorkers
             )
         }
+
+        @Test
+        fun `toToolDefinition produces valid schema`() {
+            val def = tool.toToolDefinition()
+            assertEquals("function", def.type)
+            assertEquals("project_structure", def.function.name)
+            assertTrue(def.function.description.isNotBlank())
+            assertEquals("object", def.function.parameters.type)
+            assertEquals(listOf("action"), def.function.parameters.required)
+            // 7 parameters: action, path, module, kind, scope, detect_cycles + any others
+            assertTrue(def.function.parameters.properties.containsKey("action"))
+            assertTrue(def.function.parameters.properties.containsKey("path"))
+            assertTrue(def.function.parameters.properties.containsKey("module"))
+        }
     }
 
     // ────────────────────────────────────────────────────────────────────────
