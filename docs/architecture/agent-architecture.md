@@ -509,7 +509,7 @@ All tools registered in `AgentService.registerAllTools()`.
 
 ### Deferred Tools by Category (loaded via `tool_search`)
 
-**PSI / Code Intelligence (11)**
+**PSI / Code Intelligence (12)**
 
 | Tool | Purpose |
 |---|---|
@@ -524,6 +524,7 @@ All tools registered in `AgentService.registerAllTools()`.
 | `test_finder` | Find related test files/methods |
 | `structural_search` | Structural search and replace patterns |
 | `read_write_access` | Show read/write access patterns |
+| `project_structure` | IntelliJ project-model introspection (8 actions: resolve_file, module_detail, topology, list_sdks, list_libraries, list_facets, refresh_external_project, add_source_root) |
 
 **IDE (6)**
 
