@@ -86,6 +86,12 @@ class ModuleDetailActionTest {
         every { ModuleManager.getInstance(project) } returns mockModuleManager
         every { mockModuleManager.findModuleByName(unknownName) } returns null
 
+        mockkStatic(ReadAction::class)
+        val computeSlot = slot<ThrowableComputable<Any, RuntimeException>>()
+        every { ReadAction.compute(capture(computeSlot)) } answers {
+            computeSlot.captured.compute()
+        }
+
         val params = buildJsonObject { put("module", unknownName) }
         val result = executeModuleDetail(params, project)
 
@@ -94,6 +100,7 @@ class ModuleDetailActionTest {
             result.content.contains(unknownName),
             "Expected module name '$unknownName' in error content but got: ${result.content}"
         )
+        assertTrue(result.content.contains("build.project_modules"))
     }
 
     // ────────────────────────────────────────────────────────────────────────

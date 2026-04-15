@@ -42,14 +42,13 @@ internal fun executeModuleDetail(params: JsonObject, project: Project): ToolResu
         return ToolResult.error("Project is indexing — retry after indexing completes.")
     }
 
-    // 3. Locate the module
-    val module = ModuleManager.getInstance(project).findModuleByName(moduleName)
-        ?: return ToolResult.error(
-            "Module not found: '$moduleName'. Use build.project_modules to list modules."
-        )
-
-    // 4. All IntelliJ model reads inside ReadAction
+    // 3. Locate the module + all IntelliJ model reads inside ReadAction
     return ReadAction.compute<ToolResult, RuntimeException> {
+        val module = ModuleManager.getInstance(project).findModuleByName(moduleName)
+            ?: return@compute ToolResult.error(
+                "Module not found: '$moduleName'. Use build.project_modules to list modules."
+            )
+
         val rm = ModuleRootManager.getInstance(module)
         val basePath = project.basePath
 
