@@ -156,12 +156,30 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         val module = findModuleForClass(project, className)
 
         if (useNativeRunner) {
+            val reasonOut = StringBuilder()
             try {
-                val result = executeWithNativeRunner(project, className, method, testTarget, timeoutSeconds)
+                val result = executeWithNativeRunner(project, className, method, testTarget, timeoutSeconds, reasonOut)
                 if (result != null) return result
+                // Explicit native opt-in but setup failed — do NOT silently use `mvn test`.
+                // Previously this path silently fell through to executeWithShell, which is
+                // why a multi-module project could land on Maven even with use_native_runner=true
+                // (e.g. findModuleForClass returned null for a sibling module's class,
+                // createJUnitRunSettings bailed, the dispatcher fell back without telling anyone).
+                val reason = reasonOut.toString().ifBlank { "setup returned null without a specific reason" }
+                return ToolResult(
+                    content = "Native IntelliJ test runner could not be set up for '$className': $reason.\n\n" +
+                        "Not falling back to Maven/Gradle shell because use_native_runner=true.\n" +
+                        "Options:\n" +
+                        "- Fix the underlying cause (most common: class not in the project source roots, " +
+                        "module not resolvable, or the JUnit/TestNG plugin is disabled).\n" +
+                        "- Pass use_native_runner=false to run via `mvn test` / `./gradlew test`.",
+                    summary = "Native runner unavailable: $reason",
+                    tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                    isError = true
+                )
             } catch (e: Exception) {
                 val shellResult = executeWithShell(project, testTarget, timeoutSeconds, module)
-                val warning = "[WARNING] Native test runner failed (${e.javaClass.simpleName}: ${e.message}), used shell fallback.\n\n"
+                val warning = "[WARNING] Native test runner threw ${e.javaClass.simpleName}: ${e.message}, used shell fallback.\n\n"
                 return shellResult.copy(content = warning + shellResult.content)
             }
         }
@@ -171,9 +189,10 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
 
     private suspend fun executeWithNativeRunner(
         project: Project, className: String, method: String?,
-        testTarget: String, timeoutSeconds: Long
+        testTarget: String, timeoutSeconds: Long,
+        reasonOut: StringBuilder
     ): ToolResult? {
-        val settings = createJUnitRunSettings(project, className, method) ?: return null
+        val settings = createJUnitRunSettings(project, className, method, reasonOut) ?: return null
 
         val processHandlerRef = AtomicReference<ProcessHandler?>(null)
         val descriptorRef = AtomicReference<RunContentDescriptor?>(null)
@@ -196,6 +215,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                             ?.build()
 
                         if (env == null) {
+                            reasonOut.append("ExecutionEnvironmentBuilder.createOrNull returned null (no runner registered for this configuration)")
                             if (continuation.isActive) continuation.resume(null)
                             return@invokeLater
                         }
@@ -203,6 +223,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                         val callback = object : ProgramRunner.Callback {
                             override fun processStarted(descriptor: RunContentDescriptor?) {
                                 if (descriptor == null) {
+                                    reasonOut.append("ProgramRunner.Callback produced no RunContentDescriptor (the runner refused to start the process)")
                                     if (continuation.isActive) continuation.resume(null)
                                     return
                                 }
@@ -295,6 +316,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                             } catch (_: InterruptedException) { /* normal */ }
                         }.apply { isDaemon = true; name = "build-watchdog-timeout"; start() }
                     } catch (e: Exception) {
+                        reasonOut.append("setup threw ${e.javaClass.simpleName}: ${e.message}")
                         if (continuation.isActive) continuation.resume(null)
                     }
                 }
@@ -392,8 +414,17 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
     }
 
     private fun createJUnitRunSettings(
-        project: Project, className: String, method: String?
+        project: Project, className: String, method: String?,
+        reasonOut: StringBuilder
     ): RunnerAndConfigurationSettings? {
+        // reasonOut is appended (single reason) on every return-null branch so the
+        // dispatcher can surface WHY the native runner could not be set up instead
+        // of silently falling back to `mvn test`. Each branch writes its own reason
+        // only if the builder is still empty, so the earliest failure wins.
+        fun fail(why: String): RunnerAndConfigurationSettings? {
+            if (reasonOut.isEmpty()) reasonOut.append(why)
+            return null
+        }
         return try {
             val runManager = RunManager.getInstance(project)
 
@@ -404,9 +435,10 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             }
             val testConfigType = ConfigurationType.CONFIGURATION_TYPE_EP.extensionList.find { type ->
                 type.id == configTypeId || type.displayName == configTypeId
-            } ?: return null
+            } ?: return fail("no '$configTypeId' ConfigurationType registered (is the JUnit/TestNG plugin enabled?)")
 
-            val factory = testConfigType.configurationFactories.firstOrNull() ?: return null
+            val factory = testConfigType.configurationFactories.firstOrNull()
+                ?: return fail("$configTypeId ConfigurationType has no configuration factories")
             val configName = "${className.substringAfterLast('.')}${if (method != null) ".$method" else ""}"
             val settings = runManager.createConfiguration(configName, factory)
 
@@ -440,13 +472,17 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                         methodField.set(data, method)
                     }
                 } else {
-                    return null
+                    return fail("$configTypeId config exposes neither getPersistentData nor getPersistantData (unexpected plugin version)")
                 }
-            } catch (_: Exception) {
-                return null
+            } catch (e: Exception) {
+                return fail("failed to populate $configTypeId persistent data via reflection: ${e.javaClass.simpleName}: ${e.message}")
             }
 
-            val testModule = findModuleForClass(project, className) ?: return null
+            val testModule = findModuleForClass(project, className)
+                ?: return fail("could not resolve an IntelliJ module for '$className'. " +
+                    "Most common cause in a multi-module project: the class is not under any module's source roots, " +
+                    "or the module containing it hasn't been re-imported since it was added. " +
+                    "Open the test class in the editor and verify it has a module badge on the file tab")
             run {
                 try {
                     val setModuleMethod = config.javaClass.getMethod("setModule", com.intellij.openapi.module.Module::class.java)
@@ -467,7 +503,9 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             // and stealing the user's selected config causes "initialization error" on
             // the next manual run after the agent is stopped.
             settings
-        } catch (_: Exception) { null }
+        } catch (e: Exception) {
+            fail("unexpected ${e.javaClass.simpleName} during native run config setup: ${e.message}")
+        }
     }
 
     private fun detectTestFramework(project: Project, className: String): String {
