@@ -15,9 +15,9 @@ import kotlinx.serialization.json.jsonPrimitive
  *
  * Lists libraries from the project-level library table and/or the application-level
  * library table depending on the `scope` parameter:
- *  - "project" (default) — project library table only
+ *  - "project"            — project library table only
  *  - "application"       — application (global) library table only
- *  - "all"               — both tables
+ *  - "all" (default)     — both tables
  *
  * For each library the class root count and source root count are reported.
  *

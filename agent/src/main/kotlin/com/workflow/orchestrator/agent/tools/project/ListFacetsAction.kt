@@ -20,6 +20,9 @@ import kotlinx.serialization.json.jsonPrimitive
  *
  * All IntelliJ model reads run inside [ReadAction.compute] so this function is
  * safe to call from any non-EDT background thread.
+ *
+ * Summary uses natural pluralisation (facet/facets, module/modules) rather than
+ * the literal module(s) template form.
  */
 internal fun executeListFacets(params: JsonObject, project: Project): ToolResult {
     val moduleName = params["module"]?.jsonPrimitive?.content
