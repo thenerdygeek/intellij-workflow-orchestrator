@@ -170,6 +170,11 @@ class AgentController(
         onFlush = { batched -> dashboard.appendStreamToken(batched) }
     )
 
+    /** Routes per-tool-call process output chunks to the tool's own Terminal block in the chat UI. */
+    private val toolStreamBatcher = PerToolStreamBatcher(
+        onFlush = { id, batched -> dashboard.appendToolOutput(id, batched) }
+    )
+
     /** Resolves @file, @folder, @symbol, @tool, /skill, #ticket mentions into rich context for the LLM. */
     private val mentionContextBuilder = MentionContextBuilder(project)
 
@@ -184,6 +189,7 @@ class AgentController(
 
     init {
         Disposer.register(this, streamBatcher)
+        Disposer.register(this, toolStreamBatcher)
         wireCallbacks()
         // Register the push callback used by RenderArtifactTool → ArtifactResultRegistry
         // to forward interactive artifacts into the webview. The tool drives the full
@@ -509,6 +515,11 @@ class AgentController(
         // buffered and the page took longer than expected (slow machines, heavy IDE startup).
         // If the buffered calls already flushed successfully, this is a harmless idempotent re-push.
         dashboard.setCefPageReadyCallback { pushInitialState() }
+
+        // Route tool process output to per-tool-call Terminal blocks via toolStreamBatcher
+        com.workflow.orchestrator.agent.tools.builtin.RunCommandTool.streamCallback = { toolCallId, chunk ->
+            toolStreamBatcher.append(toolCallId, chunk)
+        }
     }
 
     /**
@@ -1292,6 +1303,8 @@ class AgentController(
                 } else {
                     RichStreamingPanel.ToolCallStatus.SUCCESS
                 }
+                // Flush any in-flight tool output chunks for this tool call before finalising the result card
+                toolStreamBatcher.flush(progress.toolCallId)
                 dashboard.updateLastToolCall(
                     status = status,
                     result = progress.result,
@@ -1346,6 +1359,7 @@ class AgentController(
 
         // Drain the stream batcher before UI flush so no buffered tokens are lost
         streamBatcher.flush()
+        toolStreamBatcher.flush()
 
         invokeLater {
             // Flush any remaining stream content
