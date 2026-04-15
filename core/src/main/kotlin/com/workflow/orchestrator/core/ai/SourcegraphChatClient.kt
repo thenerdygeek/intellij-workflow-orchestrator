@@ -759,6 +759,19 @@ class SourcegraphChatClient(
         // Note: sharedApiCallCounter (if set) is owned by the session and not reset here.
     }
 
+    /**
+     * Detach any previously-injected [sharedApiCallCounter] and resume using the
+     * local counter. Used by sub-agent runners so their api-debug dumps number
+     * independently of the parent session — otherwise a sub-agent spawned mid-task
+     * would write `call-042-*.txt` into its own debug dir while the parent was
+     * writing `call-043-*.txt` into the session dir, making dumps hard to correlate.
+     */
+    fun detachSharedApiCallCounter() {
+        sharedApiCallCounter = null
+        localApiCallCounter = 0
+        lastDumpedCallNum = 0
+    }
+
     private fun dumpApiRequest(messages: List<ChatMessage>, tools: List<ToolDefinition>?, bodyLength: Int) {
         val dir = apiDebugDir ?: return
         try {

@@ -110,4 +110,13 @@ class OpenAiCompatBrain(
     fun setSharedApiCallCounter(counter: java.util.concurrent.atomic.AtomicInteger) {
         client.setSharedApiCallCounter(counter)
     }
+
+    /**
+     * Detach any shared API call counter previously injected via
+     * [setSharedApiCallCounter] and resume using a local counter. Used by sub-agent
+     * runners so their dumps are numbered independently of the parent session.
+     */
+    fun detachSharedApiCallCounter() {
+        client.detachSharedApiCallCounter()
+    }
 }
