@@ -93,6 +93,7 @@ Before using glob_files or search_code for these tasks, use tool_search first:
 | Inspect database schema | "db_schema" | Reading migration files |
 | Check code quality issues | "run_inspections" | Running linter via run_command |
 | Rename across codebase | "refactor_rename" | Find-and-replace via edit_file |
+| Fix module deps, SDK, or language level | "project_structure" | Editing build.gradle/pom.xml |
 | Extract specific lines from large output | grep_pattern param | Piping through grep via run_command |
 
 ====
@@ -104,6 +105,7 @@ Do NOT use run_command when a dedicated IDE tool exists. IDE tools provide struc
 - Use diagnostics instead of `run_command("mvn compile")` or `run_command("./gradlew compileKotlin")`
 - Use java_runtime_exec(action="run_tests") instead of `run_command("./gradlew test")`
 - Use java_runtime_exec(action="compile_module") instead of `run_command("mvn compile")`
+- Use project_structure to set module dependencies, SDK, or language level on intrinsic (non-Gradle/Maven) modules instead of editing build files — changes take effect immediately and support undo
 - Use search_code instead of `run_command("grep -r ...")`
 - Use glob_files instead of `run_command("find ...")`
 - Use refactor_rename instead of find-and-replace via run_command

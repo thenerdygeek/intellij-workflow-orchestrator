@@ -33,7 +33,7 @@ class ProjectStructureTool : AgentTool {
     override val name = "project_structure"
 
     override val description = """
-Project structure intelligence — module layout, source root configuration, SDK setup, and external system sync.
+Project structure intelligence and mutation — query/fix module layout, dependencies, SDK, language level, source/content roots, and external system sync. Use instead of editing build files directly.
 
 Actions and their parameters:
 - resolve_file(path) → Resolve a file path to its owning module, content root, and source root type

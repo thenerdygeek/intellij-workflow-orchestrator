@@ -327,6 +327,7 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("| Inspect database schema | \"db_schema\" | Reading migration files |")
         appendLine("| Check code quality issues | \"run_inspections\" | Running linter via run_command |")
         appendLine("| Rename across codebase | \"refactor_rename\" | Find-and-replace via edit_file |")
+        appendLine("| Fix module deps, SDK, or language level | \"project_structure\" | Editing build.gradle/pom.xml |")
         appendLine("| Extract specific lines from large output | grep_pattern param | Piping through grep via run_command |")
     }.trimEnd()
 
@@ -436,6 +437,7 @@ In each user message, the environment_details will specify the current mode. The
             appendLine("- Use diagnostics instead of `run_command(\"mvn compile\")` or `run_command(\"./gradlew compileKotlin\")`")
             appendLine("- Use java_runtime_exec(action=\"run_tests\") instead of `run_command(\"./gradlew test\")`")
             appendLine("- Use java_runtime_exec(action=\"compile_module\") instead of `run_command(\"mvn compile\")`")
+            appendLine("- Use project_structure to set module dependencies, SDK, or language level on intrinsic (non-Gradle/Maven) modules instead of editing build files — changes take effect immediately and support undo")
         }
         if (ideContext?.supportsPython == true) {
             appendLine("- Use diagnostics instead of `run_command(\"python -m py_compile\")` or `run_command(\"pylint\")`")
