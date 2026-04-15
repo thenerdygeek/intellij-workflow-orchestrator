@@ -202,6 +202,7 @@ export function ToolCallView({ toolCall, isLatest, rolledBack }: ToolCallViewPro
   const liveTimer = useLiveTimer(status);
   const toolPart = toToolPart(toolCall);
   const streamOutput = useChatStore(s => s.toolOutputStreams[toolCall.id] || '');
+  const hasStreamOutput = streamOutput.length > 0;
 
   const timeoutSeconds = (() => {
     try {
@@ -210,8 +211,9 @@ export function ToolCallView({ toolCall, isLatest, rolledBack }: ToolCallViewPro
     } catch { return category === 'CMD' ? 120 : undefined; }
   })();
 
-  // For CMD tools, suppress Tool's built-in output rendering — we'll render Terminal instead
-  const effectiveToolPart = category === 'CMD'
+  // For CMD tools and any tool actively streaming output, suppress Tool's built-in output
+  // rendering — the Terminal block will render it instead.
+  const effectiveToolPart = (category === 'CMD' || hasStreamOutput)
     ? { ...toolPart, output: undefined, errorText: undefined }
     : toolPart;
 
@@ -320,7 +322,7 @@ export function ToolCallView({ toolCall, isLatest, rolledBack }: ToolCallViewPro
         footerExtra={footerExtra}
         className="mt-2"
       />
-      {category === 'CMD' && isOpen && (
+      {(category === 'CMD' || hasStreamOutput) && isOpen && (
         <div className="px-3 pb-3 -mt-1" style={{ backgroundColor: 'var(--tool-bg)' }}>
           <Terminal
             command={extractCommand(toolCall.args)}
