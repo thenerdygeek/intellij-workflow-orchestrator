@@ -122,7 +122,7 @@ These tools consolidate multiple operations behind an `action` enum:
 | Meta-Tool | Action Count | Examples |
 |-----------|-------------|----------|
 | **runtime_exec** | 3 | get_test_results, get_running_processes, get_run_output (universal observation) |
-| **java_runtime_exec** | 2 | run_tests (JUnit/TestNG), compile_module (CompilerManager) — registered only when Java plugin present |
+| **java_runtime_exec** | 2 | run_tests (JUnit/TestNG), compile_module (CompilerManager) — registered only when Java plugin present. **run_tests explicitly calls `ProjectTaskManager.build(module)` before launching JUnit** (commit 9b164bf3 guard: config is transient/unregistered so factory-default "Build" before-run task is NOT wired; we call the build API ourselves to prevent `initializationError`). |
 | **python_runtime_exec** | 2 | run_tests (pytest via PytestActions), compile_module (python -m py_compile) — registered only when Python plugin present |
 | **runtime_config** | 4 | get_run_configurations, create/modify/delete_run_config |
 | **coverage** | 2 | run_with_coverage, get_file_coverage |

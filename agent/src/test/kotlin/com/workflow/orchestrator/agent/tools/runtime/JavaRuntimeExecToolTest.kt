@@ -11,6 +11,9 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
+import java.io.File
+import java.nio.file.Path
 
 class JavaRuntimeExecToolTest {
     private val project = mockk<Project>(relaxed = true)
@@ -369,5 +372,126 @@ class JavaRuntimeExecToolTest {
             result.content.contains("no test methods") || result.content.contains("No test"),
             "content should explain no @Test methods were found. Got: ${result.content}"
         )
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Build-gate regression tests.
+    //
+    // Background: the native runner creates a transient RunnerAndConfigurationSettings
+    // that is intentionally never registered in RunManager (commit 9b164bf3 — prevents
+    // "initialization error on next manual run"). As a side-effect, IntelliJ's factory-
+    // default "Build" before-run task is never wired. Without an explicit build step,
+    // JUnit launches against an uncompiled classpath → initializationError.
+    //
+    // Fix: JavaRuntimeExecTool now calls ProjectTaskManager.build(module) explicitly
+    // before ProgramRunnerUtil.executeConfigurationAsync.
+    //
+    // Full end-to-end coverage of the ProjectTaskManager path requires EDT + IntelliJ
+    // service infrastructure (BasePlatformTestCase). The tests below cover:
+    //   (a) The shell fallback path — no EDT needed, runs synchronously.
+    //   (b) A canary that the 9b164bf3 guard comment (preventing setTemporaryConfiguration)
+    //       is still present in the source file.
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `run_tests shell path — returns error when project has no build file`(@TempDir tempDir: Path) = runTest {
+        val emptyProject = mockk<Project>(relaxed = true)
+        every { emptyProject.basePath } returns tempDir.toFile().absolutePath
+        // tempDir has no pom.xml, build.gradle, or build.gradle.kts → "No build tool found"
+        val result = tool.execute(
+            buildJsonObject {
+                put("action", "run_tests")
+                put("class_name", "com.example.FooTest")
+                put("use_native_runner", false)
+            },
+            emptyProject
+        )
+        assertTrue(result.isError)
+        assertTrue(
+            result.content.contains("Maven") || result.content.contains("Gradle"),
+            "error should mention the missing build tools. Got: ${result.content}"
+        )
+    }
+
+    @Test
+    fun `run_tests shell path — returns error when project basePath is null`() = runTest {
+        val noPathProject = mockk<Project>(relaxed = true)
+        every { noPathProject.basePath } returns null
+        val result = tool.execute(
+            buildJsonObject {
+                put("action", "run_tests")
+                put("class_name", "com.example.FooTest")
+                put("use_native_runner", false)
+            },
+            noPathProject
+        )
+        assertTrue(result.isError)
+        assertTrue(
+            result.content.lowercase().contains("base path") || result.content.lowercase().contains("project"),
+            "error should mention missing base path. Got: ${result.content}"
+        )
+    }
+
+    @Test
+    fun `run_tests shell path — finds Maven pom and builds correct command`(@TempDir tempDir: Path) = runTest {
+        File(tempDir.toFile(), "pom.xml").writeText("<project/>")
+        val mavenProject = mockk<Project>(relaxed = true)
+        every { mavenProject.basePath } returns tempDir.toFile().absolutePath
+        // The process will fail to run mvn (not installed in test), but the fact that it
+        // attempts to and doesn't return "No build tool found" confirms the Maven path.
+        val result = tool.execute(
+            buildJsonObject {
+                put("action", "run_tests")
+                put("class_name", "com.example.FooTest")
+                put("use_native_runner", false)
+                put("timeout", 5)  // 5s cap so the test is fast
+            },
+            mavenProject
+        )
+        // May be a timeout or a "mvn: not found" error — either way NOT "No build tool found"
+        assertFalse(
+            result.content.contains("No Maven") && result.content.contains("Gradle"),
+            "Maven pom.xml present: should NOT say 'No build tool found'. Got: ${result.content}"
+        )
+    }
+
+    /**
+     * Canary: guards against re-introducing commit 9b164bf3's regression.
+     *
+     * If someone "fixes" the build gate by calling RunManager.setTemporaryConfiguration,
+     * this test will fail, reminding them to read the comment in createJUnitRunSettings
+     * before proceeding.
+     */
+    @Test
+    fun `9b164bf3 regression canary — guard comment still present in source`() {
+        val sourceFile = findSourceFile("JavaRuntimeExecTool.kt")
+        assertNotNull(sourceFile, "Could not find JavaRuntimeExecTool.kt for canary check")
+        val source = sourceFile!!.readText()
+        assertTrue(
+            source.contains("9b164bf3"),
+            "Commit 9b164bf3 guard comment must still exist in JavaRuntimeExecTool.kt. " +
+                "It prevents setTemporaryConfiguration from being called, which would re-trigger " +
+                "the 'initialization error on next manual run' regression."
+        )
+        // Verify no non-comment line actually CALLS setTemporaryConfiguration.
+        val callLines = source.lines()
+            .filter { it.contains("setTemporaryConfiguration(") }
+            .filter { it.trim().startsWith("//").not() }
+        assertTrue(
+            callLines.isEmpty(),
+            "RunManager.setTemporaryConfiguration must NOT be called in JavaRuntimeExecTool.kt — " +
+                "see the 9b164bf3 guard comment. Use ProjectTaskManager.build(module) instead. " +
+                "Offending lines: $callLines"
+        )
+    }
+
+    private fun findSourceFile(name: String): File? {
+        // user.dir in a Gradle test run is the project root (the directory containing
+        // the root build.gradle.kts). Walk from there to find the source file.
+        val root = File(System.getProperty("user.dir") ?: return null)
+        return root.walkTopDown()
+            .onEnter { it.name != "build" && it.name != ".git" && it.name != "node_modules" }
+            .filter { it.isFile && it.name == name }
+            .firstOrNull()
     }
 }
