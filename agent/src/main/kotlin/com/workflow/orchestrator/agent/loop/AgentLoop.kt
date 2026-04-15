@@ -54,6 +54,22 @@ import java.util.concurrent.atomic.AtomicBoolean
 enum class ApprovalResult { APPROVED, DENIED, ALLOWED_FOR_SESSION }
 
 /**
+ * Delegates all [AgentTool] behaviour to [delegate] but overrides
+ * [AgentTool.requestApproval] to route through the loop's [gate].
+ * Allows write actions inside tools to call [requestApproval] without
+ * being added to [ApprovalPolicy.APPROVAL_TOOLS].
+ */
+private class ApprovalGatedTool(
+    private val delegate: com.workflow.orchestrator.agent.tools.AgentTool,
+    private val gate: (suspend (String, String, String, Boolean) -> ApprovalResult)?
+) : com.workflow.orchestrator.agent.tools.AgentTool by delegate {
+    override suspend fun requestApproval(
+        toolName: String, args: String, riskLevel: String, allowSessionApproval: Boolean
+    ): ApprovalResult = gate?.invoke(toolName, args, riskLevel, allowSessionApproval)
+        ?: ApprovalResult.APPROVED
+}
+
+/**
  * Core ReAct loop: call LLM -> execute tools -> repeat.
  *
  * Follows the Codex CLI + Cline pattern:
@@ -1103,7 +1119,8 @@ class AgentLoop(
                 LoopStatus.OK -> { /* no action */ }
             }
 
-            val tool = toolResolver?.invoke(toolName) ?: tools[toolName]
+            val rawTool = toolResolver?.invoke(toolName) ?: tools[toolName]
+            val tool = if (rawTool != null && approvalGate != null) ApprovalGatedTool(rawTool, approvalGate) else rawTool
             if (tool == null) {
                 // Unknown tool
                 val allToolNames = if (toolResolver != null) "use tool_search to find tools" else tools.keys.joinToString(", ")

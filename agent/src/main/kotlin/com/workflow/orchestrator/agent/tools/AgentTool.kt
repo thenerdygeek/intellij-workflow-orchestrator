@@ -5,6 +5,7 @@ import com.workflow.orchestrator.agent.api.dto.FunctionDefinition
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.api.dto.ToolDefinition
+import com.workflow.orchestrator.agent.loop.ApprovalResult
 import kotlinx.serialization.json.JsonObject
 
 /** Worker type for tool access control. Kept for compatibility with existing tools. */
@@ -87,6 +88,19 @@ interface AgentTool {
 
     /** Output configuration for this tool (max chars, truncation limits). */
     val outputConfig: ToolOutputConfig get() = ToolOutputConfig.DEFAULT
+
+    /**
+     * Invoked by write actions inside [execute] when they need user approval.
+     * Default returns [ApprovalResult.APPROVED] — no gate (safe for read-only tools
+     * and tests). The AgentLoop overrides this per-call via [ApprovalGatedTool] when
+     * an [approvalGate] callback is wired.
+     */
+    suspend fun requestApproval(
+        toolName: String,
+        args: String,
+        riskLevel: String,
+        allowSessionApproval: Boolean
+    ): ApprovalResult = ApprovalResult.APPROVED
 
     suspend fun execute(params: JsonObject, project: Project): ToolResult
 
