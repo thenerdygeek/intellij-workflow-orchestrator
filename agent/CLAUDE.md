@@ -104,7 +104,7 @@ Registered in `AgentService.registerAllTools()`:
 
 | Category | Tools |
 |----------|-------|
-| Code Intelligence | find_implementations, file_structure, type_hierarchy, call_hierarchy, type_inference, dataflow_analysis, get_method_body, get_annotations, test_finder, structural_search, read_write_access, project_structure (resolve_file, module_detail, topology, list_sdks, list_libraries, list_facets, refresh_external_project, add_source_root) |
+| Code Intelligence | find_implementations, file_structure, type_hierarchy, call_hierarchy, type_inference, dataflow_analysis, get_method_body, get_annotations, test_finder, structural_search, read_write_access, project_structure (resolve_file, module_detail, topology, list_sdks, list_libraries, list_facets, refresh_external_project, add_source_root, set_module_dependency, remove_module_dependency, set_module_sdk, set_language_level, add_content_root, remove_content_root) |
 | Code Quality | format_code, optimize_imports, refactor_rename, run_inspections, problem_view, list_quickfixes |
 | VCS | changelist_shelve |
 | Build & Run | build, spring, django, fastapi, flask, runtime_exec, java_runtime_exec (Java only), python_runtime_exec (Python only), runtime_config, coverage |
@@ -131,7 +131,7 @@ These tools consolidate multiple operations behind an `action` enum:
 | **debug_inspect** | 8 | evaluate, get_stack_frames, get_variables, thread_dump, memory_view, hotswap, force_return, drop_frame |
 | **spring** | 15 | context, endpoints, bean_graph, config, version_info, profiles, etc. |
 | **build** | 11 | maven_dependencies, gradle_tasks, project_modules, module_dependency_graph, etc. |
-| **project_structure** | 8 | resolve_file, module_detail, topology, list_sdks, list_libraries, list_facets, refresh_external_project, add_source_root |
+| **project_structure** | 14 | resolve_file, module_detail, topology, list_sdks, list_libraries, list_facets, refresh_external_project, add_source_root, set_module_dependency, remove_module_dependency, set_module_sdk, set_language_level, add_content_root, remove_content_root |
 | **jira** | 17 | get_ticket, search_issues, transition, comment, log_work, etc. |
 | **bamboo_builds** | 11 | build_status, trigger_build, get_build_log, get_test_results, etc. |
 | **bamboo_plans** | 8 | get_plans, search_plans, get_plan_branches, rerun_failed_jobs, etc. |

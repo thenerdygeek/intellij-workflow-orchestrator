@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test
 /**
  * Scenario-based tests for [ProjectStructureTool].
  *
- * Strategy mirrors [BuildToolTest]: ProjectStructureTool is a meta-tool with 8 actions
+ * Strategy mirrors [BuildToolTest]: ProjectStructureTool is a meta-tool with 14 actions
  * covering IntelliJ project structure introspection and mutation. Tests lock in:
  *
  *  1. **Tool surface** — name, action enum, parameter schema, allowedWorkers.
@@ -59,7 +59,7 @@ class ProjectStructureToolTest {
         }
 
         @Test
-        fun `description lists all 8 actions`() {
+        fun `description lists all 14 actions`() {
             val desc = tool.description
             ALL_ACTIONS.forEach { action ->
                 assertTrue(desc.contains(action), "description should mention action '$action'")
@@ -67,10 +67,10 @@ class ProjectStructureToolTest {
         }
 
         @Test
-        fun `action enum contains exactly 8 actions`() {
+        fun `action enum contains exactly 14 actions`() {
             val actions = tool.parameters.properties["action"]?.enumValues
             assertNotNull(actions)
-            assertEquals(8, actions!!.size)
+            assertEquals(14, actions!!.size)
         }
 
         @Test
@@ -119,7 +119,7 @@ class ProjectStructureToolTest {
             val scopeValues = prop.enumValues
             assertNotNull(scopeValues)
             assertEquals(
-                setOf("project", "application", "all"),
+                setOf("compile", "test", "runtime", "provided", "project", "application", "all"),
                 scopeValues!!.toSet()
             )
         }
@@ -252,6 +252,12 @@ class ProjectStructureToolTest {
         @Test fun `list_facets routes`() = smokeTestAction("list_facets")
         @Test fun `refresh_external_project routes`() = smokeTestAction("refresh_external_project")
         @Test fun `add_source_root routes`() = smokeTestAction("add_source_root")
+        @Test fun `set_module_dependency routes`() = smokeTestAction("set_module_dependency")
+        @Test fun `remove_module_dependency routes`() = smokeTestAction("remove_module_dependency")
+        @Test fun `set_module_sdk routes`() = smokeTestAction("set_module_sdk")
+        @Test fun `set_language_level routes`() = smokeTestAction("set_language_level")
+        @Test fun `add_content_root routes`() = smokeTestAction("add_content_root")
+        @Test fun `remove_content_root routes`() = smokeTestAction("remove_content_root")
     }
 
     companion object {
@@ -263,7 +269,13 @@ class ProjectStructureToolTest {
             "list_libraries",
             "list_facets",
             "refresh_external_project",
-            "add_source_root"
+            "add_source_root",
+            "set_module_dependency",
+            "remove_module_dependency",
+            "set_module_sdk",
+            "set_language_level",
+            "add_content_root",
+            "remove_content_root"
         )
     }
 }
