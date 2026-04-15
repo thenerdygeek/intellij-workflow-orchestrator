@@ -128,18 +128,6 @@ Actions and their parameters:
 // NOTE: executeResolveFile is implemented in ResolveFileAction.kt
 // NOTE: executeModuleDetail is implemented in ModuleDetailAction.kt
 
-internal fun executeTopology(params: JsonObject, project: Project): ToolResult =
-    ToolResult("Action 'topology' is not yet implemented.", "Stub", 10, isError = true)
-
-internal fun executeListSdks(params: JsonObject, project: Project): ToolResult =
-    ToolResult("Action 'list_sdks' is not yet implemented.", "Stub", 10, isError = true)
-
-internal fun executeListLibraries(params: JsonObject, project: Project): ToolResult =
-    ToolResult("Action 'list_libraries' is not yet implemented.", "Stub", 10, isError = true)
-
-internal fun executeListFacets(params: JsonObject, project: Project): ToolResult =
-    ToolResult("Action 'list_facets' is not yet implemented.", "Stub", 10, isError = true)
-
 // ── Write action stubs ────────────────────────────────────────────────────────
 // Signature: suspend executeXxx(params: JsonObject, project: Project, tool: AgentTool): ToolResult
 
