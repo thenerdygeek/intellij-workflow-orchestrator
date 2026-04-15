@@ -30,7 +30,13 @@ internal fun sourceRootKindToJpsType(kind: SourceRootKind): JpsModuleSourceRootT
     SourceRootKind.TEST_RESOURCE -> JavaResourceRootType.TEST_RESOURCE
 }
 
-/** Strip projectBasePath prefix if present, else return the absolute path. */
+/**
+ * Strip projectBasePath prefix if present, else return the absolute path.
+ *
+ * Uses '/' as separator throughout: IntelliJ's [com.intellij.openapi.vfs.VirtualFile.path]
+ * and [com.intellij.openapi.project.Project.basePath] both return forward-slash-normalised
+ * paths on all platforms (including Windows), so no OS-level separator handling is needed.
+ */
 internal fun relativizeToProject(absolutePath: String, projectBasePath: String?): String {
     if (projectBasePath == null) return absolutePath
     val base = projectBasePath.trimEnd('/')
