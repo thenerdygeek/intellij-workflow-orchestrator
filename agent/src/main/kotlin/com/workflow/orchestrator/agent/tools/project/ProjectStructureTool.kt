@@ -137,8 +137,7 @@ Actions and their parameters:
  * need approval and omit the parameter — consistent with every other action in this
  * package.
  */
-internal suspend fun executeRefreshExternalProject(params: JsonObject, project: Project, tool: AgentTool): ToolResult =
-    ToolResult("Action 'refresh_external_project' is not yet implemented.", "Stub", 10, isError = true)
+// NOTE: executeRefreshExternalProject is implemented in RefreshExternalProjectAction.kt
 
 internal suspend fun executeAddSourceRoot(params: JsonObject, project: Project, tool: AgentTool): ToolResult =
     ToolResult("Action 'add_source_root' is not yet implemented.", "Stub", 10, isError = true)
