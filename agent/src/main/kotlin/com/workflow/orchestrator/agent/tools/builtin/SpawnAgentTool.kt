@@ -298,7 +298,8 @@ Tips:
 
         val runner = SubagentRunner(
             brain = brain,
-            tools = coreTools,
+            coreTools = coreTools,
+            deferredTools = deferredTools,
             systemPrompt = config.systemPrompt,
             project = project,
             maxIterations = DEFAULT_MAX_ITERATIONS,
@@ -394,7 +395,8 @@ Tips:
                     brain.paramNameSet = coreTools.values.flatMap { it.parameters.properties.keys }.toSet()
                     val runner = SubagentRunner(
                         brain = brain,
-                        tools = coreTools,
+                        coreTools = coreTools,
+                        deferredTools = deferredTools,
                         systemPrompt = config.systemPrompt,
                         project = project,
                         maxIterations = maxIter,

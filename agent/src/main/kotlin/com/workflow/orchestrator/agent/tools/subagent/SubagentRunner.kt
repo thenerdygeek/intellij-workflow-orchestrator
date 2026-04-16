@@ -8,7 +8,10 @@ import com.workflow.orchestrator.agent.loop.AgentLoop
 import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.ToolRegistry
+import com.workflow.orchestrator.agent.tools.builtin.ToolSearchTool
 import com.workflow.orchestrator.core.ai.LlmBrain
+import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.core.ai.OpenAiCompatBrain
 import com.workflow.orchestrator.core.ai.ToolPromptBuilder
 import kotlinx.coroutines.CoroutineScope
@@ -32,7 +35,8 @@ import kotlin.coroutines.coroutineContext
  */
 class SubagentRunner(
     private val brain: LlmBrain,
-    private val tools: Map<String, AgentTool>,
+    private val coreTools: Map<String, AgentTool>,
+    private val deferredTools: Map<String, Pair<AgentTool, String>> = emptyMap(),
     private val systemPrompt: String,
     private val project: Project,
     private val maxIterations: Int,
@@ -74,6 +78,11 @@ class SubagentRunner(
      * changes made inside the sub-agent.
      */
     private val onCheckpoint: (suspend () -> Unit)? = null,
+    /**
+     * Test hook: called with the initial composed system prompt immediately after it is built.
+     * Null in production. Allows tests to capture the composed prompt without running a full loop.
+     */
+    internal val onSystemPromptBuilt: ((String) -> Unit)? = null,
 ) {
     private val abortRequested = AtomicBoolean(false)
 
@@ -128,37 +137,63 @@ class SubagentRunner(
                 }
             }
 
-            // 1. Build tool definitions and compose system prompt with XML tool defs
-            val toolDefinitions = tools.values.map { it.toToolDefinition() }
-            val toolDefsMarkdown = ToolPromptBuilder.build(toolDefinitions)
-            val composedSystemPrompt = "$systemPrompt\n\n====\n\n$toolDefsMarkdown"
+            // 1. Build per-sub-agent ToolRegistry
+            val subagentRegistry = ToolRegistry()
 
-            // 2. Create fresh context manager with budget
+            // Register core tools (schemas in system prompt from turn 1)
+            coreTools.forEach { (_, tool) -> subagentRegistry.registerCore(tool) }
+
+            // Register deferred tools (names in catalog, schemas loaded via tool_search)
+            deferredTools.forEach { (_, pair) ->
+                val (tool, category) = pair
+                subagentRegistry.registerDeferred(tool, category)
+            }
+
+            // Always inject a fresh ToolSearchTool backed by THIS sub-agent's registry.
+            subagentRegistry.registerCore(ToolSearchTool(subagentRegistry))
+
+            // 2. Build initial composed system prompt: body + core schemas + deferred catalog
+            val initialPrompt = buildComposedSystemPrompt(subagentRegistry)
+            onSystemPromptBuilt?.invoke(initialPrompt)
+
+            // 3. Scope the brain's XML parser to ALL tools (core + deferred)
+            brain.toolNameSet = subagentRegistry.allToolNames()
+            brain.paramNameSet = subagentRegistry.allParamNames()
+
+            // 4. Create fresh context manager with budget
             val contextManager = ContextManager(maxInputTokens = contextBudget)
-            contextManager.setSystemPrompt(composedSystemPrompt)
+            contextManager.setSystemPrompt(initialPrompt)
+            contextManager.setToolDefinitionTokens(
+                TokenEstimator.estimateToolDefinitions(subagentRegistry.getActiveDefinitions())
+            )
 
-            // 3. Report initial "running" status
+            // 5. Report initial "running" status
             onProgress(SubagentProgressUpdate(status = SubagentExecutionStatus.RUNNING, stats = stats.snapshot()))
 
-            // 4. Check abort before proceeding
+            // 6. Check abort before proceeding
             if (abortRequested.get()) {
                 return cancelledResult(stats)
             }
 
-            // 5. Create AgentLoop with callbacks
+            // 7. Create AgentLoop with callbacks
             // Capture coroutine scope to bridge non-suspend AgentLoop callbacks
             // to suspend onProgress. Port of Cline's per-tool-call progress reporting.
             val scope = CoroutineScope(coroutineContext)
 
             val loop = AgentLoop(
                 brain = brain,
-                tools = tools,
-                toolDefinitions = toolDefinitions,
+                tools = subagentRegistry.getActiveTools(),
+                toolDefinitions = subagentRegistry.getActiveDefinitions(),
                 contextManager = contextManager,
                 project = project,
                 maxIterations = maxIterations,
                 maxOutputTokens = maxOutputTokens,
                 planMode = planMode,
+                toolDefinitionProvider = { subagentRegistry.getActiveDefinitions() },
+                toolResolver = { name -> subagentRegistry.get(name) },
+                systemPromptProvider = { buildComposedSystemPrompt(subagentRegistry) },
+                toolNameProvider = { subagentRegistry.allToolNames() },
+                paramNameProvider = { subagentRegistry.allParamNames() },
                 onToolCall = { progress ->
                     // AgentLoop fires onToolCall twice: once at tool start (empty result, durationMs=0)
                     // and once at tool completion (populated result, durationMs>0). We must propagate
@@ -213,23 +248,17 @@ class SubagentRunner(
                         onProgress(SubagentProgressUpdate(streamDelta = chunk, stats = stats.snapshot()))
                     }
                 },
-                // Gap 2 fix: scope XML parser tool/param names to this sub-agent's
-                // own tool set, not the main agent's brain.toolNameSet fallback.
-                toolNameProvider = { tools.keys },
-                paramNameProvider = {
-                    tools.values.flatMap { it.parameters.properties.keys }.toSet()
-                }
             )
 
-            // 6. Run the loop
+            // 8. Run the loop
             val loopResult = loop.run(prompt)
 
-            // 7. Check abort after loop finishes
+            // 9. Check abort after loop finishes
             if (abortRequested.get()) {
                 return cancelledResult(stats)
             }
 
-            // 8. Map LoopResult to SubagentRunResult
+            // 10. Map LoopResult to SubagentRunResult
             val result = when (loopResult) {
                 is LoopResult.Completed -> {
                     stats.inputTokens = loopResult.inputTokens
@@ -269,7 +298,7 @@ class SubagentRunner(
                 }
             }
 
-            // 9. Report final status
+            // 11. Report final status
             val finalStatus = if (result.status == SubagentRunStatus.COMPLETED) SubagentExecutionStatus.COMPLETED else SubagentExecutionStatus.FAILED
             onProgress(
                 SubagentProgressUpdate(
@@ -311,6 +340,38 @@ class SubagentRunner(
                 )
             )
             return failedResult
+        }
+    }
+
+    private fun buildDeferredCatalogSection(registry: ToolRegistry): String {
+        val catalog = registry.getDeferredCatalogGroupedWithDescriptions()
+        if (catalog.isEmpty()) return ""
+        return buildString {
+            appendLine("## Deferred Tools (load with tool_search)")
+            appendLine("These tools are available but not loaded. Use tool_search to activate them when needed.")
+            appendLine()
+            for ((category, tools) in catalog) {
+                appendLine("### $category")
+                for ((name, description) in tools) {
+                    appendLine("- `$name`: $description")
+                }
+            }
+        }.trimEnd()
+    }
+
+    private fun buildComposedSystemPrompt(registry: ToolRegistry): String {
+        val coreDefinitions = registry.getActiveDefinitions()
+        val coreMarkdown = ToolPromptBuilder.build(coreDefinitions)
+        val deferredCatalog = buildDeferredCatalogSection(registry)
+
+        return buildString {
+            append(systemPrompt)
+            append("\n\n====\n\n")
+            append(coreMarkdown)
+            if (deferredCatalog.isNotEmpty()) {
+                append("\n\n====\n\n")
+                append(deferredCatalog)
+            }
         }
     }
 

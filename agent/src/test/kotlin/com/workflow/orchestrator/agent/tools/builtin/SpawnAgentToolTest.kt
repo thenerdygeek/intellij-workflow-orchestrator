@@ -1051,9 +1051,9 @@ class SpawnAgentToolTest {
                 assertFalse(result.isError, "Should succeed: ${result.content}")
                 assertNotNull(capturedToolNames, "Brain should have received tool definitions")
                 assertEquals(
-                    setOf("read_file", "search_code", "think", "attempt_completion"),
+                    setOf("read_file", "search_code", "think", "attempt_completion", "tool_search"),
                     capturedToolNames!!.toSet(),
-                    "Should only have config-specified tools"
+                    "Should have config-specified tools plus auto-injected tool_search"
                 )
                 assertFalse("edit_file" in capturedToolNames!!, "Should NOT have edit_file")
                 assertFalse("run_command" in capturedToolNames!!, "Should NOT have run_command")
@@ -1345,13 +1345,13 @@ class SpawnAgentToolTest {
                     project
                 )
 
-                // Even with no config tools resolving, attempt_completion is auto-added
+                // Even with no config tools resolving, attempt_completion + tool_search are auto-added
                 assertFalse(result.isError, "Should succeed since attempt_completion is always available: ${result.content}")
                 assertNotNull(capturedToolNames, "Brain should have been called")
                 assertEquals(
-                    listOf("attempt_completion"),
-                    capturedToolNames,
-                    "Only attempt_completion should be available when no config tools resolve"
+                    setOf("attempt_completion", "tool_search"),
+                    capturedToolNames!!.toSet(),
+                    "attempt_completion and tool_search should be available when no config tools resolve"
                 )
             } finally {
                 tempDir.toFile().deleteRecursively()

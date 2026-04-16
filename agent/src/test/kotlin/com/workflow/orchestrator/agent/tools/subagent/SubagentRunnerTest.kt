@@ -127,7 +127,7 @@ class SubagentRunnerTest {
         contextBudget: Int = 50_000
     ): SubagentRunner = SubagentRunner(
         brain = brain,
-        tools = tools,
+        coreTools = tools,
         systemPrompt = "You are a test sub-agent.",
         project = project,
         maxIterations = maxIterations,
@@ -373,7 +373,7 @@ class SubagentRunnerTest {
 
             val runner = SubagentRunner(
                 brain = brain,
-                tools = buildTools(),
+                coreTools = buildTools(),
                 systemPrompt = "You are a test sub-agent.",
                 project = project,
                 maxIterations = 50,
@@ -462,7 +462,7 @@ class SubagentRunnerTest {
 
             val runner = SubagentRunner(
                 brain = brain,
-                tools = subTools,
+                coreTools = subTools,
                 systemPrompt = "You are a research agent.",
                 project = project,
                 maxIterations = 10,
@@ -493,7 +493,7 @@ class SubagentRunnerTest {
             val customPrompt = "You are a specialized code reviewer"
             val runner = SubagentRunner(
                 brain = brain,
-                tools = buildTools(),
+                coreTools = buildTools(),
                 systemPrompt = customPrompt,
                 project = project,
                 maxIterations = 50,
@@ -517,7 +517,7 @@ class SubagentRunnerTest {
             val brain = SequenceBrain(emptyList())
             val runner = SubagentRunner(
                 brain = brain,
-                tools = buildTools(),
+                coreTools = buildTools(),
                 systemPrompt = "test",
                 project = project,
                 maxIterations = 5,
@@ -527,6 +527,117 @@ class SubagentRunnerTest {
             )
             // … runner must ignore it.
             assertEquals("stream_interrupt", runner.effectiveToolExecutionMode)
+        }
+    }
+
+    // ---- Task 4: Per-sub-agent ToolRegistry + deferred catalog tests ----
+
+    @Nested
+    inner class PerSubagentRegistryTests {
+
+        @Test
+        fun `SubagentRunner injects tool_search backed by sub-agent registry into core tools`() = runTest {
+            // Even with no tool_search in coreTools, it must be injected automatically.
+            // The brain calls attempt_completion, so the loop completes without using tool_search.
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"Done without tool_search."}"""
+                ))
+            ))
+
+            val capturedSystemPrompt = mutableListOf<String>()
+            val runner = SubagentRunner(
+                brain = brain,
+                coreTools = buildTools(),   // no tool_search in here
+                deferredTools = emptyMap(),
+                systemPrompt = "You are a test sub-agent.",
+                project = project,
+                maxIterations = 10,
+                planMode = false,
+                contextBudget = 50_000,
+                onSystemPromptBuilt = { prompt -> capturedSystemPrompt.add(prompt) }
+            )
+
+            val result = runner.run("Quick task") {}
+
+            assertEquals(SubagentRunStatus.COMPLETED, result.status)
+            // tool_search must appear in the composed system prompt
+            assertTrue(capturedSystemPrompt.isNotEmpty(), "onSystemPromptBuilt hook must have fired")
+            assertTrue(
+                capturedSystemPrompt.first().contains("tool_search"),
+                "tool_search should be injected into the sub-agent system prompt automatically"
+            )
+        }
+
+        @Test
+        fun `SubagentRunner system prompt contains deferred catalog when deferredTools provided`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"Done."}"""
+                ))
+            ))
+
+            val deferredTool = stubTool("find_implementations")
+            val deferredTools = mapOf(
+                "find_implementations" to Pair(deferredTool, "Code Intelligence")
+            )
+
+            val capturedSystemPrompt = mutableListOf<String>()
+            val runner = SubagentRunner(
+                brain = brain,
+                coreTools = buildTools(),
+                deferredTools = deferredTools,
+                systemPrompt = "You are a test sub-agent.",
+                project = project,
+                maxIterations = 10,
+                planMode = false,
+                contextBudget = 50_000,
+                onSystemPromptBuilt = { prompt -> capturedSystemPrompt.add(prompt) }
+            )
+
+            runner.run("Find implementations") {}
+
+            assertTrue(capturedSystemPrompt.isNotEmpty(), "Hook must fire")
+            val prompt = capturedSystemPrompt.first()
+            assertTrue(
+                prompt.contains("find_implementations"),
+                "System prompt should list the deferred tool name"
+            )
+            assertTrue(
+                prompt.contains("Deferred Tools"),
+                "System prompt should contain 'Deferred Tools' section header"
+            )
+        }
+
+        @Test
+        fun `SubagentRunner with no deferred tools produces clean system prompt without Deferred Tools section`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"Done."}"""
+                ))
+            ))
+
+            val capturedSystemPrompt = mutableListOf<String>()
+            val runner = SubagentRunner(
+                brain = brain,
+                coreTools = buildTools(),
+                deferredTools = emptyMap(),
+                systemPrompt = "You are a test sub-agent.",
+                project = project,
+                maxIterations = 10,
+                planMode = false,
+                contextBudget = 50_000,
+                onSystemPromptBuilt = { prompt -> capturedSystemPrompt.add(prompt) }
+            )
+
+            runner.run("Quick task") {}
+
+            assertTrue(capturedSystemPrompt.isNotEmpty(), "Hook must fire")
+            val prompt = capturedSystemPrompt.first()
+            assertFalse(
+                prompt.contains("Deferred Tools"),
+                "System prompt must NOT contain 'Deferred Tools' section when there are no deferred tools"
+            )
         }
     }
 
@@ -565,7 +676,7 @@ class SubagentRunnerTest {
 
             val runner = SubagentRunner(
                 brain = brain,
-                tools = tools,
+                coreTools = tools,
                 systemPrompt = "test",
                 project = project,
                 maxIterations = 10,
@@ -606,7 +717,7 @@ class SubagentRunnerTest {
 
             val runner = SubagentRunner(
                 brain = brain,
-                tools = tools,
+                coreTools = tools,
                 systemPrompt = "test",
                 project = project,
                 maxIterations = 10,
