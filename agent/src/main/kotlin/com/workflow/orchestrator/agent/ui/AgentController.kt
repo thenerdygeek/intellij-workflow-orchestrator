@@ -10,6 +10,7 @@ import com.intellij.openapi.util.Disposer
 import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.tools.ArtifactRenderResult
 import com.workflow.orchestrator.agent.tools.builtin.ArtifactResultRegistry
+import com.workflow.orchestrator.agent.tools.builtin.Question
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
 import com.workflow.orchestrator.agent.hooks.HookEvent
 import com.workflow.orchestrator.agent.hooks.HookResult
@@ -43,6 +44,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.intOrNull
@@ -153,6 +155,24 @@ class AgentController(
      * instead of the normal [AskQuestionsTool] resolution path.
      */
     private var pendingApprovalChoice = false
+
+    // ── Live question metadata — cached when the wizard is shown, cleared on cancel/submit ──
+
+    private enum class QuestionMode { SIMPLE, WIZARD }
+    private data class LiveQuestions(val mode: QuestionMode, val questions: List<Question>)
+
+    /**
+     * Cached question metadata for the currently-shown ask_followup_question wizard.
+     *
+     * Set when the question wizard is rendered (simple or wizard mode).
+     * Used on submit to produce an enriched payload (question text + label resolution)
+     * instead of raw synthetic option IDs.
+     * Cleared on cancel/skip to prevent stale data bleeding into subsequent questions.
+     */
+    private var liveQuestions: LiveQuestions? = null
+
+    /** Reusable lenient JSON instance for parsing question metadata. */
+    private val lenientJson = Json { ignoreUnknownKeys = true }
 
     /** Recent tool calls for Haiku phrase context (FIFO, max 3). */
     private val recentToolCalls = mutableListOf<Pair<String, String>>()
@@ -373,6 +393,16 @@ class AgentController(
                             }
                             append("]}]}")
                         }
+                        // Cache question metadata so onSubmitted can resolve option ids → labels
+                        liveQuestions = try {
+                            val root = lenientJson.parseToJsonElement(wizardJson).jsonObject
+                            val questionsArray = root["questions"] ?: throw IllegalStateException("missing questions key")
+                            val parsed = lenientJson.decodeFromJsonElement<List<Question>>(questionsArray)
+                            LiveQuestions(QuestionMode.SIMPLE, parsed)
+                        } catch (e: Exception) {
+                            LOG.warn("ask_followup_question: failed to cache question metadata: ${e.message}")
+                            null
+                        }
                         LOG.info("ask_followup_question: showing wizard with ${options.size} options (wizardJson=${wizardJson.length} chars)")
                         dashboard.showQuestions(wizardJson)
                     } else {
@@ -401,6 +431,16 @@ class AgentController(
         // Wizard mode: structured multi-question UI
         com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.showQuestionsCallback = { questionsJson ->
             LOG.info("ask_questions: wizard callback fired (json=${questionsJson.length} chars)")
+            // Cache question metadata before dispatching to EDT so onSubmitted can resolve labels
+            liveQuestions = try {
+                val root = lenientJson.parseToJsonElement(questionsJson).jsonObject
+                val questionsElement = root["questions"] ?: throw IllegalStateException("missing questions key")
+                val parsed = lenientJson.decodeFromJsonElement<List<Question>>(questionsElement)
+                LiveQuestions(QuestionMode.WIZARD, parsed)
+            } catch (e: Exception) {
+                LOG.warn("ask_questions: failed to cache wizard question metadata: ${e.message}")
+                null
+            }
             invokeLater {
                 // Clear busy FIRST — before the showQuestions bridge call which could
                 // silently fail on the JCEF/JS side
@@ -437,14 +477,22 @@ class AgentController(
                     // Normal LLM-initiated question — resolve the pending deferred.
                     // Restore busy state so the user sees the agent is processing their answer.
                     dashboard.setBusy(true)
-                    val answersJson = collectedAnswers.entries.joinToString(",", "{", "}") { (qid, opts) ->
-                        "\"$qid\":$opts"
+                    val snapshot = liveQuestions
+                    val enrichedPayload = if (snapshot != null) {
+                        buildEnrichedAnswerPayload(snapshot, collectedAnswers)
+                    } else {
+                        // Fallback: liveQuestions unexpectedly null — send raw ids
+                        collectedAnswers.entries.joinToString(",", "{", "}") { (qid, opts) ->
+                            "\"$qid\":$opts"
+                        }
                     }
-                    com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.resolveQuestions(answersJson)
+                    com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.resolveQuestions(enrichedPayload)
                 }
+                liveQuestions = null
                 collectedAnswers.clear()
             },
             onCancelled = {
+                liveQuestions = null
                 if (pendingApprovalChoice) {
                     // User cancelled the approval choice — revert to plan mode and
                     // resume the suspended loop so the user can continue discussing
@@ -524,6 +572,82 @@ class AgentController(
         //       passing the callback explicitly via AgentService/AgentLoop context to fix multi-project routing.
         RunCommandTool.streamCallback = { toolCallId, chunk ->
             toolStreamBatcher.append(toolCallId, chunk)
+        }
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  Question answer enrichment helpers
+    // ═══════════════════════════════════════════════════
+
+    /**
+     * Builds an enriched answer payload that includes question text and human-readable option
+     * labels alongside the selected option ids. This replaces the raw `{"q1":["o1"]}` format
+     * that the LLM previously received, which contained no readable context.
+     *
+     * **Simple mode** (single question routed as a synthetic wizard):
+     * Resolves selected ids to their label strings and calls
+     * [AskQuestionsTool.resolveQuestions] with the joined label text so `executeSimple`
+     * wraps it in `<answer>…</answer>`.
+     *
+     * **Wizard mode** (structured multi-question wizard):
+     * Builds a JSON object per question that includes both the question text and each selected
+     * option's id + label. Target format:
+     * ```json
+     * {"q1":{"question":"Which database?","selected":[{"id":"o1","label":"PostgreSQL"}]}}
+     * ```
+     *
+     * Fallback: if [liveQuestions] is null (unexpected path) the caller falls back to the
+     * original raw `joinToString` behaviour — this function is never called in that case.
+     */
+    private fun buildEnrichedAnswerPayload(
+        live: LiveQuestions,
+        collectedAnswers: Map<String, String>
+    ): String {
+        return when (live.mode) {
+            QuestionMode.SIMPLE -> {
+                // Single question: resolve ids → labels, pass joined labels to executeSimple
+                val q = live.questions.firstOrNull()
+                val idsJson = collectedAnswers["q1"] ?: "[]"
+                val selectedIds = try {
+                    lenientJson.decodeFromString<List<String>>(idsJson)
+                } catch (_: Exception) { emptyList() }
+                val labels = selectedIds.map { id ->
+                    q?.options?.find { it.id == id }?.label ?: id
+                }
+                labels.joinToString(", ")
+            }
+            QuestionMode.WIZARD -> {
+                // Multi-question wizard: build enriched JSON with question text + selected labels
+                buildString {
+                    append("{")
+                    var first = true
+                    for (q in live.questions) {
+                        val idsJson = collectedAnswers[q.id] ?: "[]"
+                        val selectedIds = try {
+                            lenientJson.decodeFromString<List<String>>(idsJson)
+                        } catch (_: Exception) { emptyList() }
+                        if (!first) append(",")
+                        first = false
+                        append(JsEscape.toJsonString(q.id))
+                        append(":{\"question\":")
+                        append(JsEscape.toJsonString(q.question))
+                        append(",\"selected\":[")
+                        var firstOpt = true
+                        for (id in selectedIds) {
+                            val label = q.options.find { it.id == id }?.label ?: id
+                            if (!firstOpt) append(",")
+                            firstOpt = false
+                            append("{\"id\":")
+                            append(JsEscape.toJsonString(id))
+                            append(",\"label\":")
+                            append(JsEscape.toJsonString(label))
+                            append("}")
+                        }
+                        append("]}")
+                    }
+                    append("}")
+                }
+            }
         }
     }
 
