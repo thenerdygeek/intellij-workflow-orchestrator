@@ -169,7 +169,7 @@ class AgentController(
      * instead of raw synthetic option IDs.
      * Cleared on cancel/skip to prevent stale data bleeding into subsequent questions.
      */
-    private var liveQuestions: LiveQuestions? = null
+    @Volatile private var liveQuestions: LiveQuestions? = null
 
     /** Reusable lenient JSON instance for parsing question metadata. */
     private val lenientJson = Json { ignoreUnknownKeys = true }
@@ -406,6 +406,7 @@ class AgentController(
                         LOG.info("ask_followup_question: showing wizard with ${options.size} options (wizardJson=${wizardJson.length} chars)")
                         dashboard.showQuestions(wizardJson)
                     } else {
+                        // No options — user types freely; no id→label resolution needed, so liveQuestions is not set.
                         // Questions WITHOUT options → user types their answer freely in the chat input.
                         // The question text lives in the tool call params (not in the streamed text),
                         // so we must display it explicitly as an agent message. Use the streaming
