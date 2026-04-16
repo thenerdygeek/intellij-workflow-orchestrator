@@ -1,5 +1,11 @@
 package com.workflow.orchestrator.agent.tools.process
 
+import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.settings.AgentSettings
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.mockkObject
+import io.mockk.unmockkObject
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.condition.EnabledOnOs
@@ -226,5 +232,59 @@ class ShellResolverTest {
         // On Unix, bash should be listed as available
         assertTrue(ex.message!!.contains("Available shells"))
         assertTrue(ex.message!!.contains("bash"))
+    }
+
+    // ──────────────────────────────────────────────
+    // cmdEnabled setting
+    // ──────────────────────────────────────────────
+
+    @Test
+    @EnabledOnOs(OS.WINDOWS)
+    fun `detectAvailableShells excludes cmd when cmdEnabled=false`() {
+        mockkObject(AgentSettings.Companion)
+        val mockProject = mockk<Project>()
+        every { AgentSettings.getInstance(mockProject) } returns mockk {
+            every { state } returns mockk {
+                every { cmdEnabled } returns false
+                every { powershellEnabled } returns true
+            }
+        }
+        try {
+            val shells = ShellResolver.detectAvailableShells(project = mockProject)
+            assertFalse(shells.any { it.shellType == ShellType.CMD },
+                "cmd should be absent when cmdEnabled=false")
+        } finally {
+            unmockkObject(AgentSettings.Companion)
+        }
+    }
+
+    @Test
+    @EnabledOnOs(OS.WINDOWS)
+    fun `resolveCmd throws ShellUnavailableException when cmdEnabled=false`() {
+        mockkObject(AgentSettings.Companion)
+        val mockProject = mockk<Project>()
+        every { AgentSettings.getInstance(mockProject) } returns mockk {
+            every { state } returns mockk {
+                every { cmdEnabled } returns false
+                every { powershellEnabled } returns true
+            }
+        }
+        try {
+            val ex = assertThrows(ShellUnavailableException::class.java) {
+                ShellResolver.resolve(requestedShell = "cmd", project = mockProject)
+            }
+            assertTrue(ex.message!!.contains("disabled"), "Error should say cmd is disabled")
+        } finally {
+            unmockkObject(AgentSettings.Companion)
+        }
+    }
+
+    @Test
+    @EnabledOnOs(OS.MAC, OS.LINUX)
+    fun `detectAvailableShells cmdEnabled=false has no effect on Unix`() {
+        // On Unix cmd is never available regardless of setting
+        val shells = ShellResolver.detectAvailableShells(project = null)
+        assertFalse(shells.any { it.shellType == ShellType.CMD })
+        assertTrue(shells.any { it.shellType == ShellType.BASH })
     }
 }

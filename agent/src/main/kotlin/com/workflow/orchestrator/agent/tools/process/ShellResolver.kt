@@ -63,7 +63,7 @@ object ShellResolver {
 
         return when (requestedShell.lowercase()) {
             "bash" -> resolveBash(isWindows)
-            "cmd" -> resolveCmd(isWindows)
+            "cmd" -> resolveCmd(isWindows, project)
             "powershell" -> resolvePowerShell(isWindows, project)
             else -> throw ShellUnavailableException(
                 "Unknown shell '$requestedShell'. Available shells: ${detectAvailableShells(project).joinToString(", ") { it.displayName }}."
@@ -86,7 +86,9 @@ object ShellResolver {
         findGitBash()?.let {
             shells.add(ShellConfig(it, listOf("-c"), ShellType.BASH, "Git Bash"))
         }
-        shells.add(ShellConfig("cmd.exe", listOf("/c"), ShellType.CMD, "cmd.exe"))
+        if (isCmdAllowed(project)) {
+            shells.add(ShellConfig("cmd.exe", listOf("/c"), ShellType.CMD, "cmd.exe"))
+        }
 
         val powershellAllowed = try {
             project?.let {
@@ -191,7 +193,13 @@ object ShellResolver {
                 return ShellConfig(path, listOf("-NoProfile", "-NonInteractive", "-Command"), ShellType.POWERSHELL, name)
             }
         }
-        return ShellConfig("cmd.exe", listOf("/c"), ShellType.CMD, "cmd.exe")
+        if (isCmdAllowed(project)) {
+            return ShellConfig("cmd.exe", listOf("/c"), ShellType.CMD, "cmd.exe")
+        }
+        throw ShellUnavailableException(
+            "No shell available: cmd and PowerShell are both disabled in agent settings. " +
+            "Install Git Bash or enable at least one shell in Settings > AI Agent > Advanced."
+        )
     }
 
     private fun resolveBash(isWindows: Boolean): ShellConfig {
@@ -206,15 +214,26 @@ object ShellResolver {
         return ShellConfig(bash, listOf("-l", "-c"), ShellType.BASH, "bash")
     }
 
-    private fun resolveCmd(isWindows: Boolean): ShellConfig {
+    private fun resolveCmd(isWindows: Boolean, project: Project?): ShellConfig {
         if (!isWindows) {
             val available = detectAvailableShells(null)
             throw ShellUnavailableException(
                 "shell='cmd' is only available on Windows. Available shells: ${available.joinToString(", ") { it.displayName }}. Use shell='bash' instead."
             )
         }
+        if (!isCmdAllowed(project)) {
+            throw ShellUnavailableException(
+                "cmd is disabled in agent settings. Use shell='bash' instead."
+            )
+        }
         return ShellConfig("cmd.exe", listOf("/c"), ShellType.CMD, "cmd.exe")
     }
+
+    private fun isCmdAllowed(project: Project?): Boolean = try {
+        project?.let {
+            com.workflow.orchestrator.agent.settings.AgentSettings.getInstance(it).state.cmdEnabled
+        } ?: true
+    } catch (_: Exception) { true }
 
     private fun resolvePowerShell(isWindows: Boolean, project: Project?): ShellConfig {
         if (!isWindows) {
