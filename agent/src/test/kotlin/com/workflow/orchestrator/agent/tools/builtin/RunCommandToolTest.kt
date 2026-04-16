@@ -20,6 +20,8 @@ import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import org.junit.jupiter.api.condition.EnabledOnOs
+import org.junit.jupiter.api.condition.OS
 import java.nio.file.Path
 
 class RunCommandToolTest {
@@ -28,6 +30,70 @@ class RunCommandToolTest {
     lateinit var tempDir: Path
 
     private val project = mockk<Project> { every { basePath } returns "/tmp" }
+
+    // ── Dynamic schema tests (no OS dependency, no process execution) ──────────
+
+    @Test
+    fun `parameters with bash-only allowedShells omits shell param and required`() {
+        val tool = RunCommandTool(allowedShells = listOf("bash"))
+        assertFalse(tool.parameters.properties.containsKey("shell"),
+            "shell param must be absent when only bash is available")
+        assertFalse(tool.parameters.required.contains("shell"),
+            "shell must not be in required list when omitted")
+        assertTrue(tool.parameters.required.containsAll(listOf("command", "description")))
+    }
+
+    @Test
+    fun `parameters with bash-and-cmd includes shell param with two-value enum`() {
+        val tool = RunCommandTool(allowedShells = listOf("bash", "cmd"))
+        assertTrue(tool.parameters.properties.containsKey("shell"))
+        assertEquals(listOf("bash", "cmd"), tool.parameters.properties["shell"]!!.enumValues)
+        assertTrue(tool.parameters.required.contains("shell"))
+    }
+
+    @Test
+    fun `parameters with all three shells matches original full enum`() {
+        val tool = RunCommandTool(allowedShells = listOf("bash", "cmd", "powershell"))
+        assertEquals(
+            listOf("bash", "cmd", "powershell"),
+            tool.parameters.properties["shell"]!!.enumValues
+        )
+        assertTrue(tool.parameters.required.containsAll(listOf("command", "shell", "description")))
+    }
+
+    @Test
+    fun `default constructor preserves all three shells for backward compatibility`() {
+        val tool = RunCommandTool()
+        assertEquals(
+            listOf("bash", "cmd", "powershell"),
+            tool.parameters.properties["shell"]!!.enumValues
+        )
+    }
+
+    @Test
+    fun `shell description only mentions available shells`() {
+        val tool = RunCommandTool(allowedShells = listOf("bash", "cmd"))
+        val desc = tool.parameters.properties["shell"]!!.description
+        assertTrue(desc.contains("bash"), "description should mention bash")
+        assertTrue(desc.contains("cmd"), "description should mention cmd")
+        assertFalse(desc.contains("powershell"), "description should NOT mention powershell when not available")
+    }
+
+    @Test
+    @EnabledOnOs(OS.MAC, OS.LINUX)
+    fun `execute with no shell param succeeds when bash-only tool`() = runTest {
+        // When only bash is available, shell param is omitted from schema.
+        // execute() must still work when LLM sends no "shell" key.
+        val tool = RunCommandTool(allowedShells = listOf("bash"))
+        val params = buildJsonObject {
+            put("command", "echo shell-omitted")
+            put("description", "test without shell param")
+            // deliberately no "shell" key
+        }
+        val result = tool.execute(params, project)
+        assertFalse(result.isError, "Should succeed: ${result.content}")
+        assertTrue(result.content.contains("shell-omitted"))
+    }
 
     @BeforeEach
     fun mockAgentSettings() {

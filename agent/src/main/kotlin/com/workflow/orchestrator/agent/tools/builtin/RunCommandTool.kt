@@ -31,26 +31,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
 
-class RunCommandTool : AgentTool {
+class RunCommandTool(
+    allowedShells: List<String> = listOf("bash", "cmd", "powershell")
+) : AgentTool {
     override val name = "run_command"
     override val description = "Execute a CLI command on the system. Use this when you need to perform system operations or run specific commands to accomplish any step in the user's task. You must tailor your command to the user's system and provide a clear explanation of what the command does via the description parameter. For command chaining, use the appropriate chaining syntax for the shell (e.g., '&&' for bash). Prefer to execute complex CLI commands over creating executable scripts, as they are more flexible and easier to run. Commands will be executed in the project directory by default. You MUST specify the shell type matching the available shells listed in your environment. If the process goes idle (no output for the idle timeout period), returns [IDLE] with the process ID — use send_stdin, ask_user_input, or kill_process to interact with it. Dangerous commands are blocked by the safety analyzer."
-    override val parameters = FunctionParameters(
-        properties = mapOf(
-            "command" to ParameterProperty(type = "string", description = "The CLI command to execute. This should be valid for the current operating system and the specified shell. Ensure the command is properly formatted and does not contain any harmful instructions."),
-            "shell" to ParameterProperty(
-                type = "string",
-                description = "Shell to execute the command in. Use ONLY shells listed as available in your environment. bash = Unix/Git Bash syntax (ls, grep, cat, &&). cmd = Windows cmd.exe syntax (dir, type, findstr). powershell = PowerShell syntax (Get-ChildItem, Select-String).",
-                enumValues = listOf("bash", "cmd", "powershell")
-            ),
-            "working_dir" to ParameterProperty(type = "string", description = "Working directory (absolute or relative to project root). Optional, defaults to project root. Example: 'src/main/kotlin'"),
-            "description" to ParameterProperty(type = "string", description = "A clear explanation of what the command does and why (shown to user in approval dialog)."),
-            "timeout" to ParameterProperty(type = "integer", description = "Timeout in seconds. Default: 120, max: 600."),
-            "idle_timeout" to ParameterProperty(type = "integer", description = "Idle detection threshold in seconds. Default: 15 (60 for build commands). Process returns [IDLE] if no output for this many seconds."),
-            "env" to ParameterProperty(type = "object", description = "Custom environment variables to set for the command. Keys are variable names, values are strings. System/path variables (PATH, HOME, LD_PRELOAD, etc.) are blocked for safety."),
-            "separate_stderr" to ParameterProperty(type = "boolean", description = "When true, capture stderr separately and append as [STDERR] section. Default: false (stderr merged with stdout).")
-        ),
-        required = listOf("command", "shell", "description")
-    )
+    override val parameters: FunctionParameters = buildShellParameters(allowedShells)
     override val allowedWorkers = setOf(WorkerType.CODER)
     override val timeoutMs: Long get() = AgentTool.LONG_TOOL_TIMEOUT_MS
     override val outputConfig = ToolOutputConfig.COMMAND
@@ -84,6 +70,84 @@ class RunCommandTool : AgentTool {
 
         // streamCallback and currentToolCallId are still read by RuntimeExecTool
         // and SonarTool. Remove once those tools are migrated to explicit parameters.
+
+        /**
+         * Builds the FunctionParameters for run_command based on which shells are available.
+         *
+         * When [allowedShells] has exactly one entry, the `shell` parameter is omitted entirely —
+         * the LLM never sees it and will not send it. execute() handles a missing `shell` param
+         * by falling back to ShellResolver.resolve(null, project) which picks the platform default.
+         *
+         * When multiple shells are available, `shell` is included as a required enum param with
+         * a description that only names the available shells.
+         *
+         * Internal visibility allows tests to call this directly without constructing the full tool.
+         */
+        internal fun buildShellParameters(allowedShells: List<String>): FunctionParameters {
+            val singleShell = allowedShells.size == 1
+
+            // Base properties excluding shell (preserves command-first ordering)
+            val baseProps = linkedMapOf(
+                "command" to ParameterProperty(
+                    type = "string",
+                    description = "The CLI command to execute. This should be valid for the current operating system and the specified shell. Ensure the command is properly formatted and does not contain any harmful instructions."
+                ),
+                "working_dir" to ParameterProperty(
+                    type = "string",
+                    description = "Working directory (absolute or relative to project root). Optional, defaults to project root. Example: 'src/main/kotlin'"
+                ),
+                "description" to ParameterProperty(
+                    type = "string",
+                    description = "A clear explanation of what the command does and why (shown to user in approval dialog)."
+                ),
+                "timeout" to ParameterProperty(
+                    type = "integer",
+                    description = "Timeout in seconds. Default: 120, max: 600."
+                ),
+                "idle_timeout" to ParameterProperty(
+                    type = "integer",
+                    description = "Idle detection threshold in seconds. Default: 15 (60 for build commands). Process returns [IDLE] if no output for this many seconds."
+                ),
+                "env" to ParameterProperty(
+                    type = "object",
+                    description = "Custom environment variables to set for the command. Keys are variable names, values are strings. System/path variables (PATH, HOME, LD_PRELOAD, etc.) are blocked for safety."
+                ),
+                "separate_stderr" to ParameterProperty(
+                    type = "boolean",
+                    description = "When true, capture stderr separately and append as [STDERR] section. Default: false (stderr merged with stdout)."
+                )
+            )
+
+            if (singleShell) {
+                // Only one shell — omit the shell param entirely
+                return FunctionParameters(
+                    properties = baseProps,
+                    required = listOf("command", "description")
+                )
+            }
+
+            // Multiple shells — build description that only names available ones
+            val shellDesc = buildString {
+                append("Shell to execute the command in. Use ONLY shells listed as available in your environment.")
+                if ("bash" in allowedShells) append(" bash = Unix/Git Bash syntax (ls, grep, cat, &&).")
+                if ("cmd" in allowedShells) append(" cmd = Windows cmd.exe syntax (dir, type, findstr).")
+                if ("powershell" in allowedShells) append(" powershell = PowerShell syntax (Get-ChildItem, Select-String).")
+            }
+
+            // Insert shell between command and working_dir (preserving original param order)
+            val propsWithShell = linkedMapOf("command" to baseProps["command"]!!)
+            propsWithShell["shell"] = ParameterProperty(
+                type = "string",
+                description = shellDesc,
+                enumValues = allowedShells
+            )
+            propsWithShell.putAll(baseProps.filterKeys { it != "command" })
+
+            return FunctionParameters(
+                properties = propsWithShell,
+                required = listOf("command", "shell", "description")
+            )
+        }
     }
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
