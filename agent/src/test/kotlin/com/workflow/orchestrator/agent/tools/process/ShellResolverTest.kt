@@ -235,6 +235,51 @@ class ShellResolverTest {
     }
 
     // ──────────────────────────────────────────────
+    // powershellEnabled setting
+    // ──────────────────────────────────────────────
+
+    @Test
+    @EnabledOnOs(OS.WINDOWS)
+    fun `detectAvailableShells excludes powershell when powershellEnabled=false`() {
+        mockkObject(AgentSettings.Companion)
+        val mockProject = mockk<Project>()
+        every { AgentSettings.getInstance(mockProject) } returns mockk {
+            every { state } returns mockk {
+                every { powershellEnabled } returns false
+                every { cmdEnabled } returns true
+            }
+        }
+        try {
+            val shells = ShellResolver.detectAvailableShells(project = mockProject)
+            assertFalse(shells.any { it.shellType == ShellType.POWERSHELL },
+                "powershell should be absent when powershellEnabled=false")
+        } finally {
+            unmockkObject(AgentSettings.Companion)
+        }
+    }
+
+    @Test
+    @EnabledOnOs(OS.WINDOWS)
+    fun `resolvePowershell throws ShellUnavailableException when powershellEnabled=false`() {
+        mockkObject(AgentSettings.Companion)
+        val mockProject = mockk<Project>()
+        every { AgentSettings.getInstance(mockProject) } returns mockk {
+            every { state } returns mockk {
+                every { powershellEnabled } returns false
+                every { cmdEnabled } returns true
+            }
+        }
+        try {
+            val ex = assertThrows(ShellUnavailableException::class.java) {
+                ShellResolver.resolve(requestedShell = "powershell", project = mockProject)
+            }
+            assertTrue(ex.message!!.contains("disabled"), "Error should say powershell is disabled")
+        } finally {
+            unmockkObject(AgentSettings.Companion)
+        }
+    }
+
+    // ──────────────────────────────────────────────
     // cmdEnabled setting
     // ──────────────────────────────────────────────
 
