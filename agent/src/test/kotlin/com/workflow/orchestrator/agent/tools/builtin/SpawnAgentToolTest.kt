@@ -6,6 +6,7 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
+import com.workflow.orchestrator.agent.tools.subagent.AgentConfig
 import com.workflow.orchestrator.agent.tools.subagent.AgentConfigLoader
 import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
 import com.workflow.orchestrator.core.ai.LlmBrain
@@ -257,25 +258,127 @@ class SpawnAgentToolTest {
         }
     }
 
-    // ---- Max Iterations Clamping ----
+    // ---- Max Iterations ----
 
     @Nested
     inner class MaxIterationsTests {
 
         @Test
-        fun `max_iterations below minimum is clamped to 5`() {
-            // We can't easily test the clamped value without running the full loop,
-            // but we can verify the constants are correct
-            assertEquals(5, SpawnAgentTool.MIN_ITERATIONS)
-            assertEquals(100, SpawnAgentTool.MAX_ITERATIONS)
+        fun `DEFAULT_MAX_ITERATIONS is 200`() {
+            assertEquals(200, SpawnAgentTool.DEFAULT_MAX_ITERATIONS)
+        }
+    }
+
+    // ---- Schema and Tiered Resolution ----
+
+    @Nested
+    inner class TieredResolutionTests {
+
+        @Test
+        fun `agent tool schema does not contain max_iterations parameter`() {
+            val tool = SpawnAgentTool(
+                brainProvider = { mockk(relaxed = true) },
+                toolRegistry = mockk(relaxed = true),
+                project = mockk(relaxed = true),
+            )
+
+            assertFalse(
+                tool.parameters.properties.containsKey("max_iterations"),
+                "max_iterations must be removed from the agent tool schema"
+            )
         }
 
         @Test
-        fun `coerceIn clamps correctly`() {
-            assertEquals(5, 1.coerceIn(SpawnAgentTool.MIN_ITERATIONS, SpawnAgentTool.MAX_ITERATIONS))
-            assertEquals(50, 50.coerceIn(SpawnAgentTool.MIN_ITERATIONS, SpawnAgentTool.MAX_ITERATIONS))
-            assertEquals(100, 999.coerceIn(SpawnAgentTool.MIN_ITERATIONS, SpawnAgentTool.MAX_ITERATIONS))
-            assertEquals(5, (-10).coerceIn(SpawnAgentTool.MIN_ITERATIONS, SpawnAgentTool.MAX_ITERATIONS))
+        fun `resolveConfigToolsTiered returns core and deferred maps separately`() {
+            val registry = ToolRegistry()
+            registry.registerCore(stubTool("read_file"))
+            registry.registerCore(stubTool("search_code"))
+            registry.registerCore(stubTool("attempt_completion"))
+            registry.registerDeferred(stubTool("type_hierarchy"), "Code Intelligence")
+            registry.registerDeferred(stubTool("call_hierarchy"), "Code Intelligence")
+
+            val config = AgentConfig(
+                name = "test",
+                description = "test",
+                tools = listOf("read_file", "search_code"),
+                deferredTools = listOf("type_hierarchy", "call_hierarchy"),
+                skills = null,
+                modelId = null,
+                systemPrompt = "Test prompt",
+            )
+
+            val tool = SpawnAgentTool(
+                brainProvider = { mockk(relaxed = true) },
+                toolRegistry = registry,
+                project = mockk(relaxed = true),
+            )
+
+            val (core, deferred) = tool.resolveConfigToolsTiered(config)
+
+            assertTrue(core.containsKey("read_file"))
+            assertTrue(core.containsKey("search_code"))
+            assertTrue(core.containsKey("attempt_completion"))  // always injected
+            assertFalse(core.containsKey("type_hierarchy"))
+
+            assertEquals("Code Intelligence", deferred["type_hierarchy"]?.second)
+            assertEquals("Code Intelligence", deferred["call_hierarchy"]?.second)
+        }
+
+        @Test
+        fun `resolveConfigToolsTiered excludes agent tool from both core and deferred`() {
+            val registry = ToolRegistry()
+            registry.registerCore(stubTool("agent"))
+            registry.registerCore(stubTool("read_file"))
+            registry.registerCore(stubTool("attempt_completion"))
+
+            val config = AgentConfig(
+                name = "test",
+                description = "test",
+                tools = listOf("agent", "read_file"),
+                deferredTools = listOf("agent"),
+                skills = null,
+                modelId = null,
+                systemPrompt = "Test prompt",
+            )
+
+            val tool = SpawnAgentTool(
+                brainProvider = { mockk(relaxed = true) },
+                toolRegistry = registry,
+                project = mockk(relaxed = true),
+            )
+
+            val (core, deferred) = tool.resolveConfigToolsTiered(config)
+
+            assertFalse(core.containsKey("agent"))
+            assertFalse(deferred.containsKey("agent"))
+        }
+
+        @Test
+        fun `unknown deferred tool names are silently dropped`() {
+            val registry = ToolRegistry()
+            registry.registerCore(stubTool("read_file"))
+            registry.registerCore(stubTool("attempt_completion"))
+
+            val config = AgentConfig(
+                name = "test",
+                description = "test",
+                tools = listOf("read_file"),
+                deferredTools = listOf("nonexistent_tool"),
+                skills = null,
+                modelId = null,
+                systemPrompt = "Test prompt",
+            )
+
+            val tool = SpawnAgentTool(
+                brainProvider = { mockk(relaxed = true) },
+                toolRegistry = registry,
+                project = mockk(relaxed = true),
+            )
+
+            val (_, deferred) = tool.resolveConfigToolsTiered(config)
+
+            assertFalse(deferred.containsKey("nonexistent_tool"))
+            assertEquals(0, deferred.size)
         }
     }
 

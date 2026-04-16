@@ -24,7 +24,6 @@ import com.workflow.orchestrator.core.ai.LlmBrain
 import kotlinx.coroutines.async
 import kotlinx.coroutines.supervisorScope
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.concurrent.ConcurrentHashMap
 
@@ -143,10 +142,6 @@ Tips:
                 type = "string",
                 description = "Agent type to use. Defaults to 'general-purpose' if not specified. Each type has a curated system prompt and tool set."
             ),
-            "max_iterations" to ParameterProperty(
-                type = "integer",
-                description = "Max iterations for the sub-agent (5-100, default 50). Lower = faster/cheaper."
-            )
         ),
         required = listOf("description", "prompt")
     )
@@ -160,17 +155,16 @@ Tips:
         val prompt = params["prompt"]?.jsonPrimitive?.content
             ?: return errorResult("Missing required parameter: prompt")
         val agentType = params["agent_type"]?.jsonPrimitive?.content ?: DEFAULT_AGENT_TYPE
-        val maxIter = params["max_iterations"]?.jsonPrimitive?.intOrNull ?: 50
 
         val config = configLoader?.getCachedConfig(agentType)
             ?: return errorResult(buildUnknownAgentTypeError(agentType))
 
-        val resolvedTools = resolveConfigTools(config)
-        if (resolvedTools.isEmpty()) {
-            return errorResult("Agent type '${config.name}' has no resolvable tools. Config lists: ${config.tools}")
+        val (coreTools, deferredToolsForConfig) = resolveConfigToolsTiered(config)
+        if (coreTools.isEmpty()) {
+            return errorResult("Agent type '${config.name}' has no resolvable core tools. Config lists: ${config.tools}")
         }
 
-        val isReadOnly = inferPlanMode(resolvedTools)
+        val isReadOnly = inferPlanMode(coreTools)
 
         // Collect parallel prompts for read-only agents
         val prompts = if (isReadOnly) {
@@ -184,9 +178,9 @@ Tips:
         }
 
         return if (prompts.size == 1) {
-            executeSingle(description, prompts.first(), config, resolvedTools, isReadOnly, maxIter)
+            executeSingle(description, prompts.first(), config, coreTools, deferredToolsForConfig, isReadOnly)
         } else {
-            executeParallel(description, prompts, config, resolvedTools, maxIter)
+            executeParallel(description, prompts, config, coreTools, deferredToolsForConfig)
         }
     }
 
@@ -224,21 +218,47 @@ Tips:
 
     // ---- Config-based agent execution ----
 
-    private fun resolveConfigTools(config: AgentConfig): Map<String, AgentTool> {
-        val resolved = config.tools
-            .filter { it != "agent" }  // Depth-1 enforcement
+    /**
+     * Resolve config.tools into the core map and config.deferredTools into a
+     * (tool, category) map. `agent` is filtered from both (depth-1 enforcement).
+     * `attempt_completion` is always injected into core.
+     *
+     * Returns: Pair(coreTools, deferredTools)
+     * where deferredTools values are Pair(AgentTool, category: String)
+     */
+    internal fun resolveConfigToolsTiered(
+        config: AgentConfig
+    ): Pair<Map<String, AgentTool>, Map<String, Pair<AgentTool, String>>> {
+        // --- Core ---
+        val core = config.tools
+            .filter { it != "agent" }
             .mapNotNull { name ->
                 val tool = toolRegistry.get(name)
-                if (tool == null) LOG.warn("[SpawnAgent] Config '${config.name}' references unknown tool: $name")
+                if (tool == null) LOG.warn("[SpawnAgent] Config '${config.name}' references unknown core tool: $name")
                 tool?.let { name to it }
             }
             .toMap()
             .toMutableMap()
-        // Always include attempt_completion — sub-agents MUST be able to terminate
-        if ("attempt_completion" !in resolved) {
-            toolRegistry.get("attempt_completion")?.let { resolved["attempt_completion"] = it }
+
+        // attempt_completion must always be in core
+        if ("attempt_completion" !in core) {
+            toolRegistry.get("attempt_completion")?.let { core["attempt_completion"] = it }
         }
-        return resolved
+
+        // --- Deferred ---
+        val deferred = config.deferredTools
+            .filter { it != "agent" && it !in core }
+            .mapNotNull { name ->
+                val tool = toolRegistry.get(name)
+                if (tool == null) LOG.warn("[SpawnAgent] Config '${config.name}' references unknown deferred tool: $name")
+                tool?.let {
+                    val category = toolRegistry.getDeferredCategory(name)
+                    name to (it to category)
+                }
+            }
+            .toMap()
+
+        return core to deferred
     }
 
     /**
@@ -263,9 +283,9 @@ Tips:
         description: String,
         prompt: String,
         config: AgentConfig,
-        resolvedTools: Map<String, AgentTool>,
-        planMode: Boolean,
-        iterationOverride: Int
+        coreTools: Map<String, AgentTool>,
+        deferredTools: Map<String, Pair<AgentTool, String>>,
+        planMode: Boolean
     ): ToolResult {
         val brain = brainProvider()
         // Scope the brain's XML parser to the subagent's tools, not the parent's.
@@ -273,16 +293,15 @@ Tips:
         // tool calls for tools not in the parent's active set (e.g., deferred tools
         // like file_structure), causing the response to be treated as text-only and
         // the LLM to hallucinate instead of executing tools.
-        brain.toolNameSet = resolvedTools.keys
-        brain.paramNameSet = resolvedTools.values.flatMap { it.parameters.properties.keys }.toSet()
-        val maxIter = iterationOverride.coerceIn(MIN_ITERATIONS, MAX_ITERATIONS)
+        brain.toolNameSet = coreTools.keys
+        brain.paramNameSet = coreTools.values.flatMap { it.parameters.properties.keys }.toSet()
 
         val runner = SubagentRunner(
             brain = brain,
-            tools = resolvedTools,
+            tools = coreTools,
             systemPrompt = config.systemPrompt,
             project = project,
-            maxIterations = maxIter,
+            maxIterations = DEFAULT_MAX_ITERATIONS,
             planMode = planMode,
             contextBudget = contextBudget,
             maxOutputTokens = maxOutputTokens,
@@ -349,10 +368,10 @@ Tips:
         description: String,
         prompts: List<String>,
         config: AgentConfig,
-        resolvedTools: Map<String, AgentTool>,
-        iterationOverride: Int
+        coreTools: Map<String, AgentTool>,
+        deferredTools: Map<String, Pair<AgentTool, String>>
     ): ToolResult {
-        val maxIter = iterationOverride.coerceIn(MIN_ITERATIONS, MAX_ITERATIONS)
+        val maxIter = DEFAULT_MAX_ITERATIONS
         val uiLabel = "$description (${config.name})"
 
         // Create status entries for each prompt
@@ -371,11 +390,11 @@ Tips:
                 async {
                     val brain = brainProvider()
                     // Scope brain's XML parser to subagent's tool set (same as executeSingle)
-                    brain.toolNameSet = resolvedTools.keys
-                    brain.paramNameSet = resolvedTools.values.flatMap { it.parameters.properties.keys }.toSet()
+                    brain.toolNameSet = coreTools.keys
+                    brain.paramNameSet = coreTools.values.flatMap { it.parameters.properties.keys }.toSet()
                     val runner = SubagentRunner(
                         brain = brain,
-                        tools = resolvedTools,
+                        tools = coreTools,
                         systemPrompt = config.systemPrompt,
                         project = project,
                         maxIterations = maxIter,
@@ -530,8 +549,11 @@ Tips:
         const val DEFAULT_AGENT_TYPE = "general-purpose"
         val PROMPT_KEYS = listOf("prompt", "prompt_2", "prompt_3", "prompt_4", "prompt_5")
 
-        const val MIN_ITERATIONS = 5
-        const val MAX_ITERATIONS = 100
+        /**
+         * Fixed iteration cap matching the main agent — sub-agents run until
+         * attempt_completion or context exhaustion, not until an arbitrary user-set number.
+         */
+        const val DEFAULT_MAX_ITERATIONS = 200
 
         /** Generate a short random ID for a subagent (8 hex chars). */
         fun generateAgentId(): String = java.util.UUID.randomUUID().toString().take(8)
