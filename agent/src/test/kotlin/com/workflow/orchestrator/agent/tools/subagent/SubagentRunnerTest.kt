@@ -730,4 +730,167 @@ class SubagentRunnerTest {
                 "Null approval gate must not block execution.")
         }
     }
+
+    // ---- Integration: Deferred Tool Activation -----------------------------------------------
+
+    @Nested
+    inner class DeferredToolActivationIntegration {
+
+        /**
+         * Full pipeline integration test:
+         * 1. Sub-agent starts with db_explain in deferred (not in core)
+         * 2. LLM calls tool_search to activate db_explain
+         * 3. LLM calls db_explain (now active via sub-agent registry)
+         * 4. LLM calls attempt_completion
+         *
+         * Verifies the full activation chain: ToolSearchTool → subagentRegistry.activateDeferred
+         * → AgentLoop.toolResolver picks it up → tool executes successfully.
+         */
+        @Test
+        fun `tool_search activates deferred tool which becomes callable in next iteration`() = runTest {
+            var dbExplainCallCount = 0
+            val dbExplainTool = object : AgentTool {
+                override val name = "db_explain"
+                override val description = "Explain a SQL query plan"
+                override val parameters = FunctionParameters(
+                    properties = mapOf(
+                        "query" to com.workflow.orchestrator.agent.api.dto.ParameterProperty(
+                            type = "string", description = "SQL query to explain"
+                        )
+                    )
+                )
+                override val allowedWorkers = setOf(WorkerType.CODER)
+                override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+                    dbExplainCallCount++
+                    return ToolResult(
+                        content = "Seq Scan on orders (cost=0.00..1.23)",
+                        summary = "query plan",
+                        tokenEstimate = 30
+                    )
+                }
+            }
+
+            val brain = SequenceBrain(listOf(
+                // Turn 1: LLM activates db_explain from deferred via tool_search
+                ApiResult.Success(toolCallResponse(
+                    "tool_search" to """{"query":"select:db_explain"}"""
+                )),
+                // Turn 2: LLM calls the now-active db_explain
+                ApiResult.Success(toolCallResponse(
+                    "db_explain" to """{"query":"SELECT * FROM orders WHERE id = 1"}"""
+                )),
+                // Turn 3: complete
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"Query uses seq scan — add index on orders.id"}"""
+                )),
+            ))
+
+            val coreTools = buildTools()  // read_file, search_code, think, attempt_completion
+            val deferredTools = mapOf("db_explain" to (dbExplainTool to "Database"))
+
+            val runner = SubagentRunner(
+                brain = brain,
+                coreTools = coreTools,
+                deferredTools = deferredTools,
+                systemPrompt = "You are a performance engineer.",
+                project = project,
+                maxIterations = 10,
+                planMode = false,
+                contextBudget = 100_000,
+            )
+
+            val result = runner.run("Analyze slow query") {}
+
+            assertEquals(SubagentRunStatus.COMPLETED, result.status,
+                "Sub-agent must complete after activating deferred tool via tool_search")
+            assertEquals(1, dbExplainCallCount,
+                "db_explain must have been called exactly once after activation by tool_search")
+        }
+
+        /**
+         * Registry isolation test:
+         * Sub-agent tool_search only sees its own deferredTools — NOT the main registry.
+         * When the sub-agent's deferred list is empty, tool_search returns no results
+         * and the sub-agent should complete without error.
+         */
+        @Test
+        fun `tool_search in sub-agent returns no results when deferred list is empty`() = runTest {
+            // Sub-agent has NO deferred tools at all
+            val brain = SequenceBrain(listOf(
+                // LLM tries to activate jira — not in sub-agent's deferred list
+                ApiResult.Success(toolCallResponse(
+                    "tool_search" to """{"query":"select:jira"}"""
+                )),
+                // After getting "no tools found" result, completes gracefully
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"jira not available for this sub-agent task"}"""
+                )),
+            ))
+
+            val coreTools = buildTools()
+            val deferredTools = emptyMap<String, Pair<AgentTool, String>>()  // nothing deferred
+
+            val runner = SubagentRunner(
+                brain = brain,
+                coreTools = coreTools,
+                deferredTools = deferredTools,
+                systemPrompt = "Test",
+                project = project,
+                maxIterations = 10,
+                planMode = false,
+                contextBudget = 100_000,
+            )
+
+            // Should complete without crashing — tool_search returns "no results" for jira
+            val result = runner.run("Task") {}
+            assertEquals(SubagentRunStatus.COMPLETED, result.status,
+                "Sub-agent must complete even when tool_search finds no matching deferred tool")
+        }
+
+        /**
+         * System prompt catalog test:
+         * The onSystemPromptBuilt hook captures the initial prompt, which must contain
+         * the deferred catalog section when deferredTools are provided.
+         */
+        @Test
+        fun `initial system prompt includes deferred catalog when deferredTools provided`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"done"}"""
+                )),
+            ))
+
+            var capturedSystemPrompt: String? = null
+
+            val coreTools = buildTools()
+            val deferredTools = mapOf(
+                "db_explain" to (stubTool("db_explain") to "Database"),
+                "db_schema"  to (stubTool("db_schema")  to "Database"),
+            )
+
+            val runner = SubagentRunner(
+                brain = brain,
+                coreTools = coreTools,
+                deferredTools = deferredTools,
+                systemPrompt = "Test persona prompt.",
+                project = project,
+                maxIterations = 10,
+                planMode = false,
+                contextBudget = 100_000,
+                onSystemPromptBuilt = { prompt -> capturedSystemPrompt = prompt },
+            )
+
+            runner.run("Task") {}
+
+            assertNotNull(capturedSystemPrompt, "onSystemPromptBuilt hook must be called")
+            assertTrue(
+                capturedSystemPrompt!!.contains("db_explain"),
+                "Initial system prompt must mention deferred tool 'db_explain'. Got:\n${capturedSystemPrompt!!.take(500)}"
+            )
+            assertTrue(
+                capturedSystemPrompt!!.contains("Deferred Tools"),
+                "Initial system prompt must contain 'Deferred Tools' section header"
+            )
+        }
+    }
 }
