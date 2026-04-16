@@ -372,6 +372,8 @@ class SubagentRunner(
                 append("\n\n====\n\n")
                 append(deferredCatalog)
             }
+            append("\n\n====\n\n")
+            append(COMPLETING_YOUR_TASK_SECTION)
         }
     }
 
@@ -385,6 +387,23 @@ class SubagentRunner(
     companion object {
         private val LOG = Logger.getInstance(SubagentRunner::class.java)
         private const val TOOL_CALL_PREVIEW_MAX_LENGTH = 80
+
+        /**
+         * Injected at the end of every sub-agent's composed system prompt so that all
+         * current and future personas know to use [TaskReportTool] (not `attempt_completion`).
+         * Option B from the design: one injection point beats editing every persona file.
+         */
+        internal const val COMPLETING_YOUR_TASK_SECTION = """COMPLETING YOUR TASK
+
+When you have completed your task, call `task_report` with:
+- summary: one paragraph — what was done, the overall conclusion, and whether the task succeeded
+- findings: detailed analysis (markdown OK, inline code snippets with file:line welcome)
+- files: newline-separated paths you examined or modified
+- next_steps: what the parent agent should do next (concrete and actionable)
+- issues: blockers or unresolved questions (omit if none)
+
+Your conversation, tool calls, and streamed text are NOT visible to the parent agent.
+Only the task_report fields are. Be comprehensive, not terse."""
 
         /**
          * Format a tool call for display in progress updates.

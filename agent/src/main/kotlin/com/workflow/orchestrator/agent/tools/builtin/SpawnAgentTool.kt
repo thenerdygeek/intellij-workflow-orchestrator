@@ -230,8 +230,11 @@ Tips:
         config: AgentConfig
     ): Pair<Map<String, AgentTool>, Map<String, Pair<AgentTool, String>>> {
         // --- Core ---
+        // Filter out "agent" (recursion guard) and "attempt_completion" (orchestrator-only;
+        // sub-agents receive task_report instead). Some persona configs list attempt_completion
+        // in their tools field — silently drop it here so the LLM isn't confused by both.
         val core = config.tools
-            .filter { it != "agent" }
+            .filter { it != "agent" && it != "attempt_completion" }
             .mapNotNull { name ->
                 val tool = toolRegistry.get(name)
                 if (tool == null) LOG.warn("[SpawnAgent] Config '${config.name}' references unknown core tool: $name")
@@ -240,9 +243,10 @@ Tips:
             .toMap()
             .toMutableMap()
 
-        // attempt_completion must always be in core
-        if ("attempt_completion" !in core) {
-            toolRegistry.get("attempt_completion")?.let { core["attempt_completion"] = it }
+        // Sub-agents use task_report instead of attempt_completion.
+        // attempt_completion stays orchestrator-only (its allowedWorkers enforces this at schema time).
+        if ("task_report" !in core) {
+            toolRegistry.get("task_report")?.let { core["task_report"] = it }
         }
 
         // --- Deferred ---

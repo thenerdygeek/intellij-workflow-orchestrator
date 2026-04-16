@@ -950,22 +950,24 @@ class AgentLoop(
                     contextManager.pruneTrailingNudgePairs(TEXT_ONLY_NUDGE)
                     contextManager.pruneTrailingNudgePairs(EMPTY_RESPONSE_ERROR)
 
-                    // Batch guard: if attempt_completion co-occurs with other tools in the
-                    // same LLM turn, strip it and nudge. Reason: the LLM cannot legitimately
-                    // conclude a task in the same turn it issued the reads it wants to
-                    // conclude on — it hasn't seen the results yet. Letting it complete
-                    // here makes the summary a speculation, not an observation.
+                    // Batch guard: if a completion signal (attempt_completion or task_report)
+                    // co-occurs with other tools in the same LLM turn, strip it and nudge.
+                    // Reason: the LLM cannot legitimately conclude a task in the same turn it
+                    // issued the reads it wants to conclude on — it hasn't seen the results yet.
+                    // Letting it complete here makes the summary a speculation, not an observation.
                     val rawCalls = assistantMessage.toolCalls!!
-                    val hasCompletion = rawCalls.any { it.function.name == "attempt_completion" }
+                    val completionTools = setOf("attempt_completion", "task_report")
+                    val hasCompletion = rawCalls.any { it.function.name in completionTools }
                     val filteredCalls = if (hasCompletion && rawCalls.size > 1) {
-                        LOG.warn("[Loop] attempt_completion batched with ${rawCalls.size - 1} other tool(s) — deferring completion to next turn")
+                        val completionName = rawCalls.first { it.function.name in completionTools }.function.name
+                        LOG.warn("[Loop] $completionName batched with ${rawCalls.size - 1} other tool(s) — deferring completion to next turn")
                         onDebugLog?.invoke(
                             "warn",
                             "batch_guard",
-                            "Dropped attempt_completion from multi-tool batch (size=${rawCalls.size})",
+                            "Dropped $completionName from multi-tool batch (size=${rawCalls.size})",
                             mapOf("batchSize" to rawCalls.size)
                         )
-                        rawCalls.filter { it.function.name != "attempt_completion" }
+                        rawCalls.filter { it.function.name !in completionTools }
                     } else {
                         rawCalls
                     }
@@ -973,13 +975,14 @@ class AgentLoop(
                     val completionResult = executeToolCalls(filteredCalls, iteration)
                     if (completionResult != null) return completionResult
 
-                    // If we stripped attempt_completion, nudge the LLM so it re-issues it
+                    // If we stripped the completion signal, nudge the LLM so it re-issues it
                     // after observing the results in the next turn.
                     if (hasCompletion && filteredCalls.size < rawCalls.size) {
+                        val completionName = rawCalls.first { it.function.name in completionTools }.function.name
                         contextManager.addUserMessage(
-                            "[System] You tried to call attempt_completion in the same turn as other tool calls. " +
+                            "[System] You tried to call $completionName in the same turn as other tool calls. " +
                                 "Your summary would be based on guesses, not observations. The other tools have now " +
-                                "executed — review their results and call attempt_completion again on its own."
+                                "executed — review their results and call $completionName again on its own."
                         )
                     }
                 }
@@ -1404,8 +1407,8 @@ class AgentLoop(
                         text = questionText.take(2000),
                     )
                 }
-                // attempt_completion: persist as ASK/COMPLETION_RESULT for CompletionCard on resume.
-                "attempt_completion" -> UiMessage(
+                // attempt_completion / task_report: persist as ASK/COMPLETION_RESULT for CompletionCard on resume.
+                "attempt_completion", "task_report" -> UiMessage(
                     ts = System.currentTimeMillis(),
                     type = UiMessageType.ASK,
                     ask = UiAsk.COMPLETION_RESULT,
@@ -1508,7 +1511,7 @@ class AgentLoop(
                         ask = UiAsk.COMPLETION_RESULT,
                         text = toolResult.content
                     ))
-                    onDebugLog?.invoke("info", "loop_exit", "Exit: attempt_completion", mapOf("iteration" to iteration))
+                    onDebugLog?.invoke("info", "loop_exit", "Exit: $toolName", mapOf("iteration" to iteration))
                     return LoopResult.Completed(
                         summary = toolResult.content,
                         iterations = iteration,

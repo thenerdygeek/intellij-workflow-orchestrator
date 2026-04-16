@@ -6,6 +6,7 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.builtin.AttemptCompletionTool
+import com.workflow.orchestrator.agent.tools.builtin.TaskReportTool
 import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.dto.*
 import com.workflow.orchestrator.core.model.ApiResult
@@ -891,6 +892,154 @@ class SubagentRunnerTest {
                 capturedSystemPrompt!!.contains("Deferred Tools"),
                 "Initial system prompt must contain 'Deferred Tools' section header"
             )
+        }
+    }
+
+    // ── task_report completion tests ──────────────────────────────────────────────────────────
+
+    @Nested
+    inner class TaskReportCompletionTests {
+
+        private fun buildToolsWithTaskReport(): Map<String, AgentTool> {
+            val tools = mutableMapOf<String, AgentTool>()
+            for (name in listOf("read_file", "search_code", "think")) {
+                tools[name] = stubTool(name)
+            }
+            tools["task_report"] = TaskReportTool()
+            return tools
+        }
+
+        @Test
+        fun `sub-agent calling task_report terminates the loop with COMPLETED status`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "read_file" to """{"path":"src/Foo.kt"}"""
+                )),
+                ApiResult.Success(toolCallResponse(
+                    "task_report" to """{"summary":"Reviewed Foo.kt and found no issues.","findings":"All methods follow the coding standard.","files":"src/Foo.kt"}"""
+                ))
+            ))
+
+            val runner = SubagentRunner(
+                brain = brain,
+                coreTools = buildToolsWithTaskReport(),
+                systemPrompt = "You are a code reviewer.",
+                project = project,
+                maxIterations = 50,
+                planMode = false,
+                contextBudget = 50_000
+            )
+
+            val result = runner.run("Review Foo.kt") {}
+
+            assertEquals(SubagentRunStatus.COMPLETED, result.status)
+            assertNull(result.error)
+            assertNotNull(result.result, "task_report content must flow back as result")
+        }
+
+        @Test
+        fun `task_report structured content flows into parent ToolResult content`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "task_report" to """{"summary":"Found the bug.","findings":"NPE at Foo.kt:42 when input is null.","next_steps":"Add null check at Foo.kt:42.","issues":"Could not reproduce under Java 17."}"""
+                ))
+            ))
+
+            val runner = SubagentRunner(
+                brain = brain,
+                coreTools = buildToolsWithTaskReport(),
+                systemPrompt = "You are a debugger.",
+                project = project,
+                maxIterations = 10,
+                planMode = false,
+                contextBudget = 50_000
+            )
+
+            val result = runner.run("Debug the NPE") {}
+
+            assertEquals(SubagentRunStatus.COMPLETED, result.status)
+            val content = result.result ?: ""
+            assertTrue(content.contains("## Summary"), "Structured report must contain ## Summary")
+            assertTrue(content.contains("Found the bug."))
+            assertTrue(content.contains("## Findings"))
+            assertTrue(content.contains("NPE at Foo.kt:42"))
+            assertTrue(content.contains("## Next Steps"))
+            assertTrue(content.contains("Add null check"))
+            assertTrue(content.contains("## Issues"))
+            assertTrue(content.contains("Could not reproduce"))
+        }
+    }
+
+    // ── "COMPLETING YOUR TASK" prompt injection tests ─────────────────────────────────────────
+
+    @Nested
+    inner class CompletingYourTaskInjectionTests {
+
+        @Test
+        fun `composed system prompt always contains COMPLETING YOUR TASK section`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"Done."}"""
+                ))
+            ))
+
+            var capturedPrompt: String? = null
+            val runner = SubagentRunner(
+                brain = brain,
+                coreTools = buildTools(),
+                systemPrompt = "You are a specialist agent.",
+                project = project,
+                maxIterations = 10,
+                planMode = false,
+                contextBudget = 50_000,
+                onSystemPromptBuilt = { prompt -> capturedPrompt = prompt }
+            )
+            runner.run("Do something") {}
+
+            assertNotNull(capturedPrompt, "onSystemPromptBuilt hook must fire")
+            assertTrue(
+                capturedPrompt!!.contains("COMPLETING YOUR TASK"),
+                "Composed system prompt must contain 'COMPLETING YOUR TASK' section"
+            )
+            assertTrue(
+                capturedPrompt!!.contains("task_report"),
+                "COMPLETING YOUR TASK section must reference the task_report tool"
+            )
+        }
+
+        @Test
+        fun `COMPLETING YOUR TASK section explains parent cannot see streamed text`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"Done."}"""
+                ))
+            ))
+
+            var capturedPrompt: String? = null
+            val runner = SubagentRunner(
+                brain = brain,
+                coreTools = buildTools(),
+                systemPrompt = "You are a test agent.",
+                project = project,
+                maxIterations = 10,
+                planMode = false,
+                contextBudget = 50_000,
+                onSystemPromptBuilt = { prompt -> capturedPrompt = prompt }
+            )
+            runner.run("Task") {}
+
+            val section = capturedPrompt ?: ""
+            assertTrue(
+                section.contains("NOT visible to the parent"),
+                "The section must warn the sub-agent that streamed text is not visible to the parent"
+            )
+        }
+
+        @Test
+        fun `COMPLETING_YOUR_TASK_SECTION constant is accessible from companion`() {
+            assertTrue(SubagentRunner.COMPLETING_YOUR_TASK_SECTION.contains("task_report"))
+            assertTrue(SubagentRunner.COMPLETING_YOUR_TASK_SECTION.contains("summary"))
+            assertTrue(SubagentRunner.COMPLETING_YOUR_TASK_SECTION.contains("findings"))
         }
     }
 }

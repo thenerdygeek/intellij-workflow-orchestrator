@@ -391,6 +391,7 @@ class AgentService(private val project: Project) : Disposable {
         safeRegisterCore { RunCommandTool(allowedShells) }
         safeRegisterCore { RevertFileTool() }
         safeRegisterCore { AttemptCompletionTool() }
+        safeRegisterCore { TaskReportTool() }
         safeRegisterCore { ThinkTool() }
         safeRegisterCore { AskQuestionsTool() }
         safeRegisterCore { PlanModeRespondTool() }

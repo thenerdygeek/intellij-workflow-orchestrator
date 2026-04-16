@@ -41,10 +41,11 @@ AgentController (UI entry point, owns AgentCefPanel + JCEF bridges)
 - **SystemPrompt** (`prompt/SystemPrompt.kt`, ~507 lines) — Builds the system prompt per turn. 11 sections following Cline's generic variant template: Agent Role → Task Progress → Editing Files → Act vs Plan Mode → Capabilities → Skills → Deferred Tool Catalog → Rules → System Info → Objective → Memory → User Instructions.
 - **InstructionLoader** (`prompt/InstructionLoader.kt`, ~453 lines) — Loads skill and agent config files from resources and disk. Handles YAML frontmatter parsing, substitution variable expansion (`$ARGUMENTS`, `$1`-`$N`, `${CLAUDE_SKILL_DIR}`). Dynamic injection via `` !`command` `` for preprocessing.
 - **SpawnAgentTool** (`tools/builtin/SpawnAgentTool.kt`) — Primary tool for spawning subagents. Only `description` and `prompt` required. Optional `name` makes agents addressable for resume/send. `subagent_type` selects built-in or custom agents. Defaults to general-purpose. Explorer type restricted to read-only tools.
-- **SubagentRunner** (`tools/subagent/SubagentRunner.kt`, ~311 lines) — Executes subagent with isolated context and budget. Handles tool availability filtering, file ownership registry, worker message bus.
+- **SubagentRunner** (`tools/subagent/SubagentRunner.kt`) — Executes subagent with isolated context and budget. `buildComposedSystemPrompt()` appends a standard "COMPLETING YOUR TASK" section (via `COMPLETING_YOUR_TASK_SECTION` constant) to every sub-agent's composed system prompt so all personas know to call `task_report`, not `attempt_completion`.
 - **ModelFallbackManager** (`loop/ModelFallbackManager.kt`) — Opt-in model fallback. On NETWORK_ERROR/TIMEOUT, advances through fallback chain (Opus thinking → Opus → Sonnet thinking → Sonnet). After 3 successful iterations on fallback, attempts escalation back to primary.
 - **HookManager** (`hooks/HookManager.kt`) — 8 lifecycle hook types (TaskStart, UserPromptSubmit, TaskResume, PreCompact, TaskCancel, PreToolUse, PostToolUse, TaskComplete). Config: `.agent-hooks.json` in project root.
-- **AttemptCompletionTool** (`attempt_completion`) — Explicit completion signal. LLM must call this to end the session. Text-only responses (no tool calls) trigger escalating nudges (up to `MAX_NO_TOOL_NUDGES=4`) demanding `attempt_completion`.
+- **AttemptCompletionTool** (`attempt_completion`) — Explicit completion signal for the **orchestrator**. LLM must call this to end the session. Text-only responses (no tool calls) trigger escalating nudges (up to `MAX_NO_TOOL_NUDGES=4`) demanding `attempt_completion`. `allowedWorkers = {ORCHESTRATOR}` only.
+- **TaskReportTool** (`task_report`) — Completion signal for **sub-agents** (replaces `attempt_completion` at the sub-agent boundary). Forces the sub-agent to produce a structured report (summary, findings, files, next_steps, issues) that flows directly into the parent LLM's tool result — unlike `attempt_completion`, which targets the user UI. `allowedWorkers = {CODER, REVIEWER, ANALYZER, TOOLER}`. Auto-injected by `SpawnAgentTool.resolveConfigToolsTiered()`; any `attempt_completion` in a config's `tools:` field is silently dropped and replaced by this tool.
 - **StreamBatcher** (`ui/StreamBatcher.kt`) — 16ms EDT timer coalesces rapid SSE chunks into single JCEF bridge calls (~5000 → ~300 per response).
 
 ## System Prompt Structure (`SystemPrompt`)
@@ -80,7 +81,8 @@ Registered in `AgentService.registerAllTools()`:
 | `glob_files` | GlobFilesTool | Glob-pattern file discovery |
 | `run_command` | RunCommandTool | Shell command execution (ShellResolver + DefaultCommandFilter + OutputCollector + ProcessEnvironment) |
 | `revert_file` | RevertFileTool | Single-file revert |
-| `attempt_completion` | AttemptCompletionTool | Explicit task completion signal |
+| `attempt_completion` | AttemptCompletionTool | Explicit task completion signal (orchestrator only) |
+| `task_report` | TaskReportTool | Sub-agent completion: structured findings report for parent LLM (sub-agents only, auto-injected) |
 | `think` | ThinkTool | No-op reasoning scratchpad |
 | `ask_followup_question` | AskQuestionsTool | Ask user questions (simple or wizard mode) |
 | `plan_mode_respond` | PlanModeRespondTool | Present plan in plan mode |

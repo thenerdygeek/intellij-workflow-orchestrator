@@ -9,6 +9,7 @@ import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.builtin.AttemptCompletionTool
+import com.workflow.orchestrator.agent.tools.builtin.TaskReportTool
 import com.workflow.orchestrator.agent.tools.builtin.SpawnAgentTool
 import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.dto.*
@@ -67,6 +68,7 @@ class ParallelSubagentIntegrationTest {
             "project_context", "current_time", "ask_questions", "ask_user_input"
         )) reg.register(stubTool(name))
         reg.register(AttemptCompletionTool())
+        reg.register(TaskReportTool())
 
         // Builtin write tools
         for (name in listOf(
@@ -215,7 +217,7 @@ class ParallelSubagentIntegrationTest {
                         "read_file" to """{"path":"src/module$idx.kt"}"""
                     )),
                     ApiResult.Success(toolCallResponse(
-                        "attempt_completion" to """{"result":"Result from agent $idx"}"""
+                        "task_report" to """{"summary":"Result from agent $idx"}"""
                     ))
                 ))
             },
@@ -284,7 +286,7 @@ class ParallelSubagentIntegrationTest {
                             "read_file" to """{"path":"src/file$idx.kt"}"""
                         )),
                         ApiResult.Success(toolCallResponse(
-                            "attempt_completion" to """{"result":"Success from agent $idx"}"""
+                            "task_report" to """{"summary":"Success from agent $idx"}"""
                         ))
                     ))
                 }
