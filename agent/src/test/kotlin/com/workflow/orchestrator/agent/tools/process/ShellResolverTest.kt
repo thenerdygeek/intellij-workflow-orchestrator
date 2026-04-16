@@ -280,6 +280,28 @@ class ShellResolverTest {
     }
 
     @Test
+    @EnabledOnOs(OS.WINDOWS)
+    fun `resolveDefault throws when cmd and powershell both disabled on Windows`() {
+        mockkObject(AgentSettings.Companion)
+        val mockProject = mockk<Project>()
+        every { AgentSettings.getInstance(mockProject) } returns mockk {
+            every { state } returns mockk {
+                every { cmdEnabled } returns false
+                every { powershellEnabled } returns false
+            }
+        }
+        try {
+            val ex = assertThrows(ShellUnavailableException::class.java) {
+                ShellResolver.resolve(requestedShell = null, project = mockProject)
+            }
+            assertTrue(ex.message!!.contains("No shell available"),
+                "Error should indicate no shell is available")
+        } finally {
+            unmockkObject(AgentSettings.Companion)
+        }
+    }
+
+    @Test
     @EnabledOnOs(OS.MAC, OS.LINUX)
     fun `detectAvailableShells cmdEnabled=false has no effect on Unix`() {
         // On Unix cmd is never available regardless of setting

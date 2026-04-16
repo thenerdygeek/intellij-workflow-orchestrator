@@ -223,7 +223,7 @@ object ShellResolver {
         }
         if (!isCmdAllowed(project)) {
             throw ShellUnavailableException(
-                "cmd is disabled in agent settings. Use shell='bash' instead."
+                "shell='cmd' is disabled in agent settings. Use shell='bash' instead."
             )
         }
         return ShellConfig("cmd.exe", listOf("/c"), ShellType.CMD, "cmd.exe")
