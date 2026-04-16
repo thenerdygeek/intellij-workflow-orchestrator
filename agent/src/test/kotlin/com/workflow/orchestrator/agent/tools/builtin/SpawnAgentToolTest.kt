@@ -774,13 +774,11 @@ class SpawnAgentToolTest {
             description: String,
             tools: String,
             systemPrompt: String,
-            maxTurns: Int? = null
         ): String = buildString {
             appendLine("---")
             appendLine("name: \"$name\"")
             appendLine("description: \"$description\"")
             appendLine("tools: $tools")
-            if (maxTurns != null) appendLine("max-turns: $maxTurns")
             appendLine("---")
             appendLine(systemPrompt)
         }
@@ -1108,15 +1106,16 @@ class SpawnAgentToolTest {
         }
 
         @Test
-        fun `config max-turns is used when set`() = runTest {
+        fun `config with max-turns field in yaml is silently ignored and agent runs to completion`() = runTest {
             val tempDir = createTempDirectory("agent-type-test-")
             try {
+                // max-turns is intentionally removed from AgentConfig; the YAML field is silently
+                // ignored during parsing and sub-agents always run until completion.
                 writeConfigFile(tempDir, "quick-agent.md", makeConfig(
                     name = "quick-agent",
-                    description = "Quick agent with limited turns",
+                    description = "Quick agent",
                     tools = "read_file, think, attempt_completion",
-                    systemPrompt = "You are a quick agent.",
-                    maxTurns = 8
+                    systemPrompt = "You are a quick agent."
                 ))
                 configLoader.loadFromDisk(tempDir)
 
@@ -1142,8 +1141,7 @@ class SpawnAgentToolTest {
                     project
                 )
 
-                // If config.maxTurns is used correctly, execution succeeds with the config's max
-                assertFalse(result.isError, "Should succeed with config max-turns: ${result.content}")
+                assertFalse(result.isError, "Should succeed: ${result.content}")
                 assertTrue(result.content.contains("Quick result"), "Should contain completion result")
             } finally {
                 tempDir.toFile().deleteRecursively()

@@ -17,7 +17,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * java.nio.file.WatchService with manual YAML-frontmatter parsing.
  *
  * Two sources:
- * 1. Bundled: plugin resources (`agents/` dir) — 8 specialist personas shipped with the plugin
+ * 1. Bundled: plugin resources (`agents/` dir) — specialist personas shipped with the plugin
  * 2. User: `~/.workflow-orchestrator/agents/` — custom YAML/MD configs, hot-reloaded
  *
  * User configs override bundled ones if they share the same name (case-insensitive).
@@ -27,12 +27,13 @@ data class AgentConfig(
     val name: String,
     val description: String,
     val tools: List<String>,
+    val deferredTools: List<String> = emptyList(),   // tools available via tool_search for this sub-agent
     val skills: List<String>?,
     val modelId: String?,
     val systemPrompt: String,
-    val maxTurns: Int? = null,
     /** True for configs bundled in plugin resources, false for user-defined. */
     val bundled: Boolean = false,
+    // maxTurns REMOVED — sub-agents run until completion (DEFAULT_MAX_ITERATIONS = 200)
 )
 
 /**
@@ -217,18 +218,20 @@ class AgentConfigLoader private constructor() : Disposable {
         require(body.isNotEmpty()) { "Missing system prompt body after frontmatter" }
 
         val tools = toolsRaw?.let { splitCsvField(it) } ?: emptyList()
+        val deferredToolsRaw = fields["deferred-tools"]
+        val deferredTools = deferredToolsRaw?.let { splitCsvField(it) } ?: emptyList()
         val skills = fields["skills"]?.let { splitCsvField(it) }
         val modelId = fields["modelId"]?.takeIf { it.isNotBlank() }
-        val maxTurns = (fields["max-turns"] ?: fields["maxTurns"])?.toIntOrNull()
+        // max-turns: intentionally NOT parsed — removed from AgentConfig
 
         return AgentConfig(
             name = name,
             description = description,
             tools = tools,
+            deferredTools = deferredTools,
             skills = skills,
             modelId = modelId,
             systemPrompt = body,
-            maxTurns = maxTurns,
         )
     }
 

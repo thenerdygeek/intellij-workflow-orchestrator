@@ -416,33 +416,86 @@ class AgentConfigLoaderTest {
     }
 
     @Test
-    fun `bundled agents have expected maxTurns`() {
+    fun `bundled agents have empty deferredTools by default`() {
         loader.loadFromDisk(tempDir)
 
         val springBoot = loader.getCachedConfig("spring-boot-engineer")
         assertNotNull(springBoot)
-        // Bundled configs currently have no max-turns (uses spawn default)
-        assertNull(springBoot!!.maxTurns, "spring-boot-engineer should have no max-turns (uses spawn default)")
+        // Bundled configs have no deferred-tools field — defaults to empty list
+        assertEquals(emptyList<String>(), springBoot!!.deferredTools,
+            "spring-boot-engineer should have no deferred tools by default")
 
         val codeReviewer = loader.getCachedConfig("code-reviewer")
         assertNotNull(codeReviewer)
-        assertNull(codeReviewer!!.maxTurns, "code-reviewer should have no max-turns (uses spawn default)")
+        assertEquals(emptyList<String>(), codeReviewer!!.deferredTools,
+            "code-reviewer should have no deferred tools by default")
     }
 
     @Test
-    fun `parse config with max-turns field`() {
+    fun `parse config with deferred-tools field`() {
         val yaml = """
             ---
-            name: "Custom Agent"
-            description: "Test"
-            tools: "read_file"
-            max-turns: 15
+            name: "Test Agent"
+            description: "Desc"
+            tools: "read_file, search_code"
+            deferred-tools: "type_hierarchy, call_hierarchy"
             ---
             Prompt.
         """.trimIndent()
 
         val config = loader.parseAgentConfigFromYaml(yaml)
-        assertEquals(15, config.maxTurns)
+
+        assertEquals(listOf("read_file", "search_code"), config.tools)
+        assertEquals(listOf("type_hierarchy", "call_hierarchy"), config.deferredTools)
+    }
+
+    @Test
+    fun `parse config without deferred-tools defaults to empty list`() {
+        val yaml = """
+            ---
+            name: "Test Agent"
+            description: "Desc"
+            tools: "read_file"
+            ---
+            Prompt.
+        """.trimIndent()
+
+        val config = loader.parseAgentConfigFromYaml(yaml)
+        assertEquals(emptyList<String>(), config.deferredTools)
+    }
+
+    @Test
+    fun `parse config with max-turns field silently ignores it`() {
+        val yaml = """
+            ---
+            name: "Test Agent"
+            description: "Desc"
+            tools: "read_file"
+            max-turns: 30
+            ---
+            Prompt.
+        """.trimIndent()
+
+        val config = loader.parseAgentConfigFromYaml(yaml)
+        assertEquals(listOf("read_file"), config.tools)
+        assertEquals(emptyList<String>(), config.deferredTools)
+        // maxTurns no longer exists on AgentConfig — this is a compile-time guarantee
+    }
+
+    @Test
+    fun `parse config with inline list syntax for deferred-tools`() {
+        val yaml = """
+            ---
+            name: "Test Agent"
+            description: "Desc"
+            tools: "read_file, search_code, glob_files"
+            deferred-tools: "db_schema, db_query, db_explain"
+            ---
+            Prompt.
+        """.trimIndent()
+
+        val config = loader.parseAgentConfigFromYaml(yaml)
+        assertEquals(listOf("db_schema", "db_query", "db_explain"), config.deferredTools)
     }
 
     // ── Helpers ───────────────────────────────────────────────────

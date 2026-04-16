@@ -161,6 +161,14 @@ class ToolRegistry {
         return grouped
     }
 
+    /**
+     * Returns the registered category for a deferred (or active-deferred) tool.
+     * Used by SpawnAgentTool to carry over category metadata when building a
+     * per-sub-agent ToolRegistry.
+     */
+    fun getDeferredCategory(toolName: String): String =
+        deferredCategories[toolName] ?: "Other"
+
     /** Remove a deferred or active-deferred tool by name. Returns the removed tool or null. */
     @Synchronized
     fun unregisterDeferred(toolName: String): AgentTool? {

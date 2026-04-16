@@ -275,7 +275,7 @@ Tips:
         // the LLM to hallucinate instead of executing tools.
         brain.toolNameSet = resolvedTools.keys
         brain.paramNameSet = resolvedTools.values.flatMap { it.parameters.properties.keys }.toSet()
-        val maxIter = (config.maxTurns ?: iterationOverride).coerceIn(MIN_ITERATIONS, MAX_ITERATIONS)
+        val maxIter = iterationOverride.coerceIn(MIN_ITERATIONS, MAX_ITERATIONS)
 
         val runner = SubagentRunner(
             brain = brain,
@@ -352,7 +352,7 @@ Tips:
         resolvedTools: Map<String, AgentTool>,
         iterationOverride: Int
     ): ToolResult {
-        val maxIter = (config.maxTurns ?: iterationOverride).coerceIn(MIN_ITERATIONS, MAX_ITERATIONS)
+        val maxIter = iterationOverride.coerceIn(MIN_ITERATIONS, MAX_ITERATIONS)
         val uiLabel = "$description (${config.name})"
 
         // Create status entries for each prompt
