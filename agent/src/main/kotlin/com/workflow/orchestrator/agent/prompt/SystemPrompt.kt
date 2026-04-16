@@ -47,7 +47,9 @@ object SystemPrompt {
         /** Auto-retrieved archival memory entries relevant to the user's task. */
         recalledMemoryXml: String? = null,
         /** IDE context for adapting prompt content to the running IDE (null = backward-compatible IntelliJ). */
-        ideContext: IdeContext? = null
+        ideContext: IdeContext? = null,
+        /** When non-null, shows "Available Shells (run_command): bash, cmd" instead of "Default Shell: …". */
+        availableShells: List<String>? = null
     ): String = buildString {
 
         // 1. AGENT ROLE
@@ -95,7 +97,7 @@ object SystemPrompt {
 
         // 8. SYSTEM INFO
         append(SECTION_SEP)
-        append(systemInfo(osName, shell, projectPath, ideContext))
+        append(systemInfo(osName, shell, projectPath, ideContext, availableShells))
 
         // 9. OBJECTIVE
         append(SECTION_SEP)
@@ -571,14 +573,20 @@ In each user message, the environment_details will specify the current mode. The
         osName: String,
         shell: String,
         projectPath: String,
-        ideContext: IdeContext?
+        ideContext: IdeContext?,
+        availableShells: List<String>? = null
     ): String {
         val ideName = ideContext?.productName ?: "IntelliJ IDEA"
+        val shellLine = if (!availableShells.isNullOrEmpty()) {
+            "Available Shells (run_command): ${availableShells.joinToString(", ")}"
+        } else {
+            "Default Shell: $shell"
+        }
         return """SYSTEM INFORMATION
 
 Operating System: $osName
 IDE: $ideName
-Default Shell: $shell
+$shellLine
 Home Directory: ${System.getProperty("user.home") ?: "unknown"}
 Current Working Directory: $projectPath"""
     }

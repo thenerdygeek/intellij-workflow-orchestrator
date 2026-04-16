@@ -548,4 +548,44 @@ class SystemPromptTest {
             "should reference IntelliJ IDEA"
         )
     }
+
+    // ---- availableShells in systemInfo tests ----
+
+    @Test
+    fun `systemInfo shows Available Shells line when availableShells provided`() {
+        val prompt = SystemPrompt.build(
+            projectName = "my-app",
+            projectPath = "/home/user/my-app",
+            availableShells = listOf("bash")
+        )
+        assertTrue(
+            prompt.contains("Available Shells (run_command): bash"),
+            "Should show bash as the only available shell"
+        )
+        assertFalse(prompt.contains("Default Shell:"), "Should not show Default Shell when availableShells is set")
+    }
+
+    @Test
+    fun `systemInfo shows all shells when all three are available`() {
+        val prompt = SystemPrompt.build(
+            projectName = "my-app",
+            projectPath = "/home/user/my-app",
+            availableShells = listOf("bash", "cmd", "powershell")
+        )
+        assertTrue(
+            prompt.contains("Available Shells (run_command): bash, cmd, powershell"),
+            "Should list all three shells"
+        )
+    }
+
+    @Test
+    fun `systemInfo falls back to Default Shell when availableShells is null`() {
+        val prompt = SystemPrompt.build(
+            projectName = "my-app",
+            projectPath = "/home/user/my-app"
+            // availableShells not passed — defaults to null
+        )
+        assertTrue(prompt.contains("Default Shell:"), "Should show Default Shell when availableShells is null")
+        assertFalse(prompt.contains("Available Shells (run_command)"), "Should not show Available Shells line")
+    }
 }
