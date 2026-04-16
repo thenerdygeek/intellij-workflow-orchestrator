@@ -116,8 +116,8 @@ class AgentService(private val project: Project) : Disposable {
     lateinit var ideContext: IdeContext
         private set
 
-    /** Shells available for run_command — computed from settings at session init. */
-    private var allowedShells: List<String> = listOf("bash", "cmd", "powershell")
+    /** Shells available for run_command — populated by registerAllTools() before any consumer reads it. */
+    private var allowedShells: List<String> = emptyList()
 
     lateinit var providerRegistry: LanguageProviderRegistry
         private set
@@ -365,7 +365,7 @@ class AgentService(private val project: Project) : Disposable {
             "languages=${ideContext.languages}, frameworks=${ideContext.detectedFrameworks}, " +
             "buildTools=${ideContext.detectedBuildTools}")
         allowedShells = ShellResolver.detectAvailableShells(project).map { it.shellType.name.lowercase() }
-        log.info("[Agent] Available shells: $allowedShells")
+        log.info("[AgentService] Available shells: $allowedShells")
 
         // Initialize language provider registry
         providerRegistry = LanguageProviderRegistry()
