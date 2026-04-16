@@ -37,6 +37,7 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
          *  After this many minutes the prompt expires and the tool returns an error. */
         var askUserInputTimeoutMinutes by property(5)
         var powershellEnabled by property(true)
+        var cmdEnabled by property(true)
         /** Use Haiku to generate contextual humorous working indicator messages. */
         var smartWorkingIndicator by property(true)
         /** Enable auto-memory: retrieve relevant archival memories at session start

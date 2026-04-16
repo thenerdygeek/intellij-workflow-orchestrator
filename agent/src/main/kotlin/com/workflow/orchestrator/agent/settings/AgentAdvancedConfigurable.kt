@@ -27,6 +27,7 @@ class AgentAdvancedConfigurable(
     private var showDebugLog = agentSettings.state.showDebugLog
     private var smartWorkingIndicator = agentSettings.state.smartWorkingIndicator
     private var powershellEnabled = agentSettings.state.powershellEnabled
+    private var cmdEnabled = agentSettings.state.cmdEnabled
 
     override fun getId(): String = "workflow.orchestrator.agent.advanced"
     override fun getDisplayName(): String = "Advanced"
@@ -50,9 +51,12 @@ class AgentAdvancedConfigurable(
                 row {
                     checkBox("Allow PowerShell in run_command tool")
                         .bindSelected(::powershellEnabled)
-                        .comment(
-                            "When disabled, the agent cannot use PowerShell — only bash and cmd are available"
-                        )
+                        .comment("When disabled, the agent will not offer PowerShell as a shell option in run_command")
+                }
+                row {
+                    checkBox("Allow cmd.exe in run_command tool")
+                        .bindSelected(::cmdEnabled)
+                        .comment("When disabled, the agent will not offer cmd.exe as a shell option in run_command")
                 }
             }
 
@@ -120,12 +124,14 @@ class AgentAdvancedConfigurable(
         agentSettings.state.showDebugLog = showDebugLog
         agentSettings.state.smartWorkingIndicator = smartWorkingIndicator
         agentSettings.state.powershellEnabled = powershellEnabled
+        agentSettings.state.cmdEnabled = cmdEnabled
     }
 
     override fun reset() {
         showDebugLog = agentSettings.state.showDebugLog
         smartWorkingIndicator = agentSettings.state.smartWorkingIndicator
         powershellEnabled = agentSettings.state.powershellEnabled
+        cmdEnabled = agentSettings.state.cmdEnabled
         dialogPanel?.reset()
     }
 
