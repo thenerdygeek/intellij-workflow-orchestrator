@@ -10,7 +10,7 @@ import javax.swing.JComponent
  * "AI Agent → Advanced" sub-page.
  *
  * Power-user settings that most users never touch:
- *  - Debugging toggles (debug panel, smart working indicator, PowerShell)
+ *  - Debugging toggles (debug panel, smart working indicator, PowerShell, cmd)
  *  - HTTP timeouts (shared with every API client, via [PluginSettings])
  *  - Jira custom field IDs used by AI pre-review and other integration features
  */
