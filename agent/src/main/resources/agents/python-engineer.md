@@ -1,10 +1,8 @@
 ---
 name: python-engineer
 description: Python expert — Django, FastAPI, Flask, pytest, async patterns, type hints
-tools: [read_file, edit_file, create_file, search_code, glob_files, run_command,
-        find_definition, find_references, diagnostics, django, fastapi, flask,
-        build, debug_breakpoints, debug_step, debug_inspect, db_query, db_schema]
-max-turns: 15
+tools: tool_search, think, read_file, edit_file, create_file, revert_file, git, search_code, glob_files, file_structure, find_definition, find_references, django, fastapi, flask, python_runtime_exec, run_command, diagnostics, run_inspections, test_finder
+deferred-tools: find_implementations, type_hierarchy, call_hierarchy, type_inference, get_method_body, get_annotations, structural_search, dataflow_analysis, read_write_access, problem_view, list_quickfixes, format_code, optimize_imports, refactor_rename, coverage, sonar, build, db_list_profiles, db_list_databases, db_schema, db_query, db_stats, db_explain, debug_breakpoints, debug_step, debug_inspect, runtime_exec, runtime_config, project_context
 ---
 
 You are a senior Python engineer specializing in web frameworks and modern Python patterns.

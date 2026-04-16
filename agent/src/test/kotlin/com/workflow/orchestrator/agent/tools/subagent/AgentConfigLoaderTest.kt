@@ -416,19 +416,19 @@ class AgentConfigLoaderTest {
     }
 
     @Test
-    fun `bundled agents have empty deferredTools by default`() {
+    fun `bundled agents expose deferred tools after 3-tier tool split`() {
         loader.loadFromDisk(tempDir)
 
         val springBoot = loader.getCachedConfig("spring-boot-engineer")
         assertNotNull(springBoot)
-        // Bundled configs have no deferred-tools field — defaults to empty list
-        assertEquals(emptyList<String>(), springBoot!!.deferredTools,
-            "spring-boot-engineer should have no deferred tools by default")
+        // All bundled agents now have a deferred-tools section (Task 5 — 3-tier tool system)
+        assertTrue(springBoot!!.deferredTools.isNotEmpty(),
+            "spring-boot-engineer should have deferred tools after 3-tier split")
 
         val codeReviewer = loader.getCachedConfig("code-reviewer")
         assertNotNull(codeReviewer)
-        assertEquals(emptyList<String>(), codeReviewer!!.deferredTools,
-            "code-reviewer should have no deferred tools by default")
+        assertTrue(codeReviewer!!.deferredTools.isNotEmpty(),
+            "code-reviewer should have deferred tools after 3-tier split")
     }
 
     @Test
