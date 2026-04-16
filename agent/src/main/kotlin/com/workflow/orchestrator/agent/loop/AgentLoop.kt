@@ -298,6 +298,18 @@ class AgentLoop(
     /** Dynamic provider for known param names (re-read from registry each iteration for deferred tools). */
     private val paramNameProvider: (() -> Set<String>)? = null,
     /**
+     * Optional callback that returns a fresh composed system prompt each iteration.
+     * Used by sub-agents with deferred tools: when tool_search activates a new tool,
+     * the system prompt must include its schema for subsequent API calls.
+     *
+     * Called at the start of every iteration when non-null. The contextManager's
+     * system prompt is updated unconditionally — the provider is responsible for
+     * returning a stable string when nothing has changed (cheap, no API calls).
+     *
+     * Null for the main agent (which manages its own system prompt via AgentService).
+     */
+    private val systemPromptProvider: (() -> String)? = null,
+    /**
      * Optional output spiller for persisting large tool outputs to disk.
      * When set, outputs exceeding SPILL_THRESHOLD_CHARS or explicitly requested via
      * output_file=true are written to disk and a preview is returned to the LLM.
@@ -533,6 +545,12 @@ class AgentLoop(
                     LOG.info("[Loop] Injected ${drained.size} steering message(s) into context")
                     onSteeringDrained?.invoke(drained.map { it.id })
                 }
+            }
+
+            // Stage 0.75: Refresh system prompt if deferred tools were activated
+            // (sub-agent path only — systemPromptProvider is null for the main agent)
+            systemPromptProvider?.invoke()?.let { freshPrompt ->
+                contextManager.setSystemPrompt(freshPrompt)
             }
 
             // Stage 1: Call LLM (use dynamic definitions if tool_search has loaded new tools)

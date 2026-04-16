@@ -1169,4 +1169,75 @@ class AgentLoopTest {
             assertEquals("Done.", result.summary)
         }
     }
+
+    // ---- systemPromptProvider (dynamic system prompt refresh for sub-agents with deferred tools) ----
+
+    @Nested
+    inner class SystemPromptProviderTests {
+
+        @Test
+        fun `systemPromptProvider is called each iteration and updates context manager`() = runTest {
+            var callCount = 0
+            val systemPromptProvider = {
+                callCount++
+                "System prompt version $callCount"
+            }
+
+            // 2-iteration run: read_file then attempt_completion
+            val brain = sequenceBrain(
+                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
+                toolCallResponse("attempt_completion" to """{"result":"Done."}""")
+            )
+
+            val tools = listOf(
+                fakeTool("read_file"),
+                completionTool("Done.")
+            )
+            val toolMap = tools.associateBy { it.name }
+            val toolDefs = tools.map { it.toToolDefinition() }
+
+            val loop = AgentLoop(
+                brain = brain,
+                tools = toolMap,
+                toolDefinitions = toolDefs,
+                contextManager = contextManager,
+                project = project,
+                systemPromptProvider = systemPromptProvider
+            )
+
+            val result = loop.run("Do something")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed but got $result")
+            assertEquals(2, callCount,
+                "systemPromptProvider should be called once per iteration (2 iterations = 2 calls)")
+        }
+
+        @Test
+        fun `when systemPromptProvider is null loop runs without errors`() = runTest {
+            val brain = sequenceBrain(
+                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
+                toolCallResponse("attempt_completion" to """{"result":"Done."}""")
+            )
+
+            val tools = listOf(
+                fakeTool("read_file"),
+                completionTool("Done.")
+            )
+            val toolMap = tools.associateBy { it.name }
+            val toolDefs = tools.map { it.toToolDefinition() }
+
+            // systemPromptProvider defaults to null — loop must run without crashing
+            val loop = AgentLoop(
+                brain = brain,
+                tools = toolMap,
+                toolDefinitions = toolDefs,
+                contextManager = contextManager,
+                project = project
+            )
+
+            val result = loop.run("Do something")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed — null systemPromptProvider must not crash")
+        }
+    }
 }
