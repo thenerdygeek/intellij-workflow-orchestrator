@@ -11,25 +11,23 @@ import org.junit.jupiter.api.Test
  * The filter (from AgentService.executeTask's toolDefinitionProvider lambda):
  * - Plan mode: exclude write tools + "enable_plan_mode"; keep "plan_mode_respond" + "discard_plan"
  * - Act mode: exclude "plan_mode_respond" + "discard_plan"; keep all other tools
+ * - use_skill: excluded when hasSkills=false, included when hasSkills=true (before plan/act split)
  *
- * These tests exercise the exact predicate logic without requiring the full AgentService
- * to be instantiated (which depends on the IntelliJ platform).
+ * These tests exercise the exact predicate logic sourced from production constants —
+ * writeToolNames is AgentLoop.WRITE_TOOLS (the single source of truth used by AgentService).
  */
 class AgentServiceToolFilterTest {
 
     /**
-     * Replicates the tool-name filter from AgentService.executeTask's toolDefinitionProvider lambda.
-     * This is the single source of truth for what the LLM can see in each mode.
+     * Production filter predicate — faithfully ported from AgentService.executeTask's
+     * toolDefinitionProvider lambda. Uses AgentLoop.WRITE_TOOLS as the authoritative set
+     * so any change to the production write-tool list is immediately reflected in these tests.
      */
-    private val writeToolNames = setOf(
-        "edit_file", "create_file", "run_command", "revert_file",
-        "kill_process", "send_stdin", "format_code", "optimize_imports",
-        "refactor_rename"
-    )
-
-    private fun filterForMode(isPlanMode: Boolean, toolName: String): Boolean {
+    private fun filterForMode(isPlanMode: Boolean, toolName: String, hasSkills: Boolean = true): Boolean {
+        // Port of Cline's contextRequirements: omit use_skill when no skills available
+        if (toolName == "use_skill" && !hasSkills) return false
         return if (isPlanMode) {
-            toolName !in writeToolNames && toolName != "enable_plan_mode"
+            toolName !in AgentLoop.WRITE_TOOLS && toolName != "enable_plan_mode"
         } else {
             toolName != "plan_mode_respond" && toolName != "discard_plan"
         }
@@ -122,6 +120,11 @@ class AgentServiceToolFilterTest {
     fun `plan mode excludes write tools`() {
         val planModeTools = allToolNames.filter { filterForMode(isPlanMode = true, toolName = it) }
 
+        // Verify every tool in the production WRITE_TOOLS set is blocked
+        for (writeTool in AgentLoop.WRITE_TOOLS) {
+            assertFalse(planModeTools.contains(writeTool), "$writeTool must be blocked in plan mode")
+        }
+        // Spot-check the most commonly expected names explicitly for readable failure messages
         assertFalse(planModeTools.contains("edit_file"), "edit_file must be blocked in plan mode")
         assertFalse(planModeTools.contains("create_file"), "create_file must be blocked in plan mode")
         assertFalse(planModeTools.contains("run_command"), "run_command must be blocked in plan mode")
@@ -148,6 +151,65 @@ class AgentServiceToolFilterTest {
         assertTrue(planModeTools.contains("find_references"))
         assertTrue(planModeTools.contains("diagnostics"))
         assertTrue(planModeTools.contains("attempt_completion"))
+    }
+
+    // ---- use_skill contextRequirements tests ----
+
+    @Test
+    fun `use_skill is included in act mode when hasSkills is true`() {
+        val actModeTools = allToolNames.filter { filterForMode(isPlanMode = false, toolName = it, hasSkills = true) }
+
+        assertTrue(
+            actModeTools.contains("use_skill"),
+            "use_skill must be included in act mode when skills are available"
+        )
+    }
+
+    @Test
+    fun `use_skill is excluded in act mode when hasSkills is false`() {
+        val actModeTools = allToolNames.filter { filterForMode(isPlanMode = false, toolName = it, hasSkills = false) }
+
+        assertFalse(
+            actModeTools.contains("use_skill"),
+            "use_skill must be excluded from act mode when no skills are available (contextRequirements)"
+        )
+    }
+
+    @Test
+    fun `use_skill is included in plan mode when hasSkills is true`() {
+        val planModeTools = allToolNames.filter { filterForMode(isPlanMode = true, toolName = it, hasSkills = true) }
+
+        assertTrue(
+            planModeTools.contains("use_skill"),
+            "use_skill must be included in plan mode when skills are available"
+        )
+    }
+
+    @Test
+    fun `use_skill is excluded in plan mode when hasSkills is false`() {
+        val planModeTools = allToolNames.filter { filterForMode(isPlanMode = true, toolName = it, hasSkills = false) }
+
+        assertFalse(
+            planModeTools.contains("use_skill"),
+            "use_skill must be excluded from plan mode when no skills are available (contextRequirements)"
+        )
+    }
+
+    // ---- WRITE_TOOLS set completeness check ----
+
+    @Test
+    fun `AgentLoop WRITE_TOOLS contains all expected write tool names`() {
+        val expectedWriteTools = setOf(
+            "edit_file", "create_file", "run_command", "revert_file",
+            "kill_process", "send_stdin", "format_code", "optimize_imports",
+            "refactor_rename"
+        )
+        assertEquals(
+            expectedWriteTools,
+            AgentLoop.WRITE_TOOLS,
+            "AgentLoop.WRITE_TOOLS must match the canonical write-tool list. " +
+            "If you add/remove a write tool, update both AgentLoop.WRITE_TOOLS and this test."
+        )
     }
 
     // ---- Tool object sanity tests (verify tool names match what the filter expects) ----

@@ -346,17 +346,21 @@ class PlanModeLoopTest {
 
         @Test
         fun `text-only response in plan mode resets consecutiveEmpties to 0`() = runTest {
-            // Scenario: LLM gives text-only (no tool calls) while in plan mode with a channel.
-            // After receiving user input, the loop should continue without hitting the consecutive-empties
-            // guard. We verify this indirectly by checking the loop completes successfully — if
-            // consecutiveEmpties were NOT reset, a follow-up empty response would count towards the
-            // limit from before the text-only turn, potentially causing a premature loop failure.
+            // Scenario: LLM gives MAX_CONSECUTIVE_EMPTIES-1 (=2) consecutive empty responses,
+            // then a text-only plan-mode reply (which resets consecutiveEmpties to 0 and waits
+            // for user input), then one more empty response, then completion.
+            //
+            // Without the reset: the empty after the text-only turn would be the 3rd consecutive
+            // empty (2 before + 1 after), pushing consecutiveEmpties to 3 == MAX_CONSECUTIVE_EMPTIES
+            // and the loop would return Failed.
+            //
+            // With the reset: consecutiveEmpties goes back to 0 on the text-only turn, so the
+            // subsequent empty is only count=1 — the loop continues and completes normally.
             val channel = Channel<String>(Channel.RENDEZVOUS)
 
-            val brain = sequenceBrain(
-                // Empty response (consecutiveEmpties = 1)
+            val emptyResponse = { id: String ->
                 ChatCompletionResponse(
-                    id = "resp-1",
+                    id = id,
                     choices = listOf(
                         Choice(
                             index = 0,
@@ -365,10 +369,16 @@ class PlanModeLoopTest {
                         )
                     ),
                     usage = UsageInfo(promptTokens = 100, completionTokens = 0, totalTokens = 100)
-                ),
-                // Text-only reply in plan mode — triggers wait for user input, then resets consecutiveEmpties
+                )
+            }
+
+            val brain = sequenceBrain(
+                // Two consecutive empty responses — consecutiveEmpties reaches 2 (MAX-1)
+                emptyResponse("resp-1"),  // consecutiveEmpties = 1
+                emptyResponse("resp-2"),  // consecutiveEmpties = 2
+                // Text-only reply in plan mode — triggers wait for user input, resets consecutiveEmpties to 0
                 ChatCompletionResponse(
-                    id = "resp-2",
+                    id = "resp-3",
                     choices = listOf(
                         Choice(
                             index = 0,
@@ -378,18 +388,10 @@ class PlanModeLoopTest {
                     ),
                     usage = UsageInfo(promptTokens = 110, completionTokens = 10, totalTokens = 120)
                 ),
-                // Empty response after the reset (would hit limit=3 if not reset, but after reset it's only 1)
-                ChatCompletionResponse(
-                    id = "resp-3",
-                    choices = listOf(
-                        Choice(
-                            index = 0,
-                            message = ChatMessage(role = "assistant", content = null),
-                            finishReason = "stop"
-                        )
-                    ),
-                    usage = UsageInfo(promptTokens = 100, completionTokens = 0, totalTokens = 100)
-                ),
+                // One empty response after the reset:
+                //   - WITHOUT reset: consecutiveEmpties would be 3 == MAX → loop fails
+                //   - WITH reset:    consecutiveEmpties is 1 → loop continues
+                emptyResponse("resp-4"),  // consecutiveEmpties = 1 (after reset)
                 // Finally completes
                 toolCallResponse("attempt_completion" to """{"result":"Done"}""")
             )
@@ -411,7 +413,11 @@ class PlanModeLoopTest {
 
             val loopJob = launch {
                 val result = loop.run("Help me plan")
-                assertTrue(result is LoopResult.Completed, "loop should complete after counter reset, got: $result")
+                assertTrue(
+                    result is LoopResult.Completed,
+                    "loop should complete after counter reset — without the reset the 3rd consecutive empty " +
+                    "would exceed MAX_CONSECUTIVE_EMPTIES and the loop would return Failed. Got: $result"
+                )
             }
 
             // Send user response after the text-only turn (which resets consecutiveEmpties to 0)

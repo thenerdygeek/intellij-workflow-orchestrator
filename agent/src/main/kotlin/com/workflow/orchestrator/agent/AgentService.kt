@@ -136,12 +136,10 @@ class AgentService(private val project: Project) : Disposable {
      */
     val hookManager: HookManager
 
-    /** Tool names that are blocked in plan mode (write/mutate tools). */
-    private val writeToolNames = setOf(
-        "edit_file", "create_file", "run_command", "revert_file",
-        "kill_process", "send_stdin", "format_code", "optimize_imports",
-        "refactor_rename"
-    )
+    /** Tool names that are blocked in plan mode (write/mutate tools).
+     *  Single source of truth is AgentLoop.WRITE_TOOLS — this is an alias so callers
+     *  in this class keep readable local references without duplicating the set. */
+    private val writeToolNames get() = AgentLoop.WRITE_TOOLS
 
     init {
         val basePath = project.basePath ?: System.getProperty("user.home")
