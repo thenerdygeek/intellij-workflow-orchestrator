@@ -84,7 +84,10 @@ class RunCommandTool(
          * Internal visibility allows tests to call this directly without constructing the full tool.
          */
         internal fun buildShellParameters(allowedShells: List<String>): FunctionParameters {
-            val singleShell = allowedShells.size == 1
+            // Guard: empty list means detection found nothing — fall back to bash so the
+            // schema is always valid. This prevents an empty enumValues in the LLM schema.
+            val effective = allowedShells.ifEmpty { listOf("bash") }
+            val singleShell = effective.size == 1
 
             // Base properties excluding shell (preserves command-first ordering)
             val baseProps = linkedMapOf(
@@ -129,9 +132,9 @@ class RunCommandTool(
             // Multiple shells — build description that only names available ones
             val shellDesc = buildString {
                 append("Shell to execute the command in. Use ONLY shells listed as available in your environment.")
-                if ("bash" in allowedShells) append(" bash = Unix/Git Bash syntax (ls, grep, cat, &&).")
-                if ("cmd" in allowedShells) append(" cmd = Windows cmd.exe syntax (dir, type, findstr).")
-                if ("powershell" in allowedShells) append(" powershell = PowerShell syntax (Get-ChildItem, Select-String).")
+                if ("bash" in effective) append(" bash = Unix/Git Bash syntax (ls, grep, cat, &&).")
+                if ("cmd" in effective) append(" cmd = Windows cmd.exe syntax (dir, type, findstr).")
+                if ("powershell" in effective) append(" powershell = PowerShell syntax (Get-ChildItem, Select-String).")
             }
 
             // Insert shell between command and working_dir (preserving original param order)
@@ -139,7 +142,7 @@ class RunCommandTool(
             propsWithShell["shell"] = ParameterProperty(
                 type = "string",
                 description = shellDesc,
-                enumValues = allowedShells
+                enumValues = effective
             )
             propsWithShell.putAll(baseProps.filterKeys { it != "command" })
 
