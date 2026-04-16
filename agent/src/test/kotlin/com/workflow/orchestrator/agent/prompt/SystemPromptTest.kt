@@ -588,4 +588,15 @@ class SystemPromptTest {
         assertTrue(prompt.contains("Default Shell:"), "Should show Default Shell when availableShells is null")
         assertFalse(prompt.contains("Available Shells (run_command)"), "Should not show Available Shells line")
     }
+
+    @Test
+    fun `systemInfo falls back to Default Shell when availableShells is empty list`() {
+        val prompt = SystemPrompt.build(
+            projectName = "my-app",
+            projectPath = "/home/user/my-app",
+            availableShells = emptyList()
+        )
+        assertTrue(prompt.contains("Default Shell:"), "Should show Default Shell when availableShells is empty")
+        assertFalse(prompt.contains("Available Shells (run_command)"), "Should not show Available Shells line")
+    }
 }

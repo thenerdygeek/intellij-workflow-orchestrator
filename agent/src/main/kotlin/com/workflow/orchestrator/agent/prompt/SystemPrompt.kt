@@ -568,6 +568,9 @@ In each user message, the environment_details will specify the current mode. The
     /**
      * Section 8: System Info
      * Ported from: system_info.ts (SYSTEM_INFO_TEMPLATE_TEXT)
+     *
+     * @param availableShells When non-null/non-empty, replaces "Default Shell: …" with
+     *   "Available Shells (run_command): bash, cmd" (etc.). Null = backward-compat mode.
      */
     private fun systemInfo(
         osName: String,
