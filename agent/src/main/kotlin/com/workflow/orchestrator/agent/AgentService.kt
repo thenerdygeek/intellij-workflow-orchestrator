@@ -65,6 +65,7 @@ import com.workflow.orchestrator.agent.tools.ide.*
 import com.workflow.orchestrator.agent.tools.integration.*
 import com.workflow.orchestrator.agent.tools.memory.*
 import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
+import com.workflow.orchestrator.agent.tools.process.ShellResolver
 import com.workflow.orchestrator.agent.tools.subagent.AgentConfigLoader
 import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
 import com.workflow.orchestrator.agent.tools.psi.*
@@ -114,6 +115,9 @@ class AgentService(private val project: Project) : Disposable {
 
     lateinit var ideContext: IdeContext
         private set
+
+    /** Shells available for run_command — computed from settings at session init. */
+    private var allowedShells: List<String> = listOf("bash", "cmd", "powershell")
 
     lateinit var providerRegistry: LanguageProviderRegistry
         private set
@@ -360,6 +364,8 @@ class AgentService(private val project: Project) : Disposable {
         log.info("IDE context detected: ${ideContext.product} (${ideContext.edition}), " +
             "languages=${ideContext.languages}, frameworks=${ideContext.detectedFrameworks}, " +
             "buildTools=${ideContext.detectedBuildTools}")
+        allowedShells = ShellResolver.detectAvailableShells(project).map { it.shellType.name.lowercase() }
+        log.info("[Agent] Available shells: $allowedShells")
 
         // Initialize language provider registry
         providerRegistry = LanguageProviderRegistry()
@@ -382,7 +388,7 @@ class AgentService(private val project: Project) : Disposable {
         safeRegisterCore { CreateFileTool() }
         safeRegisterCore { SearchCodeTool() }
         safeRegisterCore { GlobFilesTool() }
-        safeRegisterCore { RunCommandTool() }
+        safeRegisterCore { RunCommandTool(allowedShells) }
         safeRegisterCore { RevertFileTool() }
         safeRegisterCore { AttemptCompletionTool() }
         safeRegisterCore { ThinkTool() }
@@ -997,7 +1003,8 @@ class AgentService(private val project: Project) : Disposable {
                         coreMemoryXml = coreMemory?.compile(),
                         toolDefinitionsMarkdown = toolDefsMarkdown,
                         recalledMemoryXml = recalledMemoryXml,
-                        ideContext = ideContext
+                        ideContext = ideContext,
+                        availableShells = allowedShells
                     )
                 }
                 // Set initial system prompt (XML defs added on first toolDefinitionProvider call)
@@ -1524,7 +1531,8 @@ class AgentService(private val project: Project) : Disposable {
                 projectName = project.name,
                 projectPath = project.basePath ?: "",
                 planModeEnabled = planModeActive.get(),
-                ideContext = ideContext
+                ideContext = ideContext,
+                availableShells = allowedShells
             )
             ctx.setSystemPrompt(systemPrompt)
 
