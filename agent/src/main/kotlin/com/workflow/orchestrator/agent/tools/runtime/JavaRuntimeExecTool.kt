@@ -178,11 +178,56 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         // wiring) and the shell fallback (for multi-module Gradle/Maven subproject path).
         val module = findModuleForClass(project, className)
 
+        // Pre-flight validation (Phase 2 / Tasks 2.7–2.9): when we have a resolved module,
+        // run BuildSystemValidator to catch the "module exists in IntelliJ but unrunnable
+        // in the build tool" failure family BEFORE dispatching. If module is null, skip the
+        // validator and let the native/shell paths surface their own "module could not be
+        // resolved" error — the validator requires a module to check against.
+        var authoritativeBuildPath: String? = null
+        var detectedTestCount: Int = 0
+        if (module != null) {
+            when (val validation = BuildSystemValidator(project).validateForTestRun(className, module)) {
+                is BuildSystemValidator.ValidationResult.Blocked -> return ToolResult(
+                    content = "${validation.reason}\n\n${validation.suggestion}",
+                    summary = validation.reason.substringBefore('\n'),
+                    tokenEstimate = 50,
+                    isError = true
+                )
+                is BuildSystemValidator.ValidationResult.Ok -> {
+                    authoritativeBuildPath = validation.authoritativeBuildPath
+                    detectedTestCount = validation.detectedTestCount
+                }
+            }
+        }
+
+        // Build the success breadcrumb (Task 2.9). Prepended to any happy-path result
+        // returned by the native runner or shell fallback. Adapts to what's available:
+        // module always, build-path only when the validator resolved it.
+        val breadcrumb = if (module != null) {
+            val buildPathPart = authoritativeBuildPath?.let { path ->
+                val label = if (path.startsWith(":")) "Gradle path" else "Maven dir"
+                ", $label: $path"
+            } ?: ""
+            val simpleClass = className.substringAfterLast('.')
+            "Running tests in module: ${module.name} (Build path$buildPathPart, $detectedTestCount test methods detected in $simpleClass)"
+        } else {
+            null
+        }
+
+        fun prependBreadcrumb(result: ToolResult): ToolResult {
+            if (breadcrumb == null || result.isError) return result
+            val newContent = breadcrumb + "\n\n" + result.content
+            return result.copy(
+                content = newContent,
+                tokenEstimate = result.tokenEstimate + TokenEstimator.estimate(breadcrumb)
+            )
+        }
+
         if (useNativeRunner) {
             val reasonOut = StringBuilder()
             try {
                 val result = executeWithNativeRunner(project, className, method, testTarget, timeoutSeconds, reasonOut)
-                if (result != null) return result
+                if (result != null) return prependBreadcrumb(result)
                 // Explicit native opt-in but setup failed — do NOT silently use `mvn test`.
                 // Previously this path silently fell through to executeWithShell, which is
                 // why a multi-module project could land on Maven even with use_native_runner=true
@@ -201,13 +246,18 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                     isError = true
                 )
             } catch (e: Exception) {
-                val shellResult = executeWithShell(project, testTarget, timeoutSeconds, module)
+                // Catch branch: the validator may have produced an authoritative path we
+                // should still prefer, but if anything about the native launch exploded we
+                // pass `null` for the authoritative path so executeWithShell falls back to
+                // filesystem derivation — the validator's Ok was only authoritative for a
+                // happy-path launch. Defensive choice; can be relaxed later.
+                val shellResult = executeWithShell(project, testTarget, timeoutSeconds, module, null)
                 val warning = "[WARNING] Native test runner threw ${e.javaClass.simpleName}: ${e.message}, used shell fallback.\n\n"
-                return shellResult.copy(content = warning + shellResult.content)
+                return prependBreadcrumb(shellResult.copy(content = warning + shellResult.content))
             }
         }
 
-        return executeWithShell(project, testTarget, timeoutSeconds, module)
+        return prependBreadcrumb(executeWithShell(project, testTarget, timeoutSeconds, module, authoritativeBuildPath))
     }
 
     private suspend fun executeWithNativeRunner(
@@ -701,7 +751,8 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         project: Project,
         testTarget: String,
         timeoutSeconds: Long,
-        module: com.intellij.openapi.module.Module? = null
+        module: com.intellij.openapi.module.Module? = null,
+        authoritativeBuildPath: String? = null
     ): ToolResult {
         val basePath = project.basePath
             ?: return ToolResult("Error: no project base path available", "Error: no project", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
@@ -715,6 +766,11 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         // For nested modules (<projectRoot>/services/auth/), the task is :services:auth:test.
         // Falls back to a root-level `test` task if the module dir can't be determined or
         // if it equals the project root (single-module project).
+        //
+        // Fallback-only: this filesystem-derived path is used when the validator could not
+        // supply an authoritative Gradle path (plugin unavailable, non-Gradle project, or
+        // the validator was not run because `module` was null). When the authoritative path
+        // IS available, it supersedes this value (see `effectiveGradlePath` below).
         val gradleSubprojectPath: String? = module?.let { m ->
             try {
                 val contentRoot = com.intellij.openapi.roots.ModuleRootManager.getInstance(m)
@@ -728,6 +784,9 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
 
         // Maven: for multi-module projects, restrict the build to the module containing
         // the test class. Maven module directories contain their own pom.xml.
+        //
+        // Fallback-only for the same reason as `gradleSubprojectPath` above — the validator's
+        // authoritative directory (when available) supersedes this via `effectiveMavenDir`.
         val mavenModuleDir: File? = module?.let { m ->
             try {
                 val contentRoot = com.intellij.openapi.roots.ModuleRootManager.getInstance(m)
@@ -737,11 +796,23 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             } catch (_: Exception) { null }
         }
 
+        // Prefer the validator-supplied authoritative build path when available. Gradle
+        // subproject paths start with `:` (e.g. `:services:auth`); Maven module directories
+        // are absolute filesystem paths. Disambiguation is unambiguous because no legal
+        // filesystem path begins with `:`.
+        val effectiveGradlePath: String? =
+            if (authoritativeBuildPath != null && authoritativeBuildPath.startsWith(":")) authoritativeBuildPath
+            else gradleSubprojectPath
+
+        val effectiveMavenDir: File? =
+            if (authoritativeBuildPath != null && !authoritativeBuildPath.startsWith(":")) File(authoritativeBuildPath)
+            else mavenModuleDir
+
         val command = when {
             hasMaven -> {
                 val className = testTarget.substringBefore('#')
                 val methodPart = if ('#' in testTarget) "#${testTarget.substringAfter('#')}" else ""
-                if (mavenModuleDir != null && mavenModuleDir != baseDir) {
+                if (effectiveMavenDir != null && effectiveMavenDir != baseDir) {
                     // Run only the submodule to avoid rebuilding unrelated modules
                     "mvn test -Dtest=${className}${methodPart} -Dsurefire.useFile=false -q --also-make"
                 } else {
@@ -751,9 +822,9 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             hasGradle -> {
                 val gradleWrapper = if (File(baseDir, "gradlew").exists()) "./gradlew" else "gradle"
                 val gradleTarget = testTarget.replace('#', '.')
-                if (gradleSubprojectPath != null) {
+                if (effectiveGradlePath != null) {
                     // Multi-module: run only the subproject that owns the test class
-                    "$gradleWrapper ${gradleSubprojectPath}:test --tests '$gradleTarget' --no-daemon -q"
+                    "$gradleWrapper ${effectiveGradlePath}:test --tests '$gradleTarget' --no-daemon -q"
                 } else {
                     "$gradleWrapper test --tests '$gradleTarget' --no-daemon -q"
                 }
@@ -767,7 +838,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         // For Maven multi-module: run from the submodule directory so Maven uses the
         // submodule's pom.xml and doesn't walk unrelated modules. For everything else
         // (Gradle, single-module Maven) always run from the project root.
-        val workDir = if (hasMaven && mavenModuleDir != null && mavenModuleDir != baseDir) mavenModuleDir else baseDir
+        val workDir = if (hasMaven && effectiveMavenDir != null && effectiveMavenDir != baseDir) effectiveMavenDir else baseDir
 
         return try {
             val isWindows = System.getProperty("os.name").lowercase().contains("win")
