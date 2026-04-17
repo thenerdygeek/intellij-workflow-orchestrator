@@ -208,16 +208,25 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
 
         val processHandlerRef = AtomicReference<ProcessHandler?>(null)
         val descriptorRef = AtomicReference<RunContentDescriptor?>(null)
+        // Two distinct refs: one for the build phase connection, one for the
+        // post-build ExecutionListener connection. Reusing a single ref between
+        // phases opens a race: if cancellation fires after buildConnection.disconnect()
+        // but before runConnection is set, the watchdog thread keeps the ExecutionListener
+        // connected for the full BUILD_WATCHDOG_MAX_MS (5 min) before it disconnects.
         val buildConnectionRef = AtomicReference<com.intellij.util.messages.MessageBusConnection?>(null)
+        val runConnectionRef = AtomicReference<com.intellij.util.messages.MessageBusConnection?>(null)
 
         val result = withTimeoutOrNull(timeoutSeconds * 1000) {
             suspendCancellableCoroutine { continuation ->
-                // Kill the spawned process and disconnect the bus watcher when the agent is
+                // Kill the spawned process and disconnect BOTH bus watchers when the agent is
                 // stopped or when withTimeoutOrNull fires — prevents orphaned JUnit processes
-                // that block subsequent runs with "initialization error".
+                // that block subsequent runs with "initialization error". getAndSet(null)
+                // ensures a double-disconnect doesn't throw if the listeners already cleared
+                // the ref.
                 continuation.invokeOnCancellation {
                     processHandlerRef.get()?.destroyProcess()
-                    buildConnectionRef.get()?.disconnect()
+                    buildConnectionRef.getAndSet(null)?.disconnect()
+                    runConnectionRef.getAndSet(null)?.disconnect()
                 }
                 com.intellij.openapi.application.invokeLater {
                     try {
@@ -267,8 +276,8 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                             ProjectTaskManager.getInstance(project)
                                 .build(testModule)
                                 .onSuccess { buildResult ->
-                                    buildConnection.disconnect()
-                                    buildConnectionRef.set(null)
+                                    // getAndSet(null) so cancellation can't also disconnect this again.
+                                    buildConnectionRef.getAndSet(null)?.disconnect()
 
                                     if (buildResult.hasErrors() || buildResult.isAborted) {
                                         if (continuation.isActive) {
@@ -320,8 +329,14 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                                             // reasons (no ProgramRunner registered, executor disabled, JDK
                                             // resolution failure, etc.). Build failures are caught above via
                                             // ProjectTaskManager.build — this handles everything else.
+                                            //
+                                            // Tracked in its own ref (runConnectionRef) — NOT buildConnectionRef —
+                                            // so cancellation between the build-disconnect and the run-subscribe
+                                            // still tears this down cleanly. Each disconnect site uses
+                                            // getAndSet(null) so double-disconnect (listener callback + cancellation
+                                            // + watchdog) is a no-op after the first caller wins.
                                             val runConnection = project.messageBus.connect()
-                                            buildConnectionRef.set(runConnection)
+                                            runConnectionRef.set(runConnection)
 
                                             runConnection.subscribe(
                                                 com.intellij.execution.ExecutionManager.EXECUTION_TOPIC,
@@ -331,7 +346,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                                                         e: com.intellij.execution.runners.ExecutionEnvironment
                                                     ) {
                                                         if (e == env) {
-                                                            runConnection.disconnect()
+                                                            runConnectionRef.getAndSet(null)?.disconnect()
                                                             if (continuation.isActive) {
                                                                 continuation.resume(ToolResult(
                                                                     content = "Test execution did not start after a successful build.\n\n" +
@@ -350,7 +365,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                                                         e: com.intellij.execution.runners.ExecutionEnvironment,
                                                         handler: com.intellij.execution.process.ProcessHandler
                                                     ) {
-                                                        if (e == env) runConnection.disconnect()
+                                                        if (e == env) runConnectionRef.getAndSet(null)?.disconnect()
                                                     }
                                                 }
                                             )
@@ -359,7 +374,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                                             Thread {
                                                 try {
                                                     Thread.sleep(BUILD_WATCHDOG_MAX_MS)
-                                                    runConnection.disconnect()
+                                                    runConnectionRef.getAndSet(null)?.disconnect()
                                                 } catch (_: InterruptedException) { /* normal */ }
                                             }.apply { isDaemon = true; name = "build-watchdog-timeout"; start() }
 
@@ -370,8 +385,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                                     }
                                 }
                                 .onError { _ ->
-                                    buildConnection.disconnect()
-                                    buildConnectionRef.set(null)
+                                    buildConnectionRef.getAndSet(null)?.disconnect()
                                     if (continuation.isActive) {
                                         continuation.resume(
                                             buildCompileFailureResult(
@@ -383,8 +397,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                                     }
                                 }
                         } catch (e: Exception) {
-                            buildConnection.disconnect()
-                            buildConnectionRef.set(null)
+                            buildConnectionRef.getAndSet(null)?.disconnect()
                             reasonOut.append("ProjectTaskManager.build threw ${e.javaClass.simpleName}: ${e.message}")
                             if (continuation.isActive) continuation.resume(null)
                         }
@@ -426,7 +439,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
      * Leading-line format: `BUILD FAILED — N compile error(s) prevented tests from starting:`
      * — matches the plan document so the LLM cannot skim-read this as a red test.
      */
-    private fun buildCompileFailureResult(
+    internal fun buildCompileFailureResult(
         context: CompileContext?,
         testTarget: String,
         aborted: Boolean

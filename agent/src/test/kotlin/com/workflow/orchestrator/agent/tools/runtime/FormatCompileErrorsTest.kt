@@ -6,7 +6,8 @@ import com.intellij.openapi.compiler.CompilerMessageCategory
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.pom.Navigatable
-import org.junit.jupiter.api.Assertions.assertEquals
+import io.mockk.every
+import io.mockk.mockk
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -29,8 +30,11 @@ import java.lang.reflect.Proxy
  * `java.lang.InstantiationError: CompilerMessageCategory`.
  *
  * Instead we use Java dynamic `Proxy` to synthesize just enough of the
- * [CompileContext] / [CompilerMessage] / [VirtualFile] / [OpenFileDescriptor]
- * contracts that [formatCompileErrors] exercises.
+ * [CompileContext] / [CompilerMessage] / [VirtualFile] contracts that
+ * [formatCompileErrors] exercises. [OpenFileDescriptor] is a concrete class
+ * that [Proxy] cannot synthesize, so we mock it via MockK directly — this
+ * avoids the `MockProject(null)` constructor-signature-drift hazard used
+ * by an earlier iteration of this test.
  */
 class FormatCompileErrorsTest {
 
@@ -57,34 +61,17 @@ class FormatCompileErrorsTest {
     private fun fakeVirtualFile(name: String): VirtualFile =
         com.intellij.testFramework.LightVirtualFile(name)
 
-    /** OpenFileDescriptor is a concrete class, not an interface, so proxy() cannot
-     *  synthesize it. Subclass directly with a lightweight constructor path. For our
-     *  purposes we only need `line` and `column` to return stub values — the helper
-     *  never calls anything else on the navigatable. */
+    /** OpenFileDescriptor is a concrete class, not an interface, so [Proxy] cannot
+     *  synthesize it. Use MockK instead — we only need the runtime type to be
+     *  [OpenFileDescriptor] (for the `is` check in the helper) and for `line` /
+     *  `column` to return our stub values. This avoids the prior approach of
+     *  subclassing with `MockProject(null)`, whose constructor shape is an
+     *  internal-API moving target across IDE versions. */
     private fun fakeOpenFileDescriptor(line0: Int, col0: Int): OpenFileDescriptor {
-        // Real OpenFileDescriptor requires a Project + VirtualFile. We only need the
-        // runtime type to be `OpenFileDescriptor` (for the `is` check in the helper) AND
-        // for `line` / `column` to return our stub values. Subclassing gives us both
-        // without any IntelliJ-service overhead.
-        //
-        // CAVEAT: we pass null Project via unsafe reflection through the superclass.
-        // This works in tests because the helper NEVER invokes anything on the
-        // descriptor that needs the project (it only reads line+column).
-        return LineColOpenFileDescriptor(line0, col0)
-    }
-
-    /** Subclass of OpenFileDescriptor that stubs line/column without needing a Project.
-     *  Uses a package-private test constructor? None exists — so we synthesize via
-     *  unsafe allocation. */
-    private class LineColOpenFileDescriptor(private val line0: Int, private val col0: Int)
-        : OpenFileDescriptor(
-            // IntelliJ's MockProject has a no-arg pattern used in unit tests
-            com.intellij.mock.MockProject(null) { /* disposer */ },
-            // A valid (though mock) VirtualFile
-            com.intellij.testFramework.LightVirtualFile("dummy")
-        ) {
-        override fun getLine(): Int = line0
-        override fun getColumn(): Int = col0
+        val mock = mockk<OpenFileDescriptor>(relaxed = true)
+        every { mock.line } returns line0
+        every { mock.column } returns col0
+        return mock
     }
 
     private fun fakeCompilerMessage(
@@ -329,6 +316,59 @@ class FormatCompileErrorsTest {
         assertTrue(
             result.summary.endsWith("...") || !result.summary.contains(longMessage),
             "long message must be truncated in the summary"
+        )
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // buildCompileFailureResult — null-context fallback paths.
+    // These matter because when the CompilationStatusListener doesn't fire
+    // (e.g. build aborted early, or the callback was never delivered), the
+    // tool must still return an LLM-safe message that says "BUILD FAILED",
+    // not a generic compile-result wrapper. Exercises the `context == null`
+    // branch that formatCompileErrors can't reach.
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `buildCompileFailureResult with null context and aborted=true mentions aborted`() {
+        val tool = JavaRuntimeExecTool()
+        val result = tool.buildCompileFailureResult(
+            context = null,
+            testTarget = "com.example.FooTest",
+            aborted = true
+        )
+
+        assertTrue(result.isError, "null-context failure must still be an error")
+        assertTrue(
+            result.content.contains("BUILD FAILED"),
+            "content must lead with BUILD FAILED. Got: ${result.content}"
+        )
+        assertTrue(
+            result.content.contains("aborted", ignoreCase = true),
+            "content must mention that the build was aborted. Got: ${result.content}"
+        )
+        assertTrue(
+            result.summary.contains("aborted", ignoreCase = true),
+            "summary must mention the abort. Got: ${result.summary}"
+        )
+    }
+
+    @Test
+    fun `buildCompileFailureResult with null context and aborted=false mentions no compile context captured`() {
+        val tool = JavaRuntimeExecTool()
+        val result = tool.buildCompileFailureResult(
+            context = null,
+            testTarget = "com.example.FooTest",
+            aborted = false
+        )
+
+        assertTrue(result.isError, "null-context failure must still be an error")
+        assertTrue(
+            result.content.contains("BUILD FAILED"),
+            "content must lead with BUILD FAILED. Got: ${result.content}"
+        )
+        assertTrue(
+            result.content.contains("no compile context captured", ignoreCase = true),
+            "content must say 'no compile context captured' to tell the LLM the listener never fired. Got: ${result.content}"
         )
     }
 }
