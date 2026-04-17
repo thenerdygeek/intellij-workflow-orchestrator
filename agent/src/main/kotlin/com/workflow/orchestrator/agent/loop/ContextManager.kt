@@ -103,6 +103,31 @@ class ContextManager(
      */
     private var taskProgressMarkdown: String? = null
 
+    /**
+     * Optional TaskStore reference for the new typed task system (Phase 3+).
+     * When attached, [renderTaskProgressMarkdown] reads live task state from the store.
+     * The legacy [taskProgressMarkdown] field remains in parallel until Phase 6.
+     */
+    private var taskStore: com.workflow.orchestrator.agent.session.TaskStore? = null
+
+    fun attachTaskStore(store: com.workflow.orchestrator.agent.session.TaskStore) {
+        taskStore = store
+    }
+
+    /**
+     * Render current tasks as a Markdown checklist. Returns null if no store attached or no tasks.
+     * Format: "- [x] completed" / "- [ ] other". DELETED tasks are filtered out.
+     */
+    fun renderTaskProgressMarkdown(): String? {
+        val store = taskStore ?: return null
+        val tasks = store.listTasks().filter { it.status != com.workflow.orchestrator.agent.loop.TaskStatus.DELETED }
+        if (tasks.isEmpty()) return null
+        return tasks.joinToString("\n") { t ->
+            val box = if (t.status == com.workflow.orchestrator.agent.loop.TaskStatus.COMPLETED) "[x]" else "[ ]"
+            "- $box ${t.subject}"
+        }
+    }
+
     // ---- Message management ----
 
     fun setSystemPrompt(prompt: String) {
