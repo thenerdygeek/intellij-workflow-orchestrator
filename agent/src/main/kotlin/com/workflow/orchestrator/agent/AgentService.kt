@@ -29,6 +29,7 @@ import com.workflow.orchestrator.agent.prompt.InstructionLoader
 import com.workflow.orchestrator.agent.prompt.SystemPrompt
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.agent.session.AtomicFileWriter
+import com.workflow.orchestrator.agent.session.TaskStore
 import com.workflow.orchestrator.agent.session.Session
 import com.workflow.orchestrator.agent.session.SessionStatus
 import com.workflow.orchestrator.agent.session.HistoryItem
@@ -271,6 +272,16 @@ class AgentService(private val project: Project) : Disposable {
     @Volatile var activeMessageStateHandler: MessageStateHandler? = null
         private set
 
+    /**
+     * Session-scoped task store. Initialised alongside [activeMessageStateHandler] at
+     * task start, nulled out in the finally block and on [resetForNewChat].
+     * Tools access it via [currentTaskStore].
+     */
+    @Volatile private var taskStore: com.workflow.orchestrator.agent.session.TaskStore? = null
+
+    /** Provider for the task-system tools — returns null when no session is active. */
+    fun currentTaskStore(): com.workflow.orchestrator.agent.session.TaskStore? = taskStore
+
     // ── Auto Memory ────────────────────────────────────────────────────────
 
     /**
@@ -488,6 +499,13 @@ class AgentService(private val project: Project) : Disposable {
         safeRegisterCore { UseSkillTool() }
         safeRegisterCore { NewTaskTool() }
         safeRegisterCore { RenderArtifactTool() }
+
+        // Task system tools — four LLM-facing tools for typed task management.
+        // Ported from Claude Code's task-system behavior. Hook-exempt (see AgentLoop.HOOK_EXEMPT).
+        safeRegisterCore { TaskCreateTool { currentTaskStore() } }
+        safeRegisterCore { TaskUpdateTool { currentTaskStore() } }
+        safeRegisterCore { TaskListTool { currentTaskStore() } }
+        safeRegisterCore { TaskGetTool { currentTaskStore() } }
 
         // Core PSI — essential navigation tools (guarded by IDE context)
         val hasPsiSupport = ToolRegistrationFilter.shouldRegisterJavaPsiTools(ideContext) ||
@@ -1222,6 +1240,11 @@ class AgentService(private val project: Project) : Disposable {
                 // Expose active handler so AgentController.dismissPlan() can rewrite history.
                 activeMessageStateHandler = messageState
 
+                // Initialise session-scoped task store alongside the message state handler.
+                // loadFromDisk() runs inside a coroutine scope so it is safe to call here.
+                taskStore = TaskStore(baseDir = sessionBaseDir, sessionId = sid)
+                taskStore?.loadFromDisk()
+
                 // Wire onHistoryOverwrite callback so compaction persists truncated history.
                 // Ported from Cline's conversationHistoryDeletedRange pattern: after context
                 // truncation/summarization, the modified api_conversation_history is overwritten.
@@ -1439,6 +1462,7 @@ class AgentService(private val project: Project) : Disposable {
             } finally {
                 activeTask.set(null)
                 activeMessageStateHandler = null
+                taskStore = null
                 // Clear API debug dir so the brain doesn't dump after task ends
                 (brainRef as? OpenAiCompatBrain)?.setApiDebugDir(null)
                 // Clear per-task sub-agent callbacks. Leaving any of these attached
@@ -1895,6 +1919,7 @@ class AgentService(private val project: Project) : Disposable {
         ProcessRegistry.killAll()
         activeTask.set(null)
         _outputSpiller = null  // Clear session-scoped spiller so the next session gets a fresh one
+        taskStore = null       // Clear session-scoped task store
         sessionDisposableHolder.resetSession()
     }
 
