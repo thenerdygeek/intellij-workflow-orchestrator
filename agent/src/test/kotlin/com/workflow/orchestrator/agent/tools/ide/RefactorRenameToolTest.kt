@@ -382,6 +382,29 @@ class RefactorRenameToolTest {
     }
 
     @Test
+    fun `summarizeForApproval executes before performRefactoring in source`() {
+        // The library block and cross-module gate are safety checks; they MUST
+        // run BEFORE performRefactoring. If a future refactor swaps the phase
+        // ordering (safety-analysis after mutation), the library block becomes
+        // a post-hoc error message rather than a gate — the jar usages would
+        // already be partially renamed in the project, and the LLM would
+        // receive `isError=true` after the damage. This structural test pins
+        // the ordering invariant.
+        val text = readSource("RefactorRenameTool.kt")
+        val summarizeIdx = text.indexOf("summarizeForApproval(")
+        val performIdx = text.indexOf("performRefactoring(")
+        assertTrue(summarizeIdx >= 0, "expected summarizeForApproval(...) call")
+        assertTrue(performIdx >= 0, "expected performRefactoring(...) call")
+        assertTrue(
+            summarizeIdx < performIdx,
+            "F4 (Task 5.3): summarizeForApproval must execute BEFORE " +
+                "performRefactoring. Otherwise the library block is a " +
+                "post-hoc error message, not a safety gate — jar usages " +
+                "would already be partially renamed before detection.",
+        )
+    }
+
+    @Test
     fun `source file includes module count in success result`() {
         // Final rename result: must include module count so the LLM sees the
         // blast radius of what happened. Brief spec says:

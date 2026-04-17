@@ -134,8 +134,8 @@ class RefactorRenameTool(
                             "  - ${counts.total} usages in module :$mod (${counts.testCount} test, ${counts.prodCount} production)"
                         }
                         return ToolResult(
-                            "Rename of '$oldName' → '$newName' will affect:\n$moduleLines\n\n" +
-                                "This spans multiple modules. Re-run with confirm_cross_module=true to apply.",
+                            "PREVIEW (no changes made yet): rename of '$oldName' → '$newName' will affect:\n$moduleLines\n\n" +
+                                "This spans multiple modules. To proceed, re-invoke refactor_rename with the SAME arguments plus confirm_cross_module=true.",
                             "Cross-module preview — confirmation required",
                             10
                             // NOT isError — this is a successful preview, not
