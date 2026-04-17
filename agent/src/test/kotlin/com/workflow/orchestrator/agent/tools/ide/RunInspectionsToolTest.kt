@@ -216,7 +216,12 @@ class RunInspectionsToolTest {
      * API shape.
      */
     @Test
-    @Disabled("F5 fallback: manual walk retained; see TODO(phase7) in RunInspectionsTool.kt")
+    @Disabled(
+        "F5 deferred: LocalInspectionToolWrapper.processFile is not in the public API " +
+            "(see docs/superpowers/research/2026-03-20-intellij-api-signatures.md §4). " +
+            "Re-enable when upstream exposes a public wrapper, or migrate to whatever " +
+            "succeeds it. See TODO(phase7) in RunInspectionsTool.kt."
+    )
     fun `source file does not use deprecated buildVisitor walk`() {
         val text = readSource("RunInspectionsTool.kt")
         assertFalse(
