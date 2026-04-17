@@ -152,7 +152,12 @@ internal fun collectTestResults(root: SMTestProxy): List<TestResultEntry> {
         .filter { it.isLeaf }
         .filter { proxy ->
             val url = proxy.locationUrl
-            url != null && (url.startsWith("java:test://") || url.startsWith("java:suite://"))
+            url != null && (
+                url.startsWith("java:test://") ||
+                url.startsWith("java:suite://") ||
+                url.startsWith("python://") ||
+                url.startsWith("file://")
+            )
         }
         .map { mapToTestResultEntry(it) }
 }
