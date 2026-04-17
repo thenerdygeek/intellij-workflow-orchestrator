@@ -141,6 +141,61 @@ internal class SessionDisposableHolder(
     }
 
     /**
+     * Allocate a new per-debug-session disposal scope under the current
+     * session. Phase 5 / Task 4.3 — see
+     * `docs/plans/2026-04-17-phase5-debug-tools-fixes.md`. Sibling of
+     * [newRunInvocation] for [com.workflow.orchestrator.agent.tools.debug.DebugInvocation];
+     * used by `AgentDebugController.registerSession` to route
+     * `XDebugSessionListener` attachment through the 2-arg
+     * `addSessionListener(listener, parentDisposable)` overload.
+     *
+     * ```kotlin
+     * val invocation = holder.newDebugInvocation("debug-$counter")
+     * try {
+     *     invocation.attachListener(xDebugSession, xDebugSessionListener)
+     *     invocation.pauseFlow.emit(pauseEvent)
+     *     // ... await pause / step / stop events ...
+     * } finally {
+     *     Disposer.dispose(invocation)
+     * }
+     * ```
+     *
+     * If the user clicks "new chat" while a debug session is in flight,
+     * [resetSession] disposes the parent session, which cascades to
+     * this `DebugInvocation` — session listeners detach via their
+     * registered parent Disposable, the replay cache is reset, and any
+     * user-registered `onDispose` blocks fire.
+     *
+     * ### Why two registrations
+     *
+     * `DebugInvocation` constructs its own internal `disposable` as a
+     * child of [sessionDisposable] (used for 2-arg
+     * `addSessionListener` auto-cleanup and `MessageBusConnection`
+     * teardown), but the `DebugInvocation` *instance itself* must also
+     * participate in the Disposer tree so cascading a session reset
+     * actually invokes `DebugInvocation.dispose()` — which is what
+     * resets the replay cache and fires any user-registered
+     * `onDispose { … }` hooks. So we `Disposer.register` the
+     * invocation itself as a child of [sessionDisposable]. The
+     * internal `disposable`'s own parenting is redundant for the
+     * cascade path but harmless —
+     * [com.workflow.orchestrator.agent.tools.debug.DebugInvocation.dispose]
+     * is idempotent.
+     */
+    fun newDebugInvocation(
+        name: String,
+    ): com.workflow.orchestrator.agent.tools.debug.DebugInvocation {
+        val session = sessionDisposable
+        val invocation = com.workflow.orchestrator.agent.tools.debug.DebugInvocation(session, name)
+        // Register the invocation itself so a cascade dispose (e.g. resetSession)
+        // actually invokes DebugInvocation.dispose() — not merely its internal
+        // `disposable` child. Disposer.dispose is idempotent so the fact that
+        // the internal `disposable` is ALSO a child of session is safe.
+        Disposer.register(session, invocation)
+        return invocation
+    }
+
+    /**
      * Tear down the current session's `Disposable` (cascading to every
      * outstanding `RunInvocation`) and install a fresh one for the next
      * session.

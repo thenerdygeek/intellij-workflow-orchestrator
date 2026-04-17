@@ -59,6 +59,7 @@ import com.workflow.orchestrator.agent.tools.database.*
 import com.workflow.orchestrator.agent.tools.debug.AgentDebugController
 import com.workflow.orchestrator.agent.tools.debug.DebugBreakpointsTool
 import com.workflow.orchestrator.agent.tools.debug.DebugInspectTool
+import com.workflow.orchestrator.agent.tools.debug.DebugInvocation
 import com.workflow.orchestrator.agent.tools.debug.DebugStepTool
 import com.workflow.orchestrator.agent.tools.framework.*
 import com.workflow.orchestrator.agent.tools.ide.*
@@ -190,6 +191,34 @@ class AgentService(private val project: Project) : Disposable {
      */
     internal fun newRunInvocation(name: String): RunInvocation =
         sessionDisposableHolder.newRunInvocation(name)
+
+    /**
+     * Allocate a per-debug-session disposal scope tied to the current
+     * chat session. Phase 5 / Task 4.3 — see
+     * `docs/plans/2026-04-17-phase5-debug-tools-fixes.md`. Sibling of
+     * [newRunInvocation] for `XDebugSession` listener lifecycle —
+     * returns a [DebugInvocation] whose parent is the session
+     * Disposable, so a "new chat" click cascade-disposes any
+     * outstanding debug invocation automatically (listeners detached,
+     * replay cache cleared, `onDispose` hooks fired). Task 4.2 will
+     * convert `AgentDebugController.registerSession` to consume this
+     * factory.
+     *
+     * Typical usage:
+     *
+     * ```kotlin
+     * val invocation = project.service<AgentService>().newDebugInvocation("debug-$counter")
+     * try {
+     *     invocation.attachListener(xDebugSession, xDebugSessionListener)
+     *     invocation.pauseFlow.emit(pauseEvent)
+     *     // ... await pause / step / stop events ...
+     * } finally {
+     *     Disposer.dispose(invocation)
+     * }
+     * ```
+     */
+    internal fun newDebugInvocation(name: String): DebugInvocation =
+        sessionDisposableHolder.newDebugInvocation(name)
 
     init {
         val basePath = project.basePath ?: System.getProperty("user.home")
