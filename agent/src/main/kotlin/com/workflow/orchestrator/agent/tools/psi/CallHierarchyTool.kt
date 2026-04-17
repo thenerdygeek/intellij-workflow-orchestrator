@@ -95,10 +95,12 @@ class CallHierarchyTool(
             sb.toString()
         }.inSmartMode(project).executeSynchronously()
 
+        val spilled = spillOrFormat(content, project)
         return ToolResult(
-            content = content,
+            content = spilled.preview,
             summary = "Call hierarchy for '$methodName'",
-            tokenEstimate = TokenEstimator.estimate(content)
+            tokenEstimate = TokenEstimator.estimate(spilled.preview),
+            spillPath = spilled.spilledToFile,
         )
     }
 }

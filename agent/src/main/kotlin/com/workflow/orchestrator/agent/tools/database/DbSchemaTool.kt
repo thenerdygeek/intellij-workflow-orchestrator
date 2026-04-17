@@ -120,11 +120,13 @@ class DbSchemaTool : AgentTool {
         }
 
         return result.fold(
-            onSuccess = { content ->
+            onSuccess = { raw ->
+                val spilled = spillOrFormat(raw, project)
                 ToolResult(
-                    content = content,
+                    content = spilled.preview,
                     summary = "db_schema on '$summaryProfileLabel': $summaryDetail",
-                    tokenEstimate = TokenEstimator.estimate(content)
+                    tokenEstimate = TokenEstimator.estimate(spilled.preview),
+                    spillPath = spilled.spilledToFile,
                 )
             },
             onFailure = { e ->

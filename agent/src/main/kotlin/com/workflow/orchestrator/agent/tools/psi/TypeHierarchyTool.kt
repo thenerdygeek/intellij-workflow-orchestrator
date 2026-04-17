@@ -82,10 +82,12 @@ class TypeHierarchyTool(
             sb.toString()
         }.inSmartMode(project).executeSynchronously()
 
+        val spilled = spillOrFormat(content, project)
         return ToolResult(
-            content = content,
+            content = spilled.preview,
             summary = "Type hierarchy for '$className'",
-            tokenEstimate = TokenEstimator.estimate(content)
+            tokenEstimate = TokenEstimator.estimate(spilled.preview),
+            spillPath = spilled.spilledToFile,
         )
     }
 }

@@ -114,13 +114,15 @@ class DbExplainTool : AgentTool {
 
         return result.fold(
             onSuccess = { plan ->
-                val content = "$modeLabel for **$targetLabel** (${profile.dbType.displayName}):\n\n" +
+                val raw = "$modeLabel for **$targetLabel** (${profile.dbType.displayName}):\n\n" +
                     "```sql\n$sql\n```\n\n" +
                     "```\n$plan\n```"
+                val spilled = spillOrFormat(raw, project)
                 ToolResult(
-                    content = content,
+                    content = spilled.preview,
                     summary = "db_explain on '$summaryProfileLabel' ($modeLabel)",
-                    tokenEstimate = TokenEstimator.estimate(content)
+                    tokenEstimate = TokenEstimator.estimate(spilled.preview),
+                    spillPath = spilled.spilledToFile,
                 )
             },
             onFailure = { e ->

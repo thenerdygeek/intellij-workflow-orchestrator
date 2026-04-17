@@ -91,12 +91,14 @@ class DbQueryTool : AgentTool {
 
         return result.fold(
             onSuccess = { (table, rowCount) ->
-                val content = "Query against **$targetLabel** (${profile.dbType.displayName}):\n\n" +
+                val raw = "Query against **$targetLabel** (${profile.dbType.displayName}):\n\n" +
                     "```sql\n$sql\n```\n\n$table\n_$rowCount row(s) returned._"
+                val spilled = spillOrFormat(raw, project)
                 ToolResult(
-                    content = content,
+                    content = spilled.preview,
                     summary = "db_query on '${profile.id}${database?.let { "/$it" } ?: ""}': $rowCount row(s)",
-                    tokenEstimate = TokenEstimator.estimate(content)
+                    tokenEstimate = TokenEstimator.estimate(spilled.preview),
+                    spillPath = spilled.spilledToFile,
                 )
             },
             onFailure = { e ->

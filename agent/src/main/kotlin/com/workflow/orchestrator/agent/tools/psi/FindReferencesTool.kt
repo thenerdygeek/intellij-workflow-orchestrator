@@ -104,10 +104,12 @@ class FindReferencesTool(
             header + results.joinToString("\n") + truncated
         }.inSmartMode(project).executeSynchronously()
 
+        val spilled = spillOrFormat(content, project)
         return ToolResult(
-            content = content,
+            content = spilled.preview,
             summary = "References for '$symbol'",
-            tokenEstimate = TokenEstimator.estimate(content)
+            tokenEstimate = TokenEstimator.estimate(spilled.preview),
+            spillPath = spilled.spilledToFile,
         )
     }
 

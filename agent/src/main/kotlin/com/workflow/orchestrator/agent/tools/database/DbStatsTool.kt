@@ -113,11 +113,13 @@ class DbStatsTool : AgentTool {
         return result.fold(
             onSuccess = { (markdownTable, note) ->
                 val header = "Table statistics for **$targetLabel** (${profile.dbType.displayName}) — $scopeLabel\n\n"
-                val content = header + markdownTable + (if (note.isNotEmpty()) "\n$note" else "")
+                val raw = header + markdownTable + (if (note.isNotEmpty()) "\n$note" else "")
+                val spilled = spillOrFormat(raw, project)
                 ToolResult(
-                    content = content,
+                    content = spilled.preview,
                     summary = "db_stats on '$summaryProfileLabel': $scopeLabel",
-                    tokenEstimate = TokenEstimator.estimate(content)
+                    tokenEstimate = TokenEstimator.estimate(spilled.preview),
+                    spillPath = spilled.spilledToFile,
                 )
             },
             onFailure = { e ->
