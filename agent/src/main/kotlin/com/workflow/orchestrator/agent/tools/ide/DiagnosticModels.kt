@@ -17,6 +17,10 @@ import kotlinx.serialization.json.Json
  * - [column] is 1-based; -1 means column is unknown.
  * - [category] is the IntelliJ group name when available ("Probable bugs",
  *   "Type hierarchy", …); null otherwise.
+ *
+ * Schema evolution: fields may be ADDED with defaults (readers with
+ * `ignoreUnknownKeys = true` will accept the old format). Removing or renaming a
+ * field is a breaking change that requires migrating Phase 7's spiller consumers.
  */
 @Serializable
 data class DiagnosticEntry(
@@ -34,10 +38,16 @@ data class DiagnosticEntry(
  * Delimiter marking where prose ends and the JSON-serialized structured list begins.
  * Phase 7's spiller grep's for this to route prose→preview, JSON→disk.
  * DO NOT change without updating ToolOutputSpiller consumers.
+ *
+ * Readers decode with `ignoreUnknownKeys = true`, so additive field changes are safe.
  */
 const val DIAGNOSTIC_STRUCTURED_DATA_MARKER = "---DIAGNOSTIC-STRUCTURED-DATA---"
 
-private val diagnosticJson = Json { encodeDefaults = true; prettyPrint = false }
+private val diagnosticJson = Json {
+    encodeDefaults = true
+    prettyPrint = false
+    ignoreUnknownKeys = true
+}
 
 /**
  * Compose a tool result body as `prose + marker + JSON-encoded entries`.

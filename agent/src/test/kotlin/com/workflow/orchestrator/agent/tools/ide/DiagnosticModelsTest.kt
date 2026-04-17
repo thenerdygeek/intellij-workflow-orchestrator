@@ -188,4 +188,30 @@ class DiagnosticModelsTest {
         assertEquals(prose, parsedProse)
         assertEquals(entries, parsedEntries)
     }
+
+    @Test
+    fun `renderDiagnosticBody emits default field values in JSON (encodeDefaults)`() {
+        val entries = listOf(
+            DiagnosticEntry(
+                file = "x.kt", line = 1, column = 1,
+                severity = "WARNING", toolId = "t", description = "d",
+                hasQuickFix = false, // category defaulted to null
+            ),
+        )
+        val body = renderDiagnosticBody(prose = "p", entries = entries)
+        assertTrue(
+            body.contains("\"category\":null"),
+            "encodeDefaults=true must emit defaulted null category so Phase 7 readers see a stable shape",
+        )
+    }
+
+    @Test
+    fun `parseDiagnosticBody tolerates unknown fields (forward-compat)`() {
+        val bodyWithExtra = "prose\n$DIAGNOSTIC_STRUCTURED_DATA_MARKER\n" +
+            """[{"file":"a","line":1,"column":1,"severity":"ERROR","toolId":"t","description":"d","hasQuickFix":true,"category":null,"extraFieldFromFuture":42}]"""
+        val (prose, entries) = parseDiagnosticBody(bodyWithExtra)
+        assertEquals("prose", prose)
+        assertEquals(1, entries.size)
+        assertEquals("a", entries[0].file)
+    }
 }
