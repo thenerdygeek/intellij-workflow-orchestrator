@@ -34,7 +34,13 @@ import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
 import com.workflow.orchestrator.agent.tools.truncateOutput
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import kotlinx.coroutines.CancellableContinuation
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
@@ -300,12 +306,9 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         // disconnected the run connection) is gone — the outer `withTimeoutOrNull`
         // fires → this finally runs → everything is released.
         val invocation = project.service<AgentService>().newRunInvocation("run-tests-${System.currentTimeMillis()}")
-        // Keep local refs as aliases to the invocation's public refs so Task 2.4 can
-        // refactor handleDescriptorReady to consume `invocation` directly without
-        // another rename pass here. Task 2.3 boundary: the local vars still exist
-        // but point to invocation-owned storage.
-        val processHandlerRef: AtomicReference<ProcessHandler?> = invocation.processHandlerRef
-        val descriptorRef: AtomicReference<RunContentDescriptor?> = invocation.descriptorRef
+        // Task 2.4 follow-up: handleDescriptorReady now consumes `invocation` directly
+        // (its descriptorRef / processHandlerRef / attachListener / attachProcessListener),
+        // so the local-var aliases that bridged Task 2.3 are gone.
 
         try {
             val result = withTimeoutOrNull(timeoutSeconds * 1000) {
@@ -400,9 +403,9 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                                                             if (continuation.isActive) continuation.resume(null)
                                                             return
                                                         }
-                                                        handleDescriptorReady(descriptor, continuation, testTarget, descriptorRef, processHandlerRef, project, invocation)
+                                                        handleDescriptorReady(descriptor, continuation, testTarget, invocation, project)
                                                         // Descriptor is populated into invocation.descriptorRef by
-                                                        // handleDescriptorReady (via the aliased descriptorRef param).
+                                                        // handleDescriptorReady directly.
                                                         // Register an onDispose callback that removes it from
                                                         // RunContentManager — this is the release mechanism for the
                                                         // TestResultsViewer (and its EventsListener) because
@@ -498,9 +501,9 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                 }
             }
 
-            if (result == null && processHandlerRef.get() != null) {
-                processHandlerRef.get()?.destroyProcess()
-                val descriptor = descriptorRef.get()
+            if (result == null && invocation.processHandlerRef.get() != null) {
+                invocation.processHandlerRef.get()?.destroyProcess()
+                val descriptor = invocation.descriptorRef.get()
                 val partialResult = descriptor?.let { extractNativeResults(it, testTarget) }
                 return if (partialResult != null) {
                     partialResult.copy(
@@ -570,66 +573,88 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         descriptor: RunContentDescriptor,
         continuation: CancellableContinuation<ToolResult?>,
         testTarget: String,
-        descriptorRef: AtomicReference<RunContentDescriptor?>,
-        processHandlerRef: AtomicReference<ProcessHandler?>,
+        invocation: RunInvocation,
         project: Project? = null,
-        @Suppress("UNUSED_PARAMETER") invocation: RunInvocation? = null
     ) {
-        descriptorRef.set(descriptor)
+        invocation.descriptorRef.set(descriptor)
         val handler = descriptor.processHandler
-        processHandlerRef.set(handler)
+        invocation.processHandlerRef.set(handler)
 
         val toolCallId = RunCommandTool.currentToolCallId.get()
         val activeStreamCallback = if (project != null) resolveStreamCallback(project) else RunCommandTool.streamCallback
 
         if (handler != null && toolCallId != null) {
-            handler.addProcessListener(object : ProcessAdapter() {
+            // Phase 3 / Task 2.4: route through invocation.attachProcessListener so the
+            // listener is auto-removed when invocation disposes (uses 2-arg
+            // addProcessListener(listener, disposable) form internally — no manual
+            // removeProcessListener needed on terminal notification).
+            val streamingListener = object : ProcessAdapter() {
                 override fun onTextAvailable(event: ProcessEvent, outputType: com.intellij.openapi.util.Key<*>) {
                     val text = event.text ?: return
                     if (text.isNotBlank()) {
                         activeStreamCallback?.invoke(toolCallId, text)
                     }
                 }
-            })
+            }
+            invocation.attachProcessListener(handler, streamingListener)
         }
 
         val testConsole = TestConsoleUtils.unwrapToTestConsole(descriptor.executionConsole)
         if (testConsole != null) {
             val resultsViewer = testConsole.resultsViewer
-            resultsViewer.addEventsListener(object : TestResultsViewer.EventsListener {
+            // Phase 3 / Task 2.4: route through invocation.attachListener — wraps the
+            // listener in a defense-in-depth proxy that gates on the invocation's
+            // disposed flag. If the framework re-fires onTestingFinished after we've
+            // already disposed (e.g. timeout fired and continuation was cancelled),
+            // the proxy silently drops the call instead of resuming an already-consumed
+            // continuation.
+            val eventsListener = object : TestResultsViewer.EventsListener {
                 override fun onTestingFinished(sender: TestResultsViewer) {
                     val root = sender.testsRootNode as? SMTestProxy.SMRootTestProxy
                     if (root != null && continuation.isActive) {
                         continuation.resume(interpretTestRoot(root, descriptor.displayName ?: testTarget))
                     }
                 }
-            })
+            }
+            invocation.attachListener(eventsListener, resultsViewer)
         } else {
             // Fallback: no test console available — wait for process exit, then retry
             // until the test tree is populated. No TestResultsViewer.EventsListener is
             // available here, so we poll with short intervals instead of a blind 2s Timer.
+            //
+            // Phase 3 / Task 2.4: replaces the prior raw `test-tree-finalize` Thread.
+            // We launch a coroutine on a per-invocation scope (Dispatchers.IO) and
+            // tie its cancellation to invocation.onDispose so:
+            //   - timeout/cancel disposes the invocation → scope.cancel() → poll loop
+            //     stops promptly without leaking a daemon thread,
+            //   - delay() is interruptible (unlike Thread.sleep) so cancellation is
+            //     immediate rather than waiting up to TEST_TREE_RETRY_INTERVAL_MS.
             if (handler != null) {
+                val pollScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+                invocation.onDispose { pollScope.cancel() }
+
                 val doExtract = {
-                    Thread {
+                    pollScope.launch {
                         for (attempt in 1..TEST_TREE_RETRY_ATTEMPTS) {
-                            if (!continuation.isActive) return@Thread
+                            if (!continuation.isActive) return@launch
                             if (TestConsoleUtils.findTestRoot(descriptor)?.children?.isNotEmpty() == true) break
-                            Thread.sleep(TEST_TREE_RETRY_INTERVAL_MS)
+                            delay(TEST_TREE_RETRY_INTERVAL_MS)
                         }
                         if (continuation.isActive) {
                             continuation.resume(extractNativeResults(descriptor, testTarget))
                         }
-                    }.apply { isDaemon = true; name = "test-tree-finalize"; start() }
+                    }
                 }
 
                 if (handler.isProcessTerminated) {
                     doExtract()
                 } else {
-                    handler.addProcessListener(object : ProcessAdapter() {
+                    val terminationListener = object : ProcessAdapter() {
                         override fun processTerminated(event: ProcessEvent) {
                             doExtract()
                         }
-                    })
+                    }
+                    invocation.attachProcessListener(handler, terminationListener)
                 }
             } else {
                 if (continuation.isActive) continuation.resume(null)
