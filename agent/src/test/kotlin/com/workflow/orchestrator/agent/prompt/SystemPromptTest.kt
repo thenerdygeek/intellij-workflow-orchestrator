@@ -268,7 +268,7 @@ class SystemPromptTest {
         )
     }
 
-    // ---- Task progress section tests ----
+    // ---- Task management section tests ----
 
     @Test
     fun `includes task progress section when provided`() {
@@ -284,8 +284,12 @@ class SystemPromptTest {
         )
 
         assertTrue(
-            prompt.contains("UPDATING TASK PROGRESS"),
-            "should contain task progress heading"
+            prompt.contains("TASK MANAGEMENT"),
+            "should contain task management heading"
+        )
+        assertTrue(
+            prompt.contains("Current tasks:"),
+            "should contain current tasks block when progress is provided"
         )
         assertTrue(
             prompt.contains("- [x] Set up project structure"),
@@ -298,26 +302,34 @@ class SystemPromptTest {
     }
 
     @Test
-    fun `omits task progress section when null`() {
+    fun `omits current tasks block when null`() {
         val prompt = SystemPrompt.build(
             projectName = "p", projectPath = "/p", taskProgress = null
         )
 
+        assertTrue(
+            prompt.contains("TASK MANAGEMENT"),
+            "section is always present — typed task system"
+        )
         assertFalse(
-            prompt.contains("UPDATING TASK PROGRESS"),
-            "should not contain task progress heading"
+            prompt.contains("Current tasks:"),
+            "should not contain current tasks block when progress is null"
         )
     }
 
     @Test
-    fun `omits task progress section when blank`() {
+    fun `omits current tasks block when blank`() {
         val prompt = SystemPrompt.build(
             projectName = "p", projectPath = "/p", taskProgress = "  "
         )
 
+        assertTrue(
+            prompt.contains("TASK MANAGEMENT"),
+            "section is always present — typed task system"
+        )
         assertFalse(
-            prompt.contains("UPDATING TASK PROGRESS"),
-            "should not contain task progress heading for blank input"
+            prompt.contains("Current tasks:"),
+            "should not contain current tasks block for blank input"
         )
     }
 
