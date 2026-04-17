@@ -309,4 +309,70 @@ class DiagnosticModelsTest {
             )
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // normalizeProviderSeverity — shared canonical mapper for T5
+    // [SemanticDiagnosticsTool]. Input is the String emitted by
+    // `LanguageIntelligenceProvider.DiagnosticInfo.severity`.
+    //
+    // Contract: maps raw provider severity strings (any case, any vocabulary)
+    // onto the canonical `"ERROR" | "WARNING" | "INFO"` set used by
+    // [DiagnosticEntry.severity]. This is the THIRD severity normalizer in
+    // the codebase (alongside ProblemHighlightType and HighlightSeverity) —
+    // extracting here is justified only because we now have three callers.
+    //
+    // Current provider emissions (verified against JavaKotlinProvider and
+    // PythonProvider at the time T5 landed): both providers emit only the
+    // uppercase literal "ERROR" (for syntax errors and unresolved references).
+    // This vocabulary is pinned by the exhaustive provider-vocabulary test
+    // below. If providers later emit "WARNING" or other levels, extend both
+    // providers AND this mapper together.
+    // ═══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `normalizeProviderSeverity pins providers' current vocabulary (uppercase ERROR)`() {
+        // This is the actual vocabulary currently emitted by both
+        // JavaKotlinProvider.getDiagnostics and PythonProvider.getDiagnostics
+        // (grep -n "severity = " JavaKotlinProvider.kt PythonProvider.kt on
+        // 2026-04-17 shows only "ERROR"). Locking this invariant ensures
+        // the mapper keeps working as providers currently wire things up.
+        assertEquals("ERROR", normalizeProviderSeverity("ERROR"))
+    }
+
+    @Test
+    fun `normalizeProviderSeverity accepts mixed-case error variants`() {
+        assertEquals("ERROR", normalizeProviderSeverity("error"))
+        assertEquals("ERROR", normalizeProviderSeverity("Error"))
+        assertEquals("ERROR", normalizeProviderSeverity("ErRoR"))
+    }
+
+    @Test
+    fun `normalizeProviderSeverity accepts mixed-case warning variants`() {
+        assertEquals("WARNING", normalizeProviderSeverity("WARNING"))
+        assertEquals("WARNING", normalizeProviderSeverity("warning"))
+        assertEquals("WARNING", normalizeProviderSeverity("Warning"))
+    }
+
+    @Test
+    fun `normalizeProviderSeverity accepts mixed-case info variants`() {
+        assertEquals("INFO", normalizeProviderSeverity("INFO"))
+        assertEquals("INFO", normalizeProviderSeverity("info"))
+        assertEquals("INFO", normalizeProviderSeverity("Info"))
+    }
+
+    @Test
+    fun `normalizeProviderSeverity falls back to 'INFO' for unknown or empty inputs`() {
+        // Forward-compat: unknown or junk inputs must NOT leak through as
+        // non-canonical strings. Phase 7 consumers filter/sort on the closed
+        // 3-value vocabulary; any leak (e.g. "TYPO", "HINT", "WEAK_WARNING")
+        // would silently break grouping. Matches the `else -> "INFO"`
+        // conservative default used in `normalizeSeverity(ProblemHighlightType)`.
+        assertEquals("INFO", normalizeProviderSeverity(""))
+        assertEquals("INFO", normalizeProviderSeverity("unknown"))
+        assertEquals("INFO", normalizeProviderSeverity("TYPO"))
+        assertEquals("INFO", normalizeProviderSeverity("weak_warning"))
+        assertEquals("INFO", normalizeProviderSeverity("hint"))
+        assertEquals("INFO", normalizeProviderSeverity("  "))
+        assertEquals("INFO", normalizeProviderSeverity("???junk???"))
+    }
 }
