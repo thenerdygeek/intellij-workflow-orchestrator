@@ -549,7 +549,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         )
     }
 
-    private fun handleDescriptorReady(
+    internal fun handleDescriptorReady(
         descriptor: RunContentDescriptor,
         continuation: CancellableContinuation<ToolResult?>,
         testTarget: String,
