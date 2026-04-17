@@ -432,7 +432,10 @@ class AgentController(
         // Wizard mode: structured multi-question UI
         com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.showQuestionsCallback = { questionsJson ->
             LOG.info("ask_questions: wizard callback fired (json=${questionsJson.length} chars)")
-            // Cache question metadata before dispatching to EDT so onSubmitted can resolve labels
+            // Cache question metadata BEFORE the invokeLater dispatch. This write happens-before
+            // AWT's event queue enqueue (JMM §17.4.5), so onSubmitted — which runs on the EDT —
+            // is guaranteed to see the updated value. Do NOT move this inside invokeLater, as that
+            // would create a window where onSubmitted could fire before the write completes.
             liveQuestions = try {
                 val root = lenientJson.parseToJsonElement(questionsJson).jsonObject
                 val questionsElement = root["questions"] ?: throw IllegalStateException("missing questions key")
