@@ -5,6 +5,7 @@ import com.intellij.lang.annotation.HighlightSeverity
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.editor.impl.DocumentMarkupModel
 import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.problems.WolfTheProblemSolver
@@ -41,6 +42,30 @@ class ProblemViewTool : AgentTool {
     )
     override val allowedWorkers = setOf(WorkerType.ANALYZER, WorkerType.CODER, WorkerType.REVIEWER)
 
+    /**
+     * ## `isError` semantics (Task 5.6 / F6 invariant)
+     *
+     * `ToolResult.isError` distinguishes **tool-execution failure** from
+     * **problems-as-payload**:
+     *
+     * - `isError = true`  → the tool itself could not run: invalid `severity`
+     *   enum value, bad file path (traversal, missing base path, not found),
+     *   `DumbService` blocked during indexing, or an uncaught exception
+     *   escaping the outer catch.
+     * - `isError = false` → the tool ran to completion. "No problems in X",
+     *   "N problems in X", and "No files are open in the editor" are ALL
+     *   successful results — the problem list IS the payload, not a failure
+     *   signal. "Flagged by Wolf but no details" is likewise a legitimate
+     *   zero-detail-problem outcome (the file IS a known problem file, we
+     *   just can't enumerate specifics because it's not open).
+     *
+     * This mirrors the contract documented for `SemanticDiagnosticsTool`,
+     * `RunInspectionsTool` (T2), and `ListQuickFixesTool` (T3). See
+     * `agent/CLAUDE.md`. [ProblemViewToolTest] pins the error-path invariant
+     * at the unit-test boundary; the problems-found branch is covered
+     * structurally (the only `isError = true` construction in this file is
+     * at the designated error sites).
+     */
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val filePath = params["file"]?.jsonPrimitive?.content
         val severity = params["severity"]?.jsonPrimitive?.content ?: "all"
@@ -49,6 +74,20 @@ class ProblemViewTool : AgentTool {
             return ToolResult(
                 "Error: severity must be 'error', 'warning', or 'all'",
                 "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
+            )
+        }
+
+        // F3 (Task 5.2): DumbService guard placed OUTSIDE the outer try so
+        // indexing-state signals are surfaced as their own ToolResult rather
+        // than being swallowed by the outer catch. Matches the placement
+        // pattern in RunInspectionsTool.kt lines 70–72 and ListQuickFixesTool.kt
+        // lines 77–79. WolfTheProblemSolver's cache may be stale during
+        // indexing — short-circuiting here avoids emitting misleading
+        // zero-problem results while the index is still being built.
+        if (DumbService.isDumb(project)) {
+            return ToolResult(
+                "Indexing in progress — problem view cache may be stale. Try again shortly.",
+                "Indexing", 5, isError = true
             )
         }
 
@@ -74,6 +113,11 @@ class ProblemViewTool : AgentTool {
                     "Not found", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
                 )
 
+            // F1 (Task 5.1): collect the FULL problem list (uncapped) so the
+            // structured entry list is lossless. The preview cap applies
+            // only to the prose rendering below — Phase 7's spiller reads
+            // entries off the ToolResult and must see every problem, not
+            // the capped subset.
             val problems = collectHighlightProblems(vf, severity, project)
             val relativePath = project.basePath?.let {
                 vf.path.removePrefix(it).removePrefix("/")
@@ -91,8 +135,29 @@ class ProblemViewTool : AgentTool {
                     ToolResult("No problems in $relativePath.", "No problems", 5)
                 }
             } else {
-                val content = formatFileProblems(relativePath, problems)
-                ToolResult(content, "${problems.size} problems in ${vf.name}", TokenEstimator.estimate(content))
+                // Build the LOSSLESS structured list BEFORE the prose cap is
+                // applied inside formatFileProblemsWithCap. Every entry
+                // embeds the ABSOLUTE file path from `vf.path` per the
+                // DiagnosticEntry.file contract (commit 52b0d867).
+                val entries = problems.map { p ->
+                    DiagnosticEntry(
+                        file = vf.path,             // absolute path; DiagnosticEntry.file contract (52b0d867)
+                        line = p.line,
+                        column = p.column,
+                        severity = p.severity,      // canonical DiagnosticEntry vocabulary SUBSET: ERROR / WARNING
+                        toolId = p.toolId,
+                        description = p.description,
+                        hasQuickFix = false,        // see TODO(phase7) on hasQuickFix resolution below
+                        category = null,
+                    )
+                }
+                val (prose, tokenEstimate) = formatFileProblemsWithCap(relativePath, problems)
+                val content = renderDiagnosticBody(prose, entries)
+                ToolResult(
+                    content,
+                    "${problems.size} problems in ${vf.name}",
+                    TokenEstimator.estimate(content).coerceAtLeast(tokenEstimate)
+                )
             }
         }.executeSynchronously()
     }
@@ -105,36 +170,75 @@ class ProblemViewTool : AgentTool {
             }
 
             val wolf = WolfTheProblemSolver.getInstance(project)
-            val filesWithProblems = mutableListOf<Pair<String, List<ProblemEntry>>>()
+            // Per-file aggregation retains both relative path (for prose) and
+            // absolute path (for DiagnosticEntry.file). Prose keeps the
+            // relative path for readability; the structured field MUST be
+            // absolute per the DiagnosticEntry.file contract (52b0d867).
+            val filesWithProblems = mutableListOf<FileProblems>()
 
             for (vf in openFiles) {
                 val problems = collectHighlightProblems(vf, severity, project)
+                val relativePath = project.basePath?.let {
+                    vf.path.removePrefix(it).removePrefix("/")
+                } ?: vf.name
                 if (problems.isNotEmpty()) {
-                    val relativePath = project.basePath?.let {
-                        vf.path.removePrefix(it).removePrefix("/")
-                    } ?: vf.name
-                    filesWithProblems.add(relativePath to problems)
+                    filesWithProblems.add(FileProblems(relativePath, vf.path, problems))
                 } else if (wolf.isProblemFile(vf)) {
-                    val relativePath = project.basePath?.let {
-                        vf.path.removePrefix(it).removePrefix("/")
-                    } ?: vf.name
-                    filesWithProblems.add(relativePath to listOf(
-                        ProblemEntry("WARNING", 0, "File flagged as problematic (no detailed info available)")
-                    ))
+                    // Wolf flagged the file but we have no HighlightInfo to
+                    // enumerate — synthesize a single placeholder entry so
+                    // the LLM sees the file was flagged.
+                    filesWithProblems.add(
+                        FileProblems(
+                            relativePath,
+                            vf.path,
+                            listOf(
+                                ProblemEntry(
+                                    severity = "WARNING",
+                                    line = 0,
+                                    column = -1,
+                                    description = "File flagged as problematic (no detailed info available)",
+                                    toolId = "wolf"
+                                )
+                            )
+                        )
+                    )
                 }
             }
 
             if (filesWithProblems.isEmpty()) {
                 ToolResult("No problems found in ${openFiles.size} open file(s).", "No problems", 5)
             } else {
-                val totalProblems = filesWithProblems.sumOf { it.second.size }
+                val totalProblems = filesWithProblems.sumOf { it.problems.size }
+
+                // F1 (Task 5.1): build the LOSSLESS aggregated DiagnosticEntry
+                // list across ALL files BEFORE applying any per-file or
+                // overall preview cap. Phase 7's spiller reads entries off
+                // the ToolResult and must see every problem across every
+                // file. `fp.absolutePath` is the ABSOLUTE path (sourced from
+                // vf.path upstream) per the DiagnosticEntry.file contract.
+                val entries = filesWithProblems.flatMap { fp ->
+                    fp.problems.map { p ->
+                        DiagnosticEntry(
+                            file = fp.absolutePath,     // absolute; originally vf.path — DiagnosticEntry.file contract (52b0d867)
+                            line = p.line,
+                            column = p.column,
+                            severity = p.severity,      // canonical DiagnosticEntry vocabulary SUBSET: ERROR / WARNING
+                            toolId = p.toolId,
+                            description = p.description,
+                            hasQuickFix = false,        // see TODO(phase7) on hasQuickFix resolution below
+                            category = null,
+                        )
+                    }
+                }
+
                 val sb = StringBuilder()
                 sb.appendLine("Problems in project (${filesWithProblems.size} file(s)):")
-                for ((path, problems) in filesWithProblems) {
+                for (fp in filesWithProblems) {
                     sb.appendLine()
-                    sb.append(formatFileProblems(path, problems))
+                    sb.append(formatFileProblemsWithCap(fp.relativePath, fp.problems).first)
                 }
-                val content = sb.toString().trimEnd()
+                val prose = sb.toString().trimEnd()
+                val content = renderDiagnosticBody(prose, entries)
                 ToolResult(
                     content,
                     "$totalProblems problems in ${filesWithProblems.size} files",
@@ -144,6 +248,12 @@ class ProblemViewTool : AgentTool {
         }.executeSynchronously()
     }
 
+    /**
+     * Collect the FULL (uncapped) problem list for a single virtual file.
+     * Severity filter is applied here; preview capping is deferred to callers
+     * so the lossless entry list can be routed to Phase 7's spiller while the
+     * inline prose preview remains terse.
+     */
     private fun collectHighlightProblems(
         vf: com.intellij.openapi.vfs.VirtualFile,
         severity: String,
@@ -163,6 +273,23 @@ class ProblemViewTool : AgentTool {
             val infoSeverity = info.severity
             val description = info.description ?: continue
 
+            // HighlightSeverity normalization (inline — see decision note
+            // below). The shared `normalizeSeverity(ProblemHighlightType)`
+            // in DiagnosticModels.kt handles `ProblemHighlightType`, not
+            // `HighlightSeverity`, so we keep the existing 2-value SUBSET
+            // of the shared 3-value vocabulary here: ERROR → "ERROR",
+            // WARNING → "WARNING", everything below is dropped via
+            // `continue` (matches pre-T4 behaviour). Pinned by
+            // ProblemViewToolTest.`source file emits ERROR and WARNING
+            // severities in canonical uppercase vocabulary`.
+            //
+            // DECISION: inline rather than extracting a
+            // `normalizeHighlightSeverity(HighlightSeverity): String` sibling
+            // helper. Rationale: T5 SemanticDiagnosticsTool MAY also use
+            // HighlightSeverity, at which point extraction is justified —
+            // but pre-emptive extraction with one caller is premature
+            // abstraction. See the brief's recommendation and the
+            // DiagnosticModels.kt kdoc.
             val severityLabel = when {
                 infoSeverity >= HighlightSeverity.ERROR -> "ERROR"
                 infoSeverity >= HighlightSeverity.WARNING -> "WARNING"
@@ -176,33 +303,109 @@ class ProblemViewTool : AgentTool {
                 // "all" — no filter
             }
 
-            val line = document.getLineNumber(info.startOffset) + 1
-            problems.add(ProblemEntry(severityLabel, line, description))
+            val zeroBasedLine = document.getLineNumber(info.startOffset)
+            val line = zeroBasedLine + 1
+            // Column: cheap to compute from the startOffset we already have.
+            // 1-based; DiagnosticEntry kdoc allows -1 when column is unknown.
+            val lineStart = document.getLineStartOffset(zeroBasedLine)
+            val column = (info.startOffset - lineStart + 1).coerceAtLeast(1)
+
+            // toolId: `HighlightInfo.inspectionToolId` surfaces the
+            // originating inspection short name when the highlight came from
+            // a LocalInspectionTool pass. Null when the highlight is from
+            // the compiler/parser daemon itself — fall back to "daemon" per
+            // DiagnosticEntry.toolId kdoc, which explicitly allows subsystem
+            // IDs ("daemon", "wolf", "provider").
+            val toolId = info.inspectionToolId ?: "daemon"
+
+            problems.add(
+                ProblemEntry(
+                    severity = severityLabel,
+                    line = line,
+                    column = column,
+                    description = description,
+                    toolId = toolId,
+                )
+            )
         }
 
-        // Sort: errors first, then by line number
+        // Sort: errors first, then by line number. NO cap — callers decide.
         problems.sortWith(compareBy({ if (it.severity == "ERROR") 0 else 1 }, { it.line }))
 
-        // Cap at 30 problems per file
-        return problems.take(30)
+        return problems
     }
 
-    private fun formatFileProblems(relativePath: String, problems: List<ProblemEntry>): String {
+    /**
+     * Format the prose preview for a single file's problems, applying the
+     * MAX_PROBLEMS preview cap. Returns (prose, prose-token-estimate).
+     *
+     * F1 (Task 5.1): the cap applies ONLY to the prose preview. Callers
+     * build `DiagnosticEntry` from the LOSSLESS problem list BEFORE
+     * invoking this helper so Phase 7's spiller sees every problem.
+     */
+    private fun formatFileProblemsWithCap(
+        relativePath: String,
+        problems: List<ProblemEntry>
+    ): Pair<String, Int> {
         val sb = StringBuilder()
         sb.appendLine("$relativePath — ${problems.size} problem(s):")
-        for (p in problems) {
+
+        // TODO(phase7): replace this hard cap with ToolOutputSpiller — Phase 7
+        // will route the full entry list to disk and leave a preview inline.
+        val shown = problems.take(MAX_PROBLEMS)
+        for (p in shown) {
             if (p.line > 0) {
                 sb.appendLine("  ${p.severity} line ${p.line}: ${p.description}")
             } else {
                 sb.appendLine("  ${p.severity}: ${p.description}")
             }
         }
-        return sb.toString()
+        // TODO(phase7): replace "... and N more" preview with disk-spill reference
+        if (problems.size > MAX_PROBLEMS) {
+            sb.appendLine("... and ${problems.size - MAX_PROBLEMS} more")
+        }
+        val text = sb.toString()
+        return text to TokenEstimator.estimate(text)
     }
 
+    /**
+     * Per-problem intermediate model carrying everything needed to build a
+     * [DiagnosticEntry] and format a prose line. Matches the T2 `ProblemInfo`
+     * / T3 `QuickFixInfo` pattern — intentionally a private data class local
+     * to this file.
+     *
+     * TODO(phase7): `hasQuickFix` is pinned to `false` at the two
+     * [DiagnosticEntry] construction sites above. `HighlightInfo.hasHint()`
+     * and `HighlightInfo.quickFixActionRanges` exist but require impl-level
+     * access (`com.intellij.codeInsight.daemon.impl`); the
+     * `IntentionManager.getAvailableActions(editor, psiFile)` alternative
+     * needs an Editor instance we cannot obtain for unopened files. Phase 7
+     * or a follow-up spike can adopt a verified public API. The audit
+     * (docs/research/2026-04-17-inspection-tools-audit.md) classifies
+     * quick-fix enrichment here as informational, not correctness-critical.
+     */
     private data class ProblemEntry(
+        /** Canonical [DiagnosticEntry.severity] vocabulary SUBSET: "ERROR" or "WARNING" only. */
         val severity: String,
+        /** 1-based line number. 0 indicates unknown (synthetic Wolf-flagged entry). */
         val line: Int,
-        val description: String
+        /** 1-based column; -1 when unknown. */
+        val column: Int,
+        val description: String,
+        /** Inspection short name when available; "daemon" for compiler/daemon highlights; "wolf" for Wolf placeholders. */
+        val toolId: String,
     )
+
+    /** Aggregation struct for the all-open-files path — pairs per-file prose paths with the absolute path used for DiagnosticEntry.file. */
+    private data class FileProblems(
+        val relativePath: String,
+        val absolutePath: String,
+        val problems: List<ProblemEntry>,
+    )
+
+    companion object {
+        // TODO(phase7): replace this hard cap with ToolOutputSpiller — Phase 7
+        // will route the full entry list to disk and leave a preview inline.
+        private const val MAX_PROBLEMS = 30
+    }
 }
