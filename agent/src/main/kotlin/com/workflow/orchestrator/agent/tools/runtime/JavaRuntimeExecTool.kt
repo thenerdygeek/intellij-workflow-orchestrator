@@ -185,6 +185,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         // resolved" error — the validator requires a module to check against.
         var authoritativeBuildPath: String? = null
         var detectedTestCount: Int = 0
+        var validatorWarning: String? = null
         if (module != null) {
             when (val validation = BuildSystemValidator(project).validateForTestRun(className, module)) {
                 is BuildSystemValidator.ValidationResult.Blocked -> return ToolResult(
@@ -196,20 +197,31 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                 is BuildSystemValidator.ValidationResult.Ok -> {
                     authoritativeBuildPath = validation.authoritativeBuildPath
                     detectedTestCount = validation.detectedTestCount
+                    // Populated by Task 2.5 filesystem fallback — surface it to the LLM so
+                    // non-standard-layout dispatch failures aren't silently blamed on the
+                    // build tool. Prepended to the breadcrumb below with the same
+                    // `[WARNING]` prefix we use for the native-runner-fell-back-to-shell case.
+                    validatorWarning = validation.warning
                 }
             }
         }
 
         // Build the success breadcrumb (Task 2.9). Prepended to any happy-path result
-        // returned by the native runner or shell fallback. Adapts to what's available:
-        // module always, build-path only when the validator resolved it.
+        // returned by the native runner or shell fallback. Compose the parenthesized parts
+        // as a list so the "Build path" segment is dropped entirely when no authoritative
+        // path is available — otherwise we'd emit a dangling "(Build path, …)" label that
+        // reads broken to humans and is a confusing LLM anchor.
         val breadcrumb = if (module != null) {
-            val buildPathPart = authoritativeBuildPath?.let { path ->
-                val label = if (path.startsWith(":")) "Gradle path" else "Maven dir"
-                ", $label: $path"
-            } ?: ""
-            val simpleClass = className.substringAfterLast('.')
-            "Running tests in module: ${module.name} (Build path$buildPathPart, $detectedTestCount test methods detected in $simpleClass)"
+            val parts = buildList {
+                authoritativeBuildPath?.let { path ->
+                    val label = if (path.startsWith(":")) "Gradle path" else "Maven dir"
+                    add("$label: $path")
+                }
+                val simpleClass = className.substringAfterLast('.')
+                add("$detectedTestCount test methods detected in $simpleClass")
+            }
+            val line = "Running tests in module: ${module.name} (${parts.joinToString(", ")})"
+            if (validatorWarning != null) "[WARNING] $validatorWarning\n$line" else line
         } else {
             null
         }
