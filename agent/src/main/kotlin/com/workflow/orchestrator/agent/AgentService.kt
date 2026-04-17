@@ -277,10 +277,10 @@ class AgentService(private val project: Project) : Disposable {
      * task start, nulled out in the finally block and on [resetForNewChat].
      * Tools access it via [currentTaskStore].
      */
-    @Volatile private var taskStore: com.workflow.orchestrator.agent.session.TaskStore? = null
+    @Volatile private var taskStore: TaskStore? = null
 
     /** Provider for the task-system tools — returns null when no session is active. */
-    fun currentTaskStore(): com.workflow.orchestrator.agent.session.TaskStore? = taskStore
+    fun currentTaskStore(): TaskStore? = taskStore
 
     // ── Auto Memory ────────────────────────────────────────────────────────
 
@@ -1242,8 +1242,11 @@ class AgentService(private val project: Project) : Disposable {
 
                 // Initialise session-scoped task store alongside the message state handler.
                 // loadFromDisk() runs inside a coroutine scope so it is safe to call here.
-                taskStore = TaskStore(baseDir = sessionBaseDir, sessionId = sid)
-                taskStore?.loadFromDisk()
+                // Create and fully initialise before field assignment so observers never
+                // see a partially-initialised store (closes the init-race window).
+                val store = TaskStore(baseDir = sessionBaseDir, sessionId = sid)
+                store.loadFromDisk()
+                taskStore = store
 
                 // Wire onHistoryOverwrite callback so compaction persists truncated history.
                 // Ported from Cline's conversationHistoryDeletedRange pattern: after context

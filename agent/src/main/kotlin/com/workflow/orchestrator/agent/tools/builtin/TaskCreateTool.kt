@@ -45,31 +45,25 @@ class TaskCreateTool(
         required = listOf("subject", "description"),
     )
 
-    override val allowedWorkers = WorkerType.values().toSet()
+    override val allowedWorkers = WorkerType.entries.toSet()
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val store = storeProvider()
-            ?: return ToolResult(
-                content = "Task store is not available in this session.",
-                summary = "task_create failed: store unavailable",
-                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true,
+            ?: return ToolResult.error(
+                "Task store is not available in this session.",
+                "task_create failed: store unavailable",
             )
 
         val subject = params["subject"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-            ?: return ToolResult(
-                content = "Missing required parameter: subject",
-                summary = "task_create failed: missing subject",
-                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true,
+            ?: return ToolResult.error(
+                "Missing required parameter: subject",
+                "task_create failed: missing subject",
             )
 
         val description = params["description"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-            ?: return ToolResult(
-                content = "Missing required parameter: description",
-                summary = "task_create failed: missing description",
-                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true,
+            ?: return ToolResult.error(
+                "Missing required parameter: description",
+                "task_create failed: missing description",
             )
 
         val activeForm = params["activeForm"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
@@ -86,7 +80,6 @@ class TaskCreateTool(
             content = "Created task ${task.id}: $subject",
             summary = "Created task: $subject",
             tokenEstimate = 20,
-            isError = false,
         )
     }
 }

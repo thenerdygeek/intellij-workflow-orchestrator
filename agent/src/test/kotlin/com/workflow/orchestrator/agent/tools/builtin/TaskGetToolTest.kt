@@ -15,6 +15,18 @@ import java.io.File
 class TaskGetToolTest {
 
     @Test
+    fun `returns error when task store is unavailable`() = runTest {
+        val tool = TaskGetTool { null }
+        val project = mockk<Project>(relaxed = true)
+        val result = tool.execute(
+            buildJsonObject { put("taskId", "t-1") },
+            project,
+        )
+        assertTrue(result.isError)
+        assertTrue(result.content.contains("store", ignoreCase = true))
+    }
+
+    @Test
     fun `returns full task details including description`(@TempDir tmp: File) = runTest {
         val store = TaskStore(baseDir = tmp, sessionId = "s1")
         store.addTask(Task(id = "t-1", subject = "A", description = "detailed description here"))

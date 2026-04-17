@@ -51,6 +51,21 @@ class TaskCreateToolTest {
     }
 
     @Test
+    fun `returns error when task store is unavailable`() = runTest {
+        val tool = TaskCreateTool { null }
+        val project = mockk<Project>(relaxed = true)
+        val result = tool.execute(
+            buildJsonObject {
+                put("subject", "s")
+                put("description", "d")
+            },
+            project,
+        )
+        assertTrue(result.isError)
+        assertTrue(result.content.contains("store", ignoreCase = true))
+    }
+
+    @Test
     fun `activeForm is optional`(@TempDir tmp: File) = runTest {
         val store = TaskStore(baseDir = tmp, sessionId = "s1")
         val tool = TaskCreateTool { store }

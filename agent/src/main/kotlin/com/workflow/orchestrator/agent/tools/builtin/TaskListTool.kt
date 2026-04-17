@@ -23,15 +23,13 @@ class TaskListTool(
 
     override val parameters = FunctionParameters(properties = emptyMap(), required = emptyList())
 
-    override val allowedWorkers = WorkerType.values().toSet()
+    override val allowedWorkers = WorkerType.entries.toSet()
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val store = storeProvider()
-            ?: return ToolResult(
-                content = "Task store is not available in this session.",
-                summary = "task_list failed: store unavailable",
-                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true,
+            ?: return ToolResult.error(
+                "Task store is not available in this session.",
+                "task_list failed: store unavailable",
             )
 
         val tasks = store.listTasks()

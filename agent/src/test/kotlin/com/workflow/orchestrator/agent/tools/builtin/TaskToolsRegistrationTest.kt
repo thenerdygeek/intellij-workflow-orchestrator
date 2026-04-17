@@ -15,7 +15,7 @@ class TaskToolsRegistrationTest {
 
     @Test
     fun `task tools available to all worker types`() {
-        val allWorkers = com.workflow.orchestrator.agent.tools.WorkerType.values().toSet()
+        val allWorkers = com.workflow.orchestrator.agent.tools.WorkerType.entries.toSet()
         assertEquals(allWorkers, TaskCreateTool { null }.allowedWorkers)
         assertEquals(allWorkers, TaskUpdateTool { null }.allowedWorkers)
         assertEquals(allWorkers, TaskListTool { null }.allowedWorkers)

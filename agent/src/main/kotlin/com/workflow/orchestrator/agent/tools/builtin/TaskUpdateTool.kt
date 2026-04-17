@@ -50,19 +50,28 @@ class TaskUpdateTool(
         required = listOf("taskId"),
     )
 
-    override val allowedWorkers = WorkerType.values().toSet()
+    override val allowedWorkers = WorkerType.entries.toSet()
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val store = storeProvider()
-            ?: return errorResult("Task store is not available in this session.")
+            ?: return ToolResult.error(
+                "Task store is not available in this session.",
+                "task_update failed: Task store is not available in this session.",
+            )
 
         val taskId = params["taskId"]?.jsonPrimitive?.content
-            ?: return errorResult("Missing required parameter: taskId")
+            ?: return ToolResult.error(
+                "Missing required parameter: taskId",
+                "task_update failed: Missing required parameter: taskId",
+            )
 
         val statusArg = params["status"]?.jsonPrimitive?.content?.uppercase()
         val parsedStatus: TaskStatus? = statusArg?.let {
             runCatching { TaskStatus.valueOf(it) }.getOrNull()
-                ?: return errorResult("Invalid status '$statusArg'. Expected: pending, in_progress, completed, deleted.")
+                ?: return ToolResult.error(
+                    "Invalid status '$statusArg'. Expected: pending, in_progress, completed, deleted.",
+                    "task_update failed: Invalid status '$statusArg'. Expected: pending, in_progress, completed, deleted.",
+                )
         }
 
         val addBlocks = params["addBlocks"]?.asStringList().orEmpty()
@@ -85,25 +94,23 @@ class TaskUpdateTool(
                 )
             }
         } catch (e: TaskStore.CycleException) {
-            return errorResult("Update rejected (cycle): ${e.message}")
+            return ToolResult.error(
+                "Update rejected (cycle): ${e.message}",
+                "task_update failed: Update rejected (cycle): ${e.message}",
+            )
         }
 
-        if (updated == null) return errorResult("Task not found: $taskId")
+        if (updated == null) return ToolResult.error(
+            "Task not found: $taskId",
+            "task_update failed: Task not found: $taskId",
+        )
 
         return ToolResult(
             content = "Updated task $taskId" + (parsedStatus?.let { " to status=${it.name.lowercase()}" } ?: ""),
             summary = "Updated task: ${updated.subject}",
             tokenEstimate = 20,
-            isError = false,
         )
     }
-
-    private fun errorResult(msg: String) = ToolResult(
-        content = msg,
-        summary = "task_update failed: $msg",
-        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-        isError = true,
-    )
 
     private fun kotlinx.serialization.json.JsonElement.asStringList(): List<String>? =
         runCatching { this.jsonArray.map { it.jsonPrimitive.content } }.getOrNull()

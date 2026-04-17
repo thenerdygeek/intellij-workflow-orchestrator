@@ -28,31 +28,25 @@ class TaskGetTool(
         required = listOf("taskId"),
     )
 
-    override val allowedWorkers = WorkerType.values().toSet()
+    override val allowedWorkers = WorkerType.entries.toSet()
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val store = storeProvider()
-            ?: return ToolResult(
-                content = "Task store is not available in this session.",
-                summary = "task_get failed: store unavailable",
-                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true,
+            ?: return ToolResult.error(
+                "Task store is not available in this session.",
+                "task_get failed: store unavailable",
             )
 
         val taskId = params["taskId"]?.jsonPrimitive?.content
-            ?: return ToolResult(
-                content = "Missing required parameter: taskId",
-                summary = "task_get failed: missing taskId",
-                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true,
+            ?: return ToolResult.error(
+                "Missing required parameter: taskId",
+                "task_get failed: missing taskId",
             )
 
         val task = store.getTask(taskId)
-            ?: return ToolResult(
-                content = "Task not found: $taskId",
-                summary = "task_get failed: unknown id",
-                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true,
+            ?: return ToolResult.error(
+                "Task not found: $taskId",
+                "task_get failed: unknown id",
             )
 
         val body = buildString {
