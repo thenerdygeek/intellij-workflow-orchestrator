@@ -265,11 +265,19 @@ data class ToolResult(
     val artifact: ArtifactPayload? = null,
     /**
      * Absolute path to a disk-spilled full-output file when this tool's raw output
-     * exceeded [ToolOutputConfig.SPILL_THRESHOLD_CHARS]. Null when no spill occurred.
-     * Populated either by the tool's own call to [AgentTool.spillOrFormat] (preferred —
-     * Tasks 6.4-6.10 wire every high-output tool this way) or by [AgentLoop]'s
-     * post-execution safety net when a tool returns raw >30K content.
-     * The LLM reads the full content via `read_file` or `search_code` on this path.
+     * exceeded [ToolOutputConfig.SPILL_THRESHOLD_CHARS]. Null when no spill occurred
+     * or when the tool did not use [AgentTool.spillOrFormat].
+     *
+     * **Only populated by [AgentTool.spillOrFormat]**. [AgentLoop]'s post-execution
+     * safety net DOES write large tool outputs to disk (so `read_file` / `search_code`
+     * still work on the file path mentioned in the preview), but does NOT populate
+     * this field — no downstream consumer reads it yet. Phase 7 Tasks 6.4–6.10 wire
+     * tools through `spillOrFormat` directly, at which point this field becomes
+     * authoritative for spilled outputs. Before that wiring completes, the preview's
+     * embedded "[Output saved to: ...]" line is the canonical spill reference.
+     *
+     * The LLM reads the full content via `read_file` or `search_code` on the path,
+     * regardless of whether it was discovered via this field or the preview text.
      */
     val spillPath: String? = null,
     val type: ToolResultType = when {
