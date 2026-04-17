@@ -8,6 +8,10 @@ import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.truncateOutput
+import org.w3c.dom.Element
+import org.w3c.dom.Node
+import java.io.File
+import javax.xml.parsers.DocumentBuilderFactory
 
 /**
  * Shared helpers for [RuntimeExecTool], [JavaRuntimeExecTool], and [PythonRuntimeExecTool].
@@ -372,5 +376,184 @@ internal fun interpretTestRoot(
             tokenEstimate = 20,
             isError = true
         )
+    }
+}
+
+/**
+ * Parse JUnit/Surefire-format test report XML files under a module directory.
+ *
+ * Shell fallback for `run_tests` shells out to `mvn test` or `./gradlew test` and
+ * previously inferred pass/fail from exit code alone. That breaks when the target
+ * class is not actually a test class — Surefire exits 0 with 0 tests and the agent
+ * reports "Tests PASSED" even though nothing ran. Parsing the XML reports gives us
+ * per-test status so we can tell the LLM what really happened.
+ *
+ * **Return contract:**
+ * - `null` → no report files were found at all (directory missing, or every file
+ *   was malformed and rejected). Caller should fall through to stdout-marker checks.
+ * - empty `List` → reports found but every `<testsuite>` had `tests="0"` or no
+ *   `<testcase>` children. Caller should return NO_TESTS_FOUND (not PASSED).
+ * - non-empty `List` → parsed testcases in the standard [TestResultEntry] shape,
+ *   suitable for [formatStructuredResults].
+ *
+ * **Search paths:**
+ * - `tool == "maven"` → `{moduleDir}/target/surefire-reports/TEST-*.xml` PLUS
+ *   `{moduleDir}/target/failsafe-reports/TEST-*.xml` (failsafe = Maven IT tests).
+ * - `tool == "gradle"` → `{moduleDir}/build/test-results/STAR/TEST-*.xml`
+ *   (walks every subdir — tasks include `test`, `integrationTest`, custom tasks).
+ *
+ * **XXE hardening:** DOCTYPE declarations are disabled via the
+ * `http://apache.org/xml/features/disallow-doctype-decl` feature and XInclude is
+ * turned off. Malformed XML, IO errors, and files rejected by the hardened parser
+ * are silently skipped so one bad file doesn't kill the whole parse.
+ */
+internal fun parseJUnitXmlReports(moduleDir: File, tool: String): List<TestResultEntry>? {
+    val reportDirs = when (tool) {
+        "maven" -> listOf(
+            File(moduleDir, "target/surefire-reports"),
+            File(moduleDir, "target/failsafe-reports")
+        )
+        "gradle" -> {
+            val testResults = File(moduleDir, "build/test-results")
+            // test-results/{task}/ — each task is its own subdir with TEST-*.xml
+            if (testResults.isDirectory) {
+                testResults.listFiles { f -> f.isDirectory }?.toList() ?: emptyList()
+            } else emptyList()
+        }
+        else -> emptyList()
+    }
+
+    val xmlFiles = reportDirs
+        .filter { it.isDirectory }
+        .flatMap { dir ->
+            dir.listFiles { f ->
+                f.isFile && f.name.startsWith("TEST-") && f.name.endsWith(".xml")
+            }?.toList() ?: emptyList()
+        }
+
+    if (xmlFiles.isEmpty()) return null
+
+    val entries = mutableListOf<TestResultEntry>()
+    var parseAttempted = 0
+    var parseSucceeded = 0
+
+    val factory = DocumentBuilderFactory.newInstance().apply {
+        isNamespaceAware = false
+        isXIncludeAware = false
+        // XXE hardening — disable external entity resolution entirely. Report XML
+        // should never legitimately contain a DOCTYPE.
+        try {
+            setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+        } catch (_: Exception) { /* older parsers may not support this feature */ }
+        try {
+            setFeature("http://xml.org/sax/features/external-general-entities", false)
+        } catch (_: Exception) { }
+        try {
+            setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+        } catch (_: Exception) { }
+    }
+
+    for (file in xmlFiles) {
+        parseAttempted++
+        try {
+            val builder = factory.newDocumentBuilder()
+            val doc = builder.parse(file)
+            doc.documentElement?.let { root ->
+                entries += parseTestsuiteElements(root)
+            }
+            parseSucceeded++
+        } catch (_: Exception) {
+            // Malformed XML, XXE-rejected DOCTYPE, or IO error — skip this file.
+        }
+    }
+
+    // If we found files but EVERY one failed to parse, treat as "no reports" so
+    // the caller can escalate to the stdout-marker / NO_TESTS_FOUND path instead
+    // of treating an empty entry list as "0 tests ran successfully".
+    if (parseAttempted > 0 && parseSucceeded == 0) return null
+
+    return entries
+}
+
+/**
+ * Parse `<testsuite>` elements under [root], which may itself be a `<testsuite>`
+ * (the common Surefire single-suite shape) or a `<testsuites>` wrapper (Gradle +
+ * some Surefire configurations). Returns every `<testcase>` as a [TestResultEntry].
+ */
+private fun parseTestsuiteElements(root: Element): List<TestResultEntry> {
+    val suites: List<Element> = when (root.nodeName) {
+        "testsuite" -> listOf(root)
+        "testsuites" -> root.childNodes.elements().filter { it.nodeName == "testsuite" }.toList()
+        else -> emptyList()
+    }
+
+    return suites.flatMap { suite ->
+        suite.childNodes.elements()
+            .filter { it.nodeName == "testcase" }
+            .map { parseTestcaseElement(it) }
+            .toList()
+    }
+}
+
+/**
+ * Parse a single `<testcase>` element into a [TestResultEntry]. Status is
+ * determined by the first child status element found: `<failure>`, `<error>`,
+ * `<skipped>`, or (absent) PASSED.
+ */
+private fun parseTestcaseElement(testcase: Element): TestResultEntry {
+    val classname = testcase.getAttribute("classname").orEmpty()
+    val method = testcase.getAttribute("name").orEmpty()
+    val name = if (classname.isNotBlank()) "$classname.$method" else method
+
+    val durationMs = (testcase.getAttribute("time").toDoubleOrNull() ?: 0.0).let {
+        (it * 1000).toLong()
+    }
+
+    val children = testcase.childNodes.elements().toList()
+    val failure = children.firstOrNull { it.nodeName == "failure" }
+    val error = children.firstOrNull { it.nodeName == "error" }
+    val skipped = children.firstOrNull { it.nodeName == "skipped" }
+
+    val (status, statusElement) = when {
+        failure != null -> TestStatus.FAILED to failure
+        error != null -> TestStatus.ERROR to error
+        skipped != null -> TestStatus.SKIPPED to skipped
+        else -> TestStatus.PASSED to null
+    }
+
+    val errorMessage = statusElement?.let { el ->
+        el.getAttribute("message").takeIf { it.isNotBlank() }
+            ?: el.textContent?.trim()?.lineSequence()?.firstOrNull()?.takeIf { it.isNotBlank() }
+    }
+
+    val stackTrace = if (statusElement != null && status != TestStatus.SKIPPED) {
+        extractStackLines(statusElement.textContent.orEmpty())
+    } else emptyList()
+
+    return TestResultEntry(
+        name = name,
+        status = status,
+        durationMs = durationMs,
+        errorMessage = errorMessage,
+        stackTrace = stackTrace
+    )
+}
+
+/**
+ * Extract up to [MAX_STACK_FRAMES] stack-relevant lines from a failure/error
+ * element's text content. Mirrors [mapToTestResultEntry]'s filter so both paths
+ * produce the same shape.
+ */
+private fun extractStackLines(text: String): List<String> {
+    return text.lines()
+        .filter { it.trimStart().startsWith("at ") || it.contains("Exception") || it.contains("Error") }
+        .take(MAX_STACK_FRAMES)
+}
+
+/** Extension: iterate child [Element] nodes only (skips Text, Comment, etc.). */
+private fun org.w3c.dom.NodeList.elements(): Sequence<Element> = sequence {
+    for (i in 0 until length) {
+        val node = item(i)
+        if (node.nodeType == Node.ELEMENT_NODE && node is Element) yield(node)
     }
 }

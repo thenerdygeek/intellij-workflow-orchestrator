@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.example.SimpleTest" tests="3" failures="1" errors="0" skipped="0" time="0.512">
+  <testcase name="testAdd" classname="com.example.SimpleTest" time="0.101"/>
+  <testcase name="testSubtract" classname="com.example.SimpleTest" time="0.087"/>
+  <testcase name="testMultiply" classname="com.example.SimpleTest" time="0.324">
+    <failure message="expected: &lt;6&gt; but was: &lt;5&gt;" type="org.opentest4j.AssertionFailedError">org.opentest4j.AssertionFailedError: expected: &lt;6&gt; but was: &lt;5&gt;
+	at com.example.SimpleTest.testMultiply(SimpleTest.java:42)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.junit.platform.commons.util.ReflectionUtils.invokeMethod(ReflectionUtils.java:728)
+	at org.junit.jupiter.engine.execution.MethodInvocation.proceed(MethodInvocation.java:60)
+</failure>
+  </testcase>
+</testsuite>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="com.example.MixedTest" tests="4" failures="0" errors="1" skipped="1" time="1.234">
+    <testcase name="testHappyPath" classname="com.example.MixedTest" time="0.203"/>
+    <testcase name="testDisabled" classname="com.example.MixedTest" time="0.000">
+      <skipped message="Disabled until bug X is fixed"/>
+    </testcase>
+    <testcase name="testAlwaysSkipped" classname="com.example.MixedTest" time="0.000">
+      <skipped/>
+    </testcase>
+    <testcase name="testCrashes" classname="com.example.MixedTest" time="0.031">
+      <error message="NullPointerException in setup" type="java.lang.NullPointerException">java.lang.NullPointerException: Cannot invoke &quot;String.length()&quot; because &quot;x&quot; is null
+	at com.example.MixedTest.testCrashes(MixedTest.java:77)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+</error>
+    </testcase>
+  </testsuite>
+</testsuites>

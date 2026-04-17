@@ -810,15 +810,47 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                 rawOutput.contains("COMPILATION ERROR") ||                    // Maven
                 rawOutput.contains("compileTestJava FAILED") ||               // Gradle Java
                 rawOutput.contains("compileTestKotlin FAILED")                // Gradle Kotlin
+            // "Tests ran" markers from Maven (Surefire summary line) and Gradle
+            // (task header). Used to distinguish "tests ran but reports missing"
+            // from "nothing happened — not a test class".
+            val hasTestRanMarker = rawOutput.contains("Tests run:") ||
+                rawOutput.contains("> Task :test") ||
+                rawOutput.contains("> Task :") && rawOutput.contains(":test ")
             val truncatedOutput = truncateOutput(rawOutput, RUN_TESTS_MAX_OUTPUT_CHARS)
 
             val exitCode = process.exitValue()
-            if (exitCode == 0) {
-                ToolResult("Tests PASSED for $testTarget.\n\n$truncatedOutput", "Tests PASSED: $testTarget", TokenEstimator.estimate(truncatedOutput))
-            } else {
-                // Distinguish build/compilation failure from test failure so the agent
-                // doesn't confuse "no tests ran" with "tests ran and failed".
-                if (isBuildFailure) {
+
+            // Parse Surefire/Gradle XML reports. This is the authoritative signal —
+            // exit code 0 with 0 tests means the target class isn't actually a test
+            // class, and should surface as NO_TESTS_FOUND (not "Tests PASSED").
+            val tool = if (hasMaven) "maven" else "gradle"
+            val reportEntries = parseJUnitXmlReports(workDir, tool)
+
+            when {
+                reportEntries != null && reportEntries.isNotEmpty() -> {
+                    val base = formatStructuredResults(reportEntries, testTarget)
+                    // Diagnostic note: Surefire's default <useFile>true</useFile>
+                    // writes per-suite XML that may drop individual testcases. If
+                    // the "Tests run: N" summary count exceeds what we parsed,
+                    // warn the LLM so it doesn't trust our count blindly.
+                    val summaryCount = extractMavenTestsRunCount(rawOutput)
+                    val diagnostic = if (summaryCount != null && summaryCount > reportEntries.size) {
+                        "[WARN] Parsed ${reportEntries.size} test cases but Maven summary reports $summaryCount — " +
+                            "reports may be missing individual testcases (Surefire <useFile>true> default).\n\n"
+                    } else ""
+                    val combined = diagnostic + base.content + "\n\n--- stdout ---\n" + truncatedOutput
+                    base.copy(
+                        content = combined,
+                        tokenEstimate = TokenEstimator.estimate(combined)
+                    )
+                }
+                reportEntries != null && reportEntries.isEmpty() -> {
+                    // XML reports exist but all had tests="0" → class had no @Test methods
+                    noTestsFoundResult(testTarget, command, exitCode, truncatedOutput)
+                }
+                isBuildFailure -> {
+                    // Preserve the existing BUILD FAILED message — no reports to parse
+                    // because the build phase failed before tests could even start.
                     ToolResult(
                         "BUILD FAILED — test execution did not start (exit code $exitCode).\n\n" +
                             "Fix compilation errors and try again. Use diagnostics tool to check for errors.\n\n" +
@@ -827,16 +859,70 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                         TokenEstimator.estimate(truncatedOutput),
                         isError = true
                     )
-                } else {
+                }
+                hasTestRanMarker -> {
+                    // stdout claims tests ran but XML is absent — rare edge case
+                    // (Surefire <useFile>false> plus no report dir, or a build-abort
+                    // after tests started). Surface as an explicit warning so the
+                    // agent knows the result is ambiguous.
                     ToolResult(
-                        "Tests FAILED for $testTarget (exit code $exitCode).\n\n$truncatedOutput",
-                        "Tests FAILED: $testTarget", TokenEstimator.estimate(truncatedOutput), isError = true
+                        "Tests ran but no XML reports were found under ${workDir.path}. " +
+                            "Possible causes: Surefire -Dmaven.test.skip, custom reports dir, " +
+                            "or build aborted during write.\n\n" +
+                            "Exit code: $exitCode\n\n--- stdout ---\n$truncatedOutput",
+                        "Tests ran but XML missing",
+                        TokenEstimator.estimate(truncatedOutput),
+                        isError = true
                     )
+                }
+                else -> {
+                    // Neither XML reports nor "Tests run:" marker — nothing actually
+                    // executed. This is the user-incident-#2 case: target wasn't a
+                    // real test class.
+                    noTestsFoundResult(testTarget, command, exitCode, truncatedOutput)
                 }
             }
         } catch (e: Exception) {
             ToolResult("Error running tests: ${e.message}", "Test execution error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
+    }
+
+    /**
+     * Build the standard NO_TESTS_FOUND result used by [executeWithShell] when
+     * the Surefire/Gradle run succeeded but matched zero test methods. This is
+     * the critical anti-"Tests PASSED" signal for incident #2 — the user asked
+     * to run tests for a class that had no `@Test` annotations, Surefire exited 0
+     * with 0 tests, and the agent previously reported the run as a success. The
+     * `isError = true` flag guarantees the LLM treats this as a problem to fix.
+     */
+    private fun noTestsFoundResult(
+        testTarget: String,
+        command: String,
+        exitCode: Int,
+        truncatedOutput: String
+    ): ToolResult {
+        val content = "NO_TESTS_FOUND — Surefire/Gradle ran successfully but matched no test methods.\n" +
+            "Verify the class has @Test methods and is in a test source root.\n\n" +
+            "Command: $command\n" +
+            "Exit code: $exitCode\n\n" +
+            "--- stdout (last N lines) ---\n$truncatedOutput"
+        return ToolResult(
+            content = content,
+            summary = "NO_TESTS_FOUND: $testTarget",
+            tokenEstimate = TokenEstimator.estimate(content),
+            isError = true
+        )
+    }
+
+    /**
+     * Extract the "Tests run: N" count from Maven Surefire's summary line.
+     * Returns null if no summary line is present. Used to diagnose cases where
+     * the XML reports undercount (Surefire <useFile>true</useFile> default).
+     */
+    private fun extractMavenTestsRunCount(rawOutput: String): Int? {
+        // Matches "Tests run: 42, Failures: 0" anywhere in the output
+        val match = Regex("Tests run:\\s*(\\d+)").find(rawOutput) ?: return null
+        return match.groupValues[1].toIntOrNull()
     }
 
     // ══════════════════════════════════════════════════════════════════════
