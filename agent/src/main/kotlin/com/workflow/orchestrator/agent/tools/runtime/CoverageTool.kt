@@ -23,6 +23,7 @@ import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.ToolOutputConfig
 import com.workflow.orchestrator.agent.tools.TestConsoleUtils
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.util.ReflectionUtils
@@ -99,6 +100,7 @@ Actions and their parameters:
     override val allowedWorkers = setOf(
         WorkerType.CODER, WorkerType.REVIEWER, WorkerType.ANALYZER, WorkerType.ORCHESTRATOR, WorkerType.TOOLER
     )
+    override val outputConfig = ToolOutputConfig.COMMAND
 
     /** Cached coverage snapshot from the last run_with_coverage execution. */
     @Volatile

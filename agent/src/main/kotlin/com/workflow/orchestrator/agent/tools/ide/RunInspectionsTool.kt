@@ -17,6 +17,7 @@ import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.ToolOutputConfig
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.builtin.PathValidator
 import kotlinx.serialization.json.JsonObject
@@ -37,6 +38,7 @@ class RunInspectionsTool : AgentTool {
         required = listOf("path")
     )
     override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.REVIEWER, WorkerType.ANALYZER)
+    override val outputConfig = ToolOutputConfig.COMMAND
 
     /**
      * ## `isError` semantics (F6 invariant)
