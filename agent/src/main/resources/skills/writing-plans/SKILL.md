@@ -21,15 +21,13 @@ Note: `file_structure` and `type_hierarchy` are deferred tools — activate with
 
 Your plan flows through a specific UI pipeline. Understanding this ensures your plan renders correctly:
 
-1. **You call `plan_mode_respond(response=plan_markdown, steps=["Step 1 title", "Step 2 title", ...])`**
-   - `response`: Full markdown plan for the document viewer (with code blocks, tables, etc.)
-   - `steps`: A JSON array of high-level step/phase titles for the plan progress card (typically 5-10)
-2. **Plan card** renders in chat — shows the step titles, step count, "Approve" and "View Plan" buttons
+1. **You call `plan_mode_respond(response=plan_markdown)`** — a full markdown plan for the document viewer (with code blocks, tables, etc.)
+2. **Plan summary card** renders in chat — shows the plan summary, approve/revise buttons, and comment count
 3. **Plan editor** opens as a full tab when user clicks "View Plan" — the user sees the full markdown with line numbers and can **add inline comments on specific lines**
-4. **Approval** switches to act mode. You then include `task_progress` in tool calls to update step status in the progress card.
+4. **Approval** switches to act mode. You then use the task_create / task_update / task_list / task_get tools to track execution progress — these flow through the same PlanProgressWidget as a task checklist.
 5. **Revision** sends the user's line-level comments back to you. You revise and call `plan_mode_respond` again.
 
-**Critical: `task_progress` items should match the `steps` you provided.** Keep titles consistent between `steps` and `task_progress` so the user sees coherent progress.
+**Execution tracking after approval:** Once in act mode, create tasks via `task_create` (one call per task, outcome-focused subjects) as you scope work. Update status via `task_update` as work progresses (pending → in_progress → completed). Mark deleted for anything superseded. The user sees these in the progress widget in real time.
 
 ## Scope Check
 
@@ -99,16 +97,15 @@ Implementation plan for [feature name].
 
 ## Presenting the Plan
 
-Call `plan_mode_respond` with `response` (markdown) and `steps` (JSON array):
+Call `plan_mode_respond` with `response` (markdown):
 
 ```
 plan_mode_respond(
-  response="Implementation plan for user management API.\n\n### Task 1: Create DTOs\n**Files:**\n- Create: `src/dto/UserRequest.kt`\n...\n\n### Task 2: Write controller test\n...\n\n### Task 3: Implement UserController\n...",
-  steps=["Create UserRequest and UserResponse DTOs", "Write controller slice test", "Implement UserController"]
+  response="Implementation plan for user management API.\n\n### Task 1: Create DTOs\n**Files:**\n- Create: `src/dto/UserRequest.kt`\n...\n\n### Task 2: Write controller test\n...\n\n### Task 3: Implement UserController\n..."
 )
 ```
 
-The `steps` array drives the progress card. Keep titles concise — they appear as checklist items. During execution, your `task_progress` checklist should use matching titles so the user sees coherent progress.
+After approval, create tasks via task_create (one call per outcome-sized work item). Tasks are separate from the plan document; the plan describes strategy, tasks track execution.
 
 ## Handling User Comments
 
@@ -153,7 +150,7 @@ After writing the complete plan, look at the spec with fresh eyes and check the 
 
 **3. Type consistency:** Do the types, method signatures, and property names you used in later tasks match what you defined in earlier tasks? A function called `clearLayers()` in Task 3 but `clearFullLayers()` in Task 7 is a bug.
 
-**4. steps sync:** Count your `### Task` headers. Does your `steps` array have a matching title for each? These are what the user sees in the progress card.
+**4. Task coverage:** Count your `### Task` headers. Does each represent a distinct, outcome-sized work item that can be tracked independently?
 
 If you find issues, fix them inline. No need to re-review — just fix and move on. If you find a spec requirement with no task, add the task.
 
@@ -169,6 +166,6 @@ ask_followup_question(
 ```
 
 - If **Subagent-Driven**: load `use_skill(skill_name="subagent-driven")`
-- If **Direct Execution**: implement tasks sequentially, tracking progress via `task_progress` on each tool call
+- If **Direct Execution**: implement tasks sequentially, creating and updating tasks via task_create and task_update
 
-During execution (either approach), include `task_progress` in your tool calls to update the progress card. Use the same titles from your `steps` array. As you complete each task, mark it `[x]` in the checklist. The progress card updates in real-time with spinner/check icons.
+During execution (either approach), use task_create and task_update to track progress. Tasks appear in the progress widget with spinner/check icons reflecting status.

@@ -148,13 +148,20 @@ Once the user approves the design, switch to plan mode and present the implement
 
 The `plan_mode_respond` call should include:
 - `response` — the full plan as markdown (architecture, tasks, file paths, test steps)
-- `task_progress` — a markdown checklist summarizing the tasks
 
 ```
 plan_mode_respond(
-  response="## Implementation Plan\n\n### Task 1: Create FooService interface\n...",
-  task_progress="- [ ] Create FooService interface in core/services/\n- [ ] Implement FooServiceImpl in module/service/\n- [ ] Write failing tests for FooService\n- [ ] Implement and verify tests pass\n- [ ] Update module CLAUDE.md"
+  response="## Implementation Plan\n\n### Task 1: Create FooService interface\n..."
 )
+```
+
+After approval, call task_create for each outcome-sized work item identified in the brainstorm (one tool call per task). Use imperative subjects:
+```
+task_create(subject="Create FooService interface in core/services/", description="...")
+task_create(subject="Implement FooServiceImpl in module/service/", description="...")
+task_create(subject="Write failing tests for FooService", description="...")
+task_create(subject="Implement and verify tests pass", description="...")
+task_create(subject="Update module CLAUDE.md", description="...")
 ```
 
 The plan should:
