@@ -18,6 +18,9 @@ import planReviseContract from './contracts/plan-revise.json';
 import planReviseV2Contract from './contracts/plan-revise-v2.json';
 import planDataContract from './contracts/plan-data.json';
 import editStatsContract from './contracts/edit-stats.json';
+import taskCreateContract from './contracts/task-create.json';
+import taskUpdateContract from './contracts/task-update.json';
+import taskListContract from './contracts/task-list.json';
 
 // ── Plan Revise Contract ──
 
@@ -182,5 +185,46 @@ describe('Contract: _revisePlan v2 payload with per-line comments (React -> Kotl
     const parsed = JSON.parse(planReviseV2Contract.valid_payloads[1].payload);
     expect(parsed.comments).toEqual([]);
     expect(parsed.markdown).toBeTruthy();
+  });
+});
+
+// ── Task Create Contract ──
+
+describe('Contract: applyTaskCreate (Kotlin → React)', () => {
+  it('required fields present', () => {
+    for (const field of taskCreateContract.required_fields) {
+      expect(Object.keys(taskCreateContract.payload)).toContain(field);
+    }
+  });
+  it('status is a valid enum value', () => {
+    expect(taskCreateContract.valid_statuses).toContain(taskCreateContract.payload.status);
+  });
+});
+
+// ── Task Update Contract ──
+
+describe('Contract: applyTaskUpdate (Kotlin → React)', () => {
+  it('required fields present', () => {
+    for (const field of taskUpdateContract.required_fields) {
+      expect(Object.keys(taskUpdateContract.payload)).toContain(field);
+    }
+  });
+  it('status is a valid enum value', () => {
+    expect(taskUpdateContract.valid_statuses).toContain(taskUpdateContract.payload.status);
+  });
+});
+
+// ── Task List Contract ──
+
+describe('Contract: setTasks (Kotlin → React)', () => {
+  it('payload is an array', () => {
+    expect(Array.isArray(taskListContract.payload)).toBe(true);
+  });
+  it('every task has required fields', () => {
+    for (const task of taskListContract.payload) {
+      for (const field of taskListContract.required_fields_per_task) {
+        expect(Object.keys(task as object)).toContain(field);
+      }
+    }
   });
 });
