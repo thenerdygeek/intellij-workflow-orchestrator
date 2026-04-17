@@ -21,6 +21,7 @@ class TaskStore(
     private val tasksFile: File get() = File(sessionDir, "tasks.json")
 
     suspend fun addTask(task: Task) = mutex.withLock {
+        checkNoCycles(task)
         tasks.add(task)
         saveInternal()
     }
@@ -35,12 +36,21 @@ class TaskStore(
         updated
     }
 
+    /**
+     * Read a task by id. Not suspend / not mutex-locked — this is an intentional
+     * dirty-read safe for single-coroutine callers (the agent loop). Do NOT add
+     * `mutex.withLock` here: `updateTask` calls that lambda from within a mutex-held
+     * block (for tools' post-update lookup), and locking here would deadlock.
+     */
     fun getTask(id: String): Task? = tasks.firstOrNull { it.id == id }
 
+    /**
+     * Snapshot copy of the current task list. Same unsynchronized-read rationale
+     * as [getTask] — safe for single-coroutine callers, do not add `withLock`.
+     */
     fun listTasks(): List<Task> = tasks.toList()
 
-    fun loadFromDisk() {
-        check(!mutex.isLocked) { "loadFromDisk must only be called during init, before concurrent access" }
+    suspend fun loadFromDisk() = mutex.withLock {
         tasks.clear()
         if (tasksFile.exists()) {
             try {
@@ -57,18 +67,28 @@ class TaskStore(
 
     private fun checkNoCycles(candidate: Task) {
         val snapshot = tasks.associateBy { it.id } + (candidate.id to candidate)
-        val visited = mutableSetOf<String>()
-        val stack = ArrayDeque<String>().apply { add(candidate.id) }
-        while (stack.isNotEmpty()) {
-            val curr = stack.removeLast()
-            if (!visited.add(curr)) continue
-            val t = snapshot[curr] ?: continue
-            for (dep in t.blockedBy) {
-                if (dep == candidate.id) throw CycleException(
-                    "Updating task '${candidate.id}' would create a blockedBy cycle"
-                )
-                stack.addLast(dep)
+        for (startingEdge in listOf(EdgeKind.BLOCKED_BY, EdgeKind.BLOCKS)) {
+            val visited = mutableSetOf<String>()
+            val stack = ArrayDeque<String>().apply { addLast(candidate.id) }
+            var first = true
+            while (stack.isNotEmpty()) {
+                val curr = stack.removeLast()
+                if (!first && curr == candidate.id) {
+                    throw CycleException(
+                        "Updating task '${candidate.id}' would create a ${startingEdge.name.lowercase()} cycle"
+                    )
+                }
+                first = false
+                if (!visited.add(curr)) continue
+                val t = snapshot[curr] ?: continue
+                val edges = when (startingEdge) {
+                    EdgeKind.BLOCKED_BY -> t.blockedBy
+                    EdgeKind.BLOCKS -> t.blocks
+                }
+                for (dep in edges) stack.addLast(dep)
             }
         }
     }
+
+    private enum class EdgeKind { BLOCKED_BY, BLOCKS }
 }

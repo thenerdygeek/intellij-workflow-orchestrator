@@ -22,11 +22,7 @@ class TaskSerializationTest {
         )
         val encoded = json.encodeToString(original)
         val decoded = json.decodeFromString<Task>(encoded)
-        assertEquals(original.id, decoded.id)
-        assertEquals(original.subject, decoded.subject)
-        assertEquals(original.status, decoded.status)
-        assertEquals(original.blocks, decoded.blocks)
-        assertEquals(original.blockedBy, decoded.blockedBy)
+        assertEquals(original, decoded)
     }
 
     @Test

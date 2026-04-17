@@ -44,7 +44,8 @@ class TaskStorePersistenceTest {
         val updated = store.getTask("t-1")
         assertEquals(TaskStatus.IN_PROGRESS, updated?.status)
 
-        val reloaded = TaskStore(baseDir = tmp, sessionId = "sess-1").also { it.loadFromDisk() }
+        val reloaded = TaskStore(baseDir = tmp, sessionId = "sess-1")
+        reloaded.loadFromDisk()
         assertEquals(TaskStatus.IN_PROGRESS, reloaded.getTask("t-1")?.status)
     }
 

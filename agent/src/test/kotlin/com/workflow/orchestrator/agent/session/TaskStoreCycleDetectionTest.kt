@@ -42,12 +42,30 @@ class TaskStoreCycleDetectionTest {
     }
 
     @Test
-    fun `acyclic chain is accepted`(@TempDir tmp: File) = runTest {
+    fun `acyclic updateTask is accepted`(@TempDir tmp: File) = runTest {
         val store = TaskStore(baseDir = tmp, sessionId = "sess-1")
         store.addTask(Task(id = "A", subject = "A", description = "a"))
-        store.addTask(Task(id = "B", subject = "B", description = "b", blockedBy = listOf("A")))
-        store.addTask(Task(id = "C", subject = "C", description = "c", blockedBy = listOf("B")))
+        store.addTask(Task(id = "B", subject = "B", description = "b"))
+        store.addTask(Task(id = "C", subject = "C", description = "c"))
 
-        assertEquals(listOf("B"), store.getTask("C")?.blockedBy)
+        // This should NOT throw — C.blockedBy = [A, B] is acyclic
+        val updated = store.updateTask("C") { it.copy(blockedBy = listOf("A", "B")) }
+        assertEquals(listOf("A", "B"), updated?.blockedBy)
+    }
+
+    @Test
+    fun `cycle via blocks edges is rejected`(@TempDir tmp: File) = runTest {
+        val store = TaskStore(baseDir = tmp, sessionId = "sess-1")
+        store.addTask(Task(id = "A", subject = "A", description = "a"))
+        store.addTask(Task(id = "B", subject = "B", description = "b", blocks = listOf("A")))
+
+        var threw = false
+        try {
+            store.updateTask("A") { it.copy(blocks = listOf("B")) }
+        } catch (ex: TaskStore.CycleException) {
+            threw = true
+            assertTrue(ex.message!!.contains("cycle", ignoreCase = true))
+        }
+        assertTrue(threw, "Expected CycleException for blocks cycle")
     }
 }
