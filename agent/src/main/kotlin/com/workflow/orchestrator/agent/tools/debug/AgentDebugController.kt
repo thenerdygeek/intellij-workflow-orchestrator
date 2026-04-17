@@ -22,10 +22,10 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import org.jetbrains.annotations.VisibleForTesting
+import java.util.UUID
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.Icon
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -61,7 +61,9 @@ class AgentDebugController internal constructor(
         { name -> project.service<AgentService>().newDebugInvocation(name) },
 ) : Disposable {
 
-    private val sessionCounter = AtomicInteger(0)
+    // Strong references — cleanup is guaranteed by sessionStopped callback +
+    // DebugInvocation cascade-dispose (Phase 5 Task 4.2). WeakReference rejected
+    // in Task 4.5 review — would break getSession semantics.
     @VisibleForTesting
     internal val sessionInvocations = ConcurrentHashMap<String, SessionEntry>()
     private val agentBreakpoints = ConcurrentHashMap.newKeySet<XLineBreakpoint<*>>()
@@ -81,11 +83,20 @@ class AgentDebugController internal constructor(
     )
 
     /**
-     * Registers a debug session, assigns a unique ID, and attaches a listener
+     * Registers a debug session, assigns a globally unique ID, and attaches a listener
      * to capture pause/resume/stop events.
+     *
+     * ID format: `agent-debug-{UUID}`. Task 4.5 replaced the pre-existing sequential
+     * `debug-{counter}` format with a UUID to eliminate two correctness bugs:
+     *  - counter recycling across `new chat` lifecycle could re-use `debug-1` for
+     *    a new session while a downstream tool call still held the old handle;
+     *  - the `agent-debug-` prefix disambiguates agent-owned handles from the
+     *    platform `XDebugSession.sessionName` in logs and LLM chat output,
+     *    so [IdeStateProbe.debugState] never mistakes a user display name like
+     *    `"MyApp"` for an agent handle.
      */
     fun registerSession(session: XDebugSession): String {
-        val sessionId = "debug-${sessionCounter.incrementAndGet()}"
+        val sessionId = "agent-debug-${UUID.randomUUID()}"
         val invocation = debugInvocationFactory("session-$sessionId")
         sessionInvocations[sessionId] = SessionEntry(session, invocation)
         activeSessionId = sessionId

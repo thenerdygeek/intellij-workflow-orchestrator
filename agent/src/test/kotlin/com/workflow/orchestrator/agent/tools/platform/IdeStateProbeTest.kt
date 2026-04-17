@@ -147,4 +147,84 @@ class IdeStateProbeTest {
             "Probe must find platform session even when agent registry is empty",
         )
     }
+
+    // ── Task 4.5: name-collision disambiguation ────────────────────────────
+
+    @Test
+    fun `debugState returns AmbiguousSession when two sessions share a name and no UUID resolves`() {
+        // Task 4.5 correctness bug: two sessions both named "MyApp" (post-restart
+        // duplicate, or two runs of the same config). Pre-fix `all.firstOrNull { ... }`
+        // silently picked one. Post-fix the probe must surface the ambiguity so
+        // debug_step / debug_inspect report it rather than operating on the wrong
+        // session.
+        val a = fakeSession("MyApp", suspended = true)
+        val b = fakeSession("MyApp", suspended = false)
+        every { mgr.debugSessions } returns arrayOf(a, b)
+        every { mgr.currentSession } returns null
+
+        val result = IdeStateProbe.debugState(
+            project,
+            sessionId = "MyApp",
+            registryLookup = { null }, // no UUID handle registered for this name
+        )
+
+        assertTrue(
+            result is DebugState.AmbiguousSession,
+            "Expected AmbiguousSession when >1 platform sessions match by name — got $result"
+        )
+        val amb = result as DebugState.AmbiguousSession
+        assertEquals(2, amb.count)
+        assertEquals(listOf("MyApp", "MyApp"), amb.names)
+    }
+
+    @Test
+    fun `debugState returns Paused when UUID resolves uniquely even if sessionName collides`() {
+        // The collision-via-sessionName path is NOT triggered when the UUID registry
+        // resolves the id: the registry path is authoritative. This protects
+        // agent-started sessions (which always have a UUID handle) from being
+        // confused with user-started duplicates that happen to share a display name.
+        val agentSession = fakeSession("MyApp", suspended = true)
+        val userSessionA = fakeSession("MyApp", suspended = false)
+        val userSessionB = fakeSession("MyApp", suspended = false)
+        every { mgr.debugSessions } returns arrayOf(agentSession, userSessionA, userSessionB)
+        every { mgr.currentSession } returns null
+
+        val result = IdeStateProbe.debugState(
+            project,
+            sessionId = "agent-debug-deadbeef",
+            registryLookup = { id ->
+                if (id == "agent-debug-deadbeef") agentSession else null
+            },
+        )
+
+        assertTrue(
+            result is DebugState.Paused,
+            "UUID registry hit must win regardless of sessionName collisions — got $result"
+        )
+        assertSame(agentSession, (result as DebugState.Paused).session)
+    }
+
+    @Test
+    fun `debugState preserves string-match fallback for unknown user-started sessions`() {
+        // Ground rule from the plan: the string-match fallback must be preserved
+        // as the last-resort path. When the LLM passes a display name that doesn't
+        // resolve via the registry but DOES match exactly one platform session,
+        // the probe must still find it. This protects the "user started session,
+        // LLM typed its display name" happy path.
+        val userSession = fakeSession("MyUserApp", suspended = true)
+        every { mgr.debugSessions } returns arrayOf(userSession)
+        every { mgr.currentSession } returns null
+
+        val result = IdeStateProbe.debugState(
+            project,
+            sessionId = "MyUserApp",
+            registryLookup = { null }, // registry doesn't know about user sessions
+        )
+
+        assertTrue(
+            result is DebugState.Paused,
+            "String-match fallback must still resolve user-started sessions uniquely — got $result"
+        )
+        assertSame(userSession, (result as DebugState.Paused).session)
+    }
 }

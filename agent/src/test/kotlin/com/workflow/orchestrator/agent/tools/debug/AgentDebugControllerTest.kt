@@ -20,6 +20,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import java.util.UUID
 
 class AgentDebugControllerTest {
 
@@ -53,8 +54,35 @@ class AgentDebugControllerTest {
         val id2 = controller.registerSession(session2)
 
         assertNotEquals(id1, id2)
-        assertTrue(id1.startsWith("debug-"))
-        assertTrue(id2.startsWith("debug-"))
+        assertTrue(id1.startsWith("agent-debug-"))
+        assertTrue(id2.startsWith("agent-debug-"))
+    }
+
+    @Test
+    fun `registerSession produces agent-debug prefixed UUID handles`() {
+        // Task 4.5: session handles MUST carry the `agent-debug-` prefix so:
+        //   (a) log / chat readers can tell at a glance it's an agent handle;
+        //   (b) IdeStateProbe's string-match fallback cannot confuse a user's
+        //       display name ("MyApp") with an agent-owned id.
+        // The suffix MUST be a valid UUID so counter recycling across new-chat
+        // cycles cannot re-issue a live handle.
+        val session = createMockSession()
+        val id = controller.registerSession(session)
+
+        assertTrue(id.startsWith("agent-debug-"), "Expected agent-debug- prefix, got: $id")
+        val uuidSuffix = id.removePrefix("agent-debug-")
+        // UUID.fromString throws IllegalArgumentException on malformed input.
+        // If this doesn't throw, the suffix is a well-formed UUID.
+        UUID.fromString(uuidSuffix)
+    }
+
+    @Test
+    fun `registerSession produces unique handles across 1000 invocations`() {
+        // Strong uniqueness guarantee via UUID — pre-Task-4.5 sequential counter
+        // would produce duplicates across `new chat` cycles because the controller
+        // is disposed + replaced. UUID gives us cross-lifecycle uniqueness.
+        val ids = (1..1000).map { controller.registerSession(createMockSession()) }.toSet()
+        assertEquals(1000, ids.size, "All 1000 registerSession calls must yield unique handles")
     }
 
     @Test
