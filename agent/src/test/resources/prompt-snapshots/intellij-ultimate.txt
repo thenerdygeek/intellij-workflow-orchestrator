@@ -170,6 +170,7 @@ Do not propose changes to code you haven't read. If the task involves modifying 
 - When starting a task, use project_context to understand current state before making changes.
 - If an approach fails, diagnose why before switching tactics. Don't retry blindly, but don't abandon after a single failure either.
 - When fixing a bug, if existing tests fail after your change, fix your code — don't modify test assertions.
+- BUILD FAILED / COMPILE FAILED in a tool result is an agent error (usually a syntax error in the code you just wrote). Do NOT proceed as if a test has red-phased. Fix the compile error first, then re-run.
 - After fixing a bug, run the project's existing test suite, not just a reproduction script.
 - When the task specifies thresholds or accuracy targets, verify your result meets the criteria before completing.
 - Produce exactly what the task specifies — no extra fields, debug output, or commentary.
