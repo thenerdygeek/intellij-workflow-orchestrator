@@ -1,9 +1,20 @@
 package com.workflow.orchestrator.agent.tools.runtime
 
+import com.intellij.execution.ProgramRunnerUtil
+import com.intellij.execution.executors.DefaultRunExecutor
+import com.intellij.execution.runners.ExecutionEnvironmentBuilder
+import com.intellij.execution.runners.ProgramRunner
+import com.intellij.execution.testframework.sm.runner.SMTestProxy
+import com.intellij.execution.testframework.sm.runner.ui.TestResultsViewer
+import com.intellij.execution.ui.RunContentDescriptor
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
+import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.TestConsoleUtils
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
@@ -12,16 +23,20 @@ import com.workflow.orchestrator.agent.tools.truncateOutput
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.coroutineContext
+import kotlin.coroutines.resume
 
 /**
  * Python-specific runtime execution — runs pytest tests and compiles Python modules
@@ -30,9 +45,15 @@ import kotlin.coroutines.coroutineContext
  *
  * Action names (run_tests, compile_module) intentionally match JavaRuntimeExecTool
  * so the LLM's mental model stays simple: "to run tests, call the runtime_exec tool
- * my IDE provides." `run_tests` reuses [executePytestRun] from the pytest actions
- * module and translates the shared param names (class_name -> pytest path, method ->
- * pytest -k pattern).
+ * my IDE provides."
+ *
+ * `run_tests` uses the IntelliJ [PytestNativeLauncher] → [PyTestConfigurationType]
+ * execution pipeline when available (same RunInvocation/disposal pattern as
+ * JavaRuntimeExecTool), and falls back to the shell-based [executePytestRun] when
+ * PyTestConfigurationType is not registered (e.g. Python plugin absent or an older
+ * edition).
+ *
+ * `compile_module` reuses `python -m py_compile` unchanged.
  */
 class PythonRuntimeExecTool : AgentTool {
 
@@ -114,22 +135,245 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // Action: run_tests (delegates to PytestActions.executePytestRun)
+    // Action: run_tests
+    //   1. Attempt native PyTestConfigurationType runner (via PytestNativeLauncher).
+    //   2. Fall back to shell-based executePytestRun when native runner unavailable.
     // ══════════════════════════════════════════════════════════════════════
 
     private suspend fun executeRunTests(params: JsonObject, project: Project): ToolResult {
-        // Timeout is accepted for parity with JavaRuntimeExecTool but executePytestRun
-        // internally uses its own RUN_TIMEOUT_SECONDS. Clamp here so we surface clearly
-        // invalid values rather than silently ignoring them.
+        val rawTimeout = params["timeout"]?.jsonPrimitive?.intOrNull?.toLong()
+        val timeoutSeconds = rawTimeout?.coerceIn(1, RUN_TESTS_MAX_TIMEOUT) ?: RUN_TESTS_DEFAULT_TIMEOUT
+
+        // Resolve AgentService — may be null in unit-test context where the platform
+        // service registry isn't initialised. Use getService (nullable) rather than
+        // service() (throws) so tests can reach the shell fallback cleanly.
+        val agentService: AgentService? = try {
+            project.getService(AgentService::class.java)
+        } catch (_: Exception) {
+            null
+        }
+
+        // Check whether PyTestConfigurationType is registered AND whether the
+        // ideContext has been populated (lateinit — may not be ready in tests).
+        val hasPyTestConfigType: Boolean = try {
+            agentService?.ideContext?.hasPyTestConfigType == true
+        } catch (_: UninitializedPropertyAccessException) {
+            false
+        }
+
+        if (agentService == null || !hasPyTestConfigType) {
+            return executePytestShellFallback(params, project)
+        }
+
+        val launcher = PytestNativeLauncher(project)
+        val settings = launcher.createSettings(
+            pytestPath = params["class_name"]?.jsonPrimitive?.contentOrNull,
+            keywordExpr = params["method"]?.jsonPrimitive?.contentOrNull,
+            markerExpr = params["markers"]?.jsonPrimitive?.contentOrNull,
+        ) ?: return executePytestShellFallback(params, project)
+
+        return runPytestNative(settings, agentService, project, timeoutSeconds)
+    }
+
+    /**
+     * Launch pytest via [PyTestConfigurationType] using the same RunInvocation /
+     * disposal pattern as [JavaRuntimeExecTool.executeWithNativeRunner].
+     *
+     * Notable difference from the Java path: **no ProjectTaskManager build phase**.
+     * pytest discovers and imports tests at run time; there is no ahead-of-time
+     * compilation step required (or available) via IntelliJ's compiler API for Python.
+     *
+     * TODO: When Phase 2 BuildSystemValidator has a pytest equivalent (check interpreter
+     *   has pytest installed, target file/dir exists), call it here before dispatch.
+     */
+    private suspend fun runPytestNative(
+        settings: com.intellij.execution.RunnerAndConfigurationSettings,
+        agentService: AgentService,
+        project: Project,
+        timeoutSeconds: Long,
+    ): ToolResult {
+        val invocation = agentService.newRunInvocation("pytest-${System.currentTimeMillis()}")
+        try {
+            val result = withTimeoutOrNull(timeoutSeconds * 1000) {
+                suspendCancellableCoroutine { continuation ->
+                    // Single cleanup path: dispose the invocation on cancellation.
+                    // This destroys the process handler, disconnects MessageBusConnections,
+                    // removes the RunContentDescriptor, and fires all onDispose callbacks.
+                    continuation.invokeOnCancellation {
+                        Disposer.dispose(invocation)
+                    }
+
+                    ApplicationManager.getApplication().invokeLater {
+                        try {
+                            val executor = DefaultRunExecutor.getRunExecutorInstance()
+                            val env = ExecutionEnvironmentBuilder
+                                .createOrNull(executor, settings)
+                                ?.build()
+
+                            if (env == null) {
+                                if (continuation.isActive) continuation.resume(
+                                    ToolResult(
+                                        "Native pytest runner: ExecutionEnvironmentBuilder returned null. " +
+                                            "Possible causes: no ProgramRunner registered for PyTestConfigurationType.",
+                                        "Native runner unavailable", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
+                                    )
+                                )
+                                return@invokeLater
+                            }
+
+                            // Subscribe to processNotStarted BEFORE launching so we catch
+                            // abort events from the execution framework (no ProgramRunner,
+                            // executor disabled, interpreter resolution failure, etc.).
+                            val runConnection = project.messageBus.connect()
+                            invocation.subscribeTopic(runConnection)
+                            runConnection.subscribe(
+                                com.intellij.execution.ExecutionManager.EXECUTION_TOPIC,
+                                object : com.intellij.execution.ExecutionListener {
+                                    override fun processNotStarted(
+                                        executorId: String,
+                                        e: com.intellij.execution.runners.ExecutionEnvironment,
+                                    ) {
+                                        if (e == env && continuation.isActive) {
+                                            continuation.resume(
+                                                ToolResult(
+                                                    "pytest execution did not start. Possible causes: no runner registered " +
+                                                        "for PyTestConfigurationType, or interpreter not configured.",
+                                                    "pytest run aborted", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
+                                                )
+                                            )
+                                        }
+                                    }
+                                }
+                            )
+
+                            val callback = object : ProgramRunner.Callback {
+                                override fun processStarted(descriptor: RunContentDescriptor?) {
+                                    if (descriptor == null) {
+                                        if (continuation.isActive) continuation.resume(
+                                            ToolResult(
+                                                "pytest runner produced no RunContentDescriptor.",
+                                                "No descriptor", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
+                                            )
+                                        )
+                                        return
+                                    }
+
+                                    invocation.descriptorRef.set(descriptor)
+                                    invocation.processHandlerRef.set(descriptor.processHandler)
+
+                                    // Register removeRunContent as an onDispose block so the
+                                    // TestResultsViewer (and its EventsListener) are released
+                                    // when the invocation disposes. The literal `removeRunContent`
+                                    // call lives here in the tool file so source-text tests can anchor on it.
+                                    invocation.onDispose {
+                                        val desc = invocation.descriptorRef.get() ?: return@onDispose
+                                        val runExecutor = DefaultRunExecutor.getRunExecutorInstance()
+                                        ApplicationManager.getApplication().invokeLater {
+                                            com.intellij.execution.ui.RunContentManager.getInstance(project)
+                                                .removeRunContent(runExecutor, desc)
+                                        }
+                                    }
+
+                                    val testConsole = TestConsoleUtils.unwrapToTestConsole(descriptor.executionConsole)
+                                    if (testConsole != null) {
+                                        val resultsViewer = testConsole.resultsViewer
+                                        val eventsListener = object : TestResultsViewer.EventsListener {
+                                            override fun onTestingFinished(sender: TestResultsViewer) {
+                                                val root = sender.testsRootNode as? SMTestProxy.SMRootTestProxy
+                                                if (root != null && continuation.isActive) {
+                                                    continuation.resume(
+                                                        interpretTestRoot(root, descriptor.displayName ?: "pytest")
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        invocation.attachListener(eventsListener, resultsViewer)
+                                    } else {
+                                        // Fallback: no test console — wait for process termination,
+                                        // then extract whatever the test tree holds.
+                                        val handler = descriptor.processHandler
+                                        if (handler != null) {
+                                            val terminationListener = object : com.intellij.execution.process.ProcessAdapter() {
+                                                override fun processTerminated(event: com.intellij.execution.process.ProcessEvent) {
+                                                    if (continuation.isActive) {
+                                                        val root = TestConsoleUtils.findTestRoot(descriptor)
+                                                        continuation.resume(
+                                                            if (root != null) {
+                                                                interpretTestRoot(root, descriptor.displayName ?: "pytest")
+                                                            } else {
+                                                                ToolResult(
+                                                                    "pytest run completed but no test results available.",
+                                                                    "No structured results", 20
+                                                                )
+                                                            }
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                            invocation.attachProcessListener(handler, terminationListener)
+                                        } else {
+                                            if (continuation.isActive) continuation.resume(null)
+                                        }
+                                    }
+                                }
+                            }
+
+                            try {
+                                ProgramRunnerUtil.executeConfigurationAsync(env, false, true, callback)
+                            } catch (_: NoSuchMethodError) {
+                                env.callback = callback
+                                ProgramRunnerUtil.executeConfiguration(env, false, true)
+                            }
+                        } catch (e: Exception) {
+                            if (continuation.isActive) continuation.resume(
+                                ToolResult(
+                                    "pytest native launch threw ${e.javaClass.simpleName}: ${e.message}",
+                                    "Launch error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (result == null) {
+                // Timeout — kill process, return partial results.
+                invocation.processHandlerRef.get()?.destroyProcess()
+                val desc = invocation.descriptorRef.get()
+                val partial = desc?.let {
+                    val root = TestConsoleUtils.findTestRoot(it)
+                    root?.let { r -> interpretTestRoot(r, "pytest") }
+                }
+                return if (partial != null) {
+                    partial.copy(
+                        content = "[TIMEOUT] pytest timed out after ${timeoutSeconds}s. Partial results:\n\n${partial.content}",
+                        isError = true
+                    )
+                } else {
+                    ToolResult(
+                        "[TIMEOUT] pytest timed out after ${timeoutSeconds}s. No results captured.",
+                        "pytest timeout", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
+                    )
+                }
+            }
+            return result
+        } finally {
+            Disposer.dispose(invocation)
+        }
+    }
+
+    /**
+     * Shell fallback: translate agent-facing params (class_name, method) to the
+     * pytest-facing params (path, pattern) that [executePytestRun] expects.
+     */
+    private suspend fun executePytestShellFallback(params: JsonObject, project: Project): ToolResult {
         val rawTimeout = params["timeout"]?.jsonPrimitive?.intOrNull?.toLong()
         val timeoutSeconds = rawTimeout?.coerceIn(1, RUN_TESTS_MAX_TIMEOUT)
 
-        // Translate agent-facing params (class_name, method) to pytest-facing params
-        // (path, pattern). markers pass through untouched.
         val pytestParams = buildJsonObject {
-            params["class_name"]?.jsonPrimitive?.content?.let { put("path", JsonPrimitive(it)) }
-            params["method"]?.jsonPrimitive?.content?.let { put("pattern", JsonPrimitive(it)) }
-            params["markers"]?.jsonPrimitive?.content?.let { put("markers", JsonPrimitive(it)) }
+            params["class_name"]?.jsonPrimitive?.contentOrNull?.let { put("path", JsonPrimitive(it)) }
+            params["method"]?.jsonPrimitive?.contentOrNull?.let { put("pattern", JsonPrimitive(it)) }
+            params["markers"]?.jsonPrimitive?.contentOrNull?.let { put("markers", JsonPrimitive(it)) }
             if (timeoutSeconds != null) {
                 put("timeout", JsonPrimitive(timeoutSeconds))
             }
@@ -142,7 +386,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
     // ══════════════════════════════════════════════════════════════════════
 
     private suspend fun executeCompileModule(params: JsonObject, project: Project): ToolResult {
-        val moduleName = params["module"]?.jsonPrimitive?.content
+        val moduleName = params["module"]?.jsonPrimitive?.contentOrNull
 
         return withContext(Dispatchers.IO) {
             val basePath = project.basePath
