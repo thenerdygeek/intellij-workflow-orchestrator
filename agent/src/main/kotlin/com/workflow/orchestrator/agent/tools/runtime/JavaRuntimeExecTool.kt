@@ -1014,7 +1014,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                 }
                 reportEntries != null && reportEntries.isEmpty() -> {
                     // XML reports exist but all had tests="0" → class had no @Test methods
-                    noTestsFoundResult(testTarget, command, exitCode, spilledOutput.preview)
+                    noTestsFoundResult(testTarget, command, exitCode, spilledOutput.preview, spillPath = spilledOutput.spilledToFile)
                 }
                 isBuildFailure -> {
                     // Preserve the existing BUILD FAILED message — no reports to parse
@@ -1049,7 +1049,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                     // Neither XML reports nor "Tests run:" marker — nothing actually
                     // executed. This is the user-incident-#2 case: target wasn't a
                     // real test class.
-                    noTestsFoundResult(testTarget, command, exitCode, spilledOutput.preview)
+                    noTestsFoundResult(testTarget, command, exitCode, spilledOutput.preview, spillPath = spilledOutput.spilledToFile)
                 }
             }
         } catch (e: Exception) {
@@ -1069,7 +1069,8 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         testTarget: String,
         command: String,
         exitCode: Int,
-        truncatedOutput: String
+        truncatedOutput: String,
+        spillPath: String? = null
     ): ToolResult {
         val content = "NO_TESTS_FOUND — Surefire/Gradle ran successfully but matched no test methods.\n" +
             "Verify the class has @Test methods and is in a test source root.\n\n" +
@@ -1080,7 +1081,8 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             content = content,
             summary = "NO_TESTS_FOUND: $testTarget",
             tokenEstimate = TokenEstimator.estimate(content),
-            isError = true
+            isError = true,
+            spillPath = spillPath,
         )
     }
 

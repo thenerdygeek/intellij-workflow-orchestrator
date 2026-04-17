@@ -1,6 +1,5 @@
 package com.workflow.orchestrator.agent.tools
 
-import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.AgentService
@@ -131,10 +130,13 @@ interface AgentTool {
         content: String,
         project: Project,
     ): ToolOutputSpiller.SpillResult {
+        // getServiceIfCreated returns null when the service hasn't been started yet
+        // (headless tests, early plugin lifecycle). ClassCastException only occurs in
+        // relaxed MockK tests where the generic return type resolves to Object — treated
+        // identically to null. All other exceptions propagate so production errors surface.
         val spiller = try {
-            project.service<AgentService>().outputSpiller
-        } catch (_: Exception) {
-            // ServiceManager unavailable (headless test, mock project, etc.) — degrade gracefully.
+            project.getServiceIfCreated(AgentService::class.java)?.outputSpiller
+        } catch (_: ClassCastException) {
             null
         }
         if (spiller == null) {

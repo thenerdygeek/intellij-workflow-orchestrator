@@ -502,8 +502,6 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
         // get_run_output constants
         private const val RUN_OUTPUT_DEFAULT_LINES = 200
         private const val RUN_OUTPUT_MAX_LINES = 1000
-        // RUN_OUTPUT_TOKEN_CAP_CHARS deleted — replaced by spillOrFormat (Phase 7 Task 6.4)
-
         // Console unwrap depth
         private const val MAX_UNWRAP_DEPTH = 5
 
