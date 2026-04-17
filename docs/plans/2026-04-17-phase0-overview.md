@@ -82,13 +82,13 @@ Each plan has:
 
 | Phase | Status | Started | Finished | Notes |
 |---|---|---|---|---|
-| 1 | IN PROGRESS | 2026-04-17 | — | — |
-| 2 | IN PROGRESS | 2026-04-17 | — | BuildSystemValidator wired into run_tests (commits `f4062eab`, `8decb7b6`). |
+| 1 | DONE | 2026-04-17 | 2026-04-17 | Tasks 1.1–1.7 landed. Commits `2fa48dc3`→`f698e88f`→`3c1ca0c3`→`ab5acf6c`→`6af26a4c`→`c0674734`→`d630e907`→`40aab31c`→`ce4459b1`→`2590eaab`. Per-file compile errors in run_tests build gate, unified `interpretTestRoot` classification across RuntimeExecTool/CoverageTool/JavaRuntimeExecTool, Surefire/Gradle XML parsing in shell fallback, pytest summary-line reconciliation + zero-output heuristic, `InterpretTestRootTest` (30KB) + `SurefireXmlParseTest` (16KB) + `FormatCompileErrorsTest` (15KB) + `ShellFallbackTest` GREEN. `BUILD FAILED / COMPILE FAILED` rule added to `SystemPrompt.kt:525`. |
+| 2 | DONE | 2026-04-17 | 2026-04-17 | Tasks 2.1–2.10 landed. Commits `e5e93e88`→`269605d5`→`d3c7a13a`→`f4062eab`→`8decb7b6`. `BuildSystemValidator` with Gradle/Maven reflective probes + filesystem fallback + test-source-root + @Test count pre-check. Wired into `java_runtime_exec.run_tests` before both native and shell paths. `BuildSystemValidatorTest` (24KB, 7 scenarios) GREEN. |
 | 3 | DONE | 2026-04-17 | 2026-04-17 | RunInvocation + session Disposable + tool refactors. Commits `eff98f66`→`503f34df`→`86ac174c`→`8f90baa5`→`9c67e4d6`→`b69efac5`→`5204ef37`. All 9 leak regression tests GREEN. Manual heap-dump verification in runIde still TODO — cannot run from CLI. |
-| 4 | Planned | — | — | (was Phase 3) |
+| 4 | DONE | 2026-04-17 | 2026-04-17 | Tasks 3.1–3.6 landed. Commits `eb944a63`→`a73e7945`→`6a25b788`→`9459c7d7`→`f686c64f`→`2ba0c3b4`→`7f58e171`. `PyTestConfigurationType` detection in IdeContext, `PytestNativeLauncher` (reflective config setup), `python_runtime_exec.run_tests` routed through native runner with shell fallback, `collectTestResults` URL filter extended for `python://` + `file://` schemes, `PytestNativeLauncherTest` + SMTestProxy URL scheme tests GREEN, pytest fixture project for manual runIde testing. |
 | 5 | DONE | 2026-04-17 | 2026-04-17 | DebugInvocation + awaitCallback + UUID session handles + breakpoint-type tests + Phase-7 TODO markers. Commits `c1995f76`→`4681f639`→`67baea87`→`baf9976b`→`c7fedb35`→`9aafb0e8`→`1f79c3f9`. 70 Debug + 11 IdeStateProbe tests GREEN. verifyPlugin GREEN (3 IDE versions). Task 4.4 spiller-wiring tagged `TODO(phase7)` at 4 sites — 2 handlers (thread_dump, memory_view) currently un-truncated, silent-overflow risk for Phase 7 to address. Manual runIde verification checklist: `docs/plans/2026-04-17-phase5-manual-verification.md`. |
 | 6 | DONE | 2026-04-17 | 2026-04-17 | F1 structured DiagnosticEntry + F3 DumbService + F4 rename safety + F5 deferred + F6 isError. 23 commits (T2 `7eb4bd74`→T6 `788026a9`). All T2–T5 (98) + T6 (22) tests GREEN. Full `:agent:test` suite GREEN. F2 spiller wiring deferred to Phase 7 via 17+ `TODO(phase7)` markers at cap sites. F5 (`LocalInspectionToolWrapper.processFile`) and F6 (`DaemonCodeAnalyzerImpl.getFileHighlightingRanges`) deferred with `@Disabled` future-upgrade tests citing `docs/superpowers/research/2026-03-20-intellij-api-signatures.md §4`. |
-| 7 | Planned | — | — | (was Phase 6) |
+| 7 | Planned | — | — | (was Phase 6) — ready to start now that 1–6 all DONE. |
 
 ---
 
