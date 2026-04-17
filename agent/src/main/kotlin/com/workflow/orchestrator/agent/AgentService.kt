@@ -1108,7 +1108,7 @@ class AgentService(private val project: Project) : Disposable {
                         additionalContext = projectInstructions,
                         availableSkills = availableSkills,
                         activeSkillContent = ctx.getActiveSkill(),
-                        taskProgress = ctx.getTaskProgress(),
+                        taskProgress = ctx.renderTaskProgressMarkdown() ?: ctx.getTaskProgress(),
                         deferredToolCatalog = deferredCatalog,
                         coreMemoryXml = coreMemory?.compile(),
                         toolDefinitionsMarkdown = toolDefsMarkdown,
@@ -1247,6 +1247,9 @@ class AgentService(private val project: Project) : Disposable {
                 val store = TaskStore(baseDir = sessionBaseDir, sessionId = sid)
                 store.loadFromDisk()
                 taskStore = store
+
+                // Attach TaskStore to ContextManager so renderTaskProgressMarkdown() reads live task state.
+                ctx.attachTaskStore(store)
 
                 // Wire onHistoryOverwrite callback so compaction persists truncated history.
                 // Ported from Cline's conversationHistoryDeletedRange pattern: after context
