@@ -46,25 +46,44 @@ class ProblemViewTool : AgentTool {
      * ## `isError` semantics (Task 5.6 / F6 invariant)
      *
      * `ToolResult.isError` distinguishes **tool-execution failure** from
-     * **problems-as-payload**:
+     * **problems-as-payload**.
      *
-     * - `isError = true`  → the tool itself could not run: invalid `severity`
-     *   enum value, bad file path (traversal, missing base path, not found),
-     *   `DumbService` blocked during indexing, or an uncaught exception
-     *   escaping the outer catch.
-     * - `isError = false` → the tool ran to completion. "No problems in X",
-     *   "N problems in X", and "No files are open in the editor" are ALL
-     *   successful results — the problem list IS the payload, not a failure
-     *   signal. "Flagged by Wolf but no details" is likewise a legitimate
-     *   zero-detail-problem outcome (the file IS a known problem file, we
-     *   just can't enumerate specifics because it's not open).
+     * ### The five `isError = true` sites (exhaustive)
      *
-     * This mirrors the contract documented for `SemanticDiagnosticsTool`,
+     * 1. **Invalid `severity` enum value** — rejected before any IDE call.
+     * 2. **Malformed path** (via `PathValidator.resolveAndValidate`) —
+     *    traversal attempts (`../../etc/passwd`), missing `project.basePath`.
+     * 3. **Valid path, missing file** (`findFileByIoFile` returns null) —
+     *    the path resolved cleanly but no VFS entry exists at that location.
+     *    Distinct from #2: the input was structurally valid, the target
+     *    just isn't present. Emits `"File not found: $filePath"`.
+     * 4. **`DumbService` blocked during indexing** — Wolf's cache may be
+     *    stale while the index is still being built; short-circuit with a
+     *    retry hint rather than emit misleading zero-problem results.
+     * 5. **Uncaught exception** escaping the outer `try`/`catch` in
+     *    [execute] — any unexpected IDE/PSI failure.
+     *
+     * ### Success payloads (`isError = false`)
+     *
+     * **Per-file mode** (caller passed `file`):
+     * - `"No problems in X"` — clean file.
+     * - `"Flagged but no details for X"` — Wolf flagged the file but no
+     *   `HighlightInfo` is available (file not open in editor).
+     * - `"N problems in X"` — full structured entry list attached.
+     *
+     * **All-open-files mode** (`file` omitted):
+     * - `"No files are open in the editor"` — empty editor state.
+     * - `"No problems found in N open file(s)"` — all clean.
+     * - `"Problems in project (N file(s))"` — aggregated entries across
+     *   all open files.
+     *
+     * The problem list IS the payload, not a failure signal. This mirrors
+     * the contract documented for `SemanticDiagnosticsTool`,
      * `RunInspectionsTool` (T2), and `ListQuickFixesTool` (T3). See
      * `agent/CLAUDE.md`. [ProblemViewToolTest] pins the error-path invariant
      * at the unit-test boundary; the problems-found branch is covered
      * structurally (the only `isError = true` construction in this file is
-     * at the designated error sites).
+     * at the five designated error sites above).
      */
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val filePath = params["file"]?.jsonPrimitive?.content
@@ -396,7 +415,13 @@ class ProblemViewTool : AgentTool {
         val toolId: String,
     )
 
-    /** Aggregation struct for the all-open-files path — pairs per-file prose paths with the absolute path used for DiagnosticEntry.file. */
+    /**
+     * Aggregation struct for the all-open-files path — pairs per-file prose paths
+     * with the absolute path used for `DiagnosticEntry.file`. `absolutePath: String`
+     * is deliberately a plain string (not a `VirtualFile` reference) so the struct
+     * never leaks a VFS object past the `ReadAction.nonBlocking` lambda where it
+     * was sourced. Captured absolute paths stay safe to use from any thread.
+     */
     private data class FileProblems(
         val relativePath: String,
         val absolutePath: String,
