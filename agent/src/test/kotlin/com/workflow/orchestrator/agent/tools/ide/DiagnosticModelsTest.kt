@@ -219,11 +219,12 @@ class DiagnosticModelsTest {
     // ═══════════════════════════════════════════════════════════════════════
     // normalizeSeverity — shared canonical mapper used by T2/T3 (and future T4/T5).
     //
-    // Contract: every ProblemHighlightType maps to one of the four strings
-    // "ERROR" | "WARNING" | "WEAK_WARNING" | "INFO". The exhaustive test pins
-    // the invariant so future upstream IntelliJ enum additions surface as a
-    // visible test failure (if we ever tighten the `else` default) or safely
-    // fall through to "INFO" under the current `else` default.
+    // Contract: every ProblemHighlightType maps to one of the three strings
+    // "ERROR" | "WARNING" | "INFO". ("WEAK_WARNING" is reserved in the kdoc
+    // for a future vocabulary extension, but is not emitted today.) The
+    // exhaustive test pins the invariant so future upstream IntelliJ enum
+    // additions safely fall through to "INFO" under the current `else`
+    // default.
     //
     // Grouping matches the prior T2 RunInspectionsTool.mapHighlightType
     // behaviour verbatim — T2 collapses ERROR+GENERIC_ERROR into "ERROR",
@@ -234,16 +235,13 @@ class DiagnosticModelsTest {
     // ═══════════════════════════════════════════════════════════════════════
 
     @Test
-    fun `normalizeSeverity emits only the shared vocabulary for every ProblemHighlightType`() {
-        val validSeverities = setOf("ERROR", "WARNING", "WEAK_WARNING", "INFO")
+    fun `normalizeSeverity emits only the currently-supported 3-value vocabulary`() {
+        val supported = setOf("ERROR", "WARNING", "INFO")
         for (type in ProblemHighlightType.values()) {
             val result = normalizeSeverity(type)
             assertTrue(
-                result in validSeverities,
-                "normalizeSeverity($type) returned '$result', which is outside " +
-                    "the shared DiagnosticEntry.severity vocabulary " +
-                    "$validSeverities. Phase 7 consumers filter/sort by this " +
-                    "vocabulary; new enum values must be mapped explicitly.",
+                result in supported,
+                "normalizeSeverity($type) returned '$result'; WEAK_WARNING is reserved but not yet supported by the 3-value vocabulary",
             )
         }
     }

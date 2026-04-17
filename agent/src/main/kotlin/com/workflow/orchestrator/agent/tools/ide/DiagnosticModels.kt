@@ -17,7 +17,8 @@ import kotlinx.serialization.json.Json
  *   project-relative paths, `VirtualFile.presentableUrl`, VFS-style URIs, or any
  *   other path kind — Phase 7's link-back (chip click → navigateToFile) keys off
  *   this contract, and silent divergence between tools breaks cross-tool linking.
- * - [severity] is one of "ERROR", "WARNING", "WEAK_WARNING", "INFO".
+ * - [severity] is one of "ERROR", "WARNING", "INFO". (Reserve "WEAK_WARNING"
+ *   for a future vocabulary extension — see the note in [normalizeSeverity].)
  * - [toolId] is the inspection short name (e.g. "UnusedDeclaration") or the
  *   producing subsystem (e.g. "wolf", "daemon", "provider").
  * - [column] is 1-based; -1 means column is unknown.
@@ -72,10 +73,10 @@ fun renderDiagnosticBody(prose: String, entries: List<DiagnosticEntry>): String 
 
 /**
  * Canonicalise a [ProblemHighlightType] into the shared [DiagnosticEntry.severity]
- * vocabulary (`"ERROR" | "WARNING" | "WEAK_WARNING" | "INFO"`).
+ * vocabulary (`"ERROR" | "WARNING" | "INFO"`).
  *
  * ## Contract
- * - Every [ProblemHighlightType] value maps to one of the four strings above.
+ * - Every [ProblemHighlightType] value maps to one of the three strings above.
  *   A `DiagnosticModelsTest` assertion iterates `ProblemHighlightType.values()`
  *   and pins this invariant — new enum values landed by upstream IntelliJ will
  *   fall through to the `else` branch and surface as `"INFO"`, which is a
@@ -95,12 +96,11 @@ fun renderDiagnosticBody(prose: String, entries: List<DiagnosticEntry>): String 
  * shared mapper so both tools emit byte-identical severity values for the
  * same [ProblemHighlightType] input.
  *
- * Note: the [DiagnosticEntry.severity] kdoc advertises `"WEAK_WARNING"` as
- * part of the vocabulary, but T2 never emitted it and T3 does not emit it
- * either after this migration. If a future tool (T4 `ProblemViewTool`,
- * T5 `SemanticDiagnosticsTool`) needs the WEAK_WARNING distinction, add a
- * case here rather than forking a local mapper — that keeps cross-tool
- * consistency intact.
+ * Note: `"WEAK_WARNING"` is RESERVED but not yet emitted. If a future tool
+ * (T4 `ProblemViewTool`, T5 `SemanticDiagnosticsTool`) needs the distinction,
+ * promote it to a real case here AND extend `DiagnosticEntry.severity` kdoc,
+ * AND update any user-facing severity-filter enum lists on consumer tools
+ * (e.g. T2's `severity` parameter schema). Do not fork a local mapper.
  */
 fun normalizeSeverity(type: ProblemHighlightType): String {
     return when (type) {
