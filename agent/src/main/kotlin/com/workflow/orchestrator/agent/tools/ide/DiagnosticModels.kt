@@ -153,6 +153,58 @@ fun normalizeSeverity(type: ProblemHighlightType): String {
 }
 
 /**
+ * Canonicalise a raw severity string emitted by
+ * `LanguageIntelligenceProvider.DiagnosticInfo.severity` into the shared
+ * [DiagnosticEntry.severity] vocabulary (`"ERROR" | "WARNING" | "INFO"`).
+ *
+ * ## Why this exists
+ *
+ * This is the THIRD severity normalizer in the codebase, joining:
+ * - [normalizeSeverity] for `com.intellij.codeInspection.ProblemHighlightType`
+ *   (T2 `RunInspectionsTool`, T3 `ListQuickFixesTool`)
+ * - The inline `HighlightSeverity` mapper in T4 `ProblemViewTool`
+ *
+ * T5 `SemanticDiagnosticsTool` delegates to a language provider that returns
+ * `DiagnosticInfo.severity: String`. At the time T5 landed, both
+ * `JavaKotlinProvider.getDiagnostics` and `PythonProvider.getDiagnostics`
+ * emitted only the single uppercase literal `"ERROR"` (for syntax errors and
+ * unresolved references). A third caller (T5) is the threshold where
+ * extraction becomes justified — the audit brief pins "three callers is when
+ * extraction is justified" and this is that third caller.
+ *
+ * ## Contract
+ *
+ * - Maps `"ERROR" | "error" | "Error" | …` (any case) to `"ERROR"`.
+ * - Maps `"WARNING" | "warning" | "Warning" | …` to `"WARNING"`.
+ * - Maps `"INFO" | "info" | "Info" | …` to `"INFO"`.
+ * - Any other input — empty, whitespace, unknown vocabulary
+ *   (`"TYPO"`, `"HINT"`, `"WEAK_WARNING"`, `"CRITICAL"`, arbitrary junk) —
+ *   falls back to `"INFO"`. This is conservative: Phase 7 consumers filter
+ *   on the closed 3-value vocabulary, so leaking a non-canonical string
+ *   would silently break grouping/filter UI.
+ *
+ * If a future provider emits severities other than `"ERROR"`, extend the
+ * provider AND update `DiagnosticModelsTest.normalizeProviderSeverity*` tests
+ * together — the tests lock the current emitted vocabulary.
+ *
+ * ## Why not reuse [normalizeSeverity]
+ *
+ * `normalizeSeverity(ProblemHighlightType)` takes a `ProblemHighlightType`
+ * enum and is type-safe over a closed enum set. Provider severity is a
+ * free-form `String`, so the input domain, the normalization rules (case
+ * folding), and the forward-compat fallback are fundamentally different.
+ * Sharing the `else -> "INFO"` default is the only true overlap.
+ */
+fun normalizeProviderSeverity(raw: String): String {
+    return when (raw.trim().uppercase()) {
+        "ERROR" -> "ERROR"
+        "WARNING" -> "WARNING"
+        "INFO" -> "INFO"
+        else -> "INFO" // forward-compat: unknown/empty/junk collapses to INFO.
+    }
+}
+
+/**
  * Parse a body produced by [renderDiagnosticBody]. Returns (prose, entries) — entries
  * empty if marker is absent. Useful for tests and for Phase 7 spiller.
  */
