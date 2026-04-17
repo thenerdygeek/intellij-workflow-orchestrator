@@ -139,13 +139,23 @@ class ListQuickFixesTool : AgentTool {
                             if (problemLine == targetLine) {
                                 val fixes = problem.fixes
                                 if (fixes != null && fixes.isNotEmpty()) {
+                                    // Shared canonical mapping lives in
+                                    // DiagnosticModels.kt (`normalizeSeverity`) so
+                                    // T2/T3/T4/T5 emit identical
+                                    // DiagnosticEntry.severity values for the same
+                                    // ProblemHighlightType input. Do NOT leak raw
+                                    // enum names ("GENERIC_ERROR_OR_WARNING",
+                                    // "LIKE_UNUSED_SYMBOL", "INFORMATION", …) —
+                                    // Phase 7 consumers filter/sort by severity
+                                    // and require the canonical vocabulary.
+                                    val severityName = normalizeSeverity(problem.highlightType)
                                     for (fix in fixes) {
                                         quickFixes.add(QuickFixInfo(
                                             fixName = fix.familyName,
                                             problem = problem.descriptionTemplate,
                                             inspection = toolWrapper.shortName,
                                             problemLine = problemLine,                      // 0-based
-                                            severity = problem.highlightType.name,          // ProblemHighlightType enum name
+                                            severity = severityName,                        // canonical: ERROR / WARNING / WEAK_WARNING / INFO
                                         ))
                                     }
                                 }
@@ -186,7 +196,7 @@ class ListQuickFixesTool : AgentTool {
                             file = vf.path,                                    // absolute path; DiagnosticEntry.file contract (52b0d867)
                             line = qf.problemLine + 1,                         // 0-based problem → 1-based DiagnosticEntry
                             column = -1,                                       // ProblemDescriptor does not expose column
-                            severity = qf.severity,                            // ProblemHighlightType enum name ("ERROR", "WARNING", "GENERIC_ERROR_OR_WARNING", ...)
+                            severity = qf.severity,                            // canonical DiagnosticEntry vocabulary: ERROR / WARNING / WEAK_WARNING / INFO (via normalizeSeverity)
                             toolId = qf.inspection,                            // inspection short name
                             description = "${qf.fixName} — ${qf.problem}",    // fix name front-loaded per T3 brief
                             hasQuickFix = true,                                // invariant: every T3 entry IS a quick fix
@@ -221,7 +231,14 @@ class ListQuickFixesTool : AgentTool {
         val inspection: String,
         /** 0-based — matches IntelliJ's `ProblemDescriptor.lineNumber`. Converted to 1-based for [DiagnosticEntry]. */
         val problemLine: Int,
-        /** `ProblemHighlightType.name()` — stable enum name (ERROR, WARNING, GENERIC_ERROR_OR_WARNING, INFORMATION, …). */
+        /**
+         * Canonical [DiagnosticEntry.severity] vocabulary value — one of
+         * `"ERROR" | "WARNING" | "WEAK_WARNING" | "INFO"` — produced by the
+         * shared [normalizeSeverity] mapper in DiagnosticModels.kt. Do NOT
+         * substitute a raw `ProblemHighlightType.name` here: Phase 7 consumers
+         * filter and sort by severity and require the canonical vocabulary,
+         * identical to the output of T2 RunInspectionsTool.
+         */
         val severity: String,
     )
 
