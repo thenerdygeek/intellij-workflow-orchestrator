@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { MessageSquare, SkipForward, Send, X, Pencil } from 'lucide-react';
 import { useChatStore } from '@/stores/chatStore';
+import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 
 // ── Step indicator dots ──
 
@@ -261,11 +262,17 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
 
           <div className="space-y-3 mb-4">
             {questions.map((q, i) => {
-              const answer = q.skipped
+              const answerDisplay = q.skipped
                 ? 'Skipped'
-                : Array.isArray(q.answer)
-                  ? q.answer.join(', ')
-                  : q.answer ?? 'No answer';
+                : (() => {
+                    if (!q.answer) return 'No answer';
+                    const ids = Array.isArray(q.answer) ? q.answer : [q.answer];
+                    const labels = ids.map(id => {
+                      const opt = q.options.find(o => (o.id ?? o.label) === id);
+                      return opt?.label ?? id;
+                    });
+                    return labels.join(', ');
+                  })();
 
               return (
                 <div
@@ -274,11 +281,11 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
                   style={{ backgroundColor: 'var(--tool-bg)' }}
                 >
                   <div className="flex-1 min-w-0">
-                    <div className="text-[12px] font-medium truncate" style={{ color: 'var(--fg)' }}>
-                      {q.text}
+                    <div className="text-[12px] font-medium [&_p]:m-0 [&_p]:inline" style={{ color: 'var(--fg)' }}>
+                      <MarkdownRenderer content={q.text} />
                     </div>
                     <div className="text-[11px] mt-0.5" style={{ color: q.skipped ? 'var(--fg-muted)' : 'var(--accent)' }}>
-                      {answer}
+                      {answerDisplay}
                     </div>
                   </div>
                   <Button
@@ -322,9 +329,9 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
         {/* Text input question */}
         {question.type === 'text' ? (
           <div className="p-4">
-            <h2 className="text-sm font-semibold mb-2" style={{ color: 'var(--fg)' }}>
-              {question.text}
-            </h2>
+            <div className="text-sm font-semibold mb-2 [&_p]:m-0 [&_p]:inline" style={{ color: 'var(--fg)' }}>
+              <MarkdownRenderer content={question.text} />
+            </div>
             <TextInput
               key={question.id}
               defaultAnswer={typeof question.answer === 'string' ? question.answer : ''}
@@ -339,7 +346,8 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
                 key={question.id}
                 id={`question-${question.id}`}
                 step={activeIndex + 1}
-                title={question.text}
+                title={<MarkdownRenderer content={question.text} />}
+                titleText={question.text}
                 options={flowOptions}
                 selectionMode={selectionMode}
                 defaultValue={defaultValue}

@@ -54,7 +54,8 @@ export interface QuestionFlowProgressiveProps extends BaseRuntimeProps {
   id: string;
   role?: "information" | "decision" | "control" | "state" | "composite";
   step: number;
-  title: string;
+  title: ReactNode;
+  titleText?: string;
   description?: string;
   options: QuestionFlowOption[];
   selectionMode?: "single" | "multi";
@@ -314,6 +315,7 @@ export function getQuestionFlowStepIds(id: string, stepKey: string) {
 function StepBodyContent({
   stepKey,
   title,
+  titleText,
   description,
   options,
   selectionMode,
@@ -324,7 +326,8 @@ function StepBodyContent({
   transitionDirection,
 }: {
   stepKey: string;
-  title: string;
+  title: ReactNode;
+  titleText?: string;
   description?: string;
   options: QuestionFlowOption[];
   selectionMode: "single" | "multi";
@@ -458,7 +461,7 @@ function StepBodyContent({
       aria-hidden={isExiting}
     >
       <div className="flex flex-col gap-1">
-        <h2 id={titleId} className="text-sm font-semibold leading-tight">
+        <h2 id={titleId} className="text-sm font-semibold leading-tight" aria-label={titleText}>
           {title}
         </h2>
         {description && (
@@ -508,7 +511,8 @@ function StepBodyContent({
 interface StepContentProps {
   step: number;
   totalSteps?: number;
-  title: string;
+  title: ReactNode;
+  titleText?: string;
   description?: string;
   options: QuestionFlowOption[];
   selectionMode: "single" | "multi";
@@ -529,6 +533,7 @@ function StepContent({
   step,
   totalSteps,
   title,
+  titleText,
   description,
   options,
   selectionMode,
@@ -606,6 +611,7 @@ function StepContent({
             key={resolvedStepKey}
             stepKey={resolvedStepKey}
             title={title}
+            titleText={titleText}
             description={description}
             options={options}
             selectionMode={selectionMode}
@@ -655,6 +661,7 @@ function QuestionFlowProgressive({
   id,
   step,
   title,
+  titleText,
   description,
   options,
   selectionMode = "single",
@@ -702,6 +709,7 @@ function QuestionFlowProgressive({
       id={id}
       step={step}
       title={title}
+      titleText={titleText}
       description={description}
       options={options}
       selectionMode={selectionMode}

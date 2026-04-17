@@ -84,8 +84,9 @@ export function AnsweredQuestionsCard({ questions }: { questions: Question[] }) 
           const answers = Array.isArray(q.answer) ? q.answer : (q.answer ? [q.answer] : []);
           return (
             <li key={q.id ?? i} className="text-[12px] leading-snug">
-              <div className="font-medium" style={{ color: 'var(--fg)' }}>
-                {i + 1}. {q.text}
+              <div className="font-medium flex gap-1 [&_p]:m-0 [&_p]:inline" style={{ color: 'var(--fg)' }}>
+                <span className="shrink-0">{i + 1}.</span>
+                <MarkdownRenderer content={q.text} />
               </div>
               <div className="mt-0.5 pl-3" style={{ color: skipped ? 'var(--fg-muted)' : 'var(--fg-secondary)' }}>
                 {skipped ? (
