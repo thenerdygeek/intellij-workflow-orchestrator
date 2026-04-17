@@ -278,6 +278,7 @@ Most actions require a suspended session. session_id defaults to active session.
             sb.append("Result: ${evalResult.result}\n")
             sb.append("Type: ${evalResult.type}")
 
+            // TODO(phase7): wire ToolOutputSpiller — keep current small cap (single-value output)
             val content = sb.toString()
             ToolResult(content, "Evaluated: $expression", TokenEstimator.estimate(content))
         } catch (e: Exception) {
@@ -383,6 +384,7 @@ Most actions require a suspended session. session_id defaults to active session.
 
             var content = sb.toString()
             if (content.length > MAX_OUTPUT_CHARS) {
+                // TODO(phase7): wire ToolOutputSpiller — output_config DEFAULT, grep enabled, threshold 30K
                 content = truncateOutput(content, MAX_OUTPUT_CHARS) +
                     "\n(use variable_name to inspect specific variable)"
             }
@@ -572,6 +574,7 @@ Most actions require a suspended session. session_id defaults to active session.
                 }
             }
 
+            // TODO(phase7): wire ToolOutputSpiller — output_config DEFAULT, grep enabled, threshold 30K
             val content = sb.toString().trimEnd()
             ToolResult(content, "Thread dump: ${threadInfos.size} threads, $suspendedCount suspended", TokenEstimator.estimate(content))
         } catch (e: Exception) {
@@ -617,6 +620,7 @@ Most actions require a suspended session. session_id defaults to active session.
                 val counts = vm.instanceCounts(refTypes)
                 val totalCount = counts.sum()
 
+                // TODO(phase7): wire ToolOutputSpiller — output_config DEFAULT, grep enabled, threshold 30K
                 val content = buildString {
                     append("Memory view for: $className\n")
                     append("Total live instances: $totalCount\n")
