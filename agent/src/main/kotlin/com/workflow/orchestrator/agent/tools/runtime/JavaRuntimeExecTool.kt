@@ -19,8 +19,11 @@ import com.intellij.openapi.compiler.CompileContext
 import com.intellij.openapi.compiler.CompilerManager
 import com.intellij.openapi.compiler.CompilerMessageCategory
 import com.intellij.openapi.compiler.CompilerTopics
+import com.intellij.openapi.components.service
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
+import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.tools.AgentTool
@@ -281,227 +284,241 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         val settings = launchSpec.settings
         val testModule = launchSpec.module
 
-        val processHandlerRef = AtomicReference<ProcessHandler?>(null)
-        val descriptorRef = AtomicReference<RunContentDescriptor?>(null)
-        // Two distinct refs: one for the build phase connection, one for the
-        // post-build ExecutionListener connection. Reusing a single ref between
-        // phases opens a race: if cancellation fires after buildConnection.disconnect()
-        // but before runConnection is set, the watchdog thread keeps the ExecutionListener
-        // connected for the full BUILD_WATCHDOG_MAX_MS (5 min) before it disconnects.
-        val buildConnectionRef = AtomicReference<com.intellij.util.messages.MessageBusConnection?>(null)
-        val runConnectionRef = AtomicReference<com.intellij.util.messages.MessageBusConnection?>(null)
+        // Phase 3 / Task 2.3: route all listener/connection/descriptor tracking through
+        // a single RunInvocation. The try/finally block below disposes the invocation on
+        // every exit path (success / processNotStarted / timeout / exception / coroutine
+        // cancel), which in turn:
+        //   - destroys the captured ProcessHandler if it hasn't terminated,
+        //   - disconnects both the build-phase and run-phase MessageBusConnection
+        //     (registered via invocation.subscribeTopic below),
+        //   - runs the `removeRunContent` onDispose callback installed after the
+        //     descriptor is captured (removes the descriptor from RunContentManager,
+        //     which in turn disposes the TestResultsViewer and its EventsListener),
+        //   - auto-cleans any 2-arg process listeners attached inside handleDescriptorReady.
+        //
+        // The old raw `build-watchdog-timeout` Thread (5 min sleep that manually
+        // disconnected the run connection) is gone — the outer `withTimeoutOrNull`
+        // fires → this finally runs → everything is released.
+        val invocation = project.service<AgentService>().newRunInvocation("run-tests-${System.currentTimeMillis()}")
+        // Keep local refs as aliases to the invocation's public refs so Task 2.4 can
+        // refactor handleDescriptorReady to consume `invocation` directly without
+        // another rename pass here. Task 2.3 boundary: the local vars still exist
+        // but point to invocation-owned storage.
+        val processHandlerRef: AtomicReference<ProcessHandler?> = invocation.processHandlerRef
+        val descriptorRef: AtomicReference<RunContentDescriptor?> = invocation.descriptorRef
 
-        val result = withTimeoutOrNull(timeoutSeconds * 1000) {
-            suspendCancellableCoroutine { continuation ->
-                // Kill the spawned process and disconnect BOTH bus watchers when the agent is
-                // stopped or when withTimeoutOrNull fires — prevents orphaned JUnit processes
-                // that block subsequent runs with "initialization error". getAndSet(null)
-                // ensures a double-disconnect doesn't throw if the listeners already cleared
-                // the ref.
-                continuation.invokeOnCancellation {
-                    processHandlerRef.get()?.destroyProcess()
-                    buildConnectionRef.getAndSet(null)?.disconnect()
-                    runConnectionRef.getAndSet(null)?.disconnect()
-                }
-                com.intellij.openapi.application.invokeLater {
-                    try {
-                        // Capture the full CompileContext so the build-failure branch can
-                        // walk per-file error messages via formatCompileErrors(). Prior
-                        // implementation stored only "N errors, M warnings" in a String,
-                        // which the LLM misread as "TDD red phase" — missing that the
-                        // real failure was a typo the user could see at file:line:col.
-                        //
-                        // AtomicReference for thread safety: compilationFinished() fires
-                        // on a background thread (CompilerManager's build thread) while
-                        // the outer scope may touch the ref from EDT.
-                        val compileContextRef = AtomicReference<CompileContext?>(null)
-                        val buildConnection = project.messageBus.connect()
-                        buildConnectionRef.set(buildConnection)  // expose for invokeOnCancellation
+        try {
+            val result = withTimeoutOrNull(timeoutSeconds * 1000) {
+                suspendCancellableCoroutine { continuation ->
+                    // Single cleanup path: dispose the invocation. This destroys the
+                    // process handler, disconnects both MessageBusConnections, removes
+                    // the run content descriptor, and runs all auto-cleaning 2-arg
+                    // process listeners — replacing the old manual disconnect/destroy
+                    // dance.
+                    continuation.invokeOnCancellation {
+                        Disposer.dispose(invocation)
+                    }
+                    com.intellij.openapi.application.invokeLater {
+                        try {
+                            // Capture the full CompileContext so the build-failure branch can
+                            // walk per-file error messages via formatCompileErrors(). Prior
+                            // implementation stored only "N errors, M warnings" in a String,
+                            // which the LLM misread as "TDD red phase" — missing that the
+                            // real failure was a typo the user could see at file:line:col.
+                            //
+                            // AtomicReference for thread safety: compilationFinished() fires
+                            // on a background thread (CompilerManager's build thread) while
+                            // the outer scope may touch the ref from EDT.
+                            val compileContextRef = AtomicReference<CompileContext?>(null)
+                            val buildConnection = project.messageBus.connect()
+                            invocation.subscribeTopic(buildConnection)
 
-                        // Subscribe to CompilationStatusListener BEFORE starting the build so
-                        // we capture the CompileContext from the build phase. Direct typed
-                        // subscription — no reflection needed; the class and topic are
-                        // part of the public intellij.java.compiler module.
-                        buildConnection.subscribe(
-                            CompilerTopics.COMPILATION_STATUS,
-                            object : CompilationStatusListener {
-                                override fun compilationFinished(
-                                    aborted: Boolean,
-                                    errors: Int,
-                                    warnings: Int,
-                                    compileContext: CompileContext
-                                ) {
-                                    if (aborted || errors > 0) {
-                                        compileContextRef.set(compileContext)
+                            // Subscribe to CompilationStatusListener BEFORE starting the build so
+                            // we capture the CompileContext from the build phase. Direct typed
+                            // subscription — no reflection needed; the class and topic are
+                            // part of the public intellij.java.compiler module.
+                            buildConnection.subscribe(
+                                CompilerTopics.COMPILATION_STATUS,
+                                object : CompilationStatusListener {
+                                    override fun compilationFinished(
+                                        aborted: Boolean,
+                                        errors: Int,
+                                        warnings: Int,
+                                        compileContext: CompileContext
+                                    ) {
+                                        if (aborted || errors > 0) {
+                                            compileContextRef.set(compileContext)
+                                        }
                                     }
                                 }
-                            }
-                        )
+                            )
 
-                        // Explicit build phase: the transient RunnerAndConfigurationSettings is
-                        // intentionally never registered in RunManager (see commit 9b164bf3), so
-                        // IntelliJ's factory-default "Build" before-run task is NOT wired to it.
-                        // We invoke ProjectTaskManager.build(module) ourselves to guarantee the
-                        // test class is compiled before JUnit starts — preventing initializationError.
-                        //
-                        // Do NOT "fix" this by calling RunManager.setTemporaryConfiguration(settings):
-                        // that API sets selectedConfiguration as a side-effect and re-triggers the
-                        // "initialization error on next manual run" regression from commit 9b164bf3.
-                        try {
-                            ProjectTaskManager.getInstance(project)
-                                .build(testModule)
-                                .onSuccess { buildResult ->
-                                    // getAndSet(null) so cancellation can't also disconnect this again.
-                                    buildConnectionRef.getAndSet(null)?.disconnect()
+                            // Explicit build phase: the transient RunnerAndConfigurationSettings is
+                            // intentionally never registered in RunManager (see commit 9b164bf3), so
+                            // IntelliJ's factory-default "Build" before-run task is NOT wired to it.
+                            // We invoke ProjectTaskManager.build(module) ourselves to guarantee the
+                            // test class is compiled before JUnit starts — preventing initializationError.
+                            //
+                            // Do NOT "fix" this by calling RunManager.setTemporaryConfiguration(settings):
+                            // that API sets selectedConfiguration as a side-effect and re-triggers the
+                            // "initialization error on next manual run" regression from commit 9b164bf3.
+                            try {
+                                ProjectTaskManager.getInstance(project)
+                                    .build(testModule)
+                                    .onSuccess { buildResult ->
+                                        if (buildResult.hasErrors() || buildResult.isAborted) {
+                                            if (continuation.isActive) {
+                                                continuation.resume(
+                                                    buildCompileFailureResult(
+                                                        compileContextRef.get(),
+                                                        testTarget,
+                                                        buildResult.isAborted
+                                                    )
+                                                )
+                                            }
+                                            return@onSuccess
+                                        }
 
-                                    if (buildResult.hasErrors() || buildResult.isAborted) {
+                                        // Build succeeded — launch JUnit on EDT.
+                                        com.intellij.openapi.application.invokeLater {
+                                            try {
+                                                val executor = DefaultRunExecutor.getRunExecutorInstance()
+                                                val env = ExecutionEnvironmentBuilder
+                                                    .createOrNull(executor, settings)
+                                                    ?.build()
+
+                                                if (env == null) {
+                                                    reasonOut.append("ExecutionEnvironmentBuilder.createOrNull returned null (no runner registered for this configuration)")
+                                                    if (continuation.isActive) continuation.resume(null)
+                                                    return@invokeLater
+                                                }
+
+                                                val callback = object : ProgramRunner.Callback {
+                                                    override fun processStarted(descriptor: RunContentDescriptor?) {
+                                                        if (descriptor == null) {
+                                                            reasonOut.append("ProgramRunner.Callback produced no RunContentDescriptor (the runner refused to start the process)")
+                                                            if (continuation.isActive) continuation.resume(null)
+                                                            return
+                                                        }
+                                                        handleDescriptorReady(descriptor, continuation, testTarget, descriptorRef, processHandlerRef, project, invocation)
+                                                        // Descriptor is populated into invocation.descriptorRef by
+                                                        // handleDescriptorReady (via the aliased descriptorRef param).
+                                                        // Register an onDispose callback that removes it from
+                                                        // RunContentManager — this is the release mechanism for the
+                                                        // TestResultsViewer (and its EventsListener) because
+                                                        // TestResultsViewer is Disposable with NO removeEventsListener
+                                                        // API. Per design, the literal `removeRunContent` call
+                                                        // lives here in the tool file (source-text test anchor).
+                                                        invocation.onDispose {
+                                                            val currentDesc = invocation.descriptorRef.get() ?: return@onDispose
+                                                            val runExecutor = DefaultRunExecutor.getRunExecutorInstance()
+                                                            ApplicationManager.getApplication().invokeLater {
+                                                                com.intellij.execution.ui.RunContentManager.getInstance(project)
+                                                                    .removeRunContent(runExecutor, currentDesc)
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                try {
+                                                    ProgramRunnerUtil.executeConfigurationAsync(env, false, true, callback)
+                                                } catch (_: NoSuchMethodError) {
+                                                    env.callback = callback
+                                                    ProgramRunnerUtil.executeConfiguration(env, false, true)
+                                                }
+
+                                                // Defence-in-depth: ExecutionListener.processNotStarted()
+                                                // fires when the execution framework aborts the run for non-build
+                                                // reasons (no ProgramRunner registered, executor disabled, JDK
+                                                // resolution failure, etc.). Build failures are caught above via
+                                                // ProjectTaskManager.build — this handles everything else.
+                                                //
+                                                // Registered through invocation.subscribeTopic so disposal of the
+                                                // RunInvocation (on timeout / cancel / success) disconnects it
+                                                // automatically. No raw watchdog Thread needed.
+                                                val runConnection = project.messageBus.connect()
+                                                invocation.subscribeTopic(runConnection)
+
+                                                runConnection.subscribe(
+                                                    com.intellij.execution.ExecutionManager.EXECUTION_TOPIC,
+                                                    object : com.intellij.execution.ExecutionListener {
+                                                        override fun processNotStarted(
+                                                            executorId: String,
+                                                            e: com.intellij.execution.runners.ExecutionEnvironment
+                                                        ) {
+                                                            if (e == env) {
+                                                                if (continuation.isActive) {
+                                                                    continuation.resume(ToolResult(
+                                                                        content = "Test execution did not start after a successful build.\n\n" +
+                                                                            "Possible causes: no ProgramRunner registered for this configuration, " +
+                                                                            "executor is disabled, or JDK resolution failed.",
+                                                                        summary = "Run aborted after successful build",
+                                                                        tokenEstimate = 30,
+                                                                        isError = true
+                                                                    ))
+                                                                }
+                                                            }
+                                                        }
+
+                                                        override fun processStarted(
+                                                            executorId: String,
+                                                            e: com.intellij.execution.runners.ExecutionEnvironment,
+                                                            handler: com.intellij.execution.process.ProcessHandler
+                                                        ) {
+                                                            // Observation-only; teardown happens through invocation.dispose().
+                                                        }
+                                                    }
+                                                )
+                                            } catch (e: Exception) {
+                                                reasonOut.append("run launch threw ${e.javaClass.simpleName}: ${e.message}")
+                                                if (continuation.isActive) continuation.resume(null)
+                                            }
+                                        }
+                                    }
+                                    .onError { _ ->
                                         if (continuation.isActive) {
                                             continuation.resume(
                                                 buildCompileFailureResult(
                                                     compileContextRef.get(),
                                                     testTarget,
-                                                    buildResult.isAborted
+                                                    aborted = false
                                                 )
                                             )
                                         }
-                                        return@onSuccess
                                     }
-
-                                    // Build succeeded — launch JUnit on EDT.
-                                    com.intellij.openapi.application.invokeLater {
-                                        try {
-                                            val executor = DefaultRunExecutor.getRunExecutorInstance()
-                                            val env = ExecutionEnvironmentBuilder
-                                                .createOrNull(executor, settings)
-                                                ?.build()
-
-                                            if (env == null) {
-                                                reasonOut.append("ExecutionEnvironmentBuilder.createOrNull returned null (no runner registered for this configuration)")
-                                                if (continuation.isActive) continuation.resume(null)
-                                                return@invokeLater
-                                            }
-
-                                            val callback = object : ProgramRunner.Callback {
-                                                override fun processStarted(descriptor: RunContentDescriptor?) {
-                                                    if (descriptor == null) {
-                                                        reasonOut.append("ProgramRunner.Callback produced no RunContentDescriptor (the runner refused to start the process)")
-                                                        if (continuation.isActive) continuation.resume(null)
-                                                        return
-                                                    }
-                                                    handleDescriptorReady(descriptor, continuation, testTarget, descriptorRef, processHandlerRef, project)
-                                                }
-                                            }
-
-                                            try {
-                                                ProgramRunnerUtil.executeConfigurationAsync(env, false, true, callback)
-                                            } catch (_: NoSuchMethodError) {
-                                                env.callback = callback
-                                                ProgramRunnerUtil.executeConfiguration(env, false, true)
-                                            }
-
-                                            // Defence-in-depth watchdog: ExecutionListener.processNotStarted()
-                                            // fires when the execution framework aborts the run for non-build
-                                            // reasons (no ProgramRunner registered, executor disabled, JDK
-                                            // resolution failure, etc.). Build failures are caught above via
-                                            // ProjectTaskManager.build — this handles everything else.
-                                            //
-                                            // Tracked in its own ref (runConnectionRef) — NOT buildConnectionRef —
-                                            // so cancellation between the build-disconnect and the run-subscribe
-                                            // still tears this down cleanly. Each disconnect site uses
-                                            // getAndSet(null) so double-disconnect (listener callback + cancellation
-                                            // + watchdog) is a no-op after the first caller wins.
-                                            val runConnection = project.messageBus.connect()
-                                            runConnectionRef.set(runConnection)
-
-                                            runConnection.subscribe(
-                                                com.intellij.execution.ExecutionManager.EXECUTION_TOPIC,
-                                                object : com.intellij.execution.ExecutionListener {
-                                                    override fun processNotStarted(
-                                                        executorId: String,
-                                                        e: com.intellij.execution.runners.ExecutionEnvironment
-                                                    ) {
-                                                        if (e == env) {
-                                                            runConnectionRef.getAndSet(null)?.disconnect()
-                                                            if (continuation.isActive) {
-                                                                continuation.resume(ToolResult(
-                                                                    content = "Test execution did not start after a successful build.\n\n" +
-                                                                        "Possible causes: no ProgramRunner registered for this configuration, " +
-                                                                        "executor is disabled, or JDK resolution failed.",
-                                                                    summary = "Run aborted after successful build",
-                                                                    tokenEstimate = 30,
-                                                                    isError = true
-                                                                ))
-                                                            }
-                                                        }
-                                                    }
-
-                                                    override fun processStarted(
-                                                        executorId: String,
-                                                        e: com.intellij.execution.runners.ExecutionEnvironment,
-                                                        handler: com.intellij.execution.process.ProcessHandler
-                                                    ) {
-                                                        if (e == env) runConnectionRef.getAndSet(null)?.disconnect()
-                                                    }
-                                                }
-                                            )
-
-                                            // Safety: disconnect on timeout to prevent leaks
-                                            Thread {
-                                                try {
-                                                    Thread.sleep(BUILD_WATCHDOG_MAX_MS)
-                                                    runConnectionRef.getAndSet(null)?.disconnect()
-                                                } catch (_: InterruptedException) { /* normal */ }
-                                            }.apply { isDaemon = true; name = "build-watchdog-timeout"; start() }
-
-                                        } catch (e: Exception) {
-                                            reasonOut.append("run launch threw ${e.javaClass.simpleName}: ${e.message}")
-                                            if (continuation.isActive) continuation.resume(null)
-                                        }
-                                    }
-                                }
-                                .onError { _ ->
-                                    buildConnectionRef.getAndSet(null)?.disconnect()
-                                    if (continuation.isActive) {
-                                        continuation.resume(
-                                            buildCompileFailureResult(
-                                                compileContextRef.get(),
-                                                testTarget,
-                                                aborted = false
-                                            )
-                                        )
-                                    }
-                                }
+                            } catch (e: Exception) {
+                                reasonOut.append("ProjectTaskManager.build threw ${e.javaClass.simpleName}: ${e.message}")
+                                if (continuation.isActive) continuation.resume(null)
+                            }
                         } catch (e: Exception) {
-                            buildConnectionRef.getAndSet(null)?.disconnect()
-                            reasonOut.append("ProjectTaskManager.build threw ${e.javaClass.simpleName}: ${e.message}")
+                            reasonOut.append("setup threw ${e.javaClass.simpleName}: ${e.message}")
                             if (continuation.isActive) continuation.resume(null)
                         }
-                    } catch (e: Exception) {
-                        reasonOut.append("setup threw ${e.javaClass.simpleName}: ${e.message}")
-                        if (continuation.isActive) continuation.resume(null)
                     }
                 }
             }
-        }
 
-        if (result == null && processHandlerRef.get() != null) {
-            processHandlerRef.get()?.destroyProcess()
-            val descriptor = descriptorRef.get()
-            val partialResult = descriptor?.let { extractNativeResults(it, testTarget) }
-            return if (partialResult != null) {
-                partialResult.copy(
-                    content = "[TIMEOUT] Test execution timed out after ${timeoutSeconds}s. Partial results:\n\n${partialResult.content}",
-                    isError = true
-                )
-            } else {
-                ToolResult(
-                    "[TIMEOUT] Test execution timed out after ${timeoutSeconds}s for $testTarget. No results captured.",
-                    "Test timeout", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
-                )
+            if (result == null && processHandlerRef.get() != null) {
+                processHandlerRef.get()?.destroyProcess()
+                val descriptor = descriptorRef.get()
+                val partialResult = descriptor?.let { extractNativeResults(it, testTarget) }
+                return if (partialResult != null) {
+                    partialResult.copy(
+                        content = "[TIMEOUT] Test execution timed out after ${timeoutSeconds}s. Partial results:\n\n${partialResult.content}",
+                        isError = true
+                    )
+                } else {
+                    ToolResult(
+                        "[TIMEOUT] Test execution timed out after ${timeoutSeconds}s for $testTarget. No results captured.",
+                        "Test timeout", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
+                    )
+                }
             }
-        }
 
-        return result
+            return result
+        } finally {
+            Disposer.dispose(invocation)
+        }
     }
 
     /**
@@ -555,7 +572,8 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         testTarget: String,
         descriptorRef: AtomicReference<RunContentDescriptor?>,
         processHandlerRef: AtomicReference<ProcessHandler?>,
-        project: Project? = null
+        project: Project? = null,
+        @Suppress("UNUSED_PARAMETER") invocation: RunInvocation? = null
     ) {
         descriptorRef.set(descriptor)
         val handler = descriptor.processHandler
