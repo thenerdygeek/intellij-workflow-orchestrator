@@ -241,8 +241,13 @@ class AskQuestionsTool : AgentTool {
         }
 
         // Match Cline's response format: <answer>text</answer>
+        // Also include the question text wrapped in <question> tags so the LLM
+        // can reason about the answer even after context compaction
         val content = buildString {
             if (parseWarning != null) appendLine(parseWarning).appendLine()
+            appendLine("<question>")
+            appendLine(question)
+            appendLine("</question>")
             appendLine("<answer>")
             appendLine(answer)
             appendLine("</answer>")
