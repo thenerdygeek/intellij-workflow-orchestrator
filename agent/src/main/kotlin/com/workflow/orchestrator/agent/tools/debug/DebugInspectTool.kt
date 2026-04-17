@@ -13,7 +13,6 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
-import com.workflow.orchestrator.agent.tools.truncateOutput
 import com.workflow.orchestrator.agent.tools.integration.ToolValidation
 import com.workflow.orchestrator.agent.tools.platform.DebugState
 import com.workflow.orchestrator.agent.tools.platform.IdeStateProbe
@@ -278,7 +277,7 @@ Most actions require a suspended session. session_id defaults to active session.
             sb.append("Result: ${evalResult.result}\n")
             sb.append("Type: ${evalResult.type}")
 
-            // TODO(phase7): wire ToolOutputSpiller — keep current small cap (single-value output)
+            // Evaluate output is bounded to a single value (< 1KB); no spill needed.
             val content = sb.toString()
             ToolResult(content, "Evaluated: $expression", TokenEstimator.estimate(content))
         } catch (e: Exception) {
@@ -382,12 +381,7 @@ Most actions require a suspended session. session_id defaults to active session.
             sb.append("$frameHeader\n\nVariables:\n")
             sb.append(formatVariables(targetVars))
 
-            var content = sb.toString()
-            if (content.length > MAX_OUTPUT_CHARS) {
-                // TODO(phase7): wire ToolOutputSpiller — output_config DEFAULT, grep enabled, threshold 30K
-                content = truncateOutput(content, MAX_OUTPUT_CHARS) +
-                    "\n(use variable_name to inspect specific variable)"
-            }
+            val spilled = spillOrFormat(sb.toString(), project)
 
             val varCount = targetVars.size
             val summary = if (variableName != null) {
@@ -395,7 +389,12 @@ Most actions require a suspended session. session_id defaults to active session.
             } else {
                 "$varCount variables in frame #0"
             }
-            ToolResult(content, summary, TokenEstimator.estimate(content))
+            ToolResult(
+                content = spilled.preview,
+                summary = summary,
+                tokenEstimate = TokenEstimator.estimate(spilled.preview),
+                spillPath = spilled.spilledToFile,
+            )
         } catch (e: Exception) {
             ToolResult("Error getting variables: ${e.message}", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
@@ -574,9 +573,13 @@ Most actions require a suspended session. session_id defaults to active session.
                 }
             }
 
-            // TODO(phase7): wire ToolOutputSpiller — output_config DEFAULT, grep enabled, threshold 30K
-            val content = sb.toString().trimEnd()
-            ToolResult(content, "Thread dump: ${threadInfos.size} threads, $suspendedCount suspended", TokenEstimator.estimate(content))
+            val spilled = spillOrFormat(sb.toString().trimEnd(), project)
+            ToolResult(
+                content = spilled.preview,
+                summary = "Thread dump: ${threadInfos.size} threads, $suspendedCount suspended",
+                tokenEstimate = TokenEstimator.estimate(spilled.preview),
+                spillPath = spilled.spilledToFile,
+            )
         } catch (e: Exception) {
             ToolResult("Error getting thread dump: ${e.message}", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
@@ -594,33 +597,29 @@ Most actions require a suspended session. session_id defaults to active session.
             is SessionResolution.Failed -> return r.toolResult
         }
 
+        // Collect raw content on the manager thread, then spill outside (spillOrFormat is suspend).
+        data class MemoryViewData(val content: String, val summary: String)
+
         return try {
-            controller.executeOnManagerThread(session) { _, vmProxy ->
+            val dataOrError = controller.executeOnManagerThread(session) { _, vmProxy ->
                 val vm = vmProxy.virtualMachine
 
                 if (!vm.canGetInstanceInfo()) {
-                    return@executeOnManagerThread ToolResult(
-                        "VM does not support instance info (canGetInstanceInfo=false). This may be a remote or non-HotSpot JVM.",
-                        "Not supported",
-                        ToolResult.ERROR_TOKEN_ESTIMATE,
-                        isError = true
+                    return@executeOnManagerThread Result.failure<MemoryViewData>(
+                        IllegalStateException("VM does not support instance info (canGetInstanceInfo=false). This may be a remote or non-HotSpot JVM.")
                     )
                 }
 
                 val refTypes = vm.classesByName(className)
                 if (refTypes.isEmpty()) {
-                    return@executeOnManagerThread ToolResult(
-                        "Class '$className' is not loaded in the JVM. It may not have been instantiated yet, or the name may be incorrect.",
-                        "Class not loaded",
-                        ToolResult.ERROR_TOKEN_ESTIMATE,
-                        isError = true
+                    return@executeOnManagerThread Result.failure<MemoryViewData>(
+                        NoSuchElementException("Class '$className' is not loaded in the JVM. It may not have been instantiated yet, or the name may be incorrect.")
                     )
                 }
 
                 val counts = vm.instanceCounts(refTypes)
                 val totalCount = counts.sum()
 
-                // TODO(phase7): wire ToolOutputSpiller — output_config DEFAULT, grep enabled, threshold 30K
                 val content = buildString {
                     append("Memory view for: $className\n")
                     append("Total live instances: $totalCount\n")
@@ -647,8 +646,26 @@ Most actions require a suspended session. session_id defaults to active session.
                     append("\nSession: ${sessionId ?: controller.getActiveSessionId() ?: "unknown"}")
                 }
 
-                ToolResult(content, "$totalCount instances of $className", TokenEstimator.estimate(content))
+                Result.success(MemoryViewData(content, "$totalCount instances of $className"))
             }
+
+            val data = dataOrError.getOrElse { err ->
+                val msg = err.message ?: "Unknown error"
+                val summary = when (err) {
+                    is IllegalStateException -> "Not supported"
+                    is NoSuchElementException -> "Class not loaded"
+                    else -> "Error"
+                }
+                return ToolResult(msg, summary, ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+            }
+
+            val spilled = spillOrFormat(data.content, project)
+            ToolResult(
+                content = spilled.preview,
+                summary = data.summary,
+                tokenEstimate = TokenEstimator.estimate(spilled.preview),
+                spillPath = spilled.spilledToFile,
+            )
         } catch (e: Exception) {
             ToolResult("Error viewing memory: ${e.message}", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
@@ -1015,7 +1032,6 @@ Most actions require a suspended session. session_id defaults to active session.
         // GetVariablesTool constants
         private const val DEFAULT_MAX_DEPTH = 2
         private const val MAX_DEPTH_CAP = 4
-        private const val MAX_OUTPUT_CHARS = 3000
 
         // MemoryViewTool constants
         private const val MAX_INSTANCE_DETAILS = 50
