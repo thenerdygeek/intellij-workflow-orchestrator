@@ -298,6 +298,33 @@ Users can send messages while the agent is working. Messages are injected at ite
 4. Drained messages added to `ContextManager` as user messages
 5. LLM sees the steering context on the next call and adjusts its approach
 
+## Run/Test Tool Disposal — RunInvocation Pattern
+
+`java_runtime_exec.run_tests` and `coverage.run_with_coverage` route all per-launch IntelliJ listener/descriptor/connection tracking through `RunInvocation` (`agent/tools/runtime/RunInvocation.kt`) — a per-launch `Disposable` parented to the current session. Every run starts with:
+
+```kotlin
+val invocation = project.service<AgentService>().newRunInvocation("run-tests-$classname")
+try {
+    invocation.attachListener(eventsListener, resultsViewer)   // EventsListener with defense-in-depth proxy
+    invocation.attachProcessListener(handler, processListener) // 2-arg auto-cleanup form
+    invocation.subscribeTopic(messageBusConnection)            // auto-disconnect on dispose
+    invocation.onDispose {
+        RunContentManager.getInstance(project).removeRunContent(executor, descriptor)
+    }
+    // ... suspend until result ...
+} finally {
+    Disposer.dispose(invocation)  // disposes on success / timeout / exception / cancel
+}
+```
+
+**Session parent:** `AgentService.newRunInvocation(name)` delegates to `SessionDisposableHolder` which owns a per-session `Disposable`. On "new chat" (`AgentController.newChat()` → `AgentService.resetForNewChat()` → `sessionDisposableHolder.resetSession()`), all outstanding invocations cascade-dispose — process handlers killed, listeners unwired, descriptors removed from `RunContentManager` — before the next session starts.
+
+**Why this matters:** Pre-Phase-3, each `run_tests` call leaked a `RunContentDescriptor`, a `TestResultsViewer.EventsListener`, a streaming `ProcessListener`, and occasionally a 5-minute build-watchdog Thread. After enough agent runs, the user's own `Run | Run 'MyTest'` failed with `initializationError`. The `RunInvocation` dispose-on-all-paths contract eliminates the leak surface.
+
+**Testing invariant:** `RunInvocationLeakTest` (9 source-text + MockK assertions) locks in the contract — every `addEventsListener` must coexist with `Disposer.register` or `RunInvocation`; every `addProcessListener` 1-arg must pair with `removeProcessListener`, else use the 2-arg `Disposable` form; every outer function must contain a `finally { Disposer.dispose(invocation) }` block; the tool source must contain a literal `removeRunContent` call. Run: `./gradlew :agent:test --tests "*RunInvocationLeak*"`.
+
+**Phase 5 will clone this as `DebugInvocation`** for `XDebugSession` listener leaks (add-only API, no matching remove). Same shape: `attachListener`, `subscribeTopic`, `onDispose`, idempotent `dispose`, session-scoped parent. If you extend the pattern, keep the `onDispose` literal-in-tool-file constraint so the Task-2.7-style source-text tests remain meaningful.
+
 ## Tool Execution
 
 - **Read-only tools**: Execute in parallel via `coroutineScope { async { ... } }` (read_file, search_code, diagnostics, etc.)
