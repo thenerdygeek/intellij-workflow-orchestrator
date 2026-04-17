@@ -14,8 +14,11 @@ import com.intellij.execution.testframework.sm.runner.SMTestProxy
 import com.intellij.execution.testframework.sm.runner.ui.TestResultsViewer
 import com.intellij.execution.ui.RunContentDescriptor
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.compiler.CompilationStatusListener
+import com.intellij.openapi.compiler.CompileContext
 import com.intellij.openapi.compiler.CompilerManager
 import com.intellij.openapi.compiler.CompilerMessageCategory
+import com.intellij.openapi.compiler.CompilerTopics
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
@@ -218,41 +221,38 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                 }
                 com.intellij.openapi.application.invokeLater {
                     try {
-                        val compilationErrors = AtomicReference<String?>(null)
+                        // Capture the full CompileContext so the build-failure branch can
+                        // walk per-file error messages via formatCompileErrors(). Prior
+                        // implementation stored only "N errors, M warnings" in a String,
+                        // which the LLM misread as "TDD red phase" — missing that the
+                        // real failure was a typo the user could see at file:line:col.
+                        //
+                        // AtomicReference for thread safety: compilationFinished() fires
+                        // on a background thread (CompilerManager's build thread) while
+                        // the outer scope may touch the ref from EDT.
+                        val compileContextRef = AtomicReference<CompileContext?>(null)
                         val buildConnection = project.messageBus.connect()
                         buildConnectionRef.set(buildConnection)  // expose for invokeOnCancellation
 
                         // Subscribe to CompilationStatusListener BEFORE starting the build so
-                        // we capture error counts from the build phase for richer error messages.
-                        try {
-                            val topicsClass = Class.forName("com.intellij.openapi.compiler.CompilerTopics")
-                            val topicField = topicsClass.getField("COMPILATION_STATUS")
-                            @Suppress("UNCHECKED_CAST")
-                            val topic = topicField.get(null) as com.intellij.util.messages.Topic<Any>
-                            val listenerClass = Class.forName("com.intellij.openapi.compiler.CompilationStatusListener")
-
-                            val listener = java.lang.reflect.Proxy.newProxyInstance(
-                                listenerClass.classLoader,
-                                arrayOf(listenerClass)
-                            ) { _, m, args ->
-                                if (m.name == "compilationFinished") {
-                                    val aborted = args?.getOrNull(0) as? Boolean ?: false
-                                    val errors = args?.getOrNull(1) as? Int ?: 0
-                                    val warnings = args?.getOrNull(2) as? Int ?: 0
+                        // we capture the CompileContext from the build phase. Direct typed
+                        // subscription — no reflection needed; the class and topic are
+                        // part of the public intellij.java.compiler module.
+                        buildConnection.subscribe(
+                            CompilerTopics.COMPILATION_STATUS,
+                            object : CompilationStatusListener {
+                                override fun compilationFinished(
+                                    aborted: Boolean,
+                                    errors: Int,
+                                    warnings: Int,
+                                    compileContext: CompileContext
+                                ) {
                                     if (aborted || errors > 0) {
-                                        compilationErrors.set("$errors errors, $warnings warnings, aborted=$aborted")
+                                        compileContextRef.set(compileContext)
                                     }
                                 }
-                                null
                             }
-
-                            @Suppress("UNCHECKED_CAST")
-                            (topic as com.intellij.util.messages.Topic<Any>).let { t ->
-                                buildConnection.subscribe(t, listener)
-                            }
-                        } catch (_: Exception) {
-                            // Reflection failed — CompilerTopics not available, error details will be generic
-                        }
+                        )
 
                         // Explicit build phase: the transient RunnerAndConfigurationSettings is
                         // intentionally never registered in RunManager (see commit 9b164bf3), so
@@ -271,17 +271,14 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                                     buildConnectionRef.set(null)
 
                                     if (buildResult.hasErrors() || buildResult.isAborted) {
-                                        val detail = compilationErrors.get() ?: "build failed or was aborted"
                                         if (continuation.isActive) {
-                                            continuation.resume(ToolResult(
-                                                content = "BUILD FAILED — test execution did not start.\n\n" +
-                                                    "Compilation result: $detail\n\n" +
-                                                    "Fix the compilation errors and try again. " +
-                                                    "Use diagnostics tool to check for errors in the test class.",
-                                                summary = "Build failed before tests ($detail)",
-                                                tokenEstimate = 30,
-                                                isError = true
-                                            ))
+                                            continuation.resume(
+                                                buildCompileFailureResult(
+                                                    compileContextRef.get(),
+                                                    testTarget,
+                                                    buildResult.isAborted
+                                                )
+                                            )
                                         }
                                         return@onSuccess
                                     }
@@ -375,16 +372,14 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                                 .onError { _ ->
                                     buildConnection.disconnect()
                                     buildConnectionRef.set(null)
-                                    val detail = compilationErrors.get() ?: "build failed with an unexpected error"
                                     if (continuation.isActive) {
-                                        continuation.resume(ToolResult(
-                                            content = "BUILD FAILED — test execution did not start.\n\n" +
-                                                "Compilation result: $detail\n\n" +
-                                                "Fix the compilation errors and try again.",
-                                            summary = "Build failed before tests ($detail)",
-                                            tokenEstimate = 30,
-                                            isError = true
-                                        ))
+                                        continuation.resume(
+                                            buildCompileFailureResult(
+                                                compileContextRef.get(),
+                                                testTarget,
+                                                aborted = false
+                                            )
+                                        )
                                     }
                                 }
                         } catch (e: Exception) {
@@ -419,6 +414,51 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         }
 
         return result
+    }
+
+    /**
+     * Build the [ToolResult] returned when `ProjectTaskManager.build(testModule)` fails
+     * before tests can launch. Routes per-file error messages through the shared
+     * [formatCompileErrors] helper when a [CompileContext] was captured by the
+     * [CompilationStatusListener] — otherwise falls back to a generic message that
+     * still tells the LLM "BUILD FAILED" rather than "Compilation result: N errors".
+     *
+     * Leading-line format: `BUILD FAILED — N compile error(s) prevented tests from starting:`
+     * — matches the plan document so the LLM cannot skim-read this as a red test.
+     */
+    private fun buildCompileFailureResult(
+        context: CompileContext?,
+        testTarget: String,
+        aborted: Boolean
+    ): ToolResult {
+        if (context != null) {
+            val errorCount = context.getMessages(CompilerMessageCategory.ERROR).size
+            val leading = if (errorCount > 0) {
+                "BUILD FAILED — $errorCount compile error(s) prevented tests from starting:"
+            } else {
+                // Build reported failure but no error messages were captured. Rare, but
+                // possible when the build aborts for a non-compile reason (e.g. Gradle
+                // before-task). Give a generic leading line.
+                "BUILD FAILED — test execution did not start."
+            }
+            return formatCompileErrors(
+                context = context,
+                target = testTarget,
+                leadingLine = leading
+            )
+        }
+        // Fall back to a generic failure message when no CompileContext was captured —
+        // typically means the listener callback didn't fire (reflection/early-abort path).
+        val reason = if (aborted) "build was aborted" else "build failed with no compile context captured"
+        return ToolResult(
+            content = "BUILD FAILED — test execution did not start.\n\n" +
+                "Reason: $reason.\n\n" +
+                "Fix the compilation errors and try again. " +
+                "Use diagnostics tool to check for errors in the test class.",
+            summary = "Build failed before tests ($reason)",
+            tokenEstimate = 30,
+            isError = true
+        )
     }
 
     private fun handleDescriptorReady(
@@ -831,20 +871,15 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                                     "Compilation aborted", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
                                 )
                                 errors > 0 -> {
-                                    val messages = context.getMessages(CompilerMessageCategory.ERROR)
-                                        .take(COMPILE_MAX_ERROR_MESSAGES)
-                                        .joinToString("\n") { msg ->
-                                            val file = msg.virtualFile?.name ?: "<unknown>"
-                                            val nav = msg.navigatable
-                                            val location = if (nav is com.intellij.openapi.fileEditor.OpenFileDescriptor) {
-                                                "$file:${nav.line + 1}:${nav.column + 1}"
-                                            } else {
-                                                file
-                                            }
-                                            "  $location: ${msg.message}"
-                                        }
-                                    val content = "Compilation of $target failed: $errors error(s), $warnings warning(s).\n\nErrors:\n$messages"
-                                    ToolResult(content, "$errors errors, $warnings warnings", TokenEstimator.estimate(content), isError = true)
+                                    // Delegate to the shared formatter so run_tests and compile_module
+                                    // produce identical per-file output. Leading line mirrors the old
+                                    // format for caller-compatibility.
+                                    formatCompileErrors(
+                                        context = context,
+                                        target = target,
+                                        leadingLine = "Compilation of $target failed: $errors error(s), $warnings warning(s).",
+                                        warnings = warnings
+                                    )
                                 }
                                 else -> {
                                     val warningNote = if (warnings > 0) " with $warnings warning(s)" else ""

@@ -2,6 +2,10 @@ package com.workflow.orchestrator.agent.tools.runtime
 
 import com.intellij.execution.testframework.sm.runner.SMTestProxy
 import com.intellij.execution.testframework.sm.runner.states.TestStateInfo
+import com.intellij.openapi.compiler.CompileContext
+import com.intellij.openapi.compiler.CompilerMessageCategory
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
+import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.truncateOutput
 
@@ -42,6 +46,91 @@ internal const val RUN_TESTS_TOKEN_CAP_CHARS = 12000
 
 // compile_module constants
 internal const val COMPILE_MAX_ERROR_MESSAGES = 20
+
+/** Truncate the leading error message in the summary so the LLM skim-read surface
+ *  stays compact. 80 chars is enough for "file:line <compiler message gist>" without
+ *  drowning the status-bar-sized summary line. */
+private const val COMPILE_SUMMARY_MESSAGE_MAX = 80
+
+/**
+ * Format per-file compile errors from a [CompileContext] into a rich [ToolResult]
+ * that pinpoints each failure at `file:line:col — message` granularity.
+ *
+ * Shared by both `run_tests` (where a failed pre-test build must surface the actual
+ * typo/location, not just "1 errors, 0 warnings") and `compile_module` (the explicit
+ * compile action). The [leadingLine] parameter lets each caller provide the
+ * context-appropriate header:
+ *
+ * - `run_tests` passes `"BUILD FAILED — N compile error(s) prevented tests from starting:"`
+ * - `compile_module` passes `"Compilation of {target} failed: N error(s), M warning(s)."`
+ *
+ * The `summary` field on the returned [ToolResult] leads with the first error
+ * (`"COMPILE FAILED: MyTest.java:42 cannot find symbol: method asserT"`) so that an
+ * LLM skim-reading the summary line cannot confuse a compile failure with a red test.
+ *
+ * Errors are capped at [COMPILE_MAX_ERROR_MESSAGES] (20). When the message's
+ * navigatable is an [OpenFileDescriptor], the 1-based line/column is extracted;
+ * otherwise only the filename is shown. Messages without a [com.intellij.openapi.vfs.VirtualFile]
+ * are rendered with `<unknown>` as the filename — the helper never throws.
+ */
+internal fun formatCompileErrors(
+    context: CompileContext,
+    target: String,
+    leadingLine: String,
+    warnings: Int = context.getMessages(CompilerMessageCategory.WARNING).size
+): ToolResult {
+    val errorMessages = context.getMessages(CompilerMessageCategory.ERROR)
+    val totalErrors = errorMessages.size
+    val shown = errorMessages.take(COMPILE_MAX_ERROR_MESSAGES)
+
+    val formattedLines = shown.map { msg ->
+        val file = msg.virtualFile?.name ?: "<unknown>"
+        val nav = msg.navigatable
+        val location = if (nav is OpenFileDescriptor) {
+            "$file:${nav.line + 1}:${nav.column + 1}"
+        } else {
+            file
+        }
+        "$location — ${msg.message}"
+    }
+
+    val sb = StringBuilder()
+    sb.appendLine(leadingLine)
+    sb.appendLine()
+    for (line in formattedLines) {
+        sb.appendLine(line)
+    }
+    if (totalErrors > COMPILE_MAX_ERROR_MESSAGES) {
+        sb.appendLine()
+        sb.appendLine("... and ${totalErrors - COMPILE_MAX_ERROR_MESSAGES} more error(s) (showing first $COMPILE_MAX_ERROR_MESSAGES).")
+    }
+    val content = sb.toString().trimEnd()
+
+    // Lead the summary with the first error — "COMPILE FAILED: MyTest.java:42 msg..."
+    // so an LLM scanning summary lines can't mistake this for a red test.
+    val summary = if (shown.isNotEmpty()) {
+        val firstMsg = shown.first()
+        val file = firstMsg.virtualFile?.name ?: "<unknown>"
+        val nav = firstMsg.navigatable
+        // Summary uses `file:line` (no column) for brevity.
+        val location = if (nav is OpenFileDescriptor) "$file:${nav.line + 1}" else file
+        val rawMessage = firstMsg.message.orEmpty().lineSequence().firstOrNull().orEmpty()
+        val combined = "$location $rawMessage".trim()
+        val truncated = if (combined.length > COMPILE_SUMMARY_MESSAGE_MAX) {
+            combined.take(COMPILE_SUMMARY_MESSAGE_MAX - 3) + "..."
+        } else combined
+        "COMPILE FAILED: $truncated"
+    } else {
+        "Compilation of $target failed: $totalErrors error(s), $warnings warning(s)"
+    }
+
+    return ToolResult(
+        content = content,
+        summary = summary,
+        tokenEstimate = TokenEstimator.estimate(content),
+        isError = true
+    )
+}
 
 /**
  * Collect real test leaves from the SMTestProxy tree, rejecting synthetic engine-level
