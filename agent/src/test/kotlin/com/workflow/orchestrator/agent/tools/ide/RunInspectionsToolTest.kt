@@ -183,23 +183,22 @@ class RunInspectionsToolTest {
                 "objects (one per ProblemInfo) — not just prose.",
         )
 
-        // The MAX_PROBLEMS cap site must have a TODO(phase7) comment within 3
-        // lines (either direction) so Phase 7's grep-driven spiller rewrite can
-        // locate it reliably.
-        val lines = text.lines()
-        val capLineIdx = lines.indexOfFirst { it.contains("MAX_PROBLEMS") && !it.contains("private const val") }
-        assertTrue(
-            capLineIdx >= 0,
-            "expected at least one non-definition reference to MAX_PROBLEMS in the source",
+        // Phase 7: MAX_PROBLEMS has been replaced by PREVIEW_ENTRIES + spillOrFormat.
+        // The old constant must be gone and the new constant must be present.
+        assertFalse(
+            text.contains("MAX_PROBLEMS"),
+            "Phase 7: MAX_PROBLEMS hard-cap constant must be removed — replaced by " +
+                "PREVIEW_ENTRIES (for the prose head-preview) + spillOrFormat (for disk spill).",
         )
-        val windowStart = (capLineIdx - 3).coerceAtLeast(0)
-        val windowEnd = (capLineIdx + 3).coerceAtMost(lines.lastIndex)
-        val window = lines.subList(windowStart, windowEnd + 1).joinToString("\n")
         assertTrue(
-            window.contains("TODO(phase7)"),
-            "F1/Phase-7 handoff: the MAX_PROBLEMS cap site (line ${capLineIdx + 1}) " +
-                "must have an adjacent `TODO(phase7)` comment within 3 lines so the " +
-                "Phase 7 executor can locate it. Window:\n$window",
+            text.contains("PREVIEW_ENTRIES"),
+            "Phase 7: PREVIEW_ENTRIES constant must be present — it drives the head-preview " +
+                "entry count for the inline prose, replacing the removed MAX_PROBLEMS cap.",
+        )
+        assertTrue(
+            text.contains("spillOrFormat"),
+            "Phase 7: spillOrFormat must be called to route the full JSON body to disk " +
+                "when it exceeds the 30K threshold.",
         )
     }
 

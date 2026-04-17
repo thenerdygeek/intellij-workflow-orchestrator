@@ -125,7 +125,7 @@ class ProblemViewTool : AgentTool {
         val (path, pathError) = PathValidator.resolveAndValidate(filePath, project.basePath)
         if (pathError != null) return pathError
 
-        return ReadAction.nonBlocking<ToolResult> {
+        val rawResult = ReadAction.nonBlocking<ToolResult> {
             val vf = LocalFileSystem.getInstance().findFileByIoFile(java.io.File(path!!))
                 ?: return@nonBlocking ToolResult(
                     "File not found: $filePath",
@@ -179,10 +179,15 @@ class ProblemViewTool : AgentTool {
                 )
             }
         }.executeSynchronously()
+
+        // Phase 7: spill the full JSON body when it exceeds the 30K threshold.
+        // The prose preview is always readable inline; the full structured JSON
+        // list is available on disk for read_file / search_code.
+        return applySpillOrFormat(rawResult, project)
     }
 
     private suspend fun getProblemsForAllOpenFiles(severity: String, project: Project): ToolResult {
-        return ReadAction.nonBlocking<ToolResult> {
+        val rawResult = ReadAction.nonBlocking<ToolResult> {
             val openFiles = FileEditorManager.getInstance(project).openFiles
             if (openFiles.isEmpty()) {
                 return@nonBlocking ToolResult("No files are open in the editor.", "No open files", 5)
@@ -265,6 +270,40 @@ class ProblemViewTool : AgentTool {
                 )
             }
         }.executeSynchronously()
+
+        // Phase 7: spill the full JSON body when it exceeds the 30K threshold.
+        return applySpillOrFormat(rawResult, project)
+    }
+
+    /**
+     * Phase 7 structured-preview strategy: spill the full JSON body (prose +
+     * DIAGNOSTIC_STRUCTURED_DATA_MARKER + JSON) when it exceeds the 30K threshold.
+     * The prose preview is always readable inline; the full structured JSON list is
+     * available on disk for read_file / search_code drill-in.
+     *
+     * Error and zero-result ToolResults (no DIAGNOSTIC_STRUCTURED_DATA_MARKER) are
+     * returned unchanged — spilling only applies when a structured entry list is present.
+     */
+    private suspend fun applySpillOrFormat(result: ToolResult, project: Project): ToolResult {
+        if (result.isError) return result
+        // Only spill results that contain the structured data marker (i.e. have a non-empty entry list).
+        if (!result.content.contains(DIAGNOSTIC_STRUCTURED_DATA_MARKER)) return result
+
+        val spilled = spillOrFormat(result.content, project)
+        if (spilled.spilledToFile == null) return result
+
+        val (prose, entries) = parseDiagnosticBody(result.content)
+        val spillContent = buildString {
+            append(prose)
+            append("\n\n[Full structured list (${entries.size} entries) saved to: ${spilled.spilledToFile}]")
+            append("\n[Read with read_file or search_code for inspection matching, filtering by severity/file/inspection]")
+        }
+        return ToolResult(
+            content = spillContent,
+            summary = result.summary,
+            tokenEstimate = TokenEstimator.estimate(spillContent),
+            spillPath = spilled.spilledToFile,
+        )
     }
 
     /**
@@ -356,11 +395,17 @@ class ProblemViewTool : AgentTool {
 
     /**
      * Format the prose preview for a single file's problems, applying the
-     * MAX_PROBLEMS preview cap. Returns (prose, prose-token-estimate).
+     * PREVIEW_ENTRIES head-preview cap (Phase 7 structured-preview strategy).
+     * Returns (prose, prose-token-estimate).
      *
      * F1 (Task 5.1): the cap applies ONLY to the prose preview. Callers
      * build `DiagnosticEntry` from the LOSSLESS problem list BEFORE
      * invoking this helper so Phase 7's spiller sees every problem.
+     *
+     * Phase 7: "... and N more" is no longer appended — when the full JSON body
+     * exceeds ToolOutputConfig.SPILL_THRESHOLD_CHARS (30K), the outer coroutine
+     * appends a spill-path footer instead. When under threshold, all entries are
+     * present in the inline body via `renderDiagnosticBody`.
      */
     private fun formatFileProblemsWithCap(
         relativePath: String,
@@ -369,19 +414,16 @@ class ProblemViewTool : AgentTool {
         val sb = StringBuilder()
         sb.appendLine("$relativePath — ${problems.size} problem(s):")
 
-        // TODO(phase7): replace this hard cap with ToolOutputSpiller — Phase 7
-        // will route the full entry list to disk and leave a preview inline.
-        val shown = problems.take(MAX_PROBLEMS)
+        // Phase 7 structured-preview strategy: show head-PREVIEW_ENTRIES entries inline.
+        // The full entry list is always present in the renderDiagnosticBody JSON suffix
+        // and will be routed to disk by spillOrFormat when it exceeds the 30K threshold.
+        val shown = problems.take(PREVIEW_ENTRIES)
         for (p in shown) {
             if (p.line > 0) {
                 sb.appendLine("  ${p.severity} line ${p.line}: ${p.description}")
             } else {
                 sb.appendLine("  ${p.severity}: ${p.description}")
             }
-        }
-        // TODO(phase7): replace "... and N more" preview with disk-spill reference
-        if (problems.size > MAX_PROBLEMS) {
-            sb.appendLine("... and ${problems.size - MAX_PROBLEMS} more")
         }
         val text = sb.toString()
         return text to TokenEstimator.estimate(text)
@@ -429,8 +471,12 @@ class ProblemViewTool : AgentTool {
     )
 
     companion object {
-        // TODO(phase7): replace this hard cap with ToolOutputSpiller — Phase 7
-        // will route the full entry list to disk and leave a preview inline.
-        private const val MAX_PROBLEMS = 30
+        /**
+         * Head-preview entry count for the inline prose preview (Phase 7 structured-preview strategy).
+         * 20 entries fit comfortably in the LLM's context and give enough signal to act without
+         * reading the full spilled JSON. The full entry list is always in the spilled file when
+         * the JSON body exceeds ToolOutputConfig.SPILL_THRESHOLD_CHARS (30K).
+         */
+        private const val PREVIEW_ENTRIES = 20
     }
 }

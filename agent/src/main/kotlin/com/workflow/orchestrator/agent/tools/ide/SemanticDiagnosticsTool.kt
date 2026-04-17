@@ -24,9 +24,13 @@ class SemanticDiagnosticsTool(
         /** Lines of buffer around the edited range to include in diagnostics. */
         private const val EDIT_LINE_BUFFER = 5
 
-        // TODO(phase7): replace this hard cap with ToolOutputSpiller — Phase 7
-        // will route the full entry list to disk and leave a preview inline.
-        private const val MAX_ISSUES = 20
+        /**
+         * Head-preview entry count for the inline prose preview (Phase 7 structured-preview strategy).
+         * 20 entries fit comfortably in the LLM's context and give enough signal to act without
+         * reading the full spilled JSON. The full entry list is always in the spilled file when
+         * the JSON body exceeds ToolOutputConfig.SPILL_THRESHOLD_CHARS (30K).
+         */
+        private const val PREVIEW_ENTRIES = 20
     }
 
     override val name = "diagnostics"
@@ -213,22 +217,45 @@ class SemanticDiagnosticsTool(
                         )
                     }
 
-                    // TODO(phase7): replace this hard cap with ToolOutputSpiller — Phase 7
-                    // will route the full entry list to disk and leave a preview inline.
-                    val shown = relevantProblems.take(MAX_ISSUES)
-                    val lines = shown.map { diag -> "  Line ${diag.line}: ${diag.message}" }
-                    // TODO(phase7): replace "... and N more" preview with disk-spill reference
-                    val more = if (relevantProblems.size > MAX_ISSUES) "\n... and ${relevantProblems.size - MAX_ISSUES} more" else ""
+                    // Phase 7 structured-preview strategy: prose preview uses
+                    // head-PREVIEW_ENTRIES entries (20) — readable standalone.
+                    val previewEntries = relevantProblems.take(PREVIEW_ENTRIES)
+                    val lines = previewEntries.map { diag -> "  Line ${diag.line}: ${diag.message}" }
                     val scopeNote = if (filterRange != null) " (lines ${filterRange.first}-${filterRange.last})" else ""
                     val skippedNote = if (skippedCount > 0) "\n  ($skippedCount pre-existing issue(s) outside edit range excluded)" else ""
                     val flagNote = if (hasProblemFlag && filterRange != null) "\n  Note: IDE flags this file as problematic (may have issues outside your edit)" else ""
-                    val prose = "${relevantProblems.size} issue(s) in ${vf.name}$scopeNote:\n${lines.joinToString("\n")}$more$skippedNote$flagNote"
+                    val prose = "${relevantProblems.size} issue(s) in ${vf.name}$scopeNote:\n${lines.joinToString("\n")}$skippedNote$flagNote"
                     val content = renderDiagnosticBody(prose, entries)
                     // F6: problems-found is a SUCCESSFUL tool result (isError=false).
+                    // Phase 7: outer coroutine will call spillOrFormat on the full body.
                     ToolResult(content, "${relevantProblems.size} issues", TokenEstimator.estimate(content), isError = false)
                 }
             }.inSmartMode(project).executeSynchronously()
-            result ?: ToolResult("PSI file became invalid during analysis.", "Invalid", 5, isError = true)
+
+            if (result == null) {
+                return ToolResult("PSI file became invalid during analysis.", "Invalid", 5, isError = true)
+            }
+            // Phase 7: spill the full JSON body (prose + DIAGNOSTIC_STRUCTURED_DATA_MARKER + JSON)
+            // when it exceeds the 30K threshold. The prose preview is always readable inline;
+            // the full structured JSON list is available on disk for read_file / search_code.
+            val spilled = spillOrFormat(result.content, project)
+            if (spilled.spilledToFile != null) {
+                val (prose, entries) = parseDiagnosticBody(result.content)
+                val spillContent = buildString {
+                    append(prose)
+                    append("\n\n[Full structured list (${entries.size} entries) saved to: ${spilled.spilledToFile}]")
+                    append("\n[Read with read_file or search_code for inspection matching, filtering by severity/file/inspection]")
+                }
+                ToolResult(
+                    content = spillContent,
+                    summary = result.summary,
+                    tokenEstimate = TokenEstimator.estimate(spillContent),
+                    spillPath = spilled.spilledToFile,
+                    isError = false,
+                )
+            } else {
+                result
+            }
         } catch (e: Exception) {
             ToolResult("Error: ${e.message}", "Error", 5, isError = true)
         }

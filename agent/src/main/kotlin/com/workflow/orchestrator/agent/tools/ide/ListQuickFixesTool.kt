@@ -204,22 +204,48 @@ class ListQuickFixesTool : AgentTool {
                         )
                     }
 
-                    // TODO(phase7): replace this hard cap with ToolOutputSpiller —
-                    // Phase 7 will route the full entry list to disk and leave a
-                    // preview inline.
-                    val shown = unique.take(MAX_FIXES)
-                    val lines = shown.map { qf ->
+                    // Phase 7 structured-preview strategy:
+                    // prose preview uses head-20 entries (PREVIEW_ENTRIES) — readable
+                    // standalone without reading the spilled file.
+                    val previewEntries = unique.take(PREVIEW_ENTRIES)
+                    val lines = previewEntries.map { qf ->
                         "  - ${qf.fixName}\n    Problem: ${qf.problem} (${qf.inspection})"
                     }
-                    // TODO(phase7): replace "... and N more" preview with disk-spill reference
-                    val more = if (unique.size > MAX_FIXES) "\n... and ${unique.size - MAX_FIXES} more" else ""
-                    val prose = "${unique.size} quick fix(es) at line $line in ${vf.name}:\n${lines.joinToString("\n")}$more"
-                    val content = renderDiagnosticBody(prose, entries)
-                    // F6: quick-fixes-found is a SUCCESSFUL tool result (isError=false).
-                    ToolResult(content, "${unique.size} fixes at line $line", TokenEstimator.estimate(content))
+                    val prose = "${unique.size} quick fix(es) at line $line in ${vf.name}:\n${lines.joinToString("\n")}"
+                    // Return entries alongside prose so the outer coroutine can
+                    // call spillOrFormat on the full JSON (suspend call, cannot
+                    // run inside ReadAction.nonBlocking lambda).
+                    ToolResult(
+                        content = renderDiagnosticBody(prose, entries),
+                        summary = "${unique.size} fixes at line $line",
+                        tokenEstimate = TokenEstimator.estimate(prose),
+                    )
                 }
             }.inSmartMode(project).executeSynchronously()
-            result ?: ToolResult("PSI file became invalid during analysis.", "Invalid", 5, isError = true)
+
+            if (result == null) {
+                return ToolResult("PSI file became invalid during analysis.", "Invalid", 5, isError = true)
+            }
+            // Phase 7: spill the full JSON body (prose + DIAGNOSTIC_STRUCTURED_DATA_MARKER + JSON)
+            // when it exceeds the 30K threshold. The prose preview is always readable inline;
+            // the full structured JSON list is available on disk for read_file / search_code.
+            val spilled = spillOrFormat(result.content, project)
+            if (spilled.spilledToFile != null) {
+                val (prose, entries) = parseDiagnosticBody(result.content)
+                val spillContent = buildString {
+                    append(prose)
+                    append("\n\n[Full structured list (${entries.size} entries) saved to: ${spilled.spilledToFile}]")
+                    append("\n[Read with read_file or search_code for inspection matching, filtering by severity/file/inspection]")
+                }
+                ToolResult(
+                    content = spillContent,
+                    summary = result.summary,
+                    tokenEstimate = TokenEstimator.estimate(spillContent),
+                    spillPath = spilled.spilledToFile,
+                )
+            } else {
+                result
+            }
         } catch (e: Exception) {
             ToolResult("Error listing quick fixes: ${e.message}", "Error", 5, isError = true)
         }
@@ -244,8 +270,12 @@ class ListQuickFixesTool : AgentTool {
     )
 
     companion object {
-        // TODO(phase7): replace this hard cap with ToolOutputSpiller — Phase 7
-        // will route the full entry list to disk and leave a preview inline.
-        private const val MAX_FIXES = 20
+        /**
+         * Head-preview entry count for the inline prose preview (Phase 7 structured-preview strategy).
+         * 20 entries fit comfortably in the LLM's context and give enough signal to act without
+         * reading the full spilled JSON. The full entry list is always in the spilled file when
+         * the JSON body exceeds ToolOutputConfig.SPILL_THRESHOLD_CHARS (30K).
+         */
+        private const val PREVIEW_ENTRIES = 20
     }
 }

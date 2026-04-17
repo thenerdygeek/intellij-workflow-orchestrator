@@ -205,41 +205,40 @@ class ListQuickFixesToolTest {
                 "objects (one per quick fix) — not just prose.",
         )
 
-        // The MAX_FIXES cap site must have a TODO(phase7) comment within 3
-        // lines (either direction) so Phase 7's grep-driven spiller rewrite can
-        // locate it reliably.
-        val lines = text.lines()
-        val capLineIdx = lines.indexOfFirst { it.contains("MAX_FIXES") && !it.contains("private const val") }
-        assertTrue(
-            capLineIdx >= 0,
-            "expected at least one non-definition reference to MAX_FIXES in the source",
+        // Phase 7: MAX_FIXES has been replaced by PREVIEW_ENTRIES + spillOrFormat.
+        // The old constant must be gone and the new constant must be present.
+        assertFalse(
+            text.contains("MAX_FIXES"),
+            "Phase 7: MAX_FIXES hard-cap constant must be removed — replaced by " +
+                "PREVIEW_ENTRIES (for the prose head-preview) + spillOrFormat (for disk spill).",
         )
-        val windowStart = (capLineIdx - 3).coerceAtLeast(0)
-        val windowEnd = (capLineIdx + 3).coerceAtMost(lines.lastIndex)
-        val window = lines.subList(windowStart, windowEnd + 1).joinToString("\n")
         assertTrue(
-            window.contains("TODO(phase7)"),
-            "F1/Phase-7 handoff: the MAX_FIXES cap site (line ${capLineIdx + 1}) " +
-                "must have an adjacent `TODO(phase7)` comment within 3 lines so the " +
-                "Phase 7 executor can locate it. Window:\n$window",
+            text.contains("PREVIEW_ENTRIES"),
+            "Phase 7: PREVIEW_ENTRIES constant must be present — it drives the head-preview " +
+                "entry count for the inline prose, replacing the removed MAX_FIXES cap.",
+        )
+        assertTrue(
+            text.contains("spillOrFormat"),
+            "Phase 7: spillOrFormat must be called to route the full JSON body to disk " +
+                "when it exceeds the 30K threshold.",
         )
     }
 
     @Test
-    fun `source file builds entries before applying MAX_FIXES cap`() {
+    fun `source file builds entries before applying PREVIEW_ENTRIES cap`() {
         // F1 ordering contract (matches T2 RunInspectionsTool): the full
         // DiagnosticEntry list must be constructed from EVERY collected fix
-        // BEFORE `take(MAX_FIXES)` is applied. Phase 7's spiller reads the
+        // BEFORE `take(PREVIEW_ENTRIES)` is applied. Phase 7's spiller reads the
         // entries off the ToolResult and must see the lossless list, not
         // the capped preview.
         val text = readSource("ListQuickFixesTool.kt")
         val entriesIdx = text.indexOf("DiagnosticEntry(")
-        val takeIdx = text.indexOf("take(MAX_FIXES")
+        val takeIdx = text.indexOf("take(PREVIEW_ENTRIES")
         assertTrue(entriesIdx >= 0, "expected a DiagnosticEntry(...) constructor call")
-        assertTrue(takeIdx >= 0, "expected a take(MAX_FIXES...) call for the preview cap")
+        assertTrue(takeIdx >= 0, "expected a take(PREVIEW_ENTRIES...) call for the prose head-preview cap")
         assertTrue(
             entriesIdx < takeIdx,
-            "F1 ordering: DiagnosticEntry construction must precede take(MAX_FIXES) " +
+            "F1 ordering: DiagnosticEntry construction must precede take(PREVIEW_ENTRIES) " +
                 "so the structured list is built from all fixes, not the capped preview. " +
                 "entriesIdx=$entriesIdx, takeIdx=$takeIdx",
         )
