@@ -110,8 +110,8 @@ class OutputFilteringIntegrationTest {
 
         // Verify that content under COMMAND threshold (40K) is NOT truncated
         val shortOutput = "x".repeat(40_000)
-        val shortCommandResult = truncateOutput(shortOutput, ToolOutputConfig.COMMAND_MAX_CHARS)
-        assertEquals(shortOutput, shortCommandResult)
+        val underCapCommandResult = truncateOutput(shortOutput, ToolOutputConfig.COMMAND_MAX_CHARS)
+        assertEquals(shortOutput, underCapCommandResult)
     }
 
     @Test

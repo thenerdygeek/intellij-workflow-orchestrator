@@ -31,11 +31,12 @@ data class ToolOutputConfig(
          * reports) still fit within a 100K window and allow the LLM to reason over the
          * full result inline before resorting to a disk-spill read-back.
          *
-         * Note: tools using [COMMAND] also participate in disk spilling via
-         * [ToolOutputSpiller] at the [SPILL_THRESHOLD_CHARS] threshold (30K), so this
-         * cap is a secondary ceiling applied *after* the spiller has already written to
-         * disk. It was previously 30K (a Cline carry-over), which double-gated output
-         * for tools that already spill.
+         * Tools using [COMMAND] participate in disk spilling via [ToolOutputSpiller] at
+         * [SPILL_THRESHOLD_CHARS] (30K). This cap is the secondary ceiling applied by
+         * [AgentLoop]'s `truncateOutput` call *after* any disk-spill preview has been
+         * substituted. Both ceilings now source from [COMMAND] — the former inner-tool
+         * constant `MAX_OUTPUT_CHARS` (also 30K) was removed in favour of this
+         * authoritative value so raising [COMMAND_MAX_CHARS] takes effect end-to-end.
          */
         const val COMMAND_MAX_CHARS = 100_000
 

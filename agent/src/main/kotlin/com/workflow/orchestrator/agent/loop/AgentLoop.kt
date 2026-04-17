@@ -1318,9 +1318,18 @@ class AgentLoop(
                 params["output_file"]?.jsonPrimitive?.boolean == true
             } catch (_: Exception) { false }
 
+            var safetyNetSpillPath: String? = null
             if (outputSpiller != null && (requestedOutputFile || processedContent.length > ToolOutputConfig.SPILL_THRESHOLD_CHARS)) {
                 val spillResult = outputSpiller.spill(toolName, processedContent)
                 processedContent = spillResult.preview
+                safetyNetSpillPath = spillResult.spilledToFile
+            }
+            // Propagate safety-net spill path into the tool result so callers/observers
+            // can locate the on-disk file even when the tool itself did not call spillOrFormat.
+            val effectiveToolResult = if (safetyNetSpillPath != null && toolResult.spillPath == null) {
+                toolResult.copy(spillPath = safetyNetSpillPath)
+            } else {
+                toolResult
             }
 
             val truncatedContent = truncateOutput(processedContent, tool.outputConfig.maxChars)

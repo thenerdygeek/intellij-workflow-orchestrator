@@ -1,7 +1,9 @@
 package com.workflow.orchestrator.agent.tools
 
 import com.intellij.openapi.components.service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.api.dto.FunctionDefinition
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
@@ -120,16 +122,23 @@ interface AgentTool {
      * (e.g. headless tests). Tools should call this instead of `truncateOutput(...)` so
      * full output survives on disk for `read_file` / `search_code` follow-up.
      *
-     * Grep filtering is applied BEFORE spilling via [ToolOutputConfig.applyGrep] when
-     * the tool's [outputConfig] carries a grep pattern from the LLM's `grep_pattern`
-     * parameter.
+     * Grep filtering (from the LLM's `grep_pattern` parameter) is applied by
+     * [AgentLoop] on the returned preview — NOT inside this method. Full
+     * (unfiltered) content is what lands on disk; filtering only affects
+     * what the LLM sees in-context.
      */
     suspend fun spillOrFormat(
         content: String,
         project: Project,
     ): ToolOutputSpiller.SpillResult {
-        val spiller = project.service<com.workflow.orchestrator.agent.AgentService>().outputSpiller
-            ?: return ToolOutputSpiller.SpillResult(preview = content, spilledToFile = null)
+        val spiller = project.service<AgentService>().outputSpiller
+        if (spiller == null) {
+            Logger.getInstance(AgentTool::class.java).warn(
+                "spillOrFormat on '$name' returned content unchanged — no outputSpiller is wired. " +
+                "If this happened in production (not a headless test), check AgentService initialization."
+            )
+            return ToolOutputSpiller.SpillResult(preview = content, spilledToFile = null)
+        }
         return spiller.spill(name, content)
     }
 
@@ -257,9 +266,10 @@ data class ToolResult(
     /**
      * Absolute path to a disk-spilled full-output file when this tool's raw output
      * exceeded [ToolOutputConfig.SPILL_THRESHOLD_CHARS]. Null when no spill occurred.
-     * The LLM can read the full content via `read_file` or `search_code` on this path.
-     * Populated either by the tool's own call to [spillOrFormat] (preferred) or by
-     * the AgentLoop post-execution safety net.
+     * Populated either by the tool's own call to [AgentTool.spillOrFormat] (preferred —
+     * Tasks 6.4-6.10 wire every high-output tool this way) or by [AgentLoop]'s
+     * post-execution safety net when a tool returns raw >30K content.
+     * The LLM reads the full content via `read_file` or `search_code` on this path.
      */
     val spillPath: String? = null,
     val type: ToolResultType = when {

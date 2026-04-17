@@ -45,7 +45,6 @@ class RunCommandTool(
         private val LOG = Logger.getInstance(RunCommandTool::class.java)
         private const val DEFAULT_TIMEOUT_SECONDS = 120L
         private const val MAX_TIMEOUT_SECONDS = 600L
-        private const val MAX_OUTPUT_CHARS = 30_000
         // Idle thresholds are read from AgentSettings.commandIdleThresholdSeconds and
         // AgentSettings.buildCommandIdleThresholdSeconds at execution time. Defaults
         // are 15s / 60s respectively (set in AgentSettings.State).
@@ -376,7 +375,7 @@ class RunCommandTool(
         val rawOutput = collectOutput(managed)
         val processed = OutputCollector.processOutput(
             rawOutput = rawOutput,
-            maxResultChars = MAX_OUTPUT_CHARS,
+            maxResultChars = outputConfig.maxChars,
             spillDir = null,
             toolCallId = currentToolCallId.get()
         )
@@ -392,7 +391,7 @@ class RunCommandTool(
             val rawStderr = stderrLines.joinToString("")
             val stderrProcessed = OutputCollector.processOutput(
                 rawOutput = rawStderr,
-                maxResultChars = MAX_OUTPUT_CHARS / 2,
+                maxResultChars = outputConfig.maxChars / 2,
                 spillDir = null,
                 toolCallId = null
             )
@@ -419,7 +418,7 @@ class RunCommandTool(
         val rawOutput = collectOutput(managed)
         val processed = OutputCollector.processOutput(
             rawOutput = rawOutput,
-            maxResultChars = MAX_OUTPUT_CHARS,
+            maxResultChars = outputConfig.maxChars,
             spillDir = null,
             toolCallId = currentToolCallId.get()
         )
