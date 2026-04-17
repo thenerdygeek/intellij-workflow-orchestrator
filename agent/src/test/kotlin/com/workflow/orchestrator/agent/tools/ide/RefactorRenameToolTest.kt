@@ -267,10 +267,20 @@ class RefactorRenameToolTest {
 
     @Test
     fun `source file classifies usages by module`() {
-        val text = readSource("RefactorRenameTool.kt")
+        // The actual call site of ModuleUtilCore.findModuleForFile lives in
+        // the RenameSafetyAnalyzer helper (so the logic is unit-testable
+        // without a fixture). We check BOTH files — the analyzer must wire
+        // the API call, and the tool must call into the analyzer.
+        val toolText = readSource("RefactorRenameTool.kt")
+        val analyzerText = readSource("RenameSafetyAnalyzer.kt")
         assertTrue(
-            text.contains("findModuleForFile") || text.contains("getModuleForFile"),
-            "F4 (Task 5.3): RefactorRenameTool must use ModuleUtilCore.findModuleForFile " +
+            toolText.contains("classifyUsage"),
+            "F4 (Task 5.3): RefactorRenameTool.execute() must call classifyUsage() " +
+                "from RenameSafetyAnalyzer so each usage is classified by module.",
+        )
+        assertTrue(
+            analyzerText.contains("findModuleForFile") || analyzerText.contains("getModuleForFile"),
+            "F4 (Task 5.3): RenameSafetyAnalyzer must use ModuleUtilCore.findModuleForFile " +
                 "(or ProjectFileIndex.getModuleForFile) to classify each usage by module. " +
                 "Without this, the cross-module warning can't be computed.",
         )
@@ -278,10 +288,12 @@ class RefactorRenameToolTest {
 
     @Test
     fun `source file detects library usages`() {
-        val text = readSource("RefactorRenameTool.kt")
+        // Library detection lives in the analyzer helper — same pattern as
+        // findModuleForFile above.
+        val analyzerText = readSource("RenameSafetyAnalyzer.kt")
         assertTrue(
-            text.contains("isInLibrary") || text.contains("isInLibraryClasses"),
-            "F4 (Task 5.3): RefactorRenameTool must detect library usages via " +
+            analyzerText.contains("isInLibrary") || analyzerText.contains("isInLibraryClasses"),
+            "F4 (Task 5.3): RenameSafetyAnalyzer must detect library usages via " +
                 "ProjectFileIndex.isInLibrary (or isInLibraryClasses) — the HARD BLOCK " +
                 "on library renames is the single most important part of the fix.",
         )
@@ -294,33 +306,41 @@ class RefactorRenameToolTest {
         // `if (libraryUsages.isNotEmpty() && !confirmCrossModule)` that would
         // VIOLATE the spec — the LLM must NOT be able to bypass the library
         // block by setting confirm_cross_module=true.
-        //
-        // We assert this by checking that in the source text, the
-        // LibraryBlocked branch (or equivalent library error return) is NOT
-        // within the same boolean expression as confirmCrossModule.
         val text = readSource("RefactorRenameTool.kt")
-        // The safest invariant is: the string "LibraryBlocked" (or the
-        // library-error branch) must appear BEFORE any `confirmCrossModule`
-        // check in the control flow, i.e. the library check is first.
         assertTrue(
             text.contains("LibraryBlocked"),
             "F4 (Task 5.3): the library-rename block must go through the " +
                 "SummaryResult.LibraryBlocked case so it's uniformly handled " +
                 "and testable. Got source without LibraryBlocked branch.",
         )
-        // The library block must appear BEFORE the confirmCrossModule check
-        // in source order — i.e. even if confirm_cross_module is true, the
-        // library block wins.
-        val libraryIdx = text.indexOf("LibraryBlocked")
-        val confirmIdx = text.indexOf("confirmCrossModule")
-        assertTrue(libraryIdx >= 0)
-        assertTrue(confirmIdx >= 0)
+
+        // Invariant: between `is SummaryResult.LibraryBlocked` and its `return`,
+        // the string `confirmCrossModule` must NOT appear. This rules out any
+        // gating like `if (confirmCrossModule) ...` wrapped around the library
+        // error return.
+        val libBlockIdx = text.indexOf("is SummaryResult.LibraryBlocked")
         assertTrue(
-            libraryIdx < confirmIdx,
-            "F4 (Task 5.3): the LibraryBlocked branch must be handled BEFORE " +
-                "the confirmCrossModule check in control flow — so setting " +
-                "confirm_cross_module=true cannot bypass the library block. " +
-                "libraryIdx=$libraryIdx, confirmIdx=$confirmIdx",
+            libBlockIdx >= 0,
+            "expected `is SummaryResult.LibraryBlocked` case in source",
+        )
+        // Find the matching closing brace of this case by scanning forward.
+        // The case body ends at `return`'s closing `)` followed by `}`. We
+        // conservatively scan until the next `is SummaryResult.` (start of
+        // another case) or the end of file. Whatever we capture, it must
+        // contain a `return` and must NOT contain `confirmCrossModule`.
+        val nextCaseIdx = text.indexOf("is SummaryResult.", libBlockIdx + 1)
+        val caseBodyEnd = if (nextCaseIdx >= 0) nextCaseIdx else text.length
+        val caseBody = text.substring(libBlockIdx, caseBodyEnd)
+        assertTrue(
+            caseBody.contains("return"),
+            "LibraryBlocked case must unconditionally `return` — no fall-through.",
+        )
+        assertFalse(
+            caseBody.contains("confirmCrossModule"),
+            "F4 (Task 5.3): the LibraryBlocked case body must NOT reference " +
+                "confirmCrossModule. Referencing it here means the library " +
+                "block is GATEABLE by confirm_cross_module, which violates " +
+                "the spec. The library block is unconditional.\n\nCase body was:\n$caseBody",
         )
     }
 
