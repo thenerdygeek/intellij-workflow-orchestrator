@@ -1,0 +1,230 @@
+package com.workflow.orchestrator.agent.tools.ide
+
+import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.tools.WorkerType
+import io.mockk.every
+import io.mockk.mockk
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Disabled
+import org.junit.jupiter.api.Test
+import java.io.File
+
+/**
+ * Phase 6 / Task T2 contract tests for [RunInspectionsTool].
+ *
+ * The full PSI-driven `execute()` path requires a running IDE (InspectionManager,
+ * PsiManager, InspectionProjectProfileManager, DumbService, LocalFileSystem), so
+ * we test at the contract boundary — parameter schema, worker allow-list, the
+ * error-path `isError` semantics, and source-text structural invariants that
+ * Phase 7's ToolOutputSpiller will key off (the `TODO(phase7)` handoff markers
+ * and the `renderDiagnosticBody` call site).
+ *
+ * The source-text invariant tests follow the pattern used in
+ * [com.workflow.orchestrator.agent.tools.runtime.RunInvocationLeakTest] — read
+ * the canonical tool file from the known module layout and grep for
+ * behavioural fingerprints.
+ */
+class RunInspectionsToolTest {
+    private val tool = RunInspectionsTool()
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Schema / metadata contract
+    // ═══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `tool name is run_inspections`() {
+        assertEquals("run_inspections", tool.name)
+    }
+
+    @Test
+    fun `description mentions inspections`() {
+        assertTrue(
+            tool.description.contains("inspection", ignoreCase = true),
+            "description should reference inspections: ${tool.description}",
+        )
+    }
+
+    @Test
+    fun `parameters include path and severity`() {
+        val props = tool.parameters.properties
+        assertTrue("path" in props)
+        assertTrue("severity" in props)
+    }
+
+    @Test
+    fun `path is required, severity is optional`() {
+        assertTrue("path" in tool.parameters.required)
+        assertFalse("severity" in tool.parameters.required)
+    }
+
+    @Test
+    fun `severity has enum values ERROR WARNING INFO`() {
+        val severityProp = tool.parameters.properties["severity"]!!
+        assertNotNull(severityProp.enumValues)
+        assertEquals(listOf("ERROR", "WARNING", "INFO"), severityProp.enumValues)
+    }
+
+    @Test
+    fun `allowedWorkers includes CODER, REVIEWER, ANALYZER`() {
+        assertEquals(
+            setOf(WorkerType.CODER, WorkerType.REVIEWER, WorkerType.ANALYZER),
+            tool.allowedWorkers,
+        )
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Error-path isError semantics (F6 invariant).
+    //
+    // isError=true is reserved for tool-execution failures (missing path,
+    // missing file, invalid PSI, DumbService blocked, exception). When the
+    // tool successfully runs and emits problems, isError=false — problems
+    // are the payload, not a failure signal.
+    // ═══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `execute without path returns error`() = runTest {
+        val project = mockk<Project>(relaxed = true)
+        every { project.basePath } returns "/tmp/test-project"
+
+        val result = tool.execute(buildJsonObject { }, project)
+
+        assertTrue(result.isError, "missing 'path' must set isError=true: $result")
+        assertTrue(
+            result.content.contains("path", ignoreCase = true),
+            "error message should mention 'path': ${result.content}",
+        )
+    }
+
+    @Test
+    fun `execute with nonexistent file path returns error`() = runTest {
+        val project = mockk<Project>(relaxed = true)
+        every { project.basePath } returns "/tmp/nonexistent-project-dir-12345"
+
+        val result = tool.execute(buildJsonObject {
+            put("path", "does/not/exist.kt")
+        }, project)
+
+        // Either the VFS lookup returns null (file not found) or the DumbService
+        // check short-circuits first (mock project has no DumbService, so the
+        // nonBlocking read action path may throw). Both outcomes set isError=true.
+        assertTrue(
+            result.isError,
+            "nonexistent file must set isError=true: $result",
+        )
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Source-text structural contracts.
+    //
+    // These pin the Phase 7 ToolOutputSpiller handoff contract — Phase 7 greps
+    // for `TODO(phase7)` markers at truncation sites, and relies on the tool
+    // wrapping its prose through `renderDiagnosticBody(...)` so the structured
+    // JSON suffix can be split off and routed to disk.
+    // ═══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `source file contains TODO(phase7) markers at truncation sites`() {
+        val text = readSource("RunInspectionsTool.kt")
+        val markers = Regex("""TODO\(phase7\)""").findAll(text).count()
+        assertTrue(
+            markers >= 1,
+            "Phase 7 handoff contract: RunInspectionsTool must mark every " +
+                "truncation / cap site with `TODO(phase7)` so Phase 7's executor " +
+                "can grep for them. Found $markers marker(s).",
+        )
+    }
+
+    @Test
+    fun `source file returns DiagnosticEntry via renderDiagnosticBody`() {
+        val text = readSource("RunInspectionsTool.kt")
+        assertTrue(
+            text.contains("renderDiagnosticBody"),
+            "F1: RunInspectionsTool must wrap its prose output with " +
+                "`renderDiagnosticBody(prose, entries)` so the full per-item list is " +
+                "attached structurally for Phase 7 to route to disk.",
+        )
+        assertTrue(
+            text.contains("DiagnosticEntry"),
+            "F1: RunInspectionsTool must build a list of `DiagnosticEntry` " +
+                "objects (one per ProblemInfo) — not just prose.",
+        )
+
+        // The MAX_PROBLEMS cap site must have a TODO(phase7) comment within 3
+        // lines (either direction) so Phase 7's grep-driven spiller rewrite can
+        // locate it reliably.
+        val lines = text.lines()
+        val capLineIdx = lines.indexOfFirst { it.contains("MAX_PROBLEMS") && !it.contains("private const val") }
+        assertTrue(
+            capLineIdx >= 0,
+            "expected at least one non-definition reference to MAX_PROBLEMS in the source",
+        )
+        val windowStart = (capLineIdx - 3).coerceAtLeast(0)
+        val windowEnd = (capLineIdx + 3).coerceAtMost(lines.lastIndex)
+        val window = lines.subList(windowStart, windowEnd + 1).joinToString("\n")
+        assertTrue(
+            window.contains("TODO(phase7)"),
+            "F1/Phase-7 handoff: the MAX_PROBLEMS cap site (line ${capLineIdx + 1}) " +
+                "must have an adjacent `TODO(phase7)` comment within 3 lines so the " +
+                "Phase 7 executor can locate it. Window:\n$window",
+        )
+    }
+
+    /**
+     * F5 contract: when the tool successfully moves to
+     * `LocalInspectionToolWrapper.processFile(...)`, the deprecated manual
+     * `PsiRecursiveElementWalkingVisitor` walk should no longer appear.
+     *
+     * DISABLED because Phase 6 falls back to the existing manual walk — the
+     * `LocalInspectionToolWrapper.processFile(file, session)` overload proposed
+     * by the phase 6 plan is not exposed on the public platform API surface we
+     * depend against (see the F5 TODO(phase7) note in RunInspectionsTool.kt).
+     * Re-enable once Phase 7 (or a follow-up spike) validates the platform
+     * API shape.
+     */
+    @Test
+    @Disabled("F5 fallback: manual walk retained; see TODO(phase7) in RunInspectionsTool.kt")
+    fun `source file does not use deprecated buildVisitor walk`() {
+        val text = readSource("RunInspectionsTool.kt")
+        assertFalse(
+            text.contains("PsiRecursiveElementWalkingVisitor"),
+            "F5: `PsiRecursiveElementWalkingVisitor` is the deprecated manual-walk " +
+                "fingerprint. Replace with `LocalInspectionToolWrapper.processFile(...)` " +
+                "or an equivalent non-deprecated wrapper API.",
+        )
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Helpers
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Reads the canonical tool source file directly from the known module
+     * layout. Mirrors `RunInvocationLeakTest.readSource()` — fails loudly if
+     * the layout changes instead of silently matching a fixture.
+     */
+    private fun readSource(name: String): String {
+        val userDir = System.getProperty("user.dir")
+            ?: error("user.dir system property is not set")
+        val root = File(userDir)
+        val relSubdir = "src/main/kotlin/com/workflow/orchestrator/agent/tools/ide/$name"
+        val moduleRootedPath = File(root, relSubdir)          // user.dir == <repo>/agent
+        val repoRootedPath = File(root, "agent/$relSubdir")   // user.dir == <repo>
+        val path = when {
+            moduleRootedPath.isFile -> moduleRootedPath
+            repoRootedPath.isFile -> repoRootedPath
+            else -> error(
+                "Source file '$name' not found at either expected path:\n" +
+                    "  1. ${moduleRootedPath.absolutePath}\n" +
+                    "  2. ${repoRootedPath.absolutePath}\n" +
+                    "user.dir=$userDir — module layout may have changed.",
+            )
+        }
+        return path.readText()
+    }
+}

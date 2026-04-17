@@ -1,7 +1,6 @@
 package com.workflow.orchestrator.agent.tools.ide
 
 import com.intellij.codeInspection.InspectionManager
-import com.intellij.codeInspection.ProblemDescriptor
 import com.intellij.codeInspection.ProblemHighlightType
 import com.intellij.codeInspection.ProblemsHolder
 import com.intellij.codeInspection.ex.LocalInspectionToolWrapper
@@ -40,6 +39,25 @@ class RunInspectionsTool : AgentTool {
     )
     override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.REVIEWER, WorkerType.ANALYZER)
 
+    /**
+     * ## `isError` semantics (F6 invariant)
+     *
+     * `ToolResult.isError` distinguishes **tool-execution failure** from
+     * **problems-as-payload**:
+     *
+     * - `isError = true`  → the tool itself could not run: missing `path`
+     *   parameter, `DumbService` blocked during indexing, file not found,
+     *   PSI parse failure, or an uncaught exception during the walk.
+     * - `isError = false` → the tool ran to completion. Zero problems, one
+     *   problem, or a thousand problems — all `isError = false`. The problem
+     *   list IS the successful payload; a populated list is not a failure.
+     *
+     * This mirrors the contract already documented for `SemanticDiagnosticsTool`
+     * in `agent/CLAUDE.md` ("returns `isError=false` when problems are found").
+     * [RunInspectionsToolTest] pins the error-path invariant at the unit-test
+     * boundary; the problems-found branch is covered structurally (the only
+     * `isError = true` construction in this file is at the error sites).
+     */
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val rawPath = params["path"]?.jsonPrimitive?.content
             ?: return ToolResult("Error: 'path' required", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
@@ -49,11 +67,14 @@ class RunInspectionsTool : AgentTool {
 
         val minSeverity = parseSeverity(params["severity"]?.jsonPrimitive?.content ?: "WARNING")
 
-        if (DumbService.isDumb(project)) {
-            return ToolResult("IDE is still indexing. Try again shortly.", "Indexing", 5, isError = true)
-        }
-
         return try {
+            // F6: DumbService lookup itself can throw in headless / uninitialised
+            // project contexts. Catch inside the outer try so we always return
+            // isError=true rather than propagating a raw exception.
+            if (DumbService.isDumb(project)) {
+                return ToolResult("IDE is still indexing. Try again shortly.", "Indexing", 5, isError = true)
+            }
+
             val result = ReadAction.nonBlocking<ToolResult?> {
                 val vf = LocalFileSystem.getInstance().findFileByIoFile(java.io.File(path!!))
                     ?: return@nonBlocking ToolResult("File not found: $path", "Not found", 5, isError = true)
@@ -72,6 +93,15 @@ class RunInspectionsTool : AgentTool {
                     val tool = toolWrapper.tool
 
                     try {
+                        // TODO(phase7): F5 — the phase 6 plan proposed routing this
+                        // through `LocalInspectionToolWrapper.processFile(psiFile,
+                        // session)` to abstract visitor construction + session setup.
+                        // That overload is not exposed on the public platform API
+                        // surface we compile against (251.x) — docs/superpowers/
+                        // research/2026-03-20-intellij-api-signatures.md §4 lists
+                        // the manual buildVisitor walk as the documented approach
+                        // and flags `InspectionEngine` as internal. Re-evaluate when
+                        // the platform publishes a non-deprecated replacement.
                         val holder = ProblemsHolder(inspectionManager, psiFile, false)
                         val visitor = tool.buildVisitor(holder, false)
                         psiFile.accept(object : PsiRecursiveElementWalkingVisitor() {
@@ -104,13 +134,35 @@ class RunInspectionsTool : AgentTool {
                     ToolResult("No inspection problems found in ${vf.name} (severity >= $minSeverity).", "No problems", 5)
                 } else {
                     allProblems.sortBy { it.line }
+
+                    // Build the full structured list BEFORE any cap is applied — the
+                    // Phase 7 ToolOutputSpiller reads this off the result via the
+                    // DIAGNOSTIC-STRUCTURED-DATA marker and routes it to disk, so it
+                    // must contain every problem regardless of the prose preview cap.
+                    val entries = allProblems.map { p ->
+                        DiagnosticEntry(
+                            file = vf.path,                // absolute path for Phase 7 link-back
+                            line = p.line,                 // already 1-based
+                            column = -1,                   // column not tracked by current walk; -1 = unknown
+                            severity = p.severity.name,    // "ERROR" | "WARNING" | "INFO"
+                            toolId = p.inspection,         // inspection short name
+                            description = p.message,
+                            hasQuickFix = p.fixes.isNotEmpty(),
+                            category = null,               // IntelliJ group name not exposed by current walk
+                        )
+                    }
+
+                    // TODO(phase7): spill via ToolOutputSpiller instead of hard-capping at MAX_PROBLEMS
                     val shown = allProblems.take(MAX_PROBLEMS)
                     val lines = shown.map { p ->
                         val fixHint = if (p.fixes.isNotEmpty()) " [fixes: ${p.fixes.joinToString(", ")}]" else ""
                         "  Line ${p.line} [${p.severity}] ${p.message} (${p.inspection})$fixHint"
                     }
+                    // TODO(phase7): replace "... and N more" preview with disk-spill reference
                     val more = if (allProblems.size > MAX_PROBLEMS) "\n... and ${allProblems.size - MAX_PROBLEMS} more" else ""
-                    val content = "${allProblems.size} problem(s) in ${vf.name}:\n${lines.joinToString("\n")}$more"
+                    val prose = "${allProblems.size} problem(s) in ${vf.name}:\n${lines.joinToString("\n")}$more"
+                    val content = renderDiagnosticBody(prose, entries)
+                    // F6: problems-found is a SUCCESSFUL tool result (isError=false).
                     ToolResult(content, "${allProblems.size} problems", TokenEstimator.estimate(content))
                 }
             }.inSmartMode(project).executeSynchronously()
@@ -147,6 +199,8 @@ class RunInspectionsTool : AgentTool {
     )
 
     companion object {
+        // TODO(phase7): replace this hard cap with ToolOutputSpiller — Phase 7 will
+        // route the full entry list to disk and leave a preview inline.
         private const val MAX_PROBLEMS = 30
     }
 }
