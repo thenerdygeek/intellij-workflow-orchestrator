@@ -145,6 +145,52 @@ class AgentService(private val project: Project) : Disposable {
      *  in this class keep readable local references without duplicating the set. */
     private val writeToolNames get() = AgentLoop.WRITE_TOOLS
 
+    /**
+     * Session-scoped Disposable scope for per-run IDE state (IDE tests, coverage runs,
+     * debug sessions, etc.). Every call to [newRunInvocation] hands out a
+     * [RunInvocation] whose parent is the current session Disposable, so a
+     * "new chat" click (which routes through [resetForNewChat]) tears down any
+     * outstanding RunInvocation transitively — listeners detached, processes
+     * killed, RunContent descriptors removed.
+     *
+     * Phase 3 / Task 2.2 of the IDE-state-leak fix plan — see
+     * `docs/plans/2026-04-17-phase3-ide-state-leak-fixes.md`. Tasks 2.3/2.4/2.5
+     * will consume this factory from `JavaRuntimeExecTool.run_tests` and
+     * `CoverageTool.run_with_coverage`.
+     *
+     * Extracted into [SessionDisposableHolder] (a thin pure helper) so the
+     * per-session Disposable lifecycle can be unit-tested without instantiating
+     * the full AgentService — which has a heavy `init` (memory system,
+     * tool registration, hook loading) that's infeasible to mock.
+     */
+    private val sessionDisposableHolder: SessionDisposableHolder =
+        SessionDisposableHolder(parent = this, diagnosticName = "agent-session")
+
+    /**
+     * Allocate a per-run disposal scope tied to the current chat session.
+     *
+     * The returned [RunInvocation] auto-cleans listeners, process handlers,
+     * and descriptor teardown when disposed. Its parent is the session
+     * Disposable, so a "new chat" click will cascade-dispose any outstanding
+     * invocation automatically — no bookkeeping required in call sites.
+     *
+     * Typical usage:
+     *
+     * ```kotlin
+     * val invocation = project.service<AgentService>().newRunInvocation("run-tests-$className")
+     * try {
+     *     invocation.attachListener(...)
+     *     invocation.attachProcessListener(handler, listener)
+     *     invocation.onDispose { removeRunContent(...) }
+     *     // ... await result ...
+     * } finally {
+     *     Disposer.dispose(invocation)
+     * }
+     * ```
+     */
+    internal fun newRunInvocation(name: String): RunInvocation =
+        sessionDisposableHolder.newRunInvocation(name)
+
     init {
         val basePath = project.basePath ?: System.getProperty("user.home")
         val agentDir = ProjectIdentifier.agentDir(basePath)
@@ -1791,6 +1837,11 @@ class AgentService(private val project: Project) : Disposable {
     /**
      * Reset all service-level state for a new chat session.
      * Called by AgentController.newChat() to ensure no state leaks between conversations.
+     *
+     * Disposes the current session-scoped Disposable — cascading to every
+     * outstanding [RunInvocation] so IDE run/test/coverage state (process
+     * handlers, listeners, RunContent descriptors) from the previous session
+     * is torn down cleanly before the next session starts. Phase 3 / Task 2.2.
      */
     fun resetForNewChat() {
         cancelCurrentTask()
@@ -1798,6 +1849,7 @@ class AgentService(private val project: Project) : Disposable {
         registry.resetActiveDeferred()
         ProcessRegistry.killAll()
         activeTask.set(null)
+        sessionDisposableHolder.resetSession()
     }
 
     // ── Dispose ────────────────────────────────────────────────────────────
