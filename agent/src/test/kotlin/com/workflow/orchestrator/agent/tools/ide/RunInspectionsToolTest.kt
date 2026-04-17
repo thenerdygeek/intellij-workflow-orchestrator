@@ -1,12 +1,16 @@
 package com.workflow.orchestrator.agent.tools.ide
 
+import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.tools.WorkerType
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkStatic
+import io.mockk.unmockkStatic
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -32,6 +36,11 @@ import java.io.File
  */
 class RunInspectionsToolTest {
     private val tool = RunInspectionsTool()
+
+    @AfterEach
+    fun tearDown() {
+        unmockkStatic(DumbService::class)
+    }
 
     // ═══════════════════════════════════════════════════════════════════════
     // Schema / metadata contract
@@ -106,16 +115,35 @@ class RunInspectionsToolTest {
         val project = mockk<Project>(relaxed = true)
         every { project.basePath } returns "/tmp/nonexistent-project-dir-12345"
 
+        // DumbService.isDumb now runs OUTSIDE the outer try/catch (matches
+        // the pattern in TopologyAction, ModuleDetailAction, etc.), so we
+        // mock it explicitly to avoid a raw ClassCastException from the
+        // unconfigured Application container in the mock fixture.
+        mockkStatic(DumbService::class)
+        every { DumbService.isDumb(project) } returns false
+
         val result = tool.execute(buildJsonObject {
             put("path", "does/not/exist.kt")
         }, project)
 
-        // Either the VFS lookup returns null (file not found) or the DumbService
-        // check short-circuits first (mock project has no DumbService, so the
-        // nonBlocking read action path may throw). Both outcomes set isError=true.
+        // Either the VFS lookup returns null ("File not found") or the
+        // ReadAction.nonBlocking call itself throws (mock project has no
+        // Application container for the read action path), which is caught
+        // by the outer try and surfaced as "Error running inspections". Both
+        // outcomes MUST set isError=true.
         assertTrue(
             result.isError,
             "nonexistent file must set isError=true: $result",
+        )
+        // Discriminating assertion: the error message must name the error
+        // source — either the VFS "File not found" branch or the outer-try
+        // "Error running inspections" fallback. A generic result without
+        // either marker would indicate the error path is not firing.
+        assertTrue(
+            result.content.contains("File not found", ignoreCase = true) ||
+                result.content.contains("Error running inspections", ignoreCase = true),
+            "error content should identify the failure source " +
+                "(expected 'File not found' or 'Error running inspections'): ${result.content}",
         )
     }
 

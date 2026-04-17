@@ -67,14 +67,11 @@ class RunInspectionsTool : AgentTool {
 
         val minSeverity = parseSeverity(params["severity"]?.jsonPrimitive?.content ?: "WARNING")
 
-        return try {
-            // F6: DumbService lookup itself can throw in headless / uninitialised
-            // project contexts. Catch inside the outer try so we always return
-            // isError=true rather than propagating a raw exception.
-            if (DumbService.isDumb(project)) {
-                return ToolResult("IDE is still indexing. Try again shortly.", "Indexing", 5, isError = true)
-            }
+        if (DumbService.isDumb(project)) {
+            return ToolResult("IDE is still indexing. Try again shortly.", "Indexing", 5, isError = true)
+        }
 
+        return try {
             val result = ReadAction.nonBlocking<ToolResult?> {
                 val vf = LocalFileSystem.getInstance().findFileByIoFile(java.io.File(path!!))
                     ?: return@nonBlocking ToolResult("File not found: $path", "Not found", 5, isError = true)
