@@ -11,6 +11,11 @@ import kotlinx.serialization.json.Json
  * so Phase 7's ToolOutputSpiller can serialize the full list to disk while the prose
  * preview is returned inline to the LLM.
  *
+ * - [file] is an **absolute filesystem path**, sourced from `VirtualFile.path`.
+ *   All T2–T6 tools MUST use this same representation. Do **not** substitute
+ *   project-relative paths, `VirtualFile.presentableUrl`, VFS-style URIs, or any
+ *   other path kind — Phase 7's link-back (chip click → navigateToFile) keys off
+ *   this contract, and silent divergence between tools breaks cross-tool linking.
  * - [severity] is one of "ERROR", "WARNING", "WEAK_WARNING", "INFO".
  * - [toolId] is the inspection short name (e.g. "UnusedDeclaration") or the
  *   producing subsystem (e.g. "wolf", "daemon", "provider").
@@ -24,6 +29,11 @@ import kotlinx.serialization.json.Json
  */
 @Serializable
 data class DiagnosticEntry(
+    /**
+     * Absolute filesystem path, sourced from `VirtualFile.path`. Do not use
+     * project-relative or `presentableUrl` values — cross-tool consistency is
+     * required for Phase 7 link-back.
+     */
     val file: String,
     val line: Int,
     val column: Int,
