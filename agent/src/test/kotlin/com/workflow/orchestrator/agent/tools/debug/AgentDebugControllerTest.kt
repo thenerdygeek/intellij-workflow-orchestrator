@@ -9,6 +9,10 @@ import com.intellij.xdebugger.evaluation.XDebuggerEvaluator
 import com.intellij.xdebugger.frame.XStackFrame
 import com.intellij.xdebugger.frame.XValue
 import io.mockk.*
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
@@ -231,6 +235,200 @@ class AgentDebugControllerTest {
         assertEquals("/src/Main.kt", event!!.file)
         assertEquals(25, event.line) // 24 + 1
         assertEquals("breakpoint", event.reason)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Phase 5 Task 4.7 — RED regression tests for callback-race fix
+    //
+    // These tests describe the FIXED behavior (Task 4.1). They are expected
+    // to FAIL against the current (unfixed) AgentDebugController because:
+    //
+    //   (a) `evaluate()` has NO `withTimeoutOrNull` wrapper — a late/never-firing
+    //       XDebuggerEvaluator callback hangs the coroutine indefinitely.
+    //   (b) There is no `stopped` AtomicBoolean / `awaitCallback` helper — late
+    //       callbacks racing a cancelled/consumed continuation cannot be silently
+    //       dropped, risking `IllegalStateException: Already resumed` or leaked
+    //       XValue references.
+    //
+    // Post-Task-4.1 these must pass.
+    // ═══════════════════════════════════════════════════════════════════════
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `evaluate with never-firing callback times out with error result`() = runTest {
+        // Given: a debug session whose evaluator captures the callback but
+        // never invokes it (simulating a 20-second hang deep inside JDI).
+        val evaluator = mockk<XDebuggerEvaluator>(relaxed = true)
+        val frame = mockk<XStackFrame>(relaxed = true) {
+            every { getEvaluator() } returns evaluator
+        }
+        val session = mockk<XDebugSession>(relaxed = true) {
+            every { currentStackFrame } returns frame
+            every { addSessionListener(any()) } just Runs
+        }
+
+        val callbackSlot = slot<XDebuggerEvaluator.XEvaluationCallback>()
+        every { evaluator.evaluate(any<String>(), capture(callbackSlot), any()) } just Runs
+
+        controller.registerSession(session)
+
+        // When: we launch evaluate() and advance past any reasonable internal timeout.
+        val deferred = async { controller.evaluate(session, "1 + 1") }
+        advanceTimeBy(11_000)   // > expected 10s internal timeout
+        runCurrent()
+
+        // Then: the fix guarantees evaluate() returns an error EvaluationResult
+        // via a `withTimeoutOrNull(10_000)` + `awaitCallback` guard.
+        //
+        // Pre-fix: this assertion FAILS because there is no outer timeout —
+        // the coroutine hangs awaiting the evaluator callback.
+        assertTrue(
+            deferred.isCompleted,
+            "EXPECTED TO FAIL pre-Task-4.1: evaluate() must complete within ~10s " +
+                "even if the XDebuggerEvaluator callback never fires. Today there is " +
+                "no `withTimeoutOrNull` wrapper around the outer `suspendCancellableCoroutine`, " +
+                "so the coroutine hangs indefinitely — a leaked debugger evaluator " +
+                "callback stuck waiting for a JDI response that will never arrive."
+        )
+
+        val result = deferred.await()
+        assertTrue(
+            result.isError,
+            "Timed-out evaluate() must return an error EvaluationResult, not a success."
+        )
+        assertEquals("1 + 1", result.expression)
+
+        // And: firing the late callback AFTER timeout must NOT corrupt state.
+        // The fix installs a `stopped: AtomicBoolean` gate; pre-fix, the raw
+        // `cont.resume(...)` call may throw `IllegalStateException: Already resumed`
+        // (or silently leak the XValue reference) depending on continuation state.
+        assertDoesNotThrow {
+            val lateValue = mockk<XValue>(relaxed = true)
+            callbackSlot.captured.evaluated(lateValue)
+            runCurrent()
+        }
+    }
+
+    @Test
+    fun `resolvePresentation callback guards setPresentation against late firing with stopped flag`() {
+        // Source-text regression: every `XValueNode.setPresentation` override
+        // in AgentDebugController's `resolvePresentation` MUST guard its
+        // `cont.resume(...)` behind an `AtomicBoolean` / `stopped` gate,
+        // otherwise a late callback racing the `withTimeoutOrNull` window
+        // leaks the XValue reference (the framework-facing callback never
+        // learns we're done) and — depending on kotlinx version — may throw
+        // `IllegalStateException: Already resumed`.
+        //
+        // Today's implementation calls `cont.resume(Pair(type ?: "unknown", value))`
+        // unconditionally at roughly line 331 and 339. The fix routes through
+        // the shared `awaitCallback(timeoutMs = 5_000) { stopped, resume, _ -> ... }`
+        // helper, where the closure references `stopped` inside both
+        // `setPresentation` overloads.
+        //
+        // This test pins the mitigation via source text — the same pattern
+        // used by RunInvocationLeakTest — because the observable runtime
+        // failure (silent leak vs late exception) is kotlinx-version-
+        // dependent and therefore flaky as an assertion.
+        val source = readControllerSource()
+
+        // Locate the resolvePresentation function body.
+        val resolveStart = source.indexOf("private suspend fun resolvePresentation(")
+        assertTrue(
+            resolveStart >= 0,
+            "Could not locate `resolvePresentation` in AgentDebugController.kt — " +
+                "file layout may have changed; update this test."
+        )
+        // Body runs until the companion object / next top-level `private suspend fun`
+        // / `suspend fun` declaration, whichever comes first.
+        val bodyEnd = sequenceOf(
+            source.indexOf("suspend fun evaluate(", resolveStart + 1),
+            source.indexOf("companion object", resolveStart + 1),
+        ).filter { it > 0 }.min()
+        val body = source.substring(resolveStart, bodyEnd)
+
+        assertTrue(
+            body.contains("stopped") || body.contains("awaitCallback"),
+            "EXPECTED TO FAIL pre-Task-4.1: `resolvePresentation` must use a " +
+                "`stopped: AtomicBoolean` gate (directly or via the `awaitCallback` " +
+                "helper) so the XValueNode.setPresentation callback becomes a no-op " +
+                "when fired after the 5s timeout. Today the body calls " +
+                "`cont.resume(...)` unconditionally — source:\n\n$body"
+        )
+    }
+
+    @Test
+    fun `evaluate wraps outer callback in withTimeoutOrNull with stopped-flag guard`() {
+        // Source-text regression: the `evaluate(session, expression, frameIndex)`
+        // function must wrap its outer `XDebuggerEvaluator.evaluate` callback
+        // with BOTH:
+        //   (a) `withTimeoutOrNull(...)` — today missing entirely; without it,
+        //       a JDI hang suspends the agent loop forever.
+        //   (b) a `stopped` AtomicBoolean gate (directly or via `awaitCallback`)
+        //       — today the `evaluated` / `errorOccurred` overrides call
+        //       `cont.resume(Result.success(result))` unconditionally.
+        //
+        // The two are coupled: without (b), the timeout introduced by (a) would
+        // still leak the evaluator reference and race a consumed continuation.
+        // This test pins the exit criterion in the plan:
+        //   "All `withTimeoutOrNull + suspendCancellableCoroutine` pairs in
+        //    AgentDebugController.kt use the `awaitCallback` helper."
+        val source = readControllerSource()
+
+        val evaluateStart = source.indexOf("suspend fun evaluate(")
+        assertTrue(
+            evaluateStart >= 0,
+            "Could not locate `evaluate(` in AgentDebugController.kt — file layout " +
+                "may have changed; update this test."
+        )
+        // Extract from `suspend fun evaluate(` to the next top-level declaration.
+        val bodyEnd = sequenceOf(
+            source.indexOf("\n    fun stopAllSessions", evaluateStart + 1),
+            source.indexOf("\n    fun ", evaluateStart + 1),
+            source.indexOf("\n    private ", evaluateStart + 1),
+        ).filter { it > 0 }.min()
+        val body = source.substring(evaluateStart, bodyEnd)
+
+        assertTrue(
+            body.contains("withTimeoutOrNull") || body.contains("awaitCallback"),
+            "EXPECTED TO FAIL pre-Task-4.1: `evaluate()` must bound its outer " +
+                "XDebuggerEvaluator callback with `withTimeoutOrNull(...)` (or the " +
+                "`awaitCallback` helper). Today the outer " +
+                "`suspendCancellableCoroutine` has NO timeout — a hung JDI evaluator " +
+                "suspends the agent loop indefinitely. Body:\n\n$body"
+        )
+        assertTrue(
+            body.contains("stopped") || body.contains("awaitCallback"),
+            "EXPECTED TO FAIL pre-Task-4.1: `evaluate()`'s XEvaluationCallback " +
+                "overrides must guard `cont.resume(...)` behind a `stopped: AtomicBoolean` " +
+                "(directly or via the `awaitCallback` helper). Today both `evaluated()` " +
+                "and `errorOccurred()` call `cont.resume(...)` unconditionally — the " +
+                "late-callback race this task was filed to fix. Body:\n\n$body"
+        )
+    }
+
+    /**
+     * Reads `AgentDebugController.kt` source from the module sources tree.
+     * Same dual-user.dir resolution as `RunInvocationLeakTest.readSource` —
+     * handles both `:agent:test` (user.dir = agent/) and IDE runners (user.dir = repo root).
+     */
+    private fun readControllerSource(): String {
+        val userDir = System.getProperty("user.dir")
+            ?: error("user.dir system property is not set")
+        val root = java.io.File(userDir)
+        val relSubdir = "src/main/kotlin/com/workflow/orchestrator/agent/tools/debug/AgentDebugController.kt"
+        val moduleRooted = java.io.File(root, relSubdir)
+        val repoRooted = java.io.File(root, "agent/$relSubdir")
+        val path = when {
+            moduleRooted.isFile -> moduleRooted
+            repoRooted.isFile -> repoRooted
+            else -> error(
+                "AgentDebugController.kt not found at either expected path:\n" +
+                    "  1. ${moduleRooted.absolutePath}\n" +
+                    "  2. ${repoRooted.absolutePath}\n" +
+                    "user.dir=$userDir"
+            )
+        }
+        return path.readText()
     }
 
     // --- Helper ---
