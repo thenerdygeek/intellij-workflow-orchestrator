@@ -271,14 +271,24 @@ class BuildSystemValidator(
         val wantedFileNames = TEST_SUFFIXES.map { "$simpleName$it.java" } +
             TEST_SUFFIXES.map { "$simpleName$it.kt" }
 
+        // Directory filter: never descend into build-output / tooling directories that
+        // occasionally live inside a test source root in unusual project layouts. Files
+        // always pass — the wantedFileNames check below runs on every file.
+        val dirFilter = com.intellij.openapi.vfs.VirtualFileFilter { vf ->
+            !vf.isDirectory || (vf.name !in EXCLUDED_SCAN_DIRS && !vf.name.startsWith("."))
+        }
+
         val found = linkedSetOf<String>()
         for (root in testSourceRoots) {
-            VfsUtilCore.iterateChildrenRecursively(root, null) { vf ->
+            VfsUtilCore.iterateChildrenRecursively(root, dirFilter) { vf ->
                 if (!vf.isDirectory && vf.name in wantedFileNames) {
                     found += vf.nameWithoutExtension
                 }
-                // Cap the scan when we already have a few suggestions.
-                found.size < MAX_CANDIDATE_SUGGESTIONS
+                // Named local makes the iterator-stop contract explicit — a future
+                // refactor that adds a trailing statement (logging, etc.) won't silently
+                // break the cap on `return@iterateChildrenRecursively`.
+                val shouldContinue = found.size < MAX_CANDIDATE_SUGGESTIONS
+                shouldContinue
             }
             if (found.size >= MAX_CANDIDATE_SUGGESTIONS) break
         }
@@ -299,6 +309,16 @@ class BuildSystemValidator(
         private val TEST_SUFFIXES = listOf("Test", "Tests", "IT", "ITest", "IntegrationTest")
 
         private const val MAX_CANDIDATE_SUGGESTIONS = 3
+
+        /**
+         * Directories to skip during the test-candidate scan. Mirrors the spirit of
+         * `PythonFileScanner.shouldScanDir` — build outputs and tooling directories
+         * shouldn't contain source files even if they occasionally land inside a test
+         * source root via an unusual project layout.
+         */
+        private val EXCLUDED_SCAN_DIRS = setOf(
+            "build", "target", "out", "bin", "node_modules", ".gradle", ".idea"
+        )
     }
 }
 
