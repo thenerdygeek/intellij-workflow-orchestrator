@@ -46,6 +46,19 @@ import kotlin.coroutines.resume
 import com.intellij.task.ProjectTaskManager
 
 /**
+ * Matches a real Gradle `> Task :...:test` progress line, ignoring `compileTestJava`,
+ * `testClasses`, and arbitrary log lines that happen to contain the substring `:test `.
+ *
+ * - `^> Task :` — anchored (MULTILINE) so we only match the canonical Gradle progress
+ *   prefix at line start, not `:test ` appearing in random log noise.
+ * - `(\S*:)*` — allows any number of nested project path segments
+ *   (e.g. `> Task :services:auth:test`); the trailing `:` before `test` ensures the
+ *   task name is actually `test` and not `testClasses`.
+ * - `\btest\b` — whole-word match so `testIntegration` / `testClasses` don't match.
+ */
+internal val GRADLE_TEST_TASK_REGEX: Regex = Regex("""^> Task :(\S*:)*test\b""", RegexOption.MULTILINE)
+
+/**
  * Java/Kotlin-specific runtime execution — runs JUnit/TestNG tests and compiles modules
  * via IntelliJ's CompilerManager. Registered only when the Java plugin is present
  * (see ToolRegistrationFilter.shouldRegisterJavaBuildTools).
@@ -813,9 +826,14 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             // "Tests ran" markers from Maven (Surefire summary line) and Gradle
             // (task header). Used to distinguish "tests ran but reports missing"
             // from "nothing happened — not a test class".
+            //
+            // Gradle marker is matched per-line via [GRADLE_TEST_TASK_REGEX]: a
+            // MULTILINE-anchored `^> Task :(...:)*test\b` pattern that correctly
+            // handles nested project paths (e.g. `> Task :services:auth:test`)
+            // and rejects compile phases like `compileTestJava`, `testClasses`,
+            // or arbitrary log lines that happen to contain `":test "`.
             val hasTestRanMarker = rawOutput.contains("Tests run:") ||
-                rawOutput.contains("> Task :test") ||
-                rawOutput.contains("> Task :") && rawOutput.contains(":test ")
+                GRADLE_TEST_TASK_REGEX.containsMatchIn(rawOutput)
             val truncatedOutput = truncateOutput(rawOutput, RUN_TESTS_MAX_OUTPUT_CHARS)
 
             val exitCode = process.exitValue()
@@ -826,6 +844,13 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             val tool = if (hasMaven) "maven" else "gradle"
             val reportEntries = parseJUnitXmlReports(workDir, tool)
 
+            // Branch ordering rationale: when we have parsed test entries, prefer
+            // them over the `isBuildFailure` banner. With `-fae` / `--fail-at-end`,
+            // or a compile abort in main sources that happens AFTER tests have
+            // already run, `BUILD FAILURE` can appear alongside genuine surefire
+            // reports. The parsed XML entries are more authoritative than a later
+            // build-phase failure — the build-failure banner is still preserved
+            // for the LLM via the appended `--- stdout ---` tail.
             when {
                 reportEntries != null && reportEntries.isNotEmpty() -> {
                     val base = formatStructuredResults(reportEntries, testTarget)
@@ -918,11 +943,14 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
      * Extract the "Tests run: N" count from Maven Surefire's summary line.
      * Returns null if no summary line is present. Used to diagnose cases where
      * the XML reports undercount (Surefire <useFile>true</useFile> default).
+     *
+     * Surefire emits `Tests run: N, ...` per suite AND a final aggregate total
+     * after all suites complete. We want the aggregate, so we match the LAST
+     * occurrence rather than the first.
      */
-    private fun extractMavenTestsRunCount(rawOutput: String): Int? {
-        // Matches "Tests run: 42, Failures: 0" anywhere in the output
-        val match = Regex("Tests run:\\s*(\\d+)").find(rawOutput) ?: return null
-        return match.groupValues[1].toIntOrNull()
+    internal fun extractMavenTestsRunCount(rawOutput: String): Int? {
+        val regex = Regex("""Tests run:\s*(\d+)""")
+        return regex.findAll(rawOutput).lastOrNull()?.groupValues?.get(1)?.toIntOrNull()
     }
 
     // ══════════════════════════════════════════════════════════════════════
