@@ -240,6 +240,7 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("- Execution: run_command (shell), think (reasoning scratchpad)")
         appendLine("- Code intelligence: find_definition, find_references, diagnostics")
         appendLine("- Communication: ask_followup_question, attempt_completion, plan_mode_respond, enable_plan_mode")
+        appendLine("- Tasks: task_create, task_update, task_list, task_get")
         appendLine("- Visualization: render_artifact (interactive React components in chat)")
         appendLine("- Session: new_task (hand off to fresh session with structured context)")
         appendLine("- Memory: core_memory_read/append/replace, archival_memory_insert/search, conversation_search, save_memory")
