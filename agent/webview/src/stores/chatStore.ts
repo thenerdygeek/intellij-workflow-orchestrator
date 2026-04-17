@@ -793,7 +793,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
           currentIndex: snapshot.length - 1,
           answers: snapshot.reduce((acc, q, i) => {
             if (q.answer) {
-              acc[i] = Array.isArray(q.answer) ? q.answer.join(', ') : q.answer;
+              const ids = Array.isArray(q.answer) ? q.answer : [q.answer];
+              const labels = ids.map(id => {
+                const opt = q.options.find(o => (o.id ?? o.label) === id);
+                return opt?.label ?? id;  // fallback: if id not found in options, show it as-is (handles free-text answers)
+              });
+              acc[i] = labels.join(', ');
             }
             return acc;
           }, {} as Record<number, string>),
