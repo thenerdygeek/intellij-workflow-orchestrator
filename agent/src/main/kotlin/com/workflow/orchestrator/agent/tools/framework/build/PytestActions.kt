@@ -26,6 +26,58 @@ private const val RUN_TIMEOUT_SECONDS = 300L
 /** Safe characters for pytest -k and -m expressions (word chars, spaces, parens, boolean ops, dots, hyphens). */
 private val SAFE_PYTEST_EXPR = Regex("""^[\w\s\-.,()\[\]]+$""")
 
+/**
+ * Matches a pytest verbose-mode leaf line such as `tests/test_foo.py::test_bar PASSED`
+ * or `tests/test_foo.py::test_bar PASSED [ 50%]`. Lifted from [parsePytestRunOutput] so
+ * the zero-output heuristic ([shouldWarnZeroOutput] / [computeStdoutVolumeBytes]) can
+ * filter the same lines the parser already consumes.
+ */
+internal val PYTEST_VERBOSE_STATUS = Regex("""^(.+::\S+)\s+(PASSED|FAILED|SKIPPED|ERROR|XFAIL|XPASS)""")
+
+/**
+ * Soft-warning note prepended to pytest results when passed tests complete in ~zero time
+ * with minimal stdout. Not an error — just a nudge for the LLM to verify the tests are
+ * actually exercising code (not empty bodies, over-mocked, wrong assertion target, etc.).
+ */
+internal const val PYTEST_ZERO_OUTPUT_NOTE =
+    "[NOTE] All tests passed in near-zero time with minimal stdout. " +
+        "Consider verifying tests actually exercise the code under test " +
+        "(overmocked / empty body / wrong assertion target all produce this pattern)."
+
+/**
+ * Decide whether to emit [PYTEST_ZERO_OUTPUT_NOTE] alongside pytest results.
+ *
+ * Triggers when:
+ *  - at least one test passed (so there's something to be suspicious about);
+ *  - average wall time per passed test is < 1 ms (integer division); and
+ *  - non-status stdout volume is < 1 KB (tests printed nothing of substance).
+ *
+ * Pure function so it can be tested in isolation.
+ */
+internal fun shouldWarnZeroOutput(passed: Int, wallTimeMs: Long, stdoutVolumeKB: Double): Boolean {
+    if (passed <= 0) return false
+    return (wallTimeMs / passed) < 1L && stdoutVolumeKB < 1.0
+}
+
+/**
+ * Compute the byte-size of pytest stdout minus the lines the parser already consumes
+ * (verbose status lines like `file.py::test PASSED` and the `=== N passed ===` summary
+ * line). Blank lines and the summary bar are also excluded.
+ *
+ * Bytes are counted with UTF-8 encoding, plus 1 per line for the implicit newline
+ * (lost by [String.lines]). Used by the zero-output heuristic to decide whether the
+ * run produced any meaningful output beyond the test-status bookkeeping.
+ */
+internal fun computeStdoutVolumeBytes(output: String): Long {
+    val nonStatusLines = output.lines().filter { line ->
+        val trimmed = line.trim()
+        trimmed.isNotBlank() &&
+            !PYTEST_VERBOSE_STATUS.containsMatchIn(trimmed) &&
+            !(trimmed.startsWith("=") && (trimmed.contains("passed") || trimmed.contains("failed") || trimmed.contains("error")))
+    }
+    return nonStatusLines.sumOf { (it.toByteArray(Charsets.UTF_8).size + 1).toLong() /* +1 for newline */ }
+}
+
 /** Validate that a pytest path filter resolves within the project base directory. */
 private fun validatePytestPath(path: String, basePath: String): String? {
     val canonical = File(basePath, path).canonicalPath
@@ -140,8 +192,14 @@ internal suspend fun executePytestRun(params: JsonObject, project: Project): Too
                 args.add(markers)
             }
 
+            // Wall-time measurement is intentionally localized here (Option 2 from the plan):
+            // recording start/end around runPytestCommand under-measures by the tiny wrapper
+            // overhead but avoids widening the shared helper signature or touching the other
+            // call sites. The duration feeds into the zero-output heuristic below.
+            val startMs = System.currentTimeMillis()
             val output = runPytestCommand(args, project, timeout = RUN_TIMEOUT_SECONDS)
                 ?: return@withContext pytestNotFoundError()
+            val wallTimeMs = System.currentTimeMillis() - startMs
 
             val results = parsePytestRunOutput(output)
 
@@ -158,6 +216,12 @@ internal suspend fun executePytestRun(params: JsonObject, project: Project): Too
                     parsedErrors != parsedSummary.errors
                 )
 
+            // Zero-output heuristic (Incident #3): pytest happily reports PASSED for
+            // no-op tests (`def test_nothing(): pass`). Flag runs where passed tests
+            // completed in ~zero time with nothing meaningful written to stdout.
+            val stdoutVolumeKB = computeStdoutVolumeBytes(output) / 1024.0
+            val zeroOutputWarning = shouldWarnZeroOutput(parsedPassed, wallTimeMs, stdoutVolumeKB)
+
             val content = buildString {
                 if (mismatch) {
                     // `mismatch` is only true when parsedSummary is non-null (see computation above).
@@ -169,6 +233,11 @@ internal suspend fun executePytestRun(params: JsonObject, project: Project): Too
                             "(${s.passed} passed, ${s.failed} failed, ${s.skipped} skipped, ${s.errors} errors). " +
                             "Raw output included below for verification."
                     )
+                    appendLine()
+                }
+
+                if (zeroOutputWarning) {
+                    appendLine(PYTEST_ZERO_OUTPUT_NOTE)
                     appendLine()
                 }
 
@@ -453,8 +522,9 @@ internal fun parsePytestRunOutput(output: String): TestRunResult {
         val trimmed = line.trim()
 
         // Verbose output: tests/test_foo.py::test_bar PASSED
-        val testPattern = Regex("""^(.+::\S+)\s+(PASSED|FAILED|SKIPPED|ERROR|XFAIL|XPASS)""")
-        val match = testPattern.find(trimmed)
+        // Pattern lifted to file-level PYTEST_VERBOSE_STATUS so the zero-output
+        // heuristic can filter the same lines we consume here.
+        val match = PYTEST_VERBOSE_STATUS.find(trimmed)
         if (match != null) {
             tests.add(TestResult(match.groupValues[1], match.groupValues[2]))
             continue

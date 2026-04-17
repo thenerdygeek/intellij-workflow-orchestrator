@@ -1,9 +1,12 @@
 package com.workflow.orchestrator.agent.tools.framework
 
 import com.workflow.orchestrator.agent.tools.framework.build.PytestSummary
+import com.workflow.orchestrator.agent.tools.framework.build.computeStdoutVolumeBytes
 import com.workflow.orchestrator.agent.tools.framework.build.parsePytestRunOutput
 import com.workflow.orchestrator.agent.tools.framework.build.parsePytestSummaryLine
+import com.workflow.orchestrator.agent.tools.framework.build.shouldWarnZeroOutput
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -13,11 +16,15 @@ import org.junit.jupiter.api.Test
 /**
  * Tests for pytest output parsing helpers in [PytestActions].
  *
- * Covers (Task 1.4 — Pytest summary-line reconciliation):
- *  1. [parsePytestSummaryLine] correctly extracts counts across pytest summary variants.
- *  2. [parsePytestRunOutput] returns verbose `::`-style leaf results + raw summary line.
- *  3. End-to-end: when the verbose output undercounts vs the pytest summary, downstream
- *     formatting can flag a `[PARSE MISMATCH]` warning based on the comparison.
+ * Covers:
+ *  - Task 1.4 (Pytest summary-line reconciliation):
+ *    1. [parsePytestSummaryLine] correctly extracts counts across pytest summary variants.
+ *    2. [parsePytestRunOutput] returns verbose `::`-style leaf results + raw summary line.
+ *    3. End-to-end: when the verbose output undercounts vs the pytest summary, downstream
+ *       formatting can flag a `[PARSE MISMATCH]` warning based on the comparison.
+ *  - Task 1.5 (Pytest zero-output heuristic):
+ *    4. [computeStdoutVolumeBytes] ignores status / summary / blank lines.
+ *    5. [shouldWarnZeroOutput] triggers only when passed>0 AND ~0 ms/test AND <1KB stdout.
  */
 class PytestActionsTest {
 
@@ -157,6 +164,104 @@ class PytestActionsTest {
             assertNotNull(summary)
             assertEquals(summary!!.passed, parsedPassed)
             assertEquals(summary.failed, parsedFailed)
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Task 1.5 — zero-output heuristic
+    // ────────────────────────────────────────────────────────────────────────
+
+    @Nested
+    inner class StdoutVolume {
+
+        @Test
+        fun `only status and summary lines yields zero bytes`() {
+            // 5 PASSED status lines + blank lines + summary bar → nothing left to count.
+            val output = """
+                tests/test_a.py::test_1 PASSED
+                tests/test_a.py::test_2 PASSED
+                tests/test_a.py::test_3 PASSED
+                tests/test_a.py::test_4 PASSED
+                tests/test_a.py::test_5 PASSED
+
+                ============================ 5 passed in 0.01s ============================
+            """.trimIndent()
+
+            assertEquals(0L, computeStdoutVolumeBytes(output))
+        }
+
+        @Test
+        fun `print statements between status lines contribute to volume`() {
+            // `print("hello")` output between tests should be counted — that's exactly
+            // the kind of stdout the heuristic is looking for.
+            val output = """
+                tests/test_a.py::test_1 PASSED
+                hello from test_1
+                tests/test_a.py::test_2 PASSED
+                hello from test_2
+                ============================ 2 passed in 0.01s ============================
+            """.trimIndent()
+
+            val bytes = computeStdoutVolumeBytes(output)
+            // "hello from test_1" (17 bytes) + newline + "hello from test_2" (17 bytes) + newline = 36
+            assertEquals(36L, bytes)
+        }
+
+        @Test
+        fun `verbose progress percentage still treated as status line`() {
+            val output = """
+                tests/test_a.py::test_1 PASSED [ 50%]
+                tests/test_a.py::test_2 PASSED [100%]
+                ============================ 2 passed in 0.01s ============================
+            """.trimIndent()
+
+            assertEquals(0L, computeStdoutVolumeBytes(output))
+        }
+
+        @Test
+        fun `blank lines do not contribute`() {
+            val output = "\n\n\n"
+            assertEquals(0L, computeStdoutVolumeBytes(output))
+        }
+    }
+
+    @Nested
+    inner class ZeroOutputHeuristic {
+
+        @Test
+        fun `fires when all three thresholds met`() {
+            // 5 passed in 2 ms wall time (0 ms/test) with empty stdout → classic no-op tests.
+            assertTrue(shouldWarnZeroOutput(passed = 5, wallTimeMs = 2L, stdoutVolumeKB = 0.0))
+        }
+
+        @Test
+        fun `zero passed never fires`() {
+            // Divide-by-zero guard and also no pass = nothing to be suspicious about.
+            assertFalse(shouldWarnZeroOutput(passed = 0, wallTimeMs = 0L, stdoutVolumeKB = 0.0))
+        }
+
+        @Test
+        fun `stdout over threshold suppresses warning`() {
+            // A test that prints a few KB clearly did something — no warning.
+            assertFalse(shouldWarnZeroOutput(passed = 3, wallTimeMs = 5L, stdoutVolumeKB = 2.5))
+        }
+
+        @Test
+        fun `long-running tests suppress warning`() {
+            // 1 passed in 5 ms wall time = 5 ms/test ≥ 1 → does real work, no warning.
+            assertFalse(shouldWarnZeroOutput(passed = 1, wallTimeMs = 5L, stdoutVolumeKB = 0.0))
+        }
+
+        @Test
+        fun `fires for large batch completing in tiny wall time`() {
+            // 100 passed in 5 ms total → 0 ms/test (integer div), under-1KB stdout → fire.
+            assertTrue(shouldWarnZeroOutput(passed = 100, wallTimeMs = 5L, stdoutVolumeKB = 0.1))
+        }
+
+        @Test
+        fun `stdout exactly at 1KB threshold does not fire`() {
+            // Strict `<` on stdoutVolumeKB — 1.0 is not less than 1.0.
+            assertFalse(shouldWarnZeroOutput(passed = 5, wallTimeMs = 0L, stdoutVolumeKB = 1.0))
         }
     }
 }
