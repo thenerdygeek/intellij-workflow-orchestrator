@@ -363,7 +363,7 @@ try {
 
 ## Tool Output Management
 
-- **ToolOutputConfig**: Per-tool output size limits. `DEFAULT` cap = 50K chars; `COMMAND` cap = 30K chars. Tools override via `outputConfig` property on `AgentTool` interface (e.g., `RunCommandTool` uses `ToolOutputConfig.COMMAND`).
+- **ToolOutputConfig**: Per-tool output size limits. `DEFAULT` cap = 50K chars (most tools); `COMMAND` cap = 100K chars (`run_command` + high-volume tools like `run_tests`, `run_with_coverage`, `run_inspections` full-project). Tools override via `outputConfig` property on `AgentTool` interface (e.g., `RunCommandTool` uses `ToolOutputConfig.COMMAND`).
 - **`grep_pattern` parameter**: Optional regex available on tools in `OUTPUT_FILTERABLE_TOOLS` set. The LLM passes a pattern; only matching lines are returned (no context lines — simple line filter). Applied before spill/truncation. Implemented via `ToolOutputConfig.applyGrep()`.
 - **`output_file` parameter**: Boolean (not a path). When `true`, full output is saved to disk via `ToolOutputSpiller` and the context receives a preview (first 20 + last 10 lines) with the file path. The LLM can then use `read_file` or `search_code` on the saved file.
 - **ToolOutputSpiller**: Auto-spills large outputs (>30K chars) to `{sessionDir}/tool-output/{toolName}-{epochSec}-output.txt`. Preview = head 20 lines + tail 10 lines + file reference. Falls back to truncation if disk write fails.

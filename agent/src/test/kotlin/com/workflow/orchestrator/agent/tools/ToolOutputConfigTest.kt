@@ -11,8 +11,8 @@ class ToolOutputConfigTest {
     }
 
     @Test
-    fun `command config has 30K max chars`() {
-        assertEquals(30_000, ToolOutputConfig.COMMAND.maxChars)
+    fun `command config has 100K max chars`() {
+        assertEquals(100_000, ToolOutputConfig.COMMAND.maxChars)
     }
 
     @Test

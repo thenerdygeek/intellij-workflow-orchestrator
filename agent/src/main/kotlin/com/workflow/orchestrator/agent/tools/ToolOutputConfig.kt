@@ -15,11 +15,36 @@ data class ToolOutputConfig(
     companion object {
         private val LOG = Logger.getInstance(ToolOutputConfig::class.java)
 
+        /**
+         * Standard cap (50K chars) for most tools. Content beyond this limit is
+         * middle-truncated by the AgentLoop safety net after any disk-spill attempt.
+         * The majority of tools use this default via [DEFAULT].
+         */
         const val DEFAULT_MAX_CHARS = 50_000
-        const val COMMAND_MAX_CHARS = 30_000
+
+        /**
+         * Extended cap (100K chars) for high-volume tools where the LLM benefits from
+         * more in-context visibility before content is spilled to disk. Used by
+         * [RunCommandTool] and any tool that overrides [outputConfig] with [COMMAND] —
+         * notably `run_tests`, `run_with_coverage`, and `run_inspections` (full-project
+         * scope) where large output sets (500-failure JUnit runs, 100+ class coverage
+         * reports) still fit within a 100K window and allow the LLM to reason over the
+         * full result inline before resorting to a disk-spill read-back.
+         *
+         * Note: tools using [COMMAND] also participate in disk spilling via
+         * [ToolOutputSpiller] at the [SPILL_THRESHOLD_CHARS] threshold (30K), so this
+         * cap is a secondary ceiling applied *after* the spiller has already written to
+         * disk. It was previously 30K (a Cline carry-over), which double-gated output
+         * for tools that already spill.
+         */
+        const val COMMAND_MAX_CHARS = 100_000
+
         const val SPILL_THRESHOLD_CHARS = 30_000
 
+        /** Standard config for most tools — 50K char cap. */
         val DEFAULT = ToolOutputConfig()
+
+        /** Extended config for high-volume tools (`run_command`, `run_tests`, etc.) — 100K char cap. */
         val COMMAND = ToolOutputConfig(maxChars = COMMAND_MAX_CHARS)
 
         /**

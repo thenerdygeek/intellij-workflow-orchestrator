@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools
 
+import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionDefinition
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
@@ -111,6 +112,26 @@ interface AgentTool {
             parameters = parameters
         )
     )
+
+    /**
+     * Spill [content] to disk if it exceeds [ToolOutputConfig.SPILL_THRESHOLD_CHARS],
+     * returning a preview (head-20 + tail-10 lines + file reference) plus the spill path.
+     * Returns [content] unchanged when below threshold or when no spiller is configured
+     * (e.g. headless tests). Tools should call this instead of `truncateOutput(...)` so
+     * full output survives on disk for `read_file` / `search_code` follow-up.
+     *
+     * Grep filtering is applied BEFORE spilling via [ToolOutputConfig.applyGrep] when
+     * the tool's [outputConfig] carries a grep pattern from the LLM's `grep_pattern`
+     * parameter.
+     */
+    suspend fun spillOrFormat(
+        content: String,
+        project: Project,
+    ): ToolOutputSpiller.SpillResult {
+        val spiller = project.service<com.workflow.orchestrator.agent.AgentService>().outputSpiller
+            ?: return ToolOutputSpiller.SpillResult(preview = content, spilledToFile = null)
+        return spiller.spill(name, content)
+    }
 
     companion object {
         const val DEFAULT_TOOL_TIMEOUT_MS = 120_000L
@@ -233,6 +254,14 @@ data class ToolResult(
     @Deprecated("Use ToolResult.type instead") val enablePlanMode: Boolean = false,
     /** Interactive React artifact to render in the chat UI (set by RenderArtifactTool). */
     val artifact: ArtifactPayload? = null,
+    /**
+     * Absolute path to a disk-spilled full-output file when this tool's raw output
+     * exceeded [ToolOutputConfig.SPILL_THRESHOLD_CHARS]. Null when no spill occurred.
+     * The LLM can read the full content via `read_file` or `search_code` on this path.
+     * Populated either by the tool's own call to [spillOrFormat] (preferred) or by
+     * the AgentLoop post-execution safety net.
+     */
+    val spillPath: String? = null,
     val type: ToolResultType = when {
         isCompletion -> ToolResultType.Completion
         isSessionHandoff -> ToolResultType.SessionHandoff(handoffContext ?: "")

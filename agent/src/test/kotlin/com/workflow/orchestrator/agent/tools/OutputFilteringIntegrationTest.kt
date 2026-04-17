@@ -94,16 +94,24 @@ class OutputFilteringIntegrationTest {
 
     @Test
     fun `per-tool output config respected in truncation`() {
-        val longOutput = "x".repeat(40_000)
+        // 110K chars — exceeds COMMAND (100K) but also exceeds DEFAULT (50K).
+        // Use a separate smaller input to verify DEFAULT pass-through.
+        val longOutput = "x".repeat(110_000)
 
-        // Default config (50K) — no truncation
+        // Default config (50K) — truncated (110K > 50K)
         val defaultResult = truncateOutput(longOutput, ToolOutputConfig.DEFAULT_MAX_CHARS)
-        assertEquals(longOutput, defaultResult)
+        assertTrue(defaultResult.length < longOutput.length)
+        assertTrue(defaultResult.contains("[..."))
 
-        // Command config (30K) — truncated
+        // Command config (100K) — also truncated (110K > 100K)
         val commandResult = truncateOutput(longOutput, ToolOutputConfig.COMMAND_MAX_CHARS)
         assertTrue(commandResult.length < longOutput.length)
         assertTrue(commandResult.contains("[..."))
+
+        // Verify that content under COMMAND threshold (40K) is NOT truncated
+        val shortOutput = "x".repeat(40_000)
+        val shortCommandResult = truncateOutput(shortOutput, ToolOutputConfig.COMMAND_MAX_CHARS)
+        assertEquals(shortOutput, shortCommandResult)
     }
 
     @Test

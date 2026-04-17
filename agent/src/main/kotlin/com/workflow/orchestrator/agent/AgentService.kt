@@ -133,6 +133,19 @@ class AgentService(private val project: Project) : Disposable {
     private val failedRegistrations = mutableListOf<String>()
 
     /**
+     * Session-scoped output spiller. Hoisted from the [executeTask] local val so that
+     * [AgentTool.spillOrFormat] can resolve it via [service] on [AgentService] without
+     * coupling individual tools to the execute-task closure.
+     *
+     * Lifecycle: set when a session starts in [executeTask], cleared in [resetForNewChat]
+     * so each new chat gets a fresh spiller pointing at the correct session directory.
+     */
+    @Volatile private var _outputSpiller: ToolOutputSpiller? = null
+
+    /** Public read-only view of the session-scoped spiller; null before the first task starts. */
+    val outputSpiller: ToolOutputSpiller? get() = _outputSpiller
+
+    /**
      * Hook manager — loaded from .agent-hooks.json in project root.
      * Ported from Cline's hook system: provides lifecycle extensibility points
      * (TaskStart, PreToolUse, PostToolUse, etc.) via shell command hooks.
@@ -922,8 +935,11 @@ class AgentService(private val project: Project) : Disposable {
                     ProjectIdentifier.agentDir(basePath),
                     "sessions/$sid"
                 )
-                // Output spiller: writes large tool outputs to disk, returns preview to LLM
-                val outputSpiller = ToolOutputSpiller(
+                // Output spiller: writes large tool outputs to disk, returns preview to LLM.
+                // Assigned to the session-scoped field so AgentTool.spillOrFormat() can resolve
+                // it via project.service<AgentService>().outputSpiller without coupling tools to
+                // the executeTask closure.
+                _outputSpiller = ToolOutputSpiller(
                     java.io.File(sessionDebugDir, "tool-output").toPath()
                 )
                 // Session-scoped API call counter — shared across the initial brain AND any
@@ -1324,7 +1340,7 @@ class AgentService(private val project: Project) : Disposable {
                     toolExecutionMode = agentSettings.state.toolExecutionMode ?: "accumulate",
                     toolNameProvider = { registry.allToolNames() },
                     paramNameProvider = { registry.allParamNames() },
-                    outputSpiller = outputSpiller,
+                    outputSpiller = _outputSpiller,
                 )
 
                 // I4: Set activeTask atomically after both loop and job are available
@@ -1878,6 +1894,7 @@ class AgentService(private val project: Project) : Disposable {
         registry.resetActiveDeferred()
         ProcessRegistry.killAll()
         activeTask.set(null)
+        _outputSpiller = null  // Clear session-scoped spiller so the next session gets a fresh one
         sessionDisposableHolder.resetSession()
     }
 
