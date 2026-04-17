@@ -307,7 +307,7 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
               <X className="h-3 w-3 mr-1" />
               Cancel
             </Button>
-            <Button size="sm" onClick={handleSubmitAll}>
+            <Button size="sm" onClick={handleSubmitAll} className="question-view-btn">
               <Send className="h-3 w-3 mr-1" />
               Submit All
             </Button>

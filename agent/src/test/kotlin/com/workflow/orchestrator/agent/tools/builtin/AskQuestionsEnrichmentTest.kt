@@ -453,5 +453,134 @@ class AskQuestionsEnrichmentTest {
             assertEquals("""{"q1":["o1"],"q2":["o2","o3"]}""", fallback,
                 "Fallback format must produce raw ids JSON (backward-compatible format)")
         }
+
+        /**
+         * Verifies the FINAL content the LLM receives for simple mode.
+         *
+         * AskQuestionsTool.executeSimple wraps the enriched answer in:
+         *   <question>\n{questionText}\n</question>\n<answer>\n{label}\n</answer>\n
+         *
+         * This test calls tool.execute() directly and asserts on ToolResult.content —
+         * the exact string that will be returned to the LLM as the tool result.
+         *
+         * Why direct call (no launch/yield)? The callback completes the CompletableDeferred
+         * synchronously, so withTimeoutOrNull { deferred.await() } returns immediately
+         * without suspending. No virtual-time tricks needed.
+         */
+        @Test
+        fun `simple mode ToolResult content has question and answer tags with resolved label not raw id`() = runTest {
+            val tool = AskQuestionsTool()
+
+            AskQuestionsTool.showSimpleQuestionCallback = { question, optionsJson ->
+                val options = try {
+                    if (!optionsJson.isNullOrBlank()) lenientJson.decodeFromString<List<String>>(optionsJson)
+                    else emptyList()
+                } catch (_: Exception) { emptyList() }
+
+                if (options.isNotEmpty()) {
+                    val wizardJson = buildSimpleWizardJson(question, options)
+                    val live = parseSimpleLiveQuestions(wizardJson)!!
+                    val enriched = buildEnrichedPayload(live, mapOf("q1" to """["o1"]"""))
+                    AskQuestionsTool.resolveQuestions(enriched)
+                }
+            }
+
+            val result = tool.execute(
+                buildJsonObject {
+                    put("question", "Which option?")
+                    put("options", """["Option A","Option B","Option C"]""")
+                },
+                project
+            )
+
+            assertFalse(result.isError, "ToolResult must not be an error for a successful answer")
+            assertTrue(result.content.contains("<question>"),
+                "LLM content must contain <question> tag so the LLM can anchor the answer after compaction")
+            assertTrue(result.content.contains("Which option?"),
+                "LLM content must contain the original question text")
+            assertTrue(result.content.contains("<answer>"),
+                "LLM content must contain <answer> tag (Cline-faithful)")
+            assertTrue(result.content.contains("Option A"),
+                "LLM content must contain the resolved human-readable label 'Option A'")
+            assertFalse(result.content.contains("o1") && !result.content.contains("Option"),
+                "LLM content must NOT contain only the raw synthetic id 'o1' without the label")
+        }
+
+        /**
+         * Verifies the FINAL content the LLM receives for wizard mode.
+         *
+         * AskQuestionsTool.executeWizard wraps the enriched JSON as:
+         *   "User answered the questions:\n{enrichedJson}"
+         *
+         * The enrichedJson from AgentController has shape:
+         *   {"q1":{"question":"Which DB?","selected":[{"id":"o1","label":"PostgreSQL"}]}, ...}
+         *
+         * This test asserts that the LLM receives both the question text and the label,
+         * NOT the raw id string {"q1":["o1"]}.
+         */
+        @Test
+        fun `wizard mode ToolResult content has enriched JSON prefix with question text and labels not raw ids`() = runTest {
+            val tool = AskQuestionsTool()
+
+            val questionsPayload = """[
+                {"id":"q1","question":"Which database?","type":"single","options":[
+                    {"id":"o1","label":"PostgreSQL"},
+                    {"id":"o2","label":"MySQL"}
+                ]},
+                {"id":"q2","question":"Which ORM?","type":"multiple","options":[
+                    {"id":"o1","label":"Prisma"},
+                    {"id":"o2","label":"TypeORM"}
+                ]}
+            ]"""
+
+            AskQuestionsTool.showQuestionsCallback = { questionsJson ->
+                val live = parseWizardLiveQuestions(questionsJson)!!
+                val enriched = buildEnrichedPayload(live, mapOf(
+                    "q1" to """["o1"]""",
+                    "q2" to """["o2"]"""
+                ))
+                AskQuestionsTool.resolveQuestions(enriched)
+            }
+
+            val result = tool.execute(
+                buildJsonObject {
+                    put("questions", questionsPayload)
+                },
+                project
+            )
+
+            assertFalse(result.isError, "ToolResult must not be an error for a successful answer")
+            assertTrue(
+                result.content.startsWith("User answered the questions:\n"),
+                "Wizard mode LLM content must start with 'User answered the questions:\\n' " +
+                    "(Cline-faithful prefix), got: '${result.content.take(80)}'"
+            )
+
+            // Parse the JSON portion and verify it contains question text + labels, not raw ids
+            val jsonPart = result.content.removePrefix("User answered the questions:\n")
+            val parsed = lenientJson.parseToJsonElement(jsonPart).jsonObject
+
+            val q1 = parsed["q1"]!!.jsonObject
+            assertEquals(
+                "Which database?", q1["question"]!!.jsonPrimitive.content,
+                "LLM must receive the question text for q1 so it can reason after compaction — not just 'q1:o1'"
+            )
+            val q1Selected = q1["selected"]!!.toString()
+            assertTrue(q1Selected.contains("PostgreSQL"),
+                "LLM must receive the label 'PostgreSQL' for q1, not the raw id 'o1'")
+            assertFalse(q1Selected.contains("MySQL"),
+                "LLM must NOT receive unselected option 'MySQL' in q1 selected array")
+
+            val q2 = parsed["q2"]!!.jsonObject
+            assertEquals(
+                "Which ORM?", q2["question"]!!.jsonPrimitive.content,
+                "LLM must receive the question text for q2"
+            )
+            val q2Selected = q2["selected"]!!.toString()
+            assertTrue(q2Selected.contains("TypeORM"),
+                "LLM must receive the label 'TypeORM' for q2, not the raw id 'o2'")
+            assertFalse(q2Selected.contains("Prisma"),
+                "LLM must NOT receive unselected 'Prisma' in q2 selected array")
+        }
     }
 }
