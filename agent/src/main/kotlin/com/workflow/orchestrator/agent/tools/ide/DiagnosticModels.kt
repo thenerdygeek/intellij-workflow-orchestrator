@@ -21,7 +21,13 @@ import kotlinx.serialization.json.Json
  *   for a future vocabulary extension — see the note in [normalizeSeverity].)
  * - [toolId] is the inspection short name (e.g. "UnusedDeclaration") or the
  *   producing subsystem (e.g. "wolf", "daemon", "provider").
- * - [column] is 1-based; -1 means column is unknown.
+ * - [column] is 1-based; -1 means column is unknown. Tools that can
+ *   cheaply resolve a real column (T4 `ProblemViewTool`) emit one;
+ *   tools whose upstream API only exposes line-level information
+ *   (T2 `RunInspectionsTool`, T3 `ListQuickFixesTool`) emit -1.
+ *   Phase 7 consumers grouping by `(file, line, column)` must treat
+ *   mixed producers with care — do not assume all entries with the
+ *   same `(file, line)` collapse.
  * - [category] is the IntelliJ group name when available ("Probable bugs",
  *   "Type hierarchy", …); null otherwise.
  *
@@ -42,6 +48,15 @@ data class DiagnosticEntry(
     val severity: String,
     val toolId: String,
     val description: String,
+    /**
+     * Availability hint — `true` when the producing tool confirms a registered
+     * quick fix exists for this diagnostic; `false` when none or unknown.
+     * Not authoritative: T4 `ProblemViewTool` stubs to `false` because
+     * `HighlightInfo.hasHint()` / quick-fix ranges are impl-level and
+     * `IntentionManager.getAvailableActions` needs an Editor. Phase 7
+     * consumers filtering on `hasQuickFix == true` receive a lower-bound
+     * "definitely has fix" set; `false` means "absent OR unknown."
+     */
     val hasQuickFix: Boolean,
     val category: String? = null,
 )
