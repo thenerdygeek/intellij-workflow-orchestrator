@@ -207,4 +207,39 @@ class IdeContextDetectorTest {
         assertTrue(context.supportsPython)
         assertFalse(context.supportsPythonAdvanced)
     }
+
+    @Test
+    fun `hasPyTestConfigType defaults to false when not set`() {
+        val context = IdeContext(
+            product = IdeProduct.INTELLIJ_COMMUNITY,
+            productName = "IntelliJ IDEA Community",
+            edition = Edition.COMMUNITY,
+            languages = setOf(Language.JAVA, Language.KOTLIN),
+            hasJavaPlugin = true,
+            hasPythonPlugin = false,
+            hasPythonCorePlugin = false,
+            hasSpringPlugin = false,
+            detectedFrameworks = emptySet(),
+            detectedBuildTools = emptySet(),
+        )
+        assertFalse(context.hasPyTestConfigType)
+    }
+
+    @Test
+    fun `hasPyTestConfigType is true when explicitly set`() {
+        val context = IdeContext(
+            product = IdeProduct.PYCHARM_PROFESSIONAL,
+            productName = "PyCharm Professional",
+            edition = Edition.PROFESSIONAL,
+            languages = setOf(Language.PYTHON),
+            hasJavaPlugin = false,
+            hasPythonPlugin = true,
+            hasPythonCorePlugin = false,
+            hasSpringPlugin = false,
+            detectedFrameworks = emptySet(),
+            detectedBuildTools = emptySet(),
+            hasPyTestConfigType = true,
+        )
+        assertTrue(context.hasPyTestConfigType)
+    }
 }

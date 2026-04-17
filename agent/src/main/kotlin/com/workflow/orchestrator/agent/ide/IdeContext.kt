@@ -24,6 +24,7 @@ data class IdeContext(
     val hasSpringPlugin: Boolean,
     val detectedFrameworks: Set<Framework>,
     val detectedBuildTools: Set<BuildTool>,
+    val hasPyTestConfigType: Boolean = false,
 ) {
     val supportsJava: Boolean
         get() = Language.JAVA in languages

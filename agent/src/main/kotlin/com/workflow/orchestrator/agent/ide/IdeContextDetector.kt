@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.ide
 
+import com.intellij.execution.configurations.ConfigurationType
 import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.openapi.application.ApplicationInfo
 import com.intellij.openapi.extensions.PluginId
@@ -27,6 +28,8 @@ object IdeContextDetector {
         val hasPythonPro = isPluginInstalled(PYTHON_PRO_PLUGIN_ID)
         val hasPythonCore = isPluginInstalled(PYTHON_CORE_PLUGIN_ID)
         val hasSpring = isPluginInstalled(SPRING_PLUGIN_ID)
+        val hasPyTestConfigType = ConfigurationType.CONFIGURATION_TYPE_EP.extensionList
+            .any { it.id == "PyTest" || it.id == "py.test" }
 
         val languages = deriveLanguages(product, hasJava, hasPythonPro || hasPythonCore)
         val frameworks = ProjectScanner.detectFrameworks(project)
@@ -43,6 +46,7 @@ object IdeContextDetector {
             hasSpringPlugin = hasSpring,
             detectedFrameworks = frameworks,
             detectedBuildTools = buildTools,
+            hasPyTestConfigType = hasPyTestConfigType,
         )
     }
 
