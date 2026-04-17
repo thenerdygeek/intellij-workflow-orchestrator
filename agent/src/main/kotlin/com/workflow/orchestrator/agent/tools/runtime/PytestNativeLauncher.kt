@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.tools.runtime
 import com.intellij.execution.RunManager
 import com.intellij.execution.RunnerAndConfigurationSettings
 import com.intellij.execution.configurations.ConfigurationType
+import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
 
 /**
@@ -98,7 +99,15 @@ internal class PytestNativeLauncher(private val project: Project) {
             var c: Class<*>? = clazz
             while (c != null) {
                 try {
-                    return c.getDeclaredMethod(name, *paramTypes).also { it.isAccessible = true }
+                    return c.getDeclaredMethod(name, *paramTypes).also {
+                        try {
+                            it.isAccessible = true
+                        } catch (e: RuntimeException) {
+                            // InaccessibleObjectException on JDK 17+ module system — log and signal caller to fall back
+                            thisLogger().debug("PytestNativeLauncher: cannot make $name accessible — falling back to shell", e)
+                            return null
+                        }
+                    }
                 } catch (_: NoSuchMethodException) {
                     c = c.superclass
                 }

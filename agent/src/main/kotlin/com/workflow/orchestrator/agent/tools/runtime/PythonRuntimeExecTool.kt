@@ -192,6 +192,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         project: Project,
         timeoutSeconds: Long,
     ): ToolResult {
+        coroutineContext.ensureActive()
         val invocation = agentService.newRunInvocation("pytest-${System.currentTimeMillis()}")
         try {
             val result = withTimeoutOrNull(timeoutSeconds * 1000) {
@@ -318,6 +319,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                                 }
                             }
 
+                            if (!continuation.isActive) return@invokeLater
                             try {
                                 ProgramRunnerUtil.executeConfigurationAsync(env, false, true, callback)
                             } catch (_: NoSuchMethodError) {
@@ -337,10 +339,11 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             }
 
             if (result == null) {
-                // Timeout — kill process, return partial results.
-                invocation.processHandlerRef.get()?.destroyProcess()
-                val desc = invocation.descriptorRef.get()
-                val partial = desc?.let {
+                // Timeout — capture refs immediately before invokeOnCancellation can dispose them.
+                val capturedHandler = invocation.processHandlerRef.get()
+                val capturedDescriptor = invocation.descriptorRef.get()
+                capturedHandler?.destroyProcess()
+                val partial = capturedDescriptor?.let {
                     val root = TestConsoleUtils.findTestRoot(it)
                     root?.let { r -> interpretTestRoot(r, "pytest") }
                 }

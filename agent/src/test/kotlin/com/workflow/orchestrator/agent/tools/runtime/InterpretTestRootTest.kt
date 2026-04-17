@@ -453,10 +453,10 @@ class InterpretTestRootTest {
     // ══════════════════════════════════════════════════════════════════════
     // Scenario P1 — pytest happy path
     //
-    // 3 leaves with python:// URLs, all passed. Must FAIL now because
-    // collectTestResults rejects python:// URLs → interpretTestRoot sees 0
-    // leaves → returns NO_TESTS_FOUND / runner error.
-    // Will PASS after Task 3.4 extends the URL filter to accept python://.
+    // 3 leaves with python:// URLs, all passed. Tests that python:// leaves
+    // are correctly collected by collectTestResults (Task 3.4 extended the
+    // URL filter to accept python://) and that interpretTestRoot returns
+    // PASSED with the correct count.
     // ══════════════════════════════════════════════════════════════════════
 
     @Test
@@ -479,9 +479,9 @@ class InterpretTestRootTest {
     // Scenario P2 — pytest collection error (_collect suffix)
     //
     // 1 leaf whose name ends in _collect (teamcity-messages protocol for
-    // collection errors). isDefect=true. Must surface as FAILED (or error)
-    // not as runner-error/empty-suite. Must FAIL now because python:// URL
-    // is rejected and the leaf is never counted.
+    // collection errors). isDefect=true. Verifies the leaf is collected via
+    // the python:// URL filter and surfaces as FAILED (or error), not as an
+    // opaque runner-error/empty-suite result.
     // ══════════════════════════════════════════════════════════════════════
 
     @Test
@@ -517,10 +517,10 @@ class InterpretTestRootTest {
     // ══════════════════════════════════════════════════════════════════════
     // Scenario P3 — pytest fixture setup failure
     //
-    // 1 leaf that fails due to a missing fixture. Must surface as ERROR
-    // with the test name and "test setup failed" message visible. Must FAIL
-    // now because python:// URL is rejected → empty leaf list → runner error
-    // without the test name.
+    // 1 leaf that fails due to a missing fixture. Verifies the leaf is
+    // collected via the python:// URL filter and that interpretTestRoot
+    // surfaces it as ERROR with the test name and "test setup failed"
+    // message visible (not an opaque runner error without the test name).
     // ══════════════════════════════════════════════════════════════════════
 
     @Test
@@ -555,10 +555,10 @@ class InterpretTestRootTest {
     // ══════════════════════════════════════════════════════════════════════
     // Scenario P4 — pytest empty root (exit code 5 equivalent)
     //
-    // Root with no children — pytest --collect-only found nothing. Must
-    // return isError=true with a "no tests found" message. This scenario
-    // may already PASS because the empty-root path in interpretTestRoot is
-    // not URL-scheme-dependent; that is acceptable for the RED phase.
+    // Root with no children — pytest --collect-only found nothing. Verifies
+    // that interpretTestRoot returns isError=true with a "no tests found"
+    // message. The empty-root path is URL-scheme-independent so this passes
+    // regardless of the python:// URL filter.
     // ══════════════════════════════════════════════════════════════════════
 
     @Test
