@@ -1,0 +1,22 @@
+{
+  "description": "Contract for setTasks(tasks) bridge function. Kotlin sends the full task array (session rehydration or bulk sync); React replaces chatStore.tasks with this value.",
+  "payload": [
+    {
+      "id": "task-1",
+      "subject": "Write tests",
+      "description": "Add coverage for auth flow",
+      "status": "completed",
+      "blocks": [],
+      "blockedBy": []
+    },
+    {
+      "id": "task-2",
+      "subject": "Deploy fix",
+      "description": "Push to staging",
+      "status": "pending",
+      "blocks": [],
+      "blockedBy": ["task-1"]
+    }
+  ],
+  "required_fields_per_task": ["id", "subject", "description", "status"]
+}
