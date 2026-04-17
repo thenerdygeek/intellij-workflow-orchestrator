@@ -182,7 +182,7 @@ Actions and their parameters:
 
                         if (env == null) {
                             if (continuation.isActive) continuation.resume(
-                                CoverageRunResult("Error: could not build execution environment", "Error")
+                                CoverageRunResult("Error: could not build execution environment", "Error", testIsError = true)
                             )
                             return@invokeLater
                         }
@@ -191,7 +191,7 @@ Actions and their parameters:
                             override fun processStarted(descriptor: RunContentDescriptor?) {
                                 if (descriptor == null) {
                                     if (continuation.isActive) continuation.resume(
-                                        CoverageRunResult("Error: no descriptor from coverage run", "Error")
+                                        CoverageRunResult("Error: no descriptor from coverage run", "Error", testIsError = true)
                                     )
                                     return
                                 }
@@ -232,7 +232,7 @@ Actions and their parameters:
                                     })
                                 } else {
                                     if (continuation.isActive) continuation.resume(
-                                        CoverageRunResult("Error: no process handler", "Error")
+                                        CoverageRunResult("Error: no process handler", "Error", testIsError = true)
                                     )
                                 }
                             }
@@ -258,7 +258,8 @@ Actions and their parameters:
                                                 "BUILD FAILED — coverage run did not start.\n\n" +
                                                     "Compilation failed before test execution. " +
                                                     "Fix the errors and try again.",
-                                                "Build failed before coverage"
+                                                "Build failed before coverage",
+                                                testIsError = true,
                                             ))
                                         }
                                     }
@@ -272,7 +273,8 @@ Actions and their parameters:
                         if (continuation.isActive) continuation.resume(
                             CoverageRunResult(
                                 "Error launching coverage run: ${e.message}",
-                                "Error: ${e.javaClass.simpleName}"
+                                "Error: ${e.javaClass.simpleName}",
+                                testIsError = true,
                             )
                         )
                     }
@@ -314,7 +316,8 @@ Actions and their parameters:
         return ToolResult(
             content = content,
             summary = result.testSummary + if (snapshot != null) " | ${snapshot.files.size} files covered" else "",
-            tokenEstimate = content.length / 4
+            tokenEstimate = content.length / 4,
+            isError = result.testIsError,
         )
     }
 
@@ -789,7 +792,7 @@ Actions and their parameters:
     // ══════════════════════════════════════════════════════════════════════
 
     private fun ToolResult.toCoverageRunResult(): CoverageRunResult =
-        CoverageRunResult(this.content, this.summary)
+        CoverageRunResult(this.content, this.summary, this.isError)
 
     // ══════════════════════════════════════════════════════════════════════
     // Run configuration creation
@@ -998,4 +1001,8 @@ data class FileCoverageDetail(
 /** Top-level snapshot from a coverage run — keyed by fully qualified class name. */
 data class CoverageSnapshot(val files: Map<String, FileCoverageDetail>)
 
-internal data class CoverageRunResult(val testResult: String, val testSummary: String)
+internal data class CoverageRunResult(
+    val testResult: String,
+    val testSummary: String,
+    val testIsError: Boolean = false,
+)
