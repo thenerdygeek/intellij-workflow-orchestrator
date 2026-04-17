@@ -138,6 +138,14 @@ class BuildSystemValidatorTest {
         every { JavaPsiFacade.getInstance(project) } returns facade
         every { facade.findClass(className, any<GlobalSearchScope>()) } returns psiClass
 
+        // Stub GlobalSearchScope.projectScope(project) — the validator calls it as the
+        // search scope argument to findClass. Without this, the static helper dispatches
+        // to ProjectScope.getProjectScope(project) which tries to resolve a project
+        // service on the mock and ClassCasts.
+        val projectScope = mockk<GlobalSearchScope>(relaxed = true)
+        mockkStatic(GlobalSearchScope::class)
+        every { GlobalSearchScope.projectScope(project) } returns projectScope
+
         mockkStatic(ModuleUtilCore::class)
         every { ModuleUtilCore.findModuleForPsiElement(psiClass) } returns module
         every { ModuleUtilCore.findModuleForFile(classFile, project) } returns module
@@ -145,7 +153,6 @@ class BuildSystemValidatorTest {
         val rm = mockk<ModuleRootManager>(relaxed = true)
         mockkStatic(ModuleRootManager::class)
         every { ModuleRootManager.getInstance(module) } returns rm
-        every { rm.sourceRoots } returns arrayOf(mainRoot, testRoot)
         every { rm.getSourceRoots(JavaSourceRootType.TEST_SOURCE) } returns listOf(testRoot)
         every { rm.getSourceRoots(JavaSourceRootType.SOURCE) } returns listOf(mainRoot)
         every { rm.contentRoots } returns arrayOf(mockk<VirtualFile>(relaxed = true) {
@@ -155,10 +162,6 @@ class BuildSystemValidatorTest {
         // VfsUtilCore.isAncestor: returns true only for the root that matches
         // sourceRootKind. This is how the validator distinguishes main vs test location.
         mockkStatic(VfsUtilCore::class)
-        every { VfsUtilCore.isAncestor(testRoot, classFile, any<Boolean>()) } returns
-            (sourceRootKind == SourceRootKind.TEST)
-        every { VfsUtilCore.isAncestor(mainRoot, classFile, any<Boolean>()) } returns
-            (sourceRootKind == SourceRootKind.MAIN)
         every { VfsUtilCore.isAncestor(any<VirtualFile>(), classFile, any<Boolean>()) } answers {
             val anc = firstArg<VirtualFile>()
             when (anc) {
