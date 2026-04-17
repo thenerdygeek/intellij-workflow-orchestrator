@@ -204,7 +204,7 @@ Actions and their parameters:
                                         override fun onTestingFinished(sender: TestResultsViewer) {
                                             val root = sender.testsRootNode as? SMTestProxy.SMRootTestProxy
                                             if (root != null && continuation.isActive) {
-                                                continuation.resume(formatTestResults(root, testTarget))
+                                                continuation.resume(interpretTestRoot(root, testTarget).toCoverageRunResult())
                                             }
                                         }
                                     })
@@ -216,7 +216,7 @@ Actions and their parameters:
                                                     if (continuation.isActive) {
                                                         val root = TestConsoleUtils.findTestRoot(descriptor)
                                                         if (root != null) {
-                                                            continuation.resume(formatTestResults(root, testTarget))
+                                                            continuation.resume(interpretTestRoot(root, testTarget).toCoverageRunResult())
                                                         } else {
                                                             continuation.resume(
                                                                 CoverageRunResult(
@@ -780,52 +780,16 @@ Actions and their parameters:
 
     // ══════════════════════════════════════════════════════════════════════
     // Test results formatting
+    //
+    // CoverageRunResult is the data-class carrier we pass across the
+    // withTimeoutOrNull boundary. Populate it from the canonical
+    // [interpretTestRoot] ToolResult — same classifier as RuntimeExecTool and
+    // JavaRuntimeExecTool, so a coverage-backed run can't report PASSED for
+    // an empty suite or a runner crash.
     // ══════════════════════════════════════════════════════════════════════
 
-    private fun formatTestResults(root: SMTestProxy.SMRootTestProxy, testTarget: String): CoverageRunResult {
-        val allTests = collectAllTests(root)
-        val passed = allTests.count { it.isPassed }
-        val failed = allTests.count { it.isDefect && !it.isErrorProxy() }
-        val errors = allTests.count { it.isErrorProxy() }
-        val skipped = allTests.count { it.isIgnored }
-        val duration = root.duration?.let { it / 1000.0 } ?: 0.0
-
-        val sb = StringBuilder()
-        sb.appendLine("Tests: $passed passed, $failed failed, $errors error, $skipped skipped (${String.format("%.1f", duration)}s)")
-
-        val failedTests = allTests.filter { it.isDefect }
-        if (failedTests.isNotEmpty()) {
-            sb.appendLine()
-            sb.appendLine("FAILED:")
-            for (test in failedTests) {
-                sb.appendLine("  ${test.name} — ${test.errorMessage ?: "unknown error"}")
-                val firstFrame = test.stacktrace?.lines()?.firstOrNull { it.contains("at ") }
-                if (firstFrame != null) sb.appendLine("    ${firstFrame.trim()}")
-            }
-        }
-
-        val skippedTests = allTests.filter { it.isIgnored }
-        if (skippedTests.isNotEmpty()) {
-            sb.appendLine()
-            sb.appendLine("SKIPPED:")
-            for (test in skippedTests) {
-                val reason = test.errorMessage
-                if (reason != null) sb.appendLine("  ${test.name} — $reason") else sb.appendLine("  ${test.name}")
-            }
-        }
-
-        val summary = if (failed > 0 || errors > 0) "FAILED" else "PASSED"
-        return CoverageRunResult(sb.toString().trimEnd(), "$summary: $passed passed, $failed failed")
-    }
-
-    private fun SMTestProxy.isErrorProxy(): Boolean =
-        magnitudeInfo?.title?.contains("error", ignoreCase = true) == true ||
-            errorMessage?.startsWith("java.lang.") == true
-
-    private fun collectAllTests(proxy: SMTestProxy): List<SMTestProxy> {
-        if (proxy.children.isEmpty() && proxy !is SMTestProxy.SMRootTestProxy) return listOf(proxy)
-        return proxy.children.flatMap { collectAllTests(it) }
-    }
+    private fun ToolResult.toCoverageRunResult(): CoverageRunResult =
+        CoverageRunResult(this.content, this.summary)
 
     // ══════════════════════════════════════════════════════════════════════
     // Run configuration creation

@@ -419,78 +419,12 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
                 )
             }
 
-            val allTests = collectTestResults(testRoot)
-            val filtered = if (statusFilter != null) {
-                allTests.filter { it.status.name == statusFilter }
-            } else {
-                allTests
-            }
-
-            val passed = allTests.count { it.status == TestStatus.PASSED }
-            val failed = allTests.count { it.status == TestStatus.FAILED }
-            val errors = allTests.count { it.status == TestStatus.ERROR }
-            val skipped = allTests.count { it.status == TestStatus.SKIPPED }
-            val totalDuration = allTests.sumOf { it.durationMs }
-
-            val sb = StringBuilder()
-            sb.appendLine("Test Run: ${descriptor.displayName ?: "Unknown"}")
-
-            val overallStatus = when {
-                errors > 0 || failed > 0 -> "FAILED"
-                else -> "PASSED"
-            }
-            sb.appendLine("Status: $overallStatus ($passed passed, $failed failed, $errors error, $skipped skipped)")
-            sb.appendLine("Duration: ${formatDuration(totalDuration)}")
-            sb.appendLine()
-
-            val failedTests = filtered.filter { it.status == TestStatus.FAILED || it.status == TestStatus.ERROR }
-            val skippedTests = filtered.filter { it.status == TestStatus.SKIPPED }
-            val passedTests = filtered.filter { it.status == TestStatus.PASSED }
-
-            if (failedTests.isNotEmpty()) {
-                sb.appendLine("--- FAILED ---")
-                for (test in failedTests) {
-                    sb.appendLine("${test.name} (${formatDuration(test.durationMs)})")
-                    test.errorMessage?.let { sb.appendLine("  Assertion: $it") }
-                    if (test.stackTrace.isNotEmpty()) {
-                        sb.appendLine("  Stack:")
-                        for (frame in test.stackTrace.take(MAX_STACK_FRAMES)) {
-                            sb.appendLine("    $frame")
-                        }
-                    }
-                    sb.appendLine()
-                }
-            }
-
-            if (skippedTests.isNotEmpty()) {
-                sb.appendLine("--- SKIPPED ---")
-                for (test in skippedTests) {
-                    val reason = test.errorMessage
-                    if (reason != null) sb.appendLine("${test.name} — $reason") else sb.appendLine(test.name)
-                }
-                sb.appendLine()
-            }
-
-            if (statusFilter == "PASSED" && passedTests.isNotEmpty()) {
-                sb.appendLine("--- PASSED ---")
-                for (test in passedTests) {
-                    sb.appendLine("${test.name} (${formatDuration(test.durationMs)})")
-                }
-            } else if (passedTests.isNotEmpty() && statusFilter == null) {
-                sb.appendLine("--- PASSED ($passed tests) ---")
-                val shown = passedTests.take(MAX_PASSED_SHOWN)
-                for (test in shown) {
-                    sb.appendLine("${test.name} (${formatDuration(test.durationMs)})")
-                }
-                if (passedTests.size > MAX_PASSED_SHOWN) {
-                    sb.appendLine("... and ${passedTests.size - MAX_PASSED_SHOWN} more passed tests")
-                }
-            }
-
-            val content = sb.toString().trimEnd()
-            val capped = truncateOutput(content, TEST_RESULTS_TOKEN_CAP_CHARS)
-
-            ToolResult(capped, "$overallStatus: $passed passed, $failed failed", capped.length / 4)
+            // Route through the canonical interpreter — correctly handles empty-suite /
+            // terminated / defect cases (fixes the "0/0/0/0 → PASSED" bug where the old
+            // inline classifier mapped an empty suite to PASSED). formatStructuredResults
+            // already applies RUN_TESTS_TOKEN_CAP_CHARS truncation, so we do not truncate
+            // again here.
+            interpretTestRoot(testRoot, descriptor.displayName ?: "unknown", statusFilter)
         } catch (e: Exception) {
             ToolResult("Error getting test results: ${e.message}", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
@@ -574,6 +508,5 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
         private const val MAX_PROCESS_WAIT_SECONDS = 600
         private const val TEST_TREE_FINALIZE_TIMEOUT_MS = 10_000L
         private const val PROGRESS_INTERVAL_MS = 10_000L
-        private const val TEST_RESULTS_TOKEN_CAP_CHARS = 12000
     }
 }

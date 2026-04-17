@@ -196,7 +196,24 @@ internal fun mapToTestResultEntry(proxy: SMTestProxy): TestResultEntry {
     )
 }
 
-internal fun formatStructuredResults(allTests: List<TestResultEntry>, runName: String): ToolResult {
+/**
+ * Format a list of [TestResultEntry] into a rich [ToolResult] with a header line
+ * (overall status + passed/failed/errors/skipped counts), a duration, then
+ * FAILED / SKIPPED / PASSED sections.
+ *
+ * The optional [statusFilter] (uppercase `PASSED`/`FAILED`/`ERROR`/`SKIPPED`) is
+ * a **presentation** concern only: the header counts and the `isError` flag are
+ * always derived from the FULL [allTests] list, so a "PASSED" filter against a
+ * run that had failures still reports the failure in the summary line and
+ * `isError=true`. When the filter is set, only sections matching the filter are
+ * rendered, and for `statusFilter == "PASSED"` every passed test is shown (the
+ * `MAX_PASSED_SHOWN` cap is only applied when no filter is active).
+ */
+internal fun formatStructuredResults(
+    allTests: List<TestResultEntry>,
+    runName: String,
+    statusFilter: String? = null
+): ToolResult {
     val passed = allTests.count { it.status == TestStatus.PASSED }
     val failed = allTests.count { it.status == TestStatus.FAILED }
     val errors = allTests.count { it.status == TestStatus.ERROR }
@@ -214,8 +231,16 @@ internal fun formatStructuredResults(allTests: List<TestResultEntry>, runName: S
     sb.appendLine("Duration: ${formatDuration(totalDuration)}")
     sb.appendLine()
 
-    val failedTests = allTests.filter { it.status == TestStatus.FAILED || it.status == TestStatus.ERROR }
-    if (failedTests.isNotEmpty()) {
+    // FAILED/ERROR block: shown when no filter is set, or when the filter selects FAILED/ERROR.
+    val showFailed = statusFilter == null || statusFilter == "FAILED" || statusFilter == "ERROR"
+    val failedTests = if (statusFilter == null) {
+        allTests.filter { it.status == TestStatus.FAILED || it.status == TestStatus.ERROR }
+    } else if (statusFilter == "FAILED") {
+        allTests.filter { it.status == TestStatus.FAILED }
+    } else if (statusFilter == "ERROR") {
+        allTests.filter { it.status == TestStatus.ERROR }
+    } else emptyList()
+    if (showFailed && failedTests.isNotEmpty()) {
         sb.appendLine("--- FAILED ---")
         for (test in failedTests) {
             sb.appendLine("${test.name} (${formatDuration(test.durationMs)})")
@@ -230,8 +255,10 @@ internal fun formatStructuredResults(allTests: List<TestResultEntry>, runName: S
         }
     }
 
+    // SKIPPED block: shown when no filter is set, or when the filter selects SKIPPED.
+    val showSkipped = statusFilter == null || statusFilter == "SKIPPED"
     val skippedTests = allTests.filter { it.status == TestStatus.SKIPPED }
-    if (skippedTests.isNotEmpty()) {
+    if (showSkipped && skippedTests.isNotEmpty()) {
         sb.appendLine("--- SKIPPED ---")
         for (test in skippedTests) {
             val reason = test.errorMessage
@@ -240,14 +267,17 @@ internal fun formatStructuredResults(allTests: List<TestResultEntry>, runName: S
         sb.appendLine()
     }
 
+    // PASSED block: shown when no filter is set (capped at MAX_PASSED_SHOWN), or when
+    // the filter explicitly selects PASSED (uncapped — user asked for all passed tests).
+    val showPassed = statusFilter == null || statusFilter == "PASSED"
     val passedTests = allTests.filter { it.status == TestStatus.PASSED }
-    if (passedTests.isNotEmpty()) {
+    if (showPassed && passedTests.isNotEmpty()) {
         sb.appendLine("--- PASSED ($passed tests) ---")
-        val shown = passedTests.take(MAX_PASSED_SHOWN)
+        val shown = if (statusFilter == "PASSED") passedTests else passedTests.take(MAX_PASSED_SHOWN)
         for (test in shown) {
             sb.appendLine("${test.name} (${formatDuration(test.durationMs)})")
         }
-        if (passedTests.size > MAX_PASSED_SHOWN) {
+        if (statusFilter == null && passedTests.size > MAX_PASSED_SHOWN) {
             sb.appendLine("... and ${passedTests.size - MAX_PASSED_SHOWN} more passed tests")
         }
     }
@@ -307,12 +337,16 @@ internal fun buildRunnerErrorResult(root: SMTestProxy): ToolResult {
  * 4. If no leaves + `root.isDefect` → engine-level failure (wrong class, JUnit 5 crash).
  * 5. If no leaves + no defect → empty suite (no @Test methods, wrong class name).
  */
-internal fun interpretTestRoot(root: SMTestProxy, runName: String): ToolResult {
+internal fun interpretTestRoot(
+    root: SMTestProxy,
+    runName: String,
+    statusFilter: String? = null
+): ToolResult {
     val allTests = collectTestResults(root)
 
     if (allTests.isNotEmpty()) {
         // Real tests ran — format pass/fail/error/skip regardless of root defect state.
-        val result = formatStructuredResults(allTests, runName)
+        val result = formatStructuredResults(allTests, runName, statusFilter)
         // If the process was also terminated (e.g. timeout), prepend a warning.
         return if (root.wasTerminated()) {
             result.copy(
