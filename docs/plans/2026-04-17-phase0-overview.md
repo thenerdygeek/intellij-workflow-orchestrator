@@ -87,7 +87,7 @@ Each plan has:
 | 3 | DONE | 2026-04-17 | 2026-04-17 | RunInvocation + session Disposable + tool refactors. Commits `eff98f66`→`503f34df`→`86ac174c`→`8f90baa5`→`9c67e4d6`→`b69efac5`→`5204ef37`. All 9 leak regression tests GREEN. Manual heap-dump verification in runIde still TODO — cannot run from CLI. |
 | 4 | Planned | — | — | (was Phase 3) |
 | 5 | DONE | 2026-04-17 | 2026-04-17 | DebugInvocation + awaitCallback + UUID session handles + breakpoint-type tests + Phase-7 TODO markers. Commits `c1995f76`→`4681f639`→`67baea87`→`baf9976b`→`c7fedb35`→`9aafb0e8`→`1f79c3f9`. 70 Debug + 11 IdeStateProbe tests GREEN. verifyPlugin GREEN (3 IDE versions). Task 4.4 spiller-wiring tagged `TODO(phase7)` at 4 sites — 2 handlers (thread_dump, memory_view) currently un-truncated, silent-overflow risk for Phase 7 to address. Manual runIde verification checklist: `docs/plans/2026-04-17-phase5-manual-verification.md`. |
-| 6 | Planned | — | — | (was Phase 5) |
+| 6 | DONE | 2026-04-17 | 2026-04-17 | F1 structured DiagnosticEntry + F3 DumbService + F4 rename safety + F5 deferred + F6 isError. 23 commits (T2 `7eb4bd74`→T6 `788026a9`). All T2–T5 (98) + T6 (22) tests GREEN. Full `:agent:test` suite GREEN. F2 spiller wiring deferred to Phase 7 via 17+ `TODO(phase7)` markers at cap sites. F5 (`LocalInspectionToolWrapper.processFile`) and F6 (`DaemonCodeAnalyzerImpl.getFileHighlightingRanges`) deferred with `@Disabled` future-upgrade tests citing `docs/superpowers/research/2026-03-20-intellij-api-signatures.md §4`. |
 | 7 | Planned | — | — | (was Phase 6) |
 
 ---
