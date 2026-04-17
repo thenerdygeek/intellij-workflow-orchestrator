@@ -5,7 +5,9 @@ import com.intellij.execution.testframework.sm.runner.states.TestStateInfo
 import com.intellij.openapi.compiler.CompileContext
 import com.intellij.openapi.compiler.CompilerMessageCategory
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
+import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.ai.TokenEstimator
+import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.truncateOutput
 import org.w3c.dom.Element
@@ -45,8 +47,7 @@ internal const val TEST_TREE_RETRY_INTERVAL_MS = 500L  // 10 * 500ms = 5s max wa
 
 /** Build watchdog timeout — how long to wait for CompilationStatusListener callback. */
 internal const val BUILD_WATCHDOG_MAX_MS = 300_000L     // Hard cap at 5 min (matches test timeout)
-internal const val RUN_TESTS_MAX_OUTPUT_CHARS = 12000
-internal const val RUN_TESTS_TOKEN_CAP_CHARS = 12000
+// RUN_TESTS_MAX_OUTPUT_CHARS and RUN_TESTS_TOKEN_CAP_CHARS deleted — replaced by spillOrFormat (Phase 7 Task 6.4)
 
 // compile_module constants
 internal const val COMPILE_MAX_ERROR_MESSAGES = 20
@@ -218,9 +219,11 @@ internal fun mapToTestResultEntry(proxy: SMTestProxy): TestResultEntry {
  * rendered, and for `statusFilter == "PASSED"` every passed test is shown (the
  * `MAX_PASSED_SHOWN` cap is only applied when no filter is active).
  */
-internal fun formatStructuredResults(
+internal suspend fun formatStructuredResults(
     allTests: List<TestResultEntry>,
     runName: String,
+    tool: AgentTool,
+    project: Project?,
     statusFilter: String? = null
 ): ToolResult {
     val passed = allTests.count { it.status == TestStatus.PASSED }
@@ -292,14 +295,23 @@ internal fun formatStructuredResults(
     }
 
     val content = sb.toString().trimEnd()
-    val capped = truncateOutput(content, RUN_TESTS_TOKEN_CAP_CHARS)
-
-    return ToolResult(
-        capped,
-        "$overallStatus: $passed passed, $failed failed",
-        capped.length / 4,
-        isError = overallStatus == "FAILED"
-    )
+    return if (project != null) {
+        val spilled = tool.spillOrFormat(content, project)
+        ToolResult(
+            content = spilled.preview,
+            summary = "$overallStatus: $passed passed, $failed failed",
+            tokenEstimate = spilled.preview.length / 4,
+            isError = overallStatus == "FAILED",
+            spillPath = spilled.spilledToFile,
+        )
+    } else {
+        ToolResult(
+            content = content,
+            summary = "$overallStatus: $passed passed, $failed failed",
+            tokenEstimate = content.length / 4,
+            isError = overallStatus == "FAILED",
+        )
+    }
 }
 
 internal fun formatDuration(ms: Long): String {
@@ -315,17 +327,31 @@ internal fun formatDuration(ms: Long): String {
  * error message and stacktrace (if any) so the LLM has enough signal to diagnose
  * the runner failure instead of silently seeing "0 tests".
  */
-internal fun buildRunnerErrorResult(root: SMTestProxy): ToolResult {
+internal suspend fun buildRunnerErrorResult(
+    root: SMTestProxy,
+    tool: AgentTool,
+    project: Project?,
+): ToolResult {
     val errorMessage = root.errorMessage ?: "unknown"
     val stacktrace = root.stacktrace ?: ""
     val content = "Test runner error: $errorMessage\n\n$stacktrace".trimEnd()
-    val capped = truncateOutput(content, RUN_TESTS_TOKEN_CAP_CHARS)
-    return ToolResult(
-        content = capped,
-        summary = "Test runner error (no tests executed)",
-        tokenEstimate = capped.length / 4,
-        isError = true
-    )
+    return if (project != null) {
+        val spilled = tool.spillOrFormat(content, project)
+        ToolResult(
+            content = spilled.preview,
+            summary = "Test runner error (no tests executed)",
+            tokenEstimate = spilled.preview.length / 4,
+            isError = true,
+            spillPath = spilled.spilledToFile,
+        )
+    } else {
+        ToolResult(
+            content = content,
+            summary = "Test runner error (no tests executed)",
+            tokenEstimate = content.length / 4,
+            isError = true,
+        )
+    }
 }
 
 /**
@@ -346,16 +372,18 @@ internal fun buildRunnerErrorResult(root: SMTestProxy): ToolResult {
  * 4. If no leaves + `root.isDefect` → engine-level failure (wrong class, JUnit 5 crash).
  * 5. If no leaves + no defect → empty suite (no @Test methods, wrong class name).
  */
-internal fun interpretTestRoot(
+internal suspend fun interpretTestRoot(
     root: SMTestProxy,
     runName: String,
-    statusFilter: String? = null
+    tool: AgentTool,
+    project: Project?,
+    statusFilter: String? = null,
 ): ToolResult {
     val allTests = collectTestResults(root)
 
     if (allTests.isNotEmpty()) {
         // Real tests ran — format pass/fail/error/skip regardless of root defect state.
-        val result = formatStructuredResults(allTests, runName, statusFilter)
+        val result = formatStructuredResults(allTests, runName, tool, project, statusFilter)
         // If the process was also terminated (e.g. timeout), prepend a warning.
         return if (root.wasTerminated()) {
             result.copy(
@@ -368,9 +396,9 @@ internal fun interpretTestRoot(
     // No real test leaves — distinguish the failure cause.
     return when {
         root.wasTerminated() ->
-            buildRunnerErrorResult(root)   // killed before any test reported
+            buildRunnerErrorResult(root, tool, project)   // killed before any test reported
         root.isDefect ->
-            buildRunnerErrorResult(root)   // engine-level failure (JUnit 5 crash, class not found, etc.)
+            buildRunnerErrorResult(root, tool, project)   // engine-level failure (JUnit 5 crash, class not found, etc.)
         else -> ToolResult(
             content = "Test run completed for '$runName' but no test methods were found.\n\n" +
                 "Possible causes:\n" +

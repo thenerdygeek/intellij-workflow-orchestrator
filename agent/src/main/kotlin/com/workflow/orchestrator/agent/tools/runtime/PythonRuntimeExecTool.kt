@@ -19,10 +19,13 @@ import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
 import com.workflow.orchestrator.agent.tools.framework.build.executePytestRun
-import com.workflow.orchestrator.agent.tools.truncateOutput
 import com.workflow.orchestrator.core.ai.TokenEstimator
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -282,9 +285,15 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                                             override fun onTestingFinished(sender: TestResultsViewer) {
                                                 val root = sender.testsRootNode as? SMTestProxy.SMRootTestProxy
                                                 if (root != null && continuation.isActive) {
-                                                    continuation.resume(
-                                                        interpretTestRoot(root, descriptor.displayName ?: "pytest")
-                                                    )
+                                                    val pollScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+                                                    invocation.onDispose { pollScope.cancel() }
+                                                    pollScope.launch {
+                                                        if (continuation.isActive) {
+                                                            continuation.resume(
+                                                                interpretTestRoot(root, descriptor.displayName ?: "pytest", this@PythonRuntimeExecTool, project)
+                                                            )
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -298,16 +307,24 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                                                 override fun processTerminated(event: com.intellij.execution.process.ProcessEvent) {
                                                     if (continuation.isActive) {
                                                         val root = TestConsoleUtils.findTestRoot(descriptor)
-                                                        continuation.resume(
-                                                            if (root != null) {
-                                                                interpretTestRoot(root, descriptor.displayName ?: "pytest")
-                                                            } else {
+                                                        if (root != null) {
+                                                            val pollScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+                                                            invocation.onDispose { pollScope.cancel() }
+                                                            pollScope.launch {
+                                                                if (continuation.isActive) {
+                                                                    continuation.resume(
+                                                                        interpretTestRoot(root, descriptor.displayName ?: "pytest", this@PythonRuntimeExecTool, project)
+                                                                    )
+                                                                }
+                                                            }
+                                                        } else {
+                                                            continuation.resume(
                                                                 ToolResult(
                                                                     "pytest run completed but no test results available.",
                                                                     "No structured results", 20
                                                                 )
-                                                            }
-                                                        )
+                                                            )
+                                                        }
                                                     }
                                                 }
                                             }
@@ -345,7 +362,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                 capturedHandler?.destroyProcess()
                 val partial = capturedDescriptor?.let {
                     val root = TestConsoleUtils.findTestRoot(it)
-                    root?.let { r -> interpretTestRoot(r, "pytest") }
+                    root?.let { r -> interpretTestRoot(r, "pytest", this@PythonRuntimeExecTool, project) }
                 }
                 return if (partial != null) {
                     partial.copy(
@@ -457,20 +474,21 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                 isError = true
             )
 
-            val truncated = truncateOutput(output.stdErr, RUN_TESTS_MAX_OUTPUT_CHARS)
-            if (output.exitCode == 0 && !truncated.contains("SyntaxError")) {
+            val spilled = this@PythonRuntimeExecTool.spillOrFormat(output.stdErr, project)
+            if (output.exitCode == 0 && !spilled.preview.contains("SyntaxError")) {
                 ToolResult(
                     "Compilation of $target successful: ${pyFiles.size} file(s) byte-compiled, 0 errors.",
                     "Build OK",
                     20
                 )
             } else {
-                val content = "Compilation of $target failed (exit code ${output.exitCode}):\n\n$truncated"
+                val content = "Compilation of $target failed (exit code ${output.exitCode}):\n\n${spilled.preview}"
                 ToolResult(
-                    content,
-                    "py_compile errors",
-                    TokenEstimator.estimate(content),
-                    isError = true
+                    content = content,
+                    summary = "py_compile errors",
+                    tokenEstimate = TokenEstimator.estimate(content),
+                    isError = true,
+                    spillPath = spilled.spilledToFile,
                 )
             }
         }

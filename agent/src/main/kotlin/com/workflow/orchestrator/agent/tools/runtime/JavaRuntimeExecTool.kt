@@ -31,7 +31,6 @@ import com.workflow.orchestrator.agent.tools.TestConsoleUtils
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
-import com.workflow.orchestrator.agent.tools.truncateOutput
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CoroutineScope
@@ -504,7 +503,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             if (result == null && invocation.processHandlerRef.get() != null) {
                 invocation.processHandlerRef.get()?.destroyProcess()
                 val descriptor = invocation.descriptorRef.get()
-                val partialResult = descriptor?.let { extractNativeResults(it, testTarget) }
+                val partialResult = descriptor?.let { extractNativeResults(it, testTarget, project) }
                 return if (partialResult != null) {
                     partialResult.copy(
                         content = "[TIMEOUT] Test execution timed out after ${timeoutSeconds}s. Partial results:\n\n${partialResult.content}",
@@ -612,7 +611,13 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                 override fun onTestingFinished(sender: TestResultsViewer) {
                     val root = sender.testsRootNode as? SMTestProxy.SMRootTestProxy
                     if (root != null && continuation.isActive) {
-                        continuation.resume(interpretTestRoot(root, descriptor.displayName ?: testTarget))
+                        val pollScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+                        invocation.onDispose { pollScope.cancel() }
+                        pollScope.launch {
+                            if (continuation.isActive) {
+                                continuation.resume(extractNativeResults(descriptor, testTarget, project))
+                            }
+                        }
                     }
                 }
             }
@@ -641,7 +646,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                             delay(TEST_TREE_RETRY_INTERVAL_MS)
                         }
                         if (continuation.isActive) {
-                            continuation.resume(extractNativeResults(descriptor, testTarget))
+                            continuation.resume(extractNativeResults(descriptor, testTarget, project))
                         }
                     }
                 }
@@ -790,7 +795,11 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         } catch (_: Exception) { null }
     }
 
-    private fun extractNativeResults(descriptor: RunContentDescriptor, testTarget: String): ToolResult? {
+    private suspend fun extractNativeResults(
+        descriptor: RunContentDescriptor,
+        testTarget: String,
+        project: Project?,
+    ): ToolResult? {
         val testRoot = TestConsoleUtils.findTestRoot(descriptor)
         if (testRoot == null) {
             return ToolResult(
@@ -799,10 +808,13 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             )
         }
 
-        return interpretTestRoot(testRoot, descriptor.displayName ?: testTarget)
+        // project is non-null in all production paths (executeWithNativeRunner always
+        // provides it); null only in the legacy headless path via handleDescriptorReady(project=null).
+        // interpretTestRoot accepts Project? and degrades gracefully when null.
+        return interpretTestRoot(testRoot, descriptor.displayName ?: testTarget, this, project)
     }
 
-    private fun executeWithShell(
+    private suspend fun executeWithShell(
         project: Project,
         testTarget: String,
         timeoutSeconds: Long,
@@ -935,10 +947,14 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             if (!completed) {
                 process.destroyForcibly()
                 readerThread.join(1000)
-                val truncatedOutput = truncateOutput(outputBuilder.toString(), RUN_TESTS_MAX_OUTPUT_CHARS)
+                val rawOutput = outputBuilder.toString()
+                val spilled = spillOrFormat(rawOutput, project)
                 return ToolResult(
-                    "[TIMEOUT] Test execution timed out after ${timeoutSeconds}s for $testTarget.\nPartial output:\n$truncatedOutput",
-                    "Test timeout", TokenEstimator.estimate(truncatedOutput), isError = true
+                    content = "[TIMEOUT] Test execution timed out after ${timeoutSeconds}s for $testTarget.\nPartial output:\n${spilled.preview}",
+                    summary = "Test timeout",
+                    tokenEstimate = TokenEstimator.estimate(spilled.preview),
+                    isError = true,
+                    spillPath = spilled.spilledToFile,
                 )
             }
 
@@ -960,15 +976,15 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             // or arbitrary log lines that happen to contain `":test "`.
             val hasTestRanMarker = rawOutput.contains("Tests run:") ||
                 GRADLE_TEST_TASK_REGEX.containsMatchIn(rawOutput)
-            val truncatedOutput = truncateOutput(rawOutput, RUN_TESTS_MAX_OUTPUT_CHARS)
+            val spilledOutput = spillOrFormat(rawOutput, project)
 
             val exitCode = process.exitValue()
 
             // Parse Surefire/Gradle XML reports. This is the authoritative signal —
             // exit code 0 with 0 tests means the target class isn't actually a test
             // class, and should surface as NO_TESTS_FOUND (not "Tests PASSED").
-            val tool = if (hasMaven) "maven" else "gradle"
-            val reportEntries = parseJUnitXmlReports(workDir, tool)
+            val buildTool = if (hasMaven) "maven" else "gradle"
+            val reportEntries = parseJUnitXmlReports(workDir, buildTool)
 
             // Branch ordering rationale: when we have parsed test entries, prefer
             // them over the `isBuildFailure` banner. With `-fae` / `--fail-at-end`,
@@ -979,7 +995,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             // for the LLM via the appended `--- stdout ---` tail.
             when {
                 reportEntries != null && reportEntries.isNotEmpty() -> {
-                    val base = formatStructuredResults(reportEntries, testTarget)
+                    val base = formatStructuredResults(reportEntries, testTarget, this, project)
                     // Diagnostic note: Surefire's default <useFile>true</useFile>
                     // writes per-suite XML that may drop individual testcases. If
                     // the "Tests run: N" summary count exceeds what we parsed,
@@ -989,26 +1005,28 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                         "[WARN] Parsed ${reportEntries.size} test cases but Maven summary reports $summaryCount — " +
                             "reports may be missing individual testcases (Surefire <useFile>true> default).\n\n"
                     } else ""
-                    val combined = diagnostic + base.content + "\n\n--- stdout ---\n" + truncatedOutput
+                    val combined = diagnostic + base.content + "\n\n--- stdout ---\n" + spilledOutput.preview
                     base.copy(
                         content = combined,
-                        tokenEstimate = TokenEstimator.estimate(combined)
+                        tokenEstimate = TokenEstimator.estimate(combined),
+                        spillPath = base.spillPath ?: spilledOutput.spilledToFile,
                     )
                 }
                 reportEntries != null && reportEntries.isEmpty() -> {
                     // XML reports exist but all had tests="0" → class had no @Test methods
-                    noTestsFoundResult(testTarget, command, exitCode, truncatedOutput)
+                    noTestsFoundResult(testTarget, command, exitCode, spilledOutput.preview)
                 }
                 isBuildFailure -> {
                     // Preserve the existing BUILD FAILED message — no reports to parse
                     // because the build phase failed before tests could even start.
                     ToolResult(
-                        "BUILD FAILED — test execution did not start (exit code $exitCode).\n\n" +
+                        content = "BUILD FAILED — test execution did not start (exit code $exitCode).\n\n" +
                             "Fix compilation errors and try again. Use diagnostics tool to check for errors.\n\n" +
-                            truncatedOutput,
-                        "Build failed before tests",
-                        TokenEstimator.estimate(truncatedOutput),
-                        isError = true
+                            spilledOutput.preview,
+                        summary = "Build failed before tests",
+                        tokenEstimate = TokenEstimator.estimate(spilledOutput.preview),
+                        isError = true,
+                        spillPath = spilledOutput.spilledToFile,
                     )
                 }
                 hasTestRanMarker -> {
@@ -1017,20 +1035,21 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                     // after tests started). Surface as an explicit warning so the
                     // agent knows the result is ambiguous.
                     ToolResult(
-                        "Tests ran but no XML reports were found under ${workDir.path}. " +
+                        content = "Tests ran but no XML reports were found under ${workDir.path}. " +
                             "Possible causes: Surefire -Dmaven.test.skip, custom reports dir, " +
                             "or build aborted during write.\n\n" +
-                            "Exit code: $exitCode\n\n--- stdout ---\n$truncatedOutput",
-                        "Tests ran but XML missing",
-                        TokenEstimator.estimate(truncatedOutput),
-                        isError = true
+                            "Exit code: $exitCode\n\n--- stdout ---\n${spilledOutput.preview}",
+                        summary = "Tests ran but XML missing",
+                        tokenEstimate = TokenEstimator.estimate(spilledOutput.preview),
+                        isError = true,
+                        spillPath = spilledOutput.spilledToFile,
                     )
                 }
                 else -> {
                     // Neither XML reports nor "Tests run:" marker — nothing actually
                     // executed. This is the user-incident-#2 case: target wasn't a
                     // real test class.
-                    noTestsFoundResult(testTarget, command, exitCode, truncatedOutput)
+                    noTestsFoundResult(testTarget, command, exitCode, spilledOutput.preview)
                 }
             }
         } catch (e: Exception) {

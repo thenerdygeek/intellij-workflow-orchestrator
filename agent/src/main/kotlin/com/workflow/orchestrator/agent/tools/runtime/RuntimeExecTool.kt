@@ -17,7 +17,6 @@ import com.workflow.orchestrator.agent.tools.TestConsoleUtils
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
-import com.workflow.orchestrator.agent.tools.truncateOutput
 import com.workflow.orchestrator.agent.util.ReflectionUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
@@ -267,9 +266,14 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
             }
 
             val content = sb.toString().trimEnd()
-            val capped = truncateOutput(content, RUN_OUTPUT_TOKEN_CAP_CHARS)
+            val spilled = spillOrFormat(content, project)
 
-            ToolResult(capped, "${lines.size} lines from ${descriptor.displayName}", capped.length / 4)
+            ToolResult(
+                content = spilled.preview,
+                summary = "${lines.size} lines from ${descriptor.displayName}",
+                tokenEstimate = spilled.preview.length / 4,
+                spillPath = spilled.spilledToFile,
+            )
         } catch (e: Exception) {
             ToolResult("Error getting run output: ${e.message}", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
@@ -422,9 +426,8 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
             // Route through the canonical interpreter — correctly handles empty-suite /
             // terminated / defect cases (fixes the "0/0/0/0 → PASSED" bug where the old
             // inline classifier mapped an empty suite to PASSED). formatStructuredResults
-            // already applies RUN_TESTS_TOKEN_CAP_CHARS truncation, so we do not truncate
-            // again here.
-            interpretTestRoot(testRoot, descriptor.displayName ?: "unknown", statusFilter)
+            // routes through spillOrFormat so full output lands on disk.
+            interpretTestRoot(testRoot, descriptor.displayName ?: "unknown", this, project, statusFilter)
         } catch (e: Exception) {
             ToolResult("Error getting test results: ${e.message}", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
@@ -499,7 +502,7 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
         // get_run_output constants
         private const val RUN_OUTPUT_DEFAULT_LINES = 200
         private const val RUN_OUTPUT_MAX_LINES = 1000
-        private const val RUN_OUTPUT_TOKEN_CAP_CHARS = 12000
+        // RUN_OUTPUT_TOKEN_CAP_CHARS deleted — replaced by spillOrFormat (Phase 7 Task 6.4)
 
         // Console unwrap depth
         private const val MAX_UNWRAP_DEPTH = 5

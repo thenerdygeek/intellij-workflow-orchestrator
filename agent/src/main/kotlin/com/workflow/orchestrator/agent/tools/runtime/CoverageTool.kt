@@ -254,7 +254,13 @@ Actions and their parameters:
                                             override fun onTestingFinished(sender: TestResultsViewer) {
                                                 val root = sender.testsRootNode as? SMTestProxy.SMRootTestProxy
                                                 if (root != null && continuation.isActive) {
-                                                    continuation.resume(interpretTestRoot(root, testTarget).toCoverageRunResult())
+                                                    val pollScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+                                                    invocation.onDispose { pollScope.cancel() }
+                                                    pollScope.launch {
+                                                        if (continuation.isActive) {
+                                                            continuation.resume(interpretTestRoot(root, testTarget, this@CoverageTool, project).toCoverageRunResult())
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -277,7 +283,7 @@ Actions and their parameters:
                                                     if (continuation.isActive) {
                                                         val root = TestConsoleUtils.findTestRoot(descriptor)
                                                         if (root != null) {
-                                                            continuation.resume(interpretTestRoot(root, testTarget).toCoverageRunResult())
+                                                            continuation.resume(interpretTestRoot(root, testTarget, this@CoverageTool, project).toCoverageRunResult())
                                                         } else {
                                                             continuation.resume(
                                                                 CoverageRunResult(

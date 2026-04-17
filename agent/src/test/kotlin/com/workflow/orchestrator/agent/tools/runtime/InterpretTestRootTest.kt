@@ -1,6 +1,9 @@
 package com.workflow.orchestrator.agent.tools.runtime
 
 import com.intellij.execution.testframework.sm.runner.SMTestProxy
+import com.intellij.openapi.project.Project
+import io.mockk.mockk
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -34,6 +37,10 @@ import org.junit.jupiter.api.Test
  * Scenarios 4 and 6 exercise this filter.
  */
 class InterpretTestRootTest {
+
+    // Minimal tool + project for spillOrFormat (no spiller wired → degrades gracefully in tests)
+    private val tool = JavaRuntimeExecTool()
+    private val project: Project = mockk(relaxed = true)
 
     // ══════════════════════════════════════════════════════════════════════
     // Helpers — real SMTestProxy tree construction
@@ -71,7 +78,7 @@ class InterpretTestRootTest {
     // ══════════════════════════════════════════════════════════════════════
 
     @Test
-    fun `scenario 1 — all tests pass returns PASSED with 3 passed`() {
+    fun `scenario 1 — all tests pass returns PASSED with 3 passed`() = runTest {
         val root = buildTree { suite ->
             repeat(3) { i ->
                 val leaf = realLeaf("test$i")
@@ -81,7 +88,7 @@ class InterpretTestRootTest {
             }
         }
 
-        val result = interpretTestRoot(root, "MyTestSuite")
+        val result = interpretTestRoot(root, "MyTestSuite", tool, project)
 
         assertFalse(result.isError, "all-pass run must not be an error. content=${result.content}")
         assertTrue(result.content.contains("PASSED"), "content must contain PASSED status. Got: ${result.content}")
@@ -108,7 +115,7 @@ class InterpretTestRootTest {
     // ══════════════════════════════════════════════════════════════════════
 
     @Test
-    fun `scenario 2 — 2 pass 1 fail returns FAILED with correct counts`() {
+    fun `scenario 2 — 2 pass 1 fail returns FAILED with correct counts`() = runTest {
         val root = buildTree { suite ->
             // Passing leaves
             listOf("testA", "testB").forEach { name ->
@@ -128,7 +135,7 @@ class InterpretTestRootTest {
             suite.addChild(failLeaf)
         }
 
-        val result = interpretTestRoot(root, "MyTestSuite")
+        val result = interpretTestRoot(root, "MyTestSuite", tool, project)
 
         assertTrue(result.isError, "run with a failure must be an error. summary=${result.summary}")
         assertTrue(result.content.contains("FAILED"), "content must contain FAILED status line. Got: ${result.content}")
@@ -155,11 +162,11 @@ class InterpretTestRootTest {
     // ══════════════════════════════════════════════════════════════════════
 
     @Test
-    fun `scenario 3 — empty suite returns isError with no test methods message`() {
+    fun `scenario 3 — empty suite returns isError with no test methods message`() = runTest {
         val root = SMTestProxy.SMRootTestProxy()
         // No children at all.
 
-        val result = interpretTestRoot(root, "EmptyTestSuite")
+        val result = interpretTestRoot(root, "EmptyTestSuite", tool, project)
 
         assertTrue(result.isError, "empty suite must be isError=true")
         assertTrue(
@@ -186,7 +193,7 @@ class InterpretTestRootTest {
     // ══════════════════════════════════════════════════════════════════════
 
     @Test
-    fun `scenario 4 — engine defect with no real leaves returns Test runner error`() {
+    fun `scenario 4 — engine defect with no real leaves returns Test runner error`() = runTest {
         val root = SMTestProxy.SMRootTestProxy()
         // Engine-scheme "leaf" — our filter must reject this.
         root.addChild(engineLeaf("junit-jupiter-engine"))
@@ -199,7 +206,7 @@ class InterpretTestRootTest {
             /* testError = */ true
         )
 
-        val result = interpretTestRoot(root, "BrokenTestSuite")
+        val result = interpretTestRoot(root, "BrokenTestSuite", tool, project)
 
         assertTrue(result.isError, "engine defect must be isError=true")
         assertTrue(
@@ -226,7 +233,7 @@ class InterpretTestRootTest {
     // ══════════════════════════════════════════════════════════════════════
 
     @Test
-    fun `scenario 5 — terminated with partial results prepends TERMINATED`() {
+    fun `scenario 5 — terminated with partial results prepends TERMINATED`() = runTest {
         val root = buildTree { suite ->
             listOf("testFast1", "testFast2").forEach { name ->
                 val leaf = realLeaf(name)
@@ -237,7 +244,7 @@ class InterpretTestRootTest {
         }
         root.setTerminated()
 
-        val result = interpretTestRoot(root, "TimeoutTestSuite")
+        val result = interpretTestRoot(root, "TimeoutTestSuite", tool, project)
 
         assertTrue(result.isError, "terminated run must be isError=true")
         assertTrue(
@@ -266,7 +273,7 @@ class InterpretTestRootTest {
     // ══════════════════════════════════════════════════════════════════════
 
     @Test
-    fun `scenario 6 — initializationError leaf falls through to runner error`() {
+    fun `scenario 6 — initializationError leaf falls through to runner error`() = runTest {
         val root = SMTestProxy.SMRootTestProxy()
         // Mimic a classic JUnit 4 initializationError leaf — null location URL.
         val initErrorLeaf = SMTestProxy("initializationError", /* isSuite = */ false, /* locationUrl = */ null)
@@ -283,7 +290,7 @@ class InterpretTestRootTest {
             /* testError = */ true
         )
 
-        val result = interpretTestRoot(root, "BrokenTestSuite")
+        val result = interpretTestRoot(root, "BrokenTestSuite", tool, project)
 
         assertTrue(result.isError, "initializationError must be isError=true")
         assertTrue(
@@ -311,7 +318,7 @@ class InterpretTestRootTest {
     // ══════════════════════════════════════════════════════════════════════
 
     @Test
-    fun `scenario 7 — setTestComparisonFailed produces FAILED status with message`() {
+    fun `scenario 7 — setTestComparisonFailed produces FAILED status with message`() = runTest {
         val root = buildTree { suite ->
             val passLeaf = realLeaf("testOk")
             passLeaf.setStarted()
@@ -329,7 +336,7 @@ class InterpretTestRootTest {
             suite.addChild(cmpLeaf)
         }
 
-        val result = interpretTestRoot(root, "CompareTestSuite")
+        val result = interpretTestRoot(root, "CompareTestSuite", tool, project)
 
         assertTrue(result.isError, "comparison failure must be isError=true")
         assertTrue(
@@ -363,7 +370,7 @@ class InterpretTestRootTest {
     // ══════════════════════════════════════════════════════════════════════
 
     @Test
-    fun `scenario 8 — parameterized tests with same base name are all included`() {
+    fun `scenario 8 — parameterized tests with same base name are all included`() = runTest {
         val paramSuffixes = listOf("[a]", "[b]", "[c]")
         val root = buildTree(suiteName = "ParamTest", suiteFqn = "com.example.ParamTest") { suite ->
             for ((i, suffix) in paramSuffixes.withIndex()) {
@@ -379,7 +386,7 @@ class InterpretTestRootTest {
             }
         }
 
-        val result = interpretTestRoot(root, "ParamTestSuite")
+        val result = interpretTestRoot(root, "ParamTestSuite", tool, project)
 
         assertFalse(result.isError, "all parameterized passes must not be an error. content=${result.content}")
         assertTrue(
@@ -403,7 +410,7 @@ class InterpretTestRootTest {
     // ══════════════════════════════════════════════════════════════════════
 
     @Test
-    fun `statusFilter PASSED against a failed run still reports failure in summary`() {
+    fun `statusFilter PASSED against a failed run still reports failure in summary`() = runTest {
         val root = buildTree { suite ->
             val passLeaf = realLeaf("testA")
             passLeaf.setStarted()
@@ -420,7 +427,7 @@ class InterpretTestRootTest {
             suite.addChild(failLeaf)
         }
 
-        val result = interpretTestRoot(root, "MixedRun", statusFilter = "PASSED")
+        val result = interpretTestRoot(root, "MixedRun", tool, project, statusFilter = "PASSED")
 
         assertTrue(result.isError, "failure-in-run still isError even when filtering PASSED")
         assertTrue(
@@ -460,7 +467,7 @@ class InterpretTestRootTest {
     // ══════════════════════════════════════════════════════════════════════
 
     @Test
-    fun `scenario P1 — pytest happy path python-scheme leaves are collected`() {
+    fun `scenario P1 — pytest happy path python-scheme leaves are collected`() = runTest {
         val root = SMTestProxy.SMRootTestProxy()
         val suite = SMTestProxy("tests/test_sample.py", true, "file://tests/test_sample.py")
         root.addChild(suite)
@@ -470,7 +477,7 @@ class InterpretTestRootTest {
             leaf.setFinished()
             suite.addChild(leaf)
         }
-        val result = interpretTestRoot(root, "pytest")
+        val result = interpretTestRoot(root, "pytest", tool, project)
         assertFalse(result.isError, "pytest happy path must not be isError. content=${result.content}")
         assertTrue(result.content.contains("3 passed"), "must report 3 passed. Got: ${result.content}")
     }
@@ -485,7 +492,7 @@ class InterpretTestRootTest {
     // ══════════════════════════════════════════════════════════════════════
 
     @Test
-    fun `scenario P2 — pytest collection error _collect leaf is collected as failure`() {
+    fun `scenario P2 — pytest collection error _collect leaf is collected as failure`() = runTest {
         val root = SMTestProxy.SMRootTestProxy()
         val suite = SMTestProxy("tests/test_foo.py", true, "file://tests/test_foo.py")
         root.addChild(suite)
@@ -501,7 +508,7 @@ class InterpretTestRootTest {
             true
         )
         suite.addChild(collectLeaf)
-        val result = interpretTestRoot(root, "pytest")
+        val result = interpretTestRoot(root, "pytest", tool, project)
         assertTrue(result.isError, "collection error must be isError=true. content=${result.content}")
         assertTrue(
             result.content.contains("test_bar_collect") || result.content.contains("collection"),
@@ -524,7 +531,7 @@ class InterpretTestRootTest {
     // ══════════════════════════════════════════════════════════════════════
 
     @Test
-    fun `scenario P3 — pytest fixture setup failure surfaces as ERROR with setup failed message`() {
+    fun `scenario P3 — pytest fixture setup failure surfaces as ERROR with setup failed message`() = runTest {
         val root = SMTestProxy.SMRootTestProxy()
         val suite = SMTestProxy("tests/test_conftest.py", true, "file://tests/test_conftest.py")
         root.addChild(suite)
@@ -540,7 +547,7 @@ class InterpretTestRootTest {
             true
         )
         suite.addChild(fixtureLeaf)
-        val result = interpretTestRoot(root, "pytest")
+        val result = interpretTestRoot(root, "pytest", tool, project)
         assertTrue(result.isError, "fixture setup failure must be isError=true. content=${result.content}")
         assertTrue(
             result.content.contains("test_uses_fixture"),
@@ -562,10 +569,10 @@ class InterpretTestRootTest {
     // ══════════════════════════════════════════════════════════════════════
 
     @Test
-    fun `scenario P4 — pytest empty root returns no tests found`() {
+    fun `scenario P4 — pytest empty root returns no tests found`() = runTest {
         val root = SMTestProxy.SMRootTestProxy()
         // No children at all — pytest --collect-only found nothing (exit code 5).
-        val result = interpretTestRoot(root, "pytest")
+        val result = interpretTestRoot(root, "pytest", tool, project)
         assertTrue(result.isError, "empty pytest root must be isError=true")
         assertTrue(
             result.content.contains("no test methods", ignoreCase = true) ||

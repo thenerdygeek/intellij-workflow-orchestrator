@@ -131,7 +131,12 @@ interface AgentTool {
         content: String,
         project: Project,
     ): ToolOutputSpiller.SpillResult {
-        val spiller = project.service<AgentService>().outputSpiller
+        val spiller = try {
+            project.service<AgentService>().outputSpiller
+        } catch (_: Exception) {
+            // ServiceManager unavailable (headless test, mock project, etc.) — degrade gracefully.
+            null
+        }
         if (spiller == null) {
             Logger.getInstance(AgentTool::class.java).warn(
                 "spillOrFormat on '$name' returned content unchanged — no outputSpiller is wired. " +

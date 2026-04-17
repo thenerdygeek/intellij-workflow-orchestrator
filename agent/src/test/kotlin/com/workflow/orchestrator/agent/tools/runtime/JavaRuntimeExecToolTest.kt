@@ -144,14 +144,14 @@ class JavaRuntimeExecToolTest {
     }
 
     @Test
-    fun `buildRunnerErrorResult returns error with runner error summary`() {
+    fun `buildRunnerErrorResult returns error with runner error summary`() = runTest {
         val root = makeRoot(
             leaves = emptyList(),
             isDefect = true,
             errorMessage = "Internal Error Occurred",
             stacktrace = "at org.junit.platform.launcher..."
         )
-        val result = buildRunnerErrorResult(root)
+        val result = buildRunnerErrorResult(root, tool, project)
         assertTrue(result.isError, "defect root should produce error ToolResult")
         assertTrue(
             result.summary.startsWith("Test runner error"),
@@ -164,9 +164,9 @@ class JavaRuntimeExecToolTest {
     }
 
     @Test
-    fun `runner error contract — wasTerminated root with empty children`() {
+    fun `runner error contract — wasTerminated root with empty children`() = runTest {
         val root = makeRoot(leaves = emptyList(), wasTerminated = true, errorMessage = "killed")
-        val result = buildRunnerErrorResult(root)
+        val result = buildRunnerErrorResult(root, tool, project)
         assertTrue(result.isError)
         assertTrue(result.summary.startsWith("Test runner error"))
     }
@@ -279,7 +279,7 @@ class JavaRuntimeExecToolTest {
     }
 
     @Test
-    fun `interpretTestRoot — 3 pass 1 fail returns structured results, NOT runner error`() {
+    fun `interpretTestRoot — 3 pass 1 fail returns structured results, NOT runner error`() = runTest {
         // THE KEY REGRESSION: root.isDefect is true because one test failed, but we must
         // still collect and report the individual test results.
         val passLeaf1 = makeRealLeaf("testA")
@@ -293,7 +293,7 @@ class JavaRuntimeExecToolTest {
             errorMessage = null // root has no own error message when it's just a child failure
         )
 
-        val result = interpretTestRoot(root, "com.example.FooTest")
+        val result = interpretTestRoot(root, "com.example.FooTest", tool, project)
 
         assertTrue(result.isError, "result should be error because a test failed")
         assertTrue(
@@ -315,18 +315,18 @@ class JavaRuntimeExecToolTest {
     }
 
     @Test
-    fun `interpretTestRoot — all pass returns structured non-error results`() {
+    fun `interpretTestRoot — all pass returns structured non-error results`() = runTest {
         val root = makeRoot(
             leaves = listOf(makeRealLeaf("testX"), makeRealLeaf("testY")),
             isDefect = false
         )
-        val result = interpretTestRoot(root, "com.example.BarTest")
+        val result = interpretTestRoot(root, "com.example.BarTest", tool, project)
         assertFalse(result.isError, "all-pass run should not be an error")
         assertTrue(result.content.contains("PASSED"))
     }
 
     @Test
-    fun `interpretTestRoot — runner crash with no real leaves returns runner error`() {
+    fun `interpretTestRoot — runner crash with no real leaves returns runner error`() = runTest {
         val engineLeaf = makeSyntheticLeaf(locationUrl = "java:engine://junit-jupiter")
         val root = makeRoot(
             leaves = listOf(engineLeaf),  // only a synthetic engine leaf, no real tests
@@ -334,7 +334,7 @@ class JavaRuntimeExecToolTest {
             errorMessage = "Internal Error Occurred",
             stacktrace = "at org.junit.platform.launcher.LauncherSession.execute(LauncherSession.java:65)"
         )
-        val result = interpretTestRoot(root, "com.example.BrokenTest")
+        val result = interpretTestRoot(root, "com.example.BrokenTest", tool, project)
         assertTrue(result.isError)
         assertTrue(
             result.summary.startsWith("Test runner error"),
@@ -344,14 +344,14 @@ class JavaRuntimeExecToolTest {
     }
 
     @Test
-    fun `interpretTestRoot — terminated run with partial results includes TERMINATED prefix`() {
+    fun `interpretTestRoot — terminated run with partial results includes TERMINATED prefix`() = runTest {
         val passLeaf = makeRealLeaf("testFast")
         val root = makeRoot(
             leaves = listOf(passLeaf),
             wasTerminated = true,
             isDefect = false
         )
-        val result = interpretTestRoot(root, "com.example.SlowTest")
+        val result = interpretTestRoot(root, "com.example.SlowTest", tool, project)
         assertTrue(result.isError)
         assertTrue(
             result.content.contains("[TERMINATED]"),
@@ -360,9 +360,9 @@ class JavaRuntimeExecToolTest {
     }
 
     @Test
-    fun `interpretTestRoot — empty suite with no defect returns helpful no-tests-found error`() {
+    fun `interpretTestRoot — empty suite with no defect returns helpful no-tests-found error`() = runTest {
         val root = makeRoot(leaves = emptyList(), isDefect = false, isEmptySuite = true)
-        val result = interpretTestRoot(root, "com.example.EmptyTest")
+        val result = interpretTestRoot(root, "com.example.EmptyTest", tool, project)
         assertTrue(result.isError)
         assertFalse(
             result.summary.startsWith("Test runner error"),
