@@ -449,4 +449,128 @@ class InterpretTestRootTest {
         assertEquals(1, results.size, "engine leaves must be filtered out; only realTest should remain")
         assertEquals("realTest", results.first().name)
     }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Scenario P1 — pytest happy path
+    //
+    // 3 leaves with python:// URLs, all passed. Must FAIL now because
+    // collectTestResults rejects python:// URLs → interpretTestRoot sees 0
+    // leaves → returns NO_TESTS_FOUND / runner error.
+    // Will PASS after Task 3.4 extends the URL filter to accept python://.
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `scenario P1 — pytest happy path python-scheme leaves are collected`() {
+        val root = SMTestProxy.SMRootTestProxy()
+        val suite = SMTestProxy("tests/test_sample.py", true, "file://tests/test_sample.py")
+        root.addChild(suite)
+        listOf("test_one", "test_two", "test_three").forEach { name ->
+            val leaf = SMTestProxy(name, false, "python://tests/test_sample.py::$name")
+            leaf.setStarted()
+            leaf.setFinished()
+            suite.addChild(leaf)
+        }
+        val result = interpretTestRoot(root, "pytest")
+        assertFalse(result.isError, "pytest happy path must not be isError. content=${result.content}")
+        assertTrue(result.content.contains("3 passed"), "must report 3 passed. Got: ${result.content}")
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Scenario P2 — pytest collection error (_collect suffix)
+    //
+    // 1 leaf whose name ends in _collect (teamcity-messages protocol for
+    // collection errors). isDefect=true. Must surface as FAILED (or error)
+    // not as runner-error/empty-suite. Must FAIL now because python:// URL
+    // is rejected and the leaf is never counted.
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `scenario P2 — pytest collection error _collect leaf is collected as failure`() {
+        val root = SMTestProxy.SMRootTestProxy()
+        val suite = SMTestProxy("tests/test_foo.py", true, "file://tests/test_foo.py")
+        root.addChild(suite)
+        val collectLeaf = SMTestProxy(
+            "tests/test_foo.py::test_bar_collect",
+            false,
+            "python://tests/test_foo.py::test_bar_collect"
+        )
+        collectLeaf.setStarted()
+        collectLeaf.setTestFailed(
+            "ImportError: cannot import name 'missing_dep' from 'conftest'",
+            "ImportError: cannot import name 'missing_dep'\n\tat conftest.py:3",
+            true
+        )
+        suite.addChild(collectLeaf)
+        val result = interpretTestRoot(root, "pytest")
+        assertTrue(result.isError, "collection error must be isError=true. content=${result.content}")
+        assertTrue(
+            result.content.contains("test_bar_collect") || result.content.contains("collection"),
+            "collection error test name must appear or 'collection' referenced. Got: ${result.content}"
+        )
+        // Must NOT fall through to the runner-error / empty-suite path — the _collect leaf IS a real result.
+        assertFalse(
+            result.content.contains("Test runner error:") && !result.content.contains("test_bar_collect"),
+            "must not surface as opaque runner error without the test name. Got: ${result.content}"
+        )
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Scenario P3 — pytest fixture setup failure
+    //
+    // 1 leaf that fails due to a missing fixture. Must surface as ERROR
+    // with the test name and "test setup failed" message visible. Must FAIL
+    // now because python:// URL is rejected → empty leaf list → runner error
+    // without the test name.
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `scenario P3 — pytest fixture setup failure surfaces as ERROR with setup failed message`() {
+        val root = SMTestProxy.SMRootTestProxy()
+        val suite = SMTestProxy("tests/test_conftest.py", true, "file://tests/test_conftest.py")
+        root.addChild(suite)
+        val fixtureLeaf = SMTestProxy(
+            "test_uses_fixture",
+            false,
+            "python://tests/test_conftest.py::test_uses_fixture"
+        )
+        fixtureLeaf.setStarted()
+        fixtureLeaf.setTestFailed(
+            "test setup failed: fixture 'broken_fixture' not found",
+            "fixture 'broken_fixture' not found\n\tat conftest.py:10",
+            true
+        )
+        suite.addChild(fixtureLeaf)
+        val result = interpretTestRoot(root, "pytest")
+        assertTrue(result.isError, "fixture setup failure must be isError=true. content=${result.content}")
+        assertTrue(
+            result.content.contains("test_uses_fixture"),
+            "fixture failure test name must appear. Got: ${result.content}"
+        )
+        assertTrue(
+            result.content.contains("test setup failed") || result.content.contains("fixture"),
+            "setup failure message must appear. Got: ${result.content}"
+        )
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Scenario P4 — pytest empty root (exit code 5 equivalent)
+    //
+    // Root with no children — pytest --collect-only found nothing. Must
+    // return isError=true with a "no tests found" message. This scenario
+    // may already PASS because the empty-root path in interpretTestRoot is
+    // not URL-scheme-dependent; that is acceptable for the RED phase.
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `scenario P4 — pytest empty root returns no tests found`() {
+        val root = SMTestProxy.SMRootTestProxy()
+        // No children at all — pytest --collect-only found nothing (exit code 5).
+        val result = interpretTestRoot(root, "pytest")
+        assertTrue(result.isError, "empty pytest root must be isError=true")
+        assertTrue(
+            result.content.contains("no test methods", ignoreCase = true) ||
+                result.content.contains("No test", ignoreCase = true),
+            "content must say no tests were found. Got: ${result.content}"
+        )
+    }
 }
