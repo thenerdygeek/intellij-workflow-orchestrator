@@ -155,7 +155,7 @@ class ListQuickFixesTool : AgentTool {
                                             problem = problem.descriptionTemplate,
                                             inspection = toolWrapper.shortName,
                                             problemLine = problemLine,                      // 0-based
-                                            severity = severityName,                        // canonical: ERROR / WARNING / WEAK_WARNING / INFO
+                                            severity = severityName,                        // canonical: ERROR / WARNING / INFO (WEAK_WARNING reserved)
                                         ))
                                     }
                                 }
@@ -196,7 +196,7 @@ class ListQuickFixesTool : AgentTool {
                             file = vf.path,                                    // absolute path; DiagnosticEntry.file contract (52b0d867)
                             line = qf.problemLine + 1,                         // 0-based problem → 1-based DiagnosticEntry
                             column = -1,                                       // ProblemDescriptor does not expose column
-                            severity = qf.severity,                            // canonical DiagnosticEntry vocabulary: ERROR / WARNING / WEAK_WARNING / INFO (via normalizeSeverity)
+                            severity = qf.severity,                            // canonical DiagnosticEntry vocabulary: ERROR / WARNING / INFO (via normalizeSeverity; WEAK_WARNING reserved)
                             toolId = qf.inspection,                            // inspection short name
                             description = "${qf.fixName} — ${qf.problem}",    // fix name front-loaded per T3 brief
                             hasQuickFix = true,                                // invariant: every T3 entry IS a quick fix
@@ -233,11 +233,12 @@ class ListQuickFixesTool : AgentTool {
         val problemLine: Int,
         /**
          * Canonical [DiagnosticEntry.severity] vocabulary value — one of
-         * `"ERROR" | "WARNING" | "WEAK_WARNING" | "INFO"` — produced by the
-         * shared [normalizeSeverity] mapper in DiagnosticModels.kt. Do NOT
-         * substitute a raw `ProblemHighlightType.name` here: Phase 7 consumers
-         * filter and sort by severity and require the canonical vocabulary,
-         * identical to the output of T2 RunInspectionsTool.
+         * `"ERROR" | "WARNING" | "INFO"` — produced by the shared
+         * [normalizeSeverity] mapper in DiagnosticModels.kt (`"WEAK_WARNING"`
+         * is reserved for a future vocabulary extension). Do NOT substitute a
+         * raw `ProblemHighlightType.name` here: Phase 7 consumers filter and
+         * sort by severity and require the canonical vocabulary, identical to
+         * the output of T2 RunInspectionsTool.
          */
         val severity: String,
     )
