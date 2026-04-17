@@ -55,11 +55,9 @@ object SystemPrompt {
         // 1. AGENT ROLE
         append(agentRole(ideContext))
 
-        // 2. TASK PROGRESS (optional)
-        taskProgress(taskProgress)?.let {
-            append(SECTION_SEP)
-            append(it)
-        }
+        // 2. TASK MANAGEMENT (typed task system — always emitted)
+        append(SECTION_SEP)
+        append(taskProgress(taskProgress))
 
         // 3. EDITING FILES
         append(SECTION_SEP)
@@ -139,32 +137,44 @@ object SystemPrompt {
 
     /**
      * Section 2: Task Progress
-     * Ported from: task_progress.ts (UPDATING_TASK_PROGRESS template)
+     * Rewritten for typed task system (task_create/task_update/task_list/task_get).
+     * Replaces Cline's task_progress-markdown-parameter-on-every-tool pattern.
+     * The `progress` arg is a pre-rendered Markdown checklist from
+     * ContextManager.renderTaskProgressMarkdown(), shown at the bottom for LLM awareness.
      */
-    private fun taskProgress(progress: String?): String? {
-        if (progress.isNullOrBlank()) return null
-        return """UPDATING TASK PROGRESS
+    private fun taskProgress(progress: String?): String = """TASK MANAGEMENT
 
-You can track and communicate your progress on the overall task using the task_progress parameter supported by every tool call. Using task_progress ensures you remain on task, and stay focused on completing the user's objective.
+Track work using the task_create, task_update, task_list, and task_get tools. These are dedicated tools with typed state — not a parameter on other tool calls.
 
-- When switching from PLAN MODE to ACT MODE, you must create a comprehensive todo list for the task using the task_progress parameter.
-- Todo list updates should be done silently using the task_progress parameter -- do not announce these updates to the user.
-- Use standard Markdown checklist format: "- [ ]" for incomplete items and "- [x]" for completed items.
-- Keep items focused on meaningful progress milestones rather than minor technical details. The checklist should not be so granular that minor implementation details clutter the progress tracking.
-- For simple tasks, short checklists with even a single item are acceptable. For complex tasks, avoid making the checklist too long or verbose.
-- If you are creating this checklist for the first time, and the tool use completes the first step in the checklist, make sure to mark it as completed in your task_progress parameter.
-- Provide the whole checklist of steps you intend to complete in the task, and keep the checkboxes updated as you make progress. It is okay to rewrite this checklist as needed if it becomes invalid due to scope changes or new information.
-- If a checklist is being used, be sure to update it any time a step has been completed.
-- The system will automatically include todo list context in your prompts when appropriate -- these reminders are important.
+**When to create tasks:**
+- Work that requires 3+ distinct steps or touches multiple files.
+- Work spanning multiple phases where user-visible progress tracking helps.
+- Skip tasks for trivial single-edit fixes; skip purely informational exchanges.
 
-**How to use task_progress:**
-- Include the task_progress parameter in your tool calls to provide an updated checklist.
-- Use standard Markdown checklist format: "- [ ]" for incomplete items and "- [x]" for completed items.
-- The task_progress parameter MUST be included as a separate parameter in the tool, it should not be included inside other content or argument blocks.
+**How to create tasks:**
+- One task per task_create call — there is no batch API. Creating 10 tasks requires 10 calls; this is intentional back-pressure against over-decomposition.
+- Use imperative outcome-focused subjects ("Fix auth bug in login flow"), NOT action-by-action breakdowns ("Read file, then edit line 42, then run tests").
+- Provide a description with context and acceptance criteria; subjects stay concise.
+- Optionally provide activeForm (present-continuous, e.g. "Fixing auth bug") — shown in the UI while the task is in_progress.
 
-Current task progress:
-$progress"""
-    }
+**Status workflow:**
+- pending → in_progress → completed. Mark deleted when a task is no longer relevant.
+- Flip to in_progress when you begin work; flip to completed the moment the work is verified (tests passing, changes applied). Do not batch.
+- Only one task should typically be in_progress at a time per worker.
+- **Stale tasks are actively harmful.** When a task is no longer relevant or has been superseded, mark it deleted — do not leave it in the list.
+
+**Dependencies:**
+- Use addBlockedBy on task_update to express "this task can't start until X and Y complete."
+- Before starting work on a pending task, check task_get — verify its blockedBy list is empty.
+- Cycles are rejected by the store; do not create circular dependencies.
+
+**Plan mode vs act mode:**
+- Tasks are available in both modes, but the common pattern is act-mode task creation as work begins. Plan mode is primarily for strategic exploration (writing the plan document). Creating tasks during plan mode is permitted but unusual.
+
+**Reading the task list:**
+- task_list returns minimal fields (id, subject, status, owner, blockedBy) — cheap to call often.
+- task_get returns full details including description. Use when you need context beyond task_list.
+""" + (if (progress.isNullOrBlank()) "" else "\nCurrent tasks:\n$progress")
 
     /**
      * Section 3: Editing Files
