@@ -197,7 +197,7 @@ class ProblemViewTool : AgentTool {
                                     line = 0,
                                     column = -1,
                                     description = "File flagged as problematic (no detailed info available)",
-                                    toolId = "wolf"
+                                    toolId = DiagnosticSubsystem.WOLF
                                 )
                             )
                         )
@@ -316,7 +316,7 @@ class ProblemViewTool : AgentTool {
             // the compiler/parser daemon itself — fall back to "daemon" per
             // DiagnosticEntry.toolId kdoc, which explicitly allows subsystem
             // IDs ("daemon", "wolf", "provider").
-            val toolId = info.inspectionToolId ?: "daemon"
+            val toolId = info.inspectionToolId ?: DiagnosticSubsystem.DAEMON
 
             problems.add(
                 ProblemEntry(

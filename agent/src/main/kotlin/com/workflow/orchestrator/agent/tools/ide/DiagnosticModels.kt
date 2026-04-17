@@ -55,6 +55,20 @@ data class DiagnosticEntry(
  */
 const val DIAGNOSTIC_STRUCTURED_DATA_MARKER = "---DIAGNOSTIC-STRUCTURED-DATA---"
 
+/**
+ * Canonical producer subsystem identifiers for [DiagnosticEntry.toolId].
+ * Keeps cross-tool `toolId` vocabulary consistent so Phase 7 consumers
+ * (chips, group-by, filters) can rely on a closed set. When a specific
+ * inspection shortName is available (e.g. "UnusedDeclaration"), prefer
+ * that — these constants are for entries produced by the subsystem as
+ * a whole.
+ */
+object DiagnosticSubsystem {
+    const val DAEMON = "daemon"        // HighlightInfo via DocumentMarkupModel
+    const val WOLF = "wolf"            // WolfTheProblemSolver "flagged but no details" entries
+    const val PROVIDER = "provider"    // LanguageIntelligenceProvider.getDiagnostics (T5)
+}
+
 private val diagnosticJson = Json {
     encodeDefaults = true
     prettyPrint = false
