@@ -35,6 +35,28 @@ class ListQuickFixesTool : AgentTool {
     )
     override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.ANALYZER, WorkerType.REVIEWER)
 
+    /**
+     * ## `isError` semantics (Task 5.6 / F6 invariant)
+     *
+     * `ToolResult.isError` distinguishes **tool-execution failure** from
+     * **quick-fixes-as-payload**:
+     *
+     * - `isError = true`  → the tool itself could not run: missing `path` or
+     *   `line` parameter, `line < 1`, `line` beyond end-of-file, `DumbService`
+     *   blocked during indexing, file not found, PSI parse failure, or an
+     *   uncaught exception during the walk.
+     * - `isError = false` → the tool ran to completion. "N quick fixes
+     *   available at line X" and "no quick fixes available at line X" are
+     *   BOTH successful results — zero fixes is a legitimate outcome when the
+     *   user asks about a line with nothing to fix. The fix list IS the
+     *   successful payload; a populated list is not a failure.
+     *
+     * This mirrors the contract documented for `SemanticDiagnosticsTool` and
+     * `RunInspectionsTool` (see agent/CLAUDE.md). [ListQuickFixesToolTest]
+     * pins the error-path invariant at the unit-test boundary; the
+     * problems-found branch is covered structurally (the only `isError = true`
+     * construction in this file is at the error sites).
+     */
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val rawPath = params["path"]?.jsonPrimitive?.content
             ?: return ToolResult("Error: 'path' required", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
@@ -48,6 +70,10 @@ class ListQuickFixesTool : AgentTool {
             return ToolResult("Error: 'line' must be >= 1", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
 
+        // F3: DumbService guard placed OUTSIDE the outer try so indexing-state
+        // signals are surfaced as their own ToolResult rather than being
+        // swallowed by the outer catch. Matches the T2 RunInspectionsTool
+        // post-fix pattern (see RunInspectionsTool.kt lines 70–72).
         if (DumbService.isDumb(project)) {
             return ToolResult("IDE is still indexing. Try again shortly.", "Indexing", 5, isError = true)
         }
@@ -73,13 +99,25 @@ class ListQuickFixesTool : AgentTool {
                     )
                 }
 
-                val lineStartOffset = document.getLineStartOffset(targetLine)
-                val lineEndOffset = document.getLineEndOffset(targetLine)
-
                 val profile = InspectionProjectProfileManager.getInstance(project).currentProfile
                 val inspectionManager = InspectionManager.getInstance(project)
                 val quickFixes = mutableListOf<QuickFixInfo>()
 
+                // TODO(phase7): F6 — the phase 6 plan proposed reading
+                // already-computed HighlightInfo from
+                // `DaemonCodeAnalyzerImpl.getFileHighlightingRanges()` plus
+                // `HighlightInfo.findRegisteredQuickFix(...)` (or
+                // `IntentionManager.getAvailableActions(editor, psiFile)`) so
+                // quick-fix extraction does not re-run the full inspection
+                // suite per invocation. That API is impl-level (the `Impl`
+                // suffix) and is not documented in
+                // docs/superpowers/research/2026-03-20-intellij-api-signatures.md,
+                // and `IntentionManager.getAvailableActions` needs an Editor
+                // instance we cannot obtain for unopened files. The audit
+                // (docs/research/2026-04-17-inspection-tools-audit.md §F6)
+                // classifies this as redundant work (performance), not a
+                // safety issue — fallback to the manual buildVisitor walk is
+                // acceptable. Re-evaluate when a public replacement lands.
                 for (toolWrapper in profile.getInspectionTools(psiFile)) {
                     if (toolWrapper !is LocalInspectionToolWrapper) continue
                     val key = HighlightDisplayKey.find(toolWrapper.shortName)
@@ -105,7 +143,9 @@ class ListQuickFixesTool : AgentTool {
                                         quickFixes.add(QuickFixInfo(
                                             fixName = fix.familyName,
                                             problem = problem.descriptionTemplate,
-                                            inspection = toolWrapper.shortName
+                                            inspection = toolWrapper.shortName,
+                                            problemLine = problemLine,                      // 0-based
+                                            severity = problem.highlightType.name,          // ProblemHighlightType enum name
                                         ))
                                     }
                                 }
@@ -117,19 +157,55 @@ class ListQuickFixesTool : AgentTool {
                 }
 
                 if (quickFixes.isEmpty()) {
+                    // F6: zero quick fixes is a LEGITIMATE successful result —
+                    // the user may have asked about a line with nothing to fix.
+                    // isError=false (ToolResult default).
                     ToolResult(
                         "No quick fixes available at line $line in ${vf.name}.",
                         "No fixes",
                         5
                     )
                 } else {
-                    // Deduplicate by fix name
+                    // Deduplicate by fix name. Ordering contract: build the
+                    // LOSSLESS DiagnosticEntry list from the de-duplicated
+                    // collection BEFORE the preview cap is applied below, so
+                    // Phase 7's spiller can route the full list to disk even
+                    // when the inline preview is capped.
                     val unique = quickFixes.distinctBy { it.fixName }
-                    val lines = unique.take(MAX_FIXES).map { qf ->
+
+                    // Build the full structured entry list BEFORE any cap is
+                    // applied — matches the T2 RunInspectionsTool ordering.
+                    // Every entry is a quick fix BY CONSTRUCTION (we only
+                    // entered this branch from a non-empty `problem.fixes`),
+                    // so `hasQuickFix = true` is hardcoded rather than
+                    // conditional. This differs in shape from
+                    // RunInspectionsTool, whose entries may or may not have
+                    // fixes.
+                    val entries = unique.map { qf ->
+                        DiagnosticEntry(
+                            file = vf.path,                                    // absolute path; DiagnosticEntry.file contract (52b0d867)
+                            line = qf.problemLine + 1,                         // 0-based problem → 1-based DiagnosticEntry
+                            column = -1,                                       // ProblemDescriptor does not expose column
+                            severity = qf.severity,                            // ProblemHighlightType enum name ("ERROR", "WARNING", "GENERIC_ERROR_OR_WARNING", ...)
+                            toolId = qf.inspection,                            // inspection short name
+                            description = "${qf.fixName} — ${qf.problem}",    // fix name front-loaded per T3 brief
+                            hasQuickFix = true,                                // invariant: every T3 entry IS a quick fix
+                            category = null,                                   // IntelliJ group name not resolved cheaply here
+                        )
+                    }
+
+                    // TODO(phase7): replace this hard cap with ToolOutputSpiller —
+                    // Phase 7 will route the full entry list to disk and leave a
+                    // preview inline.
+                    val shown = unique.take(MAX_FIXES)
+                    val lines = shown.map { qf ->
                         "  - ${qf.fixName}\n    Problem: ${qf.problem} (${qf.inspection})"
                     }
+                    // TODO(phase7): replace "... and N more" preview with disk-spill reference
                     val more = if (unique.size > MAX_FIXES) "\n... and ${unique.size - MAX_FIXES} more" else ""
-                    val content = "${unique.size} quick fix(es) at line $line in ${vf.name}:\n${lines.joinToString("\n")}$more"
+                    val prose = "${unique.size} quick fix(es) at line $line in ${vf.name}:\n${lines.joinToString("\n")}$more"
+                    val content = renderDiagnosticBody(prose, entries)
+                    // F6: quick-fixes-found is a SUCCESSFUL tool result (isError=false).
                     ToolResult(content, "${unique.size} fixes at line $line", TokenEstimator.estimate(content))
                 }
             }.inSmartMode(project).executeSynchronously()
@@ -142,10 +218,16 @@ class ListQuickFixesTool : AgentTool {
     private data class QuickFixInfo(
         val fixName: String,
         val problem: String,
-        val inspection: String
+        val inspection: String,
+        /** 0-based — matches IntelliJ's `ProblemDescriptor.lineNumber`. Converted to 1-based for [DiagnosticEntry]. */
+        val problemLine: Int,
+        /** `ProblemHighlightType.name()` — stable enum name (ERROR, WARNING, GENERIC_ERROR_OR_WARNING, INFORMATION, …). */
+        val severity: String,
     )
 
     companion object {
+        // TODO(phase7): replace this hard cap with ToolOutputSpiller — Phase 7
+        // will route the full entry list to disk and leave a preview inline.
         private const val MAX_FIXES = 20
     }
 }
