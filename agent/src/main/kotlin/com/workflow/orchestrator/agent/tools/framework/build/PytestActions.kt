@@ -145,17 +145,38 @@ internal suspend fun executePytestRun(params: JsonObject, project: Project): Too
 
             val results = parsePytestRunOutput(output)
 
+            val parsedPassed = results.tests.count { it.status == "PASSED" }
+            val parsedFailed = results.tests.count { it.status == "FAILED" }
+            val parsedSkipped = results.tests.count { it.status == "SKIPPED" }
+            val parsedErrors = results.tests.count { it.status == "ERROR" }
+
+            val parsedSummary = parsePytestSummaryLine(results.summaryLine)
+            val mismatch = parsedSummary != null && (
+                parsedPassed != parsedSummary.passed ||
+                    parsedFailed != parsedSummary.failed ||
+                    parsedSkipped != parsedSummary.skipped ||
+                    parsedErrors != parsedSummary.errors
+                )
+
             val content = buildString {
+                if (mismatch) {
+                    // `mismatch` is only true when parsedSummary is non-null (see computation above).
+                    val s = parsedSummary!!
+                    appendLine(
+                        "[PARSE MISMATCH] Verbose output parsed as ${results.tests.size} tests " +
+                            "($parsedPassed passed, $parsedFailed failed, $parsedSkipped skipped, $parsedErrors errors) " +
+                            "but pytest summary reports " +
+                            "(${s.passed} passed, ${s.failed} failed, ${s.skipped} skipped, ${s.errors} errors). " +
+                            "Raw output included below for verification."
+                    )
+                    appendLine()
+                }
+
                 appendLine("pytest results:")
                 appendLine()
 
                 if (results.tests.isNotEmpty()) {
-                    val passed = results.tests.count { it.status == "PASSED" }
-                    val failed = results.tests.count { it.status == "FAILED" }
-                    val skipped = results.tests.count { it.status == "SKIPPED" }
-                    val errors = results.tests.count { it.status == "ERROR" }
-
-                    appendLine("Summary: ${results.tests.size} total, $passed passed, $failed failed, $skipped skipped, $errors errors")
+                    appendLine("Summary: ${results.tests.size} total, $parsedPassed passed, $parsedFailed failed, $parsedSkipped skipped, $parsedErrors errors")
                     appendLine()
 
                     // Show failures first
@@ -202,12 +223,15 @@ internal suspend fun executePytestRun(params: JsonObject, project: Project): Too
                 }
             }
 
-            val passed = results.tests.count { it.status == "PASSED" }
-            val failed = results.tests.count { it.status == "FAILED" }
+            val toolSummary = if (results.summaryLine.isNotBlank()) {
+                "pytest: ${results.summaryLine}"
+            } else {
+                "${results.tests.size} tests: $parsedPassed passed, $parsedFailed failed"
+            }
 
             ToolResult(
                 content = content.trimEnd(),
-                summary = "${results.tests.size} tests: $passed passed, $failed failed",
+                summary = toolSummary,
                 tokenEstimate = TokenEstimator.estimate(content)
             )
         }
@@ -279,13 +303,60 @@ internal suspend fun executePytestFixtures(params: JsonObject, project: Project)
 
 private data class DiscoveredTest(val file: String, val name: String, val parametrized: Boolean)
 
-private data class TestRunResult(
+internal data class TestRunResult(
     val tests: List<TestResult>,
     val summaryLine: String,
     val failureOutput: String
 )
 
-private data class TestResult(val name: String, val status: String)
+internal data class TestResult(val name: String, val status: String)
+
+/**
+ * Parsed counts from a pytest summary line (e.g. `=== 3 passed, 2 failed, 1 skipped in 0.42s ===`).
+ * Internal so tests in the same module can construct/compare instances.
+ */
+internal data class PytestSummary(
+    val passed: Int,
+    val failed: Int,
+    val skipped: Int,
+    val errors: Int,
+    val xfail: Int,
+    val xpass: Int,
+)
+
+private val PYTEST_SUMMARY_PATTERN =
+    Regex("""(\d+)\s+(passed|failed|skipped|error|errors|xfailed|xpassed)""")
+
+/**
+ * Parse a pytest summary line into counts. Input is the already-`=`-stripped summary
+ * (see [parsePytestRunOutput]). Returns null if the input is blank or contains no
+ * recognizable count/token pairs (e.g. "no tests ran in 0.01s").
+ *
+ * Handles both singular (`1 error`) and plural (`2 errors`) forms that pytest prints.
+ */
+internal fun parsePytestSummaryLine(summaryLine: String): PytestSummary? {
+    if (summaryLine.isBlank()) return null
+    var passed = 0
+    var failed = 0
+    var skipped = 0
+    var errors = 0
+    var xfail = 0
+    var xpass = 0
+    var anyMatch = false
+    PYTEST_SUMMARY_PATTERN.findAll(summaryLine).forEach { m ->
+        anyMatch = true
+        val n = m.groupValues[1].toInt()
+        when (m.groupValues[2]) {
+            "passed" -> passed = n
+            "failed" -> failed = n
+            "skipped" -> skipped = n
+            "error", "errors" -> errors = n
+            "xfailed" -> xfail = n
+            "xpassed" -> xpass = n
+        }
+    }
+    return if (anyMatch) PytestSummary(passed, failed, skipped, errors, xfail, xpass) else null
+}
 
 private data class FixtureInfo(val name: String, val scope: String, val docstring: String, val location: String)
 
@@ -372,7 +443,7 @@ private fun parsePytestCollectOutput(output: String): List<DiscoveredTest> {
     }
 }
 
-private fun parsePytestRunOutput(output: String): TestRunResult {
+internal fun parsePytestRunOutput(output: String): TestRunResult {
     val tests = mutableListOf<TestResult>()
     var summaryLine = ""
     val failureOutput = StringBuilder()
