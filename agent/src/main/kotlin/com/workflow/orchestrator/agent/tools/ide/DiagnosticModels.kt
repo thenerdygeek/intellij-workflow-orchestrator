@@ -108,7 +108,18 @@ fun normalizeSeverity(type: ProblemHighlightType): String {
         ProblemHighlightType.GENERIC_ERROR -> "ERROR"
         ProblemHighlightType.WARNING,
         ProblemHighlightType.GENERIC_ERROR_OR_WARNING -> "WARNING"
-        else -> "INFO"
+        // Deliberately collapsed to INFO (matches T2's historical grouping).
+        // If IntelliJ adds a genuinely distinct severity (e.g. CRITICAL), promote
+        // it here rather than letting it silently downgrade — the exhaustive
+        // `normalizeSeverity` test only pins vocabulary membership, not grouping.
+        ProblemHighlightType.WEAK_WARNING,
+        ProblemHighlightType.INFORMATION,
+        ProblemHighlightType.LIKE_DEPRECATED,
+        ProblemHighlightType.LIKE_MARKED_FOR_REMOVAL,
+        ProblemHighlightType.LIKE_UNKNOWN_SYMBOL,
+        ProblemHighlightType.LIKE_UNUSED_SYMBOL,
+        ProblemHighlightType.POSSIBLE_PROBLEM -> "INFO"
+        else -> "INFO" // forward-compat: new IntelliJ enum values land here until promoted.
     }
 }
 

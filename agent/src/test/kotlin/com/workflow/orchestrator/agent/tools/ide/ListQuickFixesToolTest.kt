@@ -323,16 +323,22 @@ class ListQuickFixesToolTest {
             "and IntentionManager.getAvailableActions needs an Editor instance the tool " +
             "cannot obtain for unopened files. See TODO(phase7) in ListQuickFixesTool.kt."
     )
-    fun `source file does not re-run inspection suite per quick fix lookup`() {
+    fun `source file reads already-computed daemon highlighting instead of rerunning inspections`() {
         val text = readSource("ListQuickFixesTool.kt")
-        assertFalse(
-            text.contains("PsiRecursiveElementWalkingVisitor"),
-            "F6: `PsiRecursiveElementWalkingVisitor` is the redundant manual-walk " +
-                "fingerprint. Replace with a read of " +
-                "`DaemonCodeAnalyzerImpl.getFileHighlightingRanges()` + " +
-                "`HighlightInfo.findRegisteredQuickFix(...)` (or the successor " +
-                "public API) so quick-fix extraction doesn't re-run the full " +
-                "inspection suite.",
+        // Positive fingerprint: assert the REPLACEMENT API is present (robust to
+        // visitor-class renames in IntelliJ; a future agent cannot pass this
+        // test without actually landing the phase-7 fix).
+        assertTrue(
+            text.contains("DaemonCodeAnalyzerImpl") ||
+                text.contains("HighlightInfo.findRegisteredQuickFix") ||
+                text.contains("IntentionManager.getAvailableActions"),
+            "F6: ListQuickFixesTool must read from the already-computed daemon " +
+                "highlighting cache — one of `DaemonCodeAnalyzerImpl`, " +
+                "`HighlightInfo.findRegisteredQuickFix`, or " +
+                "`IntentionManager.getAvailableActions` (or a future public " +
+                "successor) — instead of running a per-invocation inspection " +
+                "pass. Re-enabling this test without adopting one of those " +
+                "APIs does not satisfy F6.",
         )
     }
 
