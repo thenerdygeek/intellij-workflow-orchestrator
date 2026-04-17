@@ -1,6 +1,8 @@
 package com.workflow.orchestrator.agent.tools.debug
 
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
 import com.intellij.xdebugger.XDebugSession
 import com.intellij.xdebugger.XDebugSessionListener
 import com.intellij.xdebugger.XSourcePosition
@@ -22,16 +24,24 @@ import org.junit.jupiter.api.Test
 class AgentDebugControllerTest {
 
     private lateinit var controller: AgentDebugController
+    private lateinit var testParentDisposable: Disposable
     private val mockProject = mockk<Project>(relaxed = true)
 
     @BeforeEach
     fun setup() {
-        controller = AgentDebugController(mockProject)
+        // Phase 5 / Task 4.2: registerSession now requires a DebugInvocationFactory.
+        // Tests use a throw-away parent Disposable so we don't have to stand up a
+        // real AgentService (heavy init: memory, tool registration, hooks).
+        testParentDisposable = Disposer.newDisposable("AgentDebugControllerTest-parent")
+        controller = AgentDebugController(mockProject) { name ->
+            DebugInvocation(testParentDisposable, name)
+        }
     }
 
     @AfterEach
     fun tearDown() {
         controller.dispose()
+        Disposer.dispose(testParentDisposable)
     }
 
     @Test
@@ -209,6 +219,9 @@ class AgentDebugControllerTest {
 
     @Test
     fun `session listener callback fires pause event`() = runTest {
+        // Phase 5 / Task 4.2: DebugInvocation.attachListener uses the 2-arg
+        // addSessionListener(listener, parentDisposable) form, so capture must
+        // come from that overload, not the deprecated 1-arg form.
         val listenerSlot = slot<XDebugSessionListener>()
         val position = mockk<XSourcePosition> {
             every { file } returns mockk {
@@ -217,7 +230,9 @@ class AgentDebugControllerTest {
             every { line } returns 24
         }
         val session = mockk<XDebugSession>(relaxed = true) {
-            every { addSessionListener(capture(listenerSlot)) } just Runs
+            every {
+                addSessionListener(capture(listenerSlot), any<Disposable>())
+            } just Runs
             every { isSuspended } returns false andThen true
             every { currentPosition } returns position
         }

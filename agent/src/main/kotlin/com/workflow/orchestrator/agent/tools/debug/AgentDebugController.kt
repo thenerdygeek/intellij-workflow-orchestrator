@@ -1,7 +1,9 @@
 package com.workflow.orchestrator.agent.tools.debug
 
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.xdebugger.XDebugSession
 import com.intellij.xdebugger.XDebugSessionListener
@@ -14,11 +16,12 @@ import com.intellij.xdebugger.frame.presentation.XValuePresentation
 import com.intellij.debugger.engine.DebugProcessImpl
 import com.intellij.debugger.engine.events.DebuggerCommandImpl
 import com.intellij.debugger.jdi.VirtualMachineProxyImpl
+import com.workflow.orchestrator.agent.AgentService
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
+import org.jetbrains.annotations.VisibleForTesting
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -31,16 +34,51 @@ import kotlin.coroutines.resumeWithException
  * Shared coroutine wrapper for IntelliJ's callback-based XDebugger API.
  * All debug tools delegate to this controller for session management,
  * stack frame resolution, variable inspection, and expression evaluation.
+ *
+ * ## Per-session listener/flow ownership (Phase 5 / Task 4.2)
+ *
+ * Every [registerSession] call allocates a [DebugInvocation] via
+ * [debugInvocationFactory] (default: `project.service<AgentService>().newDebugInvocation(...)`)
+ * which owns:
+ *  - the proxied [XDebugSessionListener] (attached via the 2-arg
+ *    `addSessionListener(listener, parent)` form inside
+ *    [DebugInvocation.attachListener] — auto-removed on `Disposer.dispose`);
+ *  - the `pauseFlow` used by [waitForPause].
+ *
+ * This replaces the pre-Task-4.2 pattern of raw `addSessionListener(listener)`
+ * + a controller-level `ConcurrentHashMap<String, MutableSharedFlow>`, which
+ * leaked listeners across `registerSession` cycles (the 1-arg form has no
+ * `removeSessionListener` path). See `DebugInvocation` KDoc for details.
+ *
+ * @param debugInvocationFactory Functional dependency for allocating
+ *   per-session disposal scopes. Defaulted to the production wiring —
+ *   tests inject a throw-away factory to avoid needing a real
+ *   [AgentService] instance.
  */
-class AgentDebugController(private val project: Project) : Disposable {
+class AgentDebugController internal constructor(
+    private val project: Project,
+    private val debugInvocationFactory: (String) -> DebugInvocation =
+        { name -> project.service<AgentService>().newDebugInvocation(name) },
+) : Disposable {
 
     private val sessionCounter = AtomicInteger(0)
-    private val sessions = ConcurrentHashMap<String, XDebugSession>()
-    private val pauseFlows = ConcurrentHashMap<String, MutableSharedFlow<DebugPauseEvent>>()
+    @VisibleForTesting
+    internal val sessionInvocations = ConcurrentHashMap<String, SessionEntry>()
     private val agentBreakpoints = ConcurrentHashMap.newKeySet<XLineBreakpoint<*>>()
     private val agentGeneralBreakpoints = ConcurrentHashMap.newKeySet<XBreakpoint<*>>()
     @Volatile
     private var activeSessionId: String? = null
+
+    /**
+     * Per-session tuple: the [XDebugSession] plus the [DebugInvocation]
+     * scoping its listener and pause flow. Replaces the two parallel maps
+     * (`sessions` + `pauseFlows`) held pre-Task-4.2 — a single atomic
+     * entry guarantees the listener and flow lifecycles stay in sync.
+     */
+    internal data class SessionEntry(
+        val session: XDebugSession,
+        val invocation: DebugInvocation,
+    )
 
     /**
      * Registers a debug session, assigns a unique ID, and attaches a listener
@@ -48,24 +86,21 @@ class AgentDebugController(private val project: Project) : Disposable {
      */
     fun registerSession(session: XDebugSession): String {
         val sessionId = "debug-${sessionCounter.incrementAndGet()}"
-        sessions[sessionId] = session
+        val invocation = debugInvocationFactory("session-$sessionId")
+        sessionInvocations[sessionId] = SessionEntry(session, invocation)
         activeSessionId = sessionId
 
-        val flow = MutableSharedFlow<DebugPauseEvent>(replay = 1)
-        pauseFlows[sessionId] = flow
-
-        session.addSessionListener(object : XDebugSessionListener {
+        invocation.attachListener(session, object : XDebugSessionListener {
             override fun sessionPaused() {
                 val pos = session.currentPosition
                 // XDebugSession doesn't expose currentBreakpoint directly;
                 // we infer reason from context: if paused, it's either a breakpoint or step
-                val reason = "breakpoint"
-                flow.tryEmit(
+                invocation.pauseFlow.tryEmit(
                     DebugPauseEvent(
                         sessionId = sessionId,
                         file = pos?.file?.path,
                         line = pos?.line?.plus(1), // 0-based to 1-based
-                        reason = reason
+                        reason = "breakpoint"
                     )
                 )
             }
@@ -73,14 +108,19 @@ class AgentDebugController(private val project: Project) : Disposable {
             @OptIn(ExperimentalCoroutinesApi::class)
             override fun sessionResumed() {
                 // Reset the replay cache so waitForPause blocks on next call
-                flow.resetReplayCache()
+                invocation.pauseFlow.resetReplayCache()
             }
 
             override fun sessionStopped() {
-                sessions.remove(sessionId)
-                pauseFlows.remove(sessionId)
+                sessionInvocations.remove(sessionId)?.also { entry ->
+                    try {
+                        Disposer.dispose(entry.invocation)
+                    } catch (_: Exception) {
+                        // Invocation already disposed (e.g. by new chat cascade) — no-op
+                    }
+                }
                 if (activeSessionId == sessionId) {
-                    activeSessionId = sessions.keys.firstOrNull()
+                    activeSessionId = sessionInvocations.keys.firstOrNull()
                 }
             }
         })
@@ -93,9 +133,9 @@ class AgentDebugController(private val project: Project) : Disposable {
      */
     fun getSession(sessionId: String? = null): XDebugSession? {
         if (sessionId == null) {
-            return activeSessionId?.let { sessions[it] }
+            return activeSessionId?.let { sessionInvocations[it]?.session }
         }
-        return sessions[sessionId]
+        return sessionInvocations[sessionId]?.session
     }
 
     /**
@@ -123,8 +163,9 @@ class AgentDebugController(private val project: Project) : Disposable {
      * Returns immediately if already suspended. Returns null on timeout.
      */
     suspend fun waitForPause(sessionId: String, timeoutMs: Long = 5000): DebugPauseEvent? {
-        val session = sessions[sessionId] ?: return null
-        val flow = pauseFlows[sessionId] ?: return null
+        val entry = sessionInvocations[sessionId] ?: return null
+        val session = entry.session
+        val flow = entry.invocation.pauseFlow
         return withTimeoutOrNull(timeoutMs) {
             if (session.isSuspended) {
                 val pos = session.currentPosition
@@ -413,16 +454,21 @@ class AgentDebugController(private val project: Project) : Disposable {
      * Stops all tracked debug sessions.
      */
     fun stopAllSessions() {
-        sessions.values.forEach { session ->
+        val snapshot = sessionInvocations.values.toList()
+        sessionInvocations.clear()
+        activeSessionId = null
+        for (entry in snapshot) {
             try {
-                session.stop()
+                entry.session.stop()
             } catch (_: Exception) {
                 // Session may already be stopped
             }
+            try {
+                Disposer.dispose(entry.invocation)
+            } catch (_: Exception) {
+                // Invocation may already be disposed (cascaded from session reset)
+            }
         }
-        sessions.clear()
-        pauseFlows.clear()
-        activeSessionId = null
     }
 
     /**
