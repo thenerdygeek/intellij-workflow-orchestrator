@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools.ide
 
+import com.intellij.codeInspection.ProblemHighlightType
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -213,5 +214,101 @@ class DiagnosticModelsTest {
         assertEquals("prose", prose)
         assertEquals(1, entries.size)
         assertEquals("a", entries[0].file)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // normalizeSeverity — shared canonical mapper used by T2/T3 (and future T4/T5).
+    //
+    // Contract: every ProblemHighlightType maps to one of the four strings
+    // "ERROR" | "WARNING" | "WEAK_WARNING" | "INFO". The exhaustive test pins
+    // the invariant so future upstream IntelliJ enum additions surface as a
+    // visible test failure (if we ever tighten the `else` default) or safely
+    // fall through to "INFO" under the current `else` default.
+    //
+    // Grouping matches the prior T2 RunInspectionsTool.mapHighlightType
+    // behaviour verbatim — T2 collapses ERROR+GENERIC_ERROR into "ERROR",
+    // WARNING+GENERIC_ERROR_OR_WARNING into "WARNING", and everything else
+    // (including WEAK_WARNING, LIKE_*, INFORMATION) into "INFO". Any change
+    // to these groupings is a cross-tool-visible behaviour change and must
+    // be reflected in a regression scenario here.
+    // ═══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `normalizeSeverity emits only the shared vocabulary for every ProblemHighlightType`() {
+        val validSeverities = setOf("ERROR", "WARNING", "WEAK_WARNING", "INFO")
+        for (type in ProblemHighlightType.values()) {
+            val result = normalizeSeverity(type)
+            assertTrue(
+                result in validSeverities,
+                "normalizeSeverity($type) returned '$result', which is outside " +
+                    "the shared DiagnosticEntry.severity vocabulary " +
+                    "$validSeverities. Phase 7 consumers filter/sort by this " +
+                    "vocabulary; new enum values must be mapped explicitly.",
+            )
+        }
+    }
+
+    @Test
+    fun `normalizeSeverity pins ERROR and GENERIC_ERROR to 'ERROR'`() {
+        assertEquals("ERROR", normalizeSeverity(ProblemHighlightType.ERROR))
+        assertEquals("ERROR", normalizeSeverity(ProblemHighlightType.GENERIC_ERROR))
+    }
+
+    @Test
+    fun `normalizeSeverity pins WARNING and GENERIC_ERROR_OR_WARNING to 'WARNING'`() {
+        assertEquals("WARNING", normalizeSeverity(ProblemHighlightType.WARNING))
+        assertEquals("WARNING", normalizeSeverity(ProblemHighlightType.GENERIC_ERROR_OR_WARNING))
+    }
+
+    @Test
+    fun `normalizeSeverity collapses WEAK_WARNING to 'INFO' (matches prior T2 behavior)`() {
+        // Regression lock: the prior T2 RunInspectionsTool.mapHighlightType
+        // used `else -> Severity.INFO`, which collapsed WEAK_WARNING into
+        // "INFO". Cross-tool consistency requires T3 (and future T4/T5) to
+        // emit the same value. If WEAK_WARNING should ever be surfaced as a
+        // distinct bucket, update ALL callers together and flip this test.
+        assertEquals("INFO", normalizeSeverity(ProblemHighlightType.WEAK_WARNING))
+    }
+
+    @Test
+    fun `normalizeSeverity collapses LIKE_DEPRECATED LIKE_UNUSED_SYMBOL LIKE_UNKNOWN_SYMBOL LIKE_MARKED_FOR_REMOVAL to 'INFO'`() {
+        // Regression lock: all LIKE_* hints are INFO under the prior T2
+        // behaviour. These are visual decorators (strikethrough, greyed-out)
+        // rather than true warnings — surfacing them as "WARNING" would
+        // spam Phase 7 consumers with UI-only signals.
+        assertEquals("INFO", normalizeSeverity(ProblemHighlightType.LIKE_DEPRECATED))
+        assertEquals("INFO", normalizeSeverity(ProblemHighlightType.LIKE_UNUSED_SYMBOL))
+        assertEquals("INFO", normalizeSeverity(ProblemHighlightType.LIKE_UNKNOWN_SYMBOL))
+        assertEquals("INFO", normalizeSeverity(ProblemHighlightType.LIKE_MARKED_FOR_REMOVAL))
+    }
+
+    @Test
+    fun `normalizeSeverity pins INFORMATION to 'INFO'`() {
+        assertEquals("INFO", normalizeSeverity(ProblemHighlightType.INFORMATION))
+    }
+
+    @Test
+    fun `normalizeSeverity defaults unknown-to-this-code types to 'INFO'`() {
+        // Forward-compat: if upstream IntelliJ adds a new ProblemHighlightType
+        // enum value, the `else` branch in normalizeSeverity surfaces it as
+        // "INFO" rather than throwing or returning a non-vocabulary string.
+        // The exhaustive test above catches any non-vocabulary leak; this
+        // test pins the conservative default explicitly for any
+        // not-yet-covered-by-a-named-case types that may exist today.
+        val namedCases = setOf(
+            ProblemHighlightType.ERROR,
+            ProblemHighlightType.GENERIC_ERROR,
+            ProblemHighlightType.WARNING,
+            ProblemHighlightType.GENERIC_ERROR_OR_WARNING,
+        )
+        for (type in ProblemHighlightType.values()) {
+            if (type in namedCases) continue
+            assertEquals(
+                "INFO", normalizeSeverity(type),
+                "Expected $type to collapse to 'INFO' under the prior T2 " +
+                    "grouping; if you intentionally surfaced it as a new " +
+                    "bucket, update T2/T3/T4/T5 callers together.",
+            )
+        }
     }
 }

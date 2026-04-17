@@ -1,7 +1,6 @@
 package com.workflow.orchestrator.agent.tools.ide
 
 import com.intellij.codeInspection.InspectionManager
-import com.intellij.codeInspection.ProblemHighlightType
 import com.intellij.codeInspection.ProblemsHolder
 import com.intellij.codeInspection.ex.LocalInspectionToolWrapper
 import com.intellij.codeInsight.daemon.HighlightDisplayKey
@@ -109,7 +108,11 @@ class RunInspectionsTool : AgentTool {
                         })
 
                         for (problem in holder.results) {
-                            val severity = mapHighlightType(problem.highlightType)
+                            // Shared canonical mapping lives in DiagnosticModels.kt
+                            // (`normalizeSeverity`) so T2/T3/T4/T5 emit identical
+                            // DiagnosticEntry.severity values for the same input.
+                            val severityName = normalizeSeverity(problem.highlightType)
+                            val severity = Severity.fromName(severityName)
                             if (severity.ordinal <= minSeverity.ordinal) {
                                 val line = problem.lineNumber + 1 // ProblemDescriptor uses 0-based
                                 val fixes = problem.fixes?.map { it.familyName } ?: emptyList()
@@ -177,15 +180,24 @@ class RunInspectionsTool : AgentTool {
         }
     }
 
-    private fun mapHighlightType(type: ProblemHighlightType): Severity {
-        return when (type) {
-            ProblemHighlightType.ERROR, ProblemHighlightType.GENERIC_ERROR -> Severity.ERROR
-            ProblemHighlightType.WARNING, ProblemHighlightType.GENERIC_ERROR_OR_WARNING -> Severity.WARNING
-            else -> Severity.INFO
+    /**
+     * Internal severity bucket used ONLY for the `minSeverity` threshold
+     * comparison (ordinal-based). The emitted [DiagnosticEntry.severity]
+     * string goes through the shared [normalizeSeverity] mapper — the enum
+     * `.name` values here MUST agree with the shared mapper's output so the
+     * filter and the emitted field are consistent.
+     */
+    private enum class Severity {
+        ERROR, WARNING, INFO;
+
+        companion object {
+            fun fromName(name: String): Severity = when (name) {
+                "ERROR" -> ERROR
+                "WARNING" -> WARNING
+                else -> INFO // "INFO" and any future shared-vocabulary addition
+            }
         }
     }
-
-    private enum class Severity { ERROR, WARNING, INFO }
 
     private data class ProblemInfo(
         val line: Int,

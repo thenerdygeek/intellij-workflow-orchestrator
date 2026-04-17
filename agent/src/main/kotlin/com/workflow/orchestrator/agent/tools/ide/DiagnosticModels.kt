@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools.ide
 
+import com.intellij.codeInspection.ProblemHighlightType
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -67,6 +68,48 @@ fun renderDiagnosticBody(prose: String, entries: List<DiagnosticEntry>): String 
     if (entries.isEmpty()) return prose
     val json = diagnosticJson.encodeToString(entries)
     return "$prose\n$DIAGNOSTIC_STRUCTURED_DATA_MARKER\n$json"
+}
+
+/**
+ * Canonicalise a [ProblemHighlightType] into the shared [DiagnosticEntry.severity]
+ * vocabulary (`"ERROR" | "WARNING" | "WEAK_WARNING" | "INFO"`).
+ *
+ * ## Contract
+ * - Every [ProblemHighlightType] value maps to one of the four strings above.
+ *   A `DiagnosticModelsTest` assertion iterates `ProblemHighlightType.values()`
+ *   and pins this invariant — new enum values landed by upstream IntelliJ will
+ *   fall through to the `else` branch and surface as `"INFO"`, which is a
+ *   conservative default that keeps Phase 7 consumers stable.
+ * - Phase 7 consumers (filters, sorts, UI grouping) depend on this canonical
+ *   vocabulary. If you need a finer distinction, add a new case here; do NOT
+ *   leak raw `ProblemHighlightType.name` values (e.g. `GENERIC_ERROR_OR_WARNING`,
+ *   `LIKE_UNUSED_SYMBOL`, `INFORMATION`) into `DiagnosticEntry.severity`.
+ *
+ * ## Grouping
+ *
+ * This mapping matches the prior behaviour of
+ * `RunInspectionsTool.mapHighlightType` (T2) verbatim: both tools previously
+ * used the three-bucket scheme ERROR / WARNING / INFO, with WEAK_WARNING,
+ * INFORMATION, LIKE_*, etc. all collapsed into INFO. T3 (`ListQuickFixesTool`)
+ * previously emitted the raw enum name and has now been migrated onto this
+ * shared mapper so both tools emit byte-identical severity values for the
+ * same [ProblemHighlightType] input.
+ *
+ * Note: the [DiagnosticEntry.severity] kdoc advertises `"WEAK_WARNING"` as
+ * part of the vocabulary, but T2 never emitted it and T3 does not emit it
+ * either after this migration. If a future tool (T4 `ProblemViewTool`,
+ * T5 `SemanticDiagnosticsTool`) needs the WEAK_WARNING distinction, add a
+ * case here rather than forking a local mapper — that keeps cross-tool
+ * consistency intact.
+ */
+fun normalizeSeverity(type: ProblemHighlightType): String {
+    return when (type) {
+        ProblemHighlightType.ERROR,
+        ProblemHighlightType.GENERIC_ERROR -> "ERROR"
+        ProblemHighlightType.WARNING,
+        ProblemHighlightType.GENERIC_ERROR_OR_WARNING -> "WARNING"
+        else -> "INFO"
+    }
 }
 
 /**
