@@ -1,9 +1,15 @@
 package com.workflow.orchestrator.agent.loop
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
-enum class TaskStatus { PENDING, IN_PROGRESS, COMPLETED, DELETED }
+enum class TaskStatus {
+    @SerialName("pending") PENDING,
+    @SerialName("in_progress") IN_PROGRESS,
+    @SerialName("completed") COMPLETED,
+    @SerialName("deleted") DELETED,
+}
 
 @Serializable
 data class Task(

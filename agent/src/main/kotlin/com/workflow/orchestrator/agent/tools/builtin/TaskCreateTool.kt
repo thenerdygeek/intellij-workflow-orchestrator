@@ -8,6 +8,8 @@ import com.workflow.orchestrator.agent.session.TaskStore
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
+import com.workflow.orchestrator.core.events.EventBus
+import com.workflow.orchestrator.core.events.WorkflowEvent
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.UUID
@@ -75,6 +77,14 @@ class TaskCreateTool(
             activeForm = activeForm,
         )
         store.addTask(task)
+
+        // Emit TaskChanged so AgentController can push the new task to the webview.
+        // Best-effort: if the event bus is unavailable (e.g. in unit tests without a Project
+        // service container), silently swallow — the store update itself succeeded.
+        runCatching {
+            project.getService(EventBus::class.java)
+                ?.emit(WorkflowEvent.TaskChanged(task.id, isCreate = true))
+        }
 
         return ToolResult(
             content = "Created task ${task.id}: $subject",

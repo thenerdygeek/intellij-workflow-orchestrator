@@ -8,6 +8,8 @@ import com.workflow.orchestrator.agent.session.TaskStore
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
+import com.workflow.orchestrator.core.events.EventBus
+import com.workflow.orchestrator.core.events.WorkflowEvent
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
@@ -104,6 +106,14 @@ class TaskUpdateTool(
             "Task not found: $taskId",
             "task_update failed: Task not found: $taskId",
         )
+
+        // Emit TaskChanged so AgentController can push the updated task to the webview.
+        // Best-effort: if the event bus is unavailable (e.g. in unit tests without a Project
+        // service container), silently swallow — the store update itself succeeded.
+        runCatching {
+            project.getService(EventBus::class.java)
+                ?.emit(WorkflowEvent.TaskChanged(taskId, isCreate = false))
+        }
 
         return ToolResult(
             content = "Updated task $taskId" + (parsedStatus?.let { " to status=${it.name.lowercase()}" } ?: ""),

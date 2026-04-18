@@ -121,5 +121,19 @@ sealed class WorkflowEvent {
         val tickets: List<com.workflow.orchestrator.core.model.jira.JiraTicketData>
     ) : WorkflowEvent()
 
+    /**
+     * Emitted by the :agent task system when a task is created or updated.
+     *
+     * Consumed by `AgentController` to push the new/updated task to the webview
+     * via the `_applyTaskCreate` / `_applyTaskUpdate` JCEF bridge functions.
+     *
+     * @param taskId    UUID of the affected task.
+     * @param isCreate  `true` when emitted from `task_create`, `false` for `task_update`.
+     */
+    data class TaskChanged(
+        val taskId: String,
+        val isCreate: Boolean,
+    ) : WorkflowEvent()
+
     enum class BuildEventStatus { SUCCESS, FAILED }
 }
