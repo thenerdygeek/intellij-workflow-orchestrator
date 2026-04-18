@@ -88,3 +88,73 @@ data class HistoryEntry(
     val buildResultKey: String?,
     val buildPassed: Boolean?
 )
+
+/**
+ * Diagnostic result from baseline loading — replaces opaque empty list.
+ * Tells the UI exactly what happened and why.
+ */
+data class BaselineLoadResult(
+    val tags: List<TagEntry>,
+    val selectedBuild: BaselineRun?,
+    val diagnostics: BaselineDiagnostics
+)
+
+data class BaselineDiagnostics(
+    val buildsQueried: Int,
+    val buildsWithVariables: Int,
+    val buildsWithDockerTags: Int,
+    val bambooError: String?,
+    val skippedReasons: List<String>
+) {
+    /** Human-readable summary for the status label. */
+    fun toStatusText(): String = when {
+        bambooError != null -> "Bamboo error: $bambooError"
+        buildsQueried == 0 -> "No recent builds found for this suite"
+        buildsWithDockerTags == 0 && buildsWithVariables == 0 ->
+            "Fetched $buildsQueried builds — none had build variables"
+        buildsWithDockerTags == 0 ->
+            "Fetched $buildsQueried builds ($buildsWithVariables had variables) — none had dockerTagsAsJson"
+        else -> "" // success — caller formats the success message
+    }
+}
+
+/**
+ * Result from docker tag auto-detection for the current repo.
+ */
+data class TagDetectionResult(
+    val detected: Boolean,
+    val tag: String?,
+    val buildKey: String?,
+    val reason: String
+) {
+    companion object {
+        fun success(tag: String, buildKey: String) = TagDetectionResult(
+            detected = true, tag = tag, buildKey = buildKey,
+            reason = "Detected from build $buildKey"
+        )
+        fun notConfigured(missing: String) = TagDetectionResult(
+            detected = false, tag = null, buildKey = null,
+            reason = "Not configured — set $missing in Settings"
+        )
+        fun noBuild(branch: String) = TagDetectionResult(
+            detected = false, tag = null, buildKey = null,
+            reason = "No CI build found for branch '$branch'"
+        )
+        fun noTagInLog(buildKey: String) = TagDetectionResult(
+            detected = false, tag = null, buildKey = buildKey,
+            reason = "Build $buildKey has no 'Unique Docker Tag' in log"
+        )
+        fun buildFailed(planKey: String, buildNumber: Int) = TagDetectionResult(
+            detected = false, tag = null, buildKey = "$planKey-$buildNumber",
+            reason = "CI build failed ($planKey #$buildNumber)"
+        )
+        fun logFetchFailed(resultKey: String) = TagDetectionResult(
+            detected = false, tag = null, buildKey = resultKey,
+            reason = "Could not fetch build log for $resultKey"
+        )
+        fun branchDetectionFailed() = TagDetectionResult(
+            detected = false, tag = null, buildKey = null,
+            reason = "Could not detect current git branch"
+        )
+    }
+}

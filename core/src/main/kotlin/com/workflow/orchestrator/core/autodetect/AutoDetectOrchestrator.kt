@@ -4,6 +4,7 @@ import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.events.EventBus
@@ -144,17 +145,35 @@ class AutoDetectOrchestrator(private val project: Project, private val cs: Corou
     fun detectFromBambooSpecs(filled: MutableList<String>) {
         val settings = PluginSettings.getInstance(project)
         val repos = settings.getRepos()
+        log.info("[AutoDetect:BambooSpecs] Starting. Saved repos count=${repos.size}")
         if (repos.isEmpty()) {
-            val basePath = project.basePath ?: return
+            val basePath = project.basePath ?: run {
+                log.warn("[AutoDetect:BambooSpecs] No repos and project.basePath is null — skipping")
+                return
+            }
+            log.info("[AutoDetect:BambooSpecs] No saved repos — using project.basePath='$basePath'")
             val constants = BambooSpecsParser.parseConstants(Paths.get(basePath))
-            if (constants.isEmpty()) return
+            if (constants.isEmpty()) {
+                log.info("[AutoDetect:BambooSpecs] No constants found at project root — nothing to fill")
+                return
+            }
+            log.info("[AutoDetect:BambooSpecs] Found ${constants.size} constants, applying to global state")
             applyBambooSpecsToState(settings.state, constants, "global", filled)
             return
         }
         for (repo in repos) {
-            val rootPath = repo.localVcsRootPath?.takeIf { it.isNotBlank() } ?: continue
+            val rootPath = repo.localVcsRootPath?.takeIf { it.isNotBlank() }
+            if (rootPath == null) {
+                log.info("[AutoDetect:BambooSpecs] Repo '${repo.displayLabel}' has blank localVcsRootPath — skipping")
+                continue
+            }
+            log.info("[AutoDetect:BambooSpecs] Repo '${repo.displayLabel}' rootPath='$rootPath'")
             val constants = BambooSpecsParser.parseConstants(Paths.get(rootPath))
-            if (constants.isEmpty()) continue
+            if (constants.isEmpty()) {
+                log.info("[AutoDetect:BambooSpecs] No constants found for repo '${repo.displayLabel}'")
+                continue
+            }
+            log.info("[AutoDetect:BambooSpecs] Found ${constants.size} constants for repo '${repo.displayLabel}', applying")
             applyBambooSpecsToRepo(repo, constants, filled)
         }
     }
@@ -245,6 +264,33 @@ class AutoDetectOrchestrator(private val project: Project, private val cs: Corou
                 ?: repo.bitbucketRepoSlug?.takeIf { it.isNotBlank() }
                 ?: "unnamed"
 
+        private val log = Logger.getInstance(AutoDetectOrchestrator::class.java)
+
+        /**
+         * Builds the full Bamboo plan key from PROJECT_KEY and PLAN_KEY constants.
+         * Bamboo API requires "PROJECT-PLAN" format (e.g., "ACME-DEMOAPPSERVICE").
+         * If PLAN_KEY already contains a hyphen (already full format), uses it as-is.
+         */
+        internal fun buildFullPlanKey(constants: Map<String, String>): String? {
+            val planKey = constants["PLAN_KEY"]?.takeIf { it.isNotBlank() } ?: return null
+            if ('-' in planKey) return planKey // already full format
+            val projectKey = constants["PROJECT_KEY"]?.takeIf { it.isNotBlank() } ?: return planKey
+            return "$projectKey-$planKey"
+        }
+
+        /**
+         * Like [fillIfEmpty] but also overwrites if the current value is just the short
+         * PLAN_KEY (no hyphen) and the new value is the full PROJECT-PLAN format.
+         * This corrects stale values from earlier versions that stored only PLAN_KEY.
+         */
+        internal fun fillOrUpgradePlanKey(current: String?, fullKey: String?): String? {
+            if (fullKey.isNullOrBlank()) return current
+            if (current.isNullOrBlank()) return fullKey
+            // Overwrite if current is the short key and fullKey is the proper PROJECT-PLAN format
+            if ('-' !in current && '-' in fullKey && fullKey.endsWith(current)) return fullKey
+            return current
+        }
+
         /** Visible for testing. Writes constants into a state object via fill-only-empty. */
         internal fun applyBambooSpecsToState(
             state: PluginSettings.State,
@@ -252,15 +298,19 @@ class AutoDetectOrchestrator(private val project: Project, private val cs: Corou
             label: String,
             filled: MutableList<String>
         ) {
+            val fullPlanKey = buildFullPlanKey(constants)
+            log.info("[AutoDetect:Apply] Applying to $label state. DOCKER_TAG_NAME='${constants["DOCKER_TAG_NAME"]}', fullPlanKey='$fullPlanKey' (PROJECT_KEY='${constants["PROJECT_KEY"]}', PLAN_KEY='${constants["PLAN_KEY"]}')")
             val newDocker = fillIfEmpty(state.dockerTagKey, constants["DOCKER_TAG_NAME"])
             if (newDocker != state.dockerTagKey && !newDocker.isNullOrBlank()) {
                 state.dockerTagKey = newDocker
                 filled += "$label.dockerTagKey"
+                log.info("[AutoDetect:Apply]   SET $label.dockerTagKey = '$newDocker'")
             }
-            val newPlan = fillIfEmpty(state.bambooPlanKey, constants["PLAN_KEY"])
+            val newPlan = fillOrUpgradePlanKey(state.bambooPlanKey, fullPlanKey)
             if (newPlan != state.bambooPlanKey && !newPlan.isNullOrBlank()) {
                 state.bambooPlanKey = newPlan
                 filled += "$label.bambooPlanKey"
+                log.info("[AutoDetect:Apply]   SET $label.bambooPlanKey = '$newPlan'")
             }
         }
 
@@ -271,15 +321,19 @@ class AutoDetectOrchestrator(private val project: Project, private val cs: Corou
             filled: MutableList<String>
         ) {
             val label = repoLabel(repo)
+            val fullPlanKey = buildFullPlanKey(constants)
+            log.info("[AutoDetect:Apply] Applying to repo '$label'. DOCKER_TAG_NAME='${constants["DOCKER_TAG_NAME"]}', fullPlanKey='$fullPlanKey' (PROJECT_KEY='${constants["PROJECT_KEY"]}', PLAN_KEY='${constants["PLAN_KEY"]}')")
             val newDocker = fillIfEmpty(repo.dockerTagKey, constants["DOCKER_TAG_NAME"])
             if (newDocker != repo.dockerTagKey && !newDocker.isNullOrBlank()) {
                 repo.dockerTagKey = newDocker
                 filled += "$label.dockerTagKey"
+                log.info("[AutoDetect:Apply]   SET $label.dockerTagKey = '$newDocker'")
             }
-            val newPlan = fillIfEmpty(repo.bambooPlanKey, constants["PLAN_KEY"])
+            val newPlan = fillOrUpgradePlanKey(repo.bambooPlanKey, fullPlanKey)
             if (newPlan != repo.bambooPlanKey && !newPlan.isNullOrBlank()) {
                 repo.bambooPlanKey = newPlan
                 filled += "$label.bambooPlanKey"
+                log.info("[AutoDetect:Apply]   SET $label.bambooPlanKey = '$newPlan'")
             }
         }
 

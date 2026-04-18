@@ -55,11 +55,17 @@ class TagBuilderServiceTest {
             summary = "1 variable"
         )
 
-        val ranked = service.scoreAndRankRuns("PROJ-AUTO")
+        val (ranked, diagnostics) = service.scoreAndRankRuns("PROJ-AUTO")
 
         assertTrue(ranked.isNotEmpty())
         assertEquals(847, ranked[0].buildNumber)
         assertTrue(ranked[0].score > ranked[1].score)
+
+        // Diagnostics track what happened
+        assertEquals(3, diagnostics.buildsQueried)
+        assertEquals(3, diagnostics.buildsWithVariables)
+        assertEquals(3, diagnostics.buildsWithDockerTags)
+        assertNull(diagnostics.bambooError)
     }
 
     @Test
@@ -176,10 +182,148 @@ class TagBuilderServiceTest {
         assertTrue(entries.isEmpty())
     }
 
+    @Test
+    fun `loadBaselineWithDiagnostics reports API error`() = runTest {
+        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10, null, null) } returns ToolResult(
+            data = emptyList(),
+            summary = "Bamboo returned 401",
+            isError = true
+        )
+
+        val result = service.loadBaselineWithDiagnostics("PROJ-AUTO")
+
+        assertTrue(result.tags.isEmpty())
+        assertNull(result.selectedBuild)
+        assertEquals("Bamboo returned 401", result.diagnostics.bambooError)
+        assertEquals("Bamboo error: Bamboo returned 401", result.diagnostics.toStatusText())
+    }
+
+    @Test
+    fun `loadBaselineWithDiagnostics reports missing variable`() = runTest {
+        val runs = listOf(makeBuildResultData(100, "Successful", listOf("Successful")))
+        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10, null, null) } returns ToolResult.success(
+            data = runs,
+            summary = "1 build"
+        )
+        // Build has variables but NOT dockerTagsAsJson
+        coEvery { bambooService.getBuildVariables("PROJ-AUTO-100") } returns ToolResult.success(
+            data = listOf(PlanVariableData("someOtherVar", "value")),
+            summary = "1 variable"
+        )
+
+        val result = service.loadBaselineWithDiagnostics("PROJ-AUTO")
+
+        assertTrue(result.tags.isEmpty())
+        assertNull(result.selectedBuild)
+        assertEquals(1, result.diagnostics.buildsQueried)
+        assertEquals(1, result.diagnostics.buildsWithVariables)
+        assertEquals(0, result.diagnostics.buildsWithDockerTags)
+        assertTrue(result.diagnostics.toStatusText().contains("none had dockerTagsAsJson"))
+    }
+
+    @Test
+    fun `loadBaselineWithDiagnostics reports success with build details`() = runTest {
+        val runs = listOf(makeBuildResultData(847, "Successful", listOf("Successful", "Successful")))
+        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10, null, null) } returns ToolResult.success(
+            data = runs,
+            summary = "1 build"
+        )
+        coEvery { bambooService.getBuildVariables("PROJ-AUTO-847") } returns ToolResult.success(
+            data = listOf(PlanVariableData("dockerTagsAsJson", """{"auth":"2.4.0","payments":"2.3.1"}""")),
+            summary = "1 variable"
+        )
+
+        val result = service.loadBaselineWithDiagnostics("PROJ-AUTO")
+
+        assertEquals(2, result.tags.size)
+        assertNotNull(result.selectedBuild)
+        assertEquals(847, result.selectedBuild!!.buildNumber)
+        assertEquals(2, result.selectedBuild!!.releaseTagCount)
+        assertTrue(result.diagnostics.toStatusText().isEmpty()) // empty = success
+    }
+
+    @Test
+    fun `detectDockerTag returns success with tag from log`() = runTest {
+        coEvery { bambooService.getLatestBuild("CI-PLAN", "feature/test", null) } returns ToolResult.success(
+            data = makeBuildResultData(42, "Successful", emptyList(), "CI-PLAN"),
+            summary = "build found"
+        )
+        coEvery { bambooService.getBuildLog("CI-PLAN-42") } returns ToolResult.success(
+            data = "Building...\nUnique Docker Tag : feature-test-abc123\nDone.",
+            summary = "log fetched"
+        )
+
+        val result = service.detectDockerTag("CI-PLAN", "feature/test")
+
+        assertTrue(result.detected)
+        assertEquals("feature-test-abc123", result.tag)
+        assertEquals("CI-PLAN-42", result.buildKey)
+    }
+
+    @Test
+    fun `detectDockerTag returns noBuild when no build found`() = runTest {
+        coEvery { bambooService.getLatestBuild("CI-PLAN", "feature/gone", null) } returns ToolResult(
+            data = BuildResultData(planKey = "CI-PLAN", buildNumber = 0, state = "ERROR", durationSeconds = 0),
+            summary = "Branch 'feature/gone' not found",
+            isError = true
+        )
+
+        val result = service.detectDockerTag("CI-PLAN", "feature/gone")
+
+        assertFalse(result.detected)
+        assertNull(result.tag)
+        assertTrue(result.reason.contains("feature/gone"))
+    }
+
+    @Test
+    fun `detectDockerTag returns noTagInLog when pattern not found`() = runTest {
+        coEvery { bambooService.getLatestBuild("CI-PLAN", "main", null) } returns ToolResult.success(
+            data = makeBuildResultData(99, "Successful", emptyList(), "CI-PLAN"),
+            summary = "build found"
+        )
+        coEvery { bambooService.getBuildLog("CI-PLAN-99") } returns ToolResult.success(
+            data = "Building...\nTests passed.\nDone.",
+            summary = "log fetched"
+        )
+
+        val result = service.detectDockerTag("CI-PLAN", "main")
+
+        assertFalse(result.detected)
+        assertNull(result.tag)
+        assertTrue(result.reason.contains("CI-PLAN-99"))
+    }
+
+    @Test
+    fun `extractDockerTagFromLog returns tag from log text`() {
+        val log = "Building...\nUnique Docker Tag : feature-test-abc123\nDone."
+        val tag = service.extractDockerTagFromLog(log)
+        assertEquals("feature-test-abc123", tag)
+    }
+
+    @Test
+    fun `extractDockerTagFromLog strips ANSI escape codes`() {
+        val log = "Unique Docker Tag : \u001B[32mfeature-test-xyz\u001B[0m"
+        val tag = service.extractDockerTagFromLog(log)
+        assertEquals("feature-test-xyz", tag)
+    }
+
+    @Test
+    fun `extractDockerTagFromLog returns null when pattern not found`() {
+        val log = "Building...\nTests passed.\nDone."
+        val tag = service.extractDockerTagFromLog(log)
+        assertNull(tag)
+    }
+
+    @Test
+    fun `extractDockerTagFromLog returns null for empty log`() {
+        assertNull(service.extractDockerTagFromLog(""))
+    }
+
     private fun makeBuildResultData(
         buildNumber: Int,
         state: String,
-        stageStates: List<String>
+        stageStates: List<String>,
+        planKey: String = "PROJ-AUTO"
     ): BuildResultData {
         val stages = stageStates.mapIndexed { i, s ->
             BuildStageData(
@@ -189,11 +333,11 @@ class TagBuilderServiceTest {
             )
         }
         return BuildResultData(
-            planKey = "PROJ-AUTO",
+            planKey = planKey,
             buildNumber = buildNumber,
             state = state,
             durationSeconds = 700,
-            buildResultKey = "PROJ-AUTO-$buildNumber",
+            buildResultKey = "$planKey-$buildNumber",
             buildRelativeTime = "5 min ago",
             stages = stages
         )

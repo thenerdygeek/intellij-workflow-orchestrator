@@ -100,23 +100,8 @@ class AutomationConfigurable(private val project: Project) : SearchableConfigura
             )
 
             group("Docker Tags") {
-                row("Docker tag key for this repo:") {
-                    textField()
-                        .bindText(
-                            { PluginSettings.getInstance(project).state.dockerTagKey ?: "" },
-                            { PluginSettings.getInstance(project).state.dockerTagKey = it }
-                        )
-                        .columns(COLUMNS_LARGE)
-                        .comment("Key in dockerTagsAsJson that represents this repo (e.g., order-service)")
-                }
-                row("Service CI plan key:") {
-                    textField()
-                        .bindText(
-                            { PluginSettings.getInstance(project).state.serviceCiPlanKey ?: "" },
-                            { PluginSettings.getInstance(project).state.serviceCiPlanKey = it }
-                        )
-                        .columns(COLUMNS_LARGE)
-                        .comment("Bamboo plan key for this repo's CI build (for docker tag extraction)")
+                row {
+                    comment("Docker Tag Key and Bamboo Plan Key are auto-detected from bamboo-specs and shown in Settings \u2192 Repositories.")
                 }
                 row("Build variable name:") {
                     textField()

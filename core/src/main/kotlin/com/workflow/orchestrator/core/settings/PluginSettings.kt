@@ -111,7 +111,7 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
 
         // Automation
         var tagHistoryMaxEntries by property(5)
-        var bambooBuildVariableName by string("dockerTagsAsJson")
+        var bambooBuildVariableName by string("DockerTagsAsJson")
 
         // Sprint dashboard view preferences
         var sprintSortBy by string("Default")
