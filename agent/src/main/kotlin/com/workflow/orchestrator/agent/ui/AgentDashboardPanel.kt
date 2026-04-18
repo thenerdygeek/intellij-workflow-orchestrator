@@ -7,6 +7,7 @@ import java.awt.BorderLayout
 import java.util.concurrent.CopyOnWriteArrayList
 import javax.swing.JPanel
 import com.intellij.openapi.application.invokeLater
+import com.workflow.orchestrator.agent.tools.CompletionData
 import com.workflow.orchestrator.agent.tools.subagent.AgentConfigLoader
 import com.workflow.orchestrator.agent.tools.subagent.SubagentToolName
 import javax.swing.SwingUtilities
@@ -495,10 +496,10 @@ class AgentDashboardPanel(
         broadcast { it.finalizeToolChain() }
     }
 
-    fun appendCompletionSummary(result: String, verifyHow: String? = null) {
-        cefPanel?.appendCompletionSummary(result, verifyHow)
-            ?: fallbackPanel?.appendStatus("Task completed: $result", RichStreamingPanel.StatusType.SUCCESS)
-        broadcast { it.appendCompletionSummary(result, verifyHow) }
+    fun appendCompletionCard(data: CompletionData) {
+        cefPanel?.appendCompletionCard(data)
+            ?: fallbackPanel?.appendStatus("Task completed: ${data.result}", RichStreamingPanel.StatusType.SUCCESS)
+        broadcast { it.appendCompletionCard(data) }
     }
 
     fun appendToolCall(

@@ -9,7 +9,9 @@ import com.intellij.ui.jcef.JBCefBrowserBase
 import com.intellij.ui.jcef.JBCefClient
 import com.intellij.ui.jcef.JBCefJSQuery
 import com.intellij.util.ui.UIUtil
+import com.workflow.orchestrator.agent.tools.CompletionData
 import com.workflow.orchestrator.agent.util.JsEscape
+import kotlinx.serialization.encodeToString
 import org.cef.browser.CefBrowser
 import org.cef.handler.CefLoadHandlerAdapter
 import kotlinx.coroutines.CoroutineScope
@@ -40,6 +42,7 @@ class AgentCefPanel(
 
     companion object {
         private val LOG = Logger.getInstance(AgentCefPanel::class.java)
+        private val JSON = Json { encodeDefaults = true }
 
         /** Check if JCEF is available in this IDE installation. */
         fun isAvailable(): Boolean = try { JBCefApp.isSupported() } catch (_: Exception) { false }
@@ -673,9 +676,9 @@ class AgentCefPanel(
         callJs("finalizeToolChain()")
     }
 
-    fun appendCompletionSummary(result: String, verifyHow: String? = null) {
-        val cmdArg = if (verifyHow != null) JsEscape.toJsString(verifyHow) else "undefined"
-        callJs("appendCompletionSummary(${JsEscape.toJsString(result)},$cmdArg)")
+    fun appendCompletionCard(data: CompletionData) {
+        val json = JSON.encodeToString(data)
+        callJs("window._appendCompletionCard(${JsEscape.toJsString(json)})")
     }
 
     fun appendToolCall(

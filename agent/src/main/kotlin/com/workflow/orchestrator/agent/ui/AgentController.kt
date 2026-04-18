@@ -9,6 +9,8 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.tools.ArtifactRenderResult
+import com.workflow.orchestrator.agent.tools.CompletionData
+import com.workflow.orchestrator.agent.tools.CompletionKind
 import com.workflow.orchestrator.agent.tools.builtin.ArtifactResultRegistry
 import com.workflow.orchestrator.agent.tools.builtin.Question
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
@@ -1522,7 +1524,7 @@ class AgentController(
             try {
             when (result) {
                 is LoopResult.Completed -> {
-                    dashboard.appendCompletionSummary(result.summary, result.completionData?.verifyHow)
+                    dashboard.appendCompletionCard(result.completionData ?: CompletionData(CompletionKind.DONE, result.summary))
                     // Display token usage summary (ported from Cline's cost tracking)
                     if (result.inputTokens > 0 || result.outputTokens > 0) {
                         val inputK = formatTokenCount(result.inputTokens)
