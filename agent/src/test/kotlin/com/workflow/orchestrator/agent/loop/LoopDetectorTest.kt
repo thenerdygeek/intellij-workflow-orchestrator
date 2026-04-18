@@ -140,22 +140,6 @@ class LoopDetectorTest {
         }
 
         @Test
-        fun `task_progress param is ignored in signature`() {
-            val sig1 = LoopDetector.toolCallSignature("""{"path":"a.kt","task_progress":"step 1"}""")
-            val sig2 = LoopDetector.toolCallSignature("""{"path":"a.kt","task_progress":"step 5"}""")
-            assertEquals(sig1, sig2, "task_progress should be ignored")
-        }
-
-        @Test
-        fun `task_progress ignored - same effective args trigger loop detection`() {
-            // Simulate calls where only task_progress differs
-            detector.recordToolCall("read_file", """{"path":"a.kt","task_progress":"step 1"}""")
-            detector.recordToolCall("read_file", """{"path":"a.kt","task_progress":"step 2"}""")
-            val status = detector.recordToolCall("read_file", """{"path":"a.kt","task_progress":"step 3"}""")
-            assertEquals(LoopStatus.SOFT_WARNING, status, "Calls differing only in task_progress should be considered identical")
-        }
-
-        @Test
         fun `empty arguments produce consistent signature`() {
             val sig1 = LoopDetector.toolCallSignature("")
             val sig2 = LoopDetector.toolCallSignature("")

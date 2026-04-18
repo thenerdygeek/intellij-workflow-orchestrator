@@ -71,7 +71,7 @@ class LoopDetector(
          * These change between calls even when the user-facing arguments are identical.
          * Matches Cline's IGNORED_PARAMS set.
          */
-        private val IGNORED_PARAMS = setOf("task_progress")
+        private val IGNORED_PARAMS = emptySet<String>()
 
         /**
          * Compute a canonical signature for a tool call's params.

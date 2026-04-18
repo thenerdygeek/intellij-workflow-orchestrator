@@ -22,7 +22,6 @@ import com.workflow.orchestrator.agent.loop.AgentLoop
 import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.loop.SteeringMessage
-import com.workflow.orchestrator.agent.loop.TaskProgress
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
 import com.workflow.orchestrator.agent.prompt.EnvironmentDetailsBuilder
 import com.workflow.orchestrator.agent.prompt.InstructionLoader
@@ -801,7 +800,6 @@ class AgentService(private val project: Project) : Disposable {
         contextManager: ContextManager? = null,
         onStreamChunk: (String) -> Unit = {},
         onToolCall: (ToolCallProgress) -> Unit = {},
-        onTaskProgress: (TaskProgress) -> Unit = {},
         onComplete: (LoopResult) -> Unit = {},
         /**
          * Callback fired when the LLM presents a plan via plan_mode_respond.
@@ -1285,7 +1283,6 @@ class AgentService(private val project: Project) : Disposable {
                     project = project,
                     onStreamChunk = onStreamChunk,
                     onToolCall = onToolCall,
-                    onTaskProgress = onTaskProgress,
                     planMode = planModeActive.get(),
                     maxOutputTokens = agentSettings.state.maxOutputTokens,
                     toolDefinitionProvider = toolDefinitionProvider,
@@ -1507,7 +1504,6 @@ class AgentService(private val project: Project) : Disposable {
      * @param userText optional user message provided at resume time
      * @param onStreamChunk streaming callback
      * @param onToolCall tool progress callback
-     * @param onTaskProgress task progress callback
      * @param onComplete completion callback
      * @param onUiMessagesLoaded callback to push full UI state to webview for rehydration
      * @return the Job, or null if session not found, locked, or has no history
@@ -1519,7 +1515,6 @@ class AgentService(private val project: Project) : Disposable {
         userText: String? = null,
         onStreamChunk: (String) -> Unit = {},
         onToolCall: (ToolCallProgress) -> Unit = {},
-        onTaskProgress: (TaskProgress) -> Unit = {},
         onComplete: (LoopResult) -> Unit = {},
         onUiMessagesLoaded: ((List<UiMessage>) -> Unit)? = null,
         onRetry: ((attempt: Int, maxAttempts: Int, reason: String, delayMs: Long) -> Unit)? = null,
@@ -1675,7 +1670,6 @@ class AgentService(private val project: Project) : Disposable {
                 messageStateHandler = handler,
                 onStreamChunk = onStreamChunk,
                 onToolCall = onToolCall,
-                onTaskProgress = onTaskProgress,
                 onComplete = { result ->
                     lock.release()
                     onComplete(result)
@@ -1718,7 +1712,6 @@ class AgentService(private val project: Project) : Disposable {
      * @param checkpointId the checkpoint to revert to
      * @param onStreamChunk streaming callback
      * @param onToolCall tool progress callback
-     * @param onTaskProgress progress callback
      * @param onComplete completion callback
      * @return the Job for the continued session, or null if checkpoint not found
      */
@@ -1727,7 +1720,6 @@ class AgentService(private val project: Project) : Disposable {
         checkpointId: String,
         onStreamChunk: (String) -> Unit = {},
         onToolCall: (ToolCallProgress) -> Unit = {},
-        onTaskProgress: (TaskProgress) -> Unit = {},
         onComplete: (LoopResult) -> Unit = {}
     ): Job? {
         // Load checkpoint
@@ -1756,7 +1748,6 @@ class AgentService(private val project: Project) : Disposable {
             contextManager = ctx,
             onStreamChunk = onStreamChunk,
             onToolCall = onToolCall,
-            onTaskProgress = onTaskProgress,
             onComplete = onComplete
         )
     }
@@ -1846,7 +1837,6 @@ class AgentService(private val project: Project) : Disposable {
      * @param handoffContext the structured context summary from the LLM
      * @param onStreamChunk streaming callback
      * @param onToolCall tool progress callback
-     * @param onTaskProgress task progress callback
      * @param onComplete completion callback
      * @return the Job for the new session
      */
@@ -1854,7 +1844,6 @@ class AgentService(private val project: Project) : Disposable {
         handoffContext: String,
         onStreamChunk: (String) -> Unit = {},
         onToolCall: (ToolCallProgress) -> Unit = {},
-        onTaskProgress: (TaskProgress) -> Unit = {},
         onComplete: (LoopResult) -> Unit = {}
     ): Job {
         // The handoff context becomes the task for the new session
@@ -1866,7 +1855,6 @@ class AgentService(private val project: Project) : Disposable {
             contextManager = null, // fresh context
             onStreamChunk = onStreamChunk,
             onToolCall = onToolCall,
-            onTaskProgress = onTaskProgress,
             onComplete = onComplete
         )
     }

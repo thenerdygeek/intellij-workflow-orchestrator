@@ -108,7 +108,6 @@ class AgentLoop(
     private val project: Project,
     private val onStreamChunk: (String) -> Unit = {},
     private val onToolCall: (ToolCallProgress) -> Unit = {},
-    private val onTaskProgress: (TaskProgress) -> Unit = {},
     private val maxIterations: Int = 200,
     private val planMode: Boolean = false,
     private val onCheckpoint: (suspend () -> Unit)? = null,
@@ -462,11 +461,6 @@ class AgentLoop(
             Regex("(input|prompt).{0,20}too.{0,10}(long|large)", RegexOption.IGNORE_CASE)
         )
 
-        /**
-         * The parameter name used by the LLM to communicate task progress.
-         * Matches Cline's `task_progress` parameter in tool calls.
-         */
-        private const val TASK_PROGRESS_PARAM = "task_progress"
     }
 
     /**
@@ -1237,12 +1231,6 @@ class AgentLoop(
                 continue
             }
 
-            // Extract task_progress from tool call arguments (Cline's FocusChain pattern).
-            // In Cline, task_progress is a parameter on every tool call. The LLM includes
-            // it when it wants to update the progress checklist. We extract it here,
-            // store it in ContextManager, and notify the UI.
-            extractTaskProgress(params)
-
             // PRE_TOOL_USE hook (ported from Cline's ToolHookUtils.runPreToolUseIfEnabled)
             // Runs before each tool execution; can cancel (block) the tool.
             // Cline: "This should be called by tool handlers after approval succeeds
@@ -1718,23 +1706,6 @@ class AgentLoop(
                 line.startsWith("+") -> totalLinesAdded++
                 line.startsWith("-") -> totalLinesRemoved++
             }
-        }
-    }
-
-    /**
-     * Extract `task_progress` from tool call arguments and update state.
-     *
-     * Port of Cline's FocusChainManager.updateFCListFromToolResponse():
-     * - The LLM includes a `task_progress` parameter in tool call JSON
-     * - We extract it, store in ContextManager, and notify the UI callback
-     * - The progress is a markdown checklist string
-     *
-     * @param params the parsed JSON arguments from the tool call
-     */
-    private fun extractTaskProgress(params: JsonObject) {
-        val markdown = (params[TASK_PROGRESS_PARAM] as? JsonPrimitive)?.contentOrNull
-        if (!markdown.isNullOrBlank()) {
-            contextManager.setTaskProgress(markdown)?.let { onTaskProgress(it) }
         }
     }
 
