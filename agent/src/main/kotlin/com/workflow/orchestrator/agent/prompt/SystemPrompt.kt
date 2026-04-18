@@ -239,7 +239,7 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("- File operations: read_file, edit_file, create_file, search_code, glob_files, revert_file")
         appendLine("- Execution: run_command (shell), think (reasoning scratchpad)")
         appendLine("- Code intelligence: find_definition, find_references, diagnostics")
-        appendLine("- Communication: ask_followup_question, attempt_completion, plan_mode_respond, enable_plan_mode")
+        appendLine("- Communication: ask_followup_question, attempt_completion, plan_mode_respond, enable_plan_mode, discard_plan")
         appendLine("- Tasks: task_create, task_update, task_list, task_get")
         appendLine("- Visualization: render_artifact (interactive React components in chat)")
         appendLine("- Session: new_task (hand off to fresh session with structured context)")
@@ -267,7 +267,8 @@ In each user message, the environment_details will specify the current mode. The
 
         appendLine()
         appendLine("**When to load IDE tools (common workflows):**")
-        appendLine("- **Understanding code structure** → find_implementations, type_hierarchy, call_hierarchy, file_structure")
+        appendLine("- **Understanding code structure** → find_implementations, type_hierarchy, call_hierarchy, file_structure, get_method_body, get_annotations, read_write_access")
+        appendLine("- **Locating tests for a class/method** → test_finder (instead of grepping for *Test.kt naming patterns)")
         appendLine("- **Navigating types and data flow** → type_inference, dataflow_analysis, structural_search")
         appendLine("- **Refactoring safely** → refactor_rename, find_implementations, run_inspections, diagnostics")
         val runtimeHint = buildString {
@@ -285,10 +286,14 @@ In each user message, the environment_details will specify the current mode. The
             append(parts.joinToString(", "))
         }
         appendLine(runtimeHint)
+        appendLine("- **Understanding multi-module project layout** → build (project_modules, module_dependency_graph), project_structure (topology, module_detail) — use these BEFORE grepping build.gradle / pom.xml")
+        appendLine("- **Inspecting Maven/Gradle dependencies** → build (maven_dependencies, gradle_dependencies, maven_dependency_tree, maven_effective_pom)")
+        appendLine("- **Fixing module configuration** → project_structure (set_module_dependency, remove_module_dependency, set_module_sdk, set_language_level, add_content_root, remove_content_root, add_source_root, list_facets, list_libraries, list_sdks, refresh_external_project)")
         appendLine("- **Debugging** → debug_breakpoints, debug_step, debug_inspect")
-        appendLine("- **Code quality** → run_inspections, list_quickfixes, format_code, optimize_imports")
+        appendLine("- **Managing run/debug configurations** → runtime_config (get_run_configurations, create/modify/delete_run_config — uses [Agent] prefix for safety)")
+        appendLine("- **Code quality** → run_inspections, list_quickfixes, problem_view (current IDE Problems panel snapshot), format_code, optimize_imports")
         appendLine("- **Git operations** → use run_command (e.g. `git log --oneline -20`, `git diff HEAD~1`, `git blame -L 10,30 path/to/file`); use changelist_shelve for IntelliJ changelist/shelve operations")
-        appendLine("- **Project integrations** → jira, bamboo_builds, sonar, bitbucket_pr, bitbucket_repo")
+        appendLine("- **Project integrations** → jira, bamboo_builds, bamboo_plans, sonar, bitbucket_pr, bitbucket_repo, bitbucket_review")
         appendLine("- **Database** → db_list_profiles, db_list_databases, db_schema, db_query, db_stats, db_explain")
         appendLine()
         appendLine("**Usage tips:**")
@@ -307,7 +312,8 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("- render_artifact tool: produce interactive React visualizations in chat. Load the frontend-design skill first for component APIs and design guidelines. Available: Tailwind CSS, UI components (Card, Badge, Tabs, Progress, Accordion, Tooltip), Recharts (all chart types), Lucide icons (all 1500+), D3 (full namespace), motion/AnimatePresence (Framer Motion), createGlobe (cobe), react-simple-maps, roughjs, React Flow / @xyflow/react (ReactFlowCanvas, Background, Controls, MiniMap, Handle, Position, MarkerType, useNodesState, useEdgesState — use for flow diagrams, state machines, pipelines, dependency graphs, architecture diagrams; do NOT render these as card grids), @tanstack/react-table (headless tables), date-fns (format, formatDistance, parseISO, addDays, ...), colord (color manipulation). All scope variables — use directly, not as imports or props. The sandbox has NO network access — all data must be inline.")
         appendLine("- Database workflow — always follow this sequence: (1) db_list_profiles to discover configured connections, (2) db_list_databases to list user databases on a server profile (system DBs are filtered out), (3) db_schema to explore structure hierarchically: call with profile only to list schemas, add schema= to list tables in that schema, add table= to describe a specific table with columns/indexes/foreign keys, (4) db_stats to check row counts and table sizes before querying large tables, (5) db_query to run read-only SELECT statements, (6) db_explain to get the execution plan and diagnose slow queries. Profiles are server-level — one PostgreSQL profile can reach all databases on that server via the optional `database` parameter.")
         appendLine("- After refactoring code, use sonar.local_analysis(files=...) to get immediate SonarQube feedback on the changed files without waiting for the CI pipeline to complete a full scan. This runs the Sonar scanner locally and fetches fresh issues, hotspots, coverage, and duplications for exactly the files you changed.")
-        append("- You can call multiple tools in a single response. If calls are independent, make them all in parallel for efficiency. If calls depend on each other, run them sequentially.")
+        appendLine("- You can call multiple tools in a single response. If calls are independent, make them all in parallel for efficiency. If calls depend on each other, run them sequentially.")
+        append("- For long-running shell commands started via run_command, use kill_process to terminate and send_stdin to feed input to a still-running process. Use current_time when you need an authoritative timestamp (do not guess). Use ask_user_input for short structured prompts to the user (distinct from ask_followup_question which is conversational).")
 
         // Task-to-tool hints — helps the LLM prefer specialized tools over generic fallbacks
         appendLine()
@@ -345,6 +351,14 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("| Rename across codebase | \"refactor_rename\" | Find-and-replace via edit_file |")
         appendLine("| Fix module deps, SDK, or language level | \"project_structure\" | Editing build.gradle/pom.xml |")
         appendLine("| Extract specific lines from large output | grep_pattern param | Piping through grep via run_command |")
+        appendLine("| Create/edit a run or debug config | \"runtime_config\" | Editing .idea/runConfigurations/*.xml |")
+        if (ideContext == null || ideContext.supportsJava) {
+            appendLine("| Map module dependencies in a multi-module project | \"build\" (project_modules / module_dependency_graph) | Reading every settings.gradle / pom.xml manually |")
+            appendLine("| See effective POM or full dependency tree | \"build\" (maven_effective_pom / maven_dependency_tree) | Running `mvn` via run_command and parsing output |")
+        }
+        if (ideContext?.supportsPython == true) {
+            appendLine("| Discover or run pytest tests | \"build\" (pytest_discover, pytest_run, pytest_fixtures) | Manually running pytest via run_command |")
+        }
     }.trimEnd()
 
     /**
@@ -518,6 +532,7 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("- Three similar lines of code is better than a premature abstraction. Don't design for hypothetical future requirements.")
         appendLine("- Be careful not to introduce security vulnerabilities: command injection, XSS, SQL injection, path traversal. If you notice insecure code, fix it immediately.")
         appendLine("- After making changes, use the diagnostics tool to check for compilation errors. For project-wide issues, use tool_search to load run_inspections or problem_view.")
+        appendLine("- After editing `build.gradle`, `pom.xml`, `settings.gradle`, or any external-system build file, call project_structure(action=\"refresh_external_project\") so IntelliJ reimports the model. Skipping this means subsequent diagnostics/run_tests/find_definition see stale module info.")
         appendLine()
 
         // Safety & Reversibility
