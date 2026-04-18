@@ -18,6 +18,11 @@ class TagBuilderService {
     private val bambooService: BambooService
     private val buildVariableName: String
 
+    companion object {
+        private val DOCKER_TAG_REGEX = Regex("Unique Docker Tag\\s*:\\s*(.+)")
+        private val ANSI_ESCAPE_REGEX = Regex("\\x1B\\[[0-9;]*m")
+    }
+
     /** Project service constructor — used by IntelliJ DI. */
     constructor(project: Project) {
         val settings = PluginSettings.getInstance(project)
@@ -34,51 +39,74 @@ class TagBuilderService {
     private val json = Json { ignoreUnknownKeys = true }
     private val semverPattern = Regex("""^\d+\.\d+\.\d+.*$""")
 
+    /**
+     * Scores and ranks recent builds, collecting diagnostic info about each step.
+     * Returns the ranked runs plus diagnostics explaining what happened.
+     */
     suspend fun scoreAndRankRuns(
         suitePlanKey: String,
         maxResults: Int = 10
-    ): List<BaselineRun> {
+    ): Pair<List<BaselineRun>, BaselineDiagnostics> {
         log.info("[Automation:Tags] Scoring and ranking runs for plan '$suitePlanKey', maxResults=$maxResults")
         val buildsResult = bambooService.getRecentBuilds(suitePlanKey, maxResults)
         if (buildsResult.isError) {
             log.info("[Automation:Tags] getRecentBuilds failed for '$suitePlanKey': ${buildsResult.summary}")
-            return emptyList()
+            return emptyList<BaselineRun>() to BaselineDiagnostics(
+                buildsQueried = 0,
+                buildsWithVariables = 0,
+                buildsWithDockerTags = 0,
+                bambooError = buildsResult.summary,
+                skippedReasons = emptyList()
+            )
         }
 
-        log.info("[Automation:Tags] Found ${buildsResult.data.size} recent builds for '$suitePlanKey'")
+        val totalBuilds = buildsResult.data.size
+        log.info("[Automation:Tags] Found $totalBuilds recent builds for '$suitePlanKey'")
+        var buildsWithVars = 0
+        var buildsWithTags = 0
+        val skippedReasons = mutableListOf<String>()
 
-        return buildsResult.data.mapNotNull { build ->
+        val ranked = buildsResult.data.mapNotNull { build ->
             log.info("[Automation:Tags] Checking build #${build.buildNumber} (buildResultKey=${build.buildResultKey}, state=${build.state})")
 
-            // Fetch build variables via service
             val resultKey = build.buildResultKey.ifBlank { "${suitePlanKey}-${build.buildNumber}" }
             log.info("[Automation:Tags]   Build #${build.buildNumber}: fetching variables with key='$resultKey'")
             val varsResult = bambooService.getBuildVariables(resultKey)
             if (varsResult.isError) {
-                log.info("[Automation:Tags]   Build #${build.buildNumber}: failed to get variables: ${varsResult.summary}")
+                val reason = "#${build.buildNumber}: variables fetch failed — ${varsResult.summary}"
+                log.info("[Automation:Tags]   $reason")
+                skippedReasons.add(reason)
                 return@mapNotNull null
             }
             val variables = varsResult.data.associate { it.name to it.value }
-            log.info("[Automation:Tags]   Build #${build.buildNumber}: fetched variables: ${variables.keys}")
+            buildsWithVars++
+            log.info("[Automation:Tags]   Build #${build.buildNumber}: fetched ${variables.size} variables: ${variables.keys}")
 
-            val dockerTagsJson = variables[buildVariableName]
+            // Case-insensitive lookup — Bamboo variable may be DockerTagsAsJson or dockerTagsAsJson
+            val dockerTagsJson = variables.entries
+                .firstOrNull { it.key.equals(buildVariableName, ignoreCase = true) }?.value
             if (dockerTagsJson == null) {
-                log.info("[Automation:Tags]   Build #${build.buildNumber}: no '$buildVariableName' variable found")
+                val reason = "#${build.buildNumber}: no '$buildVariableName' in variables [${variables.keys.joinToString()}]"
+                log.info("[Automation:Tags]   $reason")
+                skippedReasons.add(reason)
                 return@mapNotNull null
             }
 
             val tags = parseDockerTagsJson(dockerTagsJson)
             if (tags.isEmpty()) {
-                log.info("[Automation:Tags]   Build #${build.buildNumber}: dockerTagsJson parsed to empty map: ${dockerTagsJson.take(200)}")
+                val reason = "#${build.buildNumber}: dockerTagsAsJson parsed to empty — ${dockerTagsJson.take(100)}"
+                log.info("[Automation:Tags]   $reason")
+                skippedReasons.add(reason)
                 return@mapNotNull null
             }
+            buildsWithTags++
 
             val releaseCount = tags.values.count { semverPattern.matches(it) }
             val successStages = build.stages.count { it.state.equals("Successful", ignoreCase = true) }
             val failedStages = build.stages.count { it.state.equals("Failed", ignoreCase = true) }
             val score = (releaseCount * 10) + (successStages * 5) - (failedStages * 20)
 
-            log.info("[Automation:Tags]   Build #${build.buildNumber}: ${tags.size} services, score=$score")
+            log.info("[Automation:Tags]   Build #${build.buildNumber}: ${tags.size} services, $releaseCount release tags, score=$score")
 
             BaselineRun(
                 buildNumber = build.buildNumber,
@@ -91,22 +119,35 @@ class TagBuilderService {
                 triggeredAt = java.time.Instant.now(),
                 score = score
             )
-        }.sortedByDescending { it.score }.also { ranked ->
-            log.info("[Automation:Tags] Scored ${ranked.size} baseline runs for plan '$suitePlanKey'")
-        }
+        }.sortedByDescending { it.score }
+
+        log.info("[Automation:Tags] Scored ${ranked.size} baseline runs for plan '$suitePlanKey'")
+
+        val diagnostics = BaselineDiagnostics(
+            buildsQueried = totalBuilds,
+            buildsWithVariables = buildsWithVars,
+            buildsWithDockerTags = buildsWithTags,
+            bambooError = null,
+            skippedReasons = skippedReasons
+        )
+        return ranked to diagnostics
     }
 
-    suspend fun loadBaseline(suitePlanKey: String): List<TagEntry> {
+    /**
+     * Loads baseline tags with full diagnostic info for the UI.
+     */
+    suspend fun loadBaselineWithDiagnostics(suitePlanKey: String): BaselineLoadResult {
         log.info("[Automation:Tags] Loading baseline for plan '$suitePlanKey'")
-        val ranked = scoreAndRankRuns(suitePlanKey)
+        val (ranked, diagnostics) = scoreAndRankRuns(suitePlanKey)
+
         if (ranked.isEmpty()) {
-            log.info("[Automation:Tags] No baseline runs found for plan '$suitePlanKey'")
-            return emptyList()
+            log.info("[Automation:Tags] No baseline runs found — ${diagnostics.toStatusText()}")
+            return BaselineLoadResult(tags = emptyList(), selectedBuild = null, diagnostics = diagnostics)
         }
 
         val best = ranked[0]
-        log.info("[Automation:Tags] Selected baseline run #${best.buildNumber} with ${best.totalServices} services, score=${best.score}")
-        return best.dockerTags.map { (service, tag) ->
+        log.info("[Automation:Tags] Selected baseline: build #${best.buildNumber}, ${best.releaseTagCount}/${best.totalServices} release tags, score=${best.score}")
+        val tags = best.dockerTags.map { (service, tag) ->
             TagEntry(
                 serviceName = service,
                 currentTag = tag,
@@ -117,7 +158,12 @@ class TagBuilderService {
                 isCurrentRepo = false
             )
         }
+        return BaselineLoadResult(tags = tags, selectedBuild = best, diagnostics = diagnostics)
     }
+
+    /** Legacy method — delegates to [loadBaselineWithDiagnostics]. */
+    suspend fun loadBaseline(suitePlanKey: String): List<TagEntry> =
+        loadBaselineWithDiagnostics(suitePlanKey).tags
 
     fun replaceCurrentRepoTag(
         entries: List<TagEntry>,
@@ -158,42 +204,52 @@ class TagBuilderService {
     }
 
     /**
-     * Extract the current repo's docker tag from its CI build log.
-     * Looks for "Unique Docker Tag : <tag>" in the log.
+     * Detect the current repo's docker tag from its CI build log.
+     * Returns a [TagDetectionResult] with diagnostic info for the UI.
      */
-    suspend fun extractDockerTagFromBuildLog(serviceCiPlanKey: String, branchName: String): String? {
-        log.info("[Automation:Tags] Extracting docker tag from build log: plan=$serviceCiPlanKey, branch=$branchName")
+    suspend fun detectDockerTag(serviceCiPlanKey: String, branchName: String): TagDetectionResult {
+        log.info("[Automation:Tags] Detecting docker tag: plan=$serviceCiPlanKey, branch=$branchName")
 
-        // Get latest build for this branch
         val buildResult = bambooService.getLatestBuild(serviceCiPlanKey, branchName)
         if (buildResult.isError) {
-            log.warn("[Automation:Tags] No build found for $serviceCiPlanKey/$branchName")
-            return null
+            log.warn("[Automation:Tags] No build found for $serviceCiPlanKey/$branchName: ${buildResult.summary}")
+            return TagDetectionResult.noBuild(branchName)
         }
 
         val resultKey = buildResult.data.buildResultKey
         log.info("[Automation:Tags] Found build $resultKey, fetching log...")
 
-        // Try to get the build log
         val logResult = bambooService.getBuildLog(resultKey)
         if (logResult.isError) {
-            log.warn("[Automation:Tags] Failed to fetch build log for $resultKey")
-            return null
+            log.warn("[Automation:Tags] Failed to fetch build log for $resultKey: ${logResult.summary}")
+            return TagDetectionResult.logFetchFailed(resultKey)
         }
 
-        // Extract docker tag from log
-        val dockerTagRegex = Regex("Unique Docker Tag\\s*:\\s*(.+)")
-        val match = dockerTagRegex.find(logResult.data)
-        val tag = match?.groupValues?.get(1)?.trim()
-            ?.replace(Regex("\\x1B\\[[0-9;]*m"), "") // Strip ANSI escape codes
+        val tag = extractDockerTagFromLog(logResult.data)
 
-        if (tag != null) {
-            log.info("[Automation:Tags] Extracted docker tag: '$tag'")
+        return if (tag != null) {
+            log.info("[Automation:Tags] Detected docker tag: '$tag' from $resultKey")
+            TagDetectionResult.success(tag, resultKey)
         } else {
             log.warn("[Automation:Tags] 'Unique Docker Tag' not found in build log for $resultKey")
+            TagDetectionResult.noTagInLog(resultKey)
         }
-        return tag
     }
+
+    /**
+     * Extract docker tag from pre-fetched build log text.
+     * Pure function — no API calls. Used by event-driven path (BuildLogReady).
+     */
+    fun extractDockerTagFromLog(logText: String): String? {
+        val match = DOCKER_TAG_REGEX.find(logText) ?: return null
+        return match.groupValues[1].trim()
+            .replace(ANSI_ESCAPE_REGEX, "")
+            .takeIf { it.isNotBlank() }
+    }
+
+    /** Legacy method — delegates to [detectDockerTag]. */
+    suspend fun extractDockerTagFromBuildLog(serviceCiPlanKey: String, branchName: String): String? =
+        detectDockerTag(serviceCiPlanKey, branchName).tag
 
     private fun parseDockerTagsJson(jsonStr: String): Map<String, String> {
         return try {
