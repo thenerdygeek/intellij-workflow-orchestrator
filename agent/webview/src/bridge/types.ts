@@ -337,6 +337,15 @@ export interface UiMessageToolCallData {
   isError?: boolean;
 }
 
+export type CompletionKind = 'done' | 'review' | 'heads_up';
+
+export interface CompletionData {
+  kind: CompletionKind;
+  result: string;
+  verifyHow?: string | null;
+  discovery?: string | null;
+}
+
 export interface UiMessage {
   ts: number;
   type: UiMessageType;
@@ -357,6 +366,7 @@ export interface UiMessage {
   questionData?: UiMessageQuestionData;
   subagentData?: UiMessageSubagentData;
   toolCallData?: UiMessageToolCallData;
+  completionData?: CompletionData;
   /** Mentions attached to a USER_MESSAGE (ticket chips, file refs, etc.) */
   mentions?: Mention[];
 }

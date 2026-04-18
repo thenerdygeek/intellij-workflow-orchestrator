@@ -19,6 +19,8 @@ import type {
   UiMessage,
   SubAgentState,
   HistoryItem,
+  CompletionData,
+  CompletionKind,
 } from '../bridge/types';
 
 // ── Internal ID generator ──
@@ -171,7 +173,7 @@ interface ChatState {
   finalizeToolChain(): void;
   addDiff(diff: EditDiff): void;
   addDiffExplanation(title: string, diffSource: string): void;
-  addCompletionSummary(result: string, verifyCommand?: string): void;
+  addCompletionCard(data: CompletionData): void;
   addStatus(message: string, type: StatusType): void;
   addThinking(text: string): void;
   clearChat(): void;
@@ -621,12 +623,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set(state => ({ messages: [...state.messages, msg] }));
   },
 
-  addCompletionSummary(result: string, verifyCommand?: string) {
+  addCompletionCard(data: CompletionData) {
     const msg: UiMessage = {
       ts: uniqueTs(),
       type: 'ASK',
       ask: 'COMPLETION_RESULT',
-      text: verifyCommand ? JSON.stringify({ result, verifyCommand }) : result,
+      completionData: data,
     };
     set(state => ({
       messages: [...state.messages, msg],
@@ -1519,6 +1521,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ask: 'COMPLETION_RESULT' as const,
             text: result,
             toolCallData: undefined,
+            completionData: { kind: 'done' as CompletionKind, result },
           };
         }
         case 'plan_mode_respond': {

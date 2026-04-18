@@ -5,6 +5,7 @@ import type {
   UiMessage,
   HistoryItem,
   Task,
+  CompletionData,
 } from './types';
 import { preloadDiff2Html } from '../components/rich/DiffHtml';
 import { updateChartById } from '../components/rich/chartUtils';
@@ -89,8 +90,13 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     preloadDiff2Html();
     stores?.getChatStore().addDiffExplanation(title, diffSource);
   },
-  appendCompletionSummary(result: string, verifyCommand?: string) {
-    stores?.getChatStore().addCompletionSummary(result, verifyCommand ?? undefined);
+  _appendCompletionCard(json: string) {
+    try {
+      const data = JSON.parse(json) as CompletionData;
+      stores?.getChatStore().addCompletionCard(data);
+    } catch (e) {
+      console.error('[bridge] _appendCompletionCard parse error', e);
+    }
   },
   appendStatus(message: string, type: string) {
     stores?.getChatStore().addStatus(message, type as StatusType);
