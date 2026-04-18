@@ -7,22 +7,11 @@ import { Check, RotateCcw, Loader2 } from 'lucide-react';
 import { PlanDocumentViewer } from './components/plan/PlanDocumentViewer';
 import type { LineComment } from './components/plan/PlanDocumentViewer';
 
-// ── Data model — mirrors AgentPlan / PlanStep from Kotlin ─────────────────────
-
-interface PlanStep {
-  id: string;
-  title: string;
-  description?: string;
-  files?: string[];
-  action?: string;   // read | edit | create | verify | code
-  status?: string;   // pending | running | completed | failed | skipped
-  userComment?: string;
-}
+// ── Data model — mirrors PlanJson from Kotlin ────────────────────────────────
 
 interface AgentPlanData {
   goal: string;
   approach?: string;
-  steps: PlanStep[];
   testing?: string;
   approved?: boolean;
   markdown?: string;
@@ -63,50 +52,6 @@ let triggerReviseInternal: (() => void) | null = null;
   triggerReviseInternal?.();
 };
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/** Convert plan data into a markdown string for rendering (backward compat). */
-function planToMarkdown(plan: AgentPlanData): string {
-  const lines: string[] = [];
-
-  lines.push(`## Goal`);
-  lines.push('');
-  lines.push(plan.goal);
-  lines.push('');
-
-  if (plan.approach) {
-    lines.push(`## Approach`);
-    lines.push('');
-    lines.push(plan.approach);
-    lines.push('');
-  }
-
-  lines.push(`## Steps`);
-  lines.push('');
-
-  plan.steps.forEach((step, idx) => {
-    lines.push(`### ${idx + 1}. ${step.title}`);
-    lines.push('');
-    if (step.description) {
-      lines.push(step.description);
-      lines.push('');
-    }
-    if (step.files && step.files.length > 0) {
-      lines.push(`**Files:** ${step.files.map(f => `\`${f}\``).join(', ')}`);
-      lines.push('');
-    }
-  });
-
-  if (plan.testing) {
-    lines.push(`## Testing & Verification`);
-    lines.push('');
-    lines.push(plan.testing);
-    lines.push('');
-  }
-
-  return lines.join('\n');
-}
-
 // ── Main component ────────────────────────────────────────────────────────────
 
 function PlanEditor() {
@@ -139,11 +84,10 @@ function PlanEditor() {
     };
   }, []);
 
-  // Generate markdown — use raw markdown if available, otherwise synthesize
+  // Generate markdown from plan data (markdown field is always present in production)
   const markdown = useMemo(() => {
     if (!planData) return '';
-    if (planData.markdown) return planData.markdown;
-    return planToMarkdown(planData);
+    return planData.markdown ?? '';
   }, [planData]);
 
   const handleAddComment = useCallback((lineNumber: number, text: string, lineContent: string) => {

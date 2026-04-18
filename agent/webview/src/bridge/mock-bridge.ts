@@ -36,14 +36,13 @@ export async function simulateAgentResponse(): Promise<void> {
 export async function simulatePlan(): Promise<void> {
   const w = window as any;
   const planJson = JSON.stringify({
+    goal: 'Implement user authentication',
     title: 'Implement user authentication',
-    steps: [
-      { id: 'step-1', title: 'Create auth service', description: 'Implement AuthService with login/logout methods', status: 'completed', filePaths: ['src/services/auth.ts'] },
-      { id: 'step-2', title: 'Add login form component', description: 'Create LoginForm with email/password fields', status: 'running', filePaths: ['src/components/LoginForm.tsx'] },
-      { id: 'step-3', title: 'Wire up routing', description: 'Add protected routes and redirect logic', status: 'pending', filePaths: ['src/App.tsx', 'src/routes.tsx'] },
-      { id: 'step-4', title: 'Write tests', description: 'Unit tests for auth service and integration tests for login flow', status: 'pending', filePaths: ['src/services/__tests__/auth.test.ts'] },
-    ],
+    summary: 'Add login/logout flow with JWT tokens, protected routes, and unit tests.',
+    approach: 'Create AuthService, add LoginForm component, wire protected routes, then write tests.',
+    testing: 'Run `npm test -- --filter auth` and verify all auth tests pass.',
     approved: false,
+    markdown: `## Goal\n\nImplement user authentication\n\n## Approach\n\nCreate AuthService, add LoginForm component, wire protected routes, then write tests.\n\n## Testing & Verification\n\nRun \`npm test -- --filter auth\` and verify all auth tests pass.`,
   });
   w.renderPlan?.(planJson);
 }
