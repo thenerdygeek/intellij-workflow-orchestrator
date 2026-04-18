@@ -281,7 +281,7 @@ lastPromptTokens: Int?               -- API-reported prompt tokens (invalidated 
 lastSummary: String?                 -- previous LLM summary for summary chaining
 fileReadIndices: Map<path, indices>  -- tracks file reads for Stage 1 dedup
 activeSkillContent: String?          -- survives compaction via re-injection
-taskProgressMarkdown: String?        -- survives compaction via system prompt inclusion
+taskStore: TaskStore?                -- attached via ContextManager.attachTaskStore; rendered via renderTaskProgressMarkdown on every prompt build (survives compaction)
 ```
 
 `getMessages()` returns `[systemPrompt] + messages` as the list sent to the LLM.
@@ -355,7 +355,7 @@ Two types of data survive compaction:
 
 | Data | Mechanism | Source |
 |---|---|---|
-| **Task progress** | Stored in `taskProgressMarkdown`; included in system prompt on rebuild | Cline (FocusChainManager) |
+| **Tasks** | TaskStore attached via ContextManager.attachTaskStore; rendered into Section 2 of system prompt on every build | Cline (FocusChainManager) |
 | **Active skill** | Stored in `activeSkillContent`; re-injected as tagged assistant message after compaction | Cline (skill activation) |
 
 ### Checkpoint Persistence
@@ -836,6 +836,10 @@ Hooks loaded from `.agent-hooks.json` in project root:
 ```
 
 Timeout bounded to 1s-120s. Zero-overhead when no hooks configured (`hasHooks()` is O(1)).
+
+### Hook Exemptions
+
+**Hook exemption:** Task tools (`task_create`, `task_update`, `task_list`, `task_get`) bypass `PreToolUse`/`PostToolUse` hooks entirely. They are metadata operations (no repo state change) and follow Claude Code's behavior of treating internal bookkeeping tools as hook-exempt. Hooks configured for approval or audit logging will **not** fire for these tools.
 
 ---
 
