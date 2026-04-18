@@ -1509,7 +1509,7 @@ class AgentLoop(
                         summary = toolResult.content,
                         iterations = iteration,
                         tokensUsed = totalTokensUsed,
-                        verifyCommand = toolResult.verifyCommand,
+                        completionData = toolResult.completionData,
                         inputTokens = totalInputTokens,
                         outputTokens = totalOutputTokens,
                         filesModified = filesModifiedList(),

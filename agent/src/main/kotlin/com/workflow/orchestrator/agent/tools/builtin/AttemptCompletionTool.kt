@@ -4,6 +4,8 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.CompletionData
+import com.workflow.orchestrator.agent.tools.CompletionKind
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
 import kotlinx.serialization.json.JsonObject
@@ -45,7 +47,7 @@ class AttemptCompletionTool : AgentTool {
             content = result,
             summary = "Task completed: ${result.take(200)}",
             tokenEstimate = result.length / 4,
-            verifyCommand = command
+            completionData = CompletionData(kind = CompletionKind.DONE, result = result, verifyHow = command)
         )
     }
 }

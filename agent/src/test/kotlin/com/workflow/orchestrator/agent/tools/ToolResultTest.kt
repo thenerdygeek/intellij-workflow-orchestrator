@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.tools
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -48,9 +49,12 @@ class ToolResultTest {
 
     @Test
     fun `completion factory produces Completion type`() {
-        val result = ToolResult.completion("done", "completed", 10, verifyCommand = "npm test")
+        val result = ToolResult.completion(
+            "done", "completed", 10,
+            completionData = CompletionData(CompletionKind.DONE, "done", verifyHow = "npm test")
+        )
         assertTrue(result.type is ToolResultType.Completion)
-        assertEquals("npm test", result.verifyCommand)
+        assertEquals("npm test", result.completionData?.verifyHow)
     }
 
     @Test
@@ -123,9 +127,13 @@ class ToolResultTest {
     }
 
     @Test
-    fun `verifyCommand preserved through completion factory`() {
-        val result = ToolResult.completion("done", "completed", 10, verifyCommand = "make test")
-        assertEquals("make test", result.verifyCommand)
+    fun `completionData preserved through completion factory`() {
+        val result = ToolResult.completion(
+            "done", "completed", 10,
+            completionData = CompletionData(CompletionKind.DONE, "done", verifyHow = "make test")
+        )
+        assertEquals("make test", result.completionData?.verifyHow)
+        assertNull(result.completionData?.discovery)
     }
 
     @Test

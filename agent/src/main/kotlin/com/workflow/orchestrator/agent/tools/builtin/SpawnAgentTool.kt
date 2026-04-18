@@ -356,7 +356,7 @@ Tips:
                 content = "[Agent: $description]\n${result.result ?: "(no output)"}\n\n$statsLine",
                 summary = "Agent completed ($label): ${(result.result ?: "").take(150)}",
                 tokenEstimate = estimateTokens(result.result ?: ""),
-                verifyCommand = null
+                completionData = null
             )
             SubagentRunStatus.FAILED -> ToolResult(
                 content = "[Agent: $description] Failed: ${result.error ?: "unknown error"}\n\n$statsLine",

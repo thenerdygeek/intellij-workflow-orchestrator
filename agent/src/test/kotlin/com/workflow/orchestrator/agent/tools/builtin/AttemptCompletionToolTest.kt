@@ -53,6 +53,6 @@ class AttemptCompletionToolTest {
             put("result", "Done")
             put("command", "./gradlew test")
         }, project)
-        assertEquals("./gradlew test", result.verifyCommand)
+        assertEquals("./gradlew test", result.completionData?.verifyHow)
     }
 }

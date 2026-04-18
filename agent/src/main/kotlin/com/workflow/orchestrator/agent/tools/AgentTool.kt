@@ -213,7 +213,7 @@ data class ToolResult(
     val artifacts: List<String> = emptyList(),
     val isError: Boolean = false,
     @Deprecated("Use ToolResult.type instead") val isCompletion: Boolean = false,
-    val verifyCommand: String? = null,
+    val completionData: CompletionData? = null,
     /** True when this result is a plan_mode_respond output (plan presentation). */
     @Deprecated("Use ToolResult.type instead") val isPlanResponse: Boolean = false,
     /** True when the LLM needs more exploration before finalizing the plan. */
@@ -280,8 +280,8 @@ data class ToolResult(
         fun error(message: String, summary: String = message): ToolResult =
             ToolResult(message, summary, ERROR_TOKEN_ESTIMATE, isError = true)
 
-        fun completion(content: String, summary: String, tokenEstimate: Int, verifyCommand: String? = null) =
-            ToolResult(content, summary, tokenEstimate, isCompletion = true, verifyCommand = verifyCommand, type = ToolResultType.Completion)
+        fun completion(content: String, summary: String, tokenEstimate: Int, completionData: CompletionData? = null) =
+            ToolResult(content, summary, tokenEstimate, isCompletion = true, completionData = completionData, type = ToolResultType.Completion)
 
         fun planResponse(content: String, summary: String, tokenEstimate: Int, needsMoreExploration: Boolean) =
             ToolResult(content, summary, tokenEstimate, isPlanResponse = true, needsMoreExploration = needsMoreExploration, type = ToolResultType.PlanResponse(needsMoreExploration))

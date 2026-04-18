@@ -458,7 +458,7 @@ class ToolTestingPanel(
             if (result.isSkillActivation) append("  |  skill=${result.activatedSkillName}")
             if (result.enablePlanMode) append("  |  enablePlanMode=true")
             if (result.diff != null) append("  |  hasDiff=true")
-            if (result.verifyCommand != null) append("  |  verify=${result.verifyCommand}")
+            if (result.completionData?.verifyHow != null) append("  |  verify=${result.completionData.verifyHow}")
         }
         metadataLabel.text = meta
         metadataLabel.foreground = UIUtil.getContextHelpForeground()

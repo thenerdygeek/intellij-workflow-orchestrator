@@ -1522,7 +1522,7 @@ class AgentController(
             try {
             when (result) {
                 is LoopResult.Completed -> {
-                    dashboard.appendCompletionSummary(result.summary, result.verifyCommand)
+                    dashboard.appendCompletionSummary(result.summary, result.completionData?.verifyHow)
                     // Display token usage summary (ported from Cline's cost tracking)
                     if (result.inputTokens > 0 || result.outputTokens > 0) {
                         val inputK = formatTokenCount(result.inputTokens)
