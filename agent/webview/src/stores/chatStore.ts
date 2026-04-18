@@ -1609,8 +1609,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // ── Task Actions (task system port — Phase 5) ──
   setTasks: (tasks) => set({ tasks }),
-  applyTaskCreate: (task) => set((state) => ({ tasks: [...state.tasks, task] })),
-  applyTaskUpdate: (task) => set((state) => ({
-    tasks: state.tasks.map((t) => (t.id === task.id ? task : t)),
-  })),
+  applyTaskCreate: (task) => set((state) => {
+    const existing = state.tasks.findIndex((t) => t.id === task.id);
+    if (existing >= 0) {
+      // Upsert: duplicate create (e.g. session resume replay) replaces in-place
+      const updated = [...state.tasks];
+      updated[existing] = task;
+      return { tasks: updated };
+    }
+    return { tasks: [...state.tasks, task] };
+  }),
+  applyTaskUpdate: (task) => set((state) => {
+    const existing = state.tasks.findIndex((t) => t.id === task.id);
+    if (existing >= 0) {
+      const updated = [...state.tasks];
+      updated[existing] = task;
+      return { tasks: updated };
+    }
+    // Upsert: if the create event was missed (out-of-order delivery), fall through to append
+    return { tasks: [...state.tasks, task] };
+  }),
 }));

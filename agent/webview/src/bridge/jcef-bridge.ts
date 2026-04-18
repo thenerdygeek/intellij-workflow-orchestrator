@@ -627,6 +627,25 @@ for (const [name, fn] of Object.entries(bridgeFunctions)) {
 (window as any)._showHistoryView = (window as any).showHistoryView;
 (window as any)._showChatView = (window as any).showChatView;
 
+// Task bridge early registration — module-scope safety net so session-resume
+// _setTasks calls arriving before initBridge() don't race-drop.
+// Uses same pendingCalls buffer pattern as bridgeFunctions above.
+// In initBridge(), these are replaced with direct functions via registerTaskBridges().
+const taskBridgeFunctions: Record<string, (...args: any[]) => void> = {
+  _applyTaskCreate: (task: Task) => { stores?.getChatStore().applyTaskCreate(task); },
+  _applyTaskUpdate: (task: Task) => { stores?.getChatStore().applyTaskUpdate(task); },
+  _setTasks: (tasks: Task[]) => { stores?.getChatStore().setTasks(tasks); },
+};
+for (const [name, fn] of Object.entries(taskBridgeFunctions)) {
+  (window as any)[name] = (...args: any[]) => {
+    if (stores) {
+      fn(...args);
+    } else {
+      pendingCalls.push({ name, args });
+    }
+  };
+}
+
 // ═══ Initialization ═══
 
 export function initBridge(storeAccessors: StoreAccessors): void {
@@ -647,11 +666,16 @@ export function initBridge(storeAccessors: StoreAccessors): void {
   (window as any)._showChatView = bridgeFunctions.showChatView;
 
   // Register task bridge functions (Kotlin→JS, Phase 5 task system port)
+  // Re-register with direct references now that stores are available (no buffering wrapper needed).
   registerTaskBridges();
+  for (const [name, fn] of Object.entries(taskBridgeFunctions)) {
+    (window as any)[name] = fn;
+  }
 
   // Replay any calls that arrived before stores were ready
   for (const call of pendingCalls) {
-    const fn = bridgeFunctions[call.name];
+    const fn = (bridgeFunctions as Record<string, (...args: any[]) => void>)[call.name]
+      ?? taskBridgeFunctions[call.name];
     if (fn) {
       try { fn(...call.args); } catch (_) { /* best effort */ }
     }
