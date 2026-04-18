@@ -437,6 +437,10 @@ class AgentDashboardPanel(
         cefPanel?.onFocusPlanEditor = onFocus
     }
 
+    fun setCefOpenApprovedPlanCallback(onOpen: () -> Unit) {
+        cefPanel?.onOpenApprovedPlan = onOpen
+    }
+
     fun setCefRevisePlanFromEditorCallback(onRevise: () -> Unit) {
         cefPanel?.onRevisePlanFromEditor = onRevise
     }

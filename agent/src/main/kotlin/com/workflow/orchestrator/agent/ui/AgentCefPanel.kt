@@ -91,6 +91,7 @@ class AgentCefPanel(
     private var sendMessageWithMentionsQuery: JBCefJSQuery? = null
     private var openInEditorTabQuery: JBCefJSQuery? = null
     private var focusPlanEditorQuery: JBCefJSQuery? = null
+    private var openApprovedPlanQuery: JBCefJSQuery? = null
     private var revisePlanFromEditorQuery: JBCefJSQuery? = null
     private var viewInEditorQuery: JBCefJSQuery? = null
     private var approveToolCallQuery: JBCefJSQuery? = null
@@ -186,6 +187,9 @@ class AgentCefPanel(
 
     /** Callback when user clicks "View Implementation Plan" on the plan card. Focuses the existing plan editor tab. */
     var onFocusPlanEditor: (() -> Unit)? = null
+
+    /** Callback when user clicks "Open Plan" on the approved-plan card (plan already approved, view it in editor). */
+    var onOpenApprovedPlan: (() -> Unit)? = null
 
     /** Callback when user clicks "Revise" on the chat plan card. Triggers revise on the plan editor tab. */
     var onRevisePlanFromEditor: (() -> Unit)? = null
@@ -436,6 +440,7 @@ class AgentCefPanel(
         }
         openInEditorTabQuery = registerQuery(b) { payload -> onOpenInEditorTab?.invoke(payload); JBCefJSQuery.Response("ok") }
         focusPlanEditorQuery = registerQuery(b) { _ -> onFocusPlanEditor?.invoke(); JBCefJSQuery.Response("ok") }
+        openApprovedPlanQuery = registerQuery(b) { _ -> onOpenApprovedPlan?.invoke(); JBCefJSQuery.Response("ok") }
         revisePlanFromEditorQuery = registerQuery(b) { _ -> onRevisePlanFromEditor?.invoke(); JBCefJSQuery.Response("ok") }
         viewInEditorQuery = registerQuery(b) { _ -> onViewInEditor?.invoke(); JBCefJSQuery.Response("ok") }
 
@@ -552,6 +557,7 @@ class AgentCefPanel(
                     injectBridge("_sendMessageWithMentions") { sendMessageWithMentionsQuery?.let { q -> js("window._sendMessageWithMentions = function(payload) { ${q.inject("payload")} }") } }
                     injectBridge("_openInEditorTab") { openInEditorTabQuery?.let { q -> js("window._openInEditorTab = function(payload) { ${q.inject("payload")} }") } }
                     injectBridge("_focusPlanEditor") { focusPlanEditorQuery?.let { q -> js("window._focusPlanEditor = function() { ${q.inject("''")} }") } }
+                    injectBridge("_openApprovedPlan") { openApprovedPlanQuery?.let { q -> js("window._openApprovedPlan = function() { ${q.inject("''")} }") } }
                     injectBridge("_revisePlanFromEditor") { revisePlanFromEditorQuery?.let { q -> js("window._revisePlanFromEditor = function() { ${q.inject("''")} }") } }
                     injectBridge("_viewInEditor") { viewInEditorQuery?.let { q -> js("window._viewInEditor = function() { ${q.inject("''")} }") } }
                     injectBridge("_approveToolCall") { approveToolCallQuery?.let { q -> js("window._approveToolCall = function() { ${q.inject("'approve'")} }") } }

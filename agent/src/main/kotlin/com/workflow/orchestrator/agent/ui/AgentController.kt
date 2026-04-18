@@ -27,8 +27,11 @@ import com.workflow.orchestrator.agent.loop.ToolCallProgress
 import com.workflow.orchestrator.agent.session.HistoryItem
 import com.workflow.orchestrator.agent.session.MessageStateHandler
 import com.workflow.orchestrator.agent.session.ResumeHelper
+import com.workflow.orchestrator.agent.session.PlanApprovalData
 import com.workflow.orchestrator.agent.session.UiAsk
 import com.workflow.orchestrator.agent.session.UiMessage
+import com.workflow.orchestrator.agent.session.UiMessageType
+import com.workflow.orchestrator.agent.session.UiSay
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.settings.ToolPreferences
 import com.workflow.orchestrator.agent.observability.HaikuPhraseGenerator
@@ -81,6 +84,10 @@ class AgentController(
     private var lastTaskText: String? = null
     /** Clean display text for retry/restore (without XML). Null = same as lastTaskText. */
     private var lastDisplayText: String? = null
+    /** The original task text from the very first user message in this session. "First message wins" —
+     *  plan-mode approvals and steering injections never overwrite this. Used to re-inject the original
+     *  task when context is cleared on plan approval so the LLM retains full intent. */
+    private var originalTaskText: String? = null
     /** Mentions JSON for retry display chips. */
     private var lastDisplayMentionsJson: String? = null
     /**
@@ -325,6 +332,9 @@ class AgentController(
         dashboard.setCefFocusPlanEditorCallback {
             openPlanInEditor()
         }
+
+        // "Open Plan" button on the approved-plan card — reuses the same editor-open logic
+        dashboard.setCefOpenApprovedPlanCallback(::openPlanInEditor)
 
         // "Revise" button in the chat card — delegates to the open plan editor tab
         dashboard.setCefRevisePlanFromEditorCallback {
@@ -969,8 +979,12 @@ class AgentController(
      *
      * @param displayText Clean text for UI display (without XML context). Null = use task.
      * @param displayMentionsJson JSON array of mentions for chip rendering. Null = no chips.
+     * @param uiMessageOverride Optional override for the persisted UI message. When provided, the
+     *        message history records this message instead of the synthesized USER_MESSAGE. The live
+     *        chat bubble still shows [displayText] (or [task] if null). Passed through to
+     *        [AgentService.executeTask]. Only meaningful when this call starts a new loop.
      */
-    fun executeTask(task: String, displayText: String? = null, displayMentionsJson: String? = null) {
+    fun executeTask(task: String, displayText: String? = null, displayMentionsJson: String? = null, uiMessageOverride: UiMessage? = null) {
         if (task.isBlank()) return
 
         // Intercept /compact — direct context compaction without LLM round-trip
@@ -1082,6 +1096,10 @@ class AgentController(
             } else {
                 dashboard.startSession(uiText)
             }
+            // "First message wins" — capture the original task once, never overwrite
+            if (originalTaskText == null) {
+                originalTaskText = task
+            }
         }
 
         // Generate or update conversation title via Haiku (async, non-blocking)
@@ -1160,6 +1178,7 @@ class AgentController(
                 }
             },
             onAwaitingUserInput = ::onLoopAwaitingUserInput,
+            uiMessageOverride = uiMessageOverride,
         )
 
         // Start 30s Haiku phrase timer (if smart working indicator is enabled)
@@ -1705,6 +1724,7 @@ class AgentController(
         lastTaskText = null
         lastDisplayText = null
         lastDisplayMentionsJson = null
+        originalTaskText = null
         currentSessionId = null
         currentPlanData = null
         pendingApproval?.cancel()
@@ -2278,11 +2298,18 @@ class AgentController(
 
         // Build the approval instruction.
         // When context was cleared, the plan content is no longer in the conversation.
-        // Include it inline so the LLM can proceed without needing read_file on the
-        // external plan path (which PathValidator blocks as outside the project).
+        // Include it inline (with the original task for full intent) so the LLM can
+        // proceed without needing read_file on the external plan path (which PathValidator
+        // blocks as outside the project).
         val instruction = buildString {
             appendLine("The user has approved the plan.")
             if (clearContext) {
+                originalTaskText?.takeIf { it.isNotBlank() }?.let {
+                    appendLine()
+                    appendLine("<original_task>")
+                    appendLine(it)
+                    appendLine("</original_task>")
+                }
                 val planMarkdown = currentPlanData?.markdown
                 if (!planMarkdown.isNullOrBlank()) {
                     appendLine()
@@ -2293,7 +2320,23 @@ class AgentController(
             }
         }.trim()
 
-        executeTask(instruction)
+        // Build a typed UI message so the persisted bubble shows "Implementation plan approved"
+        // (with the plan markdown attached) rather than the raw XML instruction text.
+        val uiApprovalMsg = UiMessage(
+            type = UiMessageType.SAY,
+            say = UiSay.PLAN_APPROVED,
+            ts = System.currentTimeMillis(),
+            text = "Implementation plan approved",
+            planApprovalData = currentPlanData?.markdown?.let { PlanApprovalData(it) }
+        )
+
+        // Pass displayText so the live-UI append (AgentController.executeTask wrapper's
+        // displayUserMessage call) also shows the clean label instead of raw XML.
+        executeTask(
+            task = instruction,
+            displayText = "Implementation plan approved",
+            uiMessageOverride = uiApprovalMsg
+        )
     }
 
     /**
