@@ -84,4 +84,21 @@ class TaskCreateToolTest {
         val task = store.listTasks().single()
         assertEquals("Implementing OAuth2 flow", task.activeForm)
     }
+
+    @Test
+    fun `repeated task_create with same subject produces distinct ids`(@TempDir tmp: File) = runTest {
+        val store = TaskStore(baseDir = tmp, sessionId = "s1")
+        val tool = TaskCreateTool { store }
+        val project = mockk<Project>(relaxed = true)
+
+        val params = buildJsonObject {
+            put("subject", "Do thing")
+            put("description", "same call twice")
+        }
+        tool.execute(params, project)
+        tool.execute(params, project)
+
+        val ids = store.listTasks().map { it.id }.toSet()
+        assertEquals(2, ids.size, "distinct UUIDs expected, got: $ids")
+    }
 }

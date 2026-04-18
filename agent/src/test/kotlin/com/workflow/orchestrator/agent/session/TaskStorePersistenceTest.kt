@@ -65,4 +65,20 @@ class TaskStorePersistenceTest {
         assertEquals(1, all.size)
         assertEquals(TaskStatus.DELETED, all[0].status)
     }
+
+    @Test
+    fun `loadFromDisk starts fresh when tasks json is corrupted`(@TempDir tmp: File) = runTest {
+        val sessionDir = File(tmp, "sessions/s1")
+        sessionDir.mkdirs()
+        File(sessionDir, "tasks.json").writeText("{not valid json [")
+
+        val store = TaskStore(baseDir = tmp, sessionId = "s1")
+        store.loadFromDisk()
+
+        assertEquals(0, store.listTasks().size)
+
+        // Verify we can still write after the corrupt load
+        store.addTask(Task(id = "t-new", subject = "new", description = "d"))
+        assertEquals(1, store.listTasks().size)
+    }
 }
