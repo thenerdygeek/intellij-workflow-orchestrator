@@ -303,6 +303,7 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("**Usage tips:**")
         appendLine("- Use glob_files with patterns like '**/*.kt' (recursive) or '*.xml' (top-level) to explore the project at '$projectPath'. Use search_code with output_mode='content' for regex searches with surrounding code.")
         appendLine("- run_command executes shell commands (10min timeout). The environment sets PAGER=cat, GIT_PAGER=cat, EDITOR=cat. Prefer non-interactive commands. Each command runs in a new terminal. Redirect stderr with 2>&1 for error visibility. Use grep_pattern to filter large output.")
+        appendLine("- Do NOT pipe run_command through `tail`, `head`, `grep`, `less`, `sort`, or `awk` to trim output. These commands buffer until EOF and block live output streaming in the chat UI — the user sees nothing until the command finishes. Output is already tail-biased truncated to ~100K chars and the full output is spilled to disk, so piping to `tail`/`head` is redundant. Run the command unfiltered; use the `grep_pattern` parameter for line filtering, or `output_file=true` + read_file if you need the dropped head.")
 
         // Curl tip — adapt to detected frameworks
         val endpointType = when {
