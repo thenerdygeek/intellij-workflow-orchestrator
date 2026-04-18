@@ -10,17 +10,26 @@ import com.workflow.orchestrator.agent.hooks.HookManager
 import com.workflow.orchestrator.agent.hooks.HookResult
 import com.workflow.orchestrator.agent.hooks.HookRunner
 import com.workflow.orchestrator.agent.hooks.HookType
+import com.workflow.orchestrator.agent.ide.Framework
+import com.workflow.orchestrator.agent.ide.IdeContext
+import com.workflow.orchestrator.agent.ide.IdeContextDetector
+import com.workflow.orchestrator.agent.ide.JavaKotlinProvider
+import com.workflow.orchestrator.agent.ide.LanguageProviderRegistry
+import com.workflow.orchestrator.agent.ide.PythonPsiHelper
+import com.workflow.orchestrator.agent.ide.PythonProvider
+import com.workflow.orchestrator.agent.ide.ToolRegistrationFilter
 import com.workflow.orchestrator.agent.loop.AgentLoop
 import com.workflow.orchestrator.agent.loop.ContextManager
+import com.workflow.orchestrator.agent.loop.FailureReason
 import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.loop.SteeringMessage
-import com.workflow.orchestrator.agent.loop.TaskProgress
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
 import com.workflow.orchestrator.agent.prompt.EnvironmentDetailsBuilder
 import com.workflow.orchestrator.agent.prompt.InstructionLoader
 import com.workflow.orchestrator.agent.prompt.SystemPrompt
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.agent.session.AtomicFileWriter
+import com.workflow.orchestrator.agent.session.TaskStore
 import com.workflow.orchestrator.agent.session.Session
 import com.workflow.orchestrator.agent.session.SessionStatus
 import com.workflow.orchestrator.agent.session.HistoryItem
@@ -38,6 +47,7 @@ import com.workflow.orchestrator.agent.session.toChatMessage
 import com.workflow.orchestrator.agent.session.toApiMessage
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.ToolOutputSpiller
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.memory.ArchivalMemory
 import com.workflow.orchestrator.agent.memory.ConversationRecall
@@ -50,17 +60,19 @@ import com.workflow.orchestrator.agent.tools.database.*
 import com.workflow.orchestrator.agent.tools.debug.AgentDebugController
 import com.workflow.orchestrator.agent.tools.debug.DebugBreakpointsTool
 import com.workflow.orchestrator.agent.tools.debug.DebugInspectTool
+import com.workflow.orchestrator.agent.tools.debug.DebugInvocation
 import com.workflow.orchestrator.agent.tools.debug.DebugStepTool
 import com.workflow.orchestrator.agent.tools.framework.*
 import com.workflow.orchestrator.agent.tools.ide.*
 import com.workflow.orchestrator.agent.tools.integration.*
 import com.workflow.orchestrator.agent.tools.memory.*
 import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
+import com.workflow.orchestrator.agent.tools.process.ShellResolver
 import com.workflow.orchestrator.agent.tools.subagent.AgentConfigLoader
 import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
 import com.workflow.orchestrator.agent.tools.psi.*
 import com.workflow.orchestrator.agent.tools.runtime.*
-import com.workflow.orchestrator.agent.tools.vcs.*
+import com.workflow.orchestrator.agent.tools.vcs.ChangelistShelveTool
 import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.LlmBrainFactory
 import com.workflow.orchestrator.core.ai.ModelCache
@@ -103,6 +115,15 @@ class AgentService(private val project: Project) : Disposable {
         AgentFileLogger(logDir = ProjectIdentifier.logsDir(project.basePath ?: ""))
     }
 
+    lateinit var ideContext: IdeContext
+        private set
+
+    /** Shells available for run_command — populated by registerAllTools() before any consumer reads it. */
+    private var allowedShells: List<String> = emptyList()
+
+    lateinit var providerRegistry: LanguageProviderRegistry
+        private set
+
     private var debugController: AgentDebugController? = null
     private var coreMemory: CoreMemory? = null
     private var archivalMemory: ArchivalMemory? = null
@@ -110,6 +131,20 @@ class AgentService(private val project: Project) : Disposable {
     private var autoMemoryManager: AutoMemoryManager? = null
     private val autoMemoryInitMutex = Mutex()
     private lateinit var agentDir: java.io.File
+    private val failedRegistrations = mutableListOf<String>()
+
+    /**
+     * Session-scoped output spiller. Hoisted from the [executeTask] local val so that
+     * [AgentTool.spillOrFormat] can resolve it via [service] on [AgentService] without
+     * coupling individual tools to the execute-task closure.
+     *
+     * Lifecycle: set when a session starts in [executeTask], cleared in [resetForNewChat]
+     * so each new chat gets a fresh spiller pointing at the correct session directory.
+     */
+    @Volatile private var _outputSpiller: ToolOutputSpiller? = null
+
+    /** Public read-only view of the session-scoped spiller; null before the first task starts. */
+    val outputSpiller: ToolOutputSpiller? get() = _outputSpiller
 
     /**
      * Hook manager — loaded from .agent-hooks.json in project root.
@@ -120,12 +155,84 @@ class AgentService(private val project: Project) : Disposable {
      */
     val hookManager: HookManager
 
-    /** Tool names that are blocked in plan mode (write/mutate tools). */
-    private val writeToolNames = setOf(
-        "edit_file", "create_file", "run_command", "revert_file",
-        "kill_process", "send_stdin", "format_code", "optimize_imports",
-        "refactor_rename"
-    )
+    /** Tool names that are blocked in plan mode (write/mutate tools).
+     *  Single source of truth is AgentLoop.WRITE_TOOLS — this is an alias so callers
+     *  in this class keep readable local references without duplicating the set. */
+    private val writeToolNames get() = AgentLoop.WRITE_TOOLS
+
+    /**
+     * Session-scoped Disposable scope for per-run IDE state (IDE tests, coverage runs,
+     * debug sessions, etc.). Every call to [newRunInvocation] hands out a
+     * [RunInvocation] whose parent is the current session Disposable, so a
+     * "new chat" click (which routes through [resetForNewChat]) tears down any
+     * outstanding RunInvocation transitively — listeners detached, processes
+     * killed, RunContent descriptors removed.
+     *
+     * Phase 3 / Task 2.2 of the IDE-state-leak fix plan — see
+     * `docs/plans/2026-04-17-phase3-ide-state-leak-fixes.md`. Tasks 2.3/2.4/2.5
+     * will consume this factory from `JavaRuntimeExecTool.run_tests` and
+     * `CoverageTool.run_with_coverage`.
+     *
+     * Extracted into [SessionDisposableHolder] (a thin pure helper) so the
+     * per-session Disposable lifecycle can be unit-tested without instantiating
+     * the full AgentService — which has a heavy `init` (memory system,
+     * tool registration, hook loading) that's infeasible to mock.
+     */
+    private val sessionDisposableHolder: SessionDisposableHolder =
+        SessionDisposableHolder(parent = this, diagnosticName = "agent-session")
+
+    /**
+     * Allocate a per-run disposal scope tied to the current chat session.
+     *
+     * The returned [RunInvocation] auto-cleans listeners, process handlers,
+     * and descriptor teardown when disposed. Its parent is the session
+     * Disposable, so a "new chat" click will cascade-dispose any outstanding
+     * invocation automatically — no bookkeeping required in call sites.
+     *
+     * Typical usage:
+     *
+     * ```kotlin
+     * val invocation = project.service<AgentService>().newRunInvocation("run-tests-$className")
+     * try {
+     *     invocation.attachListener(...)
+     *     invocation.attachProcessListener(handler, listener)
+     *     invocation.onDispose { removeRunContent(...) }
+     *     // ... await result ...
+     * } finally {
+     *     Disposer.dispose(invocation)
+     * }
+     * ```
+     */
+    internal fun newRunInvocation(name: String): RunInvocation =
+        sessionDisposableHolder.newRunInvocation(name)
+
+    /**
+     * Allocate a per-debug-session disposal scope tied to the current
+     * chat session. Phase 5 / Task 4.3 — see
+     * `docs/plans/2026-04-17-phase5-debug-tools-fixes.md`. Sibling of
+     * [newRunInvocation] for `XDebugSession` listener lifecycle —
+     * returns a [DebugInvocation] whose parent is the session
+     * Disposable, so a "new chat" click cascade-disposes any
+     * outstanding debug invocation automatically (listeners detached,
+     * replay cache cleared, `onDispose` hooks fired). Task 4.2 will
+     * convert `AgentDebugController.registerSession` to consume this
+     * factory.
+     *
+     * Typical usage:
+     *
+     * ```kotlin
+     * val invocation = project.service<AgentService>().newDebugInvocation("debug-$counter")
+     * try {
+     *     invocation.attachListener(xDebugSession, xDebugSessionListener)
+     *     invocation.pauseFlow.emit(pauseEvent)
+     *     // ... await pause / step / stop events ...
+     * } finally {
+     *     Disposer.dispose(invocation)
+     * }
+     * ```
+     */
+    internal fun newDebugInvocation(name: String): DebugInvocation =
+        sessionDisposableHolder.newDebugInvocation(name)
 
     init {
         val basePath = project.basePath ?: System.getProperty("user.home")
@@ -160,6 +267,20 @@ class AgentService(private val project: Project) : Disposable {
         }
         com.intellij.openapi.util.Disposer.register(this, configLoader)
     }
+
+    /** Current session's message state handler — non-null while a task is running. */
+    @Volatile var activeMessageStateHandler: MessageStateHandler? = null
+        private set
+
+    /**
+     * Session-scoped task store. Initialised alongside [activeMessageStateHandler] at
+     * task start, nulled out in the finally block and on [resetForNewChat].
+     * Tools access it via [currentTaskStore].
+     */
+    @Volatile private var taskStore: TaskStore? = null
+
+    /** Provider for the task-system tools — returns null when no session is active. */
+    fun currentTaskStore(): TaskStore? = taskStore
 
     // ── Auto Memory ────────────────────────────────────────────────────────
 
@@ -334,36 +455,68 @@ class AgentService(private val project: Project) : Disposable {
      * - Conditional: integration tools only registered when their service URL is configured
      *
      * This reduces per-call schema tokens from ~10K to ~4K.
-     * The GitTool meta-tool is removed — individual git_status/git_diff/git_log
-     * are core, and remaining git tools are deferred.
+     * Git subprocess tools removed — the LLM uses run_command for git operations.
+     * Only changelist_shelve is kept (uses IntelliJ VCS API, not a git subprocess).
      */
     private fun registerAllTools() {
+        ideContext = IdeContextDetector.detect(project)
+        log.info("IDE context detected: ${ideContext.product} (${ideContext.edition}), " +
+            "languages=${ideContext.languages}, frameworks=${ideContext.detectedFrameworks}, " +
+            "buildTools=${ideContext.detectedBuildTools}")
+        allowedShells = ShellResolver.detectAvailableShells(project).map { it.shellType.name.lowercase() }
+        log.info("[AgentService] Available shells: $allowedShells")
+
+        // Initialize language provider registry
+        providerRegistry = LanguageProviderRegistry()
+        if (ToolRegistrationFilter.shouldRegisterJavaPsiTools(ideContext)) {
+            providerRegistry.register(JavaKotlinProvider(project))
+        }
+        if (ToolRegistrationFilter.shouldRegisterPythonPsiTools(ideContext)) {
+            val pythonHelper = PythonPsiHelper()
+            if (pythonHelper.isAvailable) {
+                providerRegistry.register(PythonProvider(pythonHelper))
+                log.info("Python code intelligence provider registered")
+            } else {
+                log.warn("Python PSI tools requested but PythonCore plugin classes not found")
+            }
+        }
+
         // ── Core tools (always sent to LLM) ──────────────────────────────
         safeRegisterCore { ReadFileTool() }
         safeRegisterCore { EditFileTool() }
         safeRegisterCore { CreateFileTool() }
         safeRegisterCore { SearchCodeTool() }
         safeRegisterCore { GlobFilesTool() }
-        safeRegisterCore { RunCommandTool() }
+        safeRegisterCore { RunCommandTool(allowedShells) }
         safeRegisterCore { RevertFileTool() }
         safeRegisterCore { AttemptCompletionTool() }
+        safeRegisterCore { TaskReportTool() }
         safeRegisterCore { ThinkTool() }
         safeRegisterCore { AskQuestionsTool() }
         safeRegisterCore { PlanModeRespondTool() }
         safeRegisterCore { EnablePlanModeTool() }
+        safeRegisterCore { DiscardPlanTool() }
         safeRegisterCore { UseSkillTool() }
         safeRegisterCore { NewTaskTool() }
         safeRegisterCore { RenderArtifactTool() }
 
-        // Core VCS — the three most commonly needed git tools
-        safeRegisterCore { GitStatusTool() }
-        safeRegisterCore { GitDiffTool() }
-        safeRegisterCore { GitLogTool() }
+        // Task system tools — four LLM-facing tools for typed task management.
+        // Ported from Claude Code's task-system behavior. Hook-exempt (see AgentLoop.HOOK_EXEMPT).
+        safeRegisterCore { TaskCreateTool { currentTaskStore() } }
+        safeRegisterCore { TaskUpdateTool { currentTaskStore() } }
+        safeRegisterCore { TaskListTool { currentTaskStore() } }
+        safeRegisterCore { TaskGetTool { currentTaskStore() } }
 
-        // Core PSI — essential navigation tools
-        safeRegisterCore { FindDefinitionTool() }
-        safeRegisterCore { FindReferencesTool() }
-        safeRegisterCore { SemanticDiagnosticsTool() }
+        // Core PSI — essential navigation tools (guarded by IDE context)
+        val hasPsiSupport = ToolRegistrationFilter.shouldRegisterJavaPsiTools(ideContext) ||
+            ToolRegistrationFilter.shouldRegisterPythonPsiTools(ideContext)
+        if (hasPsiSupport) {
+            safeRegisterCore { FindDefinitionTool(providerRegistry) }
+            safeRegisterCore { FindReferencesTool(providerRegistry) }
+            safeRegisterCore { SemanticDiagnosticsTool(providerRegistry) }
+        } else {
+            log.info("Skipping PSI tools — neither Java nor Python plugin available")
+        }
 
         // tool_search itself is core (the LLM needs it to discover deferred tools)
         safeRegisterCore { ToolSearchTool(registry) }
@@ -373,55 +526,109 @@ class AgentService(private val project: Project) : Disposable {
             brainProvider = { createBrain() },
             toolRegistry = registry,
             project = project,
-            configLoader = AgentConfigLoader.getInstance()
+            configLoader = AgentConfigLoader.getInstance(),
+            ideContext = ideContext
         ) }
 
         // ── Deferred tools (loaded via tool_search) ──────────────────────
 
-        // Code Intelligence — PSI-based semantic analysis
-        safeRegisterDeferred("Code Intelligence") { FindImplementationsTool() }
-        safeRegisterDeferred("Code Intelligence") { FileStructureTool() }
-        safeRegisterDeferred("Code Intelligence") { TypeHierarchyTool() }
-        safeRegisterDeferred("Code Intelligence") { CallHierarchyTool() }
-        safeRegisterDeferred("Code Intelligence") { TypeInferenceTool() }
-        safeRegisterDeferred("Code Intelligence") { DataFlowAnalysisTool() }
-        safeRegisterDeferred("Code Intelligence") { GetMethodBodyTool() }
-        safeRegisterDeferred("Code Intelligence") { GetAnnotationsTool() }
-        safeRegisterDeferred("Code Intelligence") { TestFinderTool() }
-        safeRegisterDeferred("Code Intelligence") { StructuralSearchTool() }
-        safeRegisterDeferred("Code Intelligence") { ReadWriteAccessTool() }
+        // Code Intelligence — PSI-based semantic analysis (guarded by IDE context)
+        if (hasPsiSupport) {
+            safeRegisterDeferred("Code Intelligence") { FindImplementationsTool(providerRegistry) }
+            safeRegisterDeferred("Code Intelligence") { FileStructureTool(providerRegistry) }
+            safeRegisterDeferred("Code Intelligence") { TypeHierarchyTool(providerRegistry) }
+            safeRegisterDeferred("Code Intelligence") { CallHierarchyTool(providerRegistry) }
+            safeRegisterDeferred("Code Intelligence") { TypeInferenceTool(providerRegistry) }
+            safeRegisterDeferred("Code Intelligence") { DataFlowAnalysisTool(providerRegistry) }
+            safeRegisterDeferred("Code Intelligence") { GetMethodBodyTool(providerRegistry) }
+            safeRegisterDeferred("Code Intelligence") { GetAnnotationsTool(providerRegistry) }
+            safeRegisterDeferred("Code Intelligence") { TestFinderTool(providerRegistry) }
+            safeRegisterDeferred("Code Intelligence") { StructuralSearchTool(providerRegistry) }
+            safeRegisterDeferred("Code Intelligence") { ReadWriteAccessTool(providerRegistry) }
+        }
+
+        // Project Structure — module/SDK/library model (always available, no PSI dependency)
+        safeRegisterDeferred("Code Intelligence") { com.workflow.orchestrator.agent.tools.project.ProjectStructureTool() }
 
         // Code Quality — formatting, refactoring, inspections
         safeRegisterDeferred("Code Quality") { FormatCodeTool() }
         safeRegisterDeferred("Code Quality") { OptimizeImportsTool() }
-        safeRegisterDeferred("Code Quality") { RefactorRenameTool() }
+        safeRegisterDeferred("Code Quality") { RefactorRenameTool(providerRegistry) }
         safeRegisterDeferred("Code Quality") { RunInspectionsTool() }
         safeRegisterDeferred("Code Quality") { ProblemViewTool() }
         safeRegisterDeferred("Code Quality") { ListQuickFixesTool() }
 
-        // Git — history, branches, blame, shelve
-        safeRegisterDeferred("Git") { GitBlameTool() }
-        safeRegisterDeferred("Git") { GitBranchesTool() }
-        safeRegisterDeferred("Git") { GitShowCommitTool() }
-        safeRegisterDeferred("Git") { GitShowFileTool() }
-        safeRegisterDeferred("Git") { GitStashListTool() }
-        safeRegisterDeferred("Git") { GitFileHistoryTool() }
-        safeRegisterDeferred("Git") { GitMergeBaseTool() }
-        safeRegisterDeferred("Git") { ChangelistShelveTool() }
-        safeRegisterDeferred("Git") { GenerateExplanationTool() }
+        // VCS — IntelliJ changelist/shelve operations (git subprocess tools removed; use run_command for git)
+        safeRegisterDeferred("VCS") { ChangelistShelveTool() }
 
         // Build & Run — project build, run configs, coverage
-        safeRegisterDeferred("Build & Run") { BuildTool() }
-        safeRegisterDeferred("Build & Run") { SpringTool() }
+        // Build tool — register if Java OR Python build tools available
+        val hasBuildSupport = ToolRegistrationFilter.shouldRegisterJavaBuildTools(ideContext) ||
+            ToolRegistrationFilter.shouldRegisterPythonBuildTools(ideContext)
+        if (hasBuildSupport) {
+            safeRegisterDeferred("Build & Run") { BuildTool() }
+        } else {
+            log.info("Skipping build tools — neither Java nor Python build tools available")
+        }
+        if (ToolRegistrationFilter.shouldRegisterSpringTools(ideContext)) {
+            safeRegisterDeferred("Build & Run") { SpringTool() }
+        } else {
+            log.info("Skipping Spring tools — Spring plugin not available")
+        }
+        // Django
+        if (ToolRegistrationFilter.shouldRegisterDjangoTools(ideContext)) {
+            if (ToolRegistrationFilter.shouldPromoteFrameworkTool(ideContext, Framework.DJANGO)) {
+                safeRegisterCore { DjangoTool() }
+                log.info("Django tool promoted to core (framework detected in project)")
+            } else {
+                safeRegisterDeferred("Framework") { DjangoTool() }
+            }
+        }
+        // FastAPI
+        if (ToolRegistrationFilter.shouldRegisterFastApiTools(ideContext)) {
+            if (ToolRegistrationFilter.shouldPromoteFrameworkTool(ideContext, Framework.FASTAPI)) {
+                safeRegisterCore { FastApiTool() }
+                log.info("FastAPI tool promoted to core (framework detected in project)")
+            } else {
+                safeRegisterDeferred("Framework") { FastApiTool() }
+            }
+        }
+        // Flask
+        if (ToolRegistrationFilter.shouldRegisterFlaskTools(ideContext)) {
+            if (ToolRegistrationFilter.shouldPromoteFrameworkTool(ideContext, Framework.FLASK)) {
+                safeRegisterCore { FlaskTool() }
+                log.info("Flask tool promoted to core (framework detected in project)")
+            } else {
+                safeRegisterDeferred("Framework") { FlaskTool() }
+            }
+        }
+        // Universal process observation (no compile or test runner)
         safeRegisterDeferred("Build & Run") { RuntimeExecTool() }
         safeRegisterDeferred("Build & Run") { RuntimeConfigTool() }
-        safeRegisterDeferred("Build & Run") { CoverageTool() }
+
+        // Java/Kotlin native test runner + Java compiler
+        if (ToolRegistrationFilter.shouldRegisterJavaBuildTools(ideContext)) {
+            safeRegisterDeferred("Build & Run") { JavaRuntimeExecTool() }
+        }
+
+        // Python pytest runner + py_compile
+        if (ToolRegistrationFilter.shouldRegisterPythonBuildTools(ideContext)) {
+            safeRegisterDeferred("Build & Run") { PythonRuntimeExecTool() }
+        }
+        // Coverage depends on the Coverage plugin (Ultimate/Professional)
+        if (ToolRegistrationFilter.shouldRegisterCoverageTool(ideContext)) {
+            safeRegisterDeferred("Build & Run") { CoverageTool() }
+        } else {
+            log.info("Skipping coverage tools — requires Ultimate or Professional edition")
+        }
 
         // Database — queries, schema, connection profiles
         safeRegisterDeferred("Database") { DbListProfilesTool() }
         safeRegisterDeferred("Database") { DbListDatabasesTool() }
         safeRegisterDeferred("Database") { DbQueryTool() }
         safeRegisterDeferred("Database") { DbSchemaTool() }
+        safeRegisterDeferred("Database") { DbStatsTool() }
+        safeRegisterDeferred("Database") { DbExplainTool() }
 
         // Utilities
         safeRegisterDeferred("Utilities") { ProjectContextTool() }
@@ -431,7 +638,14 @@ class AgentService(private val project: Project) : Disposable {
         safeRegisterDeferred("Utilities") { AskUserInputTool() }
 
         // Debug tools (require AgentDebugController)
-        registerDebugTools()
+        // XDebugger-based tools work for both Java/Kotlin and Python debug sessions.
+        val hasDebugSupport = ToolRegistrationFilter.shouldRegisterJavaDebugTools(ideContext) ||
+            ToolRegistrationFilter.shouldRegisterPythonDebugTools(ideContext)
+        if (hasDebugSupport) {
+            registerDebugTools()
+        } else {
+            log.info("Skipping debug tools — neither Java nor Python plugin available")
+        }
 
         // ── Memory tools (always available — 3-tier Letta pattern) ───────
         coreMemory?.let { cm ->
@@ -454,7 +668,11 @@ class AgentService(private val project: Project) : Disposable {
         // Only registered when the service URL is configured in ConnectionSettings
         registerConditionalIntegrationTools()
 
-        log.info("[Agent] Registered ${registry.coreCount()} core + ${registry.deferredCount()} deferred tools")
+        if (failedRegistrations.isNotEmpty()) {
+            log.error("AgentService: ${failedRegistrations.size} tools failed to register: $failedRegistrations")
+        }
+        log.info("AgentService: registered ${registry.coreCount()} core + ${registry.deferredCount()} deferred tools" +
+            if (failedRegistrations.isNotEmpty()) " (${failedRegistrations.size} failed)" else "")
     }
 
     /**
@@ -481,6 +699,53 @@ class AgentService(private val project: Project) : Disposable {
         }
     }
 
+    /**
+     * Re-check connection settings and register/unregister integration tools accordingly.
+     *
+     * Called whenever connection settings change so the tool set stays in sync without
+     * requiring an agent restart. Safe to call at any time — each check is idempotent:
+     *   - URL configured + tool absent  → register the tool
+     *   - URL blank      + tool present → unregister the tool
+     *   - Everything else               → no-op
+     */
+    fun reregisterConditionalTools() {
+        val connections = ConnectionSettings.getInstance()
+
+        // Jira
+        if (connections.state.jiraUrl.isNotBlank()) {
+            if (registry.getTool("jira") == null) safeRegisterDeferred("Integration") { JiraTool() }
+        } else {
+            if (registry.getTool("jira") != null) registry.unregisterDeferred("jira")
+        }
+
+        // Bamboo
+        if (connections.state.bambooUrl.isNotBlank()) {
+            if (registry.getTool("bamboo_builds") == null) safeRegisterDeferred("Integration") { BambooBuildsTool() }
+            if (registry.getTool("bamboo_plans") == null) safeRegisterDeferred("Integration") { BambooPlansTool() }
+        } else {
+            if (registry.getTool("bamboo_builds") != null) registry.unregisterDeferred("bamboo_builds")
+            if (registry.getTool("bamboo_plans") != null) registry.unregisterDeferred("bamboo_plans")
+        }
+
+        // SonarQube
+        if (connections.state.sonarUrl.isNotBlank()) {
+            if (registry.getTool("sonar") == null) safeRegisterDeferred("Integration") { SonarTool() }
+        } else {
+            if (registry.getTool("sonar") != null) registry.unregisterDeferred("sonar")
+        }
+
+        // Bitbucket
+        if (connections.state.bitbucketUrl.isNotBlank()) {
+            if (registry.getTool("bitbucket_pr") == null) safeRegisterDeferred("Integration") { BitbucketPrTool() }
+            if (registry.getTool("bitbucket_repo") == null) safeRegisterDeferred("Integration") { BitbucketRepoTool() }
+            if (registry.getTool("bitbucket_review") == null) safeRegisterDeferred("Integration") { BitbucketReviewTool() }
+        } else {
+            if (registry.getTool("bitbucket_pr") != null) registry.unregisterDeferred("bitbucket_pr")
+            if (registry.getTool("bitbucket_repo") != null) registry.unregisterDeferred("bitbucket_repo")
+            if (registry.getTool("bitbucket_review") != null) registry.unregisterDeferred("bitbucket_review")
+        }
+    }
+
     private fun registerDebugTools() {
         try {
             val controller = AgentDebugController(project)
@@ -497,7 +762,8 @@ class AgentService(private val project: Project) : Disposable {
         try {
             registry.registerCore(factory())
         } catch (e: Exception) {
-            log.warn("AgentService: failed to register core tool: ${e.message}")
+            log.warn("AgentService: failed to register core tool: ${e.message}", e)
+            failedRegistrations.add("core:${e.message?.take(50) ?: "unknown"}")
         }
     }
 
@@ -505,7 +771,8 @@ class AgentService(private val project: Project) : Disposable {
         try {
             registry.registerDeferred(factory(), category)
         } catch (e: Exception) {
-            log.warn("AgentService: failed to register deferred tool: ${e.message}")
+            log.warn("AgentService: failed to register deferred tool ($category): ${e.message}", e)
+            failedRegistrations.add("deferred/$category:${e.message?.take(50) ?: "unknown"}")
         }
     }
 
@@ -534,18 +801,22 @@ class AgentService(private val project: Project) : Disposable {
         contextManager: ContextManager? = null,
         onStreamChunk: (String) -> Unit = {},
         onToolCall: (ToolCallProgress) -> Unit = {},
-        onTaskProgress: (TaskProgress) -> Unit = {},
         onComplete: (LoopResult) -> Unit = {},
         /**
          * Callback fired when the LLM presents a plan via plan_mode_respond.
          * Used by the UI to render the plan card. Does NOT exit the loop.
          */
-        onPlanResponse: ((planText: String, needsMoreExploration: Boolean, planSteps: List<String>) -> Unit)? = null,
+        onPlanResponse: ((planText: String, needsMoreExploration: Boolean) -> Unit)? = null,
         /**
          * Callback fired when the LLM toggles plan mode via enable_plan_mode tool.
          * Used by the UI to update the plan mode button and rebuild tool definitions.
          */
         onPlanModeToggled: ((Boolean) -> Unit)? = null,
+        /**
+         * Callback fired when the LLM discards the current plan via discard_plan tool.
+         * The UI uses this to clear the active plan card without presenting a replacement.
+         */
+        onPlanDiscarded: (() -> Unit)? = null,
         /**
          * Channel for feeding user input into a running loop.
          * Used in plan mode: after plan presentation, the loop waits on this channel
@@ -557,7 +828,14 @@ class AgentService(private val project: Project) : Disposable {
          * When set, the loop suspends before write tools and waits for user approval.
          * When null (e.g. in sub-agents or handoff sessions), write tools execute without approval.
          */
-        approvalGate: (suspend (toolName: String, args: String, riskLevel: String) -> com.workflow.orchestrator.agent.loop.ApprovalResult)? = null,
+        approvalGate: (suspend (toolName: String, args: String, riskLevel: String, allowSessionApproval: Boolean) -> com.workflow.orchestrator.agent.loop.ApprovalResult)? = null,
+        /**
+         * Session-scoped approval store. Tracks which tools the user has approved
+         * for the current session. Injected from the controller so approvals persist
+         * across follow-up messages (multiple executeTask calls within the same session).
+         * Defaults to a fresh store for backward compatibility (tests, sub-agents).
+         */
+        sessionApprovalStore: com.workflow.orchestrator.agent.loop.SessionApprovalStore = com.workflow.orchestrator.agent.loop.SessionApprovalStore(),
         /**
          * Optional callback fired after a write checkpoint is saved.
          * Used by the UI to update the checkpoint timeline display.
@@ -612,9 +890,46 @@ class AgentService(private val project: Project) : Disposable {
          * When provided, skips internal MessageStateHandler creation and initial message recording.
          * Used by resumeSession which pre-loads state from persisted files.
          */
-        messageStateHandler: MessageStateHandler? = null
+        messageStateHandler: MessageStateHandler? = null,
+        /**
+         * Fires when the loop suspends on userInputChannel waiting for the user
+         * (plan-mode reply turn or consecutive-mistakes recovery). The UI must
+         * drop the working spinner, enable steering, and surface the reason.
+         */
+        onAwaitingUserInput: ((reason: String) -> Unit)? = null,
+        /**
+         * Optional override for the UI message that will be persisted for this task.
+         * When provided, this message is added to the UI message history instead of
+         * the synthesized USER_MESSAGE. The task text is still sent to the LLM
+         * (via addToApiConversationHistory), so the LLM always gets the full context.
+         * Defaults to null (preserves existing behavior of synthesizing a USER_MESSAGE).
+         *
+         * **Has no effect when `messageStateHandler` is also provided.** When a
+         * messageStateHandler is passed, it manages its own UI message recording before
+         * `executeTask` is called (e.g., in the resume path). The override is only used
+         * when creating a fresh MessageStateHandler.
+         *
+         * **Caller responsibility:** If provided, the caller must set `ts` to a valid
+         * timestamp (`>= System.currentTimeMillis()`) to preserve chronological ordering
+         * in the persisted UI message file.
+         */
+        uiMessageOverride: UiMessage? = null,
+        /**
+         * Optional callback invoked when the loop receives a message from [userInputChannel].
+         * Called with the raw task string; returns the [UiMessage] to persist for that turn,
+         * or null if no UI message should be written (e.g. for plan-mode comment injections
+         * that are already shown via other UI means).
+         *
+         * Forwarded directly to [AgentLoop] — see its own KDoc for the contract.
+         */
+        onUserInputReceived: ((task: String) -> com.workflow.orchestrator.agent.session.UiMessage?)? = null
     ): Job {
         val sid = sessionId ?: UUID.randomUUID().toString()
+
+        // Scope edit-range tracking to this session so that stale ranges from a
+        // previous session cannot leak into SemanticDiagnosticsTool calls.
+        com.workflow.orchestrator.agent.tools.builtin.EditFileTool.currentSessionId = sid
+
         var session = Session(
             id = sid,
             title = task.take(100),
@@ -662,6 +977,13 @@ class AgentService(private val project: Project) : Disposable {
                 val sessionDebugDir = java.io.File(
                     ProjectIdentifier.agentDir(basePath),
                     "sessions/$sid"
+                )
+                // Output spiller: writes large tool outputs to disk, returns preview to LLM.
+                // Assigned to the session-scoped field so AgentTool.spillOrFormat() can resolve
+                // it via project.service<AgentService>().outputSpiller without coupling tools to
+                // the executeTask closure.
+                _outputSpiller = ToolOutputSpiller(
+                    java.io.File(sessionDebugDir, "tool-output").toPath()
                 )
                 // Session-scoped API call counter — shared across the initial brain AND any
                 // brains spawned by the brainFactory below (recycle, model fallback). Keeps
@@ -811,11 +1133,13 @@ class AgentService(private val project: Project) : Disposable {
                         additionalContext = projectInstructions,
                         availableSkills = availableSkills,
                         activeSkillContent = ctx.getActiveSkill(),
-                        taskProgress = ctx.getTaskProgress(),
+                        taskProgress = ctx.renderTaskProgressMarkdown(),
                         deferredToolCatalog = deferredCatalog,
                         coreMemoryXml = coreMemory?.compile(),
                         toolDefinitionsMarkdown = toolDefsMarkdown,
-                        recalledMemoryXml = recalledMemoryXml
+                        recalledMemoryXml = recalledMemoryXml,
+                        ideContext = ideContext,
+                        availableShells = allowedShells
                     )
                 }
                 // Set initial system prompt (XML defs added on first toolDefinitionProvider call)
@@ -840,10 +1164,10 @@ class AgentService(private val project: Project) : Disposable {
                             if (isPlanMode) {
                                 tool.name !in writeToolNames && tool.name != "enable_plan_mode"
                             } else {
-                                tool.name != "plan_mode_respond"
+                                tool.name != "plan_mode_respond" && tool.name != "discard_plan"
                             }
                         }
-                        .map { AgentTool.injectTaskProgress(it.toToolDefinition()) }
+                        .map { AgentTool.injectOutputParams(it.toToolDefinition()) }
 
                     // Update system prompt when tool set changes (plan mode switch, deferred tool load)
                     val defsHash = defs.map { it.function.name }.hashCode()
@@ -856,13 +1180,31 @@ class AgentService(private val project: Project) : Disposable {
                     defs
                 }
 
-                // Wire sub-agent progress callback and settings for this task execution
+                // Wire sub-agent progress callback and settings for this task execution.
+                // All parent-session callbacks — approvalGate, hookManager, sessionMetrics,
+                // fileLogger, onDebugLog, onCheckpoint — are forwarded so sub-agents honour
+                // the same approval UX, hooks, observability, and checkpoint timeline as
+                // the main agent. Without this plumbing, delegating a write tool to a
+                // sub-agent would bypass the modal; delegating any tool would leave its
+                // PRE/POST_TOOL_USE hooks silent and its timings off the scorecard.
                 val spawnAgentTool = registry.get("agent") as? com.workflow.orchestrator.agent.tools.builtin.SpawnAgentTool
                 if (spawnAgentTool != null) {
                     spawnAgentTool.contextBudget = agentSettings.state.maxInputTokens
                     spawnAgentTool.maxOutputTokens = agentSettings.state.maxOutputTokens
                     spawnAgentTool.sessionDebugDir = sessionDebugDir
                     spawnAgentTool.toolExecutionMode = agentSettings.state.toolExecutionMode ?: "accumulate"
+                    spawnAgentTool.approvalGate = approvalGate
+                    spawnAgentTool.hookManager = hookManager
+                    spawnAgentTool.sessionMetrics = sessionMetrics
+                    spawnAgentTool.fileLogger = fileLogger
+                    spawnAgentTool.onDebugLog = onDebugLog
+                    spawnAgentTool.onCheckpoint = onCheckpointSaved?.let { cb ->
+                        // AgentLoop expects `suspend () -> Unit`; the outer callback is
+                        // `(String) -> Unit` keyed by sessionId. Close over the current
+                        // session id so parent-timeline checkpoint updates route correctly.
+                        val sidSnapshot = sid
+                        suspend { cb(sidSnapshot) }
+                    }
                     spawnAgentTool.onSubagentProgress = if (onSubagentProgress != null) {
                         { agentId, update -> onSubagentProgress(agentId, update) }
                     } else null
@@ -910,14 +1252,29 @@ class AgentService(private val project: Project) : Disposable {
                         content = listOf(ContentBlock.Text(task)),
                         ts = System.currentTimeMillis()
                     ))
-                    handler.addToClineMessages(UiMessage(
+                    val uiMsg = uiMessageOverride ?: UiMessage(
                         ts = System.currentTimeMillis(),
                         type = UiMessageType.SAY,
                         say = UiSay.USER_MESSAGE,
                         text = task
-                    ))
+                    )
+                    handler.addToClineMessages(uiMsg)
                     handler
                 }
+
+                // Expose active handler so AgentController.dismissPlan() can rewrite history.
+                activeMessageStateHandler = messageState
+
+                // Initialise session-scoped task store alongside the message state handler.
+                // loadFromDisk() runs inside a coroutine scope so it is safe to call here.
+                // Create and fully initialise before field assignment so observers never
+                // see a partially-initialised store (closes the init-race window).
+                val store = TaskStore(baseDir = sessionBaseDir, sessionId = sid)
+                store.loadFromDisk()
+                taskStore = store
+
+                // Attach TaskStore to ContextManager so renderTaskProgressMarkdown() reads live task state.
+                ctx.attachTaskStore(store)
 
                 // Wire onHistoryOverwrite callback so compaction persists truncated history.
                 // Ported from Cline's conversationHistoryDeletedRange pattern: after context
@@ -931,6 +1288,21 @@ class AgentService(private val project: Project) : Disposable {
                 // Write checkpoint counter — create checkpoint after write operations
                 var writeCheckpointCounter = 0
 
+                // Resolve default target branch asynchronously — DefaultBranchResolver.resolve()
+                // is suspend, but environmentDetailsProvider is a non-suspend lambda.
+                // Capture result once at task start; lambda reads the var once it is populated.
+                val resolvedDefaultBranch = AtomicReference<String?>(null)
+                launch(Dispatchers.IO) {
+                    try {
+                        val repos = git4idea.repo.GitRepositoryManager.getInstance(project).repositories
+                        val primary = repos.firstOrNull() ?: return@launch
+                        resolvedDefaultBranch.set(kotlinx.coroutines.withTimeoutOrNull(3000L) {
+                            com.workflow.orchestrator.core.util.DefaultBranchResolver
+                                .getInstance(project).resolve(primary)
+                        })
+                    } catch (_: Exception) { /* leave null if branch resolution fails */ }
+                }
+
                 val loop = AgentLoop(
                     brain = brain,
                     tools = tools,
@@ -939,7 +1311,6 @@ class AgentService(private val project: Project) : Disposable {
                     project = project,
                     onStreamChunk = onStreamChunk,
                     onToolCall = onToolCall,
-                    onTaskProgress = onTaskProgress,
                     planMode = planModeActive.get(),
                     maxOutputTokens = agentSettings.state.maxOutputTokens,
                     toolDefinitionProvider = toolDefinitionProvider,
@@ -952,8 +1323,19 @@ class AgentService(private val project: Project) : Disposable {
                         planModeActive.set(enabled)
                         onPlanModeToggled?.invoke(enabled)
                     },
+                    onPlanDiscarded = {
+                        // Rewrite the prior plan_mode_respond result in history so the LLM
+                        // won't re-surface the discarded plan on the next turn.
+                        messageState.rewriteMostRecentToolResult(
+                            "plan_mode_respond",
+                            "[Plan discarded — do not reference]"
+                        )
+                        // Then notify the UI (clear the plan card, etc.)
+                        onPlanDiscarded?.invoke()
+                    },
                     userInputChannel = userInputChannel,
                     approvalGate = approvalGate,
+                    sessionApprovalStore = sessionApprovalStore,
                     onWriteCheckpoint = { toolName, args ->
                         // Create named checkpoint after write operations (ported from Cline)
                         writeCheckpointCounter++
@@ -980,16 +1362,23 @@ class AgentService(private val project: Project) : Disposable {
                     sessionMetrics = sessionMetrics,
                     environmentDetailsProvider = {
                         val pluginSettings = PluginSettings.getInstance(project)
+                        val branch = try {
+                            git4idea.repo.GitRepositoryManager.getInstance(project)
+                                .repositories.firstOrNull()?.currentBranch?.name
+                        } catch (_: Exception) { null }
                         EnvironmentDetailsBuilder.build(
                             project = project,
                             planModeEnabled = planModeActive.get(),
                             contextManager = ctx,
                             activeTicketId = pluginSettings.state.activeTicketId,
-                            activeTicketSummary = pluginSettings.state.activeTicketSummary
+                            activeTicketSummary = pluginSettings.state.activeTicketSummary,
+                            currentBranch = branch,
+                            defaultTargetBranch = resolvedDefaultBranch.get(),
                         )
                     },
                     steeringQueue = steeringQueue,
                     onSteeringDrained = onSteeringDrained,
+                    onAwaitingUserInput = onAwaitingUserInput,
                     fallbackManager = fallbackManager,
                     brainFactory = brainFactory,
                     cachedFallbackChain = cachedFallbackChain,
@@ -1003,7 +1392,9 @@ class AgentService(private val project: Project) : Disposable {
                     messageStateHandler = messageState,
                     toolExecutionMode = agentSettings.state.toolExecutionMode ?: "accumulate",
                     toolNameProvider = { registry.allToolNames() },
-                    paramNameProvider = { registry.allParamNames() }
+                    paramNameProvider = { registry.allParamNames() },
+                    outputSpiller = _outputSpiller,
+                    onUserInputReceived = onUserInputReceived,
                 )
 
                 // I4: Set activeTask atomically after both loop and job are available
@@ -1098,13 +1489,26 @@ class AgentService(private val project: Project) : Disposable {
                     lastMessageAt = System.currentTimeMillis()
                 )
                 fileLogger.logSessionEnd(sid, 0, 0, System.currentTimeMillis() - sessionStartTime, error = e.message)
-                onComplete(LoopResult.Failed(error = e.message ?: "Unknown error"))
+                onComplete(LoopResult.Failed(error = e.message ?: "Unknown error", reason = FailureReason.EXCEPTION))
             } finally {
                 activeTask.set(null)
+                activeMessageStateHandler = null
+                taskStore = null
                 // Clear API debug dir so the brain doesn't dump after task ends
                 (brainRef as? OpenAiCompatBrain)?.setApiDebugDir(null)
-                // Clear per-task sub-agent progress callback
-                (registry.get("agent") as? com.workflow.orchestrator.agent.tools.builtin.SpawnAgentTool)?.onSubagentProgress = null
+                // Clear per-task sub-agent callbacks. Leaving any of these attached
+                // would allow a stale reference to the previous session's AgentController
+                // / loggers / hook manager to handle events for the next spawn call —
+                // cancelled deferreds, dangling modals, cross-session metric contamination.
+                (registry.get("agent") as? com.workflow.orchestrator.agent.tools.builtin.SpawnAgentTool)?.let {
+                    it.onSubagentProgress = null
+                    it.approvalGate = null
+                    it.hookManager = null
+                    it.sessionMetrics = null
+                    it.fileLogger = null
+                    it.onDebugLog = null
+                    it.onCheckpoint = null
+                }
             }
         }
         return job
@@ -1129,7 +1533,6 @@ class AgentService(private val project: Project) : Disposable {
      * @param userText optional user message provided at resume time
      * @param onStreamChunk streaming callback
      * @param onToolCall tool progress callback
-     * @param onTaskProgress task progress callback
      * @param onComplete completion callback
      * @param onUiMessagesLoaded callback to push full UI state to webview for rehydration
      * @return the Job, or null if session not found, locked, or has no history
@@ -1141,15 +1544,15 @@ class AgentService(private val project: Project) : Disposable {
         userText: String? = null,
         onStreamChunk: (String) -> Unit = {},
         onToolCall: (ToolCallProgress) -> Unit = {},
-        onTaskProgress: (TaskProgress) -> Unit = {},
         onComplete: (LoopResult) -> Unit = {},
         onUiMessagesLoaded: ((List<UiMessage>) -> Unit)? = null,
         onRetry: ((attempt: Int, maxAttempts: Int, reason: String, delayMs: Long) -> Unit)? = null,
         onModelSwitch: ((fromModel: String, toModel: String, reason: String) -> Unit)? = null,
-        onPlanResponse: ((planText: String, needsMoreExploration: Boolean, planSteps: List<String>) -> Unit)? = null,
+        onPlanResponse: ((planText: String, needsMoreExploration: Boolean) -> Unit)? = null,
         onPlanModeToggled: ((Boolean) -> Unit)? = null,
+        onPlanDiscarded: (() -> Unit)? = null,
         userInputChannel: Channel<String>? = null,
-        approvalGate: (suspend (toolName: String, args: String, riskLevel: String) -> com.workflow.orchestrator.agent.loop.ApprovalResult)? = null,
+        approvalGate: (suspend (toolName: String, args: String, riskLevel: String, allowSessionApproval: Boolean) -> com.workflow.orchestrator.agent.loop.ApprovalResult)? = null,
         onCheckpointSaved: ((sessionId: String) -> Unit)? = null,
         onSubagentProgress: ((agentId: String, update: SubagentProgressUpdate) -> Unit)? = null,
         onTokenUpdate: ((inputTokens: Int, outputTokens: Int) -> Unit)? = null,
@@ -1157,6 +1560,9 @@ class AgentService(private val project: Project) : Disposable {
         onSessionStarted: ((sessionId: String) -> Unit)? = null,
         steeringQueue: java.util.concurrent.ConcurrentLinkedQueue<SteeringMessage>? = null,
         onSteeringDrained: ((drainedIds: List<String>) -> Unit)? = null,
+        sessionApprovalStore: com.workflow.orchestrator.agent.loop.SessionApprovalStore = com.workflow.orchestrator.agent.loop.SessionApprovalStore(),
+        onAwaitingUserInput: ((reason: String) -> Unit)? = null,
+        onUserInputReceived: ((task: String) -> com.workflow.orchestrator.agent.session.UiMessage?)? = null,
     ): Job? {
         val basePath = project.basePath ?: System.getProperty("user.home")
         val sessionBaseDir = ProjectIdentifier.agentDir(basePath)
@@ -1165,6 +1571,9 @@ class AgentService(private val project: Project) : Disposable {
             log.warn("AgentService.resumeSession: session dir not found for $sessionId")
             return null
         }
+
+        // Scope edit-range tracking to this session (same as executeTask)
+        com.workflow.orchestrator.agent.tools.builtin.EditFileTool.currentSessionId = sessionId
 
         // Acquire session lock — prevents double-resume across IDE instances
         val lock = SessionLock.tryAcquire(sessionDir)
@@ -1267,7 +1676,9 @@ class AgentService(private val project: Project) : Disposable {
             val systemPrompt = SystemPrompt.build(
                 projectName = project.name,
                 projectPath = project.basePath ?: "",
-                planModeEnabled = planModeActive.get()
+                planModeEnabled = planModeActive.get(),
+                ideContext = ideContext,
+                availableShells = allowedShells
             )
             ctx.setSystemPrompt(systemPrompt)
 
@@ -1289,7 +1700,6 @@ class AgentService(private val project: Project) : Disposable {
                 messageStateHandler = handler,
                 onStreamChunk = onStreamChunk,
                 onToolCall = onToolCall,
-                onTaskProgress = onTaskProgress,
                 onComplete = { result ->
                     lock.release()
                     onComplete(result)
@@ -1298,6 +1708,7 @@ class AgentService(private val project: Project) : Disposable {
                 onModelSwitch = onModelSwitch,
                 onPlanResponse = onPlanResponse,
                 onPlanModeToggled = onPlanModeToggled,
+                onPlanDiscarded = onPlanDiscarded,
                 userInputChannel = userInputChannel,
                 approvalGate = approvalGate,
                 onCheckpointSaved = onCheckpointSaved,
@@ -1307,6 +1718,9 @@ class AgentService(private val project: Project) : Disposable {
                 onSessionStarted = onSessionStarted,
                 steeringQueue = steeringQueue,
                 onSteeringDrained = onSteeringDrained,
+                sessionApprovalStore = sessionApprovalStore,
+                onAwaitingUserInput = onAwaitingUserInput,
+                onUserInputReceived = onUserInputReceived,
             )
             innerJob.join()
         }
@@ -1329,7 +1743,6 @@ class AgentService(private val project: Project) : Disposable {
      * @param checkpointId the checkpoint to revert to
      * @param onStreamChunk streaming callback
      * @param onToolCall tool progress callback
-     * @param onTaskProgress progress callback
      * @param onComplete completion callback
      * @return the Job for the continued session, or null if checkpoint not found
      */
@@ -1338,7 +1751,6 @@ class AgentService(private val project: Project) : Disposable {
         checkpointId: String,
         onStreamChunk: (String) -> Unit = {},
         onToolCall: (ToolCallProgress) -> Unit = {},
-        onTaskProgress: (TaskProgress) -> Unit = {},
         onComplete: (LoopResult) -> Unit = {}
     ): Job? {
         // Load checkpoint
@@ -1367,7 +1779,6 @@ class AgentService(private val project: Project) : Disposable {
             contextManager = ctx,
             onStreamChunk = onStreamChunk,
             onToolCall = onToolCall,
-            onTaskProgress = onTaskProgress,
             onComplete = onComplete
         )
     }
@@ -1457,7 +1868,6 @@ class AgentService(private val project: Project) : Disposable {
      * @param handoffContext the structured context summary from the LLM
      * @param onStreamChunk streaming callback
      * @param onToolCall tool progress callback
-     * @param onTaskProgress task progress callback
      * @param onComplete completion callback
      * @return the Job for the new session
      */
@@ -1465,7 +1875,6 @@ class AgentService(private val project: Project) : Disposable {
         handoffContext: String,
         onStreamChunk: (String) -> Unit = {},
         onToolCall: (ToolCallProgress) -> Unit = {},
-        onTaskProgress: (TaskProgress) -> Unit = {},
         onComplete: (LoopResult) -> Unit = {}
     ): Job {
         // The handoff context becomes the task for the new session
@@ -1477,7 +1886,6 @@ class AgentService(private val project: Project) : Disposable {
             contextManager = null, // fresh context
             onStreamChunk = onStreamChunk,
             onToolCall = onToolCall,
-            onTaskProgress = onTaskProgress,
             onComplete = onComplete
         )
     }
@@ -1522,6 +1930,11 @@ class AgentService(private val project: Project) : Disposable {
     /**
      * Reset all service-level state for a new chat session.
      * Called by AgentController.newChat() to ensure no state leaks between conversations.
+     *
+     * Disposes the current session-scoped Disposable — cascading to every
+     * outstanding [RunInvocation] so IDE run/test/coverage state (process
+     * handlers, listeners, RunContent descriptors) from the previous session
+     * is torn down cleanly before the next session starts. Phase 3 / Task 2.2.
      */
     fun resetForNewChat() {
         cancelCurrentTask()
@@ -1529,6 +1942,9 @@ class AgentService(private val project: Project) : Disposable {
         registry.resetActiveDeferred()
         ProcessRegistry.killAll()
         activeTask.set(null)
+        _outputSpiller = null  // Clear session-scoped spiller so the next session gets a fresh one
+        taskStore = null       // Clear session-scoped task store
+        sessionDisposableHolder.resetSession()
     }
 
     // ── Dispose ────────────────────────────────────────────────────────────

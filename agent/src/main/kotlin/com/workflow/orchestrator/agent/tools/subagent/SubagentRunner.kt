@@ -8,7 +8,10 @@ import com.workflow.orchestrator.agent.loop.AgentLoop
 import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.ToolRegistry
+import com.workflow.orchestrator.agent.tools.builtin.ToolSearchTool
 import com.workflow.orchestrator.core.ai.LlmBrain
+import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.core.ai.OpenAiCompatBrain
 import com.workflow.orchestrator.core.ai.ToolPromptBuilder
 import kotlinx.coroutines.CoroutineScope
@@ -32,7 +35,8 @@ import kotlin.coroutines.coroutineContext
  */
 class SubagentRunner(
     private val brain: LlmBrain,
-    private val tools: Map<String, AgentTool>,
+    private val coreTools: Map<String, AgentTool>,
+    private val deferredTools: Map<String, Pair<AgentTool, String>> = emptyMap(),
     private val systemPrompt: String,
     private val project: Project,
     private val maxIterations: Int,
@@ -40,9 +44,58 @@ class SubagentRunner(
     private val contextBudget: Int,
     private val maxOutputTokens: Int? = null,
     private val apiDebugDir: File? = null,
-    private val toolExecutionMode: String = "accumulate"
+    toolExecutionMode: String = "accumulate",
+    /**
+     * Optional approval gate forwarded from the parent session. When set, write-tool
+     * executions inside the sub-agent suspend waiting for user approval, just like
+     * they do for the main agent. Null = no approval (tests, read-only sub-agents).
+     */
+    private val approvalGate: (suspend (toolName: String, args: String, riskLevel: String, allowSessionApproval: Boolean) -> com.workflow.orchestrator.agent.loop.ApprovalResult)? = null,
+    /**
+     * Optional hook manager forwarded from the parent session. When set, PRE_TOOL_USE /
+     * POST_TOOL_USE / etc. fire for sub-agent tool calls with the same semantics as the
+     * main agent.
+     */
+    private val hookManager: com.workflow.orchestrator.agent.hooks.HookManager? = null,
+    /**
+     * Optional session metrics accumulator from the parent session. Sub-agent tool
+     * durations / API latencies flow into the parent scorecard.
+     */
+    private val sessionMetrics: com.workflow.orchestrator.agent.observability.SessionMetrics? = null,
+    /**
+     * Optional file logger from the parent session. Sub-agent lifecycle events land in
+     * the same JSONL stream as the parent's.
+     */
+    private val fileLogger: com.workflow.orchestrator.agent.observability.AgentFileLogger? = null,
+    /**
+     * Optional debug log callback forwarded from the parent session. Routes sub-agent
+     * warnings/events to the JCEF debug panel.
+     */
+    private val onDebugLog: ((level: String, event: String, detail: String, meta: Map<String, Any?>?) -> Unit)? = null,
+    /**
+     * Optional checkpoint callback forwarded from the parent session. Fired after
+     * sub-agent write tools so the checkpoint timeline on the parent UI reflects
+     * changes made inside the sub-agent.
+     */
+    private val onCheckpoint: (suspend () -> Unit)? = null,
+    /**
+     * Test hook: called with the initial composed system prompt immediately after it is built.
+     * Null in production. Allows tests to capture the composed prompt without running a full loop.
+     */
+    internal val onSystemPromptBuilt: ((String) -> Unit)? = null,
 ) {
     private val abortRequested = AtomicBoolean(false)
+
+    /**
+     * Effective tool execution mode for this sub-agent. Always `"stream_interrupt"`
+     * regardless of what the caller passed, because sub-agents must ReAct one
+     * tool at a time. The constructor arg is retained for API compatibility but
+     * intentionally ignored — sub-agents should not accumulate because batched
+     * `attempt_completion` speculates past tool results.
+     */
+    @Suppress("unused")
+    private val callerRequestedToolExecutionMode: String = toolExecutionMode
+    internal val effectiveToolExecutionMode: String = "stream_interrupt"
 
     /**
      * Abort the subagent run. Sets the abort flag and cancels the brain's active request.
@@ -72,43 +125,75 @@ class SubagentRunner(
         val stats = MutableSubagentStats()
 
         try {
-            // 0. Wire API debug dumps on the brain (separate subdir from main agent)
-            if (apiDebugDir != null && brain is OpenAiCompatBrain) {
-                brain.setApiDebugDir(apiDebugDir)
-                brain.resetApiCallCounter()
+            // 0. Wire API debug dumps on the brain (separate subdir from main agent).
+            //    Detach any parent-session shared counter so this sub-agent's dumps
+            //    number from 001 inside its own debug dir — otherwise the shared
+            //    counter would interleave numbering between parent and sub-agent.
+            if (brain is OpenAiCompatBrain) {
+                brain.detachSharedApiCallCounter()
+                if (apiDebugDir != null) {
+                    brain.setApiDebugDir(apiDebugDir)
+                    brain.resetApiCallCounter()
+                }
             }
 
-            // 1. Build tool definitions and compose system prompt with XML tool defs
-            val toolDefinitions = tools.values.map { it.toToolDefinition() }
-            val toolDefsMarkdown = ToolPromptBuilder.build(toolDefinitions)
-            val composedSystemPrompt = "$systemPrompt\n\n====\n\n$toolDefsMarkdown"
+            // 1. Build per-sub-agent ToolRegistry
+            val subagentRegistry = ToolRegistry()
 
-            // 2. Create fresh context manager with budget
+            // Register core tools (schemas in system prompt from turn 1)
+            coreTools.forEach { (_, tool) -> subagentRegistry.registerCore(tool) }
+
+            // Register deferred tools (names in catalog, schemas loaded via tool_search)
+            deferredTools.forEach { (_, pair) ->
+                val (tool, category) = pair
+                subagentRegistry.registerDeferred(tool, category)
+            }
+
+            // Always inject a fresh ToolSearchTool backed by THIS sub-agent's registry.
+            subagentRegistry.registerCore(ToolSearchTool(subagentRegistry))
+
+            // 2. Build initial composed system prompt: body + core schemas + deferred catalog
+            val initialPrompt = buildComposedSystemPrompt(subagentRegistry)
+            onSystemPromptBuilt?.invoke(initialPrompt)
+
+            // 3. Scope the brain's XML parser to ALL tools (core + deferred)
+            brain.toolNameSet = subagentRegistry.allToolNames()
+            brain.paramNameSet = subagentRegistry.allParamNames()
+
+            // 4. Create fresh context manager with budget
             val contextManager = ContextManager(maxInputTokens = contextBudget)
-            contextManager.setSystemPrompt(composedSystemPrompt)
+            contextManager.setSystemPrompt(initialPrompt)
+            contextManager.setToolDefinitionTokens(
+                TokenEstimator.estimateToolDefinitions(subagentRegistry.getActiveDefinitions())
+            )
 
-            // 3. Report initial "running" status
-            onProgress(SubagentProgressUpdate(status = "running", stats = stats.snapshot()))
+            // 5. Report initial "running" status
+            onProgress(SubagentProgressUpdate(status = SubagentExecutionStatus.RUNNING, stats = stats.snapshot()))
 
-            // 4. Check abort before proceeding
+            // 6. Check abort before proceeding
             if (abortRequested.get()) {
                 return cancelledResult(stats)
             }
 
-            // 5. Create AgentLoop with callbacks
+            // 7. Create AgentLoop with callbacks
             // Capture coroutine scope to bridge non-suspend AgentLoop callbacks
             // to suspend onProgress. Port of Cline's per-tool-call progress reporting.
             val scope = CoroutineScope(coroutineContext)
 
             val loop = AgentLoop(
                 brain = brain,
-                tools = tools,
-                toolDefinitions = toolDefinitions,
+                tools = subagentRegistry.getActiveTools(),
+                toolDefinitions = subagentRegistry.getActiveDefinitions(),
                 contextManager = contextManager,
                 project = project,
                 maxIterations = maxIterations,
                 maxOutputTokens = maxOutputTokens,
                 planMode = planMode,
+                toolDefinitionProvider = { subagentRegistry.getActiveDefinitions() },
+                toolResolver = { name -> subagentRegistry.get(name) },
+                systemPromptProvider = { buildComposedSystemPrompt(subagentRegistry) },
+                toolNameProvider = { subagentRegistry.allToolNames() },
+                paramNameProvider = { subagentRegistry.allParamNames() },
                 onToolCall = { progress ->
                     // AgentLoop fires onToolCall twice: once at tool start (empty result, durationMs=0)
                     // and once at tool completion (populated result, durationMs>0). We must propagate
@@ -151,24 +236,29 @@ class SubagentRunner(
                         onProgress(SubagentProgressUpdate(stats = stats.snapshot()))
                     }
                 },
-                toolExecutionMode = toolExecutionMode,
-                // Gap 2 fix: scope XML parser tool/param names to this sub-agent's
-                // own tool set, not the main agent's brain.toolNameSet fallback.
-                toolNameProvider = { tools.keys },
-                paramNameProvider = {
-                    tools.values.flatMap { it.parameters.properties.keys }.toSet()
-                }
+                toolExecutionMode = effectiveToolExecutionMode,
+                approvalGate = approvalGate,
+                hookManager = hookManager,
+                sessionMetrics = sessionMetrics,
+                fileLogger = fileLogger,
+                onDebugLog = onDebugLog,
+                onCheckpoint = onCheckpoint,
+                onStreamChunk = { chunk ->
+                    scope.launch {
+                        onProgress(SubagentProgressUpdate(streamDelta = chunk, stats = stats.snapshot()))
+                    }
+                },
             )
 
-            // 6. Run the loop
+            // 8. Run the loop
             val loopResult = loop.run(prompt)
 
-            // 7. Check abort after loop finishes
+            // 9. Check abort after loop finishes
             if (abortRequested.get()) {
                 return cancelledResult(stats)
             }
 
-            // 8. Map LoopResult to SubagentRunResult
+            // 10. Map LoopResult to SubagentRunResult
             val result = when (loopResult) {
                 is LoopResult.Completed -> {
                     stats.inputTokens = loopResult.inputTokens
@@ -208,8 +298,8 @@ class SubagentRunner(
                 }
             }
 
-            // 9. Report final status
-            val finalStatus = if (result.status == SubagentRunStatus.COMPLETED) "completed" else "failed"
+            // 11. Report final status
+            val finalStatus = if (result.status == SubagentRunStatus.COMPLETED) SubagentExecutionStatus.COMPLETED else SubagentExecutionStatus.FAILED
             onProgress(
                 SubagentProgressUpdate(
                     status = finalStatus,
@@ -226,7 +316,7 @@ class SubagentRunner(
                 return cancelledResult(stats).also { cancelResult ->
                     onProgress(
                         SubagentProgressUpdate(
-                            status = "failed",
+                            status = SubagentExecutionStatus.FAILED,
                             stats = cancelResult.stats,
                             error = cancelResult.error
                         )
@@ -244,12 +334,46 @@ class SubagentRunner(
             )
             onProgress(
                 SubagentProgressUpdate(
-                    status = "failed",
+                    status = SubagentExecutionStatus.FAILED,
                     stats = failedResult.stats,
                     error = errorMsg
                 )
             )
             return failedResult
+        }
+    }
+
+    private fun buildDeferredCatalogSection(registry: ToolRegistry): String {
+        val catalog = registry.getDeferredCatalogGroupedWithDescriptions()
+        if (catalog.isEmpty()) return ""
+        return buildString {
+            appendLine("## Deferred Tools (load with tool_search)")
+            appendLine("These tools are available but not loaded. Use tool_search to activate them when needed.")
+            appendLine()
+            for ((category, tools) in catalog) {
+                appendLine("### $category")
+                for ((name, description) in tools) {
+                    appendLine("- `$name`: $description")
+                }
+            }
+        }.trimEnd()
+    }
+
+    private fun buildComposedSystemPrompt(registry: ToolRegistry): String {
+        val coreDefinitions = registry.getActiveDefinitions()
+        val coreMarkdown = ToolPromptBuilder.build(coreDefinitions)
+        val deferredCatalog = buildDeferredCatalogSection(registry)
+
+        return buildString {
+            append(systemPrompt)
+            append("\n\n====\n\n")
+            append(coreMarkdown)
+            if (deferredCatalog.isNotEmpty()) {
+                append("\n\n====\n\n")
+                append(deferredCatalog)
+            }
+            append("\n\n====\n\n")
+            append(COMPLETING_YOUR_TASK_SECTION)
         }
     }
 
@@ -263,6 +387,23 @@ class SubagentRunner(
     companion object {
         private val LOG = Logger.getInstance(SubagentRunner::class.java)
         private const val TOOL_CALL_PREVIEW_MAX_LENGTH = 80
+
+        /**
+         * Injected at the end of every sub-agent's composed system prompt so that all
+         * current and future personas know to use [TaskReportTool] (not `attempt_completion`).
+         * Option B from the design: one injection point beats editing every persona file.
+         */
+        internal const val COMPLETING_YOUR_TASK_SECTION = """COMPLETING YOUR TASK
+
+When you have completed your task, call `task_report` with:
+- summary: one paragraph — what was done, the overall conclusion, and whether the task succeeded
+- findings: detailed analysis (markdown OK, inline code snippets with file:line welcome)
+- files: newline-separated paths you examined or modified
+- next_steps: what the parent agent should do next (concrete and actionable)
+- issues: blockers or unresolved questions (omit if none)
+
+Your conversation, tool calls, and streamed text are NOT visible to the parent agent.
+Only the task_report fields are. Be comprehensive, not terse."""
 
         /**
          * Format a tool call for display in progress updates.

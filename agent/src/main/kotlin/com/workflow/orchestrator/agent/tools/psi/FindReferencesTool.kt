@@ -5,10 +5,10 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.PsiManager
 import com.intellij.psi.search.GlobalSearchScope
-import com.intellij.psi.search.PsiShortNamesCache
 import com.intellij.psi.search.searches.ReferencesSearch
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
+import com.workflow.orchestrator.agent.ide.LanguageProviderRegistry
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
@@ -17,7 +17,9 @@ import com.workflow.orchestrator.agent.tools.builtin.PathValidator
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-class FindReferencesTool : AgentTool {
+class FindReferencesTool(
+    private val registry: LanguageProviderRegistry
+) : AgentTool {
     override val name = "find_references"
     override val description = "Find all usages/references of a symbol (class, method, or field) across the project."
     override val parameters = FunctionParameters(
@@ -50,38 +52,8 @@ class FindReferencesTool : AgentTool {
         val content = ReadAction.nonBlocking<String> {
             val scope = GlobalSearchScope.projectScope(project)
 
-            // Try to find as a class first
-            val psiClass = PsiToolUtils.findClassAnywhere(project, symbol)
-            val targetElement = if (psiClass != null) {
-                // If file path specified, check class is in that file
-                if (resolvedFilePath != null) {
-                    val classFile = psiClass.containingFile?.virtualFile?.path
-                    if (classFile != resolvedFilePath) null else psiClass
-                } else {
-                    psiClass
-                }
-            } else {
-                null
-            }
-
-            // If class not found, try to find as a method within a class context
-            val searchTarget = targetElement ?: run {
-                if (resolvedFilePath != null) {
-                    val vFile = LocalFileSystem.getInstance().findFileByPath(resolvedFilePath)
-                    val psiFile = vFile?.let { PsiManager.getInstance(project).findFile(it) }
-                    // Search all classes in the file for a method with this name
-                    val classes = (psiFile as? com.intellij.psi.PsiJavaFile)?.classes ?: emptyArray()
-                    classes.flatMap { it.methods.toList() }
-                        .firstOrNull { it.name == symbol }
-                } else {
-                    null
-                }
-            } ?: run {
-                // Global fallback via PsiShortNamesCache for methods and fields
-                val shortNameCache = PsiShortNamesCache.getInstance(project)
-                shortNameCache.getMethodsByName(symbol, scope).firstOrNull()
-                    ?: shortNameCache.getFieldsByName(symbol, scope).firstOrNull()
-            }
+            // Resolve the search target via provider or fallback
+            val searchTarget = resolveSearchTarget(project, symbol, resolvedFilePath, scope)
 
             if (searchTarget == null) {
                 return@nonBlocking "No symbol '$symbol' found in project"
@@ -132,10 +104,61 @@ class FindReferencesTool : AgentTool {
             header + results.joinToString("\n") + truncated
         }.inSmartMode(project).executeSynchronously()
 
+        val spilled = spillOrFormat(content, project)
         return ToolResult(
-            content = content,
+            content = spilled.preview,
             summary = "References for '$symbol'",
-            tokenEstimate = TokenEstimator.estimate(content)
+            tokenEstimate = TokenEstimator.estimate(spilled.preview),
+            spillPath = spilled.spilledToFile,
         )
+    }
+
+    /**
+     * Resolve the PsiElement to search references for.
+     * Delegates symbol resolution to the language provider when available,
+     * falling back to direct PSI lookup for file-scoped disambiguation.
+     */
+    private fun resolveSearchTarget(
+        project: Project,
+        symbol: String,
+        resolvedFilePath: String?,
+        scope: GlobalSearchScope
+    ): com.intellij.psi.PsiElement? {
+        // If a file path is provided, try file-scoped resolution first
+        if (resolvedFilePath != null) {
+            val vFile = LocalFileSystem.getInstance().findFileByPath(resolvedFilePath)
+            val psiFile = vFile?.let { PsiManager.getInstance(project).findFile(it) }
+
+            if (psiFile != null) {
+                // Resolve provider from the actual file's language
+                val fileProvider = registry.forFile(psiFile)
+                if (fileProvider != null) {
+                    // Try to find symbol as class first, verify it's in this file
+                    val classElement = fileProvider.findSymbol(project, symbol)
+                    if (classElement != null && classElement.containingFile?.virtualFile?.path == resolvedFilePath) {
+                        return classElement
+                    }
+                }
+
+                // File-scoped fallback: search classes in the file for a method with this name
+                val classes = (psiFile as? com.intellij.psi.PsiJavaFile)?.classes ?: emptyArray()
+                classes.flatMap { it.methods.toList() }
+                    .firstOrNull { it.name == symbol }
+                    ?.let { return it }
+            }
+        }
+
+        // Global resolution via provider (fall back to hardcoded language IDs when no file context)
+        val provider = registry.forLanguageId("JAVA") ?: registry.forLanguageId("kotlin")
+        if (provider != null) {
+            provider.findSymbol(project, symbol)?.let { return it }
+        }
+
+        // Final fallback via PsiShortNamesCache (in case provider didn't find it)
+        val shortNameCache = com.intellij.psi.search.PsiShortNamesCache.getInstance(project)
+        shortNameCache.getMethodsByName(symbol, scope).firstOrNull()?.let { return it }
+        shortNameCache.getFieldsByName(symbol, scope).firstOrNull()?.let { return it }
+
+        return null
     }
 }

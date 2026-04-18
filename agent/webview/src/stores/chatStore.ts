@@ -3,8 +3,7 @@ import type {
   ToolCall,
   ToolCallStatus,
   Plan,
-  PlanStep,
-  PlanStepStatus,
+  Task,
   Question,
   SessionInfo,
   SessionStatus,
@@ -20,6 +19,8 @@ import type {
   UiMessage,
   SubAgentState,
   HistoryItem,
+  CompletionData,
+  CompletionKind,
 } from '../bridge/types';
 
 // ── Internal ID generator ──
@@ -64,6 +65,13 @@ interface PendingProcessInput {
 }
 
 // ── Approval state ──
+export interface ApprovalCommandPreview {
+  command: string;
+  shell: string;
+  cwd: string;
+  env: Array<{ key: string; value: string }>;
+  separateStderr?: boolean;
+}
 interface PendingApproval {
   toolName: string;
   riskLevel: string;
@@ -71,6 +79,9 @@ interface PendingApproval {
   description?: string;
   metadata?: Array<{ key: string; value: string }>;
   diffContent?: string;
+  commandPreview?: ApprovalCommandPreview;
+  /** Whether the UI should offer "Allow for session". False for run_command. */
+  allowSessionApproval: boolean;
 }
 
 // ── Toast state ──
@@ -116,7 +127,7 @@ interface ChatState {
   showingToolsPanel: boolean;
   toolsPanelData: string | null;
   showingSkeleton: boolean;
-  retryMessage: string | null;
+  retryState: { kind: 'continue' | 'retry'; caption: string } | null;
   toasts: Toast[];
   skillBanner: string | null;
   skillsList: Skill[];
@@ -147,10 +158,14 @@ interface ChatState {
   // Resume bar state — non-null when viewing a resumable session
   resumeSessionId: string | null;
 
+  // Task state (task system port — Phase 5)
+  tasks: Task[];
+
   // Actions
   startSession(task: string, mentions?: Mention[]): void;
   completeSession(info: SessionInfo): void;
   addUserMessage(text: string, mentions?: Mention[]): void;
+  addPlanApprovedMessage(planMarkdown: string): void;
   addAgentText(text: string): void;
   appendToken(token: string): void;
   endStream(): void;
@@ -159,17 +174,22 @@ interface ChatState {
   finalizeToolChain(): void;
   addDiff(diff: EditDiff): void;
   addDiffExplanation(title: string, diffSource: string): void;
-  addCompletionSummary(result: string, verifyCommand?: string): void;
+  addCompletionCard(data: CompletionData): void;
   addStatus(message: string, type: StatusType): void;
   addThinking(text: string): void;
   clearChat(): void;
   setPlan(plan: Plan): void;
+  clearPlan(): void;
   approvePlan(): void;
-  updatePlanStep(stepId: string, status: string): void;
-  replaceExecutionSteps(steps: PlanStep[]): void;
   setPlanPending(state: 'approve' | 'revise' | null): void;
+
+  // Task actions (task system port — Phase 5)
+  setTasks(tasks: Task[]): void;
+  applyTaskCreate(task: Task): void;
+  applyTaskUpdate(task: Task): void;
   setPlanCommentCount(count: number): void;
   showQuestions(questions: Question[]): void;
+  clearQuestions(): void;
   finalizeQuestionsAsMessage(): void;
   showQuestion(index: number): void;
   showQuestionSummary(summary: any): void;
@@ -195,7 +215,7 @@ interface ChatState {
   hideSkillBanner(): void;
   showToolsPanel(toolsJson: string): void;
   hideToolsPanel(): void;
-  showRetryButton(lastMessage: string): void;
+  showRetryButton(kind: 'continue' | 'retry', caption: string): void;
   focusInput(): void;
   addChart(chartConfigJson: string): void;
   addAnsiOutput(text: string): void;
@@ -209,7 +229,7 @@ interface ChatState {
   showToast(message: string, type: string, durationMs: number): void;
   dismissToast(id: string): void;
   receiveMentionResults(results: MentionSearchResult[]): void;
-  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string): void;
+  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string, commandPreview?: ApprovalCommandPreview, allowSessionApproval?: boolean): void;
   resolveApproval(decision: 'approve' | 'deny' | 'allowForSession'): void;
   showProcessInput(processId: string, description: string, prompt: string, command: string): void;
   resolveProcessInput(input: string): void;
@@ -242,6 +262,7 @@ interface ChatState {
   addSubAgentToolCall(payload: string): void;
   updateSubAgentToolCall(payload: string): void;
   updateSubAgentMessage(payload: string): void;
+  appendSubAgentStreamDelta(payload: string): void;
   completeSubAgent(payload: string): void;
   killSubAgent(agentId: string): void;
 
@@ -288,7 +309,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   showingToolsPanel: false,
   toolsPanelData: null,
   showingSkeleton: false,
-  retryMessage: null,
+  retryState: null,
   toasts: [],
   skillBanner: null,
   skillsList: [],
@@ -314,6 +335,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   historyItems: [],
   historySearch: '',
   resumeSessionId: null,
+  tasks: [],
 
   // Actions
   startSession(task: string, _mentions?: Mention[]) {
@@ -337,13 +359,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       questionSummary: null,
       busy: true,
       steeringMode: true,
-      retryMessage: null,
+      retryState: null,
       smartWorkingPhrase: null,
       sessionTitle: null,
       editStats: null,
       checkpoints: [],
       queuedSteeringMessages: [],
       restoredInputText: null,
+      tasks: [],
       viewMode: 'chat' as const,
       session: {
         status: 'RUNNING',
@@ -405,6 +428,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const msg: UiMessage = {
       ts: uniqueTs(), type: 'SAY', say: 'USER_MESSAGE', text,
       ...(mentions && mentions.length > 0 ? { mentions } : {}),
+    };
+    set(state => ({ messages: [...state.messages, msg] }));
+  },
+
+  addPlanApprovedMessage(planMarkdown: string) {
+    const msg: UiMessage = {
+      ts: uniqueTs(),
+      type: 'SAY',
+      say: 'PLAN_APPROVED',
+      text: 'Implementation plan approved',
+      planApprovalData: { planMarkdown },
     };
     set(state => ({ messages: [...state.messages, msg] }));
   },
@@ -602,12 +636,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set(state => ({ messages: [...state.messages, msg] }));
   },
 
-  addCompletionSummary(result: string, verifyCommand?: string) {
+  addCompletionCard(data: CompletionData) {
     const msg: UiMessage = {
       ts: uniqueTs(),
       type: 'ASK',
       ask: 'COMPLETION_RESULT',
-      text: verifyCommand ? JSON.stringify({ result, verifyCommand }) : result,
+      completionData: data,
     };
     set(state => ({
       messages: [...state.messages, msg],
@@ -684,14 +718,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
       planCompletedPendingClear: false,
       questions: null,
       questionSummary: null,
-      retryMessage: null,
+      retryState: null,
+      tasks: [],
       viewMode: 'chat',
       resumeSessionId: null,
     });
   },
 
   setPlan(plan: Plan) {
-    set({ plan, planCommentCount: 0 });
+    set(state => {
+      const current = state.plan;
+      const isIdentical = current !== null &&
+        plan.title === current.title &&
+        plan.summary === current.summary &&
+        plan.markdown === current.markdown;
+      if (isIdentical) {
+        // Content unchanged — update non-comment fields but keep planCommentCount
+        return { plan };
+      }
+      return { plan, planCommentCount: 0 };
+    });
+  },
+
+  clearPlan() {
+    set({ plan: null, planCommentCount: 0 });
   },
 
   approvePlan() {
@@ -712,39 +762,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ planCommentCount: count });
   },
 
-  updatePlanStep(stepId: string, status: string) {
-    set(state => {
-      if (!state.plan) return {};
-      const steps = state.plan.steps.map(step =>
-        step.id === stepId ? { ...step, status: status as PlanStepStatus } : step
-      );
-      const terminalStatuses = new Set(['completed', 'done', 'failed', 'skipped']);
-      const allTerminal = steps.length > 0 && steps.every(s => terminalStatuses.has(s.status));
-      return {
-        plan: { ...state.plan, steps },
-        planCompletedPendingClear: allTerminal,
-      };
-    });
-  },
-
-  replaceExecutionSteps(steps: PlanStep[]) {
-    set(state => {
-      if (!state.plan) return {};
-      const terminalStatuses = new Set(['completed', 'done', 'failed', 'skipped']);
-      const allTerminal = steps.length > 0 && steps.every(s => terminalStatuses.has(s.status));
-      return {
-        plan: { ...state.plan, steps },
-        planCompletedPendingClear: allTerminal,
-      };
-    });
-  },
-
   setPlanPending(state: 'approve' | 'revise' | null) {
     set({ planPending: state });
   },
 
   showQuestions(questions: Question[]) {
     set({ questions, activeQuestionIndex: 0, questionSummary: null });
+  },
+
+  clearQuestions() {
+    set({ questions: null, questionSummary: null, activeQuestionIndex: 0 });
   },
 
   finalizeQuestionsAsMessage() {
@@ -765,7 +792,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
           currentIndex: snapshot.length - 1,
           answers: snapshot.reduce((acc, q, i) => {
             if (q.answer) {
-              acc[i] = Array.isArray(q.answer) ? q.answer.join(', ') : q.answer;
+              const ids = Array.isArray(q.answer) ? q.answer : [q.answer];
+              const labels = ids.map(id => {
+                const opt = q.options.find(o => (o.id ?? o.label) === id);
+                return opt?.label ?? id;  // fallback: if id not found in options, show it as-is (handles free-text answers)
+              });
+              acc[i] = labels.join(', ');
             }
             return acc;
           }, {} as Record<number, string>),
@@ -874,8 +906,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ showingToolsPanel: false, toolsPanelData: null });
   },
 
-  showRetryButton(lastMessage: string) {
-    set({ retryMessage: lastMessage });
+  showRetryButton(kind: 'continue' | 'retry', caption: string) {
+    set({ retryState: { kind, caption } });
   },
 
   focusInput() {
@@ -985,7 +1017,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ mentionResults: results });
   },
 
-  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string) {
+  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string, commandPreview?: ApprovalCommandPreview, allowSessionApproval: boolean = true) {
     set(state => {
       const approval: PendingApproval = {
         toolName,
@@ -994,6 +1026,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         description,
         metadata,
         diffContent,
+        commandPreview,
+        allowSessionApproval,
       };
 
       // Drain any active tool chain into individual UiMessage entries and
@@ -1064,6 +1098,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // Do NOT add the user message here — Kotlin is authoritative.
     // For first messages: startSession() adds it atomically.
     // For subsequent messages: appendUserMessage() adds it from Kotlin.
+    // Clear the retry pill immediately so it doesn't persist into the new turn.
+    set({ retryState: null });
     import('../bridge/jcef-bridge').then(({ kotlinBridge }) => {
       if (mentions.length > 0) {
         kotlinBridge.sendMessageWithMentions(text, JSON.stringify(mentions));
@@ -1383,6 +1419,42 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
+  /**
+   * Append a raw streaming token/chunk to the sub-agent card's last partial TEXT
+   * message. Unlike [updateSubAgentMessage] which replaces the whole text, this
+   * incrementally appends — mirroring how the main agent's streaming works —
+   * so the user sees tokens flow in the sub-agent card rather than a single
+   * delayed block.
+   *
+   * If no partial TEXT message exists yet for this sub-agent, one is created.
+   */
+  appendSubAgentStreamDelta(payload: string) {
+    const { agentId, delta } = JSON.parse(payload) as { agentId: string; delta: string };
+    if (!delta) return;
+    set((state) => {
+      const newMap = new Map(state.activeSubAgents);
+      const agent = newMap.get(agentId);
+      if (!agent) return state;
+      const msgs = agent.messages;
+      const lastIdx = msgs.length - 1;
+      const last = lastIdx >= 0 ? msgs[lastIdx] : undefined;
+      if (last && last.type === 'SAY' && last.say === 'TEXT') {
+        const updated: UiMessage = { ...last, text: (last.text ?? '') + delta };
+        const nextMessages = msgs.slice(0, lastIdx).concat(updated);
+        newMap.set(agentId, { ...agent, messages: nextMessages });
+      } else {
+        const textMsg: UiMessage = {
+          ts: uniqueTs(),
+          type: 'SAY',
+          say: 'TEXT',
+          text: delta,
+        };
+        newMap.set(agentId, { ...agent, messages: [...msgs, textMsg] });
+      }
+      return { activeSubAgents: newMap };
+    });
+  },
+
   completeSubAgent(payload: string) {
     const data = JSON.parse(payload);
     set((state) => {
@@ -1468,6 +1540,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ask: 'COMPLETION_RESULT' as const,
             text: result,
             toolCallData: undefined,
+            completionData: { kind: 'done' as CompletionKind, result },
           };
         }
         case 'plan_mode_respond': {
@@ -1519,7 +1592,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     });
 
-    // Restore plan from last PLAN_UPDATE message
+    // Restore plan from last PLAN_UPDATE message (steps field removed in Phase 5 — task system port)
     let restoredPlan: Plan | null = null;
     for (let i = upgraded.length - 1; i >= 0; i--) {
       const m = upgraded[i]!;
@@ -1527,12 +1600,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const pd = m.planData;
         restoredPlan = {
           title: 'Plan',
-          steps: pd.steps.map((s, si) => ({
-            id: `plan-step-${si}`,
-            title: s.title,
-            status: (s.status as PlanStepStatus) || 'pending',
-            comment: pd.comments?.[si] ?? undefined,
-          })),
           approved: pd.status === 'APPROVED' || pd.status === 'EXECUTING',
         };
         break;
@@ -1561,4 +1628,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setResumeSessionId(sessionId: string | null) {
     set({ resumeSessionId: sessionId });
   },
+
+  // ── Task Actions (task system port — Phase 5) ──
+  setTasks: (tasks) => set({ tasks }),
+  applyTaskCreate: (task) => set((state) => {
+    const existing = state.tasks.findIndex((t) => t.id === task.id);
+    if (existing >= 0) {
+      // Upsert: duplicate create (e.g. session resume replay) replaces in-place
+      const updated = [...state.tasks];
+      updated[existing] = task;
+      return { tasks: updated };
+    }
+    return { tasks: [...state.tasks, task] };
+  }),
+  applyTaskUpdate: (task) => set((state) => {
+    const existing = state.tasks.findIndex((t) => t.id === task.id);
+    if (existing >= 0) {
+      const updated = [...state.tasks];
+      updated[existing] = task;
+      return { tasks: updated };
+    }
+    // Upsert: if the create event was missed (out-of-order delivery), fall through to append
+    return { tasks: [...state.tasks, task] };
+  }),
 }));

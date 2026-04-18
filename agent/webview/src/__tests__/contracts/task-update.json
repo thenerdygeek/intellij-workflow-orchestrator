@@ -1,0 +1,18 @@
+{
+  "description": "Contract for applyTaskUpdate(task) bridge function. Kotlin sends a task after TaskUpdate executes; React replaces the matching task in chatStore by id.",
+  "payload": {
+    "id": "task-abc123",
+    "subject": "Fix auth bug in login flow",
+    "description": "Users see 500 on /login when cookies expire mid-request.",
+    "activeForm": "Fixing auth bug",
+    "status": "in_progress",
+    "owner": "coder-agent",
+    "blocks": [],
+    "blockedBy": [],
+    "createdAt": 1744985000000,
+    "updatedAt": 1744985500000
+  },
+  "required_fields": ["id", "subject", "description", "status"],
+  "optional_fields": ["activeForm", "owner", "blocks", "blockedBy", "createdAt", "updatedAt"],
+  "valid_statuses": ["pending", "in_progress", "completed", "deleted"]
+}

@@ -8,6 +8,7 @@ import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.process.OutputCollector
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
@@ -44,7 +45,7 @@ class KillProcessTool : AgentTool {
         val command = managed.command
 
         // Collect partial output before killing
-        val rawOutput = RunCommandTool.stripAnsi(managed.outputLines.joinToString(""))
+        val rawOutput = OutputCollector.stripAnsi(managed.outputLines.joinToString(""))
 
         val readerLatch = managed.readerDone
         ProcessRegistry.kill(processId)

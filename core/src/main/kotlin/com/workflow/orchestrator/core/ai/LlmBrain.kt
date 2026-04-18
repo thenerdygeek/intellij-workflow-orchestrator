@@ -53,4 +53,14 @@ interface LlmBrain {
     var paramNameSet: Set<String>
         get() = emptySet()
         set(_) {}
+
+    /**
+     * Sampling temperature for the next request. Default 0.0 (deterministic).
+     * Raise to 1.0 before retrying an empty response to break degenerate sampling.
+     * Confirmed accepted by Sourcegraph: probe results show 0.0, 0.2, 0.5, 1.0
+     * all return HTTP 200. Resets to 0.0 after a successful tool-call response.
+     */
+    var temperature: Double
+        get() = 0.0
+        set(_) {}
 }

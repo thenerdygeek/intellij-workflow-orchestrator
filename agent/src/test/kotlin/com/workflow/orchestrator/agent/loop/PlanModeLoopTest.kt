@@ -104,7 +104,7 @@ class PlanModeLoopTest {
         brain: LlmBrain,
         tools: List<AgentTool>,
         planMode: Boolean = false,
-        onPlanResponse: ((String, Boolean, List<String>) -> Unit)? = null,
+        onPlanResponse: ((String, Boolean) -> Unit)? = null,
         userInputChannel: Channel<String>? = null
     ): AgentLoop {
         val toolMap = tools.associateBy { it.name }
@@ -155,7 +155,7 @@ class PlanModeLoopTest {
             val loop = buildLoop(
                 brain, tools,
                 planMode = true,
-                onPlanResponse = { text, explore, _ -> planCallbackFired.add(text to explore) },
+                onPlanResponse = { text, explore -> planCallbackFired.add(text to explore) },
                 userInputChannel = channel
             )
 
@@ -208,7 +208,7 @@ class PlanModeLoopTest {
             val loop = buildLoop(
                 brain, tools,
                 planMode = true,
-                onPlanResponse = { text, explore, _ -> planCallbackFired.add(text to explore) },
+                onPlanResponse = { text, explore -> planCallbackFired.add(text to explore) },
                 userInputChannel = channel
             )
 
@@ -258,7 +258,7 @@ class PlanModeLoopTest {
             val loop = buildLoop(
                 brain, tools,
                 planMode = true,
-                onPlanResponse = { _, _, _ -> },
+                onPlanResponse = { _, _ -> },
                 userInputChannel = channel
             )
 
@@ -294,7 +294,7 @@ class PlanModeLoopTest {
             val loop = buildLoop(
                 brain, tools,
                 planMode = true,
-                onPlanResponse = { text, _, _ -> planCallbackFired.add(text) },
+                onPlanResponse = { text, _ -> planCallbackFired.add(text) },
                 userInputChannel = null
             )
 
@@ -327,7 +327,7 @@ class PlanModeLoopTest {
             val loop = buildLoop(
                 brain, tools,
                 planMode = true,
-                onPlanResponse = { _, _, _ -> },
+                onPlanResponse = { _, _ -> },
                 userInputChannel = channel
             )
 
@@ -341,6 +341,87 @@ class PlanModeLoopTest {
             // User approves revised plan (second plan wait)
             channel.send("Approved. Implement it.")
 
+            loopJob.join()
+        }
+
+        @Test
+        fun `text-only response in plan mode resets consecutiveEmpties to 0`() = runTest {
+            // Scenario: LLM gives MAX_CONSECUTIVE_EMPTIES-1 (=2) consecutive empty responses,
+            // then a text-only plan-mode reply (which resets consecutiveEmpties to 0 and waits
+            // for user input), then one more empty response, then completion.
+            //
+            // Without the reset: the empty after the text-only turn would be the 3rd consecutive
+            // empty (2 before + 1 after), pushing consecutiveEmpties to 3 == MAX_CONSECUTIVE_EMPTIES
+            // and the loop would return Failed.
+            //
+            // With the reset: consecutiveEmpties goes back to 0 on the text-only turn, so the
+            // subsequent empty is only count=1 — the loop continues and completes normally.
+            val channel = Channel<String>(Channel.RENDEZVOUS)
+
+            val emptyResponse = { id: String ->
+                ChatCompletionResponse(
+                    id = id,
+                    choices = listOf(
+                        Choice(
+                            index = 0,
+                            message = ChatMessage(role = "assistant", content = null),
+                            finishReason = "stop"
+                        )
+                    ),
+                    usage = UsageInfo(promptTokens = 100, completionTokens = 0, totalTokens = 100)
+                )
+            }
+
+            val brain = sequenceBrain(
+                // Two consecutive empty responses — consecutiveEmpties reaches 2 (MAX-1)
+                emptyResponse("resp-1"),  // consecutiveEmpties = 1
+                emptyResponse("resp-2"),  // consecutiveEmpties = 2
+                // Text-only reply in plan mode — triggers wait for user input, resets consecutiveEmpties to 0
+                ChatCompletionResponse(
+                    id = "resp-3",
+                    choices = listOf(
+                        Choice(
+                            index = 0,
+                            message = ChatMessage(role = "assistant", content = "I understand your question, let me think more."),
+                            finishReason = "stop"
+                        )
+                    ),
+                    usage = UsageInfo(promptTokens = 110, completionTokens = 10, totalTokens = 120)
+                ),
+                // One empty response after the reset:
+                //   - WITHOUT reset: consecutiveEmpties would be 3 == MAX → loop fails
+                //   - WITH reset:    consecutiveEmpties is 1 → loop continues
+                emptyResponse("resp-4"),  // consecutiveEmpties = 1 (after reset)
+                // Finally completes
+                toolCallResponse("attempt_completion" to """{"result":"Done"}""")
+            )
+
+            val completionTool = fakeTool("attempt_completion", ToolResult(
+                content = "Done",
+                summary = "Done",
+                tokenEstimate = 5,
+                isCompletion = true
+            ))
+
+            val tools = listOf(PlanModeRespondTool(), completionTool)
+            val loop = buildLoop(
+                brain, tools,
+                planMode = true,
+                onPlanResponse = { _, _ -> },
+                userInputChannel = channel
+            )
+
+            val loopJob = launch {
+                val result = loop.run("Help me plan")
+                assertTrue(
+                    result is LoopResult.Completed,
+                    "loop should complete after counter reset — without the reset the 3rd consecutive empty " +
+                    "would exceed MAX_CONSECUTIVE_EMPTIES and the loop would return Failed. Got: $result"
+                )
+            }
+
+            // Send user response after the text-only turn (which resets consecutiveEmpties to 0)
+            channel.send("Please continue.")
             loopJob.join()
         }
     }

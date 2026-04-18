@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.workflow.orchestrator.agent.tools.subagent
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /**
@@ -14,7 +15,13 @@ enum class SubagentRunStatus { COMPLETED, FAILED }
  * Execution lifecycle status for tracking in-progress subagents.
  * Ported from Cline's ExtensionMessage.ts subagent status tracking.
  */
-enum class SubagentExecutionStatus { PENDING, RUNNING, COMPLETED, FAILED }
+@Serializable
+enum class SubagentExecutionStatus {
+    @SerialName("pending") PENDING,
+    @SerialName("running") RUNNING,
+    @SerialName("completed") COMPLETED,
+    @SerialName("failed") FAILED
+}
 
 /**
  * Aggregate statistics for a single subagent run.
@@ -54,7 +61,7 @@ data class SubagentRunResult(
 data class SubagentProgressUpdate(
     val stats: SubagentRunStats? = null,
     val latestToolCall: String? = null,
-    val status: String? = null,
+    val status: SubagentExecutionStatus? = null,
     val result: String? = null,
     val error: String? = null,
     // Tool lifecycle (start)
@@ -80,6 +87,13 @@ data class SubagentProgressUpdate(
      * the stable per-run identifier for dedupe.
      */
     val label: String? = null,
+    /**
+     * A raw streaming token/chunk from the sub-agent's LLM output. When non-null, the
+     * update carries no other meaningful field — the UI should append this to the
+     * sub-agent card's last partial TEXT message. Separate from [result] / [latestToolCall]
+     * so the Kotlin↔JS bridge can fast-path streaming without re-serialising stats.
+     */
+    val streamDelta: String? = null,
 )
 
 /**
@@ -92,7 +106,7 @@ data class SubagentStatusItem(
     val prompt: String,
     // @Volatile for thread safety: fields mutated concurrently from parallel coroutines.
     // Cline's JS is single-threaded; on JVM we need visibility guarantees.
-    @Volatile var status: String = "pending",
+    @Volatile var status: SubagentExecutionStatus = SubagentExecutionStatus.PENDING,
     @Volatile var toolCalls: Int = 0,
     @Volatile var inputTokens: Int = 0,
     @Volatile var outputTokens: Int = 0,

@@ -6,16 +6,23 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.core.ai.TokenEstimator
-import com.workflow.orchestrator.agent.tools.truncateOutput
+import com.workflow.orchestrator.agent.security.DefaultCommandFilter
+import com.workflow.orchestrator.agent.security.FilterResult
 import com.workflow.orchestrator.agent.tools.process.ManagedProcess
+import com.workflow.orchestrator.agent.tools.process.OutputCollector
+import com.workflow.orchestrator.agent.tools.process.ProcessEnvironment
 import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
+import com.workflow.orchestrator.agent.tools.process.ShellResolver
+import com.workflow.orchestrator.agent.tools.process.ShellType
+import com.workflow.orchestrator.agent.tools.process.ShellUnavailableException
 import com.workflow.orchestrator.agent.tools.WorkerType
-import com.workflow.orchestrator.agent.security.CommandRisk
-import com.workflow.orchestrator.agent.security.CommandSafetyAnalyzer
 import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.ToolOutputConfig
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.util.concurrent.atomic.AtomicLong
@@ -24,48 +31,34 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
 
-class RunCommandTool : AgentTool {
+class RunCommandTool(
+    allowedShells: List<String> = listOf("bash", "cmd", "powershell")
+) : AgentTool {
     override val name = "run_command"
     override val description = "Execute a CLI command on the system. Use this when you need to perform system operations or run specific commands to accomplish any step in the user's task. You must tailor your command to the user's system and provide a clear explanation of what the command does via the description parameter. For command chaining, use the appropriate chaining syntax for the shell (e.g., '&&' for bash). Prefer to execute complex CLI commands over creating executable scripts, as they are more flexible and easier to run. Commands will be executed in the project directory by default. You MUST specify the shell type matching the available shells listed in your environment. If the process goes idle (no output for the idle timeout period), returns [IDLE] with the process ID — use send_stdin, ask_user_input, or kill_process to interact with it. Dangerous commands are blocked by the safety analyzer."
-    override val parameters = FunctionParameters(
-        properties = mapOf(
-            "command" to ParameterProperty(type = "string", description = "The CLI command to execute. This should be valid for the current operating system and the specified shell. Ensure the command is properly formatted and does not contain any harmful instructions."),
-            "shell" to ParameterProperty(
-                type = "string",
-                description = "Shell to execute the command in. Use ONLY shells listed as available in your environment. bash = Unix/Git Bash syntax (ls, grep, cat, &&). cmd = Windows cmd.exe syntax (dir, type, findstr). powershell = PowerShell syntax (Get-ChildItem, Select-String).",
-                enumValues = listOf("bash", "cmd", "powershell")
-            ),
-            "working_dir" to ParameterProperty(type = "string", description = "Working directory (absolute or relative to project root). Optional, defaults to project root. Example: 'src/main/kotlin'"),
-            "description" to ParameterProperty(type = "string", description = "A clear explanation of what the command does and why (shown to user in approval dialog)."),
-            "timeout" to ParameterProperty(type = "integer", description = "Timeout in seconds. Default: 120, max: 600."),
-            "idle_timeout" to ParameterProperty(type = "integer", description = "Idle detection threshold in seconds. Default: 15 (60 for build commands). Process returns [IDLE] if no output for this many seconds.")
-        ),
-        required = listOf("command", "shell", "description")
-    )
+    override val parameters: FunctionParameters = buildShellParameters(allowedShells)
     override val allowedWorkers = setOf(WorkerType.CODER)
+    override val timeoutMs: Long get() = AgentTool.LONG_TOOL_TIMEOUT_MS
+    override val outputConfig = ToolOutputConfig.COMMAND
 
     companion object {
         private val LOG = Logger.getInstance(RunCommandTool::class.java)
         private const val DEFAULT_TIMEOUT_SECONDS = 120L
         private const val MAX_TIMEOUT_SECONDS = 600L
-        private const val MAX_OUTPUT_CHARS = 30_000
         // Idle thresholds are read from AgentSettings.commandIdleThresholdSeconds and
         // AgentSettings.buildCommandIdleThresholdSeconds at execution time. Defaults
         // are 15s / 60s respectively (set in AgentSettings.State).
         private const val IO_DRAIN_TIMEOUT_MS = 2000L
         private val processIdCounter = AtomicLong(0)
 
-        private val BUILD_COMMAND_PREFIXES = listOf(
-            "gradle", "./gradlew", "gradlew", "mvn", "./mvnw", "mvnw",
-            "npm", "yarn", "pnpm", "docker build", "cargo build", "go build",
-            "dotnet build", "make", "cmake"
-        )
+        private val commandFilter = DefaultCommandFilter()
 
         /**
          * Stream callback for real-time output delivery to the UI.
          * Set by the session/controller before tool execution.
          * Receives (toolCallId, chunk) pairs as output lines arrive.
          */
+        @Volatile
         var streamCallback: ((toolCallId: String, chunk: String) -> Unit)? = null
 
         /**
@@ -74,247 +67,131 @@ class RunCommandTool : AgentTool {
          */
         var currentToolCallId: ThreadLocal<String?> = ThreadLocal.withInitial { null }
 
-        /** Commands that are ALWAYS blocked (destructive, no approval possible). */
-        private val HARD_BLOCKED = listOf(
-            Regex("""rm\s+-rf\s+/"""),
-            Regex("""rm\s+-rf\s+~"""),
-            Regex("""^\s*sudo\s"""),
-            Regex(""":\(\)\s*\{"""),     // fork bomb
-            Regex("""mkfs\."""),
-            Regex("""dd\s+if="""),
-            Regex(""":>\s*/"""),
-            Regex(""">\s*/dev/sd"""),
-            Regex("""chmod\s+-R\s+777\s+/"""),
-            Regex("""chown\s+-R\s+.*\s+/"""),
-            Regex("""curl\s+.*\|\s*sh"""),
-            Regex("""curl\s+.*\|\s*bash"""),
-            Regex("""wget\s+.*\|\s*sh"""),
-            Regex("""wget\s+.*\|\s*bash"""),
-        )
-
-        /** Safe read-only git sub-commands allowed via run_command. */
-        private val SAFE_GIT_SUBCOMMANDS = setOf(
-            "log", "diff", "show", "status", "blame", "shortlog",
-            "rev-parse", "config", "branch", "tag", "stash list",
-            "ls-files", "cat-file", "rev-list", "merge-base",
-            "name-rev", "describe", "reflog", "for-each-ref",
-            "check-ignore", "ls-tree", "worktree list", "version"
-        )
-
-        /** Dangerous flags blocked in ANY git command. */
-        private val DANGEROUS_GIT_FLAGS = listOf(
-            "--force", "-f", "--hard", "--no-verify",
-            "--delete", "-D", "--set-upstream"
-        )
+        // streamCallback and currentToolCallId are still read by RuntimeExecTool
+        // and SonarTool. Remove once those tools are migrated to explicit parameters.
 
         /**
-         * Check if a command is likely a build command that should use a longer idle threshold.
+         * Builds the FunctionParameters for run_command based on which shells are available.
+         *
+         * When [allowedShells] has exactly one entry, the `shell` parameter is omitted entirely —
+         * the LLM never sees it and will not send it. execute() handles a missing `shell` param
+         * by falling back to ShellResolver.resolve(null, project) which picks the platform default.
+         *
+         * When multiple shells are available, `shell` is included as a required enum param with
+         * a description that only names the available shells.
+         *
+         * Internal visibility allows tests to call this directly without constructing the full tool.
          */
-        fun isLikelyBuildCommand(command: String): Boolean {
-            val trimmed = command.trim()
-            return BUILD_COMMAND_PREFIXES.any { trimmed.startsWith(it) }
-        }
+        internal fun buildShellParameters(allowedShells: List<String>): FunctionParameters {
+            // Guard: empty list means detection found nothing — fall back to bash so the
+            // schema is always valid. This prevents an empty enumValues in the LLM schema.
+            val effective = allowedShells.ifEmpty { listOf("bash") }
+            val singleShell = effective.size == 1
 
-        /**
-         * Find Git Bash on Windows. Checks standard installation paths.
-         * Returns the absolute path to bash.exe, or null if not found.
-         */
-        fun findGitBash(): String? {
-            val candidates = listOf(
-                System.getenv("PROGRAMFILES")?.let { "$it\\Git\\bin\\bash.exe" },
-                System.getenv("PROGRAMFILES(X86)")?.let { "$it\\Git\\bin\\bash.exe" },
-                System.getenv("LOCALAPPDATA")?.let { "$it\\Programs\\Git\\bin\\bash.exe" },
-                "C:\\Program Files\\Git\\bin\\bash.exe",
-                "C:\\Program Files (x86)\\Git\\bin\\bash.exe"
+            // Base properties excluding shell (preserves command-first ordering)
+            val baseProps = linkedMapOf(
+                "command" to ParameterProperty(
+                    type = "string",
+                    description = "The CLI command to execute. This should be valid for the current operating system and the specified shell. Ensure the command is properly formatted and does not contain any harmful instructions."
+                ),
+                "working_dir" to ParameterProperty(
+                    type = "string",
+                    description = "Working directory (absolute or relative to project root). Optional, defaults to project root. Example: 'src/main/kotlin'"
+                ),
+                "description" to ParameterProperty(
+                    type = "string",
+                    description = "A clear explanation of what the command does and why (shown to user in approval dialog)."
+                ),
+                "timeout" to ParameterProperty(
+                    type = "integer",
+                    description = "Timeout in seconds. Default: 120, max: 600."
+                ),
+                "idle_timeout" to ParameterProperty(
+                    type = "integer",
+                    description = "Idle detection threshold in seconds. Default: 15 (60 for build commands). Process returns [IDLE] if no output for this many seconds."
+                ),
+                "env" to ParameterProperty(
+                    type = "object",
+                    description = "Custom environment variables to set for the command. Keys are variable names, values are strings. System/path variables (PATH, HOME, LD_PRELOAD, etc.) are blocked for safety."
+                ),
+                "separate_stderr" to ParameterProperty(
+                    type = "boolean",
+                    description = "When true, capture stderr separately and append as [STDERR] section. Default: false (stderr merged with stdout)."
+                )
             )
-            return candidates.filterNotNull().firstOrNull { File(it).exists() }
-        }
 
-        /**
-         * Find PowerShell on Windows. Prefers pwsh (PowerShell 7+) over powershell.exe (5.1).
-         * Returns the executable path, or null if not found.
-         */
-        fun findPowerShell(): String? {
-            val candidates = listOf(
-                // PowerShell 7+ (cross-platform, preferred)
-                System.getenv("PROGRAMFILES")?.let { "$it\\PowerShell\\7\\pwsh.exe" },
-                "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
-                // Windows PowerShell 5.1 (built-in on Windows 10+)
-                System.getenv("SYSTEMROOT")?.let { "$it\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" },
-                "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+            if (singleShell) {
+                // Only one shell — omit the shell param entirely
+                return FunctionParameters(
+                    properties = baseProps,
+                    required = listOf("command", "description")
+                )
+            }
+
+            // Multiple shells — build description that only names available ones
+            val shellDesc = buildString {
+                append("Shell to execute the command in. Use ONLY shells listed as available in your environment.")
+                if ("bash" in effective) append(" bash = Unix/Git Bash syntax (ls, grep, cat, &&).")
+                if ("cmd" in effective) append(" cmd = Windows cmd.exe syntax (dir, type, findstr).")
+                if ("powershell" in effective) append(" powershell = PowerShell syntax (Get-ChildItem, Select-String).")
+            }
+
+            // Insert shell between command and working_dir (preserving original param order)
+            val propsWithShell = linkedMapOf("command" to baseProps["command"]!!)
+            propsWithShell["shell"] = ParameterProperty(
+                type = "string",
+                description = shellDesc,
+                enumValues = effective
             )
-            return candidates.filterNotNull().firstOrNull { File(it).exists() }
+            propsWithShell.putAll(baseProps.filterKeys { it != "command" })
+
+            return FunctionParameters(
+                properties = propsWithShell,
+                required = listOf("command", "shell", "description")
+            )
         }
-
-        /**
-         * Detect available shells on the current platform.
-         * Returns a list of shell names (bash, cmd, powershell) that can be used.
-         * Respects the powershellEnabled setting — when disabled, powershell is excluded.
-         */
-        fun detectAvailableShells(project: Project? = null): List<String> {
-            val isWindows = System.getProperty("os.name").lowercase().contains("win")
-            if (!isWindows) return listOf("bash")
-            val shells = mutableListOf<String>()
-            if (findGitBash() != null) shells.add("bash")
-            shells.add("cmd") // always available on Windows
-            val powershellAllowed = project?.let {
-                try { com.workflow.orchestrator.agent.settings.AgentSettings.getInstance(it).state.powershellEnabled } catch (_: Exception) { true }
-            } ?: true
-            if (powershellAllowed && findPowerShell() != null) shells.add("powershell")
-            return shells
-        }
-
-        private val ANSI_REGEX = Regex("\u001B\\[[;\\d]*[A-Za-z]")
-
-        /**
-         * Strip ANSI escape codes from text.
-         */
-        fun stripAnsi(text: String): String = text.replace(ANSI_REGEX, "")
-
-        private val PASSWORD_PATTERNS = listOf(
-            Regex("""(?i)password\s*:"""),
-            Regex("""(?i)passphrase\s*:"""),
-            Regex("""(?i)enter\s+.*token"""),
-            Regex("""(?i)secret\s*:"""),
-            Regex("""(?i)credentials?\s*:"""),
-            Regex("""(?i)api.?key\s*:"""),
-        )
-
-        /**
-         * Environment overrides that prevent interactive programs from blocking the process.
-         * Adopted from Cline's StandaloneTerminalProcess pattern.
-         */
-        private val ANTI_INTERACTIVE_ENV = mapOf(
-            "PAGER" to "cat",
-            "GIT_PAGER" to "cat",
-            "MANPAGER" to "cat",
-            "SYSTEMD_PAGER" to "",
-            "EDITOR" to "cat",
-            "VISUAL" to "cat",
-            "GIT_EDITOR" to "cat",
-            "LESS" to "-FRX",   // quit-if-one-screen, raw-control-chars, no-init
-        )
-
-        /** Environment variables stripped before spawning processes to prevent credential leaks. */
-        private val SENSITIVE_ENV_VARS = listOf(
-            "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "SOURCEGRAPH_TOKEN",
-            "GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN",
-            "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
-            "AZURE_CLIENT_SECRET", "GOOGLE_APPLICATION_CREDENTIALS",
-            "NPM_TOKEN", "NUGET_API_KEY", "DOCKER_PASSWORD",
-            "SONAR_TOKEN", "JIRA_TOKEN", "BAMBOO_TOKEN", "BITBUCKET_TOKEN",
-        )
-
-        /**
-         * Check if the last output looks like a password/credential prompt.
-         */
-        fun isLikelyPasswordPrompt(lastOutput: String): Boolean =
-            PASSWORD_PATTERNS.any { it.containsMatchIn(lastOutput.takeLast(300)) }
-
-        /**
-         * Check if a git command is safe to execute.
-         * Returns null if safe, or an error message if blocked.
-         */
-        fun checkGitCommand(command: String): String? {
-            val trimmed = command.trim()
-            if (!trimmed.startsWith("git ") && !trimmed.startsWith("git\t")) return null // Not a git command
-
-            // Extract the git sub-command (e.g., "log" from "git log --oneline")
-            val parts = trimmed.removePrefix("git").trim().split("\\s+".toRegex(), limit = 2)
-            val subCommand = parts.firstOrNull() ?: return "Error: empty git command"
-
-            // Check if sub-command is in the safe list
-            val isSafe = SAFE_GIT_SUBCOMMANDS.any { safe ->
-                subCommand == safe || (safe.contains(" ") && trimmed.removePrefix("git").trim().startsWith(safe))
-            }
-
-            if (!isSafe) {
-                return "Error: 'git $subCommand' is blocked for safety. To revert file changes, use the revert_file tool instead. Allowed read-only git commands: ${SAFE_GIT_SUBCOMMANDS.joinToString(", ")}."
-            }
-
-            // Block remote refs only in write git commands; allow in read-only commands
-            val readOnlyWithRemoteRefs = setOf("log", "diff", "show", "rev-list", "merge-base", "rev-parse")
-            if (trimmed.contains("origin/") || trimmed.contains("upstream/")) {
-                val allowsRemoteRefs = readOnlyWithRemoteRefs.any { cmd ->
-                    subCommand == cmd || (cmd.contains(" ") && trimmed.removePrefix("git").trim().startsWith(cmd))
-                }
-                if (!allowsRemoteRefs) {
-                    return "Error: Remote refs (origin/, upstream/) are only allowed in read-only git commands (${readOnlyWithRemoteRefs.joinToString(", ")}). Use the appropriate IDE tools for write operations."
-                }
-            }
-
-            // Check for dangerous flags even in safe sub-commands
-            for (flag in DANGEROUS_GIT_FLAGS) {
-                if (trimmed.contains(" $flag") || trimmed.contains("=$flag")) {
-                    return "Error: Flag '$flag' is blocked for safety in git commands. To revert changes, use the revert_file tool instead."
-                }
-            }
-
-            return null // Safe to execute
-        }
-
-        /**
-         * Check if a command is hard-blocked (never run, even with approval).
-         */
-        fun isHardBlocked(command: String): Boolean {
-            return HARD_BLOCKED.any { it.containsMatchIn(command) }
-        }
-
-        /**
-         * Legacy compatibility — returns true if the command is hard-blocked.
-         */
-        fun isBlocked(command: String): Boolean = isHardBlocked(command)
     }
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+        // 1. Parse params
         val command = params["command"]?.jsonPrimitive?.content
             ?: return ToolResult("Error: 'command' parameter required", "Error: missing command", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
-        val shell = params["shell"]?.jsonPrimitive?.content?.lowercase() ?: "bash"
-        if (shell !in listOf("bash", "cmd", "powershell")) {
+        val shell = params["shell"]?.jsonPrimitive?.content?.lowercase()
+        val separateStderr = params["separate_stderr"]?.jsonPrimitive?.boolean ?: false
+        val userEnv: Map<String, String> = parseEnvParam(params)
+
+        // 2. Resolve shell
+        val shellConfig = try {
+            ShellResolver.resolve(shell, project)
+        } catch (e: ShellUnavailableException) {
             return ToolResult(
-                "Error: Invalid shell '$shell'. Must be one of: bash, cmd, powershell.",
-                "Error: invalid shell",
+                "Error: ${e.message}",
+                "Error: shell unavailable",
                 ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
             )
         }
 
-        // 5B: CommandSafetyAnalyzer — block DANGEROUS commands before any other processing
-        val risk = CommandSafetyAnalyzer.classify(command)
-        if (risk == CommandRisk.DANGEROUS) {
-            LOG.warn("[Agent:RunCommand] BLOCKED dangerous command: ${command.take(100)}")
+        // 3. Filter command
+        val filterResult = commandFilter.check(command, shellConfig.shellType)
+        if (filterResult is FilterResult.Reject) {
+            LOG.warn("[Agent:RunCommand] BLOCKED command: ${command.take(100)}")
             return ToolResult(
-                content = "Command blocked by safety analyzer: classified as DANGEROUS. This command could cause data loss or system damage.",
-                summary = "Error: dangerous command blocked",
-                tokenEstimate = 30,
-                isError = true
-            )
-        }
-        // Log the execution for audit
-        LOG.info("[Agent:RunCommand] risk=$risk command=${command.take(80)}")
-
-        // Smart git command filter — allowlist approach
-        val gitBlockReason = checkGitCommand(command)
-        if (gitBlockReason != null) {
-            return ToolResult(
-                gitBlockReason,
-                "Error: git command blocked",
-                5,
-                isError = true
-            )
-        }
-
-        // Hard-blocked commands are never allowed — destructive with no recovery
-        if (isHardBlocked(command)) {
-            return ToolResult(
-                "Error: Command blocked for safety: $command. This command is destructive and cannot be executed.",
+                "Error: Command blocked for safety: ${filterResult.reason}",
                 "Error: blocked command",
                 5,
                 isError = true
             )
         }
 
+        // 4. Parse env, filter blocked vars
+        val (safeEnv, rejectedEnv) = ProcessEnvironment.filterUserEnv(userEnv)
+        if (rejectedEnv.isNotEmpty()) {
+            LOG.info("[Agent:RunCommand] Rejected env vars: ${rejectedEnv.joinToString(", ")}")
+        }
+
+        // 5. Validate working directory
         val workingDir = params["working_dir"]?.jsonPrimitive?.content?.let { dir ->
             val (validated, error) = PathValidator.resolveAndValidate(dir, project.basePath)
             if (error != null) return error
@@ -334,96 +211,39 @@ class RunCommandTool : AgentTool {
         return try {
             val isWindows = System.getProperty("os.name").lowercase().contains("win")
 
-            // Resolve the shell executable based on the LLM's requested shell type
-            val commandLine = when (shell) {
-                "bash" -> {
-                    if (isWindows) {
-                        val gitBash = findGitBash()
-                        if (gitBash != null) {
-                            GeneralCommandLine(gitBash, "-c", command)
-                        } else {
-                            return ToolResult(
-                                "Error: shell='bash' requested but Git Bash is not installed. Available shells on this system: cmd, powershell. Use one of those instead.",
-                                "Error: bash not available",
-                                ToolResult.ERROR_TOKEN_ESTIMATE,
-                                isError = true
-                            )
-                        }
-                    } else {
-                        GeneralCommandLine("sh", "-c", command)
-                    }
-                }
-                "cmd" -> {
-                    if (isWindows) {
-                        GeneralCommandLine("cmd.exe", "/c", command)
-                    } else {
-                        return ToolResult(
-                            "Error: shell='cmd' is only available on Windows. Use shell='bash' instead.",
-                            "Error: cmd not available",
-                            ToolResult.ERROR_TOKEN_ESTIMATE,
-                            isError = true
-                        )
-                    }
-                }
-                "powershell" -> {
-                    // Check if PowerShell is enabled in settings
-                    val powershellAllowed = try {
-                        com.workflow.orchestrator.agent.settings.AgentSettings.getInstance(project).state.powershellEnabled
-                    } catch (_: Exception) { true }
-                    if (!powershellAllowed) {
-                        return ToolResult(
-                            "Error: PowerShell is disabled in agent settings. Use shell='cmd' or shell='bash' instead.",
-                            "Error: powershell disabled",
-                            ToolResult.ERROR_TOKEN_ESTIMATE,
-                            isError = true
-                        )
-                    }
-                    if (isWindows) {
-                        // Try pwsh (PowerShell 7+) first, then fall back to powershell.exe (Windows PowerShell 5.1)
-                        val pwsh = findPowerShell()
-                        if (pwsh != null) {
-                            GeneralCommandLine(pwsh, "-NoProfile", "-NonInteractive", "-Command", command)
-                        } else {
-                            return ToolResult(
-                                "Error: shell='powershell' requested but PowerShell is not found. Available shells: cmd${if (findGitBash() != null) ", bash" else ""}.",
-                                "Error: powershell not available",
-                                ToolResult.ERROR_TOKEN_ESTIMATE,
-                                isError = true
-                            )
-                        }
-                    } else {
-                        return ToolResult(
-                            "Error: shell='powershell' is only available on Windows. Use shell='bash' instead.",
-                            "Error: powershell not available",
-                            ToolResult.ERROR_TOKEN_ESTIMATE,
-                            isError = true
-                        )
-                    }
-                }
-                else -> error("unreachable: shell validated above")
-            }
+            // 6. Build command line from ShellConfig
+            val commandLine = GeneralCommandLine(
+                shellConfig.executable, *shellConfig.args.toTypedArray(), command
+            )
 
             val timeoutSeconds = (params["timeout"]?.jsonPrimitive?.int?.toLong() ?: DEFAULT_TIMEOUT_SECONDS)
                 .coerceIn(1, MAX_TIMEOUT_SECONDS)
             val timeoutMs = timeoutSeconds * 1000
 
             commandLine.workDirectory = workDir
-            commandLine.withRedirectErrorStream(true)
 
-            // Sanitize environment: strip sensitive vars that could leak credentials
+            // 7. Configure stderr
+            if (!separateStderr) {
+                commandLine.withRedirectErrorStream(true)
+            }
+
+            // 8. Apply environment
             val env = commandLine.environment
-            SENSITIVE_ENV_VARS.forEach { env.remove(it) }
+            ProcessEnvironment.applyToEnvironment(env, isWindows, safeEnv)
 
-            // Prevent interactive pagers/editors from hanging the process.
-            // Without this, commands like `git log`, `git diff`, `man`, or
-            // `git commit` (without -m) open interactive programs that block forever.
-            ANTI_INTERACTIVE_ENV.forEach { (k, v) -> env[k] = v }
-
+            // 9. Spawn process
             val process = commandLine.createProcess()
 
             // Determine tool call ID for ProcessRegistry and streaming
-            val toolCallId = currentToolCallId.get()
-                ?: "run-cmd-${processIdCounter.incrementAndGet()}"
+            val rawId = currentToolCallId.get()
+            val toolCallId = rawId ?: "run-cmd-${processIdCounter.incrementAndGet()}"
+            if (rawId == null) {
+                LOG.warn(
+                    "run_command[$toolCallId]: ThreadLocal toolCallId not set — falling back to synthetic id. " +
+                    "Streaming output will NOT appear in the terminal UI. " +
+                    "Root cause: AgentLoop must call RunCommandTool.currentToolCallId.set(id) before execute()."
+                )
+            }
 
             // Register in ProcessRegistry for kill/killAll/stdin support
             val managed = ProcessRegistry.register(toolCallId, process, command)
@@ -432,13 +252,22 @@ class RunCommandTool : AgentTool {
             // AgentSettings (defaults: 15s / 60s for build commands).
             val agentSettings = com.workflow.orchestrator.agent.settings.AgentSettings.getInstance(project).state
             val idleThresholdMs = params["idle_timeout"]?.jsonPrimitive?.int?.let { it * 1000L }
-                ?: if (isLikelyBuildCommand(command))
+                ?: if (ShellResolver.isLikelyBuildCommand(command))
                     agentSettings.buildCommandIdleThresholdSeconds * 1000L
                 else
                     agentSettings.commandIdleThresholdSeconds * 1000L
 
-            // Buffer-based reader thread (handles binary output)
+            // 10. Start reader thread(s)
             val activeStreamCallback: ((String, String) -> Unit)? = streamCallback
+            if (activeStreamCallback == null) {
+                LOG.warn(
+                    "run_command[$toolCallId]: streamCallback is null — stdout chunks will be silently dropped. " +
+                    "Root cause: AgentController.wireCallbacks() was not called or streamCallback was cleared after init."
+                )
+            }
+            LOG.info("run_command[$toolCallId]: process started (streamCallback=${activeStreamCallback != null})")
+
+            // Stdout reader thread
             val readerThread = Thread {
                 try {
                     process.inputStream.bufferedReader().use { reader ->
@@ -452,8 +281,8 @@ class RunCommandTool : AgentTool {
                             bytesRead = reader.read(buffer)
                         }
                     }
-                } catch (_: Exception) {
-                    // Process killed or stream closed — expected during timeout/cancel
+                } catch (e: Exception) {
+                    LOG.warn("RunCommand stdout reader for $toolCallId terminated abnormally: ${e.message}", e)
                 } finally {
                     managed.readerDone.countDown()
                 }
@@ -463,30 +292,52 @@ class RunCommandTool : AgentTool {
                 start()
             }
 
-            // Event-driven coroutine monitor loop
+            // Stderr reader thread (only when separate_stderr is true)
+            val stderrLines = if (separateStderr) java.util.concurrent.CopyOnWriteArrayList<String>() else null
+            val stderrReaderThread = if (separateStderr) {
+                Thread {
+                    try {
+                        process.errorStream.bufferedReader().use { reader ->
+                            val buffer = CharArray(4096)
+                            var bytesRead = reader.read(buffer)
+                            while (bytesRead != -1) {
+                                stderrLines!!.add(String(buffer, 0, bytesRead))
+                                bytesRead = reader.read(buffer)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        LOG.warn("RunCommand stderr reader for $toolCallId terminated abnormally: ${e.message}", e)
+                    }
+                }.apply {
+                    isDaemon = true
+                    name = "RunCommand-Stderr-$toolCallId"
+                    start()
+                }
+            } else null
+
+            // 11. Monitor loop
             while (true) {
-                // Coroutine cancellation check — allows instant exit when user presses Stop.
-                // delay() is also cancellable, but ensureActive() gives an immediate check
-                // before waiting 500ms.
                 coroutineContext.ensureActive()
                 delay(500)
                 val now = System.currentTimeMillis()
 
-                // Priority 1: process exited — always check first (race condition fix)
+                // Priority 1: process exited
                 if (!process.isAlive) {
-                    readerThread.join(IO_DRAIN_TIMEOUT_MS) // drain remaining output
+                    readerThread.join(IO_DRAIN_TIMEOUT_MS)
+                    stderrReaderThread?.join(IO_DRAIN_TIMEOUT_MS)
                     ProcessRegistry.unregister(toolCallId)
-                    return buildExitResult(managed, command, params)
+                    return buildExitResult(managed, command, params, stderrLines)
                 }
 
                 // Priority 2: total timeout
                 if (now - managed.startedAt > timeoutMs) {
                     ProcessRegistry.kill(toolCallId)
-                    readerThread.join(IO_DRAIN_TIMEOUT_MS) // drain remaining output after kill
+                    readerThread.join(IO_DRAIN_TIMEOUT_MS)
+                    stderrReaderThread?.join(IO_DRAIN_TIMEOUT_MS)
                     return buildTimeoutResult(managed, timeoutSeconds)
                 }
 
-                // Priority 3: idle detection (only after first output — grace period)
+                // Priority 3: idle detection (only after first output)
                 val lastOutput = managed.lastOutputAt.get()
                 if (lastOutput > 0 && now - lastOutput >= idleThresholdMs) {
                     managed.idleSignaledAt.set(now)
@@ -496,7 +347,6 @@ class RunCommandTool : AgentTool {
             @Suppress("UNREACHABLE_CODE")
             error("unreachable: while(true) always returns")
         } catch (e: CancellationException) {
-            // Coroutine cancelled (user pressed Stop) — ProcessRegistry.killAll() handles cleanup
             throw e // Propagate for structured concurrency
         } catch (e: Exception) {
             ToolResult(
@@ -505,6 +355,18 @@ class RunCommandTool : AgentTool {
                 5,
                 isError = true
             )
+        }
+    }
+
+    // ── Private helpers ──────────────────
+
+    private fun parseEnvParam(params: JsonObject): Map<String, String> {
+        val envJson = params["env"] ?: return emptyMap()
+        return try {
+            val obj = envJson.jsonObject
+            obj.mapValues { it.value.jsonPrimitive.content }
+        } catch (_: Exception) {
+            emptyMap()
         }
     }
 
@@ -518,19 +380,40 @@ class RunCommandTool : AgentTool {
         return lines.takeLast(lineCount).joinToString("\n")
     }
 
-    private fun buildExitResult(managed: ManagedProcess, command: String, params: JsonObject): ToolResult {
+    private fun buildExitResult(
+        managed: ManagedProcess,
+        command: String,
+        params: JsonObject,
+        stderrLines: List<String>?
+    ): ToolResult {
         val rawOutput = collectOutput(managed)
-        // Strip ANSI for LLM context (saves tokens, LLM doesn't need color codes).
-        // The UI already received raw output with ANSI via streamCallback.
-        val cleanOutput = stripAnsi(rawOutput)
-        val truncatedOutput = if (cleanOutput.length > MAX_OUTPUT_CHARS) {
-            truncateOutput(cleanOutput, MAX_OUTPUT_CHARS) +
-                "\n\n[Total output: ${cleanOutput.length} chars. Use a more targeted command to see specific sections.]"
-        } else {
-            cleanOutput
-        }
+        val processed = OutputCollector.processOutputTailBiased(
+            rawOutput = rawOutput,
+            maxResultChars = outputConfig.maxChars,
+            spillDir = null,
+            toolCallId = currentToolCallId.get()
+        )
 
         val exitCode = managed.process.exitValue()
+
+        val contentBuilder = StringBuilder()
+        contentBuilder.append("Exit code: $exitCode\n")
+        contentBuilder.append(processed.content)
+
+        // Append separate stderr if captured
+        if (stderrLines != null && stderrLines.isNotEmpty()) {
+            val rawStderr = stderrLines.joinToString("")
+            val stderrProcessed = OutputCollector.processOutputTailBiased(
+                rawOutput = rawStderr,
+                maxResultChars = outputConfig.maxChars / 2,
+                spillDir = null,
+                toolCallId = null
+            )
+            contentBuilder.append("\n\n[STDERR]\n")
+            contentBuilder.append(stderrProcessed.content)
+        }
+
+        val content = contentBuilder.toString()
         val description = params["description"]?.jsonPrimitive?.content
         val summary = if (description != null) {
             "$description — exit code $exitCode"
@@ -538,26 +421,26 @@ class RunCommandTool : AgentTool {
             "Command exited with code $exitCode: ${command.take(80)}"
         }
         return ToolResult(
-            content = "Exit code: $exitCode\n$truncatedOutput",
+            content = content,
             summary = summary,
-            tokenEstimate = TokenEstimator.estimate(truncatedOutput),
+            tokenEstimate = TokenEstimator.estimate(content),
             isError = exitCode != 0
         )
     }
 
     private fun buildTimeoutResult(managed: ManagedProcess, timeoutSeconds: Long): ToolResult {
         val rawOutput = collectOutput(managed)
-        val cleanOutput = stripAnsi(rawOutput)
-        val truncatedOutput = if (cleanOutput.length > MAX_OUTPUT_CHARS) {
-            truncateOutput(cleanOutput, MAX_OUTPUT_CHARS) +
-                "\n\n[Total output: ${cleanOutput.length} chars. Use a more targeted command to see specific sections.]"
-        } else {
-            cleanOutput
-        }
+        val processed = OutputCollector.processOutputTailBiased(
+            rawOutput = rawOutput,
+            maxResultChars = outputConfig.maxChars,
+            spillDir = null,
+            toolCallId = currentToolCallId.get()
+        )
+        val content = "[TIMEOUT] Command timed out after ${timeoutSeconds}s.\nPartial output:\n${processed.content}"
         return ToolResult(
-            content = "[TIMEOUT] Command timed out after ${timeoutSeconds}s.\nPartial output:\n$truncatedOutput",
+            content = content,
             summary = "Error: command timed out",
-            tokenEstimate = TokenEstimator.estimate(truncatedOutput),
+            tokenEstimate = TokenEstimator.estimate(content),
             isError = true
         )
     }
@@ -565,10 +448,10 @@ class RunCommandTool : AgentTool {
     private fun buildIdleResult(managed: ManagedProcess, idleSeconds: Long): ToolResult {
         val processId = managed.toolCallId
         val command = managed.command
-        val lastLines = stripAnsi(lastOutputLines(managed, 10))
+        val lastLines = OutputCollector.stripAnsi(lastOutputLines(managed, 10))
         val indentedLines = lastLines.lines().joinToString("\n") { "  $it" }
 
-        val passwordWarning = if (isLikelyPasswordPrompt(lastLines)) {
+        val passwordWarning = if (ShellResolver.isLikelyPasswordPrompt(lastLines)) {
             "\nWARNING: Last output appears to be a password/credential prompt. Use ask_user_input, not send_stdin.\n"
         } else {
             ""

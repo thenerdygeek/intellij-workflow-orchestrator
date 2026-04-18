@@ -153,6 +153,34 @@ class SystemPromptTest {
         )
     }
 
+    @Test
+    fun `plan mode section references discard_plan tool`() {
+        val prompt = SystemPrompt.build(
+            projectName = "p", projectPath = "/p", planModeEnabled = true
+        )
+
+        assertTrue(
+            prompt.contains("discard_plan"),
+            "plan mode prompt should reference discard_plan tool"
+        )
+    }
+
+    @Test
+    fun `act mode section does not mention discard_plan as blocked`() {
+        val prompt = SystemPrompt.build(
+            projectName = "p", projectPath = "/p", planModeEnabled = false
+        )
+
+        // discard_plan may appear in the act-vs-plan section describing plan mode,
+        // but the prompt text should describe it as a plan-mode-only tool
+        val actVsPlanSection = prompt.substringAfter("ACT MODE V.S. PLAN MODE").substringBefore("====")
+        // The discard_plan reference should be within the PLAN MODE description, not as an act-mode tool
+        assertTrue(
+            actVsPlanSection.contains("discard_plan"),
+            "act vs plan section should describe discard_plan as part of plan mode"
+        )
+    }
+
     // ---- System info tests ----
 
     @Test
@@ -240,7 +268,7 @@ class SystemPromptTest {
         )
     }
 
-    // ---- Task progress section tests ----
+    // ---- Task management section tests ----
 
     @Test
     fun `includes task progress section when provided`() {
@@ -256,8 +284,12 @@ class SystemPromptTest {
         )
 
         assertTrue(
-            prompt.contains("UPDATING TASK PROGRESS"),
-            "should contain task progress heading"
+            prompt.contains("TASK MANAGEMENT"),
+            "should contain task management heading"
+        )
+        assertTrue(
+            prompt.contains("Current tasks:"),
+            "should contain current tasks block when progress is provided"
         )
         assertTrue(
             prompt.contains("- [x] Set up project structure"),
@@ -270,26 +302,34 @@ class SystemPromptTest {
     }
 
     @Test
-    fun `omits task progress section when null`() {
+    fun `omits current tasks block when null`() {
         val prompt = SystemPrompt.build(
             projectName = "p", projectPath = "/p", taskProgress = null
         )
 
+        assertTrue(
+            prompt.contains("TASK MANAGEMENT"),
+            "section is always present — typed task system"
+        )
         assertFalse(
-            prompt.contains("UPDATING TASK PROGRESS"),
-            "should not contain task progress heading"
+            prompt.contains("Current tasks:"),
+            "should not contain current tasks block when progress is null"
         )
     }
 
     @Test
-    fun `omits task progress section when blank`() {
+    fun `omits current tasks block when blank`() {
         val prompt = SystemPrompt.build(
             projectName = "p", projectPath = "/p", taskProgress = "  "
         )
 
+        assertTrue(
+            prompt.contains("TASK MANAGEMENT"),
+            "section is always present — typed task system"
+        )
         assertFalse(
-            prompt.contains("UPDATING TASK PROGRESS"),
-            "should not contain task progress heading for blank input"
+            prompt.contains("Current tasks:"),
+            "should not contain current tasks block for blank input"
         )
     }
 
@@ -334,6 +374,29 @@ class SystemPromptTest {
         assertFalse(
             prompt.contains("USER'S CUSTOM INSTRUCTIONS"),
             "should not contain custom instructions heading when nothing provided"
+        )
+    }
+
+    @Test
+    fun `includes output management guidance in rules section`() {
+        val prompt = defaultPrompt()
+        val rulesSection = prompt.substringAfter("RULES").substringBefore("====")
+
+        assertTrue(
+            rulesSection.contains("Output Management"),
+            "should contain Output Management heading in rules section"
+        )
+        assertTrue(
+            rulesSection.contains("grep_pattern"),
+            "should document grep_pattern parameter"
+        )
+        assertTrue(
+            rulesSection.contains("output_file"),
+            "should document output_file parameter"
+        )
+        assertTrue(
+            rulesSection.contains("context pollution"),
+            "should explain why output filtering matters"
         )
     }
 
@@ -394,8 +457,8 @@ class SystemPromptTest {
                 "find_implementations" to "Find all implementations of an interface",
                 "type_hierarchy" to "Show supertype/subtype hierarchy"
             ),
-            "Git" to listOf(
-                "git_blame" to "Show line-by-line blame info"
+            "VCS" to listOf(
+                "changelist_shelve" to "Manage IntelliJ changelists and shelve operations"
             )
         )
         val prompt = SystemPrompt.build(
@@ -408,12 +471,12 @@ class SystemPromptTest {
             "should contain tool name with description")
         assertTrue(prompt.contains("type_hierarchy — Show supertype/subtype hierarchy"),
             "should contain second tool with description")
-        assertTrue(prompt.contains("git_blame — Show line-by-line blame info"),
-            "should contain git tool with description")
+        assertTrue(prompt.contains("changelist_shelve — Manage IntelliJ changelists and shelve operations"),
+            "should contain VCS tool with description")
         assertTrue(prompt.contains("**Code Intelligence:**"),
             "should contain category heading")
-        assertTrue(prompt.contains("**Git:**"),
-            "should contain git category heading")
+        assertTrue(prompt.contains("**VCS:**"),
+            "should contain VCS category heading")
     }
 
     @Test
@@ -496,5 +559,56 @@ class SystemPromptTest {
             prompt.contains("IntelliJ IDEA"),
             "should reference IntelliJ IDEA"
         )
+    }
+
+    // ---- availableShells in systemInfo tests ----
+
+    @Test
+    fun `systemInfo shows Available Shells line when availableShells provided`() {
+        val prompt = SystemPrompt.build(
+            projectName = "my-app",
+            projectPath = "/home/user/my-app",
+            availableShells = listOf("bash")
+        )
+        assertTrue(
+            prompt.contains("Available Shells (run_command): bash"),
+            "Should show bash as the only available shell"
+        )
+        assertFalse(prompt.contains("Default Shell:"), "Should not show Default Shell when availableShells is set")
+    }
+
+    @Test
+    fun `systemInfo shows all shells when all three are available`() {
+        val prompt = SystemPrompt.build(
+            projectName = "my-app",
+            projectPath = "/home/user/my-app",
+            availableShells = listOf("bash", "cmd", "powershell")
+        )
+        assertTrue(
+            prompt.contains("Available Shells (run_command): bash, cmd, powershell"),
+            "Should list all three shells"
+        )
+    }
+
+    @Test
+    fun `systemInfo falls back to Default Shell when availableShells is null`() {
+        val prompt = SystemPrompt.build(
+            projectName = "my-app",
+            projectPath = "/home/user/my-app"
+            // availableShells not passed — defaults to null
+        )
+        assertTrue(prompt.contains("Default Shell:"), "Should show Default Shell when availableShells is null")
+        assertFalse(prompt.contains("Available Shells (run_command)"), "Should not show Available Shells line")
+    }
+
+    @Test
+    fun `systemInfo falls back to Default Shell when availableShells is empty list`() {
+        val prompt = SystemPrompt.build(
+            projectName = "my-app",
+            projectPath = "/home/user/my-app",
+            availableShells = emptyList()
+        )
+        assertTrue(prompt.contains("Default Shell:"), "Should show Default Shell when availableShells is empty")
+        assertFalse(prompt.contains("Available Shells (run_command)"), "Should not show Available Shells line")
     }
 }

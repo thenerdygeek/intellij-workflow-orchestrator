@@ -6,6 +6,7 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.builtin.AttemptCompletionTool
+import com.workflow.orchestrator.agent.tools.builtin.TaskReportTool
 import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.dto.*
 import com.workflow.orchestrator.core.model.ApiResult
@@ -127,7 +128,7 @@ class SubagentRunnerTest {
         contextBudget: Int = 50_000
     ): SubagentRunner = SubagentRunner(
         brain = brain,
-        tools = tools,
+        coreTools = tools,
         systemPrompt = "You are a test sub-agent.",
         project = project,
         maxIterations = maxIterations,
@@ -169,8 +170,8 @@ class SubagentRunnerTest {
 
             // Should have progress updates: at least "running" and "completed"
             assertTrue(progressUpdates.size >= 2, "Expected at least 2 progress updates, got ${progressUpdates.size}")
-            assertEquals("running", progressUpdates.first().status)
-            assertEquals("completed", progressUpdates.last().status)
+            assertEquals(SubagentExecutionStatus.RUNNING, progressUpdates.first().status)
+            assertEquals(SubagentExecutionStatus.COMPLETED, progressUpdates.last().status)
         }
 
         @Test
@@ -218,7 +219,7 @@ class SubagentRunnerTest {
             assertNull(result.result)
 
             // Should have progress updates including final "failed" status
-            assertTrue(progressUpdates.any { it.status == "failed" },
+            assertTrue(progressUpdates.any { it.status == SubagentExecutionStatus.FAILED },
                 "Should have a 'failed' progress update")
         }
     }
@@ -330,16 +331,16 @@ class SubagentRunnerTest {
             ))
 
             val runner = createRunner(brain)
-            val statuses = mutableListOf<String>()
+            val statuses = mutableListOf<SubagentExecutionStatus>()
 
             runner.run("Quick task") { update ->
                 update.status?.let { statuses.add(it) }
             }
 
-            assertTrue(statuses.contains("running"), "Should have 'running' status")
-            assertTrue(statuses.contains("completed"), "Should have 'completed' status")
-            assertEquals("running", statuses.first(), "First status should be 'running'")
-            assertEquals("completed", statuses.last(), "Last status should be 'completed'")
+            assertTrue(statuses.contains(SubagentExecutionStatus.RUNNING), "Should have RUNNING status")
+            assertTrue(statuses.contains(SubagentExecutionStatus.COMPLETED), "Should have COMPLETED status")
+            assertEquals(SubagentExecutionStatus.RUNNING, statuses.first(), "First status should be RUNNING")
+            assertEquals(SubagentExecutionStatus.COMPLETED, statuses.last(), "Last status should be COMPLETED")
         }
 
         @Test
@@ -349,14 +350,14 @@ class SubagentRunnerTest {
             ))
 
             val runner = createRunner(brain)
-            val statuses = mutableListOf<String>()
+            val statuses = mutableListOf<SubagentExecutionStatus>()
 
             runner.run("Will fail") { update ->
                 update.status?.let { statuses.add(it) }
             }
 
-            assertTrue(statuses.contains("running"), "Should have 'running' status")
-            assertTrue(statuses.contains("failed"), "Should have 'failed' status")
+            assertTrue(statuses.contains(SubagentExecutionStatus.RUNNING), "Should have RUNNING status")
+            assertTrue(statuses.contains(SubagentExecutionStatus.FAILED), "Should have FAILED status")
         }
     }
 
@@ -373,7 +374,7 @@ class SubagentRunnerTest {
 
             val runner = SubagentRunner(
                 brain = brain,
-                tools = buildTools(),
+                coreTools = buildTools(),
                 systemPrompt = "You are a test sub-agent.",
                 project = project,
                 maxIterations = 50,
@@ -462,7 +463,7 @@ class SubagentRunnerTest {
 
             val runner = SubagentRunner(
                 brain = brain,
-                tools = subTools,
+                coreTools = subTools,
                 systemPrompt = "You are a research agent.",
                 project = project,
                 maxIterations = 10,
@@ -493,7 +494,7 @@ class SubagentRunnerTest {
             val customPrompt = "You are a specialized code reviewer"
             val runner = SubagentRunner(
                 brain = brain,
-                tools = buildTools(),
+                coreTools = buildTools(),
                 systemPrompt = customPrompt,
                 project = project,
                 maxIterations = 50,
@@ -506,6 +507,539 @@ class SubagentRunnerTest {
             val content = systemMessage.content ?: ""
             assertTrue(content.contains(customPrompt),
                 "System prompt should still contain the original config prompt text")
+        }
+    }
+
+    @Nested
+    inner class ForcedStreamInterruptTests {
+
+        @Test
+        fun `sub-agent forces stream_interrupt regardless of caller-supplied accumulate`() {
+            val brain = SequenceBrain(emptyList())
+            val runner = SubagentRunner(
+                brain = brain,
+                coreTools = buildTools(),
+                systemPrompt = "test",
+                project = project,
+                maxIterations = 5,
+                planMode = false,
+                contextBudget = 50_000,
+                toolExecutionMode = "accumulate", // caller says accumulate …
+            )
+            // … runner must ignore it.
+            assertEquals("stream_interrupt", runner.effectiveToolExecutionMode)
+        }
+    }
+
+    // ---- Task 4: Per-sub-agent ToolRegistry + deferred catalog tests ----
+
+    @Nested
+    inner class PerSubagentRegistryTests {
+
+        @Test
+        fun `SubagentRunner injects tool_search backed by sub-agent registry into core tools`() = runTest {
+            // Even with no tool_search in coreTools, it must be injected automatically.
+            // The brain calls attempt_completion, so the loop completes without using tool_search.
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"Done without tool_search."}"""
+                ))
+            ))
+
+            val capturedSystemPrompt = mutableListOf<String>()
+            val runner = SubagentRunner(
+                brain = brain,
+                coreTools = buildTools(),   // no tool_search in here
+                deferredTools = emptyMap(),
+                systemPrompt = "You are a test sub-agent.",
+                project = project,
+                maxIterations = 10,
+                planMode = false,
+                contextBudget = 50_000,
+                onSystemPromptBuilt = { prompt -> capturedSystemPrompt.add(prompt) }
+            )
+
+            val result = runner.run("Quick task") {}
+
+            assertEquals(SubagentRunStatus.COMPLETED, result.status)
+            // tool_search must appear in the composed system prompt
+            assertTrue(capturedSystemPrompt.isNotEmpty(), "onSystemPromptBuilt hook must have fired")
+            assertTrue(
+                capturedSystemPrompt.first().contains("tool_search"),
+                "tool_search should be injected into the sub-agent system prompt automatically"
+            )
+        }
+
+        @Test
+        fun `SubagentRunner system prompt contains deferred catalog when deferredTools provided`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"Done."}"""
+                ))
+            ))
+
+            val deferredTool = stubTool("find_implementations")
+            val deferredTools = mapOf(
+                "find_implementations" to Pair(deferredTool, "Code Intelligence")
+            )
+
+            val capturedSystemPrompt = mutableListOf<String>()
+            val runner = SubagentRunner(
+                brain = brain,
+                coreTools = buildTools(),
+                deferredTools = deferredTools,
+                systemPrompt = "You are a test sub-agent.",
+                project = project,
+                maxIterations = 10,
+                planMode = false,
+                contextBudget = 50_000,
+                onSystemPromptBuilt = { prompt -> capturedSystemPrompt.add(prompt) }
+            )
+
+            runner.run("Find implementations") {}
+
+            assertTrue(capturedSystemPrompt.isNotEmpty(), "Hook must fire")
+            val prompt = capturedSystemPrompt.first()
+            assertTrue(
+                prompt.contains("find_implementations"),
+                "System prompt should list the deferred tool name"
+            )
+            assertTrue(
+                prompt.contains("Deferred Tools"),
+                "System prompt should contain 'Deferred Tools' section header"
+            )
+        }
+
+        @Test
+        fun `SubagentRunner with no deferred tools produces clean system prompt without Deferred Tools section`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"Done."}"""
+                ))
+            ))
+
+            val capturedSystemPrompt = mutableListOf<String>()
+            val runner = SubagentRunner(
+                brain = brain,
+                coreTools = buildTools(),
+                deferredTools = emptyMap(),
+                systemPrompt = "You are a test sub-agent.",
+                project = project,
+                maxIterations = 10,
+                planMode = false,
+                contextBudget = 50_000,
+                onSystemPromptBuilt = { prompt -> capturedSystemPrompt.add(prompt) }
+            )
+
+            runner.run("Quick task") {}
+
+            assertTrue(capturedSystemPrompt.isNotEmpty(), "Hook must fire")
+            val prompt = capturedSystemPrompt.first()
+            assertFalse(
+                prompt.contains("Deferred Tools"),
+                "System prompt must NOT contain 'Deferred Tools' section when there are no deferred tools"
+            )
+        }
+    }
+
+    @Nested
+    inner class ApprovalGateTests {
+
+        @Test
+        fun `write tool in sub-agent hits parent approval gate`() = runTest {
+            val writeTool = object : AgentTool {
+                override val name = "edit_file"
+                override val description = "stub edit tool"
+                override val parameters = FunctionParameters(properties = emptyMap())
+                override val allowedWorkers = setOf(WorkerType.CODER)
+                override suspend fun execute(params: JsonObject, project: Project) =
+                    ToolResult(content = "edited", summary = "edited", tokenEstimate = 5)
+            }
+            val tools = mapOf(
+                "edit_file" to writeTool,
+                "attempt_completion" to AttemptCompletionTool(),
+            )
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "edit_file" to """{"path":"a.kt","old_string":"a","new_string":"b"}""",
+                )),
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"done"}""",
+                )),
+            ))
+
+            val approvalCalls = mutableListOf<Triple<String, String, String>>()
+            val gate: suspend (String, String, String, Boolean) -> com.workflow.orchestrator.agent.loop.ApprovalResult =
+                { toolName, args, risk, _ ->
+                    approvalCalls += Triple(toolName, args, risk)
+                    com.workflow.orchestrator.agent.loop.ApprovalResult.APPROVED
+                }
+
+            val runner = SubagentRunner(
+                brain = brain,
+                coreTools = tools,
+                systemPrompt = "test",
+                project = project,
+                maxIterations = 10,
+                planMode = false,
+                contextBudget = 50_000,
+                approvalGate = gate,
+            )
+            val result = runner.run("edit") {}
+
+            assertEquals(SubagentRunStatus.COMPLETED, result.status)
+            assertEquals(1, approvalCalls.size,
+                "Expected approval gate to fire once for edit_file — sub-agent must surface the same modal as the main agent.")
+            assertEquals("edit_file", approvalCalls.single().first)
+        }
+
+        @Test
+        fun `sub-agent without approval gate still runs write tools (backwards compat)`() = runTest {
+            val writeTool = object : AgentTool {
+                override val name = "edit_file"
+                override val description = "stub"
+                override val parameters = FunctionParameters(properties = emptyMap())
+                override val allowedWorkers = setOf(WorkerType.CODER)
+                override suspend fun execute(params: JsonObject, project: Project) =
+                    ToolResult(content = "edited", summary = "edited", tokenEstimate = 5)
+            }
+            val tools = mapOf(
+                "edit_file" to writeTool,
+                "attempt_completion" to AttemptCompletionTool(),
+            )
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "edit_file" to """{"path":"a.kt","old_string":"a","new_string":"b"}""",
+                )),
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"done"}""",
+                )),
+            ))
+
+            val runner = SubagentRunner(
+                brain = brain,
+                coreTools = tools,
+                systemPrompt = "test",
+                project = project,
+                maxIterations = 10,
+                planMode = false,
+                contextBudget = 50_000,
+                // no approvalGate
+            )
+            val result = runner.run("edit") {}
+            assertEquals(SubagentRunStatus.COMPLETED, result.status,
+                "Null approval gate must not block execution.")
+        }
+    }
+
+    // ---- Integration: Deferred Tool Activation -----------------------------------------------
+
+    @Nested
+    inner class DeferredToolActivationIntegration {
+
+        /**
+         * Full pipeline integration test:
+         * 1. Sub-agent starts with db_explain in deferred (not in core)
+         * 2. LLM calls tool_search to activate db_explain
+         * 3. LLM calls db_explain (now active via sub-agent registry)
+         * 4. LLM calls attempt_completion
+         *
+         * Verifies the full activation chain: ToolSearchTool → subagentRegistry.activateDeferred
+         * → AgentLoop.toolResolver picks it up → tool executes successfully.
+         */
+        @Test
+        fun `tool_search activates deferred tool which becomes callable in next iteration`() = runTest {
+            var dbExplainCallCount = 0
+            val dbExplainTool = object : AgentTool {
+                override val name = "db_explain"
+                override val description = "Explain a SQL query plan"
+                override val parameters = FunctionParameters(
+                    properties = mapOf(
+                        "query" to com.workflow.orchestrator.agent.api.dto.ParameterProperty(
+                            type = "string", description = "SQL query to explain"
+                        )
+                    )
+                )
+                override val allowedWorkers = setOf(WorkerType.CODER)
+                override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+                    dbExplainCallCount++
+                    return ToolResult(
+                        content = "Seq Scan on orders (cost=0.00..1.23)",
+                        summary = "query plan",
+                        tokenEstimate = 30
+                    )
+                }
+            }
+
+            val brain = SequenceBrain(listOf(
+                // Turn 1: LLM activates db_explain from deferred via tool_search
+                ApiResult.Success(toolCallResponse(
+                    "tool_search" to """{"query":"select:db_explain"}"""
+                )),
+                // Turn 2: LLM calls the now-active db_explain
+                ApiResult.Success(toolCallResponse(
+                    "db_explain" to """{"query":"SELECT * FROM orders WHERE id = 1"}"""
+                )),
+                // Turn 3: complete
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"Query uses seq scan — add index on orders.id"}"""
+                )),
+            ))
+
+            val coreTools = buildTools()  // read_file, search_code, think, attempt_completion
+            val deferredTools = mapOf("db_explain" to (dbExplainTool to "Database"))
+
+            val runner = SubagentRunner(
+                brain = brain,
+                coreTools = coreTools,
+                deferredTools = deferredTools,
+                systemPrompt = "You are a performance engineer.",
+                project = project,
+                maxIterations = 10,
+                planMode = false,
+                contextBudget = 100_000,
+            )
+
+            val result = runner.run("Analyze slow query") {}
+
+            assertEquals(SubagentRunStatus.COMPLETED, result.status,
+                "Sub-agent must complete after activating deferred tool via tool_search")
+            assertEquals(1, dbExplainCallCount,
+                "db_explain must have been called exactly once after activation by tool_search")
+        }
+
+        /**
+         * Registry isolation test:
+         * Sub-agent tool_search only sees its own deferredTools — NOT the main registry.
+         * When the sub-agent's deferred list is empty, tool_search returns no results
+         * and the sub-agent should complete without error.
+         */
+        @Test
+        fun `tool_search in sub-agent returns no results when deferred list is empty`() = runTest {
+            // Sub-agent has NO deferred tools at all
+            val brain = SequenceBrain(listOf(
+                // LLM tries to activate jira — not in sub-agent's deferred list
+                ApiResult.Success(toolCallResponse(
+                    "tool_search" to """{"query":"select:jira"}"""
+                )),
+                // After getting "no tools found" result, completes gracefully
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"jira not available for this sub-agent task"}"""
+                )),
+            ))
+
+            val coreTools = buildTools()
+            val deferredTools = emptyMap<String, Pair<AgentTool, String>>()  // nothing deferred
+
+            val runner = SubagentRunner(
+                brain = brain,
+                coreTools = coreTools,
+                deferredTools = deferredTools,
+                systemPrompt = "Test",
+                project = project,
+                maxIterations = 10,
+                planMode = false,
+                contextBudget = 100_000,
+            )
+
+            // Should complete without crashing — tool_search returns "no results" for jira
+            val result = runner.run("Task") {}
+            assertEquals(SubagentRunStatus.COMPLETED, result.status,
+                "Sub-agent must complete even when tool_search finds no matching deferred tool")
+        }
+
+        /**
+         * System prompt catalog test:
+         * The onSystemPromptBuilt hook captures the initial prompt, which must contain
+         * the deferred catalog section when deferredTools are provided.
+         */
+        @Test
+        fun `initial system prompt includes deferred catalog when deferredTools provided`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"done"}"""
+                )),
+            ))
+
+            var capturedSystemPrompt: String? = null
+
+            val coreTools = buildTools()
+            val deferredTools = mapOf(
+                "db_explain" to (stubTool("db_explain") to "Database"),
+                "db_schema"  to (stubTool("db_schema")  to "Database"),
+            )
+
+            val runner = SubagentRunner(
+                brain = brain,
+                coreTools = coreTools,
+                deferredTools = deferredTools,
+                systemPrompt = "Test persona prompt.",
+                project = project,
+                maxIterations = 10,
+                planMode = false,
+                contextBudget = 100_000,
+                onSystemPromptBuilt = { prompt -> capturedSystemPrompt = prompt },
+            )
+
+            runner.run("Task") {}
+
+            assertNotNull(capturedSystemPrompt, "onSystemPromptBuilt hook must be called")
+            assertTrue(
+                capturedSystemPrompt!!.contains("db_explain"),
+                "Initial system prompt must mention deferred tool 'db_explain'. Got:\n${capturedSystemPrompt!!.take(500)}"
+            )
+            assertTrue(
+                capturedSystemPrompt!!.contains("Deferred Tools"),
+                "Initial system prompt must contain 'Deferred Tools' section header"
+            )
+        }
+    }
+
+    // ── task_report completion tests ──────────────────────────────────────────────────────────
+
+    @Nested
+    inner class TaskReportCompletionTests {
+
+        private fun buildToolsWithTaskReport(): Map<String, AgentTool> {
+            val tools = mutableMapOf<String, AgentTool>()
+            for (name in listOf("read_file", "search_code", "think")) {
+                tools[name] = stubTool(name)
+            }
+            tools["task_report"] = TaskReportTool()
+            return tools
+        }
+
+        @Test
+        fun `sub-agent calling task_report terminates the loop with COMPLETED status`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "read_file" to """{"path":"src/Foo.kt"}"""
+                )),
+                ApiResult.Success(toolCallResponse(
+                    "task_report" to """{"summary":"Reviewed Foo.kt and found no issues.","findings":"All methods follow the coding standard.","files":"src/Foo.kt"}"""
+                ))
+            ))
+
+            val runner = SubagentRunner(
+                brain = brain,
+                coreTools = buildToolsWithTaskReport(),
+                systemPrompt = "You are a code reviewer.",
+                project = project,
+                maxIterations = 50,
+                planMode = false,
+                contextBudget = 50_000
+            )
+
+            val result = runner.run("Review Foo.kt") {}
+
+            assertEquals(SubagentRunStatus.COMPLETED, result.status)
+            assertNull(result.error)
+            assertNotNull(result.result, "task_report content must flow back as result")
+        }
+
+        @Test
+        fun `task_report structured content flows into parent ToolResult content`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "task_report" to """{"summary":"Found the bug.","findings":"NPE at Foo.kt:42 when input is null.","next_steps":"Add null check at Foo.kt:42.","issues":"Could not reproduce under Java 17."}"""
+                ))
+            ))
+
+            val runner = SubagentRunner(
+                brain = brain,
+                coreTools = buildToolsWithTaskReport(),
+                systemPrompt = "You are a debugger.",
+                project = project,
+                maxIterations = 10,
+                planMode = false,
+                contextBudget = 50_000
+            )
+
+            val result = runner.run("Debug the NPE") {}
+
+            assertEquals(SubagentRunStatus.COMPLETED, result.status)
+            val content = result.result ?: ""
+            assertTrue(content.contains("## Summary"), "Structured report must contain ## Summary")
+            assertTrue(content.contains("Found the bug."))
+            assertTrue(content.contains("## Findings"))
+            assertTrue(content.contains("NPE at Foo.kt:42"))
+            assertTrue(content.contains("## Next Steps"))
+            assertTrue(content.contains("Add null check"))
+            assertTrue(content.contains("## Issues"))
+            assertTrue(content.contains("Could not reproduce"))
+        }
+    }
+
+    // ── "COMPLETING YOUR TASK" prompt injection tests ─────────────────────────────────────────
+
+    @Nested
+    inner class CompletingYourTaskInjectionTests {
+
+        @Test
+        fun `composed system prompt always contains COMPLETING YOUR TASK section`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"Done."}"""
+                ))
+            ))
+
+            var capturedPrompt: String? = null
+            val runner = SubagentRunner(
+                brain = brain,
+                coreTools = buildTools(),
+                systemPrompt = "You are a specialist agent.",
+                project = project,
+                maxIterations = 10,
+                planMode = false,
+                contextBudget = 50_000,
+                onSystemPromptBuilt = { prompt -> capturedPrompt = prompt }
+            )
+            runner.run("Do something") {}
+
+            assertNotNull(capturedPrompt, "onSystemPromptBuilt hook must fire")
+            assertTrue(
+                capturedPrompt!!.contains("COMPLETING YOUR TASK"),
+                "Composed system prompt must contain 'COMPLETING YOUR TASK' section"
+            )
+            assertTrue(
+                capturedPrompt!!.contains("task_report"),
+                "COMPLETING YOUR TASK section must reference the task_report tool"
+            )
+        }
+
+        @Test
+        fun `COMPLETING YOUR TASK section explains parent cannot see streamed text`() = runTest {
+            val brain = SequenceBrain(listOf(
+                ApiResult.Success(toolCallResponse(
+                    "attempt_completion" to """{"result":"Done."}"""
+                ))
+            ))
+
+            var capturedPrompt: String? = null
+            val runner = SubagentRunner(
+                brain = brain,
+                coreTools = buildTools(),
+                systemPrompt = "You are a test agent.",
+                project = project,
+                maxIterations = 10,
+                planMode = false,
+                contextBudget = 50_000,
+                onSystemPromptBuilt = { prompt -> capturedPrompt = prompt }
+            )
+            runner.run("Task") {}
+
+            val section = capturedPrompt ?: ""
+            assertTrue(
+                section.contains("NOT visible to the parent"),
+                "The section must warn the sub-agent that streamed text is not visible to the parent"
+            )
+        }
+
+        @Test
+        fun `COMPLETING_YOUR_TASK_SECTION constant is accessible from companion`() {
+            assertTrue(SubagentRunner.COMPLETING_YOUR_TASK_SECTION.contains("task_report"))
+            assertTrue(SubagentRunner.COMPLETING_YOUR_TASK_SECTION.contains("summary"))
+            assertTrue(SubagentRunner.COMPLETING_YOUR_TASK_SECTION.contains("findings"))
         }
     }
 }

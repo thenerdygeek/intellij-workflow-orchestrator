@@ -92,16 +92,28 @@ class ContextManager(
     private var activePlanPath: String? = null
 
     /**
-     * Current task progress markdown string.
-     *
-     * Port of Cline's `currentFocusChainChecklist` from TaskState:
-     * - Updated when the LLM includes `task_progress` in tool call params
-     * - Survives compaction: re-injected into the system prompt after compaction
-     * - Included in session checkpoint for resume
-     *
-     * @see <a href="https://github.com/cline/cline/blob/main/src/core/task/focus-chain/index.ts">Cline FocusChainManager</a>
+     * Optional TaskStore reference for the typed task system (Phase 3+).
+     * When attached, [renderTaskProgressMarkdown] reads live task state from the store.
      */
-    private var taskProgressMarkdown: String? = null
+    private var taskStore: com.workflow.orchestrator.agent.session.TaskStore? = null
+
+    fun attachTaskStore(store: com.workflow.orchestrator.agent.session.TaskStore) {
+        taskStore = store
+    }
+
+    /**
+     * Render current tasks as a Markdown checklist. Returns null if no store attached or no tasks.
+     * Format: "- [x] completed" / "- [ ] other". DELETED tasks are filtered out.
+     */
+    fun renderTaskProgressMarkdown(): String? {
+        val store = taskStore ?: return null
+        val tasks = store.listTasks().filter { it.status != com.workflow.orchestrator.agent.loop.TaskStatus.DELETED }
+        if (tasks.isEmpty()) return null
+        return tasks.joinToString("\n") { t ->
+            val box = if (t.status == com.workflow.orchestrator.agent.loop.TaskStatus.COMPLETED) "[x]" else "[ ]"
+            "- $box ${t.subject}"
+        }
+    }
 
     // ---- Message management ----
 
@@ -116,6 +128,48 @@ class ContextManager(
 
     fun addAssistantMessage(message: ChatMessage) {
         messages.add(message)
+    }
+
+    /**
+     * Remove contiguous trailing `[assistant-text-only, user-nudge]` pairs sitting
+     * immediately before the last message.
+     *
+     * Rationale: when the model keeps replying with text-only (or empty) responses,
+     * we inject an identical error/nudge each turn. The chain
+     * `(assistant-text, [ERROR] nudge, assistant-text, [ERROR] nudge, ...)` accumulates
+     * in context and can prime the model to keep mimicking the "no tool" pattern it
+     * sees repeated. Collapsing the chain keeps at most one visible nudge at the tail.
+     *
+     * Scope is intentionally narrow: only CONTIGUOUS trailing pairs whose user content
+     * equals `nudgeText` are removed. Legitimate older nudges that are no longer at the
+     * tail (because real work happened after) stay untouched.
+     *
+     * Not persisted via `onHistoryOverwrite` because nudges are never written to
+     * api_conversation_history (they live only in this in-memory context).
+     *
+     * @return number of pairs removed
+     */
+    fun pruneTrailingNudgePairs(nudgeText: String): Int {
+        var pairsRemoved = 0
+        var end = messages.size - 2
+        while (end >= 1) {
+            val user = messages[end]
+            val prev = messages[end - 1]
+            val isNudge = user.role == "user" && user.content == nudgeText
+            val isTextOnlyAssistant = prev.role == "assistant" && prev.toolCalls.isNullOrEmpty()
+            if (isNudge && isTextOnlyAssistant) {
+                messages.removeAt(end)
+                messages.removeAt(end - 1)
+                pairsRemoved++
+                end -= 2
+            } else {
+                break
+            }
+        }
+        if (pairsRemoved > 0) {
+            LOG.info("[Context] Pruned $pairsRemoved trailing nudge pair(s) to avoid LLM mimicry of the error pattern")
+        }
+        return pairsRemoved
     }
 
     /**
@@ -718,48 +772,6 @@ class ContextManager(
      * Export the system prompt content (for persisting in Session metadata).
      */
     fun getSystemPromptContent(): String? = systemPrompt?.content
-
-    // ---- Task progress (ported from Cline's FocusChainManager) ----
-
-    /**
-     * Update task progress from the LLM's tool call `task_progress` parameter.
-     *
-     * Port of Cline's FocusChainManager.updateFCListFromToolResponse():
-     * - Receives the raw markdown checklist from the tool call
-     * - Stores it for inclusion in the system prompt
-     * - Parses it into TaskProgress for UI consumption
-     *
-     * Called by AgentLoop after extracting `task_progress` from tool call arguments.
-     *
-     * @param markdown the raw checklist markdown from the LLM
-     * @return parsed TaskProgress for UI display, or null if markdown was blank
-     */
-    fun setTaskProgress(markdown: String): TaskProgress? {
-        val trimmed = markdown.trim()
-        if (trimmed.isBlank()) return null
-        taskProgressMarkdown = trimmed
-        return TaskProgress.fromMarkdown(trimmed)
-    }
-
-    /**
-     * Get the current task progress markdown string.
-     * Returns null if no progress has been set.
-     *
-     * Used by:
-     * - SystemPrompt.build() to inject progress into the system prompt
-     * - Session checkpoint to persist progress
-     * - AgentLoop to provide progress after compaction
-     */
-    fun getTaskProgress(): String? = taskProgressMarkdown
-
-    /**
-     * Get the current task progress as a parsed TaskProgress object.
-     * Returns null if no progress has been set.
-     */
-    fun getTaskProgressParsed(): TaskProgress? {
-        val md = taskProgressMarkdown ?: return null
-        return TaskProgress.fromMarkdown(md)
-    }
 
     // ---- Active skill management (ported from Cline's skill system) ----
 

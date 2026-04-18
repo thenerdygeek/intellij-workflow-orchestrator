@@ -9,23 +9,32 @@ import com.intellij.execution.process.ProcessHandler
 import com.intellij.execution.testframework.sm.runner.SMTestProxy
 import com.intellij.execution.testframework.sm.runner.ui.TestResultsViewer
 import com.intellij.execution.ui.RunContentDescriptor
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.components.service
 import com.intellij.openapi.module.ModuleUtilCore
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
 import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.search.GlobalSearchScope
+import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.ToolOutputConfig
 import com.workflow.orchestrator.agent.tools.TestConsoleUtils
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.util.ReflectionUtils
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -33,7 +42,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
-import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.coroutineContext
 import kotlin.coroutines.resume
 
@@ -92,6 +100,7 @@ Actions and their parameters:
     override val allowedWorkers = setOf(
         WorkerType.CODER, WorkerType.REVIEWER, WorkerType.ANALYZER, WorkerType.ORCHESTRATOR, WorkerType.TOOLER
     )
+    override val outputConfig = ToolOutputConfig.COMMAND
 
     /** Cached coverage snapshot from the last run_with_coverage execution. */
     @Volatile
@@ -160,63 +169,123 @@ Actions and their parameters:
                 isError = true
             )
 
-        val coverageDeferred = CompletableDeferred<CoverageSnapshot?>()
-        val listenerDisposable = registerCoverageListener(project, coverageDeferred)
+        // Phase 3 / Task 2.5: route all listener/connection/descriptor tracking through
+        // a single RunInvocation, mirroring the Task 2.3+2.4 refactor in JavaRuntimeExecTool.
+        // The try/finally block below disposes the invocation on every exit path (success /
+        // processNotStarted / timeout / exception / coroutine cancel), which in turn:
+        //   - destroys the captured ProcessHandler if it hasn't terminated,
+        //   - disconnects the build-phase MessageBusConnection (registered via
+        //     invocation.subscribeTopic below),
+        //   - runs the `removeRunContent` onDispose callback installed after the
+        //     descriptor is captured (removes the descriptor from RunContentManager,
+        //     which in turn disposes the TestResultsViewer and its EventsListener),
+        //   - auto-cleans the 2-arg process listener attached via attachProcessListener,
+        //   - disposes the CoverageSuiteListener (folded into invocation.onDispose),
+        //   - cancels any poll scope launched inside processTerminated.
+        val invocation = project.service<AgentService>().newRunInvocation(
+            "run-with-coverage-${System.currentTimeMillis()}"
+        )
+        try {
+            val coverageDeferred = CompletableDeferred<CoverageSnapshot?>()
+            val listenerDisposable = registerCoverageListener(project, coverageDeferred)
+            listenerDisposable?.let {
+                invocation.onDispose { Disposer.dispose(it) }
+            }
 
-        val processHandlerRef = AtomicReference<ProcessHandler?>(null)
-        val buildConnRef = AtomicReference<com.intellij.util.messages.MessageBusConnection?>(null)
+            val result = withTimeoutOrNull<CoverageRunResult>(timeoutSeconds * 1000) {
+                suspendCancellableCoroutine { continuation ->
+                    // Single cleanup path: dispose the invocation. This destroys the
+                    // process handler, disconnects the MessageBusConnection, removes
+                    // the run content descriptor, and runs all auto-cleaning 2-arg
+                    // process listeners — replacing the old manual destroy/disconnect
+                    // dance.
+                    continuation.invokeOnCancellation {
+                        Disposer.dispose(invocation)
+                    }
+                    invokeLater {
+                        try {
+                            val env = com.intellij.execution.runners.ExecutionEnvironmentBuilder
+                                .createOrNull(coverageExecutor, settings)
+                                ?.build()
 
-        val result = withTimeoutOrNull<CoverageRunResult>(timeoutSeconds * 1000) {
-            suspendCancellableCoroutine { continuation ->
-                continuation.invokeOnCancellation {
-                    // Kill the coverage process and disconnect the bus watcher on agent stop or timeout.
-                    // Without this the coverage JVM keeps running and blocks subsequent runs.
-                    processHandlerRef.get()?.destroyProcess()
-                    buildConnRef.get()?.disconnect()
-                }
-                invokeLater {
-                    try {
-                        val env = com.intellij.execution.runners.ExecutionEnvironmentBuilder
-                            .createOrNull(coverageExecutor, settings)
-                            ?.build()
+                            if (env == null) {
+                                if (continuation.isActive) continuation.resume(
+                                    CoverageRunResult("Error: could not build execution environment", "Error", testIsError = true)
+                                )
+                                return@invokeLater
+                            }
 
-                        if (env == null) {
-                            if (continuation.isActive) continuation.resume(
-                                CoverageRunResult("Error: could not build execution environment", "Error")
-                            )
-                            return@invokeLater
-                        }
+                            val callback = object : com.intellij.execution.runners.ProgramRunner.Callback {
+                                override fun processStarted(descriptor: RunContentDescriptor?) {
+                                    if (descriptor == null) {
+                                        if (continuation.isActive) continuation.resume(
+                                            CoverageRunResult("Error: no descriptor from coverage run", "Error", testIsError = true)
+                                        )
+                                        return
+                                    }
+                                    invocation.descriptorRef.set(descriptor)
+                                    val handler = descriptor.processHandler
+                                    invocation.processHandlerRef.set(handler)
 
-                        val callback = object : com.intellij.execution.runners.ProgramRunner.Callback {
-                            override fun processStarted(descriptor: RunContentDescriptor?) {
-                                if (descriptor == null) {
-                                    if (continuation.isActive) continuation.resume(
-                                        CoverageRunResult("Error: no descriptor from coverage run", "Error")
-                                    )
-                                    return
-                                }
-                                val handler = descriptor.processHandler
-                                processHandlerRef.set(handler)
+                                    // Register an onDispose callback that removes the descriptor
+                                    // from RunContentManager — this is the release mechanism for
+                                    // the TestResultsViewer (and its EventsListener) because
+                                    // TestResultsViewer is Disposable with NO removeEventsListener
+                                    // API. Per design, the literal `removeRunContent` call lives
+                                    // here in the tool file (source-text test anchor).
+                                    invocation.onDispose {
+                                        val currentDesc = invocation.descriptorRef.get() ?: return@onDispose
+                                        ApplicationManager.getApplication().invokeLater {
+                                            com.intellij.execution.ui.RunContentManager.getInstance(project)
+                                                .removeRunContent(coverageExecutor, currentDesc)
+                                        }
+                                    }
 
-                                val testConsole = TestConsoleUtils.unwrapToTestConsole(descriptor.executionConsole)
-                                if (testConsole != null) {
-                                    testConsole.resultsViewer.addEventsListener(object : TestResultsViewer.EventsListener {
-                                        override fun onTestingFinished(sender: TestResultsViewer) {
-                                            val root = sender.testsRootNode as? SMTestProxy.SMRootTestProxy
-                                            if (root != null && continuation.isActive) {
-                                                continuation.resume(formatTestResults(root, testTarget))
+                                    val testConsole = TestConsoleUtils.unwrapToTestConsole(descriptor.executionConsole)
+                                    if (testConsole != null) {
+                                        // Phase 3 / Task 2.5: replace the raw
+                                        // `resultsViewer.addEventsListener(...)` leak with
+                                        // invocation.attachListener — which internally wraps the
+                                        // listener in a defense-in-depth proxy that gates on the
+                                        // invocation's disposed flag. Prevents stale resume() on an
+                                        // already-consumed continuation after timeout/cancel. The
+                                        // TestResultsViewer has no removeEventsListener API, so the
+                                        // listener is released when the RunContentDescriptor is
+                                        // disposed via removeRunContent (registered below).
+                                        val eventsListener = object : TestResultsViewer.EventsListener {
+                                            override fun onTestingFinished(sender: TestResultsViewer) {
+                                                val root = sender.testsRootNode as? SMTestProxy.SMRootTestProxy
+                                                if (root != null && continuation.isActive) {
+                                                    val pollScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+                                                    invocation.onDispose { pollScope.cancel() }
+                                                    pollScope.launch {
+                                                        if (continuation.isActive) {
+                                                            continuation.resume(interpretTestRoot(root, testTarget, this@CoverageTool, project).toCoverageRunResult())
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
-                                    })
-                                } else if (handler != null) {
-                                    handler.addProcessListener(object : ProcessAdapter() {
-                                        override fun processTerminated(event: ProcessEvent) {
-                                            java.util.Timer().schedule(object : java.util.TimerTask() {
-                                                override fun run() {
+                                        invocation.attachListener(eventsListener, testConsole.resultsViewer)
+                                    } else if (handler != null) {
+                                        // Phase 3 / Task 2.5: the old raw `handler.addProcessListener(1-arg)`
+                                        // leak is replaced with invocation.attachProcessListener, which
+                                        // internally uses the 2-arg form addProcessListener(listener, disposable)
+                                        // so the listener is auto-removed when the invocation disposes —
+                                        // no manual removeProcessListener needed. The raw java.util.Timer
+                                        // that previously fired a 2s delayed callback has been replaced
+                                        // with a cancellable coroutine delay tied to invocation lifecycle
+                                        // via invocation.onDispose.
+                                        val terminateListener = object : ProcessAdapter() {
+                                            override fun processTerminated(event: ProcessEvent) {
+                                                val pollScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+                                                invocation.onDispose { pollScope.cancel() }
+                                                pollScope.launch {
+                                                    delay(2000)
                                                     if (continuation.isActive) {
                                                         val root = TestConsoleUtils.findTestRoot(descriptor)
                                                         if (root != null) {
-                                                            continuation.resume(formatTestResults(root, testTarget))
+                                                            continuation.resume(interpretTestRoot(root, testTarget, this@CoverageTool, project).toCoverageRunResult())
                                                         } else {
                                                             continuation.resume(
                                                                 CoverageRunResult(
@@ -227,95 +296,104 @@ Actions and their parameters:
                                                         }
                                                     }
                                                 }
-                                            }, 2000)
+                                            }
                                         }
-                                    })
-                                } else {
-                                    if (continuation.isActive) continuation.resume(
-                                        CoverageRunResult("Error: no process handler", "Error")
-                                    )
-                                }
-                            }
-                        }
-
-                        try {
-                            ProgramRunnerUtil.executeConfigurationAsync(env, false, true, callback)
-                        } catch (_: NoSuchMethodError) {
-                            env.callback = callback
-                            ProgramRunnerUtil.executeConfiguration(env, false, true)
-                        }
-
-                        // Build watchdog: detect before-run task failure via ExecutionListener.processNotStarted
-                        val buildConn = project.messageBus.connect()
-                        buildConnRef.set(buildConn)
-                        buildConn.subscribe(com.intellij.execution.ExecutionManager.EXECUTION_TOPIC,
-                            object : com.intellij.execution.ExecutionListener {
-                                override fun processNotStarted(executorId: String, e: com.intellij.execution.runners.ExecutionEnvironment) {
-                                    if (e == env) {
-                                        buildConn.disconnect()
-                                        if (continuation.isActive) {
-                                            continuation.resume(CoverageRunResult(
-                                                "BUILD FAILED — coverage run did not start.\n\n" +
-                                                    "Compilation failed before test execution. " +
-                                                    "Fix the errors and try again.",
-                                                "Build failed before coverage"
-                                            ))
-                                        }
+                                        invocation.attachProcessListener(handler, terminateListener)
+                                    } else {
+                                        if (continuation.isActive) continuation.resume(
+                                            CoverageRunResult("Error: no process handler", "Error", testIsError = true)
+                                        )
                                     }
                                 }
-                                override fun processStarted(executorId: String, e: com.intellij.execution.runners.ExecutionEnvironment, handler: ProcessHandler) {
-                                    if (e == env) buildConn.disconnect()
-                                }
                             }
-                        )
-                    } catch (e: Exception) {
-                        if (continuation.isActive) continuation.resume(
-                            CoverageRunResult(
-                                "Error launching coverage run: ${e.message}",
-                                "Error: ${e.javaClass.simpleName}"
+
+                            try {
+                                ProgramRunnerUtil.executeConfigurationAsync(env, false, true, callback)
+                            } catch (_: NoSuchMethodError) {
+                                env.callback = callback
+                                ProgramRunnerUtil.executeConfiguration(env, false, true)
+                            }
+
+                            // Build watchdog: detect before-run task failure via
+                            // ExecutionListener.processNotStarted. Registered through
+                            // invocation.subscribeTopic so disposal (on timeout / cancel /
+                            // success) disconnects it automatically. No manual disconnect
+                            // needed inside the listener.
+                            val buildConn = project.messageBus.connect()
+                            invocation.subscribeTopic(buildConn)
+                            buildConn.subscribe(com.intellij.execution.ExecutionManager.EXECUTION_TOPIC,
+                                object : com.intellij.execution.ExecutionListener {
+                                    override fun processNotStarted(executorId: String, e: com.intellij.execution.runners.ExecutionEnvironment) {
+                                        if (e == env) {
+                                            if (continuation.isActive) {
+                                                continuation.resume(CoverageRunResult(
+                                                    "BUILD FAILED — coverage run did not start.\n\n" +
+                                                        "Compilation failed before test execution. " +
+                                                        "Fix the errors and try again.",
+                                                    "Build failed before coverage",
+                                                    testIsError = true,
+                                                ))
+                                            }
+                                        }
+                                    }
+                                    override fun processStarted(executorId: String, e: com.intellij.execution.runners.ExecutionEnvironment, handler: ProcessHandler) {
+                                        // Observation-only; teardown happens through invocation.dispose().
+                                    }
+                                }
                             )
-                        )
+                        } catch (e: Exception) {
+                            if (continuation.isActive) continuation.resume(
+                                CoverageRunResult(
+                                    "Error launching coverage run: ${e.message}",
+                                    "Error: ${e.javaClass.simpleName}",
+                                    testIsError = true,
+                                )
+                            )
+                        }
                     }
                 }
             }
-        }
 
-        if (result == null) {
-            processHandlerRef.get()?.destroyProcess()
-            listenerDisposable?.let { com.intellij.openapi.util.Disposer.dispose(it) }
+            if (result == null) {
+                // Timeout path: outer `finally { Disposer.dispose(invocation) }` handles all
+                // cleanup (destroy handler, disconnect bus, remove descriptor, dispose
+                // coverage listener). No manual cleanup needed here.
+                return ToolResult(
+                    "[TIMEOUT] Coverage run timed out after ${timeoutSeconds}s for $testTarget.",
+                    "Coverage timeout",
+                    ToolResult.ERROR_TOKEN_ESTIMATE,
+                    isError = true
+                )
+            }
+
+            val snapshot = if (listenerDisposable != null) {
+                withTimeoutOrNull(COVERAGE_LISTENER_TIMEOUT_MS) { coverageDeferred.await() }
+                    ?: extractCoverageSnapshot(project)
+            } else {
+                delay(COVERAGE_FALLBACK_DELAY_MS)
+                extractCoverageSnapshot(project)
+            }
+
+            lastSnapshot = snapshot
+
+            val coverageSummary = if (snapshot != null && snapshot.files.isNotEmpty()) {
+                formatCoverageSummary(snapshot)
+            } else {
+                val diag = lastExtractionDiag?.let { "\n\nExtraction diagnostics:\n$it" } ?: ""
+                "\nCoverage: No coverage data available. " +
+                    "The coverage tab in the IDE may still show results — use get_file_coverage to re-read.$diag"
+            }
+
+            val content = "${result.testResult}\n$coverageSummary"
             return ToolResult(
-                "[TIMEOUT] Coverage run timed out after ${timeoutSeconds}s for $testTarget.",
-                "Coverage timeout",
-                ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true
+                content = content,
+                summary = result.testSummary + if (snapshot != null) " | ${snapshot.files.size} files covered" else "",
+                tokenEstimate = content.length / 4,
+                isError = result.testIsError,
             )
+        } finally {
+            Disposer.dispose(invocation)
         }
-
-        val snapshot = if (listenerDisposable != null) {
-            withTimeoutOrNull(COVERAGE_LISTENER_TIMEOUT_MS) { coverageDeferred.await() }
-                ?: extractCoverageSnapshot(project)
-        } else {
-            delay(COVERAGE_FALLBACK_DELAY_MS)
-            extractCoverageSnapshot(project)
-        }
-
-        listenerDisposable?.let { com.intellij.openapi.util.Disposer.dispose(it) }
-        lastSnapshot = snapshot
-
-        val coverageSummary = if (snapshot != null && snapshot.files.isNotEmpty()) {
-            formatCoverageSummary(snapshot)
-        } else {
-            val diag = lastExtractionDiag?.let { "\n\nExtraction diagnostics:\n$it" } ?: ""
-            "\nCoverage: No coverage data available. " +
-                "The coverage tab in the IDE may still show results — use get_file_coverage to re-read.$diag"
-        }
-
-        val content = "${result.testResult}\n$coverageSummary"
-        return ToolResult(
-            content = content,
-            summary = result.testSummary + if (snapshot != null) " | ${snapshot.files.size} files covered" else "",
-            tokenEstimate = content.length / 4
-        )
     }
 
     /**
@@ -780,52 +858,16 @@ Actions and their parameters:
 
     // ══════════════════════════════════════════════════════════════════════
     // Test results formatting
+    //
+    // CoverageRunResult is the data-class carrier we pass across the
+    // withTimeoutOrNull boundary. Populate it from the canonical
+    // [interpretTestRoot] ToolResult — same classifier as RuntimeExecTool and
+    // JavaRuntimeExecTool, so a coverage-backed run can't report PASSED for
+    // an empty suite or a runner crash.
     // ══════════════════════════════════════════════════════════════════════
 
-    private fun formatTestResults(root: SMTestProxy.SMRootTestProxy, testTarget: String): CoverageRunResult {
-        val allTests = collectAllTests(root)
-        val passed = allTests.count { it.isPassed }
-        val failed = allTests.count { it.isDefect && !it.isErrorProxy() }
-        val errors = allTests.count { it.isErrorProxy() }
-        val skipped = allTests.count { it.isIgnored }
-        val duration = root.duration?.let { it / 1000.0 } ?: 0.0
-
-        val sb = StringBuilder()
-        sb.appendLine("Tests: $passed passed, $failed failed, $errors error, $skipped skipped (${String.format("%.1f", duration)}s)")
-
-        val failedTests = allTests.filter { it.isDefect }
-        if (failedTests.isNotEmpty()) {
-            sb.appendLine()
-            sb.appendLine("FAILED:")
-            for (test in failedTests) {
-                sb.appendLine("  ${test.name} — ${test.errorMessage ?: "unknown error"}")
-                val firstFrame = test.stacktrace?.lines()?.firstOrNull { it.contains("at ") }
-                if (firstFrame != null) sb.appendLine("    ${firstFrame.trim()}")
-            }
-        }
-
-        val skippedTests = allTests.filter { it.isIgnored }
-        if (skippedTests.isNotEmpty()) {
-            sb.appendLine()
-            sb.appendLine("SKIPPED:")
-            for (test in skippedTests) {
-                val reason = test.errorMessage
-                if (reason != null) sb.appendLine("  ${test.name} — $reason") else sb.appendLine("  ${test.name}")
-            }
-        }
-
-        val summary = if (failed > 0 || errors > 0) "FAILED" else "PASSED"
-        return CoverageRunResult(sb.toString().trimEnd(), "$summary: $passed passed, $failed failed")
-    }
-
-    private fun SMTestProxy.isErrorProxy(): Boolean =
-        magnitudeInfo?.title?.contains("error", ignoreCase = true) == true ||
-            errorMessage?.startsWith("java.lang.") == true
-
-    private fun collectAllTests(proxy: SMTestProxy): List<SMTestProxy> {
-        if (proxy.children.isEmpty() && proxy !is SMTestProxy.SMRootTestProxy) return listOf(proxy)
-        return proxy.children.flatMap { collectAllTests(it) }
-    }
+    private fun ToolResult.toCoverageRunResult(): CoverageRunResult =
+        CoverageRunResult(this.content, this.summary, this.isError)
 
     // ══════════════════════════════════════════════════════════════════════
     // Run configuration creation
@@ -1034,4 +1076,8 @@ data class FileCoverageDetail(
 /** Top-level snapshot from a coverage run — keyed by fully qualified class name. */
 data class CoverageSnapshot(val files: Map<String, FileCoverageDetail>)
 
-internal data class CoverageRunResult(val testResult: String, val testSummary: String)
+internal data class CoverageRunResult(
+    val testResult: String,
+    val testSummary: String,
+    val testIsError: Boolean = false,
+)

@@ -17,8 +17,10 @@ import { describe, it, expect } from 'vitest';
 import planReviseContract from './contracts/plan-revise.json';
 import planReviseV2Contract from './contracts/plan-revise-v2.json';
 import planDataContract from './contracts/plan-data.json';
-import planStepUpdateContract from './contracts/plan-step-update.json';
 import editStatsContract from './contracts/edit-stats.json';
+import taskCreateContract from './contracts/task-create.json';
+import taskUpdateContract from './contracts/task-update.json';
+import taskListContract from './contracts/task-list.json';
 
 // ── Plan Revise Contract ──
 
@@ -84,77 +86,16 @@ describe('Contract: renderPlan payload (Kotlin → React)', () => {
     }
   });
 
-  it('steps have required fields', () => {
-    const plan = planDataContract.payload;
-    for (const step of plan.steps) {
-      for (const field of planDataContract.step_required_fields) {
-        expect(step).toHaveProperty(field);
-      }
-    }
-  });
-
-  it('step IDs are strings', () => {
-    for (const step of planDataContract.payload.steps) {
-      expect(typeof step.id).toBe('string');
-      expect(step.id.length).toBeGreaterThan(0);
-    }
-  });
-
   it('plan can be JSON.stringify + JSON.parse roundtripped', () => {
     const json = JSON.stringify(planDataContract.payload);
     const parsed = JSON.parse(json);
     expect(parsed.goal).toBe(planDataContract.payload.goal);
-    expect(parsed.steps.length).toBe(planDataContract.payload.steps.length);
   });
 
-  it('React can render plan data without errors', () => {
-    // Simulate what plan-editor.tsx does with renderPlan(json)
-    const json = JSON.stringify(planDataContract.payload);
-    const data = JSON.parse(json);
-
-    expect(data.goal).toBeTruthy();
-    expect(Array.isArray(data.steps)).toBe(true);
-    expect(data.steps.length).toBeGreaterThan(0);
-
-    // Each step should have id and title for rendering
-    for (const step of data.steps) {
-      expect(step.id).toBeTruthy();
-      expect(step.title).toBeTruthy();
-    }
-  });
-});
-
-// ── Plan Step Update Contract ──
-
-describe('Contract: updatePlanStep payload (Kotlin → React)', () => {
-  it('valid statuses are recognized', () => {
-    const validStatuses = planStepUpdateContract.valid_statuses;
-    expect(validStatuses).toContain('pending');
-    expect(validStatuses).toContain('running');
-    expect(validStatuses).toContain('completed');
-    expect(validStatuses).toContain('failed');
-  });
-
-  it('valid calls have stepId and status strings', () => {
-    for (const call of planStepUpdateContract.valid_calls) {
-      expect(typeof call.stepId).toBe('string');
-      expect(typeof call.status).toBe('string');
-      expect(planStepUpdateContract.valid_statuses).toContain(call.status);
-    }
-  });
-
-  it('React step update logic handles all valid statuses', () => {
-    // Simulate updatePlanStep in plan-editor.tsx
-    const steps = planDataContract.payload.steps.map(s => ({ ...s }));
-
-    for (const call of planStepUpdateContract.valid_calls) {
-      const updated = steps.map(s =>
-        s.id === call.stepId ? { ...s, status: call.status } : s
-      );
-      const target = updated.find(s => s.id === call.stepId);
-      if (target) {
-        expect(target.status).toBe(call.status);
-      }
+  it('optional fields are present in payload', () => {
+    const plan = planDataContract.payload;
+    for (const field of planDataContract.optional_fields) {
+      expect(plan).toHaveProperty(field);
     }
   });
 });
@@ -244,5 +185,46 @@ describe('Contract: _revisePlan v2 payload with per-line comments (React -> Kotl
     const parsed = JSON.parse(planReviseV2Contract.valid_payloads[1].payload);
     expect(parsed.comments).toEqual([]);
     expect(parsed.markdown).toBeTruthy();
+  });
+});
+
+// ── Task Create Contract ──
+
+describe('Contract: applyTaskCreate (Kotlin → React)', () => {
+  it('required fields present', () => {
+    for (const field of taskCreateContract.required_fields) {
+      expect(Object.keys(taskCreateContract.payload)).toContain(field);
+    }
+  });
+  it('status is a valid enum value', () => {
+    expect(taskCreateContract.valid_statuses).toContain(taskCreateContract.payload.status);
+  });
+});
+
+// ── Task Update Contract ──
+
+describe('Contract: applyTaskUpdate (Kotlin → React)', () => {
+  it('required fields present', () => {
+    for (const field of taskUpdateContract.required_fields) {
+      expect(Object.keys(taskUpdateContract.payload)).toContain(field);
+    }
+  });
+  it('status is a valid enum value', () => {
+    expect(taskUpdateContract.valid_statuses).toContain(taskUpdateContract.payload.status);
+  });
+});
+
+// ── Task List Contract ──
+
+describe('Contract: setTasks (Kotlin → React)', () => {
+  it('payload is an array', () => {
+    expect(Array.isArray(taskListContract.payload)).toBe(true);
+  });
+  it('every task has required fields', () => {
+    for (const task of taskListContract.payload) {
+      for (const field of taskListContract.required_fields_per_task) {
+        expect(Object.keys(task as object)).toContain(field);
+      }
+    }
   });
 });

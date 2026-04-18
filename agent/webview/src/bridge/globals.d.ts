@@ -1,3 +1,5 @@
+import type { Task } from './types';
+
 export {};
 
 declare global {
@@ -22,6 +24,7 @@ declare global {
     _submitPrompt?: (text: string) => void;
     _approvePlan?: () => void;
     _revisePlan?: (comments: string) => void;
+    _dismissPlan?: () => void;
     _toggleTool?: (data: string) => void;
     _questionAnswered?: (qid: string, opts: string) => void;
     _questionSkipped?: (qid: string) => void;
@@ -54,5 +57,11 @@ declare global {
     setDebugLogVisible?: (visible: boolean) => void;
     // Debug log entry — pushed from Kotlin to append a structured log entry
     addDebugLogEntry?: (entryJson: string) => void;
+    // Task bridge functions (Phase 5 task system port)
+    _applyTaskCreate?: (task: Task) => void;
+    _applyTaskUpdate?: (task: Task) => void;
+    _setTasks?: (tasks: Task[]) => void;
+    _appendCompletionCard?: (json: string) => void;
+    _openApprovedPlan?: () => void;
   }
 }

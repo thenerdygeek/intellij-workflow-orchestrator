@@ -105,12 +105,43 @@ Query forms:
             }
         }
 
-        val content = "Loaded ${matches.size} tool(s):\n\n$loaded\n\nThese tools are now available for you to call."
+        val relatedHint = getRelatedToolsHint(matches.map { it.name })
+        val content = buildString {
+            append("Loaded ${matches.size} tool(s):\n\n$loaded\n\nThese tools are now available for you to call.")
+            if (relatedHint.isNotEmpty()) {
+                append("\n\nRelated tools you may also find useful (load via tool_search): $relatedHint")
+            }
+        }
 
         return ToolResult(
             content = content,
             summary = "Loaded tools: ${matches.joinToString(", ") { it.name }}",
             tokenEstimate = estimateTokens(content)
         )
+    }
+
+    /**
+     * Suggest related tools based on what was just loaded.
+     * Helps the LLM discover complementary tools it might not know about.
+     */
+    internal fun getRelatedToolsHint(loadedNames: List<String>): String {
+        val related = mutableSetOf<String>()
+        for (name in loadedNames) {
+            when {
+                name.startsWith("spring") -> related.addAll(listOf("build", "coverage", "db_schema"))
+                name.startsWith("django") -> related.addAll(listOf("build", "db_schema", "db_query"))
+                name.startsWith("fastapi") -> related.addAll(listOf("build", "db_schema"))
+                name.startsWith("flask") -> related.addAll(listOf("build", "db_schema"))
+                name == "build" -> related.addAll(listOf("coverage", "runtime_exec"))
+                name.startsWith("debug") -> related.addAll(listOf("diagnostics", "runtime_exec"))
+                name == "coverage" -> related.add("runtime_exec")
+                name.startsWith("bitbucket") -> related.addAll(listOf("git"))
+                name.startsWith("jira") -> related.addAll(listOf("git"))
+                name.startsWith("sonar") -> related.addAll(listOf("diagnostics", "coverage"))
+            }
+        }
+        // Don't suggest tools that were just loaded
+        related.removeAll(loadedNames.toSet())
+        return related.take(3).joinToString(", ")
     }
 }

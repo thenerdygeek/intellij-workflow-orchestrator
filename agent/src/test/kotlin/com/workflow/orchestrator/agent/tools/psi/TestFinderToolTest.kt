@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools.psi
 
+import com.workflow.orchestrator.agent.ide.LanguageProviderRegistry
 import com.workflow.orchestrator.agent.tools.WorkerType
 import io.mockk.*
 import kotlinx.coroutines.test.runTest
@@ -9,7 +10,8 @@ import org.junit.jupiter.api.Test
 
 class TestFinderToolTest {
 
-    private val tool = TestFinderTool()
+    private val registry = LanguageProviderRegistry()
+    private val tool = TestFinderTool(registry)
 
     @Test
     fun `tool metadata is correct`() {

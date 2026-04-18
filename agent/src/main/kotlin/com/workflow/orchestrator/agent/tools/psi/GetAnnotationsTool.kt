@@ -2,11 +2,11 @@ package com.workflow.orchestrator.agent.tools.psi
 
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.project.Project
-import com.intellij.psi.PsiAnnotation
 import com.intellij.psi.PsiClass
-import com.intellij.psi.PsiModifierListOwner
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
+import com.workflow.orchestrator.agent.ide.LanguageProviderRegistry
+import com.workflow.orchestrator.agent.ide.MetadataInfo
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
@@ -15,7 +15,9 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonPrimitive
 
-class GetAnnotationsTool : AgentTool {
+class GetAnnotationsTool(
+    private val registry: LanguageProviderRegistry
+) : AgentTool {
     override val name = "get_annotations"
     override val description =
         "List all annotations on a class, method, or field — with their parameter values. " +
@@ -52,8 +54,24 @@ class GetAnnotationsTool : AgentTool {
         val memberName = params["member"]?.jsonPrimitive?.content
         val includeInherited = params["include_inherited"]?.jsonPrimitive?.boolean ?: false
 
+        // Resolve provider: try all registered providers until one finds the symbol
+        val allProviders = registry.allProviders()
+        if (allProviders.isEmpty()) {
+            return ToolResult(
+                "Code intelligence not available — no language provider registered",
+                "Error: no provider",
+                ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+        }
+
         val content = ReadAction.nonBlocking<String> {
-            val psiClass = PsiToolUtils.findClassAnywhere(project, className)
+            // Find the class via provider — try each provider until one finds the symbol
+            val (provider, psiElement) = allProviders.firstNotNullOfOrNull { p ->
+                p.findSymbol(project, className)?.let { p to it }
+            } ?: return@nonBlocking "No class '$className' found in project."
+
+            val psiClass = psiElement as? PsiClass
                 ?: return@nonBlocking "No class '$className' found in project."
 
             val fqn = psiClass.qualifiedName ?: psiClass.name ?: className
@@ -65,7 +83,8 @@ class GetAnnotationsTool : AgentTool {
                     val sb = StringBuilder()
                     methods.forEachIndexed { idx, method ->
                         val label = if (methods.size > 1) "$fqn.$memberName (overload ${idx + 1})" else "$fqn.$memberName"
-                        sb.append(formatAnnotations("Annotations on $label:", method, includeInherited, psiClass))
+                        val metadata = provider.getMetadata(method, includeInherited)
+                        sb.append(formatMetadataOutput("Annotations on $label:", metadata))
                         if (idx < methods.size - 1) sb.appendLine()
                     }
                     return@nonBlocking sb.toString().trimEnd()
@@ -73,19 +92,16 @@ class GetAnnotationsTool : AgentTool {
 
                 val field = psiClass.findFieldByName(memberName, includeInherited)
                 if (field != null) {
-                    return@nonBlocking formatAnnotations(
-                        "Annotations on $fqn.$memberName (field):",
-                        field,
-                        includeInherited = false, // fields don't have inherited annotations
-                        ownerClass = null
-                    )
+                    val metadata = provider.getMetadata(field, false) // fields don't have inherited annotations
+                    return@nonBlocking formatMetadataOutput("Annotations on $fqn.$memberName (field):", metadata)
                 }
 
                 return@nonBlocking "No method or field '$memberName' found in '$fqn'."
             }
 
             // Class-level annotations
-            formatAnnotations("Annotations on $fqn:", psiClass, includeInherited, psiClass)
+            val metadata = provider.getMetadata(psiClass, includeInherited)
+            formatMetadataOutput("Annotations on $fqn:", metadata)
         }.inSmartMode(project).executeSynchronously()
 
         val summary = if (memberName != null) {
@@ -102,81 +118,44 @@ class GetAnnotationsTool : AgentTool {
     }
 
     /**
-     * Collect and format annotations from [owner], optionally walking the superclass chain.
-     * [ownerClass] is used only for the superclass walk and may be null for fields.
+     * Format the list of [MetadataInfo] into the original output format.
      */
-    private fun formatAnnotations(
-        header: String,
-        owner: PsiModifierListOwner,
-        includeInherited: Boolean,
-        ownerClass: PsiClass?
-    ): String {
+    private fun formatMetadataOutput(header: String, metadata: List<MetadataInfo>): String {
         val sb = StringBuilder()
         sb.appendLine(header)
 
-        // Direct annotations on this element
-        val direct = owner.annotations.toList()
-        if (direct.isEmpty() && !includeInherited) {
+        if (metadata.isEmpty()) {
             sb.appendLine("  (none)")
-            return sb.toString()
-        }
-        direct.forEach { annotation ->
-            sb.append(formatAnnotation(annotation, indent = "  "))
+            return sb.toString().trimEnd()
         }
 
-        // Walk the superclass chain when requested
-        if (includeInherited && ownerClass != null) {
-            val seen = mutableSetOf<String>()
-            direct.forEach { a -> a.qualifiedName?.let { seen.add(it) } }
+        val direct = metadata.filter { !it.isInherited }
+        val inherited = metadata.filter { it.isInherited }
 
-            var cursor: PsiClass? = ownerClass.superClass
-            while (cursor != null && cursor.qualifiedName != "java.lang.Object") {
-                val inherited = cursor.annotations.filter { a ->
-                    a.qualifiedName != null && seen.add(a.qualifiedName!!)
-                }
-                if (inherited.isNotEmpty()) {
-                    val superFqn = cursor.qualifiedName ?: cursor.name ?: "superclass"
-                    sb.appendLine("  [Inherited from $superFqn]")
-                    inherited.forEach { annotation ->
-                        sb.append(formatAnnotation(annotation, indent = "    "))
-                    }
-                }
-                cursor = cursor.superClass
+        direct.forEach { info ->
+            sb.append(formatSingleAnnotation(info, "  "))
+        }
+
+        if (inherited.isNotEmpty()) {
+            // Group inherited annotations by their source (approximated from qualified name)
+            inherited.forEach { info ->
+                sb.append(formatSingleAnnotation(info, "    "))
             }
         }
 
-        val result = sb.toString().trimEnd()
-        return if (result == header.trimEnd()) "$result\n  (none)" else result
+        return sb.toString().trimEnd()
     }
 
-    /**
-     * Format a single annotation as:
-     *   @ShortName(param1=value1, param2=value2)
-     *     FQN: fully.qualified.AnnotationName
-     */
-    private fun formatAnnotation(annotation: PsiAnnotation, indent: String): String {
+    private fun formatSingleAnnotation(info: MetadataInfo, indent: String): String {
         val sb = StringBuilder()
-        val shortName = annotation.qualifiedName?.substringAfterLast('.') ?: annotation.text
-        val fqn = annotation.qualifiedName
-
-        // Collect parameter values
-        val paramList = annotation.parameterList.attributes
-        val paramText = if (paramList.isEmpty()) {
+        val shortName = info.qualifiedName.substringAfterLast('.')
+        val paramText = if (info.parameters.isEmpty()) {
             ""
         } else {
-            "(" + paramList.joinToString(", ") { attr ->
-                val name = attr.name ?: "value"
-                val value = attr.literalValue
-                    ?: attr.value?.text
-                    ?: "?"
-                "$name=$value"
-            } + ")"
+            "(" + info.parameters.entries.joinToString(", ") { (k, v) -> "$k=$v" } + ")"
         }
-
         sb.appendLine("$indent@$shortName$paramText")
-        if (fqn != null) {
-            sb.appendLine("$indent  FQN: $fqn")
-        }
+        sb.appendLine("$indent  FQN: ${info.qualifiedName}")
         return sb.toString()
     }
 }

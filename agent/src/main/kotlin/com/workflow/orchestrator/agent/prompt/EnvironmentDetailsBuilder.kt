@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.prompt
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.workflow.orchestrator.agent.loop.ContextManager
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -20,7 +21,9 @@ object EnvironmentDetailsBuilder {
         planModeEnabled: Boolean,
         contextManager: ContextManager?,
         activeTicketId: String? = null,
-        activeTicketSummary: String? = null
+        activeTicketSummary: String? = null,
+        currentBranch: String? = null,
+        defaultTargetBranch: String? = null,
     ): String {
         return buildString {
             appendLine("<environment_details>")
@@ -33,16 +36,19 @@ object EnvironmentDetailsBuilder {
             // 2. Current Time
             appendCurrentTime()
 
-            // 3. Active Editor (file, cursor, selection range)
+            // 3. VCS State (branch + dirty files)
+            appendVcsState(project, currentBranch, defaultTargetBranch)
+
+            // 4. Active Editor (file, cursor, selection range)
             appendActiveEditor(project)
 
-            // 4. Open Tabs
+            // 5. Open Tabs
             appendOpenTabs(project)
 
-            // 5. Context Window Usage
+            // 6. Context Window Usage
             appendContextUsage(contextManager)
 
-            // 6. Active Plan
+            // 7. Active Plan
             val planPath = contextManager?.getActivePlanPath()
             if (planPath != null) {
                 appendLine("# Active Plan")
@@ -50,7 +56,7 @@ object EnvironmentDetailsBuilder {
                 appendLine()
             }
 
-            // 7. Active Ticket
+            // 8. Active Ticket
             if (!activeTicketId.isNullOrBlank()) {
                 appendLine("# Active Ticket")
                 val summary = if (!activeTicketSummary.isNullOrBlank()) " — $activeTicketSummary" else ""
@@ -140,6 +146,49 @@ object EnvironmentDetailsBuilder {
                 appendLine()
             }
         } catch (_: Exception) {}
+    }
+
+    private fun StringBuilder.appendVcsState(
+        project: Project,
+        currentBranch: String?,
+        defaultTargetBranch: String?
+    ) {
+        // Branch line — shown only when available
+        if (currentBranch != null) {
+            appendLine("# Current Branch")
+            val target = if (defaultTargetBranch != null) " (target: $defaultTargetBranch)" else ""
+            appendLine("$currentBranch$target")
+            appendLine()
+        }
+
+        // Dirty files — instant from ChangeListManager, capped at 20
+        try {
+            val clm = ChangeListManager.getInstance(project)
+            val all = clm.allChanges
+            if (all.isNotEmpty()) {
+                val changes = all.take(20).map { change ->
+                    val type = when (change.type) {
+                        com.intellij.openapi.vcs.changes.Change.Type.NEW -> "added"
+                        com.intellij.openapi.vcs.changes.Change.Type.DELETED -> "deleted"
+                        com.intellij.openapi.vcs.changes.Change.Type.MOVED -> "moved"
+                        else -> "modified"
+                    }
+                    val path = change.virtualFile?.path
+                        ?: change.afterRevision?.file?.path
+                        ?: change.beforeRevision?.file?.path
+                        ?: "unknown"
+                    val basePath = project.basePath
+                    val rel = if (basePath != null && path.startsWith(basePath))
+                        path.removePrefix("$basePath/") else path
+                    rel to type
+                }
+                val count = changes.size
+                val plusSign = if (count == 20) "+" else ""
+                appendLine("# Uncommitted Changes ($count$plusSign)")
+                changes.forEach { (path, type) -> appendLine("[$type] $path") }
+                appendLine()
+            }
+        } catch (_: Exception) { /* ChangeListManager not available in tests */ }
     }
 
     private data class EditorSnapshot(

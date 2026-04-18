@@ -1,34 +1,51 @@
 package com.workflow.orchestrator.agent.tools.debug
 
+import com.intellij.openapi.project.Project
 import com.intellij.xdebugger.XDebugSession
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.platform.DebugState
+import com.workflow.orchestrator.agent.tools.platform.IdeStateProbe
 
 /**
  * Shared execution logic for step-over, step-into, and step-out tools.
  * Validates session state, performs the step action, waits for pause,
  * and auto-includes top-frame variables to save the agent a round-trip.
+ *
+ * Uses [IdeStateProbe.debugState] so that user-started debug sessions
+ * (gutter Debug button, run config dropdown, etc.) are found via the
+ * IntelliJ Platform — not just the agent's own session registry.
  */
 internal suspend fun executeStep(
     controller: AgentDebugController,
+    project: Project,
     sessionId: String?,
     actionName: String,
     action: (XDebugSession) -> Unit
 ): ToolResult {
     return try {
-        val resolvedId = sessionId ?: controller.getActiveSessionId()
-        val session = controller.getSession(sessionId)
-            ?: return ToolResult(
-                "No debug session found${sessionId?.let { ": $it" } ?: ""}. Start one with start_debug_session.",
+        val state = IdeStateProbe.debugState(project, sessionId, controller::getSession)
+        val session = when (state) {
+            is DebugState.Paused -> state.session
+            is DebugState.Running -> return ToolResult(
+                "Debug session is running but not paused. Cannot $actionName while running. Set a breakpoint and let execution reach it, or call debug_step.pause first.",
+                "Not suspended",
+                ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+            DebugState.NoSession -> return ToolResult(
+                buildString {
+                    append("No debug session found")
+                    if (sessionId != null) append(": $sessionId")
+                    append(". Start one with start_debug_session, or have the user start a debug session via the IDE (gutter Debug button or Run menu) and try again.")
+                },
                 "No session",
                 ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
             )
-
-        if (!session.isSuspended) {
-            return ToolResult(
-                "Session is not suspended. Cannot $actionName while running.",
-                "Not suspended",
+            is DebugState.AmbiguousSession -> return ToolResult(
+                "Multiple debug sessions are active (${state.count}: ${state.names.joinToString(", ")}). Pass session_id to disambiguate.",
+                "Ambiguous session",
                 ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
             )
@@ -38,8 +55,10 @@ internal suspend fun executeStep(
         action(session)
 
         // Wait for the step to complete (steps are near-instant)
-        val id = resolvedId ?: "unknown"
-        val pauseEvent = controller.waitForPause(id, 5000)
+        val name = session.sessionName
+        // Try to get a registered ID for waitForPause; fall back to session name
+        val registeredId = sessionId ?: controller.getActiveSessionId() ?: name
+        val pauseEvent = controller.waitForPause(registeredId, 5000)
 
         // Build output with position and variables
         val sb = StringBuilder()
@@ -48,7 +67,7 @@ internal suspend fun executeStep(
         } else {
             sb.append("Step completed but session did not pause within 5s (may have hit end of execution)\n")
         }
-        sb.append("Session: $id\n")
+        sb.append("Session: $name\n")
 
         // Auto-include top-frame variables (depth 1) to save a round-trip
         val frame = session.currentStackFrame

@@ -2,11 +2,14 @@ package com.workflow.orchestrator.agent.tools.psi
 
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.project.Project
-import com.intellij.psi.PsiDocumentManager
+import com.intellij.psi.PsiClass
+import com.intellij.psi.PsiField
 import com.intellij.psi.PsiMethod
 import com.intellij.psi.search.GlobalSearchScope
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
+import com.workflow.orchestrator.agent.ide.DefinitionInfo
+import com.workflow.orchestrator.agent.ide.LanguageProviderRegistry
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
@@ -14,7 +17,9 @@ import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-class FindDefinitionTool : AgentTool {
+class FindDefinitionTool(
+    private val registry: LanguageProviderRegistry
+) : AgentTool {
     override val name = "find_definition"
     override val description = "Find the declaration/definition location of a class, method, or field."
     override val parameters = FunctionParameters(
@@ -35,71 +40,51 @@ class FindDefinitionTool : AgentTool {
         val classNameHint = params["class_name"]?.jsonPrimitive?.content
 
         val content = ReadAction.nonBlocking<String> {
-            // If class_name hint provided, search within that class first
+            // Resolve provider from the file context of found symbols, falling back to hardcoded IDs
+            fun resolveProvider(element: com.intellij.psi.PsiElement? = null): com.workflow.orchestrator.agent.ide.LanguageIntelligenceProvider? {
+                // Prefer file-based resolution when we have an element
+                if (element != null) {
+                    val psiFile = element.containingFile
+                    if (psiFile != null) {
+                        registry.forFile(psiFile)?.let { return it }
+                    }
+                }
+                // Fall back to hardcoded language IDs when no file context available
+                return registry.forLanguageId("JAVA") ?: registry.forLanguageId("kotlin")
+            }
+
+            val fallbackProvider = resolveProvider()
+                ?: return@nonBlocking "Code intelligence not available — no language provider registered"
+
+            // If class_name hint provided, search within that class first using "class#symbol" syntax
             if (classNameHint != null) {
-                val clazz = PsiToolUtils.findClassAnywhere(project, classNameHint)
-                if (clazz != null) {
-                    val method = clazz.methods.firstOrNull { it.name == symbol }
-                    if (method != null) {
-                        return@nonBlocking formatMethodDefinition(project, method)
-                    }
-                    val field = clazz.fields.firstOrNull { it.name == symbol }
-                    if (field != null) {
-                        val file = field.containingFile?.virtualFile?.path?.let { PsiToolUtils.relativePath(project, it) } ?: "unknown"
-                        val document = field.containingFile?.let { PsiDocumentManager.getInstance(project).getDocument(it) }
-                        val line = document?.getLineNumber(field.textOffset)?.plus(1) ?: 0
-                        return@nonBlocking "Definition of '${field.containingClass?.qualifiedName ?: ""}#${field.name}':\n  File: $file\n  Line: $line\n  Type: ${field.type.presentableText}"
+                val element = fallbackProvider.findSymbol(project, "$classNameHint#$symbol")
+                if (element != null) {
+                    val provider = resolveProvider(element) ?: fallbackProvider
+                    val info = provider.getDefinitionInfo(element)
+                    if (info != null) {
+                        return@nonBlocking formatDefinitionOutput(element, info, symbol)
                     }
                 }
             }
 
-            // Try as class first
-            val psiClass = PsiToolUtils.findClassAnywhere(project, symbol)
-            if (psiClass != null) {
-                val file = psiClass.containingFile?.virtualFile?.path?.let { PsiToolUtils.relativePath(project, it) } ?: "unknown"
-                val document = psiClass.containingFile?.let {
-                    PsiDocumentManager.getInstance(project).getDocument(it)
+            // General symbol lookup (handles FQN, Class#method, bare names)
+            val element = fallbackProvider.findSymbol(project, symbol)
+            if (element != null) {
+                val provider = resolveProvider(element) ?: fallbackProvider
+                val info = provider.getDefinitionInfo(element)
+                if (info != null) {
+                    // Check for disambiguation hint
+                    val disambiguationNote = if (element is PsiMethod) {
+                        val scope = GlobalSearchScope.projectScope(project)
+                        val cache = com.intellij.psi.search.PsiShortNamesCache.getInstance(project)
+                        val allMethods = cache.getMethodsByName(element.name, scope)
+                        if (allMethods.size > 1)
+                            "\n\n(${allMethods.size - 1} other method(s) with same name — provide class_name to disambiguate)"
+                        else ""
+                    } else ""
+                    return@nonBlocking formatDefinitionOutput(element, info, symbol) + disambiguationNote
                 }
-                val line = document?.getLineNumber(psiClass.textOffset)?.plus(1) ?: 0
-                val signature = PsiToolUtils.formatClassSkeleton(psiClass)
-                return@nonBlocking "Definition of '${psiClass.qualifiedName ?: psiClass.name}':\n" +
-                        "  File: $file\n" +
-                        "  Line: $line\n\n$signature"
-            }
-
-            // Try as method: search for symbol containing '#' or '.' for method reference
-            // e.g., "MyClass#myMethod" or just "myMethod"
-            val parts = symbol.split('#', '.')
-            if (parts.size == 2) {
-                val className = parts[0]
-                val methodName = parts[1]
-                val clazz = PsiToolUtils.findClassAnywhere(project, className)
-                val method = clazz?.methods?.firstOrNull { it.name == methodName }
-                if (method != null) {
-                    return@nonBlocking formatMethodDefinition(project, method)
-                }
-            }
-
-            // Bare method/field name fallback via PsiShortNamesCache
-            val scope = GlobalSearchScope.projectScope(project)
-            val shortNameCache = com.intellij.psi.search.PsiShortNamesCache.getInstance(project)
-
-            // Try as method
-            val methods = shortNameCache.getMethodsByName(symbol, scope)
-            if (methods.isNotEmpty()) {
-                val method = methods.first()
-                return@nonBlocking formatMethodDefinition(project, method) +
-                    if (methods.size > 1) "\n\n(${methods.size - 1} other method(s) with same name — provide class_name to disambiguate)" else ""
-            }
-
-            // Try as field
-            val fields = shortNameCache.getFieldsByName(symbol, scope)
-            if (fields.isNotEmpty()) {
-                val field = fields.first()
-                val file = field.containingFile?.virtualFile?.path?.let { PsiToolUtils.relativePath(project, it) } ?: "unknown"
-                val document = field.containingFile?.let { PsiDocumentManager.getInstance(project).getDocument(it) }
-                val line = document?.getLineNumber(field.textOffset)?.plus(1) ?: 0
-                return@nonBlocking "Definition of '${field.containingClass?.qualifiedName ?: ""}#${field.name}':\n  File: $file\n  Line: $line\n  Type: ${field.type.presentableText}"
             }
 
             "No definition found for '$symbol'"
@@ -112,16 +97,43 @@ class FindDefinitionTool : AgentTool {
         )
     }
 
-    private fun formatMethodDefinition(project: Project, method: PsiMethod): String {
-        val file = method.containingFile?.virtualFile?.path?.let { PsiToolUtils.relativePath(project, it) } ?: "unknown"
-        val document = method.containingFile?.let {
-            PsiDocumentManager.getInstance(project).getDocument(it)
+    /**
+     * Format the definition output to match the original tool's output format exactly.
+     */
+    private fun formatDefinitionOutput(
+        element: com.intellij.psi.PsiElement,
+        info: DefinitionInfo,
+        originalSymbol: String
+    ): String {
+        return when (element) {
+            is PsiClass -> {
+                val qualifiedName = element.qualifiedName ?: element.name ?: originalSymbol
+                val skeleton = info.skeleton
+                "Definition of '$qualifiedName':\n" +
+                    "  File: ${info.filePath}\n" +
+                    "  Line: ${info.line}" +
+                    if (skeleton != null) "\n\n$skeleton" else ""
+            }
+            is PsiMethod -> {
+                val qualifiedRef = "${element.containingClass?.qualifiedName ?: ""}#${element.name}"
+                "Definition of '$qualifiedRef':\n" +
+                    "  File: ${info.filePath}\n" +
+                    "  Line: ${info.line}\n" +
+                    "  Signature: ${info.signature}"
+            }
+            is PsiField -> {
+                val qualifiedRef = "${element.containingClass?.qualifiedName ?: ""}#${element.name}"
+                "Definition of '$qualifiedRef':\n" +
+                    "  File: ${info.filePath}\n" +
+                    "  Line: ${info.line}\n" +
+                    "  Type: ${element.type.presentableText}"
+            }
+            else -> {
+                "Definition of '$originalSymbol':\n" +
+                    "  File: ${info.filePath}\n" +
+                    "  Line: ${info.line}\n" +
+                    "  Signature: ${info.signature}"
+            }
         }
-        val line = document?.getLineNumber(method.textOffset)?.plus(1) ?: 0
-        val signature = PsiToolUtils.formatMethodSignature(method)
-        return "Definition of '${method.containingClass?.qualifiedName ?: ""}#${method.name}':\n" +
-                "  File: $file\n" +
-                "  Line: $line\n" +
-                "  Signature: $signature"
     }
 }

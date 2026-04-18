@@ -4,11 +4,13 @@
     <vendor>Workflow Team</vendor>
     <description><![CDATA[
         Eliminates context-switching between Jira, Bamboo, SonarQube, Bitbucket, and AI agent
-        by consolidating the entire Spring Boot development lifecycle into a single IDE interface.
+        by consolidating the entire development lifecycle into a single IDE interface.
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
-    <depends>com.intellij.modules.java</depends>
+    <depends optional="true" config-file="plugin-withJava.xml">com.intellij.modules.java</depends>
+    <depends optional="true" config-file="plugin-withPython.xml">com.intellij.python</depends>
+    <depends optional="true" config-file="plugin-withPythonCore.xml">PythonCore</depends>
     <depends optional="true" config-file="plugin-withGit.xml">Git4Idea</depends>
 <depends optional="true" config-file="plugin-withMaven.xml">org.jetbrains.idea.maven</depends>
     <depends optional="true" config-file="plugin-withSpring.xml">com.intellij.spring</depends>
@@ -182,28 +184,7 @@
         <projectService
             serviceInterface="com.workflow.orchestrator.core.services.SonarKeyDetectorService"
             serviceImplementation="com.workflow.orchestrator.sonar.service.SonarKeyDetector"/>
-        <!-- SonarQube Editor Integration -->
-        <codeInsight.lineMarkerProvider language="JAVA"
-            implementationClass="com.workflow.orchestrator.sonar.ui.CoverageLineMarkerProvider"/>
-        <codeInsight.lineMarkerProvider language="kotlin"
-            implementationClass="com.workflow.orchestrator.sonar.ui.CoverageLineMarkerProvider"/>
-
-        <externalAnnotator language="JAVA"
-            implementationClass="com.workflow.orchestrator.sonar.ui.SonarIssueAnnotator"/>
-        <externalAnnotator language="kotlin"
-            implementationClass="com.workflow.orchestrator.sonar.ui.SonarIssueAnnotator"/>
-
-        <!-- Sonar Fix Intention Action (Alt+Enter) — language-filtered to Java/Kotlin only -->
-        <intentionAction>
-            <language>JAVA</language>
-            <className>com.workflow.orchestrator.sonar.editor.SonarFixIntentionAction</className>
-            <category>Workflow Orchestrator</category>
-        </intentionAction>
-        <intentionAction>
-            <language>kotlin</language>
-            <className>com.workflow.orchestrator.sonar.editor.SonarFixIntentionAction</className>
-            <category>Workflow Orchestrator</category>
-        </intentionAction>
+        <!-- SonarQube Editor Integration (Java/Kotlin) moved to plugin-withJava.xml -->
 
         <!-- Automation Module Project Services -->
         <projectService

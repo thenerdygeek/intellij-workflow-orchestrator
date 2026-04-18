@@ -1,5 +1,16 @@
 package com.workflow.orchestrator.agent.loop
 
+import com.workflow.orchestrator.agent.tools.CompletionData
+
+enum class FailureReason {
+    MAX_ITERATIONS,
+    DOOM_LOOP,
+    EMPTY_RESPONSES,
+    API_ERROR,
+    NO_TOOLS_USED,
+    EXCEPTION
+}
+
 sealed class LoopResult {
     /** Files modified during the agent loop (collected from tool artifacts). */
     abstract val filesModified: List<String>
@@ -12,7 +23,7 @@ sealed class LoopResult {
         val summary: String,
         val iterations: Int,
         val tokensUsed: Int = 0,
-        val verifyCommand: String? = null,
+        val completionData: CompletionData? = null,
         /** Cumulative input (prompt) tokens across all API calls. Ported from Cline's tokensIn. */
         val inputTokens: Int = 0,
         /** Cumulative output (completion) tokens across all API calls. Ported from Cline's tokensOut. */
@@ -24,6 +35,7 @@ sealed class LoopResult {
 
     data class Failed(
         val error: String,
+        val reason: FailureReason,
         val iterations: Int = 0,
         val tokensUsed: Int = 0,
         val inputTokens: Int = 0,

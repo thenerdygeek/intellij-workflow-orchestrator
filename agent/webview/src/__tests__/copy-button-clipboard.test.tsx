@@ -123,7 +123,7 @@ describe('CompletionCard — copy buttons', () => {
   });
 
   it('has a copy button for the result text', () => {
-    render(<CompletionCard result="Task done successfully" />);
+    render(<CompletionCard data={{ kind: 'done', result: 'Task done successfully' }} />);
 
     const copyBtn = screen.getByTitle('Copy result');
     expect(copyBtn).toBeDefined();
@@ -133,7 +133,7 @@ describe('CompletionCard — copy buttons', () => {
   });
 
   it('has a copy button for the verify command', () => {
-    render(<CompletionCard result="Done" verifyCommand="npm test" />);
+    render(<CompletionCard data={{ kind: 'done', result: 'Done', verifyHow: 'npm test' }} />);
 
     const copyCmd = screen.getByTitle('Copy command');
     expect(copyCmd).toBeDefined();
@@ -143,7 +143,7 @@ describe('CompletionCard — copy buttons', () => {
   });
 
   it('renders without verify command copy when no command provided', () => {
-    render(<CompletionCard result="Done" />);
+    render(<CompletionCard data={{ kind: 'done', result: 'Done' }} />);
 
     expect(screen.queryByTitle('Copy command')).toBeNull();
     expect(screen.getByTitle('Copy result')).toBeDefined();

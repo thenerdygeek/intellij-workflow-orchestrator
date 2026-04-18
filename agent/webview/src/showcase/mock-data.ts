@@ -21,24 +21,11 @@ export const mockToolCalls: ToolCall[] = [
 
 export const mockPlanPending: Plan = {
   title: 'Refactor Authentication Module',
-  steps: [
-    { id: '1', title: 'Extract token validation into separate service', status: 'pending' },
-    { id: '2', title: 'Add unit tests for token service', status: 'pending' },
-    { id: '3', title: 'Update API routes to use new service', status: 'pending' },
-    { id: '4', title: 'Remove deprecated auth middleware', status: 'pending' },
-  ],
   approved: false,
 };
 
 export const mockPlanInProgress: Plan = {
   title: 'Refactor Authentication Module',
-  steps: [
-    { id: '1', title: 'Phase 1: Extract token validation', status: 'completed' },
-    { id: '2', title: 'Phase 1: Add unit tests', status: 'completed' },
-    { id: '3', title: 'Phase 2: Update API routes', status: 'running' },
-    { id: '4', title: 'Phase 2: Remove deprecated middleware', status: 'pending' },
-    { id: '5', title: 'Phase 3: Integration tests', status: 'pending' },
-  ],
   approved: true,
 };
 
@@ -292,47 +279,21 @@ export const mockEditNewLines = [
   '}',
 ];
 
-// Plan — all steps completed
+// Plan — all steps completed (Phase 5: steps removed, tasks come from TaskStore)
 export const mockPlanCompleted = {
   title: 'Refactor Authentication Module',
-  steps: [
-    { id: '1', title: 'Extract token validation into separate service', status: 'completed' as const },
-    { id: '2', title: 'Add unit tests for token service', status: 'completed' as const },
-    { id: '3', title: 'Update API routes to use new service', status: 'completed' as const },
-    { id: '4', title: 'Remove deprecated auth middleware', status: 'completed' as const },
-    { id: '5', title: 'Integration tests & verification', status: 'completed' as const },
-  ],
   approved: true,
 };
 
-// Plan — with a failed step
+// Plan — with a failed step (Phase 5: steps removed, tasks come from TaskStore)
 export const mockPlanWithFailure = {
   title: 'Refactor Authentication Module',
-  steps: [
-    { id: '1', title: 'Extract token validation into separate service', status: 'completed' as const },
-    { id: '2', title: 'Add unit tests for token service', status: 'completed' as const },
-    { id: '3', title: 'Update API routes to use new service', status: 'failed' as const },
-    { id: '4', title: 'Remove deprecated auth middleware', status: 'pending' as const },
-    { id: '5', title: 'Integration tests & verification', status: 'pending' as const },
-  ],
   approved: true,
 };
 
-// Plan — large (10 steps) for scrollable display
+// Plan — large plan (Phase 5: steps removed, tasks come from TaskStore)
 export const mockPlanLarge = {
   title: 'Migrate to Microservices Architecture',
-  steps: [
-    { id: '1', title: 'Phase 1: Extract Auth Service', status: 'completed' as const },
-    { id: '2', title: 'Phase 1: Extract User Service', status: 'completed' as const },
-    { id: '3', title: 'Phase 1: Extract Notification Service', status: 'completed' as const },
-    { id: '4', title: 'Phase 2: Setup API Gateway', status: 'running' as const },
-    { id: '5', title: 'Phase 2: Configure Service Discovery', status: 'pending' as const },
-    { id: '6', title: 'Phase 2: Implement Circuit Breakers', status: 'pending' as const },
-    { id: '7', title: 'Phase 3: Database Per Service', status: 'pending' as const },
-    { id: '8', title: 'Phase 3: Event-Driven Communication', status: 'pending' as const },
-    { id: '9', title: 'Phase 4: Monitoring & Observability', status: 'pending' as const },
-    { id: '10', title: 'Phase 4: Load Testing & Release', status: 'pending' as const },
-  ],
   approved: true,
 };
 

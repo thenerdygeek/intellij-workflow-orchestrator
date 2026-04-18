@@ -9,6 +9,7 @@ import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.builtin.AttemptCompletionTool
+import com.workflow.orchestrator.agent.tools.builtin.TaskReportTool
 import com.workflow.orchestrator.agent.tools.builtin.SpawnAgentTool
 import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.dto.*
@@ -67,6 +68,7 @@ class ParallelSubagentIntegrationTest {
             "project_context", "current_time", "ask_questions", "ask_user_input"
         )) reg.register(stubTool(name))
         reg.register(AttemptCompletionTool())
+        reg.register(TaskReportTool())
 
         // Builtin write tools
         for (name in listOf(
@@ -85,10 +87,7 @@ class ParallelSubagentIntegrationTest {
 
         // VCS tools
         for (name in listOf(
-            "git_status", "git_diff", "git_log", "git_blame",
-            "git_show_file", "git_file_history", "git_show_commit",
-            "git_branches", "changelist_shelve", "git_stash_list",
-            "git_merge_base", "git"
+            "changelist_shelve"
         )) reg.register(stubTool(name))
 
         // IDE tools
@@ -218,7 +217,7 @@ class ParallelSubagentIntegrationTest {
                         "read_file" to """{"path":"src/module$idx.kt"}"""
                     )),
                     ApiResult.Success(toolCallResponse(
-                        "attempt_completion" to """{"result":"Result from agent $idx"}"""
+                        "task_report" to """{"summary":"Result from agent $idx"}"""
                     ))
                 ))
             },
@@ -253,7 +252,7 @@ class ParallelSubagentIntegrationTest {
         assertEquals(3, brainCount.get(), "Should have created exactly 3 brains")
 
         // Verify progress callbacks include completed updates
-        val completedUpdates = progressUpdates.filter { it.second.status == "completed" }
+        val completedUpdates = progressUpdates.filter { it.second.status == SubagentExecutionStatus.COMPLETED }
         assertTrue(
             completedUpdates.size >= 1,
             "Progress callbacks should include at least 1 'completed' group update, got: ${progressUpdates.map { it.second.status }}"
@@ -287,7 +286,7 @@ class ParallelSubagentIntegrationTest {
                             "read_file" to """{"path":"src/file$idx.kt"}"""
                         )),
                         ApiResult.Success(toolCallResponse(
-                            "attempt_completion" to """{"result":"Success from agent $idx"}"""
+                            "task_report" to """{"summary":"Success from agent $idx"}"""
                         ))
                     ))
                 }

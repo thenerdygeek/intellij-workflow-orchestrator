@@ -31,7 +31,7 @@ Execute plan by dispatching fresh subagent per task, with two-stage review after
    e. If spec issues found → implementer fixes → reviewer re-reviews
    f. Dispatch code quality reviewer subagent (reviewer type)
    g. If quality issues found → implementer fixes → reviewer re-reviews
-   h. Update progress via task_progress checklist on next tool call
+   h. Update progress via task_update calls as subagent completes each task
 3. After all tasks: dispatch final reviewer for entire implementation
 ```
 
@@ -245,7 +245,7 @@ Spec reviewer: Pass — all requirements met
 Code reviewer: Approved. Minor: FQN could use import.
 
 [Dispatch new implementer to fix minor issue]
-[Include task_progress="- [x] Task 1: Create SkillTool.kt\n- [ ] Task 2: ..." on next tool call]
+[Call task_update(taskId="t-1", status="completed") to mark Task 1 done]
 
 Task 2: ...
 ```

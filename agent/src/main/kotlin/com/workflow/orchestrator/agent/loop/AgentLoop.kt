@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.loop
 
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.core.ai.AssistantMessageContent
 import com.workflow.orchestrator.core.ai.AssistantMessageParser
 import com.workflow.orchestrator.core.ai.TextContent
 import com.workflow.orchestrator.core.ai.ToolUseContent
@@ -17,18 +18,27 @@ import com.workflow.orchestrator.agent.security.CommandSafetyAnalyzer
 import com.workflow.orchestrator.agent.security.CommandRisk
 import com.workflow.orchestrator.agent.session.*
 import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
+import com.workflow.orchestrator.agent.tools.ToolOutputConfig
+import com.workflow.orchestrator.agent.tools.ToolOutputSpiller
+import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.ToolResultType
+import com.workflow.orchestrator.agent.tools.estimateTokens
 import com.workflow.orchestrator.agent.tools.truncateOutput
 import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.concurrent.atomic.AtomicBoolean
@@ -43,6 +53,22 @@ import java.util.concurrent.atomic.AtomicBoolean
  * - ALLOWED_FOR_SESSION: approve this tool for the rest of the session
  */
 enum class ApprovalResult { APPROVED, DENIED, ALLOWED_FOR_SESSION }
+
+/**
+ * Delegates all [AgentTool] behaviour to [delegate] but overrides
+ * [AgentTool.requestApproval] to route through the loop's [gate].
+ * Allows write actions inside tools to call [requestApproval] without
+ * being added to [ApprovalPolicy.APPROVAL_TOOLS].
+ */
+private class ApprovalGatedTool(
+    private val delegate: com.workflow.orchestrator.agent.tools.AgentTool,
+    private val gate: (suspend (String, String, String, Boolean) -> ApprovalResult)?
+) : com.workflow.orchestrator.agent.tools.AgentTool by delegate {
+    override suspend fun requestApproval(
+        toolName: String, args: String, riskLevel: String, allowSessionApproval: Boolean
+    ): ApprovalResult = gate?.invoke(toolName, args, riskLevel, allowSessionApproval)
+        ?: ApprovalResult.APPROVED
+}
 
 /**
  * Core ReAct loop: call LLM -> execute tools -> repeat.
@@ -83,7 +109,6 @@ class AgentLoop(
     private val project: Project,
     private val onStreamChunk: (String) -> Unit = {},
     private val onToolCall: (ToolCallProgress) -> Unit = {},
-    private val onTaskProgress: (TaskProgress) -> Unit = {},
     private val maxIterations: Int = 200,
     private val planMode: Boolean = false,
     private val onCheckpoint: (suspend () -> Unit)? = null,
@@ -140,9 +165,10 @@ class AgentLoop(
      * @param toolName the tool about to execute
      * @param args the raw JSON arguments string
      * @param riskLevel "low", "medium", or "high" risk classification
+     * @param allowSessionApproval whether the UI should offer "allow for session" (false for run_command)
      * @return the user's decision
      */
-    private val approvalGate: (suspend (toolName: String, args: String, riskLevel: String) -> ApprovalResult)? = null,
+    private val approvalGate: (suspend (toolName: String, args: String, riskLevel: String, allowSessionApproval: Boolean) -> ApprovalResult)? = null,
     /**
      * Optional hook manager for lifecycle extensibility points.
      * Ported from Cline's hook system: dispatches PRE_TOOL_USE and POST_TOOL_USE
@@ -162,9 +188,8 @@ class AgentLoop(
      *
      * @param planText the plan markdown from the LLM
      * @param needsMoreExploration if true, loop continues immediately (LLM explores more)
-     * @param planSteps structured step titles provided by the LLM
      */
-    private val onPlanResponse: ((planText: String, needsMoreExploration: Boolean, planSteps: List<String>) -> Unit)? = null,
+    private val onPlanResponse: ((planText: String, needsMoreExploration: Boolean) -> Unit)? = null,
     /**
      * Channel for receiving user input during the loop.
      * Used in plan mode: after the LLM presents a plan (needsMoreExploration=false),
@@ -180,6 +205,12 @@ class AgentLoop(
      * rebuilds tool definitions (removes write tools, adds plan_mode_respond).
      */
     private val onPlanModeToggle: ((Boolean) -> Unit)? = null,
+    /**
+     * Callback fired when the LLM discards the current plan via discard_plan tool.
+     * The UI uses this to clear the active plan card without presenting a replacement.
+     * Only callable in plan mode; the loop continues after dismissal.
+     */
+    private val onPlanDiscarded: (suspend () -> Unit)? = null,
     /**
      * Optional callback for real-time debug log entries.
      * Pushed to the JCEF debug panel when showDebugLog setting is enabled.
@@ -252,12 +283,61 @@ class AgentLoop(
      * (instead of failing). Limited to [MAX_COMPACTION_RETRIES] attempts.
      */
     private val compactOnTimeoutExhaustion: Boolean = false,
+    /**
+     * Session-scoped approval store. Tracks which tools the user has approved
+     * for the current session. Injected from the controller/session level so
+     * approvals persist across follow-up messages (multiple loop runs).
+     * Defaults to a fresh store for backward compatibility (tests, sub-agents).
+     */
+    private val sessionApprovalStore: SessionApprovalStore = SessionApprovalStore(),
     /** Tool execution mode: "accumulate" (default) or "stream_interrupt" (Cline-style). */
     private val toolExecutionMode: String = "accumulate",
     /** Dynamic provider for known tool names (re-read from registry each iteration for deferred tools). */
     private val toolNameProvider: (() -> Set<String>)? = null,
     /** Dynamic provider for known param names (re-read from registry each iteration for deferred tools). */
-    private val paramNameProvider: (() -> Set<String>)? = null
+    private val paramNameProvider: (() -> Set<String>)? = null,
+    /**
+     * Optional callback that returns a fresh composed system prompt each iteration.
+     * Used by sub-agents with deferred tools: when tool_search activates a new tool,
+     * the system prompt must include its schema for subsequent API calls.
+     *
+     * Called at the start of every iteration when non-null. The contextManager's
+     * system prompt is updated unconditionally — the provider is responsible for
+     * returning a stable string when nothing has changed (cheap, no API calls).
+     *
+     * Null for the main agent (which manages its own system prompt via AgentService).
+     */
+    private val systemPromptProvider: (() -> String)? = null,
+    /**
+     * Optional output spiller for persisting large tool outputs to disk.
+     * When set, outputs exceeding SPILL_THRESHOLD_CHARS or explicitly requested via
+     * output_file=true are written to disk and a preview is returned to the LLM.
+     */
+    private val outputSpiller: ToolOutputSpiller? = null,
+    /**
+     * Callback fired when the loop is about to suspend on [userInputChannel] waiting
+     * for user input (plan-mode text turns, consecutive-mistakes recovery). Without
+     * this signal the UI keeps showing the "working" spinner even though nothing is
+     * happening server-side. The controller should clear busy, enable steering mode,
+     * unlock input, and surface [reason] so the user knows the loop is idle and why.
+     *
+     * Fires from the AgentLoop coroutine; invoke UI work via invokeLater on the EDT.
+     */
+    private val onAwaitingUserInput: ((reason: String) -> Unit)? = null,
+    /**
+     * Optional callback invoked synchronously after [userInputChannel] delivers a message
+     * and before that message is added to the conversation context.
+     *
+     * Returns the [UiMessage] that should be persisted to ui_messages.json for this turn.
+     * When null is returned (or the callback is not set), no UI message is persisted here
+     * — the caller is responsible for having persisted it already (the normal flow for
+     * regular chat turns where the controller calls addToClineMessages directly).
+     *
+     * Primary use: plan-mode approval. [AgentController] sets a [pendingUiMessageOverride]
+     * (a typed PLAN_APPROVED message) before sending to the channel so that the persisted
+     * bubble shows "Implementation plan approved" rather than raw XML instruction text.
+     */
+    private val onUserInputReceived: ((task: String) -> UiMessage?)? = null,
 ) {
     private val cancelled = AtomicBoolean(false)
     private var totalTokensUsed = 0
@@ -276,8 +356,8 @@ class AgentLoop(
     /** Loop detector: tracks repeated identical tool calls (from Cline). */
     private val loopDetector = LoopDetector()
 
-    /** Tools the user has allowed for the rest of this session (via ALLOWED_FOR_SESSION). */
-    private val approvedForSession = mutableSetOf<String>()
+    // Session-scoped approval is handled by the injected sessionApprovalStore
+    // (lives at the session level, persists across loop runs within the same session).
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -324,11 +404,22 @@ class AgentLoop(
          * Message for empty responses (no text, no tools).
          * Ported from Cline: empty responses are treated as PROVIDER ERRORS,
          * separate from text-only (model mistakes).
+         *
+         * NOTE: Must include the tool-use directive. Without it, the model reads
+         * "Please retry" and responds with a text-only explanation of the error,
+         * which drops into Case B (TEXT_ONLY_NUDGE). Case B does NOT reset
+         * consecutiveEmpties (except in plan-mode conversational branches where a
+         * text-only response is a genuine exchange, not a stall) — without this
+         * guard the alternating text-only ↔ empty cycle would continue indefinitely.
          */
         private const val EMPTY_RESPONSE_ERROR =
             "Invalid API Response: The provider returned an empty or unparsable response. " +
             "This is a provider-side issue where the model failed to generate valid output. " +
-            "Please retry — if the problem persists, check the model or provider configuration."
+            "Please retry using a tool call.\n\n" +
+            "If you have completed the task, use the attempt_completion tool. " +
+            "If you need more information, use the ask_followup_question tool. " +
+            "Otherwise proceed with the next step using an appropriate tool. " +
+            "(This is an automated message — do not respond to it conversationally.)"
         /**
          * Prefix for mid-turn steering messages injected from the user's queued input.
          * Frames the message so the LLM continues its current task rather than treating
@@ -345,6 +436,15 @@ class AgentLoop(
             "CRITICAL: You have called the same tool with identical arguments 5 times consecutively. " +
             "The task cannot make progress this way. Stopping to prevent further token waste."
 
+        /**
+         * Tools that bypass PreToolUse/PostToolUse hooks.
+         * Ported from Claude Code's task-system behavior — task management tools are
+         * internal bookkeeping and should not be observable by external hooks.
+         */
+        private val HOOK_EXEMPT: Set<String> = setOf(
+            "task_create", "task_update", "task_list", "task_get"
+        )
+
         /** Tools that mutate state — blocked when plan mode is active. */
         val WRITE_TOOLS = setOf(
             "edit_file", "create_file", "run_command", "revert_file",
@@ -353,7 +453,7 @@ class AgentLoop(
         )
 
         /** Subset of write tools that require user approval via the approval gate. */
-        val APPROVAL_TOOLS = setOf("edit_file", "create_file", "run_command", "revert_file")
+        val APPROVAL_TOOLS = ApprovalPolicy.APPROVAL_TOOLS
 
         /** Error types that are transient and safe to retry. */
         private val RETRYABLE_ERRORS = setOf(
@@ -375,11 +475,6 @@ class AgentLoop(
             Regex("(input|prompt).{0,20}too.{0,10}(long|large)", RegexOption.IGNORE_CASE)
         )
 
-        /**
-         * The parameter name used by the LLM to communicate task progress.
-         * Matches Cline's `task_progress` parameter in tool calls.
-         */
-        private const val TASK_PROGRESS_PARAM = "task_progress"
     }
 
     /**
@@ -391,6 +486,7 @@ class AgentLoop(
      */
     suspend fun run(task: String): LoopResult {
         if (cancelled.get()) {
+            onDebugLog?.invoke("info", "loop_exit", "Exit: cancelled_before_start", null)
             return makeCancelled(0)
         }
 
@@ -468,6 +564,12 @@ class AgentLoop(
                 }
             }
 
+            // Stage 0.75: Refresh system prompt if deferred tools were activated
+            // (sub-agent path only — systemPromptProvider is null for the main agent)
+            systemPromptProvider?.invoke()?.let { freshPrompt ->
+                contextManager.setSystemPrompt(freshPrompt)
+            }
+
             // Stage 1: Call LLM (use dynamic definitions if tool_search has loaded new tools)
             val currentToolDefs = toolDefinitionProvider?.invoke() ?: toolDefinitions
             // Update tool token count if deferred tools were loaded since last iteration
@@ -480,6 +582,8 @@ class AgentLoop(
             // Tool/param names read from providers (updated when deferred tools load via request_tools).
             val accumulatedText = StringBuilder()
             var lastPresentedTextLength = 0
+            var cachedBlocks: List<AssistantMessageContent>? = null
+            var cachedStrippedText = ""
             val currentToolNames = toolNameProvider?.invoke() ?: brain.toolNameSet
             val currentParamNames = paramNameProvider?.invoke() ?: brain.paramNameSet
 
@@ -504,32 +608,64 @@ class AgentLoop(
                     // Always accumulate
                     accumulatedText.append(text)
 
-                    // Re-parse full accumulated text
-                    val blocks = AssistantMessageParser.parse(
-                        accumulatedText.toString(),
-                        currentToolNames,
-                        currentParamNames
-                    )
+                    // Conditional re-parse: skip when no XML structural character in chunk
+                    val needsParse = cachedBlocks == null || text.contains('<') || text.contains('>')
+                    val blocks = if (needsParse) {
+                        AssistantMessageParser.parse(
+                            accumulatedText.toString(),
+                            currentToolNames,
+                            currentParamNames
+                        ).also { cachedBlocks = it }
+                    } else {
+                        cachedBlocks!!
+                    }
 
                     // Extract visible text (TextContent blocks only)
                     val visibleText = blocks.filterIsInstance<TextContent>()
                         .joinToString("\n\n") { it.content }
 
                     // Only send NEW text to UI (delta since last presentation)
-                    val stripped = AssistantMessageParser.stripPartialTag(visibleText)
+                    val stripped = if (needsParse) {
+                        // When no tool calls present, use accumulated text directly to preserve whitespace
+                        // (TextContent.content is trimmed by the parser, which loses trailing spaces at chunk boundaries)
+                        val hasToolCalls = blocks.any { it is ToolUseContent }
+                        val base = if (hasToolCalls) visibleText else accumulatedText.toString()
+                        AssistantMessageParser.stripPartialTag(base)
+                            .also { cachedStrippedText = it }
+                    } else {
+                        // Skip-parse path: only append plain text when no tool call is in flight.
+                        //
+                        // BUG FIXED: if a partial tool call is in cachedBlocks, `text` is raw
+                        // parameter content (e.g. file path bytes inside <path>...</path>). Appending
+                        // it to cachedStrippedText inflates lastPresentedTextLength. When the tool
+                        // close tag arrives and triggers a real parse, stripped = visibleText (just
+                        // pre-tool text) < lastPresentedTextLength → the condition below is forever
+                        // false → all text after the tool call becomes invisible ("stops abruptly").
+                        val hasPendingTool = cachedBlocks?.any { it is ToolUseContent && it.partial } == true
+                        if (hasPendingTool) {
+                            cachedStrippedText  // tool param in flight — don't leak it to the display
+                        } else {
+                            (cachedStrippedText + text).also { cachedStrippedText = it }
+                        }
+                    }
                     if (stripped.length > lastPresentedTextLength) {
                         val delta = stripped.substring(lastPresentedTextLength)
                         onStreamChunk(delta)
+                        lastPresentedTextLength = stripped.length
+                    } else if (needsParse && stripped.length < lastPresentedTextLength) {
+                        // Safety reset: a fresh parse gave shorter text than the watermark, meaning
+                        // the skip-parse path previously leaked content that isn't real visible text.
+                        // Reset so subsequent deltas are calculated correctly.
                         lastPresentedTextLength = stripped.length
                     }
 
                     // Persist streaming text to ui_messages.json (C3 fix — awaited inline, NOT in launch{}).
                     // First chunk: add partial message. Subsequent: update in-place.
-                    // Use visibleText (TextContent blocks only), NOT raw accumulatedText.
-                    // The raw text includes XML tool call tags (e.g. <read_file><path>...</path></read_file>)
-                    // which the live UI strips via the parser but would show as raw XML on resume.
+                    // Use stripped text (partial XML tags removed), NOT raw accumulatedText.
+                    // The raw text includes XML tool call tags which would show as raw XML on resume.
+                    // Use `stripped` (always up-to-date) rather than `visibleText` (stale on skip-parse path).
                     messageStateHandler?.let { handler ->
-                        val persistText = visibleText
+                        val persistText = stripped
                         if (isFirstStreamChunk) {
                             handler.addToClineMessages(UiMessage(
                                 ts = System.currentTimeMillis(),
@@ -719,7 +855,13 @@ class AgentLoop(
                 }
                 LOG.warn("[Loop] Task failed after $iteration iterations: ${apiResult.message.take(200)}")
                 abortStream(lastAccumulatedText, "streaming_failed")
-                return makeFailed(apiResult.message, iteration)
+                onDebugLog?.invoke("error", "loop_exit", "Exit: api_retries_exhausted (${apiResult.type.name})", mapOf(
+                    "errorType" to apiResult.type.name,
+                    "iteration" to iteration,
+                    "apiRetryCount" to apiRetryCount,
+                    "message" to apiResult.message.take(200)
+                ))
+                return makeFailed(apiResult.message, iteration, FailureReason.API_ERROR)
             }
 
             val response = (apiResult as ApiResult.Success).data
@@ -817,46 +959,128 @@ class AgentLoop(
                 hasToolCalls -> {
                     consecutiveEmpties = 0
                     consecutiveMistakes = 0  // Tool use resets mistake count
-                    val completionResult = executeToolCalls(assistantMessage.toolCalls!!, iteration)
+                    brain.temperature = 0.0  // Reset temperature escalation after successful tool use
+
+                    // Real tool call arrived — remove any stale trailing nudge chain that
+                    // preceded this turn. The nudges served their purpose; leaving them in
+                    // context just trains the next turn on the repeated [ERROR] pattern.
+                    contextManager.pruneTrailingNudgePairs(TEXT_ONLY_NUDGE)
+                    contextManager.pruneTrailingNudgePairs(EMPTY_RESPONSE_ERROR)
+
+                    // Batch guard: if a completion signal (attempt_completion or task_report)
+                    // co-occurs with other tools in the same LLM turn, strip it and nudge.
+                    // Reason: the LLM cannot legitimately conclude a task in the same turn it
+                    // issued the reads it wants to conclude on — it hasn't seen the results yet.
+                    // Letting it complete here makes the summary a speculation, not an observation.
+                    val rawCalls = assistantMessage.toolCalls!!
+                    val completionTools = setOf("attempt_completion", "task_report")
+                    val hasCompletion = rawCalls.any { it.function.name in completionTools }
+                    val filteredCalls = if (hasCompletion && rawCalls.size > 1) {
+                        val completionName = rawCalls.first { it.function.name in completionTools }.function.name
+                        LOG.warn("[Loop] $completionName batched with ${rawCalls.size - 1} other tool(s) — deferring completion to next turn")
+                        onDebugLog?.invoke(
+                            "warn",
+                            "batch_guard",
+                            "Dropped $completionName from multi-tool batch (size=${rawCalls.size})",
+                            mapOf("batchSize" to rawCalls.size)
+                        )
+                        rawCalls.filter { it.function.name !in completionTools }
+                    } else {
+                        rawCalls
+                    }
+
+                    val completionResult = executeToolCalls(filteredCalls, iteration)
                     if (completionResult != null) return completionResult
+
+                    // If we stripped the completion signal, nudge the LLM so it re-issues it
+                    // after observing the results in the next turn.
+                    if (hasCompletion && filteredCalls.size < rawCalls.size) {
+                        val completionName = rawCalls.first { it.function.name in completionTools }.function.name
+                        contextManager.addUserMessage(
+                            "[System] You tried to call $completionName in the same turn as other tool calls. " +
+                                "Your summary would be based on guesses, not observations. The other tools have now " +
+                                "executed — review their results and call $completionName again on its own."
+                        )
+                    }
                 }
 
                 // Case B: Text only (no tool calls) — Cline pattern: inject nudge, increment mistake count
                 // Ported from Cline index.ts line 3201-3207: noToolsUsed + consecutiveMistakeCount++
+                // NOTE: We do NOT reset consecutiveEmpties in the general Case B. A text-only response
+                // between two empty responses is still part of an empty/stall cycle — resetting the
+                // counter allows alternating text-only ↔ empty to cycle past MAX_CONSECUTIVE_EMPTIES.
+                // Exception: plan-mode conversational turns (see inner branch below) are genuine user
+                // exchanges; both counters are reset there.
+                // Only a real tool call (Case A) resets both counters in act mode.
                 hasContent -> {
-                    consecutiveEmpties = 0
                     consecutiveMistakes++
                     LOG.info("[Loop] Text-only response (no tool calls) — mistake $consecutiveMistakes/$maxConsecutiveMistakes")
 
                     if (planMode && userInputChannel != null) {
                         // In plan mode, text-only responses are conversational turns.
-                        contextManager.addUserMessage(withEnvDetails(userInputChannel.receive()))
+                        // Signal UI to drop the working spinner — we're idle awaiting user reply.
+                        val reason = "Plan-mode reply — waiting for your next message."
+                        onDebugLog?.invoke("info", "await_user", reason, null)
+                        onAwaitingUserInput?.invoke(reason)
+                        val receivedTask = userInputChannel.receive()
+                        // Persist typed UI message override if provided (e.g. PLAN_APPROVED bubble).
+                        onUserInputReceived?.invoke(receivedTask)?.let { messageStateHandler?.addToClineMessages(it) }
+                        contextManager.addUserMessage(withEnvDetails(receivedTask))
                         consecutiveMistakes = 0
+                        consecutiveEmpties = 0  // reset: plan-mode chat is a genuine exchange, not a stall
                     } else if (consecutiveMistakes >= maxConsecutiveMistakes && userInputChannel != null) {
-                        // Cline pattern: at max mistakes, ask user for feedback instead of failing
+                        // Cline pattern: at max mistakes, ask user for feedback instead of failing.
+                        // Without onAwaitingUserInput the UI would silently spin forever here.
                         LOG.warn("[Loop] Max consecutive mistakes ($maxConsecutiveMistakes) — waiting for user feedback")
-                        contextManager.addUserMessage(withEnvDetails(userInputChannel.receive()))
+                        val reason = "The model keeps replying without using a tool. Send guidance to continue."
+                        onDebugLog?.invoke("warn", "await_user", reason, mapOf("consecutiveMistakes" to consecutiveMistakes))
+                        onAwaitingUserInput?.invoke(reason)
+                        val receivedTask = userInputChannel.receive()
+                        // Persist typed UI message override if provided.
+                        onUserInputReceived?.invoke(receivedTask)?.let { messageStateHandler?.addToClineMessages(it) }
+                        contextManager.addUserMessage(withEnvDetails(receivedTask))
                         consecutiveMistakes = 0
                     } else if (consecutiveMistakes >= maxConsecutiveMistakes) {
                         // No user input channel (sub-agent) — fail
-                        return makeFailed("Agent failed to use tools after $maxConsecutiveMistakes attempts.", iteration)
+                        onDebugLog?.invoke("error", "loop_exit", "Exit: max_consecutive_mistakes (sub-agent, no user channel)", mapOf("max" to maxConsecutiveMistakes))
+                        return makeFailed("Agent failed to use tools after $maxConsecutiveMistakes attempts.", iteration, FailureReason.NO_TOOLS_USED)
                     } else {
-                        // Below max — inject nudge and continue (Cline: noToolsUsed message)
+                        // Below max — inject nudge and continue (Cline: noToolsUsed message).
+                        // Collapse any earlier trailing nudge chain first so we never have
+                        // more than one "[ERROR] You did not use a tool..." at the tail of
+                        // context. Repeated identical nudges can prime the LLM to mimic the
+                        // error-response pattern instead of breaking out of it.
+                        contextManager.pruneTrailingNudgePairs(TEXT_ONLY_NUDGE)
                         contextManager.addUserMessage(TEXT_ONLY_NUDGE)
                     }
                 }
 
                 // Case C: Empty response — provider error (Cline treats separately from text-only)
-                // Ported from Cline: empty = provider error, NOT a model mistake
+                // Ported from Cline: empty = provider error, NOT a model mistake.
+                // Temperature escalation (OpenHands pattern): bump to 1.0 before the next
+                // call to break degenerate zero-temperature sampling that can produce empty
+                // outputs in some models. Confirmed safe: Sourcegraph probe result_1 shows
+                // temperature 0–1.0 all return HTTP 200.
                 else -> {
                     consecutiveEmpties++
-                    LOG.warn("[Loop] Empty response from LLM — provider error (attempt $consecutiveEmpties/$MAX_CONSECUTIVE_EMPTIES)")
+                    // Escalate temperature before retry — breaks zero-temp degenerate sampling.
+                    // Reset happens in Case A when the model produces a real tool call.
+                    brain.temperature = 1.0
+                    LOG.warn("[Loop] Empty response from LLM — provider error (attempt $consecutiveEmpties/$MAX_CONSECUTIVE_EMPTIES, temperature escalated to 1.0)")
                     if (consecutiveEmpties >= MAX_CONSECUTIVE_EMPTIES) {
+                        onDebugLog?.invoke("error", "loop_exit", "Exit: max_empty_responses ($MAX_CONSECUTIVE_EMPTIES consecutive empties)", mapOf(
+                            "consecutiveEmpties" to consecutiveEmpties,
+                            "iteration" to iteration
+                        ))
                         return makeFailed(
                             "Provider returned $MAX_CONSECUTIVE_EMPTIES consecutive empty responses. Check model/provider configuration.",
-                            iteration
+                            iteration,
+                            FailureReason.EMPTY_RESPONSES
                         )
                     }
+                    // Same rationale as TEXT_ONLY_NUDGE: collapse any trailing chain first
+                    // so identical empty-response errors don't stack in context.
+                    contextManager.pruneTrailingNudgePairs(EMPTY_RESPONSE_ERROR)
                     contextManager.addUserMessage(EMPTY_RESPONSE_ERROR)
                 }
             }
@@ -865,13 +1089,16 @@ class AgentLoop(
         if (cancelled.get()) {
             LOG.info("[Loop] Task cancelled at iteration $iteration")
             abortStream(lastAccumulatedText, "user_cancelled")
+            onDebugLog?.invoke("info", "loop_exit", "Exit: user_cancelled", mapOf("iteration" to iteration))
             return makeCancelled(iteration)
         }
 
         LOG.warn("[Loop] Task failed after $iteration iterations: exceeded maximum iterations ($maxIterations)")
+        onDebugLog?.invoke("error", "loop_exit", "Exit: max_iterations ($maxIterations)", mapOf("iteration" to iteration))
         return makeFailed(
             "Exceeded maximum iterations ($maxIterations). The task may be too complex or the model is stuck.",
-            iteration
+            iteration,
+            FailureReason.MAX_ITERATIONS
         )
     }
 
@@ -914,6 +1141,7 @@ class AgentLoop(
     private suspend fun executeToolCalls(toolCalls: List<ToolCall>, iteration: Int): LoopResult? {
         for (call in toolCalls) {
             if (cancelled.get()) {
+                onDebugLog?.invoke("info", "loop_exit", "Exit: user_cancelled (between tool calls)", mapOf("iteration" to iteration))
                 return makeCancelled(iteration)
             }
 
@@ -928,9 +1156,15 @@ class AgentLoop(
                     fileLogger?.logLoopDetection(sessionId ?: "", toolName, loopDetector.currentCount, isHard = true)
                     onDebugLog?.invoke("error", "loop", "Loop HARD limit: $toolName — aborting", null)
                     reportToolError(call, startTime, LOOP_HARD_FAILURE)
+                    onDebugLog?.invoke("error", "loop_exit", "Exit: doom_loop_hard_limit ($toolName x${loopDetector.currentCount})", mapOf(
+                        "tool" to toolName,
+                        "repeatCount" to loopDetector.currentCount,
+                        "iteration" to iteration
+                    ))
                     return makeFailed(
                         "Loop detected: '$toolName' called ${loopDetector.currentCount} times with identical arguments.",
-                        iteration
+                        iteration,
+                        FailureReason.DOOM_LOOP
                     )
                 }
                 LoopStatus.SOFT_WARNING -> {
@@ -943,35 +1177,71 @@ class AgentLoop(
                 LoopStatus.OK -> { /* no action */ }
             }
 
-            val tool = toolResolver?.invoke(toolName) ?: tools[toolName]
+            val rawTool = toolResolver?.invoke(toolName) ?: tools[toolName]
+            val tool = if (rawTool != null && approvalGate != null) ApprovalGatedTool(rawTool, approvalGate) else rawTool
             if (tool == null) {
                 // Unknown tool
                 val allToolNames = if (toolResolver != null) "use tool_search to find tools" else tools.keys.joinToString(", ")
-                reportToolError(call, startTime, "Unknown tool: '$toolName'. Available tools: $allToolNames")
+                val unknownToolMsg = "Unknown tool: '$toolName'. Available tools: $allToolNames"
+                fileLogger?.logToolCall(
+                    sessionId = sessionId ?: "",
+                    toolName = toolName,
+                    durationMs = 0,
+                    isError = true,
+                    errorMessage = unknownToolMsg,
+                    tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                )
+                sessionMetrics?.recordToolCall(toolName, 0, true)
+                reportToolError(call, startTime, unknownToolMsg)
                 continue
             }
 
             // Plan mode guard: block write tools even if the LLM hallucinates them
             if (planMode && toolName in WRITE_TOOLS) {
-                reportToolError(
-                    call, startTime,
-                    "Error: '$toolName' is blocked in plan mode. You can only read, search, and analyze code."
+                val planModeBlockMsg = "Error: '$toolName' is blocked in plan mode. You can only read, search, and analyze code."
+                fileLogger?.logToolCall(
+                    sessionId = sessionId ?: "",
+                    toolName = toolName,
+                    durationMs = 0,
+                    isError = true,
+                    errorMessage = planModeBlockMsg,
+                    tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
                 )
+                sessionMetrics?.recordToolCall(toolName, 0, true)
+                reportToolError(call, startTime, planModeBlockMsg)
                 continue
             }
 
             // Approval gate (ported from Cline's approval flow).
             // Write tools require user approval unless already allowed for this session.
             // The gate suspends the coroutine (not blocking a thread) until the user responds.
-            if (toolName in APPROVAL_TOOLS && approvalGate != null && toolName !in approvedForSession) {
+            // Per-tool policy: run_command never gets session-wide approval because each
+            // command is arbitrarily different — approving `ls` shouldn't auto-approve `rm -rf /`.
+            val policy = ApprovalPolicy.forTool(toolName)
+            if (policy.requiresApproval && approvalGate != null && !sessionApprovalStore.isApproved(toolName)) {
                 val riskLevel = assessRisk(toolName, call.function.arguments)
-                val result = approvalGate.invoke(toolName, call.function.arguments, riskLevel)
+                val result = approvalGate.invoke(toolName, call.function.arguments, riskLevel, policy.allowSessionApproval)
                 when (result) {
                     ApprovalResult.DENIED -> {
-                        reportToolError(call, startTime, "Tool execution denied by user.")
+                        val deniedMsg = "Tool execution denied by user."
+                        fileLogger?.logToolCall(
+                            sessionId = sessionId ?: "",
+                            toolName = toolName,
+                            durationMs = 0,
+                            isError = true,
+                            errorMessage = deniedMsg,
+                            tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                        )
+                        sessionMetrics?.recordToolCall(toolName, 0, true)
+                        reportToolError(call, startTime, deniedMsg)
                         continue
                     }
-                    ApprovalResult.ALLOWED_FOR_SESSION -> approvedForSession.add(toolName)
+                    ApprovalResult.ALLOWED_FOR_SESSION -> {
+                        if (policy.allowSessionApproval) {
+                            sessionApprovalStore.approve(toolName)
+                        }
+                        // If policy doesn't allow session approval, treat as single APPROVED
+                    }
                     ApprovalResult.APPROVED -> { /* proceed with this single execution */ }
                 }
             }
@@ -984,17 +1254,12 @@ class AgentLoop(
                 continue
             }
 
-            // Extract task_progress from tool call arguments (Cline's FocusChain pattern).
-            // In Cline, task_progress is a parameter on every tool call. The LLM includes
-            // it when it wants to update the progress checklist. We extract it here,
-            // store it in ContextManager, and notify the UI.
-            extractTaskProgress(params)
-
             // PRE_TOOL_USE hook (ported from Cline's ToolHookUtils.runPreToolUseIfEnabled)
             // Runs before each tool execution; can cancel (block) the tool.
             // Cline: "This should be called by tool handlers after approval succeeds
             //  but before the actual tool execution begins."
-            if (hookManager != null && hookManager.hasHooks(HookType.PRE_TOOL_USE)) {
+            // Task-system tools are hook-exempt (internal bookkeeping, not user-observable).
+            if (toolName !in HOOK_EXEMPT && hookManager != null && hookManager.hasHooks(HookType.PRE_TOOL_USE)) {
                 val preHookResult = hookManager.dispatch(
                     HookEvent(
                         type = HookType.PRE_TOOL_USE,
@@ -1002,7 +1267,9 @@ class AgentLoop(
                             "toolName" to toolName,
                             "arguments" to call.function.arguments,
                             "iteration" to iteration,
-                            "sessionId" to sessionId
+                            "sessionId" to sessionId,
+                            "riskLevel" to assessRisk(toolName, call.function.arguments),
+                            "isWriteTool" to (toolName in WRITE_TOOLS).toString(),
                         )
                     )
                 )
@@ -1022,9 +1289,25 @@ class AgentLoop(
                 )
             )
 
-            // Execute tool
+            // Execute tool (with per-tool timeout and CancellationException propagation)
+            if (toolName == "run_command") RunCommandTool.currentToolCallId.set(toolCallId)
             val toolResult = try {
-                tool.execute(params, project)
+                val timeout = tool.timeoutMs
+                if (timeout == Long.MAX_VALUE) {
+                    tool.execute(params, project)
+                } else {
+                    withTimeoutOrNull(timeout) {
+                        tool.execute(params, project)
+                    } ?: ToolResult(
+                        content = "Error: Tool '$toolName' timed out after ${timeout / 1000}s. " +
+                            "The operation took too long. Try a more specific query or smaller scope.",
+                        summary = "Error: timeout after ${timeout / 1000}s",
+                        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                        isError = true
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e  // CRITICAL: Propagate cancellation — never swallow
             } catch (e: Exception) {
                 val errorMsg = "Tool '$toolName' threw exception: ${e.message}"
                 LOG.warn("[Loop] Tool $toolName failed: ${errorMsg.take(200)}")
@@ -1041,10 +1324,39 @@ class AgentLoop(
                     mapOf("tool" to toolName, "error" to errorMsg.take(200)))
                 reportToolError(call, startTime, errorMsg)
                 continue
+            } finally {
+                if (toolName == "run_command") RunCommandTool.currentToolCallId.remove()
             }
 
             val durationMs = System.currentTimeMillis() - startTime
-            val truncatedContent = truncateOutput(toolResult.content)
+
+            // Apply LLM-requested output filtering (grep_pattern, output_file)
+            var processedContent = toolResult.content
+            val grepPattern = (params["grep_pattern"] as? JsonPrimitive)?.contentOrNull
+            if (!grepPattern.isNullOrBlank() && processedContent.isNotBlank()) {
+                processedContent = ToolOutputConfig.applyGrep(processedContent, grepPattern)
+            }
+
+            // Spill to file if requested via output_file=true or if over threshold
+            val requestedOutputFile = try {
+                params["output_file"]?.jsonPrimitive?.boolean == true
+            } catch (_: Exception) { false }
+
+            if (outputSpiller != null && (requestedOutputFile || processedContent.length > ToolOutputConfig.SPILL_THRESHOLD_CHARS)) {
+                val spillResult = outputSpiller.spill(toolName, processedContent)
+                processedContent = spillResult.preview
+            }
+
+            val truncatedContent = truncateOutput(processedContent, tool.outputConfig.maxChars)
+            // Re-estimate tokens after processing (grep/spill/truncation) so budget tracking
+            // reflects what actually enters context, not the raw tool output.
+            val actualTokenEstimate = if (truncatedContent.length < processedContent.length) {
+                estimateTokens(truncatedContent)  // Content was truncated — re-estimate
+            } else if (processedContent.length < toolResult.content.length) {
+                estimateTokens(processedContent)  // Content was grep-filtered or spilled — re-estimate
+            } else {
+                toolResult.tokenEstimate  // No processing occurred — use original estimate
+            }
 
             if (toolResult.isError) {
                 LOG.warn("[Loop] Tool $toolName failed: ${toolResult.content.take(200)}")
@@ -1058,14 +1370,14 @@ class AgentLoop(
                 isError = toolResult.isError,
                 args = call.function.arguments.take(500),
                 errorMessage = if (toolResult.isError) toolResult.content.take(500) else null,
-                tokenEstimate = toolResult.tokenEstimate
+                tokenEstimate = actualTokenEstimate
             )
             sessionMetrics?.recordToolCall(toolName, durationMs, toolResult.isError)
             onDebugLog?.invoke(
                 if (toolResult.isError) "error" else "info",
                 "tool_call",
                 "$toolName ${if (toolResult.isError) "ERROR" else "OK"} (${durationMs}ms)",
-                mapOf("tool" to toolName, "duration" to durationMs, "tokens" to toolResult.tokenEstimate)
+                mapOf("tool" to toolName, "duration" to durationMs, "tokens" to actualTokenEstimate)
             )
 
             // Add result to context
@@ -1095,10 +1407,7 @@ class AgentLoop(
                     type = UiMessageType.SAY,
                     say = UiSay.PLAN_UPDATE,
                     text = toolResult.content.take(2000),
-                    planData = if (toolResult.planSteps.isNotEmpty()) PlanCardData(
-                        steps = toolResult.planSteps.map { PlanStep(title = it, status = "pending") },
-                        status = PlanStatus.AWAITING_APPROVAL,
-                    ) else null,
+                    planData = null,
                 )
                 // ask_followup_question: persist as TEXT — the question is rendered via the
                 // showSimpleQuestionCallback (streaming text) or showQuestionsCallback (wizard).
@@ -1117,12 +1426,13 @@ class AgentLoop(
                         text = questionText.take(2000),
                     )
                 }
-                // attempt_completion: persist as ASK/COMPLETION_RESULT for CompletionCard on resume.
-                "attempt_completion" -> UiMessage(
+                // attempt_completion / task_report: persist as ASK/COMPLETION_RESULT for CompletionCard on resume.
+                "attempt_completion", "task_report" -> UiMessage(
                     ts = System.currentTimeMillis(),
                     type = UiMessageType.ASK,
                     ask = UiAsk.COMPLETION_RESULT,
                     text = toolResult.content.take(2000),
+                    completionData = toolResult.completionData,
                 )
                 // All other tools: persist as TOOL with full toolCallData
                 else -> UiMessage(
@@ -1134,7 +1444,7 @@ class AgentLoop(
                         toolCallId = toolCallId,
                         toolName = toolName,
                         args = call.function.arguments,
-                        status = if (toolResult.isError) "ERROR" else "COMPLETED",
+                        status = if (toolResult.isError) ToolCallStatus.ERROR else ToolCallStatus.COMPLETED,
                         result = toolResult.summary.take(500),
                         output = toolResult.content.takeIf { it != toolResult.summary }?.take(2000),
                         durationMs = durationMs,
@@ -1148,7 +1458,8 @@ class AgentLoop(
             // POST_TOOL_USE hook (ported from Cline's PostToolUse hook)
             // Observation-only: runs after tool execution, cannot change the result.
             // Cline: fires PostToolUse with tool name, parameters, result, success, durationMs.
-            if (hookManager != null && hookManager.hasHooks(HookType.POST_TOOL_USE)) {
+            // Task-system tools are hook-exempt (internal bookkeeping, not user-observable).
+            if (toolName !in HOOK_EXEMPT && hookManager != null && hookManager.hasHooks(HookType.POST_TOOL_USE)) {
                 try {
                     hookManager.dispatch(
                         HookEvent(
@@ -1210,74 +1521,70 @@ class AgentLoop(
             // symbols / runtime errors) instead of the previous fire-and-forget path.
 
 
-            // Check for completion
-            if (toolResult.isCompletion) {
-                LOG.info("[Loop] Task completed in $iteration iterations ($totalInputTokens input, $totalOutputTokens output tokens)")
-                // Persist completion as ASK/COMPLETION_RESULT so resume detects completed sessions
-                // and the CompletionCard renders on rehydration.
-                messageStateHandler?.addToClineMessages(UiMessage(
-                    ts = System.currentTimeMillis(),
-                    type = UiMessageType.ASK,
-                    ask = UiAsk.COMPLETION_RESULT,
-                    text = toolResult.content
-                ))
-                return LoopResult.Completed(
-                    summary = toolResult.content,
-                    iterations = iteration,
-                    tokensUsed = totalTokensUsed,
-                    verifyCommand = toolResult.verifyCommand,
-                    inputTokens = totalInputTokens,
-                    outputTokens = totalOutputTokens,
-                    filesModified = filesModifiedList(),
-                    linesAdded = totalLinesAdded,
-                    linesRemoved = totalLinesRemoved
-                )
-            }
-
-            // Check for session handoff (new_task tool — ported from Cline)
-            if (toolResult.isSessionHandoff) {
-                return LoopResult.SessionHandoff(
-                    context = toolResult.handoffContext ?: toolResult.content,
-                    iterations = iteration,
-                    tokensUsed = totalTokensUsed,
-                    inputTokens = totalInputTokens,
-                    outputTokens = totalOutputTokens,
-                    filesModified = filesModifiedList(),
-                    linesAdded = totalLinesAdded,
-                    linesRemoved = totalLinesRemoved
-                )
-            }
-
-            // Check for plan response (plan_mode_respond tool)
-            // Matches Cline's plan mode: the loop NEVER exits for plan presentation.
-            // - Notify UI via callback so the plan card can be rendered
-            // - If needs_more_exploration=true, loop continues immediately (LLM explores more)
-            // - If needs_more_exploration=false, wait for user input before next LLM call
-            if (toolResult.isPlanResponse) {
-                LOG.info("[Loop] Plan presented (needsMoreExploration=${toolResult.needsMoreExploration}, steps=${toolResult.planSteps.size})")
-                onPlanResponse?.invoke(toolResult.content, toolResult.needsMoreExploration, toolResult.planSteps)
-
-                if (!toolResult.needsMoreExploration && userInputChannel != null) {
-                    // Wait for user input (matches Cline's ask() pattern).
-                    // The user can: type in chat, add step comments, or click approve.
-                    // Each sends a message into the channel, which resumes the loop.
-                    contextManager.addUserMessage(withEnvDetails(userInputChannel.receive()))
-                    // Continue the loop — LLM will see the user's message and respond
+            when (toolResult.type) {
+                is ToolResultType.Completion -> {
+                    LOG.info("[Loop] Task completed in $iteration iterations ($totalInputTokens input, $totalOutputTokens output tokens)")
+                    // COMPLETION_RESULT already persisted at Site 1 (when toolName switch above).
+                    onDebugLog?.invoke("info", "loop_exit", "Exit: $toolName", mapOf("iteration" to iteration))
+                    toolResult.completionData?.let { sessionMetrics?.recordCompletion(it.kind) }
+                    return LoopResult.Completed(
+                        summary = toolResult.content,
+                        iterations = iteration,
+                        tokensUsed = totalTokensUsed,
+                        completionData = toolResult.completionData,
+                        inputTokens = totalInputTokens,
+                        outputTokens = totalOutputTokens,
+                        filesModified = filesModifiedList(),
+                        linesAdded = totalLinesAdded,
+                        linesRemoved = totalLinesRemoved
+                    )
                 }
-                // needs_more_exploration=true OR no channel: loop continues immediately
-            }
+                is ToolResultType.SessionHandoff -> {
+                    val handoff = toolResult.type
+                    onDebugLog?.invoke("info", "loop_exit", "Exit: new_task_session_handoff", mapOf("iteration" to iteration))
+                    return LoopResult.SessionHandoff(
+                        context = handoff.context,
+                        iterations = iteration,
+                        tokensUsed = totalTokensUsed,
+                        inputTokens = totalInputTokens,
+                        outputTokens = totalOutputTokens,
+                        filesModified = filesModifiedList(),
+                        linesAdded = totalLinesAdded,
+                        linesRemoved = totalLinesRemoved
+                    )
+                }
+                is ToolResultType.PlanResponse -> {
+                    val pr = toolResult.type
+                    LOG.info("[Loop] Plan presented (needsMoreExploration=${pr.needsMoreExploration})")
+                    onPlanResponse?.invoke(toolResult.content, pr.needsMoreExploration)
 
-            // Handle enable_plan_mode: activate plan mode so next iteration
-            // rebuilds tool definitions (removes write tools, adds plan_mode_respond)
-            if (toolResult.enablePlanMode) {
-                LOG.info("[Loop] Plan mode enabled by LLM via enable_plan_mode tool")
-                onPlanModeToggle?.invoke(true)
-            }
-
-            // Store active skill in ContextManager for compaction survival
-            // (ported from Cline: skill content is re-injected after compaction)
-            if (toolResult.isSkillActivation && toolResult.activatedSkillContent != null) {
-                contextManager.setActiveSkill(toolResult.activatedSkillContent)
+                    if (!pr.needsMoreExploration && userInputChannel != null) {
+                        // Wait for user input (matches Cline's ask() pattern).
+                        // The user can: type in chat, add step comments, or click approve.
+                        // Each sends a message into the channel, which resumes the loop.
+                        val receivedTask = userInputChannel.receive()
+                        // Persist typed UI message override if provided (e.g. PLAN_APPROVED bubble).
+                        onUserInputReceived?.invoke(receivedTask)?.let { messageStateHandler?.addToClineMessages(it) }
+                        contextManager.addUserMessage(withEnvDetails(receivedTask))
+                        // Continue the loop — LLM will see the user's message and respond
+                    }
+                    // needs_more_exploration=true OR no channel: loop continues immediately
+                }
+                is ToolResultType.PlanModeToggle -> {
+                    LOG.info("[Loop] Plan mode enabled by LLM via enable_plan_mode tool")
+                    onPlanModeToggle?.invoke(true)
+                }
+                is ToolResultType.PlanDiscarded -> {
+                    LOG.info("[Loop] Plan discarded by LLM via discard_plan tool")
+                    onPlanDiscarded?.invoke()
+                }
+                is ToolResultType.SkillActivation -> {
+                    val activation = toolResult.type
+                    contextManager.setActiveSkill(activation.skillContent)
+                }
+                is ToolResultType.Standard, is ToolResultType.Error -> {
+                    // Normal result — no special dispatch
+                }
             }
         }
         return null
@@ -1287,8 +1594,9 @@ class AgentLoop(
     private fun filesModifiedList(): List<String> = modifiedFiles.toList()
 
     /** Build a Failed result with current loop tracking state. */
-    private fun makeFailed(error: String, iterations: Int): LoopResult.Failed = LoopResult.Failed(
+    private fun makeFailed(error: String, iterations: Int, reason: FailureReason): LoopResult.Failed = LoopResult.Failed(
         error = error,
+        reason = reason,
         iterations = iterations,
         tokensUsed = totalTokensUsed,
         inputTokens = totalInputTokens,
@@ -1418,23 +1726,6 @@ class AgentLoop(
                 line.startsWith("+") -> totalLinesAdded++
                 line.startsWith("-") -> totalLinesRemoved++
             }
-        }
-    }
-
-    /**
-     * Extract `task_progress` from tool call arguments and update state.
-     *
-     * Port of Cline's FocusChainManager.updateFCListFromToolResponse():
-     * - The LLM includes a `task_progress` parameter in tool call JSON
-     * - We extract it, store in ContextManager, and notify the UI callback
-     * - The progress is a markdown checklist string
-     *
-     * @param params the parsed JSON arguments from the tool call
-     */
-    private fun extractTaskProgress(params: JsonObject) {
-        val markdown = (params[TASK_PROGRESS_PARAM] as? JsonPrimitive)?.contentOrNull
-        if (!markdown.isNullOrBlank()) {
-            contextManager.setTaskProgress(markdown)?.let { onTaskProgress(it) }
         }
     }
 

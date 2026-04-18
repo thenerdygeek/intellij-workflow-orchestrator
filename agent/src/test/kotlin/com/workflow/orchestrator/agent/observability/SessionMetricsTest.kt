@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.observability
 
+import com.workflow.orchestrator.agent.tools.CompletionKind
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -27,6 +28,51 @@ class SessionMetricsTest {
             assertEquals(0, snap.totalPromptTokens)
             assertEquals(0, snap.totalCompletionTokens)
             assertEquals(0, snap.compactionCount)
+            assertTrue(snap.completionKindCounts.isEmpty())
+        }
+    }
+
+    // ── Completion kind recording ────────────────────────────────────
+
+    @Nested
+    inner class CompletionKindRecording {
+
+        @Test
+        fun `single done completion is counted`() {
+            val metrics = SessionMetrics()
+            metrics.recordCompletion(CompletionKind.DONE)
+
+            val snap = metrics.snapshot()
+            assertEquals(1, snap.completionKindCounts["done"])
+        }
+
+        @Test
+        fun `all three kinds are counted independently`() {
+            val metrics = SessionMetrics()
+            metrics.recordCompletion(CompletionKind.DONE)
+            metrics.recordCompletion(CompletionKind.DONE)
+            metrics.recordCompletion(CompletionKind.REVIEW)
+            metrics.recordCompletion(CompletionKind.HEADS_UP)
+
+            val snap = metrics.snapshot()
+            assertEquals(2, snap.completionKindCounts["done"])
+            assertEquals(1, snap.completionKindCounts["review"])
+            assertEquals(1, snap.completionKindCounts["heads_up"])
+        }
+
+        @Test
+        fun `completionKindCounts serializes and deserializes correctly`() {
+            val metrics = SessionMetrics()
+            metrics.recordCompletion(CompletionKind.REVIEW)
+            metrics.recordCompletion(CompletionKind.HEADS_UP)
+
+            val snap = metrics.snapshot()
+            val json = Json.encodeToString(snap)
+            val decoded = Json.decodeFromString<SessionMetrics.MetricsSnapshot>(json)
+
+            assertEquals(snap.completionKindCounts, decoded.completionKindCounts)
+            assertEquals(1, decoded.completionKindCounts["review"])
+            assertEquals(1, decoded.completionKindCounts["heads_up"])
         }
     }
 

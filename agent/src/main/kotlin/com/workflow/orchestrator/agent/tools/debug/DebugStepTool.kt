@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.tools.debug
 
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.xdebugger.XDebugSession
 import com.intellij.xdebugger.XDebuggerUtil
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
@@ -11,6 +12,8 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.builtin.PathValidator
 import com.workflow.orchestrator.agent.tools.integration.ToolValidation
+import com.workflow.orchestrator.agent.tools.platform.DebugState
+import com.workflow.orchestrator.agent.tools.platform.IdeStateProbe
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.serialization.json.JsonObject
@@ -94,11 +97,11 @@ All actions accept optional session_id (defaults to active session).
 
         return when (action) {
             "get_state" -> executeGetState(params, project)
-            "step_over" -> executeStepAction(params, "step_over") { it.stepOver(false) }
-            "step_into" -> executeStepAction(params, "step_into") { it.stepInto() }
-            "step_out" -> executeStepAction(params, "step_out") { it.stepOut() }
-            "force_step_into" -> executeStepAction(params, "force_step_into") { it.forceStepInto() }
-            "force_step_over" -> executeStepAction(params, "force_step_over") { it.stepOver(true) }
+            "step_over" -> executeStepAction(params, project, "step_over") { it.stepOver(false) }
+            "step_into" -> executeStepAction(params, project, "step_into") { it.stepInto() }
+            "step_out" -> executeStepAction(params, project, "step_out") { it.stepOut() }
+            "force_step_into" -> executeStepAction(params, project, "force_step_into") { it.forceStepInto() }
+            "force_step_over" -> executeStepAction(params, project, "force_step_over") { it.stepOver(true) }
             "resume" -> executeResume(params, project)
             "pause" -> executePause(params, project)
             "run_to_cursor" -> executeRunToCursor(params, project)
@@ -112,23 +115,90 @@ All actions accept optional session_id (defaults to active session).
         }
     }
 
+    // ── session resolution ──────────────────────────────────────────────────
+    //
+    // All actions resolve their target debug session through one of these two
+    // helpers. Both delegate to IdeStateProbe so that sessions started outside
+    // the agent (gutter Debug button, run config dropdown, etc.) are found via
+    // the IntelliJ Platform — not just the agent's own session registry.
+    //
+    // The agent's controller registry is still consulted first via the
+    // registryLookup callback, so sessions started by start_debug_session keep
+    // their agent-assigned ids and `activeSessionId` semantics.
+
+    private sealed class SessionResolution {
+        data class Found(val session: XDebugSession) : SessionResolution()
+        data class Failed(val toolResult: ToolResult) : SessionResolution()
+    }
+
+    /**
+     * Resolves a debug session that exists (running or paused) for [sessionId].
+     * Use this for actions that don't require the session to be paused
+     * (resume, pause, stop, get_state).
+     */
+    private fun requireSession(project: Project, sessionId: String?): SessionResolution {
+        val state = IdeStateProbe.debugState(project, sessionId, controller::getSession)
+        return when (state) {
+            is DebugState.Paused -> SessionResolution.Found(state.session)
+            is DebugState.Running -> SessionResolution.Found(state.session)
+            DebugState.NoSession -> SessionResolution.Failed(noSessionError(sessionId))
+            is DebugState.AmbiguousSession -> SessionResolution.Failed(ambiguousError(state))
+        }
+    }
+
+    /**
+     * Resolves a debug session that exists AND is currently paused for [sessionId].
+     * Use this for actions that need the session to be suspended
+     * (step_over, step_into, step_out, force_step_into, force_step_over, run_to_cursor).
+     */
+    private fun requireSuspendedSession(project: Project, sessionId: String?): SessionResolution {
+        val state = IdeStateProbe.debugState(project, sessionId, controller::getSession)
+        return when (state) {
+            is DebugState.Paused -> SessionResolution.Found(state.session)
+            is DebugState.Running -> SessionResolution.Failed(notSuspendedError())
+            DebugState.NoSession -> SessionResolution.Failed(noSessionError(sessionId))
+            is DebugState.AmbiguousSession -> SessionResolution.Failed(ambiguousError(state))
+        }
+    }
+
+    private fun noSessionError(sessionId: String?) = ToolResult(
+        buildString {
+            append("No debug session found")
+            if (sessionId != null) append(": $sessionId")
+            append(". Start one with start_debug_session, or have the user start a debug session via the IDE (gutter Debug button or Run menu) and try again.")
+        },
+        "No session",
+        ToolResult.ERROR_TOKEN_ESTIMATE,
+        isError = true,
+    )
+
+    private fun notSuspendedError() = ToolResult(
+        "Debug session is running but not paused. This action requires the debugger to be suspended (at a breakpoint or after a step). Set a breakpoint and let execution reach it, or call debug_step.pause first.",
+        "Not suspended",
+        ToolResult.ERROR_TOKEN_ESTIMATE,
+        isError = true,
+    )
+
+    private fun ambiguousError(state: DebugState.AmbiguousSession) = ToolResult(
+        "Multiple debug sessions are active (${state.count}: ${state.names.joinToString(", ")}). Pass session_id to disambiguate.",
+        "Ambiguous session",
+        ToolResult.ERROR_TOKEN_ESTIMATE,
+        isError = true,
+    )
+
     // ── get_state ───────────────────────────────────────────────────────────
 
     private suspend fun executeGetState(params: JsonObject, project: Project): ToolResult {
         val sessionId = params["session_id"]?.jsonPrimitive?.content
-        val resolvedId = sessionId ?: controller.getActiveSessionId()
 
-        val session = controller.getSession(sessionId)
-            ?: return ToolResult(
-                "No debug session found${sessionId?.let { ": $it" } ?: ""}. Start one with start_debug_session.",
-                "No session",
-                ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true
-            )
+        val session = when (val r = requireSession(project, sessionId)) {
+            is SessionResolution.Found -> r.session
+            is SessionResolution.Failed -> return r.toolResult
+        }
 
         return try {
             val sb = StringBuilder()
-            sb.append("Session: ${resolvedId ?: "unknown"}\n")
+            sb.append("Session: ${session.sessionName}\n")
 
             val isStopped = session.isStopped
             val isSuspended = session.isSuspended
@@ -188,11 +258,12 @@ All actions accept optional session_id (defaults to active session).
 
     private suspend fun executeStepAction(
         params: JsonObject,
+        project: Project,
         actionName: String,
-        action: (com.intellij.xdebugger.XDebugSession) -> Unit
+        action: (XDebugSession) -> Unit
     ): ToolResult {
         val sessionId = params["session_id"]?.jsonPrimitive?.content
-        return executeStep(controller, sessionId, actionName, action)
+        return executeStep(controller, project, sessionId, actionName, action)
     }
 
     // ── resume ──────────────────────────────────────────────────────────────
@@ -200,18 +271,14 @@ All actions accept optional session_id (defaults to active session).
     private suspend fun executeResume(params: JsonObject, project: Project): ToolResult {
         val sessionId = params["session_id"]?.jsonPrimitive?.content
 
-        return try {
-            val resolvedId = sessionId ?: controller.getActiveSessionId()
-            val session = controller.getSession(sessionId)
-                ?: return ToolResult(
-                    "No debug session found${sessionId?.let { ": $it" } ?: ""}. Start one with start_debug_session.",
-                    "No session",
-                    ToolResult.ERROR_TOKEN_ESTIMATE,
-                    isError = true
-                )
+        val session = when (val r = requireSession(project, sessionId)) {
+            is SessionResolution.Found -> r.session
+            is SessionResolution.Failed -> return r.toolResult
+        }
 
+        return try {
             session.resume()
-            val content = "Session resumed. Session: ${resolvedId ?: "unknown"}"
+            val content = "Session resumed. Session: ${session.sessionName}"
             ToolResult(content, "Session resumed", TokenEstimator.estimate(content))
         } catch (e: Exception) {
             ToolResult("Error resuming debug session: ${e.message}", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
@@ -223,25 +290,23 @@ All actions accept optional session_id (defaults to active session).
     private suspend fun executePause(params: JsonObject, project: Project): ToolResult {
         val sessionId = params["session_id"]?.jsonPrimitive?.content
 
-        return try {
-            val resolvedId = sessionId ?: controller.getActiveSessionId()
-            val session = controller.getSession(sessionId)
-                ?: return ToolResult(
-                    "No debug session found${sessionId?.let { ": $it" } ?: ""}. Start one with start_debug_session.",
-                    "No session",
-                    ToolResult.ERROR_TOKEN_ESTIMATE,
-                    isError = true
-                )
+        val session = when (val r = requireSession(project, sessionId)) {
+            is SessionResolution.Found -> r.session
+            is SessionResolution.Failed -> return r.toolResult
+        }
 
+        return try {
             session.pause()
 
-            val id = resolvedId ?: "unknown"
-            val pauseEvent = controller.waitForPause(id, 5000)
+            val name = session.sessionName
+            // Try to get a registered ID for waitForPause; fall back to session name
+            val registeredId = sessionId ?: controller.getActiveSessionId() ?: name
+            val pauseEvent = controller.waitForPause(registeredId, 5000)
 
             val content = if (pauseEvent != null) {
-                "Session paused at ${pauseEvent.file ?: "unknown"}:${pauseEvent.line ?: "?"}\nSession: $id"
+                "Session paused at ${pauseEvent.file ?: "unknown"}:${pauseEvent.line ?: "?"}\nSession: $name"
             } else {
-                "Pause requested. Session: $id"
+                "Pause requested. Session: $name"
             }
 
             ToolResult(content, "Pause requested", TokenEstimator.estimate(content))
@@ -261,25 +326,12 @@ All actions accept optional session_id (defaults to active session).
             return ToolResult("Line number must be >= 1, got: $line", "Invalid line", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
 
+        val session = when (val r = requireSuspendedSession(project, sessionId)) {
+            is SessionResolution.Found -> r.session
+            is SessionResolution.Failed -> return r.toolResult
+        }
+
         return try {
-            val resolvedId = sessionId ?: controller.getActiveSessionId()
-            val session = controller.getSession(sessionId)
-                ?: return ToolResult(
-                    "No debug session found${sessionId?.let { ": $it" } ?: ""}. Start one with start_debug_session.",
-                    "No session",
-                    ToolResult.ERROR_TOKEN_ESTIMATE,
-                    isError = true
-                )
-
-            if (!session.isSuspended) {
-                return ToolResult(
-                    "Session is not suspended. Pause or wait for a breakpoint first.",
-                    "Not suspended",
-                    ToolResult.ERROR_TOKEN_ESTIMATE,
-                    isError = true
-                )
-            }
-
             val (absolutePath, pathError) = PathValidator.resolveAndValidate(filePath, project.basePath)
             if (pathError != null) return pathError
 
@@ -291,13 +343,15 @@ All actions accept optional session_id (defaults to active session).
 
             session.runToPosition(position, false)
 
-            val id = resolvedId ?: "unknown"
-            val pauseEvent = controller.waitForPause(id, 30000)
+            val name = session.sessionName
+            // Try to get a registered ID for waitForPause; fall back to session name
+            val registeredId = sessionId ?: controller.getActiveSessionId() ?: name
+            val pauseEvent = controller.waitForPause(registeredId, 30000)
 
             val content = if (pauseEvent != null) {
-                "Reached ${pauseEvent.file ?: "unknown"}:${pauseEvent.line ?: "?"}\nSession: $id"
+                "Reached ${pauseEvent.file ?: "unknown"}:${pauseEvent.line ?: "?"}\nSession: $name"
             } else {
-                "Run to cursor requested ($filePath:$line). Session did not pause within 30s.\nSession: $id"
+                "Run to cursor requested ($filePath:$line). Session did not pause within 30s.\nSession: $name"
             }
 
             ToolResult(content, "Run to cursor", TokenEstimator.estimate(content))
@@ -311,18 +365,14 @@ All actions accept optional session_id (defaults to active session).
     private suspend fun executeStop(params: JsonObject, project: Project): ToolResult {
         val sessionId = params["session_id"]?.jsonPrimitive?.content
 
-        return try {
-            val resolvedId = sessionId ?: controller.getActiveSessionId()
-            val session = controller.getSession(sessionId)
-                ?: return ToolResult(
-                    "No debug session found${sessionId?.let { ": $it" } ?: ""}. Start one with start_debug_session.",
-                    "No session",
-                    ToolResult.ERROR_TOKEN_ESTIMATE,
-                    isError = true
-                )
+        val session = when (val r = requireSession(project, sessionId)) {
+            is SessionResolution.Found -> r.session
+            is SessionResolution.Failed -> return r.toolResult
+        }
 
+        return try {
             session.stop()
-            val content = "Debug session stopped. Session: ${resolvedId ?: "unknown"}"
+            val content = "Debug session stopped. Session: ${session.sessionName}"
             ToolResult(content, "Debug session stopped", TokenEstimator.estimate(content))
         } catch (e: Exception) {
             ToolResult("Error stopping debug session: ${e.message}", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)

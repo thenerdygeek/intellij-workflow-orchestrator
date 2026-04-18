@@ -32,23 +32,28 @@ export interface ToolCall {
 
 // ── Plan types ──
 
-export type PlanStepStatus = 'pending' | 'running' | 'completed' | 'done' | 'failed' | 'skipped';
-
-export interface PlanStep {
-  id: string;
-  title: string;
-  description?: string;
-  status: PlanStepStatus;
-  comment?: string;
-  filePaths?: string[];
-}
-
 export interface Plan {
   title: string;
-  steps: PlanStep[];
   approved: boolean;
   markdown?: string;
   summary?: string;
+}
+
+// ── Task types ──
+
+export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'deleted';
+
+export interface Task {
+  id: string;
+  subject: string;
+  description: string;
+  activeForm?: string;
+  status: TaskStatus;
+  owner?: string;
+  blocks: string[];
+  blockedBy: string[];
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 // ── Question types ──
@@ -274,7 +279,7 @@ export type UiSay =
   | 'TOOL' | 'CHECKPOINT_CREATED' | 'ERROR' | 'PLAN_UPDATE'
   | 'ARTIFACT_RESULT' | 'SUBAGENT_STARTED' | 'SUBAGENT_PROGRESS'
   | 'SUBAGENT_COMPLETED' | 'STEERING_RECEIVED' | 'CONTEXT_COMPRESSED'
-  | 'MEMORY_SAVED' | 'ROLLBACK_PERFORMED';
+  | 'MEMORY_SAVED' | 'ROLLBACK_PERFORMED' | 'PLAN_APPROVED';
 
 export interface UiMessageModelInfo {
   modelId?: string;
@@ -332,6 +337,19 @@ export interface UiMessageToolCallData {
   isError?: boolean;
 }
 
+export type CompletionKind = 'done' | 'review' | 'heads_up';
+
+export interface CompletionData {
+  kind: CompletionKind;
+  result: string;
+  verifyHow?: string | null;
+  discovery?: string | null;
+}
+
+export interface UiMessagePlanApprovalData {
+  planMarkdown: string;
+}
+
 export interface UiMessage {
   ts: number;
   type: UiMessageType;
@@ -352,6 +370,8 @@ export interface UiMessage {
   questionData?: UiMessageQuestionData;
   subagentData?: UiMessageSubagentData;
   toolCallData?: UiMessageToolCallData;
+  completionData?: CompletionData;
+  planApprovalData?: UiMessagePlanApprovalData;
   /** Mentions attached to a USER_MESSAGE (ticket chips, file refs, etc.) */
   mentions?: Mention[];
 }

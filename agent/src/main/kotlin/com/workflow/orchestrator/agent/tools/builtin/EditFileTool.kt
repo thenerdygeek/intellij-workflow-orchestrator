@@ -29,11 +29,39 @@ class EditFileTool : AgentTool {
 
     companion object {
         /**
-         * Tracks the line range of the most recent edit per file (canonical path → IntRange).
+         * Tracks the line range of the most recent edit per file, scoped by session.
+         * Key format: `"sessionId:canonicalPath"` to prevent cross-session contamination.
          * Used by SemanticDiagnosticsTool to filter results to only LLM-introduced issues.
          * Cleared when diagnostics runs, so each edit→diagnostics cycle is fresh.
          */
         val lastEditLineRanges = java.util.concurrent.ConcurrentHashMap<String, IntRange>()
+
+        /**
+         * Current agent session ID. Set by AgentService before each task execution.
+         * Used to scope [lastEditLineRanges] entries so that session A's edit ranges
+         * do not leak into session B's diagnostics calls.
+         */
+        @Volatile
+        var currentSessionId: String? = null
+
+        /**
+         * Build a session-scoped key for [lastEditLineRanges].
+         * Falls back to bare canonical path when no session is active (e.g., tests).
+         */
+        fun scopedKey(canonicalPath: String): String {
+            val sid = currentSessionId
+            return if (sid != null) "$sid:$canonicalPath" else canonicalPath
+        }
+
+        /**
+         * Clear all edit ranges for the current session. Called when a new session starts
+         * to prevent stale data from a previous session leaking into the new one.
+         */
+        fun clearSessionRanges() {
+            val sid = currentSessionId ?: return
+            val prefix = "$sid:"
+            lastEditLineRanges.keys.removeAll { it.startsWith(prefix) }
+        }
     }
 
     override val name = "edit_file"
@@ -139,7 +167,7 @@ class EditFileTool : AgentTool {
                 startLine = content.substring(0, editStart).count { it == '\n' } + 1
                 val newLines = newString.count { it == '\n' } + 1
                 endLine = startLine + newLines - 1
-                lastEditLineRanges[java.io.File(resolvedPath).canonicalPath] = startLine..endLine
+                lastEditLineRanges[scopedKey(java.io.File(resolvedPath).canonicalPath)] = startLine..endLine
             }
         } catch (_: Exception) { /* tracking is best-effort */ }
 

@@ -92,7 +92,7 @@ describe('hydration round-trip', () => {
 
     const plan = chatState().plan;
     expect(plan).not.toBeNull();
-    expect(plan!.steps).toHaveLength(2);
+    // NOTE: Plan.steps removed in Phase 5 (task system port) — steps now come from TaskStore
     expect(plan!.approved).toBe(true);
   });
 

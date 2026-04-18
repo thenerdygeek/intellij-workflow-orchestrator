@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools.psi
 
+import com.workflow.orchestrator.agent.ide.LanguageProviderRegistry
 import com.workflow.orchestrator.agent.tools.WorkerType
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.*
@@ -8,7 +9,8 @@ import org.junit.jupiter.api.Test
 
 class TypeInferenceToolTest {
 
-    private val tool = TypeInferenceTool()
+    private val registry = LanguageProviderRegistry()
+    private val tool = TypeInferenceTool(registry)
 
     @Test
     fun `tool metadata is correct`() {

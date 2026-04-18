@@ -390,13 +390,14 @@ class AgentConfigLoaderTest {
         loader.loadFromDisk(tempDir)
 
         val bundled = loader.getAllCachedConfigs().filter { it.bundled }
-        assertEquals(10, bundled.size, "Should load 10 bundled agents")
+        assertEquals(11, bundled.size, "Should load 11 bundled agents")
 
         val names = bundled.map { it.name }.toSet()
         assertTrue("explorer" in names)
         assertTrue("general-purpose" in names)
         assertTrue("code-reviewer" in names)
         assertTrue("spring-boot-engineer" in names)
+        assertTrue("python-engineer" in names)
         assertTrue("devops-engineer" in names)
         assertTrue("security-auditor" in names)
     }
@@ -415,33 +416,86 @@ class AgentConfigLoaderTest {
     }
 
     @Test
-    fun `bundled agents have expected maxTurns`() {
+    fun `bundled agents expose deferred tools after 3-tier tool split`() {
         loader.loadFromDisk(tempDir)
 
         val springBoot = loader.getCachedConfig("spring-boot-engineer")
         assertNotNull(springBoot)
-        // Bundled configs currently have no max-turns (uses spawn default)
-        assertNull(springBoot!!.maxTurns, "spring-boot-engineer should have no max-turns (uses spawn default)")
+        // All bundled agents now have a deferred-tools section (Task 5 — 3-tier tool system)
+        assertTrue(springBoot!!.deferredTools.isNotEmpty(),
+            "spring-boot-engineer should have deferred tools after 3-tier split")
 
         val codeReviewer = loader.getCachedConfig("code-reviewer")
         assertNotNull(codeReviewer)
-        assertNull(codeReviewer!!.maxTurns, "code-reviewer should have no max-turns (uses spawn default)")
+        assertTrue(codeReviewer!!.deferredTools.isNotEmpty(),
+            "code-reviewer should have deferred tools after 3-tier split")
     }
 
     @Test
-    fun `parse config with max-turns field`() {
+    fun `parse config with deferred-tools field`() {
         val yaml = """
             ---
-            name: "Custom Agent"
-            description: "Test"
-            tools: "read_file"
-            max-turns: 15
+            name: "Test Agent"
+            description: "Desc"
+            tools: "read_file, search_code"
+            deferred-tools: "type_hierarchy, call_hierarchy"
             ---
             Prompt.
         """.trimIndent()
 
         val config = loader.parseAgentConfigFromYaml(yaml)
-        assertEquals(15, config.maxTurns)
+
+        assertEquals(listOf("read_file", "search_code"), config.tools)
+        assertEquals(listOf("type_hierarchy", "call_hierarchy"), config.deferredTools)
+    }
+
+    @Test
+    fun `parse config without deferred-tools defaults to empty list`() {
+        val yaml = """
+            ---
+            name: "Test Agent"
+            description: "Desc"
+            tools: "read_file"
+            ---
+            Prompt.
+        """.trimIndent()
+
+        val config = loader.parseAgentConfigFromYaml(yaml)
+        assertEquals(emptyList<String>(), config.deferredTools)
+    }
+
+    @Test
+    fun `parse config with max-turns field silently ignores it`() {
+        val yaml = """
+            ---
+            name: "Test Agent"
+            description: "Desc"
+            tools: "read_file"
+            max-turns: 30
+            ---
+            Prompt.
+        """.trimIndent()
+
+        val config = loader.parseAgentConfigFromYaml(yaml)
+        assertEquals(listOf("read_file"), config.tools)
+        assertEquals(emptyList<String>(), config.deferredTools)
+        // maxTurns no longer exists on AgentConfig — this is a compile-time guarantee
+    }
+
+    @Test
+    fun `parse config with inline list syntax for deferred-tools`() {
+        val yaml = """
+            ---
+            name: "Test Agent"
+            description: "Desc"
+            tools: "read_file, search_code, glob_files"
+            deferred-tools: "db_schema, db_query, db_explain"
+            ---
+            Prompt.
+        """.trimIndent()
+
+        val config = loader.parseAgentConfigFromYaml(yaml)
+        assertEquals(listOf("db_schema", "db_query", "db_explain"), config.deferredTools)
     }
 
     // ── Helpers ───────────────────────────────────────────────────

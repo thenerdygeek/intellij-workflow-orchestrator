@@ -84,7 +84,11 @@ class UseSkillTool : AgentTool {
             )
         }
 
-        val skillContent = InstructionLoader.getSkillContent(skillName, availableSkills)
+        // Get IdeContext for skill variant selection
+        val ideContext = try {
+            project.getService(com.workflow.orchestrator.agent.AgentService::class.java)?.ideContext
+        } catch (_: Exception) { null }
+        val skillContent = InstructionLoader.getSkillContent(skillName, availableSkills, ideContext)
 
         if (skillContent == null) {
             // Port of Cline: list available skill names in error message
@@ -106,14 +110,12 @@ ${skillContent.instructions}
 ---
 IMPORTANT: The skill is now loaded. Do NOT call use_skill again for this task. Simply follow the instructions above to complete the user's request. You may access other files in the skill directory at: $skillDirPath"""
 
-        return ToolResult(
+        return ToolResult.skillActivation(
             content = response,
             summary = "Activated skill: $skillName",
             tokenEstimate = response.length / 4,
-            // Our addition: flags for compaction survival (not in Cline)
-            isSkillActivation = true,
-            activatedSkillName = skillName,
-            activatedSkillContent = skillContent.instructions
+            skillName = skillName,
+            skillContent = skillContent.instructions
         )
     }
 }

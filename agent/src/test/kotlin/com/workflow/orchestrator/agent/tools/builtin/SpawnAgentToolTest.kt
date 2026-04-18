@@ -6,6 +6,7 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
+import com.workflow.orchestrator.agent.tools.subagent.AgentConfig
 import com.workflow.orchestrator.agent.tools.subagent.AgentConfigLoader
 import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
 import com.workflow.orchestrator.core.ai.LlmBrain
@@ -63,12 +64,13 @@ class SpawnAgentToolTest {
     /** Build a registry with representative tools from all categories. */
     private fun buildTestRegistry(): ToolRegistry {
         val reg = ToolRegistry()
-        // Builtin read tools (attempt_completion uses real implementation for isCompletion=true)
+        // Builtin read tools (AttemptCompletionTool + TaskReportTool use real implementations)
         for (name in listOf(
             "read_file", "search_code", "glob_files", "think",
             "project_context", "current_time", "ask_followup_question", "ask_user_input"
         )) reg.register(stubTool(name))
         reg.register(AttemptCompletionTool())
+        reg.register(TaskReportTool())
 
         // Builtin write tools
         for (name in listOf(
@@ -87,10 +89,7 @@ class SpawnAgentToolTest {
 
         // VCS tools
         for (name in listOf(
-            "git_status", "git_diff", "git_log", "git_blame",
-            "git_show_file", "git_file_history", "git_show_commit",
-            "git_branches", "changelist_shelve", "git_stash_list",
-            "git_merge_base", "git"
+            "changelist_shelve"
         )) reg.register(stubTool(name))
 
         // IDE tools
@@ -260,25 +259,128 @@ class SpawnAgentToolTest {
         }
     }
 
-    // ---- Max Iterations Clamping ----
+    // ---- Max Iterations ----
 
     @Nested
     inner class MaxIterationsTests {
 
         @Test
-        fun `max_iterations below minimum is clamped to 5`() {
-            // We can't easily test the clamped value without running the full loop,
-            // but we can verify the constants are correct
-            assertEquals(5, SpawnAgentTool.MIN_ITERATIONS)
-            assertEquals(100, SpawnAgentTool.MAX_ITERATIONS)
+        fun `DEFAULT_MAX_ITERATIONS is 200`() {
+            assertEquals(200, SpawnAgentTool.DEFAULT_MAX_ITERATIONS)
+        }
+    }
+
+    // ---- Schema and Tiered Resolution ----
+
+    @Nested
+    inner class TieredResolutionTests {
+
+        @Test
+        fun `agent tool schema does not contain max_iterations parameter`() {
+            val tool = SpawnAgentTool(
+                brainProvider = { mockk(relaxed = true) },
+                toolRegistry = mockk(relaxed = true),
+                project = mockk(relaxed = true),
+            )
+
+            assertFalse(
+                tool.parameters.properties.containsKey("max_iterations"),
+                "max_iterations must be removed from the agent tool schema"
+            )
         }
 
         @Test
-        fun `coerceIn clamps correctly`() {
-            assertEquals(5, 1.coerceIn(SpawnAgentTool.MIN_ITERATIONS, SpawnAgentTool.MAX_ITERATIONS))
-            assertEquals(50, 50.coerceIn(SpawnAgentTool.MIN_ITERATIONS, SpawnAgentTool.MAX_ITERATIONS))
-            assertEquals(100, 999.coerceIn(SpawnAgentTool.MIN_ITERATIONS, SpawnAgentTool.MAX_ITERATIONS))
-            assertEquals(5, (-10).coerceIn(SpawnAgentTool.MIN_ITERATIONS, SpawnAgentTool.MAX_ITERATIONS))
+        fun `resolveConfigToolsTiered returns core and deferred maps separately`() {
+            val registry = ToolRegistry()
+            registry.registerCore(stubTool("read_file"))
+            registry.registerCore(stubTool("search_code"))
+            registry.registerCore(TaskReportTool())
+            registry.registerDeferred(stubTool("type_hierarchy"), "Code Intelligence")
+            registry.registerDeferred(stubTool("call_hierarchy"), "Code Intelligence")
+
+            val config = AgentConfig(
+                name = "test",
+                description = "test",
+                tools = listOf("read_file", "search_code"),
+                deferredTools = listOf("type_hierarchy", "call_hierarchy"),
+                skills = null,
+                modelId = null,
+                systemPrompt = "Test prompt",
+            )
+
+            val tool = SpawnAgentTool(
+                brainProvider = { mockk(relaxed = true) },
+                toolRegistry = registry,
+                project = mockk(relaxed = true),
+            )
+
+            val (core, deferred) = tool.resolveConfigToolsTiered(config)
+
+            assertTrue(core.containsKey("read_file"))
+            assertTrue(core.containsKey("search_code"))
+            assertTrue(core.containsKey("task_report"))  // always injected for sub-agents
+            assertFalse(core.containsKey("attempt_completion"), "attempt_completion must NOT be injected into sub-agents")
+            assertFalse(core.containsKey("type_hierarchy"))
+
+            assertEquals("Code Intelligence", deferred["type_hierarchy"]?.second)
+            assertEquals("Code Intelligence", deferred["call_hierarchy"]?.second)
+        }
+
+        @Test
+        fun `resolveConfigToolsTiered excludes agent tool from both core and deferred`() {
+            val registry = ToolRegistry()
+            registry.registerCore(stubTool("agent"))
+            registry.registerCore(stubTool("read_file"))
+            registry.registerCore(stubTool("attempt_completion"))
+
+            val config = AgentConfig(
+                name = "test",
+                description = "test",
+                tools = listOf("agent", "read_file"),
+                deferredTools = listOf("agent"),
+                skills = null,
+                modelId = null,
+                systemPrompt = "Test prompt",
+            )
+
+            val tool = SpawnAgentTool(
+                brainProvider = { mockk(relaxed = true) },
+                toolRegistry = registry,
+                project = mockk(relaxed = true),
+            )
+
+            val (core, deferred) = tool.resolveConfigToolsTiered(config)
+
+            assertFalse(core.containsKey("agent"))
+            assertFalse(deferred.containsKey("agent"))
+        }
+
+        @Test
+        fun `unknown deferred tool names are silently dropped`() {
+            val registry = ToolRegistry()
+            registry.registerCore(stubTool("read_file"))
+            registry.registerCore(stubTool("attempt_completion"))
+
+            val config = AgentConfig(
+                name = "test",
+                description = "test",
+                tools = listOf("read_file"),
+                deferredTools = listOf("nonexistent_tool"),
+                skills = null,
+                modelId = null,
+                systemPrompt = "Test prompt",
+            )
+
+            val tool = SpawnAgentTool(
+                brainProvider = { mockk(relaxed = true) },
+                toolRegistry = registry,
+                project = mockk(relaxed = true),
+            )
+
+            val (_, deferred) = tool.resolveConfigToolsTiered(config)
+
+            assertFalse(deferred.containsKey("nonexistent_tool"))
+            assertEquals(0, deferred.size)
         }
     }
 
@@ -294,7 +396,7 @@ class SpawnAgentToolTest {
                     "read_file" to """{"path":"src/main.kt"}"""
                 )),
                 ApiResult.Success(toolCallResponse(
-                    "attempt_completion" to """{"result":"Found the bug in line 42."}"""
+                    "task_report" to """{"summary":"Found the bug in line 42.","findings":"NPE in main.kt:42.","files":"src/main.kt"}"""
                 ))
             ))
 
@@ -376,7 +478,7 @@ class SpawnAgentToolTest {
                     capturedMessages = messages.toList()
                     // Return completion immediately
                     return ApiResult.Success(toolCallResponse(
-                        "attempt_completion" to """{"result":"Done."}"""
+                        "task_report" to """{"summary":"Done."}"""
                     ))
                 }
 
@@ -439,7 +541,7 @@ class SpawnAgentToolTest {
                 ): ApiResult<ChatCompletionResponse> {
                     capturedToolNames = tools?.map { it.function.name }
                     return ApiResult.Success(toolCallResponse(
-                        "attempt_completion" to """{"result":"Done."}"""
+                        "task_report" to """{"summary":"Done."}"""
                     ))
                 }
 
@@ -494,7 +596,7 @@ class SpawnAgentToolTest {
                 ): ApiResult<ChatCompletionResponse> {
                     capturedToolNames = tools?.map { it.function.name }
                     return ApiResult.Success(toolCallResponse(
-                        "attempt_completion" to """{"result":"Done."}"""
+                        "task_report" to """{"summary":"Done."}"""
                     ))
                 }
 
@@ -589,7 +691,7 @@ class SpawnAgentToolTest {
                     brainCallCount++
                     SequenceBrain(listOf(
                         ApiResult.Success(toolCallResponse(
-                            "attempt_completion" to """{"result":"Research result ${brainCallCount}."}"""
+                            "task_report" to """{"summary":"Research result ${brainCallCount}."}"""
                         ))
                     ))
                 },
@@ -621,7 +723,7 @@ class SpawnAgentToolTest {
                 brainProvider = {
                     SequenceBrain(listOf(
                         ApiResult.Success(toolCallResponse(
-                            "attempt_completion" to """{"result":"Done implementing."}"""
+                            "task_report" to """{"summary":"Done implementing."}"""
                         ))
                     ))
                 },
@@ -661,7 +763,7 @@ class SpawnAgentToolTest {
                     brainCallCount++
                     SequenceBrain(listOf(
                         ApiResult.Success(toolCallResponse(
-                            "attempt_completion" to """{"result":"Result $brainCallCount."}"""
+                            "task_report" to """{"summary":"Result $brainCallCount."}"""
                         ))
                     ))
                 },
@@ -777,13 +879,11 @@ class SpawnAgentToolTest {
             description: String,
             tools: String,
             systemPrompt: String,
-            maxTurns: Int? = null
         ): String = buildString {
             appendLine("---")
             appendLine("name: \"$name\"")
             appendLine("description: \"$description\"")
             appendLine("tools: $tools")
-            if (maxTurns != null) appendLine("max-turns: $maxTurns")
             appendLine("---")
             appendLine(systemPrompt)
         }
@@ -855,7 +955,7 @@ class SpawnAgentToolTest {
                     ): ApiResult<ChatCompletionResponse> {
                         capturedMessages = messages.toList()
                         return ApiResult.Success(toolCallResponse(
-                            "attempt_completion" to """{"result":"Done."}"""
+                            "task_report" to """{"summary":"Done."}"""
                         ))
                     }
 
@@ -926,7 +1026,7 @@ class SpawnAgentToolTest {
                     ): ApiResult<ChatCompletionResponse> {
                         capturedToolNames = tools?.map { it.function.name }
                         return ApiResult.Success(toolCallResponse(
-                            "attempt_completion" to """{"result":"Done."}"""
+                            "task_report" to """{"summary":"Done."}"""
                         ))
                     }
 
@@ -952,11 +1052,13 @@ class SpawnAgentToolTest {
 
                 assertFalse(result.isError, "Should succeed: ${result.content}")
                 assertNotNull(capturedToolNames, "Brain should have received tool definitions")
+                // attempt_completion is silently dropped from sub-agent configs; task_report replaces it.
                 assertEquals(
-                    setOf("read_file", "search_code", "think", "attempt_completion"),
+                    setOf("read_file", "search_code", "think", "task_report", "tool_search"),
                     capturedToolNames!!.toSet(),
-                    "Should only have config-specified tools"
+                    "Sub-agent should have config-specified tools (attempt_completion dropped), task_report injected, plus auto-injected tool_search"
                 )
+                assertFalse("attempt_completion" in capturedToolNames!!, "attempt_completion must NOT appear in sub-agent schema")
                 assertFalse("edit_file" in capturedToolNames!!, "Should NOT have edit_file")
                 assertFalse("run_command" in capturedToolNames!!, "Should NOT have run_command")
                 assertFalse("agent" in capturedToolNames!!, "agent should never be included")
@@ -981,7 +1083,7 @@ class SpawnAgentToolTest {
                     brainProvider = {
                         SequenceBrain(listOf(
                             ApiResult.Success(toolCallResponse(
-                                "attempt_completion" to """{"result":"Wrote files."}"""
+                                "task_report" to """{"summary":"Wrote files."}"""
                             ))
                         ))
                     },
@@ -1039,7 +1141,7 @@ class SpawnAgentToolTest {
                     ): ApiResult<ChatCompletionResponse> {
                         capturedToolNames = tools?.map { it.function.name }
                         return ApiResult.Success(toolCallResponse(
-                            "attempt_completion" to """{"result":"Analysis done."}"""
+                            "task_report" to """{"summary":"Analysis done."}"""
                         ))
                     }
 
@@ -1085,7 +1187,7 @@ class SpawnAgentToolTest {
                     brainProvider = {
                         SequenceBrain(listOf(
                             ApiResult.Success(toolCallResponse(
-                                "attempt_completion" to """{"result":"Done via default."}"""
+                                "task_report" to """{"summary":"Done via default."}"""
                             ))
                         ))
                     },
@@ -1111,15 +1213,16 @@ class SpawnAgentToolTest {
         }
 
         @Test
-        fun `config max-turns is used when set`() = runTest {
+        fun `config with max-turns field in yaml is silently ignored and agent runs to completion`() = runTest {
             val tempDir = createTempDirectory("agent-type-test-")
             try {
+                // max-turns is intentionally removed from AgentConfig; the YAML field is silently
+                // ignored during parsing and sub-agents always run until completion.
                 writeConfigFile(tempDir, "quick-agent.md", makeConfig(
                     name = "quick-agent",
-                    description = "Quick agent with limited turns",
+                    description = "Quick agent",
                     tools = "read_file, think, attempt_completion",
-                    systemPrompt = "You are a quick agent.",
-                    maxTurns = 8
+                    systemPrompt = "You are a quick agent."
                 ))
                 configLoader.loadFromDisk(tempDir)
 
@@ -1127,7 +1230,7 @@ class SpawnAgentToolTest {
                     brainProvider = {
                         SequenceBrain(listOf(
                             ApiResult.Success(toolCallResponse(
-                                "attempt_completion" to """{"result":"Quick result."}"""
+                                "task_report" to """{"summary":"Quick result."}"""
                             ))
                         ))
                     },
@@ -1145,8 +1248,7 @@ class SpawnAgentToolTest {
                     project
                 )
 
-                // If config.maxTurns is used correctly, execution succeeds with the config's max
-                assertFalse(result.isError, "Should succeed with config max-turns: ${result.content}")
+                assertFalse(result.isError, "Should succeed: ${result.content}")
                 assertTrue(result.content.contains("Quick result"), "Should contain completion result")
             } finally {
                 tempDir.toFile().deleteRecursively()
@@ -1174,7 +1276,7 @@ class SpawnAgentToolTest {
                     override suspend fun chat(messages: List<ChatMessage>, tools: List<ToolDefinition>?, maxTokens: Int?, toolChoice: JsonElement?) = throw UnsupportedOperationException()
                     override suspend fun chatStream(messages: List<ChatMessage>, tools: List<ToolDefinition>?, maxTokens: Int?, onChunk: suspend (StreamChunk) -> Unit): ApiResult<ChatCompletionResponse> {
                         capturedToolNames = tools?.map { it.function.name }
-                        return ApiResult.Success(toolCallResponse("attempt_completion" to """{"result":"Done."}"""))
+                        return ApiResult.Success(toolCallResponse("task_report" to """{"summary":"Done."}"""))
                     }
                     override fun estimateTokens(text: String) = text.length / 4
                     override fun cancelActiveRequest() {}
@@ -1205,7 +1307,7 @@ class SpawnAgentToolTest {
         }
 
         @Test
-        fun `agent_type with no resolvable config tools still gets attempt_completion`() = runTest {
+        fun `agent_type with no resolvable config tools still gets task_report`() = runTest {
             val tempDir = createTempDirectory("agent-config-test")
             try {
                 tempDir.resolve("broken-agent.md").toFile().writeText("""
@@ -1225,7 +1327,7 @@ class SpawnAgentToolTest {
                     override suspend fun chat(messages: List<ChatMessage>, tools: List<ToolDefinition>?, maxTokens: Int?, toolChoice: JsonElement?) = throw UnsupportedOperationException()
                     override suspend fun chatStream(messages: List<ChatMessage>, tools: List<ToolDefinition>?, maxTokens: Int?, onChunk: suspend (StreamChunk) -> Unit): ApiResult<ChatCompletionResponse> {
                         capturedToolNames = tools?.map { it.function.name }
-                        return ApiResult.Success(toolCallResponse("attempt_completion" to """{"result":"Done."}"""))
+                        return ApiResult.Success(toolCallResponse("task_report" to """{"summary":"Done."}"""))
                     }
                     override fun estimateTokens(text: String) = text.length / 4
                     override fun cancelActiveRequest() {}
@@ -1247,13 +1349,13 @@ class SpawnAgentToolTest {
                     project
                 )
 
-                // Even with no config tools resolving, attempt_completion is auto-added
-                assertFalse(result.isError, "Should succeed since attempt_completion is always available: ${result.content}")
+                // Even with no config tools resolving, task_report + tool_search are auto-added
+                assertFalse(result.isError, "Should succeed since task_report is always available: ${result.content}")
                 assertNotNull(capturedToolNames, "Brain should have been called")
                 assertEquals(
-                    listOf("attempt_completion"),
-                    capturedToolNames,
-                    "Only attempt_completion should be available when no config tools resolve"
+                    setOf("task_report", "tool_search"),
+                    capturedToolNames!!.toSet(),
+                    "task_report and tool_search should be available when no config tools resolve"
                 )
             } finally {
                 tempDir.toFile().deleteRecursively()

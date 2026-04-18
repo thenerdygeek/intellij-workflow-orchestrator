@@ -3,6 +3,10 @@ package com.workflow.orchestrator.agent.tools
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
@@ -175,11 +179,11 @@ class ToolRegistryTest {
 
         @Test
         fun `searchDeferred respects maxResults`() {
-            registry.registerDeferred(FakeAgentTool("git_blame", description = "Git blame info"))
-            registry.registerDeferred(FakeAgentTool("git_branches", description = "Git branch list"))
-            registry.registerDeferred(FakeAgentTool("git_stash_list", description = "Git stash entries"))
+            registry.registerDeferred(FakeAgentTool("tool_alpha", description = "Alpha tool description"))
+            registry.registerDeferred(FakeAgentTool("tool_beta", description = "Beta tool description"))
+            registry.registerDeferred(FakeAgentTool("tool_gamma", description = "Gamma tool description"))
 
-            val results = registry.searchDeferred("git", maxResults = 2)
+            val results = registry.searchDeferred("tool_", maxResults = 2)
             assertEquals(2, results.size)
         }
 
@@ -348,22 +352,22 @@ class ToolRegistryTest {
         fun `groups tools by category with descriptions`() {
             registry.registerDeferred(FakeAgentTool("find_implementations", description = "Find all implementations of an interface"), "Code Intelligence")
             registry.registerDeferred(FakeAgentTool("type_hierarchy", description = "Show supertype/subtype hierarchy"), "Code Intelligence")
-            registry.registerDeferred(FakeAgentTool("git_blame", description = "Show line-by-line blame info"), "Git")
+            registry.registerDeferred(FakeAgentTool("tool_alpha", description = "Alpha tool description"), "Utilities")
 
             val grouped = registry.getDeferredCatalogGroupedWithDescriptions()
 
             assertEquals(2, grouped.size)
             assertTrue(grouped.containsKey("Code Intelligence"))
-            assertTrue(grouped.containsKey("Git"))
+            assertTrue(grouped.containsKey("Utilities"))
 
             val codeIntel = grouped["Code Intelligence"]!!
             assertEquals(2, codeIntel.size)
             assertEquals("find_implementations" to "Find all implementations of an interface", codeIntel[0])
             assertEquals("type_hierarchy" to "Show supertype/subtype hierarchy", codeIntel[1])
 
-            val git = grouped["Git"]!!
-            assertEquals(1, git.size)
-            assertEquals("git_blame" to "Show line-by-line blame info", git[0])
+            val utilities = grouped["Utilities"]!!
+            assertEquals(1, utilities.size)
+            assertEquals("tool_alpha" to "Alpha tool description", utilities[0])
         }
 
         @Test
@@ -413,16 +417,16 @@ class ToolRegistryTest {
         fun `allToolNames includes core, activeDeferred, and deferred tools`() {
             registry.registerCore(FakeAgentTool("read_file"))
             registry.registerCore(FakeAgentTool("edit_file"))
-            registry.registerDeferred(FakeAgentTool("git_show_commit"))
+            registry.registerDeferred(FakeAgentTool("tool_delta"))
             registry.registerDeferred(FakeAgentTool("jira"))
             registry.activateDeferred("jira") // moves to activeDeferred
 
             val names = registry.allToolNames()
             assertEquals(4, names.size)
-            assertTrue(names.contains("read_file"))     // core
-            assertTrue(names.contains("edit_file"))      // core
-            assertTrue(names.contains("jira"))           // activeDeferred
-            assertTrue(names.contains("git_show_commit")) // still deferred
+            assertTrue(names.contains("read_file"))   // core
+            assertTrue(names.contains("edit_file"))   // core
+            assertTrue(names.contains("jira"))        // activeDeferred
+            assertTrue(names.contains("tool_delta"))  // still deferred
         }
 
         @Test
@@ -437,7 +441,7 @@ class ToolRegistryTest {
                 parameters = FunctionParameters(properties = mapOf("path" to ParameterProperty(type = "string", description = "File path")))
             ))
             registry.registerDeferred(FakeAgentTool(
-                "git_show_commit",
+                "tool_delta",
                 parameters = FunctionParameters(properties = mapOf(
                     "commit" to ParameterProperty(type = "string", description = "Commit hash"),
                     "include_diff" to ParameterProperty(type = "boolean", description = "Include diff")
@@ -479,7 +483,7 @@ class ToolRegistryTest {
             // registry.get() resolves tools for execution.
             // These MUST agree: every name in allToolNames must be resolvable by get().
             registry.registerCore(FakeAgentTool("read_file"))
-            registry.registerDeferred(FakeAgentTool("git_show_commit"))
+            registry.registerDeferred(FakeAgentTool("tool_delta"))
             registry.registerDeferred(FakeAgentTool("jira"))
             registry.activateDeferred("jira")
 
@@ -504,6 +508,117 @@ class ToolRegistryTest {
             assertEquals(2, registry.coreCount())
             assertEquals(1, registry.deferredCount()) // sonar only
             assertEquals(1, registry.activeDeferredCount()) // jira
+        }
+    }
+
+    @Nested
+    inner class ConcurrencyTests {
+
+        @Test
+        fun `concurrent activation of 100 deferred tools loses none`() = runBlocking {
+            val toolCount = 100
+            // Register 100 deferred tools
+            for (i in 0 until toolCount) {
+                registry.registerDeferred(FakeAgentTool("tool_$i"))
+            }
+            assertEquals(toolCount, registry.deferredCount())
+
+            // Activate all 100 from concurrent coroutines on the default dispatcher
+            val results = (0 until toolCount).map { i ->
+                async(Dispatchers.Default) {
+                    registry.activateDeferred("tool_$i")
+                }
+            }.awaitAll()
+
+            // Every activation should have returned a non-null tool
+            val activated = results.filterNotNull()
+            assertEquals(toolCount, activated.size, "Expected all $toolCount tools to be activated")
+
+            // All should now be in active-deferred, none left in deferred
+            assertEquals(toolCount, registry.activeDeferredCount())
+            assertEquals(0, registry.deferredCount())
+
+            // All tools should be accessible via get()
+            for (i in 0 until toolCount) {
+                assertNotNull(registry.get("tool_$i"), "tool_$i should be accessible via get()")
+            }
+
+            // All tools should appear in getActiveTools()
+            val activeTools = registry.getActiveTools()
+            assertEquals(toolCount, activeTools.size)
+        }
+
+        @Test
+        fun `concurrent registration does not lose tools`() = runBlocking {
+            val toolCount = 100
+            // Register 100 core tools concurrently
+            val coreJobs = (0 until toolCount).map { i ->
+                async(Dispatchers.Default) {
+                    registry.registerCore(FakeAgentTool("core_$i"))
+                }
+            }
+            // Register 100 deferred tools concurrently
+            val deferredJobs = (0 until toolCount).map { i ->
+                async(Dispatchers.Default) {
+                    registry.registerDeferred(FakeAgentTool("deferred_$i"), "Cat_${i % 5}")
+                }
+            }
+            coreJobs.awaitAll()
+            deferredJobs.awaitAll()
+
+            assertEquals(toolCount, registry.coreCount())
+            assertEquals(toolCount, registry.deferredCount())
+            assertEquals(toolCount * 2, registry.count())
+        }
+
+        @Test
+        fun `concurrent activation of same tool returns exactly one non-null`() = runBlocking {
+            registry.registerDeferred(FakeAgentTool("shared_tool"))
+
+            // 50 coroutines all try to activate the same tool name
+            val results = (0 until 50).map {
+                async(Dispatchers.Default) {
+                    registry.activateDeferred("shared_tool")
+                }
+            }.awaitAll()
+
+            // Exactly one coroutine should get the tool from deferredTools.remove()
+            // The rest should get it from the activeDeferred containsKey check
+            val nonNullResults = results.filterNotNull()
+            assertEquals(50, nonNullResults.size, "All callers should get a non-null result")
+
+            // The tool must end up in active-deferred, not lost
+            assertEquals(1, registry.activeDeferredCount())
+            assertEquals(0, registry.deferredCount())
+            assertNotNull(registry.get("shared_tool"))
+        }
+
+        @Test
+        fun `concurrent resetActiveDeferred does not lose tools`() = runBlocking {
+            val toolCount = 50
+            for (i in 0 until toolCount) {
+                registry.registerDeferred(FakeAgentTool("tool_$i"))
+            }
+            // Activate all
+            for (i in 0 until toolCount) {
+                registry.activateDeferred("tool_$i")
+            }
+            assertEquals(toolCount, registry.activeDeferredCount())
+            assertEquals(0, registry.deferredCount())
+
+            // Reset from multiple concurrent coroutines — should not throw or lose tools
+            val jobs = (0 until 10).map {
+                async(Dispatchers.Default) {
+                    registry.resetActiveDeferred()
+                }
+            }
+            jobs.awaitAll()
+
+            // After all resets, active deferred should be empty and
+            // all tools should be back in deferred (or still there from earlier resets)
+            assertEquals(0, registry.activeDeferredCount())
+            assertEquals(toolCount, registry.deferredCount())
+            assertEquals(toolCount, registry.count())
         }
     }
 }

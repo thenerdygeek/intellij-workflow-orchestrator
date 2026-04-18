@@ -30,6 +30,14 @@ class OpenAiCompatBrain(
     override var paramNameSet: Set<String> = emptySet()
 ) : LlmBrain {
 
+    /**
+     * Sampling temperature forwarded to every chat/chatStream call.
+     * Normally 0.0 (deterministic). Set to 1.0 by AgentLoop before retrying
+     * after an empty response — breaks degenerate zero-temperature sampling.
+     * Reset to 0.0 by AgentLoop when the model returns a real tool call.
+     */
+    override var temperature: Double = 0.0
+
     private val client = SourcegraphChatClient(
         baseUrl = sourcegraphUrl,
         tokenProvider = tokenProvider,
@@ -52,6 +60,7 @@ class OpenAiCompatBrain(
             tools = null,  // XML mode always on: tools defined in system prompt
             maxTokens = maxTokens,
             toolChoice = toolChoice, // SourcegraphChatClient will ignore this
+            temperature = temperature,
             knownToolNames = toolNameSet,
             knownParamNames = paramNameSet
         )
@@ -67,6 +76,7 @@ class OpenAiCompatBrain(
             messages = messages,
             tools = null,  // XML mode always on: tools defined in system prompt
             maxTokens = maxTokens,
+            temperature = temperature,
             onChunk = onChunk,
             knownToolNames = toolNameSet,
             knownParamNames = paramNameSet

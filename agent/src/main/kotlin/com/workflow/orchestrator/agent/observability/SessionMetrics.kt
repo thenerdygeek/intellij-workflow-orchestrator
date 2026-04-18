@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.observability
 
+import com.workflow.orchestrator.agent.tools.CompletionKind
 import kotlinx.serialization.Serializable
 
 /**
@@ -39,6 +40,7 @@ class SessionMetrics {
     private val toolRecords = mutableListOf<ToolRecord>()
     private val apiRecords = mutableListOf<ApiRecord>()
     private val compactionRecords = mutableListOf<CompactionRecord>()
+    private val completionKindCounts = mutableMapOf<String, Int>()
 
     // ── Public recording methods ─────────────────────────────────────────────
 
@@ -55,6 +57,12 @@ class SessionMetrics {
     @Synchronized
     fun recordCompaction(tokensBefore: Int, tokensAfter: Int) {
         compactionRecords.add(CompactionRecord(tokensBefore, tokensAfter))
+    }
+
+    @Synchronized
+    fun recordCompletion(kind: CompletionKind) {
+        val key = kind.name.lowercase()
+        completionKindCounts[key] = (completionKindCounts[key] ?: 0) + 1
     }
 
     /**
@@ -90,7 +98,8 @@ class SessionMetrics {
             avgApiLatencyMs = avgApiLatency,
             totalPromptTokens = apiRecords.sumOf { it.promptTokens },
             totalCompletionTokens = apiRecords.sumOf { it.completionTokens },
-            compactionCount = compactionRecords.size
+            compactionCount = compactionRecords.size,
+            completionKindCounts = completionKindCounts.toMap()
         )
     }
 
@@ -114,6 +123,7 @@ class SessionMetrics {
         val avgApiLatencyMs: Long = 0,
         val totalPromptTokens: Int = 0,
         val totalCompletionTokens: Int = 0,
-        val compactionCount: Int = 0
+        val compactionCount: Int = 0,
+        val completionKindCounts: Map<String, Int> = emptyMap()
     )
 }

@@ -9,6 +9,8 @@ import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.process.OutputCollector
+import com.workflow.orchestrator.agent.tools.process.ShellResolver
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -90,7 +92,7 @@ class SendStdinTool : AgentTool {
 
         // Step 5: Password detection — check last output
         val lastOutput = managed.outputLines.toList().joinToString("")
-        if (RunCommandTool.isLikelyPasswordPrompt(lastOutput)) {
+        if (ShellResolver.isLikelyPasswordPrompt(lastOutput)) {
             return ToolResult(
                 "Error: The process appears to be waiting for a password, token, or secret. " +
                     "Use ask_user_input instead of send_stdin for credential prompts.",
@@ -131,7 +133,7 @@ class SendStdinTool : AgentTool {
             // Priority 1: process exited
             if (!managed.process.isAlive) {
                 val newOutput = ProcessToolHelpers.collectNewOutput(managed, outputSizeBeforeStdin)
-                val stripped = RunCommandTool.stripAnsi(newOutput)
+                val stripped = OutputCollector.stripAnsi(newOutput)
                 val exitCode = try { managed.process.exitValue() } catch (_: Exception) { -1 }
                 ProcessRegistry.unregister(processId)
                 val content = "Exit code: $exitCode\n$stripped"
@@ -153,7 +155,7 @@ class SendStdinTool : AgentTool {
             // Priority 2: max wait after stdin exceeded (60s)
             if (now - stdinSentAt > MAX_WAIT_AFTER_STDIN_MS) {
                 val newOutput = ProcessToolHelpers.collectNewOutput(managed, outputSizeBeforeStdin)
-                val stripped = RunCommandTool.stripAnsi(newOutput)
+                val stripped = OutputCollector.stripAnsi(newOutput)
                 managed.idleSignaledAt.set(now)
                 val content = ProcessToolHelpers.buildIdleContent(processId, stripped, now - stdinSentAt, IDLE_LABEL)
                 return ToolResult(
@@ -171,7 +173,7 @@ class SendStdinTool : AgentTool {
             // and output has stopped for IDLE_AFTER_STDIN_MS
             if (timeSinceStdin > 500 && lastCheckedSize > outputSizeBeforeStdin && timeSinceLastOutput >= IDLE_AFTER_STDIN_MS) {
                 val newOutput = ProcessToolHelpers.collectNewOutput(managed, outputSizeBeforeStdin)
-                val stripped = RunCommandTool.stripAnsi(newOutput)
+                val stripped = OutputCollector.stripAnsi(newOutput)
                 managed.idleSignaledAt.set(now)
                 val content = ProcessToolHelpers.buildIdleContent(processId, stripped, timeSinceLastOutput, IDLE_LABEL)
                 return ToolResult(

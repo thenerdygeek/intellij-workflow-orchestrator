@@ -385,8 +385,8 @@ class SourcegraphChatClient(
                                     delta.content?.let { contentBuilder.append(it) }
                                     delta.toolCalls?.forEach { tc ->
                                         val builder = toolCallBuilders.getOrPut(tc.index) { ToolCallBuilder() }
-                                        tc.id?.let { builder.id = it }
-                                        tc.function?.name?.let { builder.name = it }
+                                        tc.id?.let { builder.id.append(it) }
+                                        tc.function?.name?.let { builder.name.append(it) }
                                         tc.function?.arguments?.let { builder.arguments.append(it) }
                                         log.debug("[Agent:API] SSE tool delta: idx=${tc.index} id=${tc.id} name=${tc.function?.name} args=${tc.function?.arguments?.take(50)}")
                                     }
@@ -692,11 +692,14 @@ class SourcegraphChatClient(
     }
 
     private class ToolCallBuilder {
-        var id: String = ""
-        var name: String = ""
+        val id = StringBuilder()
+        val name = StringBuilder()
         val arguments = StringBuilder()
 
-        fun toToolCall() = ToolCall(id = id, function = FunctionCall(name = name, arguments = arguments.toString()))
+        fun toToolCall() = ToolCall(
+            id = id.toString(),
+            function = FunctionCall(name = name.toString(), arguments = arguments.toString())
+        )
     }
 
     // ═══ API Debug Logging ═══

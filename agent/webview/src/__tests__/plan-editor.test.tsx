@@ -233,25 +233,6 @@ describe('Plan Editor Bridge Contract', () => {
   });
 });
 
-describe('updatePlanStep contract', () => {
-  it('updates step status by ID without affecting other steps', () => {
-    const steps = [...mockPlan.steps];
-    const updated = steps.map(s => s.id === 's2' ? { ...s, status: 'completed' } : s);
-
-    expect(updated[0]!.status).toBe('pending');
-    expect(updated[1]!.status).toBe('completed');
-    expect(updated[2]!.status).toBe('pending');
-  });
-
-  it('handles unknown step ID gracefully', () => {
-    const steps = [...mockPlan.steps];
-    const updated = steps.map(s => s.id === 'nonexistent' ? { ...s, status: 'completed' } : s);
-
-    // All should remain unchanged
-    updated.forEach(s => expect(s.status).toBe('pending'));
-  });
-});
-
 describe('Button state logic', () => {
   it('when comments exist: Revise enabled, Proceed enabled', () => {
     const hasComments = Object.keys({ 'goal': 'Fix this' }).length > 0;

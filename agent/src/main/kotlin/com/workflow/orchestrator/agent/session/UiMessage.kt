@@ -1,5 +1,7 @@
 package com.workflow.orchestrator.agent.session
 
+import com.workflow.orchestrator.agent.tools.CompletionData
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -27,6 +29,7 @@ enum class UiSay {
     API_REQ_FINISHED,
     TEXT,
     USER_MESSAGE,
+    PLAN_APPROVED,
     REASONING,
     TOOL,
     CHECKPOINT_CREATED,
@@ -55,7 +58,21 @@ enum class SubagentStatus { RUNNING, COMPLETED, FAILED, KILLED }
 enum class WizardStatus { IN_PROGRESS, COMPLETED, SKIPPED }
 
 @Serializable
-data class PlanStep(val title: String, val status: String = "pending")
+enum class PlanStepStatus {
+    @SerialName("pending") PENDING,
+    @SerialName("in_progress") IN_PROGRESS,
+    @SerialName("running") RUNNING,
+    @SerialName("completed") COMPLETED,
+    @SerialName("done") DONE,
+    @SerialName("failed") FAILED,
+    @SerialName("skipped") SKIPPED,
+}
+
+@Serializable
+enum class ToolCallStatus { PENDING, RUNNING, COMPLETED, ERROR }
+
+@Serializable
+data class PlanStep(val title: String, val status: PlanStepStatus = PlanStepStatus.PENDING)
 
 @Serializable
 data class PlanCardData(
@@ -63,6 +80,9 @@ data class PlanCardData(
     val status: PlanStatus,
     val comments: Map<Int, String> = emptyMap(),
 )
+
+@Serializable
+data class PlanApprovalData(val planMarkdown: String)
 
 @Serializable
 data class ApprovalGateData(
@@ -98,7 +118,7 @@ data class ToolCallData(
     val toolCallId: String,
     val toolName: String,
     val args: String = "",
-    val status: String = "COMPLETED", // PENDING | RUNNING | COMPLETED | ERROR
+    val status: ToolCallStatus = ToolCallStatus.COMPLETED,
     val result: String? = null,
     val output: String? = null,
     val durationMs: Long = 0,
@@ -130,4 +150,6 @@ data class UiMessage(
     val questionData: QuestionWizardData? = null,
     val subagentData: SubagentCardData? = null,
     val toolCallData: ToolCallData? = null,
+    val completionData: CompletionData? = null,
+    val planApprovalData: PlanApprovalData? = null,
 )

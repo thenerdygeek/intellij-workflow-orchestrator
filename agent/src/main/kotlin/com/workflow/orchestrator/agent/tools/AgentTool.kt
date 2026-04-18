@@ -1,10 +1,13 @@
 package com.workflow.orchestrator.agent.tools
 
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.api.dto.FunctionDefinition
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.api.dto.ToolDefinition
+import com.workflow.orchestrator.agent.loop.ApprovalResult
 import kotlinx.serialization.json.JsonObject
 
 /** Worker type for tool access control. Kept for compatibility with existing tools. */
@@ -69,7 +72,7 @@ fun estimateTokens(text: String): Int = (text.toByteArray().size + 3) / 4
 fun truncateOutput(content: String, maxChars: Int = 50_000): String {
     if (content.length <= maxChars) return content
     val headChars = (maxChars * 0.6).toInt()
-    val tailChars = maxChars - headChars - 200
+    val tailChars = (maxChars - headChars - 200).coerceAtLeast(0)
     val omitted = content.length - headChars - tailChars
     return content.take(headChars) +
         "\n\n[... $omitted characters omitted ...]\n\n" +
@@ -82,6 +85,25 @@ interface AgentTool {
     val parameters: FunctionParameters
     val allowedWorkers: Set<WorkerType>
 
+    /** Max execution time in milliseconds. Default 120s. Override for tools needing more. */
+    val timeoutMs: Long get() = DEFAULT_TOOL_TIMEOUT_MS
+
+    /** Output configuration for this tool (max chars, truncation limits). */
+    val outputConfig: ToolOutputConfig get() = ToolOutputConfig.DEFAULT
+
+    /**
+     * Invoked by write actions inside [execute] when they need user approval.
+     * Default returns [ApprovalResult.APPROVED] — no gate (safe for read-only tools
+     * and tests). The AgentLoop overrides this per-call via [ApprovalGatedTool] when
+     * an [approvalGate] callback is wired.
+     */
+    suspend fun requestApproval(
+        toolName: String,
+        args: String,
+        riskLevel: String,
+        allowSessionApproval: Boolean
+    ): ApprovalResult = ApprovalResult.APPROVED
+
     suspend fun execute(params: JsonObject, project: Project): ToolResult
 
     fun toToolDefinition(): ToolDefinition = ToolDefinition(
@@ -92,30 +114,96 @@ interface AgentTool {
         )
     )
 
+    /**
+     * Spill [content] to disk if it exceeds [ToolOutputConfig.SPILL_THRESHOLD_CHARS],
+     * returning a preview (head-20 + tail-10 lines + file reference) plus the spill path.
+     * Returns [content] unchanged when below threshold or when no spiller is configured
+     * (e.g. headless tests). Tools should call this instead of `truncateOutput(...)` so
+     * full output survives on disk for `read_file` / `search_code` follow-up.
+     *
+     * Grep filtering (from the LLM's `grep_pattern` parameter) is applied by
+     * [AgentLoop] on the returned preview — NOT inside this method. Full
+     * (unfiltered) content is what lands on disk; filtering only affects
+     * what the LLM sees in-context.
+     */
+    suspend fun spillOrFormat(
+        content: String,
+        project: Project,
+    ): ToolOutputSpiller.SpillResult {
+        // getServiceIfCreated returns null when the service hasn't been started yet
+        // (headless tests, early plugin lifecycle). ClassCastException only occurs in
+        // relaxed MockK tests where the generic return type resolves to Object — treated
+        // identically to null. All other exceptions propagate so production errors surface.
+        val spiller = try {
+            project.getServiceIfCreated(AgentService::class.java)?.outputSpiller
+        } catch (_: ClassCastException) {
+            null
+        }
+        if (spiller == null) {
+            Logger.getInstance(AgentTool::class.java).warn(
+                "spillOrFormat on '$name' returned content unchanged — no outputSpiller is wired. " +
+                "If this happened in production (not a headless test), check AgentService initialization."
+            )
+            return ToolOutputSpiller.SpillResult(preview = content, spilledToFile = null)
+        }
+        return spiller.spill(name, content)
+    }
+
     companion object {
-        /** Shared task_progress property injected into every tool schema at the API call site. */
-        val TASK_PROGRESS_PROPERTY = ParameterProperty(
+        const val DEFAULT_TOOL_TIMEOUT_MS = 120_000L
+        const val LONG_TOOL_TIMEOUT_MS = 600_000L  // 10 min for run_command, build, etc.
+
+        // ---- LLM-controlled output filtering parameters ----
+
+        val GREP_PATTERN_PROPERTY = ParameterProperty(
             type = "string",
-            description = "A markdown checklist of plan progress (e.g. '- [x] Step 1\\n- [ ] Step 2'). " +
-                "Include this when working through a plan to keep the progress widget updated."
+            description = "Regex pattern to filter output lines. Only lines matching this pattern are returned. " +
+                "Use when you only need specific information from a potentially large output."
+        )
+
+        val OUTPUT_FILE_PROPERTY = ParameterProperty(
+            type = "boolean",
+            description = "If true, save full output to a file and return a preview with the file path. " +
+                "Use for large outputs you may need to search later. Read the file with read_file or search_code."
+        )
+
+        /** Set of tools that support output filtering parameters. */
+        val OUTPUT_FILTERABLE_TOOLS = setOf(
+            "run_command", "search_code", "git", "sonar",
+            "bamboo_builds", "bamboo_plans", "jira", "db_query",
+            "bitbucket_pr", "bitbucket_repo",
         )
 
         /**
-         * Inject task_progress into a tool definition's schema (Cline's FocusChain pattern).
-         * Called at the API boundary so the LLM sees the parameter on every tool.
+         * Inject grep_pattern and output_file parameters into a tool definition.
+         * Only applied to tools in [OUTPUT_FILTERABLE_TOOLS].
          */
-        fun injectTaskProgress(def: ToolDefinition): ToolDefinition {
+        fun injectOutputParams(def: ToolDefinition): ToolDefinition {
+            if (def.function.name !in OUTPUT_FILTERABLE_TOOLS) return def
             val params = def.function.parameters
-            if ("task_progress" in params.properties) return def
+            if ("grep_pattern" in params.properties) return def
             return def.copy(
                 function = def.function.copy(
                     parameters = params.copy(
-                        properties = params.properties + ("task_progress" to TASK_PROGRESS_PROPERTY)
+                        properties = params.properties +
+                            ("grep_pattern" to GREP_PATTERN_PROPERTY) +
+                            ("output_file" to OUTPUT_FILE_PROPERTY)
                     )
                 )
             )
         }
     }
+}
+
+sealed class ToolResultType {
+    data object Standard : ToolResultType()
+    data object Error : ToolResultType()
+    data object Completion : ToolResultType()
+    data class PlanResponse(val needsMoreExploration: Boolean) : ToolResultType()
+    data class SkillActivation(val skillName: String, val skillContent: String) : ToolResultType()
+    data class SessionHandoff(val context: String) : ToolResultType()
+    data object PlanModeToggle : ToolResultType()
+    data object PlanDiscarded : ToolResultType()
 }
 
 data class ToolResult(
@@ -124,43 +212,90 @@ data class ToolResult(
     val tokenEstimate: Int,
     val artifacts: List<String> = emptyList(),
     val isError: Boolean = false,
-    val isCompletion: Boolean = false,
-    val verifyCommand: String? = null,
+    @Deprecated("Use ToolResult.type instead") val isCompletion: Boolean = false,
+    val completionData: CompletionData? = null,
     /** True when this result is a plan_mode_respond output (plan presentation). */
-    val isPlanResponse: Boolean = false,
+    @Deprecated("Use ToolResult.type instead") val isPlanResponse: Boolean = false,
     /** True when the LLM needs more exploration before finalizing the plan. */
-    val needsMoreExploration: Boolean = false,
+    @Deprecated("Use ToolResult.type instead") val needsMoreExploration: Boolean = false,
     /** Structured plan step titles provided by the LLM via plan_mode_respond. */
-    val planSteps: List<String> = emptyList(),
+    @Deprecated("Use ToolResult.type instead") val planSteps: List<String> = emptyList(),
     /** True when this result activates a skill via use_skill tool. */
-    val isSkillActivation: Boolean = false,
+    @Deprecated("Use ToolResult.type instead") val isSkillActivation: Boolean = false,
     /** The skill name that was activated (set by UseSkillTool). */
-    val activatedSkillName: String? = null,
+    @Deprecated("Use ToolResult.type instead") val activatedSkillName: String? = null,
     /** The full skill content that was loaded (set by UseSkillTool). */
-    val activatedSkillContent: String? = null,
+    @Deprecated("Use ToolResult.type instead") val activatedSkillContent: String? = null,
     /**
      * True when this result signals a session handoff via new_task tool.
      * Ported from Cline: the LLM creates a structured context summary and
      * hands off to a fresh session to escape context exhaustion.
      */
-    val isSessionHandoff: Boolean = false,
+    @Deprecated("Use ToolResult.type instead") val isSessionHandoff: Boolean = false,
     /**
      * The structured handoff context for the new session.
      * Contains: Current Work, Key Technical Concepts, Relevant Files and Code,
      * Problem Solving, Pending Tasks and Next Steps.
      */
-    val handoffContext: String? = null,
+    @Deprecated("Use ToolResult.type instead") val handoffContext: String? = null,
     /**
      * Unified diff for file changes (edit_file, create_file).
      * Sent to the UI for before/after diff display.
      */
     val diff: String? = null,
     /** True when the LLM requests switching to plan mode via enable_plan_mode tool. */
-    val enablePlanMode: Boolean = false,
+    @Deprecated("Use ToolResult.type instead") val enablePlanMode: Boolean = false,
     /** Interactive React artifact to render in the chat UI (set by RenderArtifactTool). */
-    val artifact: ArtifactPayload? = null
+    val artifact: ArtifactPayload? = null,
+    /**
+     * Absolute path to a disk-spilled full-output file when this tool's raw output
+     * exceeded [ToolOutputConfig.SPILL_THRESHOLD_CHARS]. Null when no spill occurred
+     * or when the tool did not use [AgentTool.spillOrFormat].
+     *
+     * **Only populated by [AgentTool.spillOrFormat]**. [AgentLoop]'s post-execution
+     * safety net DOES write large tool outputs to disk (so `read_file` / `search_code`
+     * still work on the file path mentioned in the preview), but does NOT populate
+     * this field — no downstream consumer reads it yet. Phase 7 Tasks 6.4–6.10 wire
+     * tools through `spillOrFormat` directly, at which point this field becomes
+     * authoritative for spilled outputs. Before that wiring completes, the preview's
+     * embedded "[Output saved to: ...]" line is the canonical spill reference.
+     *
+     * The LLM reads the full content via `read_file` or `search_code` on the path,
+     * regardless of whether it was discovered via this field or the preview text.
+     */
+    val spillPath: String? = null,
+    val type: ToolResultType = when {
+        isCompletion -> ToolResultType.Completion
+        isSessionHandoff -> ToolResultType.SessionHandoff(handoffContext ?: "")
+        isPlanResponse -> ToolResultType.PlanResponse(needsMoreExploration)
+        isSkillActivation -> ToolResultType.SkillActivation(activatedSkillName ?: "", activatedSkillContent ?: "")
+        enablePlanMode -> ToolResultType.PlanModeToggle
+        isError -> ToolResultType.Error
+        else -> ToolResultType.Standard
+    },
 ) {
     companion object {
         const val ERROR_TOKEN_ESTIMATE = 5
+
+        fun error(message: String, summary: String = message): ToolResult =
+            ToolResult(message, summary, ERROR_TOKEN_ESTIMATE, isError = true)
+
+        fun completion(content: String, summary: String, tokenEstimate: Int, completionData: CompletionData? = null) =
+            ToolResult(content, summary, tokenEstimate, isCompletion = true, completionData = completionData, type = ToolResultType.Completion)
+
+        fun planResponse(content: String, summary: String, tokenEstimate: Int, needsMoreExploration: Boolean) =
+            ToolResult(content, summary, tokenEstimate, isPlanResponse = true, needsMoreExploration = needsMoreExploration, type = ToolResultType.PlanResponse(needsMoreExploration))
+
+        fun skillActivation(content: String, summary: String, tokenEstimate: Int, skillName: String, skillContent: String) =
+            ToolResult(content, summary, tokenEstimate, isSkillActivation = true, activatedSkillName = skillName, activatedSkillContent = skillContent, type = ToolResultType.SkillActivation(skillName, skillContent))
+
+        fun sessionHandoff(content: String, summary: String, tokenEstimate: Int, context: String) =
+            ToolResult(content, summary, tokenEstimate, isSessionHandoff = true, handoffContext = context, type = ToolResultType.SessionHandoff(context))
+
+        fun planModeToggle(content: String, summary: String, tokenEstimate: Int) =
+            ToolResult(content, summary, tokenEstimate, enablePlanMode = true, type = ToolResultType.PlanModeToggle)
+
+        fun planDiscarded(content: String, summary: String) =
+            ToolResult(content, summary, ERROR_TOKEN_ESTIMATE, type = ToolResultType.PlanDiscarded)
     }
 }

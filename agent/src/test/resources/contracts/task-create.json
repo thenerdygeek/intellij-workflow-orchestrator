@@ -1,0 +1,18 @@
+{
+  "description": "Contract for applyTaskCreate(task) bridge function. Kotlin sends a newly created task; React appends it to the tasks array in chatStore.",
+  "payload": {
+    "id": "task-abc123",
+    "subject": "Fix auth bug in login flow",
+    "description": "Users see 500 on /login when cookies expire mid-request.",
+    "activeForm": "Fixing auth bug",
+    "status": "pending",
+    "owner": null,
+    "blocks": [],
+    "blockedBy": [],
+    "createdAt": 1744985000000,
+    "updatedAt": 1744985000000
+  },
+  "required_fields": ["id", "subject", "description", "status"],
+  "optional_fields": ["activeForm", "owner", "blocks", "blockedBy", "createdAt", "updatedAt"],
+  "valid_statuses": ["pending", "in_progress", "completed", "deleted"]
+}

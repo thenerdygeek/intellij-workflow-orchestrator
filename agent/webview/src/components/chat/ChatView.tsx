@@ -13,7 +13,7 @@ import { QuestionView } from '@/components/agent/QuestionView';
 import { ApprovalView } from '@/components/agent/ApprovalView';
 import { ProcessInputView } from '@/components/agent/ProcessInputView';
 import { RollbackCard } from '@/components/agent/RollbackCard';
-import type { UiMessage, ToolCall, Plan, PlanStepStatus, SubAgentState } from '@/bridge/types';
+import type { UiMessage, ToolCall, Plan, SubAgentState } from '@/bridge/types';
 import {
   ChatContainerRoot,
   ChatContainerContent,
@@ -313,7 +313,7 @@ export const ChatView = memo(function ChatView() {
   const resolveApproval = useChatStore(s => s.resolveApproval);
   const pendingProcessInput = useChatStore(s => s.pendingProcessInput);
   const resolveProcessInput = useChatStore(s => s.resolveProcessInput);
-  const retryMessage = useChatStore(s => s.retryMessage);
+  const retryState = useChatStore(s => s.retryState);
   const rollbackEvents = useChatStore(s => s.rollbackEvents);
   const activeSubAgents = useChatStore(s => s.activeSubAgents);
   const queuedSteeringMessages = useChatStore(s => s.queuedSteeringMessages);
@@ -478,7 +478,7 @@ export const ChatView = memo(function ChatView() {
           if (msg.ask === 'COMPLETION_RESULT') {
             return (
               <ErrorBoundary key={key}>
-                <CompletionCard result={msg.text ?? ''} />
+                <CompletionCard data={msg.completionData ?? { kind: 'done' as const, result: msg.text ?? '' }} />
               </ErrorBoundary>
             );
           }
@@ -545,26 +545,18 @@ export const ChatView = memo(function ChatView() {
             );
           }
 
-          // Plan updates — render inline as a progress snapshot so they appear
+          // Plan updates — render inline as a plan summary snapshot so they appear
           // in chronological order on resume. The global plan widget at the
           // bottom handles the live interactive approve/revise flow.
           if (msg.say === 'PLAN_UPDATE' && msg.planData) {
             const pd = msg.planData;
             const inlinePlan: Plan = {
               title: 'Plan',
-              steps: pd.steps.map((s, si) => ({
-                id: `plan-step-${msg.ts}-${si}`,
-                title: s.title,
-                status: (s.status as PlanStepStatus) || 'pending',
-                comment: pd.comments?.[si] ?? undefined,
-              })),
               approved: pd.status === 'APPROVED' || pd.status === 'EXECUTING',
             };
             return (
               <ErrorBoundary key={key}>
-                {inlinePlan.approved
-                  ? <PlanProgressWidget plan={inlinePlan} />
-                  : <PlanSummaryCard plan={inlinePlan} />}
+                {!inlinePlan.approved && <PlanSummaryCard plan={inlinePlan} />}
               </ErrorBoundary>
             );
           }
@@ -614,9 +606,10 @@ export const ChatView = memo(function ChatView() {
               description={pendingApproval.description}
               metadata={pendingApproval.metadata}
               diffContent={pendingApproval.diffContent}
+              commandPreview={pendingApproval.commandPreview}
               onApprove={handleApprove}
               onDeny={handleDeny}
-              onAllowForSession={handleAllowForSession}
+              onAllowForSession={pendingApproval.allowSessionApproval ? handleAllowForSession : undefined}
             />
           </div>
         )}
@@ -642,7 +635,7 @@ export const ChatView = memo(function ChatView() {
         {/* Plan — global widget for live interactive approve/revise flow.
             On resume, the plan renders inline via PLAN_UPDATE messages above. */}
         {plan && !plan.approved && <PlanSummaryCard plan={plan} />}
-        {plan && plan.approved && <PlanProgressWidget plan={plan} />}
+        <PlanProgressWidget />
 
         {/* Questions */}
         {questions && questions.length > 0 && (
@@ -693,8 +686,8 @@ export const ChatView = memo(function ChatView() {
         {/* Working indicator — always last content item while agent is active */}
         {showWorkingIndicator && <WorkingIndicator />}
 
-        {/* Retry button — shown after agent failure */}
-        {retryMessage && !busy && (
+        {/* Retry / Continue button — shown after agent failure */}
+        {retryState && !busy && (
           <div className="flex items-center gap-2 px-3 py-2 animate-[fade-in_200ms_ease-out]">
             <button
               className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors"
@@ -704,6 +697,9 @@ export const ChatView = memo(function ChatView() {
                 border: '1px solid var(--border)',
               }}
               onClick={() => {
+                // Clear locally first to prevent double-click and avoid a stale pill
+                // if the bridge round-trip is slow.
+                useChatStore.setState({ retryState: null });
                 import('@/bridge/jcef-bridge').then(({ kotlinBridge }) => {
                   kotlinBridge.retryLastTask();
                 });
@@ -713,10 +709,10 @@ export const ChatView = memo(function ChatView() {
                 <path d="M2 8a6 6 0 0 1 10.5-4M14 8a6 6 0 0 1-10.5 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
                 <path d="M12 1v3.5h-3.5M4 15v-3.5h3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
-              Retry
+              {retryState.kind === 'continue' ? 'Continue' : 'Retry'}
             </button>
             <span className="text-[11px] truncate max-w-[300px]" style={{ color: 'var(--fg-muted)' }}>
-              {retryMessage}
+              {retryState.caption}
             </span>
           </div>
         )}

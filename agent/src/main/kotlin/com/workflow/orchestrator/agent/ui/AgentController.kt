@@ -9,36 +9,47 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.tools.ArtifactRenderResult
+import com.workflow.orchestrator.agent.tools.CompletionData
+import com.workflow.orchestrator.agent.tools.CompletionKind
 import com.workflow.orchestrator.agent.tools.builtin.ArtifactResultRegistry
+import com.workflow.orchestrator.agent.tools.builtin.Question
+import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
 import com.workflow.orchestrator.agent.hooks.HookEvent
 import com.workflow.orchestrator.agent.hooks.HookResult
 import com.workflow.orchestrator.agent.hooks.HookType
 import com.workflow.orchestrator.agent.loop.ApprovalResult
 import com.workflow.orchestrator.agent.loop.ContextManager
+import com.workflow.orchestrator.agent.loop.FailureReason
+import com.workflow.orchestrator.agent.loop.SessionApprovalStore
 import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.loop.PlanJson
-import com.workflow.orchestrator.agent.loop.PlanStep
 import com.workflow.orchestrator.agent.loop.SteeringMessage
-import com.workflow.orchestrator.agent.loop.TaskProgress
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
 import com.workflow.orchestrator.agent.session.HistoryItem
 import com.workflow.orchestrator.agent.session.MessageStateHandler
 import com.workflow.orchestrator.agent.session.ResumeHelper
+import com.workflow.orchestrator.agent.session.PlanApprovalData
 import com.workflow.orchestrator.agent.session.UiAsk
 import com.workflow.orchestrator.agent.session.UiMessage
+import com.workflow.orchestrator.agent.session.UiMessageType
+import com.workflow.orchestrator.agent.session.UiSay
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.settings.ToolPreferences
 import com.workflow.orchestrator.agent.observability.HaikuPhraseGenerator
 import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
+import com.workflow.orchestrator.agent.tools.subagent.SubagentExecutionStatus
 import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
 import com.workflow.orchestrator.agent.ui.plan.AgentPlanEditor
 import com.workflow.orchestrator.agent.ui.plan.AgentPlanVirtualFile
 import com.workflow.orchestrator.agent.util.JsEscape
+import com.workflow.orchestrator.core.events.EventBus
+import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.intOrNull
@@ -66,12 +77,18 @@ class AgentController(
 
     private val service = AgentService.getInstance(project)
     private var contextManager: ContextManager? = null
+    /** Session-scoped approval store. Created on first message, cleared on newChat. */
+    private val sessionApprovalStore = SessionApprovalStore()
     private var currentJob: Job? = null
     private var taskStartTime: Long = 0L
     /** Last task text for retry button (may include XML mention context). Gap 17. */
     private var lastTaskText: String? = null
     /** Clean display text for retry/restore (without XML). Null = same as lastTaskText. */
     private var lastDisplayText: String? = null
+    /** The original task text from the very first user message in this session. "First message wins" —
+     *  plan-mode approvals and steering injections never overwrite this. Used to re-inject the original
+     *  task when context is cleared on plan approval so the LLM retains full intent. */
+    private var originalTaskText: String? = null
     /** Mentions JSON for retry display chips. */
     private var lastDisplayMentionsJson: String? = null
     /**
@@ -83,6 +100,16 @@ class AgentController(
     private var userInputChannel: Channel<String>? = null
     /** True when the loop is actively waiting for user input (plan presented, not exploring). */
     private var loopWaitingForInput = false
+    /**
+     * Typed UI message to persist when the loop next receives from [userInputChannel].
+     * Set in the [loopWaitingForInput] branch of [executeTask] when a [uiMessageOverride]
+     * is provided (e.g. a PLAN_APPROVED bubble from [handleApprovalChoice]).
+     * Consumed once by the [onUserInputReceived] callback wired into [AgentService.executeTask],
+     * then cleared atomically via [java.util.concurrent.atomic.AtomicReference.getAndSet].
+     * Cleared in all cleanup paths (cancel, newChat, resumeSession) to prevent stale override
+     * from polluting the next session.
+     */
+    private val pendingUiMessageOverride = java.util.concurrent.atomic.AtomicReference<com.workflow.orchestrator.agent.session.UiMessage?>(null)
 
     /**
      * Thread-safe queue for mid-turn steering messages.
@@ -136,8 +163,8 @@ class AgentController(
 
     /**
      * Structured plan data from the last plan_mode_respond call.
-     * Populated in [onPlanResponse] from the LLM's structured steps and used by
-     * [openPlanInEditor] to open the plan in a full JCEF editor tab.
+     * Populated in [onPlanResponse] and used by [openPlanInEditor] to open the plan
+     * in a full JCEF editor tab.
      */
     private var currentPlanData: PlanJson? = null
 
@@ -147,6 +174,24 @@ class AgentController(
      * instead of the normal [AskQuestionsTool] resolution path.
      */
     private var pendingApprovalChoice = false
+
+    // ── Live question metadata — cached when the wizard is shown, cleared on cancel/submit ──
+
+    private enum class QuestionMode { SIMPLE, WIZARD }
+    private data class LiveQuestions(val mode: QuestionMode, val questions: List<Question>)
+
+    /**
+     * Cached question metadata for the currently-shown ask_followup_question wizard.
+     *
+     * Set when the question wizard is rendered (simple or wizard mode).
+     * Used on submit to produce an enriched payload (question text + label resolution)
+     * instead of raw synthetic option IDs.
+     * Cleared on cancel/skip to prevent stale data bleeding into subsequent questions.
+     */
+    @Volatile private var liveQuestions: LiveQuestions? = null
+
+    /** Reusable lenient JSON instance for parsing question metadata. */
+    private val lenientJson = Json { ignoreUnknownKeys = true }
 
     /** Recent tool calls for Haiku phrase context (FIFO, max 3). */
     private val recentToolCalls = mutableListOf<Pair<String, String>>()
@@ -160,10 +205,26 @@ class AgentController(
     /** Last LLM stream text snippet — gives Haiku context about what the agent is thinking. */
     @Volatile private var lastStreamSnippet: String = ""
 
+    /**
+     * Controller-scoped coroutine scope for long-lived subscriptions (e.g. EventBus.events).
+     * Cancelled in [dispose] so subscriptions stop when the controller goes away.
+     */
+    private val controllerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     /** Coalesces rapid-fire stream chunks into ~16ms batched bridge dispatches. */
     private val streamBatcher = StreamBatcher(
         onFlush = { batched -> dashboard.appendStreamToken(batched) }
     )
+
+    /** Routes per-tool-call process output chunks to the tool's own Terminal block in the chat UI. */
+    private val toolStreamBatcher = PerToolStreamBatcher(
+        onFlush = { id, batched ->
+            // Log only the first flush per tool call ID to confirm data is flowing, without spamming on every chunk.
+            if (firstFlushSeen.add(id)) LOG.info("run_command[$id]: first flush to UI (${batched.length} chars)")
+            dashboard.appendToolOutput(id, batched)
+        }
+    )
+    private val firstFlushSeen = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     /** Resolves @file, @folder, @symbol, @tool, /skill, #ticket mentions into rich context for the LLM. */
     private val mentionContextBuilder = MentionContextBuilder(project)
@@ -179,6 +240,7 @@ class AgentController(
 
     init {
         Disposer.register(this, streamBatcher)
+        Disposer.register(this, toolStreamBatcher)
         wireCallbacks()
         // Register the push callback used by RenderArtifactTool → ArtifactResultRegistry
         // to forward interactive artifacts into the webview. The tool drives the full
@@ -190,7 +252,57 @@ class AgentController(
                 dashboard.renderArtifact(payload.title, payload.source, payload.renderId)
             }
         }
+
+        // Subscribe to TaskChanged events emitted by TaskCreateTool / TaskUpdateTool.
+        // On each event, fetch the current snapshot of the task from TaskStore and push
+        // it to the webview. Also refresh execution steps so the PlanProgressWidget
+        // (which reads chatStore.tasks) stays in sync with authoritative state.
+        subscribeToTaskChanges()
     }
+
+    /**
+     * Collect [WorkflowEvent.TaskChanged] from [EventBus] and forward each event to the
+     * webview as either `_applyTaskCreate(task)` or `_applyTaskUpdate(task)`.
+     *
+     * Runs on [controllerScope] (cancelled in [dispose]). Best-effort: if the task is
+     * missing from the store by the time the event fires, the event is ignored.
+     */
+    private fun subscribeToTaskChanges() {
+        val eventBus = project.getService(EventBus::class.java)
+        if (eventBus == null) {
+            LOG.warn("[Tasks] subscribeToTaskChanges: EventBus service not available; task UI will not update.")
+            return
+        }
+        controllerScope.launch {
+            eventBus.events.collect { event ->
+                if (event !is WorkflowEvent.TaskChanged) return@collect
+                val store = service.currentTaskStore()
+                if (store == null) {
+                    LOG.warn("[Tasks] TaskChanged(id=${event.taskId}, isCreate=${event.isCreate}) — no active TaskStore; event dropped.")
+                    return@collect
+                }
+                val task = store.getTask(event.taskId)
+                if (task == null) {
+                    LOG.warn("[Tasks] TaskChanged(id=${event.taskId}, isCreate=${event.isCreate}) — store.getTask returned null; event dropped (possible race).")
+                    return@collect
+                }
+                val taskJson = taskEventJson.encodeToString(task)
+                LOG.info("[Tasks] forwarding to webview — id=${event.taskId} isCreate=${event.isCreate} status=${task.status} subject='${task.subject}'")
+                if (event.isCreate) {
+                    dashboard.applyTaskCreate(taskJson)
+                } else {
+                    dashboard.applyTaskUpdate(taskJson)
+                }
+            }
+        }
+    }
+
+    /**
+     * Shared JSON instance for task bridge payloads. `encodeDefaults = true` ensures
+     * default-valued fields (empty `blocks` / `blockedBy`) appear in the JSON so the
+     * webview's strict TypeScript types are satisfied.
+     */
+    private val taskEventJson = Json { encodeDefaults = true; ignoreUnknownKeys = true }
 
     // ═══════════════════════════════════════════════════
     //  Callback wiring — dashboard actions → controller
@@ -231,10 +343,12 @@ class AgentController(
         // Action callbacks shared with mirror panels
         wireSharedDashboardCallbacks(dashboard)
 
-        // Retry callback — re-executes last task with original mention context + clean display
+        // Retry callback — sends "continue" so the LLM resumes its prior plan rather than
+        // restarting from scratch (replaying the original task makes the model think its
+        // previous work was wrong and pick a different approach).
         dashboard.setCefRetryCallback {
-            lastTaskText?.let { task ->
-                executeTask(task, lastDisplayText, lastDisplayMentionsJson)
+            if (lastTaskText != null) {
+                executeTask("continue", "continue", null)
             }
         }
 
@@ -243,11 +357,15 @@ class AgentController(
             onApprove = ::approvePlan,
             onRevise = ::revisePlan
         )
+        dashboard.setCefPlanDismissCallback { dismissPlan() }
 
         // "View Plan" button — opens the plan in a full JCEF editor tab
         dashboard.setCefFocusPlanEditorCallback {
             openPlanInEditor()
         }
+
+        // "Open Plan" button on the approved-plan card — reuses the same editor-open logic
+        dashboard.setCefOpenApprovedPlanCallback(::openPlanInEditor)
 
         // "Revise" button in the chat card — delegates to the open plan editor tab
         dashboard.setCefRevisePlanFromEditorCallback {
@@ -360,9 +478,20 @@ class AgentController(
                             }
                             append("]}]}")
                         }
+                        // Cache question metadata so onSubmitted can resolve option ids → labels
+                        liveQuestions = try {
+                            val root = lenientJson.parseToJsonElement(wizardJson).jsonObject
+                            val questionsArray = root["questions"] ?: throw IllegalStateException("missing questions key")
+                            val parsed = lenientJson.decodeFromJsonElement<List<Question>>(questionsArray)
+                            LiveQuestions(QuestionMode.SIMPLE, parsed)
+                        } catch (e: Exception) {
+                            LOG.warn("ask_followup_question: failed to cache question metadata: ${e.message}")
+                            null
+                        }
                         LOG.info("ask_followup_question: showing wizard with ${options.size} options (wizardJson=${wizardJson.length} chars)")
                         dashboard.showQuestions(wizardJson)
                     } else {
+                        // No options — user types freely; no id→label resolution needed, so liveQuestions is not set.
                         // Questions WITHOUT options → user types their answer freely in the chat input.
                         // The question text lives in the tool call params (not in the streamed text),
                         // so we must display it explicitly as an agent message. Use the streaming
@@ -388,6 +517,19 @@ class AgentController(
         // Wizard mode: structured multi-question UI
         com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.showQuestionsCallback = { questionsJson ->
             LOG.info("ask_questions: wizard callback fired (json=${questionsJson.length} chars)")
+            // Cache question metadata BEFORE the invokeLater dispatch. This write happens-before
+            // AWT's event queue enqueue (JMM §17.4.5), so onSubmitted — which runs on the EDT —
+            // is guaranteed to see the updated value. Do NOT move this inside invokeLater, as that
+            // would create a window where onSubmitted could fire before the write completes.
+            liveQuestions = try {
+                val root = lenientJson.parseToJsonElement(questionsJson).jsonObject
+                val questionsElement = root["questions"] ?: throw IllegalStateException("missing questions key")
+                val parsed = lenientJson.decodeFromJsonElement<List<Question>>(questionsElement)
+                LiveQuestions(QuestionMode.WIZARD, parsed)
+            } catch (e: Exception) {
+                LOG.warn("ask_questions: failed to cache wizard question metadata: ${e.message}")
+                null
+            }
             invokeLater {
                 // Clear busy FIRST — before the showQuestions bridge call which could
                 // silently fail on the JCEF/JS side
@@ -424,14 +566,22 @@ class AgentController(
                     // Normal LLM-initiated question — resolve the pending deferred.
                     // Restore busy state so the user sees the agent is processing their answer.
                     dashboard.setBusy(true)
-                    val answersJson = collectedAnswers.entries.joinToString(",", "{", "}") { (qid, opts) ->
-                        "\"$qid\":$opts"
+                    val snapshot = liveQuestions
+                    val enrichedPayload = if (snapshot != null) {
+                        buildEnrichedAnswerPayload(snapshot, collectedAnswers)
+                    } else {
+                        // Fallback: liveQuestions unexpectedly null — send raw ids
+                        collectedAnswers.entries.joinToString(",", "{", "}") { (qid, opts) ->
+                            "\"$qid\":$opts"
+                        }
                     }
-                    com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.resolveQuestions(answersJson)
+                    com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.resolveQuestions(enrichedPayload)
                 }
+                liveQuestions = null
                 collectedAnswers.clear()
             },
             onCancelled = {
+                liveQuestions = null
                 if (pendingApprovalChoice) {
                     // User cancelled the approval choice — revert to plan mode and
                     // resume the suspended loop so the user can continue discussing
@@ -504,6 +654,89 @@ class AgentController(
         // buffered and the page took longer than expected (slow machines, heavy IDE startup).
         // If the buffered calls already flushed successfully, this is a harmless idempotent re-push.
         dashboard.setCefPageReadyCallback { pushInitialState() }
+
+        // Route tool process output to per-tool-call Terminal blocks via toolStreamBatcher.
+        // TODO: RunCommandTool.streamCallback is a JVM-static field — if two projects are open
+        //       simultaneously, the second controller overwrites the first's callback. Migrate to
+        //       passing the callback explicitly via AgentService/AgentLoop context to fix multi-project routing.
+        RunCommandTool.streamCallback = { toolCallId, chunk -> toolStreamBatcher.append(toolCallId, chunk) }
+        LOG.info("AgentController: run_command streamCallback armed")
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  Question answer enrichment helpers
+    // ═══════════════════════════════════════════════════
+
+    /**
+     * Builds an enriched answer payload that includes question text and human-readable option
+     * labels alongside the selected option ids. This replaces the raw `{"q1":["o1"]}` format
+     * that the LLM previously received, which contained no readable context.
+     *
+     * **Simple mode** (single question routed as a synthetic wizard):
+     * Resolves selected ids to their label strings and calls
+     * [AskQuestionsTool.resolveQuestions] with the joined label text so `executeSimple`
+     * wraps it in `<answer>…</answer>`.
+     *
+     * **Wizard mode** (structured multi-question wizard):
+     * Builds a JSON object per question that includes both the question text and each selected
+     * option's id + label. Target format:
+     * ```json
+     * {"q1":{"question":"Which database?","selected":[{"id":"o1","label":"PostgreSQL"}]}}
+     * ```
+     *
+     * Fallback: if [liveQuestions] is null (unexpected path) the caller falls back to the
+     * original raw `joinToString` behaviour — this function is never called in that case.
+     */
+    private fun buildEnrichedAnswerPayload(
+        live: LiveQuestions,
+        collectedAnswers: Map<String, String>
+    ): String {
+        return when (live.mode) {
+            QuestionMode.SIMPLE -> {
+                // Single question: resolve ids → labels, pass joined labels to executeSimple
+                val q = live.questions.firstOrNull()
+                val idsJson = collectedAnswers["q1"] ?: "[]"
+                val selectedIds = try {
+                    lenientJson.decodeFromString<List<String>>(idsJson)
+                } catch (_: Exception) { emptyList() }
+                val labels = selectedIds.map { id ->
+                    q?.options?.find { it.id == id }?.label ?: id
+                }
+                labels.joinToString(", ")
+            }
+            QuestionMode.WIZARD -> {
+                // Multi-question wizard: build enriched JSON with question text + selected labels
+                buildString {
+                    append("{")
+                    var first = true
+                    for (q in live.questions) {
+                        val idsJson = collectedAnswers[q.id] ?: "[]"
+                        val selectedIds = try {
+                            lenientJson.decodeFromString<List<String>>(idsJson)
+                        } catch (_: Exception) { emptyList() }
+                        if (!first) append(",")
+                        first = false
+                        append(JsEscape.toJsonString(q.id))
+                        append(":{\"question\":")
+                        append(JsEscape.toJsonString(q.question))
+                        append(",\"selected\":[")
+                        var firstOpt = true
+                        for (id in selectedIds) {
+                            val label = q.options.find { it.id == id }?.label ?: id
+                            if (!firstOpt) append(",")
+                            firstOpt = false
+                            append("{\"id\":")
+                            append(JsEscape.toJsonString(id))
+                            append(",\"label\":")
+                            append(JsEscape.toJsonString(label))
+                            append("}")
+                        }
+                        append("]}")
+                    }
+                    append("}")
+                }
+            }
+        }
     }
 
     /**
@@ -701,9 +934,17 @@ class AgentController(
     //  Core: executeTask — send user message to agent loop
     // ═══════════════════════════════════════════════════
 
-    /** Display user message in chat UI, with mention chips if available. */
-    private fun displayUserMessage(text: String, mentionsJson: String?) {
-        if (mentionsJson != null) {
+    /** Display user message in chat UI, with mention chips if available.
+     *
+     * When [uiMessageOverride] has [UiSay.PLAN_APPROVED], renders the dedicated
+     * [appendPlanApprovedMessage] bubble (with icon + "View implementation plan" link)
+     * instead of a plain user message, so the live session matches what is restored from disk.
+     */
+    private fun displayUserMessage(text: String, mentionsJson: String?, uiMessageOverride: com.workflow.orchestrator.agent.session.UiMessage? = null) {
+        if (uiMessageOverride?.say == UiSay.PLAN_APPROVED) {
+            val markdown = uiMessageOverride.planApprovalData?.planMarkdown.orEmpty()
+            dashboard.appendPlanApprovedMessage(markdown)
+        } else if (mentionsJson != null) {
             dashboard.appendUserMessageWithMentions(text, mentionsJson)
         } else {
             dashboard.appendUserMessage(text)
@@ -776,8 +1017,12 @@ class AgentController(
      *
      * @param displayText Clean text for UI display (without XML context). Null = use task.
      * @param displayMentionsJson JSON array of mentions for chip rendering. Null = no chips.
+     * @param uiMessageOverride Optional override for the persisted UI message. When provided, the
+     *        message history records this message instead of the synthesized USER_MESSAGE. The live
+     *        chat bubble still shows [displayText] (or [task] if null). Passed through to
+     *        [AgentService.executeTask]. Only meaningful when this call starts a new loop.
      */
-    fun executeTask(task: String, displayText: String? = null, displayMentionsJson: String? = null) {
+    fun executeTask(task: String, displayText: String? = null, displayMentionsJson: String? = null, uiMessageOverride: UiMessage? = null) {
         if (task.isBlank()) return
 
         // Intercept /compact — direct context compaction without LLM round-trip
@@ -832,11 +1077,16 @@ class AgentController(
         val channel = userInputChannel
         if (loopWaitingForInput && channel != null && currentJob?.isActive == true) {
             LOG.info("AgentController: feeding user message into existing loop via channel — setting busy=true, steeringMode=true")
-            displayUserMessage(uiText, displayMentionsJson)
+            displayUserMessage(uiText, displayMentionsJson, uiMessageOverride)
             dashboard.setBusy(true)
             dashboard.setSteeringMode(true)
             // Input is NOT locked — user can always type freely (Cline behavior)
             loopWaitingForInput = false
+            // Stash the typed UI message override so the loop can persist it when it
+            // consumes this channel message (e.g. PLAN_APPROVED instead of raw XML).
+            if (uiMessageOverride != null) {
+                pendingUiMessageOverride.set(uiMessageOverride)
+            }
             runBlocking { channel.send(task) }
             return
         }
@@ -869,7 +1119,7 @@ class AgentController(
         }
 
         // Show user message in the chat UI
-        displayUserMessage(uiText, displayMentionsJson)
+        displayUserMessage(uiText, displayMentionsJson, uiMessageOverride)
         LOG.info("executeTask: setting busy=true, steeringMode=true (turn start)")
         dashboard.setBusy(true)
         dashboard.setSteeringMode(true)
@@ -888,6 +1138,10 @@ class AgentController(
                 dashboard.startSessionWithMentions(uiText, displayMentionsJson)
             } else {
                 dashboard.startSession(uiText)
+            }
+            // "First message wins" — capture the original task once, never overwrite
+            if (originalTaskText == null) {
+                originalTaskText = task
             }
         }
 
@@ -908,7 +1162,6 @@ class AgentController(
             contextManager = contextManager,
             onStreamChunk = ::onStreamChunk,
             onToolCall = ::onToolCall,
-            onTaskProgress = ::onTaskProgress,
             onComplete = { result ->
                 if (AgentSettings.getInstance(project).state.showDebugLog) {
                     val status = when (result) {
@@ -948,10 +1201,12 @@ class AgentController(
                     }
                 }
             },
-            onPlanResponse = { text, explore, steps -> onPlanResponse(text, explore, steps) },
+            onPlanResponse = { text, explore -> onPlanResponse(text, explore) },
             onPlanModeToggled = { enabled -> invokeLater { togglePlanMode(enabled) } },
+            onPlanDiscarded = { invokeLater { onPlanDiscardedByLlm() } },
             userInputChannel = userInputChannel,
             approvalGate = ::approvalGate,
+            sessionApprovalStore = sessionApprovalStore,
             onCheckpointSaved = ::onCheckpointSaved,
             onSubagentProgress = ::onSubagentProgress,
             onTokenUpdate = ::onTokenUpdate,
@@ -964,7 +1219,16 @@ class AgentController(
                 invokeLater {
                     dashboard.promoteQueuedSteeringMessages(drainedIds)
                 }
-            }
+            },
+            onAwaitingUserInput = ::onLoopAwaitingUserInput,
+            uiMessageOverride = uiMessageOverride,
+            onUserInputReceived = { _ ->
+                // Consume and clear the pending override atomically.
+                // The override was set in the loopWaitingForInput branch by handleApprovalChoice
+                // (and similar callers) so that the persisted bubble shows the typed message
+                // (e.g. PLAN_APPROVED) rather than the raw XML instruction text.
+                pendingUiMessageOverride.getAndSet(null)
+            },
         )
 
         // Start 30s Haiku phrase timer (if smart working indicator is enabled)
@@ -992,9 +1256,10 @@ class AgentController(
      * @param toolName the tool requesting approval (e.g. "edit_file", "run_command")
      * @param args the raw JSON arguments string
      * @param riskLevel "low", "medium", or "high" risk classification
+     * @param allowSessionApproval whether the UI should offer "allow for session" (false for run_command)
      * @return the user's decision
      */
-    private suspend fun approvalGate(toolName: String, args: String, riskLevel: String): ApprovalResult {
+    private suspend fun approvalGate(toolName: String, args: String, riskLevel: String, allowSessionApproval: Boolean): ApprovalResult {
         val deferred = CompletableDeferred<ApprovalResult>()
         // Defensive reentry guard — see the invariant described on [pendingApproval].
         // If a second approvalGate call arrives while the first is still waiting,
@@ -1022,6 +1287,7 @@ class AgentController(
 
         val description: String
         val diffContent: String?
+        var commandPreviewJson: String? = null
 
         when (toolName) {
             "edit_file" -> {
@@ -1040,11 +1306,10 @@ class AgentController(
                 diffContent = com.workflow.orchestrator.agent.util.DiffUtil.unifiedDiff("", preview, path)
             }
             "run_command" -> {
-                val command = parsedArgs?.get("command")?.jsonPrimitive?.content ?: "unknown"
-                val shell = parsedArgs?.get("shell")?.jsonPrimitive?.content ?: ""
-                val cmdDesc = parsedArgs?.get("description")?.jsonPrimitive?.content
-                description = cmdDesc ?: "Run: $command"
-                diffContent = "$ $command\n(shell: $shell)"
+                val payload = com.workflow.orchestrator.agent.ui.approval.CommandApprovalPayload.build(parsedArgs, project)
+                description = payload.description
+                diffContent = null
+                commandPreviewJson = payload.commandPreviewJson
             }
             "revert_file" -> {
                 val path = parsedArgs?.get("path")?.jsonPrimitive?.content ?: "unknown"
@@ -1066,7 +1331,9 @@ class AgentController(
                 riskLevel = riskLevel,
                 description = description,
                 metadataJson = metadataJson,
-                diffContent = diffContent
+                diffContent = diffContent,
+                commandPreviewJson = commandPreviewJson,
+                allowSessionApproval = allowSessionApproval
             )
         }
 
@@ -1106,14 +1373,14 @@ class AgentController(
     private fun onSubagentProgress(agentId: String, update: SubagentProgressUpdate) {
         invokeLater {
             when (update.status) {
-                "running" -> {
-                    // SpawnAgentTool emits "running" exactly once per child, with the
+                SubagentExecutionStatus.RUNNING -> {
+                    // SpawnAgentTool emits RUNNING exactly once per child, with the
                     // human-readable label set on the same update. The webview dedupes
                     // on agentId, so this call materialises one card per real run.
                     val label = update.label ?: update.latestToolCall ?: "Starting..."
                     dashboard.spawnSubAgent(agentId, label)
                 }
-                "completed" -> {
+                SubagentExecutionStatus.COMPLETED -> {
                     dashboard.completeSubAgent(
                         agentId,
                         update.result ?: "Completed",
@@ -1121,7 +1388,7 @@ class AgentController(
                         isError = false
                     )
                 }
-                "failed" -> {
+                SubagentExecutionStatus.FAILED -> {
                     dashboard.completeSubAgent(
                         agentId,
                         update.error ?: "Failed",
@@ -1129,7 +1396,7 @@ class AgentController(
                         isError = true
                     )
                 }
-                else -> {
+                SubagentExecutionStatus.PENDING, null -> {
                     // Tool starting — add a RUNNING tool chip to the subagent's chain.
                     // The toolCallId from [ToolCallProgress] is threaded through so the
                     // webview can key parallel tool calls by exact ID instead of relying
@@ -1153,6 +1420,12 @@ class AgentController(
                             update.toolCompleteDurationMs,
                             update.toolCompleteIsError
                         )
+                    }
+                    // Stream delta — raw LLM token to append to the sub-agent card's last
+                    // partial TEXT message. Kept separate from tool chip events so streaming
+                    // is fast-pathed without re-serialising stats.
+                    update.streamDelta?.let { delta ->
+                        dashboard.appendSubAgentStreamDelta(agentId, delta)
                     }
                     update.stats?.let { stats ->
                         dashboard.updateSubAgentIteration(agentId, stats.toolCalls)
@@ -1186,40 +1459,6 @@ class AgentController(
             val maxTokens = AgentSettings.getInstance(project).state.maxInputTokens
             // promptTokens = current context window usage (what matters for the progress bar)
             dashboard.updateProgress("", promptTokens, maxTokens)
-        }
-    }
-
-    /**
-     * Task progress callback — agent loop reports checklist updates.
-     *
-     * The LLM's task_progress checklist (focus-chain) is the sole source of truth
-     * for execution progress. LLM-provided steps drive both the plan card and progress.
-     *
-     * On each update, we replace the plan card's steps entirely with the LLM's
-     * checklist items. This handles the LLM adding, removing, or reordering items.
-     */
-    private fun onTaskProgress(progress: TaskProgress) {
-        invokeLater {
-            val summary = "${progress.completedCount}/${progress.totalCount} steps completed"
-            dashboard.appendStatus(summary, RichStreamingPanel.StatusType.INFO)
-
-            // Build execution steps directly from the LLM's task_progress checklist.
-            // The first incomplete item is "running"; completed items are "completed"; rest "pending".
-            var foundFirstIncomplete = false
-            val steps = progress.items.mapIndexed { index, item ->
-                val status = when {
-                    item.completed -> "completed"
-                    !foundFirstIncomplete -> { foundFirstIncomplete = true; "running" }
-                    else -> "pending"
-                }
-                PlanStep(
-                    id = (index + 1).toString(),
-                    title = item.description,
-                    status = status
-                )
-            }
-            val stepsJson = Json.encodeToString(steps)
-            dashboard.replaceExecutionSteps(stepsJson)
         }
     }
 
@@ -1260,6 +1499,11 @@ class AgentController(
             }
         }
 
+        // Flush any in-flight tool output chunks BEFORE the EDT dispatch, so terminal output
+        // arrives before the result card is committed. flush() is thread-safe.
+        if (progress.result.isNotEmpty() || progress.durationMs != 0L) {
+            toolStreamBatcher.flush(progress.toolCallId)
+        }
         invokeLater {
             if (progress.result.isEmpty() && progress.durationMs == 0L) {
                 // Tool call starting
@@ -1294,17 +1538,31 @@ class AgentController(
                     }
                 }
 
-                // Push diff explanation directly to chat UI when generate_explanation returns a diff.
-                // This renders the diff immediately as a DiffHtml component so the LLM does not
-                // need to re-output it in markdown, saving tokens.
-                if (progress.toolName == "generate_explanation" && !progress.isError && progress.editDiff != null) {
-                    val title = try {
-                        kotlinx.serialization.json.Json.parseToJsonElement(progress.args)
-                            .jsonObject["title"]?.jsonPrimitive?.content ?: "Diff"
-                    } catch (_: Exception) { "Diff" }
-                    dashboard.appendDiffExplanation(title, progress.editDiff)
-                }
             }
+        }
+    }
+
+    /**
+     * Fires when the AgentLoop is about to suspend on [userInputChannel] waiting for
+     * the user (consecutive text-only mistakes recovery, plan-mode reply turn).
+     *
+     * Without this the UI keeps showing the working spinner even though the loop is
+     * idle — the coroutine is parked on `channel.receive()` with nothing to log.
+     *
+     * Mirrors the unlock dance used by `ask_followup_question`: drop busy, enable
+     * steering mode (so typed text feeds the channel instead of being queued as a
+     * mid-turn steering message), unlock input, surface [reason] so the user knows
+     * what happened.
+     */
+    private fun onLoopAwaitingUserInput(reason: String) {
+        LOG.info("AgentController: loop awaiting user input — $reason")
+        loopWaitingForInput = true
+        invokeLater {
+            dashboard.setBusy(false)
+            dashboard.setSteeringMode(true)
+            dashboard.setInputLocked(false)
+            dashboard.appendStatus(reason, RichStreamingPanel.StatusType.INFO)
+            dashboard.focusInput()
         }
     }
 
@@ -1316,6 +1574,7 @@ class AgentController(
 
         // Drain the stream batcher before UI flush so no buffered tokens are lost
         streamBatcher.flush()
+        toolStreamBatcher.flush()
 
         invokeLater {
             // Flush any remaining stream content
@@ -1327,9 +1586,14 @@ class AgentController(
             // Clear working phrase
             dashboard.setSmartWorkingPhrase("")
 
+            // The spinner-cleanup footer below MUST run even if rendering inside the
+            // when-block throws (e.g. a bad completion card breaks appendCompletionCard).
+            // Without this guard, the UI was left "working" forever after any UI-side error.
+            var handledHandoff = false
+            try {
             when (result) {
                 is LoopResult.Completed -> {
-                    dashboard.appendCompletionSummary(result.summary, result.verifyCommand)
+                    dashboard.appendCompletionCard(result.completionData ?: CompletionData(CompletionKind.DONE, result.summary))
                     // Display token usage summary (ported from Cline's cost tracking)
                     if (result.inputTokens > 0 || result.outputTokens > 0) {
                         val inputK = formatTokenCount(result.inputTokens)
@@ -1374,8 +1638,17 @@ class AgentController(
                         durationMs = durationMs,
                         status = RichStreamingPanel.SessionStatus.FAILED
                     )
-                    // Gap 17: Show retry button so user can re-execute the last task
-                    lastTaskText?.let { dashboard.showRetryButton(lastDisplayText ?: it) }
+                    // Gap 17: Show retry/continue button based on failure type
+                    if (lastTaskText != null) {
+                        val isMaxIter = result.reason == FailureReason.MAX_ITERATIONS
+                        val kind = if (isMaxIter) "continue" else "retry"
+                        val caption = if (isMaxIter) {
+                            "The agent worked for many iterations without finishing. Click Continue to keep going."
+                        } else {
+                            "Something went wrong while running the task."
+                        }
+                        dashboard.showRetryButton(kind, caption)
+                    }
                 }
 
                 is LoopResult.Cancelled -> {
@@ -1407,18 +1680,25 @@ class AgentController(
 
                     // Reset context for the new session
                     contextManager = null
+                    sessionApprovalStore.clear()
 
                     // Auto-start fresh session with handoff context
                     currentJob = service.startHandoffSession(
                         handoffContext = result.context,
                         onStreamChunk = ::onStreamChunk,
                         onToolCall = ::onToolCall,
-                        onTaskProgress = ::onTaskProgress,
                         onComplete = ::onComplete
                     )
-                    // Don't unlock input — the new session is running
-                    return@invokeLater
+                    handledHandoff = true
                 }
+            }
+            } catch (e: Throwable) {
+                LOG.error("onComplete: UI render failed — clearing spinner anyway", e)
+            }
+
+            if (handledHandoff) {
+                // Handoff started a fresh session — it owns the spinner from here.
+                return@invokeLater
             }
 
             LOG.info("onComplete: clearing busy, unlocking input, disabling steering")
@@ -1470,8 +1750,11 @@ class AgentController(
         userInputChannel?.close()
         userInputChannel = null
         loopWaitingForInput = false
+        pendingUiMessageOverride.set(null)
         steeringQueue.clear()
         streamBatcher.clear()
+        toolStreamBatcher.flush()   // drain any buffered output on cancel
+        firstFlushSeen.clear()
     }
 
     fun newChat() {
@@ -1496,10 +1779,12 @@ class AgentController(
         lastStreamSnippet = ""
         contextManager?.clearActivePlanPath()
         contextManager = null
+        sessionApprovalStore.clear()
         taskStartTime = 0L
         lastTaskText = null
         lastDisplayText = null
         lastDisplayMentionsJson = null
+        originalTaskText = null
         currentSessionId = null
         currentPlanData = null
         pendingApproval?.cancel()
@@ -1521,6 +1806,7 @@ class AgentController(
         dashboard.setSmartWorkingPhrase("")                         // Clear working phrase
         dashboard.setSessionTitle("")                               // Clear conversation title
         dashboard.finalizeToolChain()                               // Collapse any open tool chain
+        dashboard.setTasks("[]")                                   // Clear task list (prevent stale state leak)
         dashboard.focusInput()                                      // Focus the input bar
     }
 
@@ -1785,6 +2071,8 @@ class AgentController(
 
         // Create a fresh input channel for the resumed loop
         userInputChannel = Channel(Channel.RENDEZVOUS)
+        loopWaitingForInput = false
+        pendingUiMessageOverride.set(null)
         taskStartTime = System.currentTimeMillis()
 
         val debugEnabled = AgentSettings.getInstance(project).state.showDebugLog
@@ -1797,7 +2085,6 @@ class AgentController(
             userText = userText,
             onStreamChunk = ::onStreamChunk,
             onToolCall = ::onToolCall,
-            onTaskProgress = ::onTaskProgress,
             onComplete = { result ->
                 if (debugEnabled) {
                     val status = when (result) {
@@ -1834,8 +2121,9 @@ class AgentController(
                     }
                 }
             },
-            onPlanResponse = { text, explore, steps -> onPlanResponse(text, explore, steps) },
+            onPlanResponse = { text, explore -> onPlanResponse(text, explore) },
             onPlanModeToggled = { enabled -> invokeLater { togglePlanMode(enabled) } },
+            onPlanDiscarded = { invokeLater { onPlanDiscardedByLlm() } },
             userInputChannel = userInputChannel,
             approvalGate = ::approvalGate,
             onCheckpointSaved = ::onCheckpointSaved,
@@ -1850,6 +2138,12 @@ class AgentController(
                 invokeLater {
                     dashboard.promoteQueuedSteeringMessages(drainedIds)
                 }
+            },
+            sessionApprovalStore = sessionApprovalStore,
+            onAwaitingUserInput = ::onLoopAwaitingUserInput,
+            onUserInputReceived = { _ ->
+                // Consumed and cleared atomically — same contract as the executeTask path.
+                pendingUiMessageOverride.getAndSet(null)
             },
         )
 
@@ -1897,11 +2191,19 @@ class AgentController(
      * Called during session resume so the chat UI displays the complete conversation history
      * from the previous session. The bridge function `_loadSessionState` (registered in
      * jcef-bridge.ts, Task 9) replaces the chatStore messages with the deserialized array.
+     *
+     * Also pushes the current TaskStore snapshot via `_setTasks` so the React
+     * PlanProgressWidget rehydrates its task list at the same time. If no session is
+     * active (task store unavailable) an empty array is sent to clear any stale UI state.
      */
     fun postStateToWebview(uiMessages: List<UiMessage>) {
         val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
         val messagesJson = json.encodeToString(uiMessages)
         dashboard.loadSessionState(messagesJson)
+
+        val tasks = service.currentTaskStore()?.listTasks().orEmpty()
+        val tasksJson = taskEventJson.encodeToString(tasks)
+        dashboard.setTasks(tasksJson)
     }
 
     /**
@@ -1928,7 +2230,6 @@ class AgentController(
             checkpointId = checkpointId,
             onStreamChunk = ::onStreamChunk,
             onToolCall = ::onToolCall,
-            onTaskProgress = ::onTaskProgress,
             onComplete = ::onComplete
         )
 
@@ -1958,7 +2259,7 @@ class AgentController(
      * If needsMoreExploration=false, the loop will wait on userInputChannel
      * for the user to respond (type chat, add comments, or approve).
      */
-    private fun onPlanResponse(planText: String, needsMoreExploration: Boolean, planSteps: List<String>) {
+    private fun onPlanResponse(planText: String, needsMoreExploration: Boolean) {
         // Save plan to disk and store path in ContextManager for compaction survival.
         // Done outside invokeLater so it's synchronous and guaranteed before UI render.
         val sid = currentSessionId
@@ -1983,16 +2284,11 @@ class AgentController(
         }
 
         invokeLater {
-            // Build plan from LLM-provided steps (not parsed from markdown).
-            // The LLM provides structured step titles via the mandatory "steps" parameter.
-            val steps = planSteps.mapIndexed { index, title ->
-                PlanStep(id = (index + 1).toString(), title = title)
-            }
             val summary = planText.lines()
                 .firstOrNull { it.isNotBlank() && !it.startsWith("#") }
                 ?.trim()?.take(300)
-                ?: "Plan with ${steps.size} steps"
-            val planData = PlanJson(summary = summary, steps = steps, markdown = planText)
+                ?: "Implementation plan"
+            val planData = PlanJson(summary = summary, markdown = planText)
             currentPlanData = planData
             val planJson = Json.encodeToString(planData)
             dashboard.renderPlan(planJson)
@@ -2068,15 +2364,24 @@ class AgentController(
 
         // Build the approval instruction.
         // When context was cleared, the plan content is no longer in the conversation.
-        // Include it inline so the LLM can proceed without needing read_file on the
-        // external plan path (which PathValidator blocks as outside the project).
-        val stepsChecklist = currentPlanData?.steps?.joinToString("\n") { step ->
-            "- [ ] ${step.title}"
-        } ?: ""
-
+        // Include it inline (with the original task for full intent) so the LLM can
+        // proceed without needing read_file on the external plan path (which PathValidator
+        // blocks as outside the project).
+        //
+        // originalTaskText is set by executeTask on first message — but resumeSession()
+        // bypasses executeTask, so it is null for resumed sessions. Fall back to the
+        // MessageStateHandler.taskText (200-char task summary written at session creation).
+        val effectiveOriginalTask = originalTaskText
+            ?: service.activeMessageStateHandler?.taskText?.takeIf { it.isNotBlank() }
         val instruction = buildString {
             appendLine("The user has approved the plan.")
             if (clearContext) {
+                effectiveOriginalTask?.let {
+                    appendLine()
+                    appendLine("<original_task>")
+                    appendLine(it)
+                    appendLine("</original_task>")
+                }
                 val planMarkdown = currentPlanData?.markdown
                 if (!planMarkdown.isNullOrBlank()) {
                     appendLine()
@@ -2085,14 +2390,25 @@ class AgentController(
                     appendLine("</approved_plan>")
                 }
             }
-            if (stepsChecklist.isNotBlank()) {
-                appendLine()
-                appendLine("Task checklist:")
-                appendLine(stepsChecklist)
-            }
         }.trim()
 
-        executeTask(instruction)
+        // Build a typed UI message so the persisted bubble shows "Implementation plan approved"
+        // (with the plan markdown attached) rather than the raw XML instruction text.
+        val uiApprovalMsg = UiMessage(
+            type = UiMessageType.SAY,
+            say = UiSay.PLAN_APPROVED,
+            ts = System.currentTimeMillis(),
+            text = "Implementation plan approved",
+            planApprovalData = currentPlanData?.markdown?.let { PlanApprovalData(it) }
+        )
+
+        // Pass displayText so the live-UI append (AgentController.executeTask wrapper's
+        // displayUserMessage call) also shows the clean label instead of raw XML.
+        executeTask(
+            task = instruction,
+            displayText = "Implementation plan approved",
+            uiMessageOverride = uiApprovalMsg
+        )
     }
 
     /**
@@ -2129,6 +2445,54 @@ class AgentController(
             LOG.warn("AgentController.revisePlan: no active loop to receive revision")
             dashboard.setBusy(false)
         }
+    }
+
+    /**
+     * Shared discard logic used by both LLM-initiated (via discard_plan tool)
+     * and user-initiated (via Dismiss button) plan discard flows.
+     *
+     * @param userInitiated If true, also injects a user-role conversation marker
+     *   so the LLM understands the user chose to dismiss the plan.
+     */
+    private fun performPlanDiscard(userInitiated: Boolean) {
+        LOG.info("AgentController.performPlanDiscard(userInitiated=$userInitiated)")
+        currentPlanData = null
+        invokeLater { dashboard.clearPlanInUi() }
+
+        if (userInitiated) {
+            val marker = "[User dismissed the pending plan. Continue the conversation in plan mode — do not re-present the dismissed plan unless explicitly asked.]"
+            // Route through channel if loop is suspended waiting for input,
+            // otherwise through steering queue (mirrors revisePlan pattern).
+            val channel = userInputChannel
+            if (loopWaitingForInput && channel != null && currentJob?.isActive == true) {
+                loopWaitingForInput = false
+                runBlocking { channel.send(marker) }
+            } else if (currentJob?.isActive == true) {
+                val steeringId = "steer-dismiss-${System.currentTimeMillis()}"
+                steeringQueue.offer(SteeringMessage(id = steeringId, text = marker))
+            }
+        }
+    }
+
+    /** User clicked Dismiss on the plan card. */
+    private fun dismissPlan() {
+        LOG.info("AgentController.dismissPlan — user-initiated plan dismissal")
+        // Rewrite history synchronously (JCEF thread, not EDT) so the mutation inside
+        // MessageStateHandler's mutex completes before performPlanDiscard sends the
+        // steering/channel message — eliminates the race where the LLM could see the
+        // old plan_mode_respond result on the very next turn.
+        runBlocking(Dispatchers.IO) {
+            service.activeMessageStateHandler
+                ?.rewriteMostRecentToolResult("plan_mode_respond", "[Plan discarded — do not reference]")
+        }
+        performPlanDiscard(userInitiated = true)
+    }
+
+    /** Called when LLM uses the discard_plan tool. */
+    internal fun onPlanDiscardedByLlm() {
+        LOG.info("AgentController.onPlanDiscardedByLlm — LLM-initiated plan dismissal")
+        // History rewrite already done inside AgentService executeTask closure
+        performPlanDiscard(userInitiated = false)
     }
 
     private fun togglePlanMode(enabled: Boolean) {
@@ -2430,11 +2794,15 @@ class AgentController(
         phraseTimerJob?.cancel()
         phraseTimerJob = null
         contextManager = null
+        sessionApprovalStore.clear()
         currentSessionId = null
         currentPlanData = null
         pendingApproval?.cancel()
         pendingApproval = null
         pendingApprovalToolName = null
+        // Cancel the long-lived controller scope so the TaskChanged EventBus
+        // subscription stops collecting once the controller is disposed.
+        controllerScope.cancel()
         // Drop the artifact push callback so the registry cannot invoke a
         // stale dashboard reference if a render fires in the window between
         // this dispose and a new controller installing its own callback.

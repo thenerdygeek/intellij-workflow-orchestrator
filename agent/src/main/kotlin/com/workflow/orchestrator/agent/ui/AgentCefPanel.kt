@@ -9,7 +9,9 @@ import com.intellij.ui.jcef.JBCefBrowserBase
 import com.intellij.ui.jcef.JBCefClient
 import com.intellij.ui.jcef.JBCefJSQuery
 import com.intellij.util.ui.UIUtil
+import com.workflow.orchestrator.agent.tools.CompletionData
 import com.workflow.orchestrator.agent.util.JsEscape
+import kotlinx.serialization.encodeToString
 import org.cef.browser.CefBrowser
 import org.cef.handler.CefLoadHandlerAdapter
 import kotlinx.coroutines.CoroutineScope
@@ -40,6 +42,7 @@ class AgentCefPanel(
 
     companion object {
         private val LOG = Logger.getInstance(AgentCefPanel::class.java)
+        private val JSON = Json { encodeDefaults = true }
 
         /** Check if JCEF is available in this IDE installation. */
         fun isAvailable(): Boolean = try { JBCefApp.isSupported() } catch (_: Exception) { false }
@@ -61,6 +64,7 @@ class AgentCefPanel(
     private var promptQuery: JBCefJSQuery? = null
     private var planApproveQuery: JBCefJSQuery? = null
     private var planReviseQuery: JBCefJSQuery? = null
+    private var planDismissQuery: JBCefJSQuery? = null
     private var toolToggleQuery: JBCefJSQuery? = null
     private var questionAnsweredQuery: JBCefJSQuery? = null
     private var questionSkippedQuery: JBCefJSQuery? = null
@@ -87,6 +91,7 @@ class AgentCefPanel(
     private var sendMessageWithMentionsQuery: JBCefJSQuery? = null
     private var openInEditorTabQuery: JBCefJSQuery? = null
     private var focusPlanEditorQuery: JBCefJSQuery? = null
+    private var openApprovedPlanQuery: JBCefJSQuery? = null
     private var revisePlanFromEditorQuery: JBCefJSQuery? = null
     private var viewInEditorQuery: JBCefJSQuery? = null
     private var approveToolCallQuery: JBCefJSQuery? = null
@@ -138,6 +143,9 @@ class AgentCefPanel(
     /** Callback when user clicks "Revise with Comments" on a plan card. JSON string of {stepId: comment}. */
     var onPlanRevised: ((String) -> Unit)? = null
 
+    /** Callback when user clicks "Dismiss" on a plan card. */
+    var onPlanDismissed: (() -> Unit)? = null
+
     /** Callback when user toggles a tool checkbox in the Tools panel. */
     var onToolToggled: ((String, Boolean) -> Unit)? = null
 
@@ -179,6 +187,9 @@ class AgentCefPanel(
 
     /** Callback when user clicks "View Implementation Plan" on the plan card. Focuses the existing plan editor tab. */
     var onFocusPlanEditor: (() -> Unit)? = null
+
+    /** Callback when user clicks "Open Plan" on the approved-plan card (plan already approved, view it in editor). */
+    var onOpenApprovedPlan: (() -> Unit)? = null
 
     /** Callback when user clicks "Revise" on the chat plan card. Triggers revise on the plan editor tab. */
     var onRevisePlanFromEditor: (() -> Unit)? = null
@@ -306,6 +317,7 @@ class AgentCefPanel(
         promptQuery = registerQuery(b) { text -> onPromptSubmitted?.invoke(text); JBCefJSQuery.Response("ok") }
         planApproveQuery = registerQuery(b) { _ -> onPlanApproved?.invoke(); JBCefJSQuery.Response("ok") }
         planReviseQuery = registerQuery(b) { commentsJson -> onPlanRevised?.invoke(commentsJson); JBCefJSQuery.Response("ok") }
+        planDismissQuery = registerQuery(b) { _ -> onPlanDismissed?.invoke(); JBCefJSQuery.Response("ok") }
         toolToggleQuery = registerQuery(b) { data ->
             // data format: "tool_name:1" or "tool_name:0"
             val colonIdx = data.lastIndexOf(':')
@@ -428,6 +440,7 @@ class AgentCefPanel(
         }
         openInEditorTabQuery = registerQuery(b) { payload -> onOpenInEditorTab?.invoke(payload); JBCefJSQuery.Response("ok") }
         focusPlanEditorQuery = registerQuery(b) { _ -> onFocusPlanEditor?.invoke(); JBCefJSQuery.Response("ok") }
+        openApprovedPlanQuery = registerQuery(b) { _ -> onOpenApprovedPlan?.invoke(); JBCefJSQuery.Response("ok") }
         revisePlanFromEditorQuery = registerQuery(b) { _ -> onRevisePlanFromEditor?.invoke(); JBCefJSQuery.Response("ok") }
         viewInEditorQuery = registerQuery(b) { _ -> onViewInEditor?.invoke(); JBCefJSQuery.Response("ok") }
 
@@ -517,6 +530,7 @@ class AgentCefPanel(
                     // Each is wrapped in injectBridge so one failure doesn't skip the rest.
                     injectBridge("_approvePlan") { planApproveQuery?.let { q -> js("window._approvePlan = function() { ${q.inject("'approve'")} }") } }
                     injectBridge("_revisePlan") { planReviseQuery?.let { q -> js("window._revisePlan = function(comments) { ${q.inject("comments")} }") } }
+                    injectBridge("_dismissPlan") { planDismissQuery?.let { q -> js("window._dismissPlan = function() { ${q.inject("'dismiss'")} }") } }
                     injectBridge("_toggleTool") { toolToggleQuery?.let { q -> js("window._toggleTool = function(data) { ${q.inject("data")} }") } }
                     injectBridge("_questionAnswered") { questionAnsweredQuery?.let { q -> js("window._questionAnswered = function(qid, opts) { ${q.inject("qid + ':' + opts")} }") } }
                     injectBridge("_questionSkipped") { questionSkippedQuery?.let { q -> js("window._questionSkipped = function(qid) { ${q.inject("qid")} }") } }
@@ -543,6 +557,7 @@ class AgentCefPanel(
                     injectBridge("_sendMessageWithMentions") { sendMessageWithMentionsQuery?.let { q -> js("window._sendMessageWithMentions = function(payload) { ${q.inject("payload")} }") } }
                     injectBridge("_openInEditorTab") { openInEditorTabQuery?.let { q -> js("window._openInEditorTab = function(payload) { ${q.inject("payload")} }") } }
                     injectBridge("_focusPlanEditor") { focusPlanEditorQuery?.let { q -> js("window._focusPlanEditor = function() { ${q.inject("''")} }") } }
+                    injectBridge("_openApprovedPlan") { openApprovedPlanQuery?.let { q -> js("window._openApprovedPlan = function() { ${q.inject("''")} }") } }
                     injectBridge("_revisePlanFromEditor") { revisePlanFromEditorQuery?.let { q -> js("window._revisePlanFromEditor = function() { ${q.inject("''")} }") } }
                     injectBridge("_viewInEditor") { viewInEditorQuery?.let { q -> js("window._viewInEditor = function() { ${q.inject("''")} }") } }
                     injectBridge("_approveToolCall") { approveToolCallQuery?.let { q -> js("window._approveToolCall = function() { ${q.inject("'approve'")} }") } }
@@ -639,6 +654,10 @@ class AgentCefPanel(
         callJs("appendUserMessage(${JsEscape.toJsString(text)})")
     }
 
+    fun appendPlanApprovedMessage(planMarkdown: String) {
+        callJs("appendPlanApprovedMessage(${JsEscape.toJsString(planMarkdown)})")
+    }
+
     fun appendUserMessageWithMentions(text: String, mentionsJson: String) {
         callJs("appendUserMessageWithMentions(${JsEscape.toJsString(text)}, ${JsEscape.toJsString(mentionsJson)})")
     }
@@ -667,9 +686,9 @@ class AgentCefPanel(
         callJs("finalizeToolChain()")
     }
 
-    fun appendCompletionSummary(result: String, verifyCommand: String? = null) {
-        val cmdArg = if (verifyCommand != null) JsEscape.toJsString(verifyCommand) else "undefined"
-        callJs("appendCompletionSummary(${JsEscape.toJsString(result)},$cmdArg)")
+    fun appendCompletionCard(data: CompletionData) {
+        val json = JSON.encodeToString(data)
+        callJs("window._appendCompletionCard(${JsEscape.toJsString(json)})")
     }
 
     fun appendToolCall(
@@ -694,12 +713,16 @@ class AgentCefPanel(
     }
 
     fun appendToolOutput(toolCallId: String, chunk: String) {
+        if (bridgeDispatcher?.isLoaded == false) LOG.warn(
+            "appendToolOutput[$toolCallId]: JS bridge not loaded yet — output buffered " +
+            "(pendingCallCount=${bridgeDispatcher?.pendingCallCount}). " +
+            "If this count keeps growing without markLoaded() firing, the webview load event was missed."
+        )
         callJs("appendToolOutput(${JsEscape.toJsString(toolCallId)},${JsEscape.toJsString(chunk)})")
     }
 
     /**
      * Push a diff explanation to the chat — renders immediately as DiffHtml.
-     * Used by generate_explanation tool to show the diff without waiting for LLM response.
      */
     fun appendDiffExplanation(title: String, diffSource: String) {
         callJs("appendDiffExplanation(${JsEscape.toJsString(title)},${JsEscape.toJsString(diffSource)})")
@@ -744,12 +767,8 @@ class AgentCefPanel(
         callJs("approvePlan()")
     }
 
-    fun updatePlanStep(stepId: String, status: String) {
-        callJs("updatePlanStep(${JsEscape.toJsString(stepId)}, ${JsEscape.toJsString(status)})")
-    }
-
-    fun replaceExecutionSteps(stepsJson: String) {
-        callJs("replaceExecutionSteps(${JsEscape.toJsString(stepsJson)})")
+    fun clearPlanInUi() {
+        callJs("clearPlan()")
     }
 
     fun setPlanCommentCount(count: Int) {
@@ -868,6 +887,14 @@ class AgentCefPanel(
         callJs("updateSubAgentMessage(${JsEscape.toJsString(payload)})")
     }
 
+    fun appendSubAgentStreamDelta(agentId: String, delta: String) {
+        val payload = buildJsonObject {
+            put("agentId", agentId)
+            put("delta", delta)
+        }.toString()
+        callJs("appendSubAgentStreamDelta(${JsEscape.toJsString(payload)})")
+    }
+
     fun completeSubAgent(agentId: String, textContent: String, tokensUsed: Int, isError: Boolean) {
         val payload = buildJsonObject {
             put("agentId", agentId)
@@ -895,8 +922,8 @@ class AgentCefPanel(
         callJs("updateSkillsList(${JsEscape.toJsString(skillsJson)})")
     }
 
-    fun showRetryButton(lastMessage: String) {
-        callJs("showRetryButton(${JsEscape.toJsString(lastMessage)})")
+    fun showRetryButton(kind: String, caption: String) {
+        callJs("showRetryButton(${JsEscape.toJsString(kind)}, ${JsEscape.toJsString(caption)})")
     }
 
     fun focusInput() {
@@ -963,9 +990,28 @@ class AgentCefPanel(
 
     // ── Tool call approval rendering ──
 
-    fun showApproval(toolName: String, riskLevel: String, description: String, metadataJson: String, diffContent: String? = null) {
+    fun showApproval(
+        toolName: String,
+        riskLevel: String,
+        description: String,
+        metadataJson: String,
+        diffContent: String? = null,
+        commandPreviewJson: String? = null,
+        allowSessionApproval: Boolean = true,
+    ) {
         val diffArg = if (diffContent != null) JsEscape.toJsString(diffContent) else "null"
-        callJs("showApproval(${JsEscape.toJsString(toolName)},${JsEscape.toJsString(riskLevel)},${JsEscape.toJsString(description)},${JsEscape.toJsString(metadataJson)},$diffArg)")
+        val previewArg = if (commandPreviewJson != null) JsEscape.toJsString(commandPreviewJson) else "null"
+        callJs(
+            "showApproval(" +
+                "${JsEscape.toJsString(toolName)}," +
+                "${JsEscape.toJsString(riskLevel)}," +
+                "${JsEscape.toJsString(description)}," +
+                "${JsEscape.toJsString(metadataJson)}," +
+                "$diffArg," +
+                "$previewArg," +
+                "$allowSessionApproval" +
+                ")"
+        )
     }
 
     fun showProcessInput(processId: String, description: String, prompt: String, command: String) {
@@ -1055,6 +1101,35 @@ class AgentCefPanel(
      */
     fun loadSessionState(uiMessagesJson: String) {
         callJs("_loadSessionState(${JsEscape.toJsString(uiMessagesJson)})")
+    }
+
+    /**
+     * Push the full task list to the webview, replacing the current chatStore.tasks.
+     * Calls the `_setTasks` bridge function registered in jcef-bridge.ts.
+     *
+     * Used on session load / rehydration so [PlanProgressWidget] shows tasks
+     * from the persisted TaskStore.
+     */
+    fun setTasks(tasksJson: String) {
+        callJs("_setTasks(${JsEscape.toJsString(tasksJson)})")
+    }
+
+    /**
+     * Push a single created task to the webview; the React chatStore appends it
+     * to `tasks`. Calls the `_applyTaskCreate` bridge function in jcef-bridge.ts.
+     */
+    fun applyTaskCreate(taskJson: String) {
+        LOG.info("[Tasks] applyTaskCreate dispatch (${taskJson.length} chars, dispatcher loaded=${bridgeDispatcher?.isLoaded == true}, pending=${bridgeDispatcher?.pendingCallCount ?: -1})")
+        callJs("_applyTaskCreate(${JsEscape.toJsString(taskJson)})")
+    }
+
+    /**
+     * Push a single updated task to the webview; the React chatStore replaces
+     * the matching task by id. Calls the `_applyTaskUpdate` bridge function.
+     */
+    fun applyTaskUpdate(taskJson: String) {
+        LOG.info("[Tasks] applyTaskUpdate dispatch (${taskJson.length} chars, dispatcher loaded=${bridgeDispatcher?.isLoaded == true}, pending=${bridgeDispatcher?.pendingCallCount ?: -1})")
+        callJs("_applyTaskUpdate(${JsEscape.toJsString(taskJson)})")
     }
 
     fun loadSessionHistory(historyItemsJson: String) {

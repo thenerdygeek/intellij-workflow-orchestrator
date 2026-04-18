@@ -1,7 +1,9 @@
 package com.workflow.orchestrator.agent.tools.debug
 
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.xdebugger.XDebugSession
 import com.intellij.xdebugger.XDebugSessionListener
@@ -14,14 +16,16 @@ import com.intellij.xdebugger.frame.presentation.XValuePresentation
 import com.intellij.debugger.engine.DebugProcessImpl
 import com.intellij.debugger.engine.events.DebuggerCommandImpl
 import com.intellij.debugger.jdi.VirtualMachineProxyImpl
+import com.workflow.orchestrator.agent.AgentService
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
+import org.jetbrains.annotations.VisibleForTesting
+import java.util.UUID
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.Icon
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -30,41 +34,84 @@ import kotlin.coroutines.resumeWithException
  * Shared coroutine wrapper for IntelliJ's callback-based XDebugger API.
  * All debug tools delegate to this controller for session management,
  * stack frame resolution, variable inspection, and expression evaluation.
+ *
+ * ## Per-session listener/flow ownership (Phase 5 / Task 4.2)
+ *
+ * Every [registerSession] call allocates a [DebugInvocation] via
+ * [debugInvocationFactory] (default: `project.service<AgentService>().newDebugInvocation(...)`)
+ * which owns:
+ *  - the proxied [XDebugSessionListener] (attached via the 2-arg
+ *    `addSessionListener(listener, parent)` form inside
+ *    [DebugInvocation.attachListener] — auto-removed on `Disposer.dispose`);
+ *  - the `pauseFlow` used by [waitForPause].
+ *
+ * This replaces the pre-Task-4.2 pattern of raw `addSessionListener(listener)`
+ * + a controller-level `ConcurrentHashMap<String, MutableSharedFlow>`, which
+ * leaked listeners across `registerSession` cycles (the 1-arg form has no
+ * `removeSessionListener` path). See `DebugInvocation` KDoc for details.
+ *
+ * @param debugInvocationFactory Functional dependency for allocating
+ *   per-session disposal scopes. Defaulted to the production wiring —
+ *   tests inject a throw-away factory to avoid needing a real
+ *   [AgentService] instance.
  */
-class AgentDebugController(private val project: Project) : Disposable {
+class AgentDebugController internal constructor(
+    private val project: Project,
+    private val debugInvocationFactory: (String) -> DebugInvocation =
+        { name -> project.service<AgentService>().newDebugInvocation(name) },
+) : Disposable {
 
-    private val sessionCounter = AtomicInteger(0)
-    private val sessions = ConcurrentHashMap<String, XDebugSession>()
-    private val pauseFlows = ConcurrentHashMap<String, MutableSharedFlow<DebugPauseEvent>>()
+    // Strong references — cleanup is guaranteed by sessionStopped callback +
+    // DebugInvocation cascade-dispose (Phase 5 Task 4.2). WeakReference rejected
+    // in Task 4.5 review — would break getSession semantics.
+    @VisibleForTesting
+    internal val sessionInvocations = ConcurrentHashMap<String, SessionEntry>()
     private val agentBreakpoints = ConcurrentHashMap.newKeySet<XLineBreakpoint<*>>()
     private val agentGeneralBreakpoints = ConcurrentHashMap.newKeySet<XBreakpoint<*>>()
     @Volatile
     private var activeSessionId: String? = null
 
     /**
-     * Registers a debug session, assigns a unique ID, and attaches a listener
+     * Per-session tuple: the [XDebugSession] plus the [DebugInvocation]
+     * scoping its listener and pause flow. Replaces the two parallel maps
+     * (`sessions` + `pauseFlows`) held pre-Task-4.2 — a single atomic
+     * entry guarantees the listener and flow lifecycles stay in sync.
+     */
+    internal data class SessionEntry(
+        val session: XDebugSession,
+        val invocation: DebugInvocation,
+    )
+
+    /**
+     * Registers a debug session, assigns a globally unique ID, and attaches a listener
      * to capture pause/resume/stop events.
+     *
+     * ID format: `agent-debug-{UUID}`. Task 4.5 replaced the pre-existing sequential
+     * `debug-{counter}` format with a UUID to eliminate two correctness bugs:
+     *  - counter recycling across `new chat` lifecycle could re-use `debug-1` for
+     *    a new session while a downstream tool call still held the old handle;
+     *  - the `agent-debug-` prefix disambiguates agent-owned handles from the
+     *    platform `XDebugSession.sessionName` in logs and LLM chat output,
+     *    so [IdeStateProbe.debugState] never mistakes a user display name like
+     *    `"MyApp"` for an agent handle.
      */
     fun registerSession(session: XDebugSession): String {
-        val sessionId = "debug-${sessionCounter.incrementAndGet()}"
-        sessions[sessionId] = session
+        val sessionId = "agent-debug-${UUID.randomUUID()}"
+        val invocation = debugInvocationFactory("session-$sessionId")
+        sessionInvocations[sessionId] = SessionEntry(session, invocation)
         activeSessionId = sessionId
 
-        val flow = MutableSharedFlow<DebugPauseEvent>(replay = 1)
-        pauseFlows[sessionId] = flow
-
-        session.addSessionListener(object : XDebugSessionListener {
+        invocation.attachListener(session, object : XDebugSessionListener {
             override fun sessionPaused() {
                 val pos = session.currentPosition
                 // XDebugSession doesn't expose currentBreakpoint directly;
                 // we infer reason from context: if paused, it's either a breakpoint or step
-                val reason = "breakpoint"
-                flow.tryEmit(
+                invocation.pauseFlow.tryEmit(
                     DebugPauseEvent(
                         sessionId = sessionId,
                         file = pos?.file?.path,
                         line = pos?.line?.plus(1), // 0-based to 1-based
-                        reason = reason
+                        reason = "breakpoint"
                     )
                 )
             }
@@ -72,14 +119,19 @@ class AgentDebugController(private val project: Project) : Disposable {
             @OptIn(ExperimentalCoroutinesApi::class)
             override fun sessionResumed() {
                 // Reset the replay cache so waitForPause blocks on next call
-                flow.resetReplayCache()
+                invocation.pauseFlow.resetReplayCache()
             }
 
             override fun sessionStopped() {
-                sessions.remove(sessionId)
-                pauseFlows.remove(sessionId)
+                sessionInvocations.remove(sessionId)?.also { entry ->
+                    try {
+                        Disposer.dispose(entry.invocation)
+                    } catch (_: Exception) {
+                        // Invocation already disposed (e.g. by new chat cascade) — no-op
+                    }
+                }
                 if (activeSessionId == sessionId) {
-                    activeSessionId = sessions.keys.firstOrNull()
+                    activeSessionId = sessionInvocations.keys.firstOrNull()
                 }
             }
         })
@@ -92,9 +144,9 @@ class AgentDebugController(private val project: Project) : Disposable {
      */
     fun getSession(sessionId: String? = null): XDebugSession? {
         if (sessionId == null) {
-            return activeSessionId?.let { sessions[it] }
+            return activeSessionId?.let { sessionInvocations[it]?.session }
         }
-        return sessions[sessionId]
+        return sessionInvocations[sessionId]?.session
     }
 
     /**
@@ -122,8 +174,9 @@ class AgentDebugController(private val project: Project) : Disposable {
      * Returns immediately if already suspended. Returns null on timeout.
      */
     suspend fun waitForPause(sessionId: String, timeoutMs: Long = 5000): DebugPauseEvent? {
-        val session = sessions[sessionId] ?: return null
-        val flow = pauseFlows[sessionId] ?: return null
+        val entry = sessionInvocations[sessionId] ?: return null
+        val session = entry.session
+        val flow = entry.invocation.pauseFlow
         return withTimeoutOrNull(timeoutMs) {
             if (session.isSuspended) {
                 val pos = session.currentPosition
@@ -196,52 +249,54 @@ class AgentDebugController(private val project: Project) : Disposable {
      * Returns null if not found.
      */
     suspend fun findXValueByName(frame: XStackFrame, name: String): XValue? {
-        return withTimeoutOrNull(5000L) {
-            suspendCancellableCoroutine { cont ->
-                cont.invokeOnCancellation { /* timeout cleanup */ }
-                var found: XValue? = null
+        return awaitCallback<XValue?>(5000L) { stopped, resume, _ ->
+            var found: XValue? = null
 
-                frame.computeChildren(object : XCompositeNode {
-                    override fun addChildren(children: XValueChildrenList, last: Boolean) {
-                        if (found == null) {
-                            for (i in 0 until children.size()) {
-                                if (children.getName(i) == name) {
-                                    found = children.getValue(i)
-                                    break
-                                }
+            frame.computeChildren(object : XCompositeNode {
+                override fun addChildren(children: XValueChildrenList, last: Boolean) {
+                    if (stopped.get()) return
+                    if (found == null) {
+                        for (i in 0 until children.size()) {
+                            if (children.getName(i) == name) {
+                                found = children.getValue(i)
+                                break
                             }
                         }
-                        if (last) cont.resume(found)
                     }
+                    if (last) resume(found)
+                }
 
-                    override fun tooManyChildren(remaining: Int) {
-                        cont.resume(found)
-                    }
+                override fun tooManyChildren(remaining: Int) {
+                    if (stopped.get()) return
+                    resume(found)
+                }
 
-                    override fun tooManyChildren(remaining: Int, childrenAdder: Runnable) {
-                        cont.resume(found)
-                    }
+                override fun tooManyChildren(remaining: Int, childrenAdder: Runnable) {
+                    if (stopped.get()) return
+                    resume(found)
+                }
 
-                    override fun setAlreadySorted(alreadySorted: Boolean) {}
+                override fun setAlreadySorted(alreadySorted: Boolean) {}
 
-                    override fun setErrorMessage(errorMessage: String) {
-                        cont.resume(null)
-                    }
+                override fun setErrorMessage(errorMessage: String) {
+                    if (stopped.get()) return
+                    resume(null)
+                }
 
-                    override fun setErrorMessage(errorMessage: String, link: XDebuggerTreeNodeHyperlink?) {
-                        cont.resume(null)
-                    }
+                override fun setErrorMessage(errorMessage: String, link: XDebuggerTreeNodeHyperlink?) {
+                    if (stopped.get()) return
+                    resume(null)
+                }
 
-                    override fun setMessage(
-                        message: String,
-                        icon: Icon?,
-                        attributes: SimpleTextAttributes,
-                        link: XDebuggerTreeNodeHyperlink?
-                    ) {}
+                override fun setMessage(
+                    message: String,
+                    icon: Icon?,
+                    attributes: SimpleTextAttributes,
+                    link: XDebuggerTreeNodeHyperlink?
+                ) {}
 
-                    override fun isObsolete(): Boolean = false
-                })
-            }
+                override fun isObsolete(): Boolean = false
+            })
         }
     }
 
@@ -252,48 +307,49 @@ class AgentDebugController(private val project: Project) : Disposable {
     ): List<VariableInfo> {
         if (charCounter[0] >= MAX_VARIABLE_CHARS) return emptyList()
 
-        val children = withTimeoutOrNull(5000L) {
-            suspendCancellableCoroutine { cont ->
-                cont.invokeOnCancellation { /* timeout cleanup */ }
-                val result = mutableListOf<XValue>()
-                val names = mutableListOf<String>()
+        val children = awaitCallback<List<Pair<String, XValue>>>(5000L) { stopped, resume, _ ->
+            val result = mutableListOf<XValue>()
+            val names = mutableListOf<String>()
 
-                node.computeChildren(object : XCompositeNode {
-                    override fun addChildren(children: XValueChildrenList, last: Boolean) {
-                        for (i in 0 until children.size()) {
-                            if (result.size >= MAX_CHILDREN_PER_LEVEL) break
-                            names.add(children.getName(i))
-                            result.add(children.getValue(i))
-                        }
-                        if (last || result.size >= MAX_CHILDREN_PER_LEVEL) {
-                            cont.resume(names.zip(result))
-                        }
+            node.computeChildren(object : XCompositeNode {
+                override fun addChildren(children: XValueChildrenList, last: Boolean) {
+                    if (stopped.get()) return
+                    for (i in 0 until children.size()) {
+                        if (result.size >= MAX_CHILDREN_PER_LEVEL) break
+                        names.add(children.getName(i))
+                        result.add(children.getValue(i))
                     }
-
-                    override fun tooManyChildren(remaining: Int) {
-                        cont.resume(names.zip(result))
+                    if (last || result.size >= MAX_CHILDREN_PER_LEVEL) {
+                        resume(names.zip(result))
                     }
+                }
 
-                    override fun setAlreadySorted(alreadySorted: Boolean) {}
+                override fun tooManyChildren(remaining: Int) {
+                    if (stopped.get()) return
+                    resume(names.zip(result))
+                }
 
-                    override fun setErrorMessage(errorMessage: String) {
-                        cont.resume(names.zip(result))
-                    }
+                override fun setAlreadySorted(alreadySorted: Boolean) {}
 
-                    override fun setErrorMessage(errorMessage: String, link: XDebuggerTreeNodeHyperlink?) {
-                        cont.resume(names.zip(result))
-                    }
+                override fun setErrorMessage(errorMessage: String) {
+                    if (stopped.get()) return
+                    resume(names.zip(result))
+                }
 
-                    override fun setMessage(
-                        message: String,
-                        icon: Icon?,
-                        attributes: SimpleTextAttributes,
-                        link: XDebuggerTreeNodeHyperlink?
-                    ) {}
+                override fun setErrorMessage(errorMessage: String, link: XDebuggerTreeNodeHyperlink?) {
+                    if (stopped.get()) return
+                    resume(names.zip(result))
+                }
 
-                    override fun isObsolete(): Boolean = false
-                })
-            }
+                override fun setMessage(
+                    message: String,
+                    icon: Icon?,
+                    attributes: SimpleTextAttributes,
+                    link: XDebuggerTreeNodeHyperlink?
+                ) {}
+
+                override fun isObsolete(): Boolean = false
+            })
         }
 
         if (children == null) return emptyList()
@@ -318,32 +374,31 @@ class AgentDebugController(private val project: Project) : Disposable {
     }
 
     private suspend fun resolvePresentation(value: XValue): Pair<String, String> {
-        return withTimeoutOrNull(5000L) {
-            suspendCancellableCoroutine { cont ->
-                cont.invokeOnCancellation { /* timeout cleanup */ }
-                value.computePresentation(object : XValueNode {
-                    override fun setPresentation(
-                        icon: Icon?,
-                        type: String?,
-                        value: String,
-                        hasChildren: Boolean
-                    ) {
-                        cont.resume(Pair(type ?: "unknown", value))
-                    }
+        return awaitCallback<Pair<String, String>>(5000L) { stopped, resume, _ ->
+            value.computePresentation(object : XValueNode {
+                override fun setPresentation(
+                    icon: Icon?,
+                    type: String?,
+                    value: String,
+                    hasChildren: Boolean
+                ) {
+                    if (stopped.get()) return
+                    resume(Pair(type ?: "unknown", value))
+                }
 
-                    override fun setPresentation(
-                        icon: Icon?,
-                        presentation: XValuePresentation,
-                        hasChildren: Boolean
-                    ) {
-                        cont.resume(Pair(presentation.type ?: "unknown", presentation.toString()))
-                    }
+                override fun setPresentation(
+                    icon: Icon?,
+                    presentation: XValuePresentation,
+                    hasChildren: Boolean
+                ) {
+                    if (stopped.get()) return
+                    resume(Pair(presentation.type ?: "unknown", presentation.toString()))
+                }
 
-                    override fun setFullValueEvaluator(fullValueEvaluator: XFullValueEvaluator) {}
+                override fun setFullValueEvaluator(fullValueEvaluator: XFullValueEvaluator) {}
 
-                    override fun isObsolete(): Boolean = false
-                }, XValuePlace.TREE)
-            }
+                override fun isObsolete(): Boolean = false
+            }, XValuePlace.TREE)
         } ?: Pair("unknown", "<timed out>")
     }
 
@@ -372,20 +427,29 @@ class AgentDebugController(private val project: Project) : Disposable {
 
         // The evaluate callback gives us an XValue, not a displayable string.
         // We must resolve its presentation (type + value) via the async computePresentation API.
-        val evalResult: Result<XValue> = suspendCancellableCoroutine { cont ->
+        // Phase 5 / Task 4.1 — wrap with awaitCallback so a hung JDI callback
+        // cannot hang the agent loop, and a late callback after timeout cannot
+        // corrupt the consumed continuation via `stopped` AtomicBoolean gate.
+        val evalResult: Result<XValue>? = awaitCallback<Result<XValue>>(10_000L) { stopped, resume, _ ->
             evaluator.evaluate(
                 expression,
                 object : XDebuggerEvaluator.XEvaluationCallback {
                     override fun evaluated(result: XValue) {
-                        cont.resume(Result.success(result))
+                        if (stopped.get()) return
+                        resume(Result.success(result))
                     }
 
                     override fun errorOccurred(errorMessage: String) {
-                        cont.resume(Result.failure(RuntimeException(errorMessage)))
+                        if (stopped.get()) return
+                        resume(Result.failure(RuntimeException(errorMessage)))
                     }
                 },
                 null
             )
+        }
+
+        if (evalResult == null) {
+            return EvaluationResult(expression, "<timed out after 10s>", "error", isError = true)
         }
 
         val xValue = evalResult.getOrElse { error ->
@@ -401,16 +465,21 @@ class AgentDebugController(private val project: Project) : Disposable {
      * Stops all tracked debug sessions.
      */
     fun stopAllSessions() {
-        sessions.values.forEach { session ->
+        val snapshot = sessionInvocations.values.toList()
+        sessionInvocations.clear()
+        activeSessionId = null
+        for (entry in snapshot) {
             try {
-                session.stop()
+                entry.session.stop()
             } catch (_: Exception) {
                 // Session may already be stopped
             }
+            try {
+                Disposer.dispose(entry.invocation)
+            } catch (_: Exception) {
+                // Invocation may already be disposed (cascaded from session reset)
+            }
         }
-        sessions.clear()
-        pauseFlows.clear()
-        activeSessionId = null
     }
 
     /**
@@ -513,6 +582,34 @@ class AgentDebugController(private val project: Project) : Disposable {
         session: XDebugSession,
         block: (DebugProcessImpl) -> T
     ): T = executeOnManagerThread(session) { dp, _ -> block(dp) }
+
+    /**
+     * Wraps IntelliJ's callback-based XDebugger APIs into a cancellation-safe
+     * coroutine with a timeout. The [register] lambda receives:
+     *   - `stopped: AtomicBoolean` — inspect in your callback to short-circuit
+     *     framework work when the caller has already timed out / cancelled.
+     *   - `resume: (T) -> Unit` — idempotent, gated by stopped flag.
+     *   - `resumeErr: (Throwable) -> Unit` — idempotent, gated by stopped flag.
+     *
+     * Returns null on timeout. On cancellation, sets stopped=true so the IntelliJ
+     * callback becomes a no-op even if it fires later.
+     *
+     * Phase 5 / Task 4.1 — see docs/plans/2026-04-17-phase5-debug-tools-fixes.md.
+     */
+    private suspend fun <T> awaitCallback(
+        timeoutMs: Long,
+        register: (stopped: AtomicBoolean, resume: (T) -> Unit, resumeErr: (Throwable) -> Unit) -> Unit,
+    ): T? = withTimeoutOrNull(timeoutMs) {
+        suspendCancellableCoroutine { cont ->
+            val stopped = AtomicBoolean(false)
+            cont.invokeOnCancellation { stopped.set(true) }
+            register(
+                stopped,
+                { value -> if (!stopped.getAndSet(true) && cont.isActive) cont.resume(value) },
+                { err -> if (!stopped.getAndSet(true) && cont.isActive) cont.resumeWithException(err) },
+            )
+        }
+    }
 
     companion object {
         const val MAX_VARIABLE_CHARS = 3000

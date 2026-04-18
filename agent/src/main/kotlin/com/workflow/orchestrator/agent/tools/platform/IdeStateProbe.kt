@@ -30,11 +30,18 @@ object IdeStateProbe {
      * Resolves the debug state for [project], honoring an optional [sessionId].
      *
      * Resolution order:
-     *   1. If [sessionId] is provided and [registryLookup] returns a session for it, use that.
-     *   2. Otherwise, if [sessionId] matches a platform session by `sessionName`, use that.
-     *   3. Otherwise, use [XDebuggerManager.currentSession] (the user-focused session).
-     *   4. Otherwise, if exactly one platform session exists, use it.
-     *   5. Otherwise: [DebugState.AmbiguousSession] (multiple, no disambiguator) or
+     *   1. If [sessionId] is provided and [registryLookup] returns a session for it, use that
+     *      (authoritative UUID / agent-handle path — never ambiguous).
+     *   2. Otherwise, if [sessionId] matches exactly one platform session by `sessionName`, use it
+     *      (preserved string-match fallback — for user-started sessions where the LLM types the
+     *      session's display name).
+     *   3. If [sessionId] matches MULTIPLE platform sessions by `sessionName` (post-restart
+     *      duplicates, two `gradle:test` runs of the same config, etc.) the request is ambiguous —
+     *      return [DebugState.AmbiguousSession] so the caller can surface it instead of silently
+     *      picking the wrong one. Task 4.5 fix.
+     *   4. Otherwise, use [XDebuggerManager.currentSession] (the user-focused session).
+     *   5. Otherwise, if exactly one platform session exists, use it.
+     *   6. Otherwise: [DebugState.AmbiguousSession] (multiple, no disambiguator) or
      *      [DebugState.NoSession] (none).
      *
      * @param project        the project to query
@@ -51,11 +58,34 @@ object IdeStateProbe {
         val mgr = XDebuggerManager.getInstance(project)
         val all = mgr.debugSessions.toList()
 
-        val target: XDebugSession? = when {
-            sessionId != null -> {
-                registryLookup?.invoke(sessionId)
-                    ?: all.firstOrNull { it.sessionName == sessionId }
+        // sessionId path is handled separately so we can return AmbiguousSession mid-resolution
+        // when the string-match fallback finds >1 platform session sharing a display name.
+        // Without this, `sessionId == "MyApp"` silently resolves to `all.first()` even when two
+        // post-restart duplicates exist — the exact correctness bug Task 4.5 fixes.
+        if (sessionId != null) {
+            val fromRegistry = registryLookup?.invoke(sessionId)
+            if (fromRegistry != null) {
+                // UUID / agent-handle match — authoritative regardless of sessionName collisions.
+                return if (fromRegistry.isSuspended) DebugState.Paused(fromRegistry)
+                else DebugState.Running(fromRegistry)
             }
+            val byName = all.filter { it.sessionName == sessionId }
+            when (byName.size) {
+                0 -> {
+                    // Fall through to the currentSession / single-session / ambiguous / none cascade
+                    // below so an unknown sessionId still yields a meaningful state when the caller
+                    // passed one speculatively (e.g. from a stale tool result). This matches the
+                    // pre-Task-4.5 behavior for the "unknown id" case.
+                }
+                1 -> {
+                    val unique = byName.single()
+                    return if (unique.isSuspended) DebugState.Paused(unique) else DebugState.Running(unique)
+                }
+                else -> return DebugState.AmbiguousSession(byName.size, byName.map { it.sessionName })
+            }
+        }
+
+        val target: XDebugSession? = when {
             mgr.currentSession != null -> mgr.currentSession
             all.size == 1 -> all.single()
             else -> null

@@ -1,5 +1,8 @@
 package com.workflow.orchestrator.agent.bridge
 
+import com.workflow.orchestrator.agent.loop.Task
+import com.workflow.orchestrator.agent.loop.TaskStatus
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
@@ -12,14 +15,12 @@ import org.junit.jupiter.api.Test
 // If either side changes the format, tests break on the OTHER side.
 class BridgeContractTest {
 
-    private val json = Json { ignoreUnknownKeys = true }
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     private fun loadContract(name: String): String {
         return javaClass.classLoader.getResource("contracts/$name")?.readText()
             ?: throw IllegalStateException("Contract fixture not found: contracts/$name")
     }
-
-    // ── Plan Revise Contract (v2 only — v1 format removed) ──
 
     // ── Plan Data Contract ──
 
@@ -35,17 +36,11 @@ class BridgeContractTest {
     }
 
     @Test
-    fun `plan-data steps have required fields`() {
+    fun `plan-data payload has no steps field`() {
         val contract = json.parseToJsonElement(loadContract("plan-data.json")).jsonObject
-        val steps = contract["payload"]!!.jsonObject["steps"]!!.jsonArray
-        val stepRequiredFields = contract["step_required_fields"]!!.jsonArray.map { it.jsonPrimitive.content }
-
-        for (step in steps) {
-            for (field in stepRequiredFields) {
-                assertTrue(step.jsonObject.containsKey(field),
-                    "Step missing required field: $field")
-            }
-        }
+        val payload = contract["payload"]!!.jsonObject
+        assertFalse(payload.containsKey("steps"),
+            "plan-data payload must not contain 'steps' — progress is tracked via task_* bridges")
     }
 
     @Test
@@ -61,36 +56,143 @@ class BridgeContractTest {
             payload.jsonObject["goal"]!!.jsonPrimitive.content,
             deserialized.jsonObject["goal"]!!.jsonPrimitive.content
         )
-        assertEquals(
-            payload.jsonObject["steps"]!!.jsonArray.size,
-            deserialized.jsonObject["steps"]!!.jsonArray.size
-        )
     }
 
-    // ── Plan Step Update Contract ──
+    // ── Task Create Contract ──
 
     @Test
-    fun `plan-step-update valid statuses are strings`() {
-        val contract = json.parseToJsonElement(loadContract("plan-step-update.json")).jsonObject
+    fun `task-create payload has required fields`() {
+        val contract = json.parseToJsonElement(loadContract("task-create.json")).jsonObject
+        val payload = contract["payload"]!!.jsonObject
+        val requiredFields = contract["required_fields"]!!.jsonArray.map { it.jsonPrimitive.content }
+
+        for (field in requiredFields) {
+            assertTrue(payload.containsKey(field), "Missing required field: $field")
+        }
+    }
+
+    @Test
+    fun `task-create status is a valid status`() {
+        val contract = json.parseToJsonElement(loadContract("task-create.json")).jsonObject
+        val payload = contract["payload"]!!.jsonObject
+        val validStatuses = contract["valid_statuses"]!!.jsonArray.map { it.jsonPrimitive.content }
+        val status = payload["status"]!!.jsonPrimitive.content
+
+        assertTrue(validStatuses.contains(status), "status '$status' not in valid_statuses: $validStatuses")
+    }
+
+    @Test
+    fun `task-create can be encoded by Kotlin Task and matches contract required fields`() {
+        val contract = json.parseToJsonElement(loadContract("task-create.json")).jsonObject
+        val requiredFields = contract["required_fields"]!!.jsonArray.map { it.jsonPrimitive.content }
         val validStatuses = contract["valid_statuses"]!!.jsonArray.map { it.jsonPrimitive.content }
 
-        assertTrue(validStatuses.contains("pending"))
-        assertTrue(validStatuses.contains("running"))
-        assertTrue(validStatuses.contains("completed"))
-        assertTrue(validStatuses.contains("failed"))
+        val task = Task(
+            id = "task-abc123",
+            subject = "Fix auth bug in login flow",
+            description = "Users see 500 on /login when cookies expire mid-request.",
+            activeForm = "Fixing auth bug",
+            status = TaskStatus.PENDING,
+        )
+
+        val encoded = json.parseToJsonElement(json.encodeToString(task)).jsonObject
+
+        for (field in requiredFields) {
+            assertTrue(encoded.containsKey(field), "Encoded Task missing required field: $field")
+        }
+
+        val encodedStatus = encoded["status"]!!.jsonPrimitive.content
+        assertTrue(validStatuses.contains(encodedStatus),
+            "Encoded status '$encodedStatus' not in valid_statuses: $validStatuses")
+    }
+
+    // ── Task Update Contract ──
+
+    @Test
+    fun `task-update payload has required fields`() {
+        val contract = json.parseToJsonElement(loadContract("task-update.json")).jsonObject
+        val payload = contract["payload"]!!.jsonObject
+        val requiredFields = contract["required_fields"]!!.jsonArray.map { it.jsonPrimitive.content }
+
+        for (field in requiredFields) {
+            assertTrue(payload.containsKey(field), "Missing required field: $field")
+        }
     }
 
     @Test
-    fun `plan-step-update valid calls have string stepId and status`() {
-        val contract = json.parseToJsonElement(loadContract("plan-step-update.json")).jsonObject
-        val validCalls = contract["valid_calls"]!!.jsonArray
+    fun `task-update status is a valid status`() {
+        val contract = json.parseToJsonElement(loadContract("task-update.json")).jsonObject
+        val payload = contract["payload"]!!.jsonObject
+        val validStatuses = contract["valid_statuses"]!!.jsonArray.map { it.jsonPrimitive.content }
+        val status = payload["status"]!!.jsonPrimitive.content
 
-        for (call in validCalls) {
-            val stepId = call.jsonObject["stepId"]!!.jsonPrimitive.content
-            val status = call.jsonObject["status"]!!.jsonPrimitive.content
+        assertTrue(validStatuses.contains(status), "status '$status' not in valid_statuses: $validStatuses")
+    }
 
-            assertTrue(stepId.isNotBlank(), "stepId must not be blank")
-            assertTrue(status.isNotBlank(), "status must not be blank")
+    @Test
+    fun `task-update can be encoded by Kotlin Task with in_progress status`() {
+        val contract = json.parseToJsonElement(loadContract("task-update.json")).jsonObject
+        val requiredFields = contract["required_fields"]!!.jsonArray.map { it.jsonPrimitive.content }
+        val validStatuses = contract["valid_statuses"]!!.jsonArray.map { it.jsonPrimitive.content }
+
+        val task = Task(
+            id = "task-abc123",
+            subject = "Fix auth bug in login flow",
+            description = "Users see 500 on /login when cookies expire mid-request.",
+            activeForm = "Fixing auth bug",
+            status = TaskStatus.IN_PROGRESS,
+            owner = "coder-agent",
+        )
+
+        val encoded = json.parseToJsonElement(json.encodeToString(task)).jsonObject
+
+        for (field in requiredFields) {
+            assertTrue(encoded.containsKey(field), "Encoded Task missing required field: $field")
+        }
+
+        val encodedStatus = encoded["status"]!!.jsonPrimitive.content
+        assertTrue(validStatuses.contains(encodedStatus),
+            "Encoded status '$encodedStatus' not in valid_statuses: $validStatuses")
+        assertEquals("in_progress", encodedStatus)
+    }
+
+    // ── Task List Contract ──
+
+    @Test
+    fun `task-list payload is an array with required fields per task`() {
+        val contract = json.parseToJsonElement(loadContract("task-list.json")).jsonObject
+        val tasks = contract["payload"]!!.jsonArray
+        val requiredFields = contract["required_fields_per_task"]!!.jsonArray.map { it.jsonPrimitive.content }
+
+        assertTrue(tasks.size > 0, "task-list payload must contain at least one task")
+        for (task in tasks) {
+            for (field in requiredFields) {
+                assertTrue(task.jsonObject.containsKey(field),
+                    "Task in list missing required field: $field")
+            }
+        }
+    }
+
+    @Test
+    fun `task-list can be encoded by Kotlin list of Tasks`() {
+        val contract = json.parseToJsonElement(loadContract("task-list.json")).jsonObject
+        val requiredFields = contract["required_fields_per_task"]!!.jsonArray.map { it.jsonPrimitive.content }
+
+        val tasks = listOf(
+            Task(id = "task-1", subject = "Write tests", description = "Add coverage for auth flow",
+                status = TaskStatus.COMPLETED),
+            Task(id = "task-2", subject = "Deploy fix", description = "Push to staging",
+                status = TaskStatus.PENDING, blockedBy = listOf("task-1")),
+        )
+
+        val encoded = json.parseToJsonElement(json.encodeToString(tasks)).jsonArray
+
+        assertEquals(2, encoded.size)
+        for (taskEl in encoded) {
+            for (field in requiredFields) {
+                assertTrue(taskEl.jsonObject.containsKey(field),
+                    "Encoded task missing required field: $field")
+            }
         }
     }
 

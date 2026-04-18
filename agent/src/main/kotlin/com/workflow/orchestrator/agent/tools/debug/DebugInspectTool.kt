@@ -254,7 +254,19 @@ Most actions require a suspended session. session_id defaults to active session.
         }
 
         return try {
-            val evalResult = controller.evaluate(session, expression, 0)
+            val evalResult = withTimeoutOrNull(EVALUATE_TIMEOUT_MS) {
+                controller.evaluate(session, expression, 0)
+            }
+
+            if (evalResult == null) {
+                return ToolResult(
+                    "Expression evaluation timed out after ${EVALUATE_TIMEOUT_MS / 1000} seconds. " +
+                        "The expression may contain an infinite loop or be waiting for a lock.",
+                    "Evaluation timed out",
+                    ToolResult.ERROR_TOKEN_ESTIMATE,
+                    isError = true
+                )
+            }
 
             if (evalResult.isError) {
                 return ToolResult("Error: ${evalResult.result}", "Evaluation error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
@@ -265,6 +277,7 @@ Most actions require a suspended session. session_id defaults to active session.
             sb.append("Result: ${evalResult.result}\n")
             sb.append("Type: ${evalResult.type}")
 
+            // Evaluate output is bounded to a single value (< 1KB); no spill needed.
             val content = sb.toString()
             ToolResult(content, "Evaluated: $expression", TokenEstimator.estimate(content))
         } catch (e: Exception) {
@@ -368,11 +381,7 @@ Most actions require a suspended session. session_id defaults to active session.
             sb.append("$frameHeader\n\nVariables:\n")
             sb.append(formatVariables(targetVars))
 
-            var content = sb.toString()
-            if (content.length > MAX_OUTPUT_CHARS) {
-                content = content.take(MAX_OUTPUT_CHARS) +
-                    "\n... (use variable_name to inspect specific variable)"
-            }
+            val spilled = spillOrFormat(sb.toString(), project)
 
             val varCount = targetVars.size
             val summary = if (variableName != null) {
@@ -380,7 +389,12 @@ Most actions require a suspended session. session_id defaults to active session.
             } else {
                 "$varCount variables in frame #0"
             }
-            ToolResult(content, summary, TokenEstimator.estimate(content))
+            ToolResult(
+                content = spilled.preview,
+                summary = summary,
+                tokenEstimate = TokenEstimator.estimate(spilled.preview),
+                spillPath = spilled.spilledToFile,
+            )
         } catch (e: Exception) {
             ToolResult("Error getting variables: ${e.message}", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
@@ -559,8 +573,13 @@ Most actions require a suspended session. session_id defaults to active session.
                 }
             }
 
-            val content = sb.toString().trimEnd()
-            ToolResult(content, "Thread dump: ${threadInfos.size} threads, $suspendedCount suspended", TokenEstimator.estimate(content))
+            val spilled = spillOrFormat(sb.toString().trimEnd(), project)
+            ToolResult(
+                content = spilled.preview,
+                summary = "Thread dump: ${threadInfos.size} threads, $suspendedCount suspended",
+                tokenEstimate = TokenEstimator.estimate(spilled.preview),
+                spillPath = spilled.spilledToFile,
+            )
         } catch (e: Exception) {
             ToolResult("Error getting thread dump: ${e.message}", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
@@ -578,26 +597,23 @@ Most actions require a suspended session. session_id defaults to active session.
             is SessionResolution.Failed -> return r.toolResult
         }
 
+        // Collect raw content on the manager thread, then spill outside (spillOrFormat is suspend).
+        data class MemoryViewData(val content: String, val summary: String)
+
         return try {
-            controller.executeOnManagerThread(session) { _, vmProxy ->
+            val dataOrError = controller.executeOnManagerThread(session) { _, vmProxy ->
                 val vm = vmProxy.virtualMachine
 
                 if (!vm.canGetInstanceInfo()) {
-                    return@executeOnManagerThread ToolResult(
-                        "VM does not support instance info (canGetInstanceInfo=false). This may be a remote or non-HotSpot JVM.",
-                        "Not supported",
-                        ToolResult.ERROR_TOKEN_ESTIMATE,
-                        isError = true
+                    return@executeOnManagerThread Result.failure<MemoryViewData>(
+                        IllegalStateException("VM does not support instance info (canGetInstanceInfo=false). This may be a remote or non-HotSpot JVM.")
                     )
                 }
 
                 val refTypes = vm.classesByName(className)
                 if (refTypes.isEmpty()) {
-                    return@executeOnManagerThread ToolResult(
-                        "Class '$className' is not loaded in the JVM. It may not have been instantiated yet, or the name may be incorrect.",
-                        "Class not loaded",
-                        ToolResult.ERROR_TOKEN_ESTIMATE,
-                        isError = true
+                    return@executeOnManagerThread Result.failure<MemoryViewData>(
+                        NoSuchElementException("Class '$className' is not loaded in the JVM. It may not have been instantiated yet, or the name may be incorrect.")
                     )
                 }
 
@@ -630,8 +646,26 @@ Most actions require a suspended session. session_id defaults to active session.
                     append("\nSession: ${sessionId ?: controller.getActiveSessionId() ?: "unknown"}")
                 }
 
-                ToolResult(content, "$totalCount instances of $className", TokenEstimator.estimate(content))
+                Result.success(MemoryViewData(content, "$totalCount instances of $className"))
             }
+
+            val data = dataOrError.getOrElse { err ->
+                val msg = err.message ?: "Unknown error"
+                val summary = when (err) {
+                    is IllegalStateException -> "Not supported"
+                    is NoSuchElementException -> "Class not loaded"
+                    else -> "Error"
+                }
+                return ToolResult(msg, summary, ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+            }
+
+            val spilled = spillOrFormat(data.content, project)
+            ToolResult(
+                content = spilled.preview,
+                summary = data.summary,
+                tokenEstimate = TokenEstimator.estimate(spilled.preview),
+                spillPath = spilled.spilledToFile,
+            )
         } catch (e: Exception) {
             ToolResult("Error viewing memory: ${e.message}", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
@@ -646,6 +680,17 @@ Most actions require a suspended session. session_id defaults to active session.
         val xSession = when (val r = requireSession(project, sessionId)) {
             is SessionResolution.Found -> r.session
             is SessionResolution.Failed -> return r.toolResult
+        }
+
+        // Hot swap relies on the JVM HotSwap protocol (JDWP redefineClasses) which is
+        // Java/Kotlin-only. Python debug processes (PyDebugProcess) do not support it.
+        if (isPythonDebugSession(xSession)) {
+            return ToolResult(
+                "Hot swap is not supported for Python. Restart the debug session to apply changes.",
+                "Hot swap not supported for Python",
+                ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
         }
 
         return try {
@@ -818,6 +863,13 @@ Most actions require a suspended session. session_id defaults to active session.
             is SessionResolution.Failed -> return r.toolResult
         }
 
+        if (isPythonDebugSession(session)) {
+            return ToolResult(
+                "Drop frame is not supported in Python debug sessions. Python's debugger does not support rewinding execution.",
+                "Drop frame not supported for Python", 10
+            )
+        }
+
         return try {
             controller.executeOnManagerThread(session) { _, vmProxy ->
                 if (!vmProxy.canPopFrames()) {
@@ -891,6 +943,26 @@ Most actions require a suspended session. session_id defaults to active session.
 
     // ── Private helpers ─────────────────────────────────────────────────────
 
+    /**
+     * Returns true when [session] is backed by a Python debug process.
+     *
+     * Uses reflection so the agent module has zero compile-time dependency on the
+     * Python plugin JARs. Python debug processes are named PyDebugProcess (PyCharm)
+     * or have "Py" in their class name — checking the simple name is sufficient
+     * because there is no other XDebugProcess subclass with that prefix.
+     */
+    private fun isPythonDebugSession(session: XDebugSession): Boolean {
+        return try {
+            val processClass = session.debugProcess.javaClass
+            processClass.simpleName.startsWith("Py") ||
+                processClass.name.contains("pydevd", ignoreCase = true) ||
+                processClass.name.startsWith("com.jetbrains.python") ||
+                processClass.name.startsWith("com.intellij.python")
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private fun inferReturnType(returnValue: String?): String {
         if (returnValue == null) return "void"
         return when {
@@ -950,6 +1022,9 @@ Most actions require a suspended session. session_id defaults to active session.
     }
 
     companion object {
+        // EvaluateTool constants
+        private const val EVALUATE_TIMEOUT_MS = 10_000L
+
         // GetStackFramesTool constants
         private const val DEFAULT_MAX_FRAMES = 20
         private const val MAX_FRAMES_CAP = 50
@@ -957,7 +1032,6 @@ Most actions require a suspended session. session_id defaults to active session.
         // GetVariablesTool constants
         private const val DEFAULT_MAX_DEPTH = 2
         private const val MAX_DEPTH_CAP = 4
-        private const val MAX_OUTPUT_CHARS = 3000
 
         // MemoryViewTool constants
         private const val MAX_INSTANCE_DETAILS = 50

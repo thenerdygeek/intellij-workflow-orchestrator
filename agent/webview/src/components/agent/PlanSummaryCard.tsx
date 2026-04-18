@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { FileText, Check, RotateCcw, Loader2 } from 'lucide-react';
+import { FileText, Check, RotateCcw, Loader2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter } from '@/components/ui/card';
-import { PlanCompact } from '@/components/ui/tool-ui/plan';
 import type { Plan } from '@/bridge/types';
 import { Badge } from '@/components/ui/badge';
 import { useChatStore } from '@/stores/chatStore';
+import { kotlinBridge } from '@/bridge/jcef-bridge';
 
 interface PlanSummaryCardProps {
   plan: Plan;
@@ -57,22 +57,12 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
   // Reset loading state when the plan is replaced (e.g., LLM calls create_plan
   // again after a ChatMessage or revision). Without this, the Revise/Approve
   // button stays stuck in loading if the plan resolves via a different path.
-  const planIdentity = `${plan.title}:${plan.steps.length}:${plan.approved}`;
+  const planIdentity = `${plan.title}:${plan.approved}`;
   useEffect(() => {
     setPending(null);
   }, [planIdentity]);
 
-  const stepCount = plan.steps.length;
-  const pendingCount = plan.steps.filter(s => s.status === 'pending').length;
   const hasComments = planCommentCount > 0;
-
-  // Map our PlanStep to tool-ui PlanTodo (all pending for unapproved plans)
-  const todos = plan.steps.map(step => ({
-    id: step.id,
-    label: step.title,
-    status: 'pending' as const,
-    description: step.description,
-  }));
 
   const handleViewPlan = useCallback(() => {
     (window as any)._focusPlanEditor?.();
@@ -87,6 +77,10 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
     setPending('revise');
     // Trigger revision via the plan editor tab's bridge — the editor holds the comments
     (window as any)._revisePlanFromEditor?.();
+  }, []);
+
+  const handleDismiss = useCallback(() => {
+    kotlinBridge.dismissPlan();
   }, []);
 
   return (
@@ -116,15 +110,6 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
           >
             {plan.title}
           </div>
-          <div
-            className="text-[11px] mt-0.5"
-            style={{ color: 'var(--fg-secondary)' }}
-          >
-            {stepCount} step{stepCount !== 1 ? 's' : ''} planned
-            {pendingCount < stepCount && (
-              <span> &middot; {stepCount - pendingCount} in progress</span>
-            )}
-          </div>
         </div>
         <Badge
           variant="outline"
@@ -138,30 +123,42 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
         </Badge>
       </div>
 
-      {/* Content preview */}
-      <CardContent className="px-4 py-3">
-        {plan.summary ? (
-          <div
-            className="text-[12px] leading-relaxed line-clamp-4 whitespace-pre-wrap"
-            style={{ color: 'var(--fg-secondary)' }}
-          >
-            <TypewriterText text={plan.summary} />
-          </div>
-        ) : plan.markdown ? (
-          <div
-            className="text-[12px] leading-relaxed line-clamp-4 whitespace-pre-wrap"
-            style={{ color: 'var(--fg-secondary)' }}
-          >
-            {plan.markdown.slice(0, 300)}
-            {plan.markdown.length > 300 && '...'}
-          </div>
-        ) : (
-          <PlanCompact todos={todos} maxVisibleTodos={4} />
-        )}
-      </CardContent>
+      {/* Content preview — typewriter summary or markdown snippet */}
+      {(plan.summary || plan.markdown) && (
+        <CardContent className="px-4 py-3">
+          {plan.summary ? (
+            <div
+              className="text-[12px] leading-relaxed line-clamp-4 whitespace-pre-wrap"
+              style={{ color: 'var(--fg-secondary)' }}
+            >
+              <TypewriterText text={plan.summary} />
+            </div>
+          ) : plan.markdown ? (
+            <div
+              className="text-[12px] leading-relaxed line-clamp-4 whitespace-pre-wrap"
+              style={{ color: 'var(--fg-secondary)' }}
+            >
+              {plan.markdown.slice(0, 300)}
+              {plan.markdown.length > 300 && '...'}
+            </div>
+          ) : null}
+        </CardContent>
+      )}
 
       {/* Actions */}
       <CardFooter className="gap-2 px-4 py-3" style={{ borderTop: '1px solid var(--border)' }}>
+        <Button
+          onClick={handleDismiss}
+          className="text-[12px] font-medium shrink-0"
+          size="sm"
+          variant="ghost"
+          disabled={pending !== null}
+          style={{ color: 'var(--fg-secondary)' }}
+          title="Dismiss plan"
+        >
+          <X size={14} />
+          Dismiss
+        </Button>
         <Button
           onClick={handleViewPlan}
           className="flex-1 text-[12px] font-medium"

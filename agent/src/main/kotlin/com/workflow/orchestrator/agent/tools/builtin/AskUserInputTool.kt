@@ -9,6 +9,7 @@ import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.process.OutputCollector
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
@@ -144,7 +145,7 @@ class AskUserInputTool : AgentTool {
             // Priority 1: process exited
             if (!managed.process.isAlive) {
                 val newOutput = ProcessToolHelpers.collectNewOutput(managed, outputSizeBeforeInput)
-                val stripped = RunCommandTool.stripAnsi(newOutput)
+                val stripped = OutputCollector.stripAnsi(newOutput)
                 val exitCode = try { managed.process.exitValue() } catch (_: Exception) { -1 }
                 ProcessRegistry.unregister(processId)
                 val content = "Exit code: $exitCode\n$stripped"
@@ -166,7 +167,7 @@ class AskUserInputTool : AgentTool {
             // Priority 2: max wait after input exceeded (60s)
             if (now - inputSentAt > MAX_WAIT_AFTER_INPUT_MS) {
                 val newOutput = ProcessToolHelpers.collectNewOutput(managed, outputSizeBeforeInput)
-                val stripped = RunCommandTool.stripAnsi(newOutput)
+                val stripped = OutputCollector.stripAnsi(newOutput)
                 managed.idleSignaledAt.set(now)
                 val content = ProcessToolHelpers.buildIdleContent(processId, stripped, now - inputSentAt, IDLE_LABEL)
                 return ToolResult(
@@ -182,7 +183,7 @@ class AskUserInputTool : AgentTool {
             val timeSinceInput = now - inputSentAt
             if (timeSinceInput > 500 && lastCheckedSize > outputSizeBeforeInput && timeSinceLastOutput >= IDLE_AFTER_INPUT_MS) {
                 val newOutput = ProcessToolHelpers.collectNewOutput(managed, outputSizeBeforeInput)
-                val stripped = RunCommandTool.stripAnsi(newOutput)
+                val stripped = OutputCollector.stripAnsi(newOutput)
                 managed.idleSignaledAt.set(now)
                 val content = ProcessToolHelpers.buildIdleContent(processId, stripped, timeSinceLastOutput, IDLE_LABEL)
                 return ToolResult(

@@ -9,9 +9,16 @@ object SessionMigrator {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
+    private const val MIGRATION_VERSION = 2
+    private const val MIGRATION_MARKER = ".migrated-v$MIGRATION_VERSION"
+
     fun migrate(baseDir: File) {
         val sessionsDir = File(baseDir, "sessions")
         if (!sessionsDir.exists()) return
+
+        // Skip migration entirely if already completed
+        val marker = File(sessionsDir, MIGRATION_MARKER)
+        if (marker.exists()) return
 
         val historyItems = mutableListOf<HistoryItem>()
 
@@ -39,6 +46,9 @@ object SessionMigrator {
             val merged = (historyItems + existing).distinctBy { it.id }.sortedByDescending { it.ts }
             AtomicFileWriter.write(indexFile, json.encodeToString(merged))
         }
+
+        // Mark migration as complete so subsequent startups skip this entirely
+        try { marker.createNewFile() } catch (_: Exception) { /* best-effort */ }
     }
 
     private fun migrateSession(baseDir: File, sessionDir: File, oldJsonl: File, items: MutableList<HistoryItem>) {

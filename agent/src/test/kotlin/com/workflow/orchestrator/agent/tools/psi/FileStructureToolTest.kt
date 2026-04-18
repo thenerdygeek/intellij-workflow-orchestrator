@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools.psi
 
+import com.workflow.orchestrator.agent.ide.LanguageProviderRegistry
 import com.workflow.orchestrator.agent.tools.WorkerType
 import io.mockk.*
 import kotlinx.coroutines.test.runTest
@@ -8,9 +9,11 @@ import org.junit.jupiter.api.Test
 
 class FileStructureToolTest {
 
+    private val registry = LanguageProviderRegistry()
+
     @Test
     fun `tool metadata is correct`() {
-        val tool = FileStructureTool()
+        val tool = FileStructureTool(registry)
         assertEquals("file_structure", tool.name)
         assertTrue(tool.parameters.required.contains("path"))
         assertTrue(tool.parameters.properties.containsKey("path"))
@@ -19,7 +22,7 @@ class FileStructureToolTest {
 
     @Test
     fun `allowedWorkers includes ANALYZER, CODER, REVIEWER, ORCHESTRATOR`() {
-        val tool = FileStructureTool()
+        val tool = FileStructureTool(registry)
         assertEquals(
             setOf(WorkerType.ANALYZER, WorkerType.CODER, WorkerType.REVIEWER, WorkerType.ORCHESTRATOR),
             tool.allowedWorkers
@@ -28,7 +31,7 @@ class FileStructureToolTest {
 
     @Test
     fun `toToolDefinition produces valid schema`() {
-        val tool = FileStructureTool()
+        val tool = FileStructureTool(registry)
         val def = tool.toToolDefinition()
         assertEquals("function", def.type)
         assertEquals("file_structure", def.function.name)
@@ -38,7 +41,7 @@ class FileStructureToolTest {
 
     @Test
     fun `execute returns dumbModeError when indexing`() = runTest {
-        val tool = FileStructureTool()
+        val tool = FileStructureTool(registry)
         val project = mockk<com.intellij.openapi.project.Project> {
             every { basePath } returns "/tmp"
         }
@@ -58,7 +61,7 @@ class FileStructureToolTest {
 
     @Test
     fun `execute returns error when path is missing`() = runTest {
-        val tool = FileStructureTool()
+        val tool = FileStructureTool(registry)
         val project = mockk<com.intellij.openapi.project.Project> {
             every { basePath } returns "/tmp"
         }

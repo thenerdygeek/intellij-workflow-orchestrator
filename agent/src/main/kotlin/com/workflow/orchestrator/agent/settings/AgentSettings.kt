@@ -36,7 +36,8 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
         /** Timeout (minutes) for `ask_user_input` waiting for the user to respond.
          *  After this many minutes the prompt expires and the tool returns an error. */
         var askUserInputTimeoutMinutes by property(5)
-        var powershellEnabled by property(true)
+        var powershellEnabled by property(false)
+        var cmdEnabled by property(false)
         /** Use Haiku to generate contextual humorous working indicator messages. */
         var smartWorkingIndicator by property(true)
         /** Enable auto-memory: retrieve relevant archival memories at session start

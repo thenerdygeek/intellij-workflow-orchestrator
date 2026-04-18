@@ -4,6 +4,8 @@ import type {
   SessionStatus,
   UiMessage,
   HistoryItem,
+  Task,
+  CompletionData,
 } from './types';
 import { preloadDiff2Html } from '../components/rich/DiffHtml';
 import { updateChartById } from '../components/rich/chartUtils';
@@ -27,7 +29,7 @@ export function isJcefEnvironment(): boolean {
   return window.location.origin === 'http://workflow-agent';
 }
 
-// ═══ Kotlin → JS bridge functions (39 chat + 3 theme = 42 unique JS functions) ═══
+// ═══ Kotlin → JS bridge functions (40 chat + 3 theme = 43 unique JS functions) ═══
 // Note: Kotlin side has 44 methods but some are composites:
 //   setText() = clearChat + appendToken + endStream
 //   appendError() = appendStatus('ERROR')
@@ -46,6 +48,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   },
   appendUserMessage(text: string) {
     stores?.getChatStore().addUserMessage(text);
+  },
+  appendPlanApprovedMessage(planMarkdown: string) {
+    stores?.getChatStore().addPlanApprovedMessage(planMarkdown);
   },
   appendUserMessageWithMentions(text: string, mentionsJson: string) {
     try {
@@ -88,8 +93,13 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     preloadDiff2Html();
     stores?.getChatStore().addDiffExplanation(title, diffSource);
   },
-  appendCompletionSummary(result: string, verifyCommand?: string) {
-    stores?.getChatStore().addCompletionSummary(result, verifyCommand ?? undefined);
+  _appendCompletionCard(json: string) {
+    try {
+      const data = JSON.parse(json) as CompletionData;
+      stores?.getChatStore().addCompletionCard(data);
+    } catch (e) {
+      console.error('[bridge] _appendCompletionCard parse error', e);
+    }
   },
   appendStatus(message: string, type: string) {
     stores?.getChatStore().addStatus(message, type as StatusType);
@@ -110,15 +120,11 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     const plan = JSON.parse(planJson);
     stores?.getChatStore().setPlan(plan);
   },
+  clearPlan() {
+    stores?.getChatStore().clearPlan();
+  },
   approvePlan() {
     stores?.getChatStore().approvePlan();
-  },
-  updatePlanStep(stepId: string, status: string) {
-    stores?.getChatStore().updatePlanStep(stepId, status);
-  },
-  replaceExecutionSteps(stepsJson: string) {
-    const steps = JSON.parse(stepsJson);
-    stores?.getChatStore().replaceExecutionSteps(steps);
   },
   setPlanPending(state: string) {
     const value = (state === 'approve' || state === 'revise') ? state : null;
@@ -218,8 +224,8 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     const skills = JSON.parse(skillsJson);
     stores?.getChatStore().updateSkillsList(skills);
   },
-  showRetryButton(lastMessage: string) {
-    stores?.getChatStore().showRetryButton(lastMessage);
+  showRetryButton(kind: 'continue' | 'retry', caption: string) {
+    stores?.getChatStore().showRetryButton(kind, caption);
   },
   focusInput() {
     stores?.getChatStore().focusInput();
@@ -263,12 +269,36 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   appendSonarBadge(badgeJson: string) {
     stores?.getChatStore().addSonarBadge(badgeJson);
   },
-  showApproval(toolName: string, riskLevel: string, description: string, metadataJson: string, diffContent?: string | null) {
+  showApproval(
+    toolName: string,
+    riskLevel: string,
+    description: string,
+    metadataJson: string,
+    diffContent?: string | null,
+    commandPreviewJson?: string | null,
+    allowSessionApproval?: boolean,
+  ) {
     // Preload diff2html immediately so the module is ready (or nearly ready) by the time
     // ApprovalView mounts and DiffHtml's useEffect fires — eliminates the loading skeleton.
     if (diffContent) preloadDiff2Html();
     const metadata = metadataJson ? JSON.parse(metadataJson) : [];
-    stores?.getChatStore().showApproval(toolName, riskLevel, description, metadata, diffContent ?? undefined);
+    let commandPreview: unknown = undefined;
+    if (commandPreviewJson) {
+      try {
+        commandPreview = JSON.parse(commandPreviewJson);
+      } catch (e) {
+        console.error('[bridge] commandPreview parse error:', e);
+      }
+    }
+    stores?.getChatStore().showApproval(
+      toolName,
+      riskLevel,
+      description,
+      metadata,
+      diffContent ?? undefined,
+      commandPreview ?? undefined,
+      allowSessionApproval ?? true,
+    );
   },
   showProcessInput(processId: string, description: string, prompt: string, command: string) {
     stores?.getChatStore().showProcessInput(processId, description, prompt, command);
@@ -377,6 +407,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   updateSubAgentMessage(payload: string) {
     stores?.getChatStore().updateSubAgentMessage(payload);
   },
+  appendSubAgentStreamDelta(payload: string) {
+    stores?.getChatStore().appendSubAgentStreamDelta(payload);
+  },
   completeSubAgent(payload: string) {
     stores?.getChatStore().completeSubAgent(payload);
   },
@@ -446,6 +479,20 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   },
 };
 
+// Task bridge functions registered separately (Kotlin→JS underscore-prefix convention)
+// These are registered in initBridge() after stores are ready.
+function registerTaskBridges(): void {
+  (window as any)._applyTaskCreate = (task: Task) => {
+    stores?.getChatStore().applyTaskCreate(task);
+  };
+  (window as any)._applyTaskUpdate = (task: Task) => {
+    stores?.getChatStore().applyTaskUpdate(task);
+  };
+  (window as any)._setTasks = (tasks: Task[]) => {
+    stores?.getChatStore().setTasks(tasks);
+  };
+}
+
 // ═══ JS → Kotlin bridge wrappers (25 unique methods) ═══
 // Note: Spec lists 26 but #26 (sendMessageWithMentionsQuery) = #25 (sendMessageWithMentions)
 
@@ -464,6 +511,7 @@ export const kotlinBridge = {
   submitPrompt(text: string): void { callKotlin('_submitPrompt', text); },
   approvePlan(): void { callKotlin('_approvePlan'); },
   revisePlan(comments: string): void { callKotlin('_revisePlan', comments); },
+  dismissPlan(): void { callKotlin('_dismissPlan'); },
   toggleTool(toolName: string, enabled: boolean): void { callKotlin('_toggleTool', `${toolName}:${enabled ? '1' : '0'}`); },
   questionAnswered(questionId: string, selectedOptionsJson: string): void { callKotlin('_questionAnswered', questionId, selectedOptionsJson); },
   questionSkipped(questionId: string): void { callKotlin('_questionSkipped', questionId); },
@@ -588,6 +636,25 @@ for (const [name, fn] of Object.entries(bridgeFunctions)) {
 (window as any)._showHistoryView = (window as any).showHistoryView;
 (window as any)._showChatView = (window as any).showChatView;
 
+// Task bridge early registration — module-scope safety net so session-resume
+// _setTasks calls arriving before initBridge() don't race-drop.
+// Uses same pendingCalls buffer pattern as bridgeFunctions above.
+// In initBridge(), these are replaced with direct functions via registerTaskBridges().
+const taskBridgeFunctions: Record<string, (...args: any[]) => void> = {
+  _applyTaskCreate: (task: Task) => { stores?.getChatStore().applyTaskCreate(task); },
+  _applyTaskUpdate: (task: Task) => { stores?.getChatStore().applyTaskUpdate(task); },
+  _setTasks: (tasks: Task[]) => { stores?.getChatStore().setTasks(tasks); },
+};
+for (const [name, fn] of Object.entries(taskBridgeFunctions)) {
+  (window as any)[name] = (...args: any[]) => {
+    if (stores) {
+      fn(...args);
+    } else {
+      pendingCalls.push({ name, args });
+    }
+  };
+}
+
 // ═══ Initialization ═══
 
 export function initBridge(storeAccessors: StoreAccessors): void {
@@ -607,9 +674,17 @@ export function initBridge(storeAccessors: StoreAccessors): void {
   (window as any)._showHistoryView = bridgeFunctions.showHistoryView;
   (window as any)._showChatView = bridgeFunctions.showChatView;
 
+  // Register task bridge functions (Kotlin→JS, Phase 5 task system port)
+  // Re-register with direct references now that stores are available (no buffering wrapper needed).
+  registerTaskBridges();
+  for (const [name, fn] of Object.entries(taskBridgeFunctions)) {
+    (window as any)[name] = fn;
+  }
+
   // Replay any calls that arrived before stores were ready
   for (const call of pendingCalls) {
-    const fn = bridgeFunctions[call.name];
+    const fn = (bridgeFunctions as Record<string, (...args: any[]) => void>)[call.name]
+      ?? taskBridgeFunctions[call.name];
     if (fn) {
       try { fn(...call.args); } catch (_) { /* best effort */ }
     }

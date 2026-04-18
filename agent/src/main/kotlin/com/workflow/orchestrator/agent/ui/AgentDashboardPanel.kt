@@ -7,6 +7,7 @@ import java.awt.BorderLayout
 import java.util.concurrent.CopyOnWriteArrayList
 import javax.swing.JPanel
 import com.intellij.openapi.application.invokeLater
+import com.workflow.orchestrator.agent.tools.CompletionData
 import com.workflow.orchestrator.agent.tools.subagent.AgentConfigLoader
 import com.workflow.orchestrator.agent.tools.subagent.SubagentToolName
 import javax.swing.SwingUtilities
@@ -216,9 +217,9 @@ class AgentDashboardPanel(
         broadcast(replay = false) { it.setInputLocked(locked) }
     }
 
-    fun showRetryButton(lastMessage: String) {
-        cefPanel?.showRetryButton(lastMessage)
-        broadcast(replay = false) { it.showRetryButton(lastMessage) }
+    fun showRetryButton(kind: String, caption: String) {
+        cefPanel?.showRetryButton(kind, caption)
+        broadcast(replay = false) { it.showRetryButton(kind, caption) }
     }
 
     fun focusInput() {
@@ -259,6 +260,15 @@ class AgentDashboardPanel(
         cefPanel?.onPlanRevised = onRevise
     }
 
+    fun setCefPlanDismissCallback(onDismiss: () -> Unit) {
+        cefPanel?.onPlanDismissed = onDismiss
+    }
+
+    fun clearPlanInUi() {
+        cefPanel?.clearPlanInUi()
+        broadcast(replay = false) { it.clearPlanInUi() }
+    }
+
     fun showToolsPanel(toolsJson: String) {
         cefPanel?.showToolsPanel(toolsJson)
         broadcast(replay = false) { it.showToolsPanel(toolsJson) }
@@ -277,16 +287,6 @@ class AgentDashboardPanel(
     fun approvePlanInUi() {
         cefPanel?.approvePlanInUi()
         broadcast(replay = false) { it.approvePlanInUi() }
-    }
-
-    fun updatePlanStep(stepId: String, status: String) {
-        cefPanel?.updatePlanStep(stepId, status)
-        broadcast(replay = false) { it.updatePlanStep(stepId, status) }
-    }
-
-    fun replaceExecutionSteps(stepsJson: String) {
-        cefPanel?.replaceExecutionSteps(stepsJson)
-        broadcast(replay = false) { it.replaceExecutionSteps(stepsJson) }
     }
 
     fun setPlanCommentCount(count: Int) {
@@ -360,9 +360,17 @@ class AgentDashboardPanel(
         broadcast(replay = false) { it.appendSonarBadge(badgeJson) }
     }
 
-    fun showApproval(toolName: String, riskLevel: String, description: String, metadataJson: String, diffContent: String? = null) {
-        cefPanel?.showApproval(toolName, riskLevel, description, metadataJson, diffContent)
-        broadcast(replay = false) { it.showApproval(toolName, riskLevel, description, metadataJson, diffContent) }
+    fun showApproval(
+        toolName: String,
+        riskLevel: String,
+        description: String,
+        metadataJson: String,
+        diffContent: String? = null,
+        commandPreviewJson: String? = null,
+        allowSessionApproval: Boolean = true,
+    ) {
+        cefPanel?.showApproval(toolName, riskLevel, description, metadataJson, diffContent, commandPreviewJson, allowSessionApproval)
+        broadcast(replay = false) { it.showApproval(toolName, riskLevel, description, metadataJson, diffContent, commandPreviewJson, allowSessionApproval) }
     }
 
     fun showProcessInput(processId: String, description: String, prompt: String, command: String) {
@@ -429,6 +437,10 @@ class AgentDashboardPanel(
         cefPanel?.onFocusPlanEditor = onFocus
     }
 
+    fun setCefOpenApprovedPlanCallback(onOpen: () -> Unit) {
+        cefPanel?.onOpenApprovedPlan = onOpen
+    }
+
     fun setCefRevisePlanFromEditorCallback(onRevise: () -> Unit) {
         cefPanel?.onRevisePlanFromEditor = onRevise
     }
@@ -457,6 +469,11 @@ class AgentDashboardPanel(
         cefPanel?.appendUserMessageWithMentions(text, mentionsJson)
             ?: fallbackPanel?.appendUserMessage(text)
         broadcast { it.appendUserMessage(text) }
+    }
+
+    fun appendPlanApprovedMessage(planMarkdown: String) {
+        cefPanel?.appendPlanApprovedMessage(planMarkdown) ?: fallbackPanel?.appendUserMessage("Implementation plan approved")
+        broadcast { it.appendUserMessage("Implementation plan approved") }
     }
 
     fun finalizeQuestionsAsMessage() {
@@ -488,10 +505,10 @@ class AgentDashboardPanel(
         broadcast { it.finalizeToolChain() }
     }
 
-    fun appendCompletionSummary(result: String, verifyCommand: String? = null) {
-        cefPanel?.appendCompletionSummary(result, verifyCommand)
-            ?: fallbackPanel?.appendStatus("Task completed: $result", RichStreamingPanel.StatusType.SUCCESS)
-        broadcast { it.appendCompletionSummary(result, verifyCommand) }
+    fun appendCompletionCard(data: CompletionData) {
+        cefPanel?.appendCompletionCard(data)
+            ?: fallbackPanel?.appendStatus("Task completed: ${data.result}", RichStreamingPanel.StatusType.SUCCESS)
+        broadcast { it.appendCompletionCard(data) }
     }
 
     fun appendToolCall(
@@ -529,6 +546,10 @@ class AgentDashboardPanel(
     }
 
     fun appendToolOutput(toolCallId: String, chunk: String) {
+        if (cefPanel == null) LOG.warn(
+            "appendToolOutput[$toolCallId]: cefPanel is null — streaming output dropped. " +
+            "JCEF may not be initialised (check AgentCefPanel.isAvailable())."
+        )
         cefPanel?.appendToolOutput(toolCallId, chunk)
         broadcast(replay = false) { it.appendToolOutput(toolCallId, chunk) }
     }
@@ -623,6 +644,11 @@ class AgentDashboardPanel(
         broadcast(replay = false) { it.updateSubAgentMessage(agentId, textContent) }
     }
 
+    fun appendSubAgentStreamDelta(agentId: String, delta: String) {
+        runOnEdt { cefPanel?.appendSubAgentStreamDelta(agentId, delta) }
+        broadcast(replay = false) { it.appendSubAgentStreamDelta(agentId, delta) }
+    }
+
     fun completeSubAgent(agentId: String, textContent: String, tokensUsed: Int, isError: Boolean) {
         runOnEdt { cefPanel?.completeSubAgent(agentId, textContent, tokensUsed, isError) }
         broadcast(replay = false) { it.completeSubAgent(agentId, textContent, tokensUsed, isError) }
@@ -697,6 +723,27 @@ class AgentDashboardPanel(
     fun loadSessionState(uiMessagesJson: String) {
         runOnEdt { cefPanel?.loadSessionState(uiMessagesJson) }
         broadcast(replay = false) { it.loadSessionState(uiMessagesJson) }
+    }
+
+    /**
+     * Push the full TaskStore snapshot to the webview (Phase 5 task system).
+     * Used on session load so the React PlanProgressWidget shows persisted tasks.
+     */
+    fun setTasks(tasksJson: String) {
+        runOnEdt { cefPanel?.setTasks(tasksJson) }
+        broadcast(replay = false) { it.setTasks(tasksJson) }
+    }
+
+    /** Push a single newly-created task to the webview (appends in chatStore). */
+    fun applyTaskCreate(taskJson: String) {
+        runOnEdt { cefPanel?.applyTaskCreate(taskJson) }
+        broadcast(replay = false) { it.applyTaskCreate(taskJson) }
+    }
+
+    /** Push a single updated task to the webview (replaces by id in chatStore). */
+    fun applyTaskUpdate(taskJson: String) {
+        runOnEdt { cefPanel?.applyTaskUpdate(taskJson) }
+        broadcast(replay = false) { it.applyTaskUpdate(taskJson) }
     }
 
     fun showResumeBar(sessionId: String) {

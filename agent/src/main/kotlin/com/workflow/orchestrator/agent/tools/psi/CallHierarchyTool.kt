@@ -2,15 +2,10 @@ package com.workflow.orchestrator.agent.tools.psi
 
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.project.Project
-import com.intellij.psi.PsiDocumentManager
-import com.intellij.psi.PsiElement
-import com.intellij.psi.PsiMethod
-import com.intellij.psi.PsiMethodCallExpression
 import com.intellij.psi.search.GlobalSearchScope
-import com.intellij.psi.search.searches.ReferencesSearch
-import com.intellij.psi.util.PsiTreeUtil
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
+import com.workflow.orchestrator.agent.ide.LanguageProviderRegistry
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
@@ -18,7 +13,9 @@ import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-class CallHierarchyTool : AgentTool {
+class CallHierarchyTool(
+    private val registry: LanguageProviderRegistry
+) : AgentTool {
     override val name = "call_hierarchy"
     override val description = "Get callers (who calls this method) and callees (what this method calls)."
     override val parameters = FunctionParameters(
@@ -39,122 +36,71 @@ class CallHierarchyTool : AgentTool {
         val className = params["class_name"]?.jsonPrimitive?.content
         val maxDepth = (params["depth"]?.jsonPrimitive?.content?.toIntOrNull() ?: 1).coerceIn(1, 3)
 
+        // Resolve provider: try all registered providers until one finds the symbol
+        val allProviders = registry.allProviders()
+        if (allProviders.isEmpty()) {
+            return ToolResult(
+                "Code intelligence not available — no language provider registered",
+                "Error: no provider",
+                ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+        }
+
         val content = ReadAction.nonBlocking<String> {
-            // Find the method
-            val psiMethod = findMethod(project, methodName, className)
-                ?: return@nonBlocking "No method '$methodName' found" +
+            // Find the method via provider — try each provider until one finds the symbol
+            val symbolName = if (className != null) "$className#$methodName" else methodName
+            val (provider, psiMethod) = allProviders.firstNotNullOfOrNull { p ->
+                p.findSymbol(project, symbolName)?.let { p to it }
+            } ?: return@nonBlocking "No method '$methodName' found" +
                         (if (className != null) " in class '$className'" else " in project")
 
+            val qualifiedMethodName = (psiMethod as? com.intellij.psi.PsiMethod)?.let {
+                "${it.containingClass?.name ?: ""}#${it.name}"
+            } ?: methodName
+
             val sb = StringBuilder()
-            val qualifiedMethodName = "${psiMethod.containingClass?.name ?: ""}#${psiMethod.name}"
             sb.appendLine("Call hierarchy for $qualifiedMethodName:")
 
-            // Callers: who references this method (with depth support)
+            // Callers: delegate to provider
             sb.appendLine("\nCallers (who calls this method):")
             val scope = GlobalSearchScope.projectScope(project)
-            val topLevelRefs = ReferencesSearch.search(psiMethod, scope).findAll()
-            if (topLevelRefs.isEmpty()) {
+            val callers = provider.findCallers(psiMethod, maxDepth, scope)
+            if (callers.isEmpty()) {
                 sb.appendLine("  (no callers found)")
             } else {
-                fun collectCallers(method: PsiMethod, currentDepth: Int, indent: String) {
-                    if (currentDepth > maxDepth) return
-                    val refs = ReferencesSearch.search(method, scope).findAll()
-                    refs.take(if (currentDepth == 1) 30 else 10).forEach { ref ->
-                        val element = ref.element
-                        val containingMethod = PsiTreeUtil.getParentOfType(element, PsiMethod::class.java)
-                        val callerName = if (containingMethod != null) {
-                            "${containingMethod.containingClass?.name ?: ""}#${containingMethod.name}"
-                        } else {
-                            "(top-level)"
-                        }
-                        val file = element.containingFile?.virtualFile?.path
-                            ?.let { PsiToolUtils.relativePath(project, it) } ?: ""
-                        val document = PsiDocumentManager.getInstance(project)
-                            .getDocument(element.containingFile)
-                        val line = document?.getLineNumber(element.textOffset)?.plus(1) ?: 0
-                        sb.appendLine("$indent$callerName  ($file:$line)")
-                        if (containingMethod != null && currentDepth < maxDepth) {
-                            collectCallers(containingMethod, currentDepth + 1, "$indent  ")
-                        }
-                    }
-                    if (refs.size > (if (currentDepth == 1) 30 else 10)) {
-                        sb.appendLine("$indent... (${refs.size - (if (currentDepth == 1) 30 else 10)} more)")
-                    }
+                callers.take(30).forEach { caller ->
+                    val indent = "  " + "  ".repeat(caller.depth - 1)
+                    sb.appendLine("$indent${caller.name}  (${caller.filePath}:${caller.line})")
                 }
-                collectCallers(psiMethod, 1, "  ")
+                if (callers.size > 30) {
+                    sb.appendLine("  ... (${callers.size - 30} more)")
+                }
             }
 
-            // Callees: what methods does this method call
+            // Callees: delegate to provider
             sb.appendLine("\nCallees (what this method calls):")
-            val calleeEntries = mutableListOf<Triple<String, String, Int>>() // name, file, line
-
-            // Java call expressions
-            val callExpressions = PsiTreeUtil.findChildrenOfType(psiMethod, PsiMethodCallExpression::class.java)
-            for (call in callExpressions) {
-                val resolved = call.resolveMethod() ?: continue
-                val calleeName = "${resolved.containingClass?.name ?: ""}#${resolved.name}"
-                val calleeFile = resolved.containingFile?.virtualFile?.path
-                    ?.let { PsiToolUtils.relativePath(project, it) } ?: ""
-                val calleeLine = resolved.containingFile
-                    ?.let { PsiDocumentManager.getInstance(project).getDocument(it) }
-                    ?.getLineNumber(resolved.textOffset)?.plus(1) ?: 0
-                calleeEntries.add(Triple(calleeName, calleeFile, calleeLine))
-            }
-
-            // Kotlin call expressions (reflection-based, graceful fallback)
-            try {
-                @Suppress("UNCHECKED_CAST")
-                val ktCallClass = Class.forName("org.jetbrains.kotlin.psi.KtCallExpression") as Class<PsiElement>
-                val ktCalls = PsiTreeUtil.findChildrenOfType(psiMethod, ktCallClass)
-                for (call in ktCalls) {
-                    val ref = (call as PsiElement).references.firstOrNull()
-                    val resolved = ref?.resolve()
-                    if (resolved is PsiMethod) {
-                        val calleeName = "${resolved.containingClass?.name ?: ""}#${resolved.name}"
-                        val calleeFile = resolved.containingFile?.virtualFile?.path
-                            ?.let { PsiToolUtils.relativePath(project, it) } ?: ""
-                        val calleeLine = resolved.containingFile
-                            ?.let { PsiDocumentManager.getInstance(project).getDocument(it) }
-                            ?.getLineNumber(resolved.textOffset)?.plus(1) ?: 0
-                        calleeEntries.add(Triple(calleeName, calleeFile, calleeLine))
-                    }
-                }
-            } catch (_: ClassNotFoundException) { /* Kotlin plugin not available */ }
-
-            // Deduplicate by name
-            val distinctCallees = calleeEntries.distinctBy { it.first }
-
-            if (distinctCallees.isEmpty()) {
+            val callees = provider.findCallees(psiMethod)
+            if (callees.isEmpty()) {
                 sb.appendLine("  (no callees found)")
             } else {
-                distinctCallees.take(30).forEach { (calleeName, calleeFile, calleeLine) ->
-                    sb.appendLine("  $calleeName  ($calleeFile:$calleeLine)")
+                callees.take(30).forEach { callee ->
+                    sb.appendLine("  ${callee.name}  (${callee.filePath ?: ""}:${callee.line ?: 0})")
                 }
-                if (distinctCallees.size > 30) {
-                    sb.appendLine("  ... (${distinctCallees.size - 30} more)")
+                if (callees.size > 30) {
+                    sb.appendLine("  ... (${callees.size - 30} more)")
                 }
             }
 
             sb.toString()
         }.inSmartMode(project).executeSynchronously()
 
+        val spilled = spillOrFormat(content, project)
         return ToolResult(
-            content = content,
+            content = spilled.preview,
             summary = "Call hierarchy for '$methodName'",
-            tokenEstimate = TokenEstimator.estimate(content)
+            tokenEstimate = TokenEstimator.estimate(spilled.preview),
+            spillPath = spilled.spilledToFile,
         )
-    }
-
-    private fun findMethod(project: Project, methodName: String, className: String?): PsiMethod? {
-        if (className != null) {
-            val psiClass = PsiToolUtils.findClassAnywhere(project, className)
-            return psiClass?.methods?.firstOrNull { it.name == methodName }
-        }
-
-        // Without class context, search all project classes for the method
-        val scope = GlobalSearchScope.projectScope(project)
-        val shortNameCache = com.intellij.psi.search.PsiShortNamesCache.getInstance(project)
-        val methods = shortNameCache.getMethodsByName(methodName, scope)
-        return methods.firstOrNull()
     }
 }

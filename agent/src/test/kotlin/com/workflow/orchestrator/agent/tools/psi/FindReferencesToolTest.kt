@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools.psi
 
+import com.workflow.orchestrator.agent.ide.LanguageProviderRegistry
 import com.workflow.orchestrator.agent.tools.WorkerType
 import io.mockk.*
 import kotlinx.coroutines.test.runTest
@@ -8,9 +9,11 @@ import org.junit.jupiter.api.Test
 
 class FindReferencesToolTest {
 
+    private val registry = LanguageProviderRegistry()
+
     @Test
     fun `tool metadata is correct`() {
-        val tool = FindReferencesTool()
+        val tool = FindReferencesTool(registry)
         assertEquals("find_references", tool.name)
         assertTrue(tool.parameters.required.contains("symbol"))
         assertTrue(tool.parameters.properties.containsKey("symbol"))
@@ -19,13 +22,13 @@ class FindReferencesToolTest {
 
     @Test
     fun `allowedWorkers includes ANALYZER and REVIEWER`() {
-        val tool = FindReferencesTool()
+        val tool = FindReferencesTool(registry)
         assertEquals(setOf(WorkerType.ANALYZER, WorkerType.REVIEWER), tool.allowedWorkers)
     }
 
     @Test
     fun `toToolDefinition produces valid schema`() {
-        val tool = FindReferencesTool()
+        val tool = FindReferencesTool(registry)
         val def = tool.toToolDefinition()
         assertEquals("function", def.type)
         assertEquals("find_references", def.function.name)
@@ -35,7 +38,7 @@ class FindReferencesToolTest {
 
     @Test
     fun `execute returns dumbModeError when indexing`() = runTest {
-        val tool = FindReferencesTool()
+        val tool = FindReferencesTool(registry)
         val project = mockk<com.intellij.openapi.project.Project> {
             every { basePath } returns "/tmp"
         }
@@ -55,7 +58,7 @@ class FindReferencesToolTest {
 
     @Test
     fun `execute returns error when symbol is missing`() = runTest {
-        val tool = FindReferencesTool()
+        val tool = FindReferencesTool(registry)
         val project = mockk<com.intellij.openapi.project.Project> {
             every { basePath } returns "/tmp"
         }

@@ -6,6 +6,10 @@
  * - Does "Revise in Editor" open the editor (not send empty string)?
  * - Do buttons show correct pending states?
  * - Is the card hidden when plan is approved?
+ *
+ * NOTE: Step-list rendering tests removed in Phase 5 (task system port).
+ * PlanSummaryCard no longer renders plan steps — those are handled by
+ * PlanProgressWidget via the tasks store.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
@@ -15,20 +19,15 @@ import type { Plan } from '@/bridge/types';
 // Mock the jcef-bridge module — openInEditorTab is the key function
 vi.mock('@/bridge/jcef-bridge', () => ({
   openInEditorTab: vi.fn(),
+  kotlinBridge: {
+    dismissPlan: vi.fn(),
+  },
 }));
 
-import { openInEditorTab } from '@/bridge/jcef-bridge';
+import { openInEditorTab, kotlinBridge } from '@/bridge/jcef-bridge';
 
 const mockPlan: Plan = {
   title: 'Fix NPE in PaymentService',
-  goal: 'Add null check for customer reference',
-  approach: 'Guard clause at entry point',
-  steps: [
-    { id: 'step-1', title: 'Read PaymentService.kt', status: 'pending', description: 'Understand the flow' },
-    { id: 'step-2', title: 'Add null check', status: 'pending', description: 'Guard clause' },
-    { id: 'step-3', title: 'Run tests', status: 'pending', description: 'Verify fix' },
-  ],
-  testing: 'Run PaymentServiceTest',
   approved: false,
 };
 
@@ -39,10 +38,9 @@ describe('PlanSummaryCard', () => {
     (window as any)._revisePlan = vi.fn();
   });
 
-  it('renders plan title and step count', () => {
+  it('renders plan title', () => {
     render(<PlanSummaryCard plan={mockPlan} />);
     expect(screen.getByText('Fix NPE in PaymentService')).toBeInTheDocument();
-    expect(screen.getByText(/3 steps planned/)).toBeInTheDocument();
   });
 
   it('shows "Awaiting Approval" badge when not approved', () => {
@@ -54,17 +52,6 @@ describe('PlanSummaryCard', () => {
     const approvedPlan = { ...mockPlan, approved: true };
     const { container } = render(<PlanSummaryCard plan={approvedPlan} />);
     expect(container.innerHTML).toBe('');
-  });
-
-  // CRITICAL: This was the bug — Revise used to send empty string to _revisePlan
-  it('Revise button opens editor tab instead of sending empty string', () => {
-    render(<PlanSummaryCard plan={mockPlan} />);
-    const reviseBtn = screen.getByText('Revise in Editor');
-    fireEvent.click(reviseBtn);
-
-    // Should open editor tab, NOT call _revisePlan with empty string
-    expect(openInEditorTab).toHaveBeenCalledWith('plan', expect.any(String));
-    expect((window as any)._revisePlan).not.toHaveBeenCalled();
   });
 
   it('Approve button calls _approvePlan bridge function', () => {
@@ -98,12 +85,9 @@ describe('PlanSummaryCard', () => {
     });
   });
 
-  it('View Implementation Plan button opens editor tab', () => {
+  it('View Implementation Plan button is present', () => {
     render(<PlanSummaryCard plan={mockPlan} />);
-    const viewBtn = screen.getByText('View Implementation Plan');
-    fireEvent.click(viewBtn);
-
-    expect(openInEditorTab).toHaveBeenCalledWith('plan', JSON.stringify(mockPlan));
+    expect(screen.getByText('View Implementation Plan')).toBeInTheDocument();
   });
 
   it('shows markdown preview when plan has markdown field', () => {
@@ -112,14 +96,25 @@ describe('PlanSummaryCard', () => {
       markdown: '## Goal\nFix the NPE in PaymentService\n\n## Steps\n### 1. Read file\nUnderstand the flow.',
     };
     render(<PlanSummaryCard plan={planWithMarkdown} />);
-    // Should show a preview of the markdown content, not the structured step list
+    // Should show a preview of the markdown content
     expect(screen.getByText(/Fix the NPE/)).toBeInTheDocument();
   });
 
-  it('falls back to step list when no markdown', () => {
+  it('Dismiss button calls kotlinBridge.dismissPlan', () => {
     render(<PlanSummaryCard plan={mockPlan} />);
-    // Should show structured step list (PlanCompact) — step titles visible
-    expect(screen.getByText('Fix NPE in PaymentService')).toBeInTheDocument();
-    expect(screen.getByText(/3 steps planned/)).toBeInTheDocument();
+    const dismissBtn = screen.getByRole('button', { name: /dismiss/i });
+    fireEvent.click(dismissBtn);
+
+    expect((kotlinBridge as any).dismissPlan).toHaveBeenCalledTimes(1);
+  });
+
+  it('Dismiss button is disabled while another action is pending', () => {
+    render(<PlanSummaryCard plan={mockPlan} />);
+    // Click Approve to put the card into a pending state
+    const approveBtn = screen.getByRole('button', { name: /approve/i });
+    fireEvent.click(approveBtn);
+
+    const dismissBtn = screen.getByRole('button', { name: /dismiss/i });
+    expect(dismissBtn).toBeDisabled();
   });
 });

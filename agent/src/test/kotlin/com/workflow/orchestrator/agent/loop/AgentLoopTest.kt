@@ -10,6 +10,9 @@ import com.workflow.orchestrator.core.ai.dto.*
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
 import io.mockk.mockk
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -1019,6 +1022,222 @@ class AgentLoopTest {
             assertEquals(2, capturedToolCounts.size)
             assertEquals(2, capturedToolCounts[0], "First call should have 2 tool defs")
             assertEquals(3, capturedToolCounts[1], "Second call should have 3 tool defs (jira added)")
+        }
+    }
+
+    @Nested
+    inner class ToolTimeoutTests {
+
+        @Test
+        fun `tool that exceeds timeout returns error result`() = runTest {
+            // Create a tool with a very short timeout that delays longer than the timeout
+            val slowTool = object : AgentTool {
+                override val name = "slow_tool"
+                override val description = "A slow tool"
+                override val parameters = FunctionParameters(properties = emptyMap())
+                override val allowedWorkers = setOf(WorkerType.CODER)
+                override val timeoutMs: Long get() = 100L  // 100ms timeout
+
+                override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+                    delay(10_000)  // 10 seconds — well past the 100ms timeout
+                    return ToolResult(content = "should not reach", summary = "ok", tokenEstimate = 5)
+                }
+            }
+
+            val brain = sequenceBrain(
+                toolCallResponse("slow_tool" to "{}"),
+                toolCallResponse("attempt_completion" to """{"result":"Done after timeout."}""")
+            )
+
+            val tools = listOf(slowTool, completionTool("Done after timeout."))
+            val loop = buildLoop(brain, tools)
+            val result = loop.run("Do something slow")
+
+            // The loop should still complete (timeout is a tool error, not a loop failure)
+            assertTrue(result is LoopResult.Completed, "Expected Completed but got $result")
+        }
+
+        @Test
+        fun `tool with MAX_VALUE timeout skips withTimeoutOrNull`() = runTest {
+            // A tool with Long.MAX_VALUE timeout should not be wrapped in withTimeoutOrNull
+            val unboundedTool = object : AgentTool {
+                override val name = "unbounded_tool"
+                override val description = "Unbounded tool"
+                override val parameters = FunctionParameters(properties = emptyMap())
+                override val allowedWorkers = setOf(WorkerType.CODER)
+                override val timeoutMs: Long get() = Long.MAX_VALUE
+
+                override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+                    // Should execute normally without timeout wrapping
+                    return ToolResult(content = "unbounded ok", summary = "ok", tokenEstimate = 5)
+                }
+            }
+
+            val brain = sequenceBrain(
+                toolCallResponse("unbounded_tool" to "{}"),
+                toolCallResponse("attempt_completion" to """{"result":"Done."}""")
+            )
+
+            val tools = listOf(unboundedTool, completionTool("Done."))
+            val loop = buildLoop(brain, tools)
+            val result = loop.run("Run unbounded tool")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed but got $result")
+        }
+
+        @Test
+        fun `cancellation exception propagates and is not swallowed`() = runTest {
+            // A tool that throws CancellationException should not be caught as a tool error
+            val cancellingTool = object : AgentTool {
+                override val name = "cancelling_tool"
+                override val description = "A tool that gets cancelled"
+                override val parameters = FunctionParameters(properties = emptyMap())
+                override val allowedWorkers = setOf(WorkerType.CODER)
+
+                override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+                    throw CancellationException("User cancelled")
+                }
+            }
+
+            val brain = sequenceBrain(
+                toolCallResponse("cancelling_tool" to "{}")
+            )
+
+            val tools = listOf(cancellingTool, completionTool())
+            val loop = buildLoop(brain, tools)
+
+            // CancellationException should propagate out of the loop
+            try {
+                loop.run("Do something")
+                fail("Expected CancellationException to propagate")
+            } catch (e: CancellationException) {
+                // Expected — cancellation propagated correctly
+                assertEquals("User cancelled", e.message)
+            }
+        }
+
+        @Test
+        fun `default tool timeout is 120 seconds`() {
+            val tool = fakeTool("test_tool")
+            assertEquals(AgentTool.DEFAULT_TOOL_TIMEOUT_MS, tool.timeoutMs,
+                "Default tool timeout should be 120_000ms")
+            assertEquals(120_000L, tool.timeoutMs)
+        }
+    }
+
+    @Nested
+    inner class AttemptCompletionBatchGuardTests {
+
+        @Test
+        fun `attempt_completion batched with other tools is deferred to next turn`() = runTest {
+            val brain = sequenceBrain(
+                toolCallResponse(
+                    "read_file" to """{"path":"x.kt"}""",
+                    "attempt_completion" to """{"result":"Guess: x is foo."}""",
+                ),
+                toolCallResponse(
+                    "attempt_completion" to """{"result":"Actual: x reads bar."}""",
+                ),
+            )
+            val tools = listOf(
+                fakeTool("read_file", ToolResult(content = "val x = \"bar\"", summary = "read", tokenEstimate = 5)),
+                completionTool("Actual: x reads bar."),
+            )
+            val loop = buildLoop(brain, tools)
+
+            val result = loop.run("what is x?")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed, got $result")
+            val summary = (result as LoopResult.Completed).summary
+            assertTrue(summary.contains("Actual"), "Expected post-observation summary, got: $summary")
+            assertFalse(summary.contains("Guess"), "Premature completion summary leaked: $summary")
+            assertEquals(2, result.iterations, "Expected TWO LLM turns — batch guard deferred completion")
+        }
+
+        @Test
+        fun `attempt_completion alone in a batch is executed immediately`() = runTest {
+            val brain = sequenceBrain(
+                toolCallResponse("attempt_completion" to """{"result":"Done."}"""),
+            )
+            val tools = listOf(completionTool("Done."))
+            val loop = buildLoop(brain, tools)
+
+            val result = loop.run("task")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed, got $result")
+            assertEquals(1, (result as LoopResult.Completed).iterations, "Expected a single turn — no guard fired")
+            assertEquals("Done.", result.summary)
+        }
+    }
+
+    // ---- systemPromptProvider (dynamic system prompt refresh for sub-agents with deferred tools) ----
+
+    @Nested
+    inner class SystemPromptProviderTests {
+
+        @Test
+        fun `systemPromptProvider is called each iteration and updates context manager`() = runTest {
+            var callCount = 0
+            val systemPromptProvider = {
+                callCount++
+                "System prompt version $callCount"
+            }
+
+            // 2-iteration run: read_file then attempt_completion
+            val brain = sequenceBrain(
+                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
+                toolCallResponse("attempt_completion" to """{"result":"Done."}""")
+            )
+
+            val tools = listOf(
+                fakeTool("read_file"),
+                completionTool("Done.")
+            )
+            val toolMap = tools.associateBy { it.name }
+            val toolDefs = tools.map { it.toToolDefinition() }
+
+            val loop = AgentLoop(
+                brain = brain,
+                tools = toolMap,
+                toolDefinitions = toolDefs,
+                contextManager = contextManager,
+                project = project,
+                systemPromptProvider = systemPromptProvider
+            )
+
+            val result = loop.run("Do something")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed but got $result")
+            assertEquals(2, callCount,
+                "systemPromptProvider should be called once per iteration (2 iterations = 2 calls)")
+        }
+
+        @Test
+        fun `when systemPromptProvider is null loop runs without errors`() = runTest {
+            val brain = sequenceBrain(
+                toolCallResponse("read_file" to """{"path":"a.kt"}"""),
+                toolCallResponse("attempt_completion" to """{"result":"Done."}""")
+            )
+
+            val tools = listOf(
+                fakeTool("read_file"),
+                completionTool("Done.")
+            )
+            val toolMap = tools.associateBy { it.name }
+            val toolDefs = tools.map { it.toToolDefinition() }
+
+            // systemPromptProvider defaults to null — loop must run without crashing
+            val loop = AgentLoop(
+                brain = brain,
+                tools = toolMap,
+                toolDefinitions = toolDefs,
+                contextManager = contextManager,
+                project = project
+            )
+
+            val result = loop.run("Do something")
+
+            assertTrue(result is LoopResult.Completed, "Expected Completed — null systemPromptProvider must not crash")
         }
     }
 }
