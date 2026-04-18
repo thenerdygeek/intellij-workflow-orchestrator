@@ -51,7 +51,6 @@ let pendingPlanData: AgentPlanData | null = null;
   }
 };
 
-let updateStepStatusInternal: ((stepId: string, status: string) => void) | null = null;
 let triggerReviseInternal: (() => void) | null = null;
 
 // Synchronize pending state from chat card or Kotlin
@@ -126,17 +125,6 @@ function PlanEditor() {
       setComments([]);
     };
 
-    // Wire the step status updater
-    updateStepStatusInternal = (stepId: string, status: string) => {
-      setPlanData(prev => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          steps: prev.steps.map(s => s.id === stepId ? { ...s, status } : s)
-        };
-      });
-    };
-
     // Wire pending state sync
     setPendingExternal = (state) => setPending(state);
 
@@ -146,7 +134,6 @@ function PlanEditor() {
     }
     return () => {
       setPlanDataExternal = null;
-      updateStepStatusInternal = null;
       setPendingExternal = null;
       triggerReviseInternal = null;
     };

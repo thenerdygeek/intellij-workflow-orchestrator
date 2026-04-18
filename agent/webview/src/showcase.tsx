@@ -5,7 +5,7 @@ import './styles/animations.css';
 import { applyShowcaseTheme, getStoredTheme } from './showcase/theme-provider';
 import {
   mockMessages, mockStreamingMessage, mockToolCalls,
-  mockPlanPending, mockPlanInProgress, mockQuestions,
+  mockPlanPending, mockQuestions,
   mockMentions,
   mockTableData, mockTimelineData, mockProgressData,
   mockOutputData, mockFlowWithGroups,
@@ -14,7 +14,6 @@ import {
   mockAnsiText, mockChartData, mockDiffSource, mockImageSource,
   mockMathLatex, mockMathLatexInline, mockInteractiveHtml,
   mockEditOldLines, mockEditNewLines,
-  mockPlanCompleted, mockPlanWithFailure, mockPlanLarge,
   mockApprovalEditMetadata, mockApprovalCommandMetadata, mockApprovalDestructiveMetadata,
   mockPlanEditorData, mockPlanMarkdownHtml,
 } from './showcase/mock-data';
@@ -297,8 +296,8 @@ function ComponentsTab() {
       </Section>
 
       {/* ── Plan — In Progress ── */}
-      <Section title="Plan — In Progress">
-        <PlanProgressWidget plan={mockPlanInProgress} />
+      <Section title="Plan — In Progress (tasks from store)">
+        <PlanProgressWidget />
       </Section>
 
       {/* ── Debug Panel ── */}
@@ -560,17 +559,8 @@ function PlanTab() {
         <SubLabel text="PlanSummaryCard — Awaiting Approval (agent just called create_plan):" />
         <PlanSummaryCard plan={mockPlanPending} />
 
-        <SubLabel text="PlanProgressWidget — In Progress (approved, agent executing steps):" />
-        <PlanProgressWidget plan={mockPlanInProgress} />
-
-        <SubLabel text="PlanProgressWidget — Large plan, 10 steps:" />
-        <PlanProgressWidget plan={mockPlanLarge} />
-
-        <SubLabel text="PlanProgressWidget — With failed step:" />
-        <PlanProgressWidget plan={mockPlanWithFailure} />
-
-        <SubLabel text="PlanProgressWidget — All steps completed:" />
-        <PlanProgressWidget plan={mockPlanCompleted} />
+        <SubLabel text="PlanProgressWidget — reads tasks from chatStore (Phase 5: task system port):" />
+        <PlanProgressWidget />
       </Section>
 
       {/* ── ② Plan Editor Tab ── */}
@@ -793,8 +783,8 @@ function ChatFlowTab() {
           <AgentMessage message={MSG_AGENT_3} />
           <PlanSummaryCard plan={mockPlanPending} />
 
-          {/* 8. Plan in progress (after approval) */}
-          <PlanProgressWidget plan={mockPlanInProgress} />
+          {/* 8. Plan in progress (after approval — reads from task store) */}
+          <PlanProgressWidget />
 
           {/* 9. Question wizard */}
           <QuestionView questions={mockQuestions} activeIndex={0} />
