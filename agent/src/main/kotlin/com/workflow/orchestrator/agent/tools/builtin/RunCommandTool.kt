@@ -387,7 +387,7 @@ class RunCommandTool(
         stderrLines: List<String>?
     ): ToolResult {
         val rawOutput = collectOutput(managed)
-        val processed = OutputCollector.processOutput(
+        val processed = OutputCollector.processOutputTailBiased(
             rawOutput = rawOutput,
             maxResultChars = outputConfig.maxChars,
             spillDir = null,
@@ -403,7 +403,7 @@ class RunCommandTool(
         // Append separate stderr if captured
         if (stderrLines != null && stderrLines.isNotEmpty()) {
             val rawStderr = stderrLines.joinToString("")
-            val stderrProcessed = OutputCollector.processOutput(
+            val stderrProcessed = OutputCollector.processOutputTailBiased(
                 rawOutput = rawStderr,
                 maxResultChars = outputConfig.maxChars / 2,
                 spillDir = null,
@@ -430,7 +430,7 @@ class RunCommandTool(
 
     private fun buildTimeoutResult(managed: ManagedProcess, timeoutSeconds: Long): ToolResult {
         val rawOutput = collectOutput(managed)
-        val processed = OutputCollector.processOutput(
+        val processed = OutputCollector.processOutputTailBiased(
             rawOutput = rawOutput,
             maxResultChars = outputConfig.maxChars,
             spillDir = null,

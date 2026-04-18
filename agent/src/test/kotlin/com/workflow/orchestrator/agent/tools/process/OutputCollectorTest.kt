@@ -189,6 +189,152 @@ class OutputCollectorTest {
         }
     }
 
+    // ── truncateToTail ──────────────────────────────────────────────────
+
+    @Nested
+    inner class TruncateToTail {
+        @Test
+        fun `short content returned as-is`() {
+            val content = "line1\nline2\nline3"
+            assertEquals(content, OutputCollector.truncateToTail(content, maxChars = 10_000))
+        }
+
+        @Test
+        fun `keeps last lines and prepends head-omission marker`() {
+            val lines = (1..1000).map { "line $it" }
+            val content = lines.joinToString("\n")
+            val result = OutputCollector.truncateToTail(content, maxChars = 5_000)
+
+            assertTrue(result.startsWith("[... "))
+            assertTrue(result.contains("lines omitted from head ..."))
+            // Last line must be present
+            assertTrue(result.contains("line 1000"))
+            // A line from the head should not be present
+            assertFalse(result.contains("line 1\n"))
+        }
+
+        @Test
+        fun `last line always survives truncation`() {
+            val content = (1..500).joinToString("\n") { "line $it" } + "\nBUILD FAILURE"
+            val result = OutputCollector.truncateToTail(content, maxChars = 1_000)
+            assertTrue(result.contains("BUILD FAILURE"), "Last line (BUILD FAILURE) must survive truncation")
+        }
+
+        @Test
+        fun `single line larger than maxChars returns marker only`() {
+            val hugeLine = "x".repeat(10_000)
+            val result = OutputCollector.truncateToTail(hugeLine, maxChars = 500)
+            assertTrue(result.startsWith("[... 1 lines omitted from head ...]"), "Expected marker: got: ${result.take(80)}")
+            assertFalse(result.contains("x".repeat(10)))
+        }
+
+        @Test
+        fun `omission count is accurate`() {
+            // 100 lines of exactly 10 chars each (10 + 1 newline = 11 chars/line)
+            // maxChars=55 → fits 5 lines (5*11=55), omits 95
+            val content = (1..100).joinToString("\n") { "0123456789" }
+            val result = OutputCollector.truncateToTail(content, maxChars = 55)
+            assertTrue(result.contains("[... 95 lines omitted from head ...]"), "got: ${result.take(80)}")
+        }
+    }
+
+    // ── processOutputTailBiased ─────────────────────────────────────────
+
+    @Nested
+    inner class ProcessOutputTailBiased {
+        @TempDir
+        lateinit var tempDir: Path
+
+        @Test
+        fun `empty output returns no output message`() {
+            val result = OutputCollector.processOutputTailBiased("")
+            assertEquals("(No output)", result.content)
+            assertFalse(result.wasTruncated)
+        }
+
+        @Test
+        fun `short output returned unchanged`() {
+            val output = "BUILD SUCCESSFUL in 2s"
+            val result = OutputCollector.processOutputTailBiased(output)
+            assertEquals(output, result.content)
+            assertFalse(result.wasTruncated)
+        }
+
+        @Test
+        fun `strips ANSI codes`() {
+            val input = "\u001B[31mBUILD FAILURE\u001B[0m"
+            val result = OutputCollector.processOutputTailBiased(input)
+            assertEquals("BUILD FAILURE", result.content)
+        }
+
+        @Test
+        fun `large output keeps tail and uses head-omission marker`() {
+            val lines = (1..1000).map { "output line $it" }
+            val content = lines.joinToString("\n")
+            val result = OutputCollector.processOutputTailBiased(content, maxResultChars = 5_000)
+
+            assertTrue(result.wasTruncated)
+            assertTrue(result.content.contains("lines omitted from head ..."))
+            // Last line must survive
+            assertTrue(result.content.contains("output line 1000"))
+            // First line must NOT be in the result body (only in the marker count)
+            assertFalse(result.content.contains("output line 1\n"))
+        }
+
+        @Test
+        fun `exit code line survives when appended before call`() {
+            // RunCommandTool prepends "Exit code: N\n" AFTER processOutputTailBiased —
+            // this test verifies the last meaningful output line survives truncation.
+            val failureLine = "BUILD FAILURE"
+            val content = (1..500).joinToString("\n") { "test output $it" } + "\n$failureLine"
+            val result = OutputCollector.processOutputTailBiased(content, maxResultChars = 2_000)
+
+            assertTrue(result.wasTruncated)
+            assertTrue(result.content.contains(failureLine))
+        }
+
+        @Test
+        fun `spill path set when over maxMemoryChars`() {
+            val line = "y".repeat(200)
+            val content = (1..6_000).joinToString("\n") { line }
+            val result = OutputCollector.processOutputTailBiased(
+                rawOutput = content,
+                maxResultChars = 5_000,
+                maxMemoryChars = 100_000,
+                spillDir = tempDir.toFile(),
+                toolCallId = "tail-spill-1"
+            )
+
+            assertNotNull(result.spillPath)
+            assertTrue(result.content.contains("Full output:"))
+            assertTrue(File(result.spillPath!!).exists())
+        }
+
+        @Test
+        fun `no spill when under maxMemoryChars`() {
+            val line = "z".repeat(100)
+            val content = (1..100).joinToString("\n") { line }
+            val result = OutputCollector.processOutputTailBiased(
+                rawOutput = content,
+                maxResultChars = 500,
+                maxMemoryChars = 1_000_000,
+                spillDir = tempDir.toFile(),
+                toolCallId = "no-spill"
+            )
+
+            assertTrue(result.wasTruncated)
+            assertNull(result.spillPath)
+        }
+
+        @Test
+        fun `totalChars and totalLines reflect sanitized input`() {
+            val content = "line1\nline2\nline3"
+            val result = OutputCollector.processOutputTailBiased(content)
+            assertEquals(3, result.totalLines)
+            assertEquals(content.length, result.totalChars)
+        }
+    }
+
     // ── spillToFile ─────────────────────────────────────────────────────
 
     @Nested

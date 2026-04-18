@@ -169,6 +169,95 @@ object OutputCollector {
     }
 
     /**
+     * Tail-biased variant of [processOutput] for `run_command`. Keeps the last lines of
+     * output (exit summary, last error, stack trace) instead of dropping the middle.
+     * All other stages (ANSI strip, Unicode sanitize, disk spill) are identical to [processOutput].
+     *
+     * Rationale: for shell commands — `mvn test`, `gradle test`, `npm run build`, server
+     * startup — the failure summary is always at the end. Middle-drop preserves neither the
+     * beginning nor the end reliably; keeping the tail preserves what the LLM needs most.
+     */
+    fun processOutputTailBiased(
+        rawOutput: String,
+        maxResultChars: Int = 100_000,
+        maxMemoryChars: Int = 1_000_000,
+        spillDir: File? = null,
+        toolCallId: String? = null,
+    ): ProcessedOutput {
+        if (rawOutput.isBlank()) {
+            return ProcessedOutput(
+                content = "(No output)",
+                wasTruncated = false,
+                totalLines = 0,
+                totalChars = 0,
+            )
+        }
+
+        val stripped = stripAnsi(rawOutput)
+        val sanitized = sanitizeForLLM(stripped)
+
+        val totalChars = sanitized.length
+        val totalLines = sanitized.lines().size
+
+        var spillPath: String? = null
+        if (spillDir != null && toolCallId != null && totalChars > maxMemoryChars) {
+            spillPath = spillToFile(sanitized, spillDir, toolCallId)
+        }
+
+        if (totalChars <= maxResultChars) {
+            return ProcessedOutput(
+                content = sanitized,
+                wasTruncated = false,
+                totalLines = totalLines,
+                totalChars = totalChars,
+                spillPath = spillPath,
+            )
+        }
+
+        val truncated = truncateToTail(sanitized, maxResultChars)
+        val footer = if (spillPath != null) {
+            "\n[Total output: $totalChars chars, $totalLines lines. Full output: $spillPath]"
+        } else {
+            "\n[Total output: $totalChars chars. Use output_file=true or a more targeted command to see the head.]"
+        }
+
+        return ProcessedOutput(
+            content = truncated + footer,
+            wasTruncated = true,
+            totalLines = totalLines,
+            totalChars = totalChars,
+            spillPath = spillPath,
+        )
+    }
+
+    /**
+     * Keep the last lines that fit in [maxChars], prepend a head-omission marker.
+     * Line-based — never splits a line mid-character. The returned content (excluding
+     * any caller-appended footer) is ≤ [maxChars] plus the marker line.
+     *
+     * If no complete lines fit (a single line is longer than [maxChars]), the marker
+     * alone is returned so the caller always gets a non-empty, structurally valid result.
+     */
+    internal fun truncateToTail(content: String, maxChars: Int): String {
+        val lines = content.lines()
+        val kept = ArrayDeque<String>()
+        var used = 0
+        for (i in lines.indices.reversed()) {
+            val lineCost = lines[i].length + 1  // +1 for the joining \n
+            if (used + lineCost > maxChars) break
+            kept.addFirst(lines[i])
+            used += lineCost
+        }
+        val omittedCount = lines.size - kept.size
+        if (omittedCount == 0) return content
+        return if (kept.isEmpty()) {
+            "[... $omittedCount lines omitted from head ...]"
+        } else {
+            "[... $omittedCount lines omitted from head ...]\n" + kept.joinToString("\n")
+        }
+    }
+
+    /**
      * Write full output to a temp file for later retrieval.
      *
      * Creates the file in [spillDir] named `run-cmd-{toolCallId}-{epoch}.txt`.

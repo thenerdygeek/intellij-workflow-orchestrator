@@ -370,7 +370,7 @@ try {
 - **Task system**: Managed via `TaskStore` (four tools: `task_create`, `task_update`, `task_list`, `task_get`). Tasks are hook-exempt (bypass PreToolUse/PostToolUse). Progress rendered into system prompt Section 2 from `ContextManager.attachTaskStore`.
 - **Dumb mode checks**: `OptimizeImportsTool` and `FormatCodeTool` check `DumbService.isDumb(project)` before operating — prevents removing used imports during indexing
 - **Session-scoped state**: `EditFileTool.lastEditLineRanges` keyed by `sessionId:canonicalPath` to prevent cross-session contamination of diagnostics edit ranges
-- **Middle-truncation**: Runtime/build/coverage tools use first-60% + last-40% truncation (via shared `truncateOutput()`) instead of head-biased `.take(N)` — preserves error messages and stack traces at end of output
+- **Middle-truncation**: Runtime/build/coverage tools use first-60% + last-40% truncation (via shared `truncateOutput()`) instead of head-biased `.take(N)` — preserves error messages and stack traces at end of output. Exception: `run_command` uses **tail-biased** truncation (`OutputCollector.processOutputTailBiased`) — keeps the last N lines and drops the head — because build/test output has exit summaries and failure traces at the tail.
 - **No-op detection**: `FormatCodeTool` and `OptimizeImportsTool` compare before/after text and report "no changes needed" when nothing changed
 - **Debug session unification**: All debug tools (step, inspect, breakpoints) resolve sessions via `IdeStateProbe.debugState()` — both agent-started and user-started sessions are visible
 - **All breakpoint types**: `list_breakpoints` shows line, exception, field watchpoint, and method breakpoints (not just `XLineBreakpoint`)
