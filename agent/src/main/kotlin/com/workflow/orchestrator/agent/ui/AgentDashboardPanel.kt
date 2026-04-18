@@ -721,6 +721,27 @@ class AgentDashboardPanel(
         broadcast(replay = false) { it.loadSessionState(uiMessagesJson) }
     }
 
+    /**
+     * Push the full TaskStore snapshot to the webview (Phase 5 task system).
+     * Used on session load so the React PlanProgressWidget shows persisted tasks.
+     */
+    fun setTasks(tasksJson: String) {
+        runOnEdt { cefPanel?.setTasks(tasksJson) }
+        broadcast(replay = false) { it.setTasks(tasksJson) }
+    }
+
+    /** Push a single newly-created task to the webview (appends in chatStore). */
+    fun applyTaskCreate(taskJson: String) {
+        runOnEdt { cefPanel?.applyTaskCreate(taskJson) }
+        broadcast(replay = false) { it.applyTaskCreate(taskJson) }
+    }
+
+    /** Push a single updated task to the webview (replaces by id in chatStore). */
+    fun applyTaskUpdate(taskJson: String) {
+        runOnEdt { cefPanel?.applyTaskUpdate(taskJson) }
+        broadcast(replay = false) { it.applyTaskUpdate(taskJson) }
+    }
+
     fun showResumeBar(sessionId: String) {
         runOnEdt { cefPanel?.showResumeBar(sessionId) }
         broadcast(replay = false) { it.showResumeBar(sessionId) }

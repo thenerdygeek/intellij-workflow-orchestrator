@@ -39,6 +39,8 @@ import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
 import com.workflow.orchestrator.agent.ui.plan.AgentPlanEditor
 import com.workflow.orchestrator.agent.ui.plan.AgentPlanVirtualFile
 import com.workflow.orchestrator.agent.util.JsEscape
+import com.workflow.orchestrator.core.events.EventBus
+import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
@@ -186,6 +188,12 @@ class AgentController(
     /** Last LLM stream text snippet — gives Haiku context about what the agent is thinking. */
     @Volatile private var lastStreamSnippet: String = ""
 
+    /**
+     * Controller-scoped coroutine scope for long-lived subscriptions (e.g. EventBus.events).
+     * Cancelled in [dispose] so subscriptions stop when the controller goes away.
+     */
+    private val controllerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     /** Coalesces rapid-fire stream chunks into ~16ms batched bridge dispatches. */
     private val streamBatcher = StreamBatcher(
         onFlush = { batched -> dashboard.appendStreamToken(batched) }
@@ -222,7 +230,46 @@ class AgentController(
                 dashboard.renderArtifact(payload.title, payload.source, payload.renderId)
             }
         }
+
+        // Subscribe to TaskChanged events emitted by TaskCreateTool / TaskUpdateTool.
+        // On each event, fetch the current snapshot of the task from TaskStore and push
+        // it to the webview. Also refresh execution steps so the PlanProgressWidget
+        // (which reads chatStore.tasks) stays in sync with authoritative state.
+        subscribeToTaskChanges()
     }
+
+    /**
+     * Collect [WorkflowEvent.TaskChanged] from [EventBus] and forward each event to the
+     * webview as either `_applyTaskCreate(task)` or `_applyTaskUpdate(task)`.
+     *
+     * Runs on [controllerScope] (cancelled in [dispose]). Best-effort: if the task is
+     * missing from the store by the time the event fires, the event is ignored.
+     */
+    private fun subscribeToTaskChanges() {
+        val eventBus = project.getService(EventBus::class.java) ?: return
+        controllerScope.launch {
+            eventBus.events.collect { event ->
+                if (event !is WorkflowEvent.TaskChanged) return@collect
+                val store = service.currentTaskStore() ?: return@collect
+                val task = store.getTask(event.taskId) ?: return@collect
+                val taskJson = taskEventJson.encodeToString(task)
+                if (event.isCreate) {
+                    dashboard.applyTaskCreate(taskJson)
+                } else {
+                    dashboard.applyTaskUpdate(taskJson)
+                }
+                // Refresh execution-step UI from the authoritative TaskStore snapshot.
+                refreshExecutionStepsFromTaskStore()
+            }
+        }
+    }
+
+    /**
+     * Shared JSON instance for task bridge payloads. `encodeDefaults = true` ensures
+     * default-valued fields (empty `blocks` / `blockedBy`) appear in the JSON so the
+     * webview's strict TypeScript types are satisfied.
+     */
+    private val taskEventJson = Json { encodeDefaults = true; ignoreUnknownKeys = true }
 
     // ═══════════════════════════════════════════════════
     //  Callback wiring — dashboard actions → controller
@@ -1351,6 +1398,37 @@ class AgentController(
     }
 
     /**
+     * Build [PlanStep]s from the current TaskStore snapshot and push them to the
+     * dashboard's execution-step list. Filters out `DELETED` tasks. An `IN_PROGRESS`
+     * task with an `activeForm` renders with the present-continuous phrasing; all
+     * other tasks render with their `subject`.
+     *
+     * Called from both the [WorkflowEvent.TaskChanged] subscription and
+     * [onTaskProgress] (the legacy task_progress callback now delegates here).
+     */
+    private fun refreshExecutionStepsFromTaskStore() {
+        val store = service.currentTaskStore() ?: return
+        val tasks = store.listTasks().filter { it.status != com.workflow.orchestrator.agent.loop.TaskStatus.DELETED }
+        val steps = tasks.map { task ->
+            val title = if (task.status == com.workflow.orchestrator.agent.loop.TaskStatus.IN_PROGRESS
+                && !task.activeForm.isNullOrBlank()
+            ) task.activeForm!! else task.subject
+            val status = when (task.status) {
+                com.workflow.orchestrator.agent.loop.TaskStatus.COMPLETED -> PlanStepStatus.COMPLETED
+                com.workflow.orchestrator.agent.loop.TaskStatus.IN_PROGRESS -> PlanStepStatus.RUNNING
+                else -> PlanStepStatus.PENDING
+            }
+            PlanStep(
+                id = task.id,
+                title = title,
+                status = status,
+            )
+        }
+        val stepsJson = Json.encodeToString(steps)
+        invokeLater { dashboard.replaceExecutionSteps(stepsJson) }
+    }
+
+    /**
      * Task progress callback — agent loop reports checklist updates.
      *
      * The LLM's task_progress checklist (focus-chain) is the sole source of truth
@@ -2097,11 +2175,21 @@ class AgentController(
      * Called during session resume so the chat UI displays the complete conversation history
      * from the previous session. The bridge function `_loadSessionState` (registered in
      * jcef-bridge.ts, Task 9) replaces the chatStore messages with the deserialized array.
+     *
+     * Also pushes the current TaskStore snapshot via `_setTasks` so the React
+     * PlanProgressWidget rehydrates its task list at the same time. If no session is
+     * active (task store unavailable) an empty array is sent to clear any stale UI state.
      */
     fun postStateToWebview(uiMessages: List<UiMessage>) {
         val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
         val messagesJson = json.encodeToString(uiMessages)
         dashboard.loadSessionState(messagesJson)
+
+        val tasks = service.currentTaskStore()?.listTasks().orEmpty()
+        val tasksJson = taskEventJson.encodeToString(tasks)
+        dashboard.setTasks(tasksJson)
+        // Also refresh the execution-step widget from the newly-loaded tasks.
+        refreshExecutionStepsFromTaskStore()
     }
 
     /**
@@ -2684,6 +2772,9 @@ class AgentController(
         pendingApproval?.cancel()
         pendingApproval = null
         pendingApprovalToolName = null
+        // Cancel the long-lived controller scope so the TaskChanged EventBus
+        // subscription stops collecting once the controller is disposed.
+        controllerScope.cancel()
         // Drop the artifact push callback so the registry cannot invoke a
         // stale dashboard reference if a render fires in the window between
         // this dispose and a new controller installing its own callback.

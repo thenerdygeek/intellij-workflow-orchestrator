@@ -1093,6 +1093,33 @@ class AgentCefPanel(
         callJs("_loadSessionState(${JsEscape.toJsString(uiMessagesJson)})")
     }
 
+    /**
+     * Push the full task list to the webview, replacing the current chatStore.tasks.
+     * Calls the `_setTasks` bridge function registered in jcef-bridge.ts.
+     *
+     * Used on session load / rehydration so [PlanProgressWidget] shows tasks
+     * from the persisted TaskStore.
+     */
+    fun setTasks(tasksJson: String) {
+        callJs("_setTasks(${JsEscape.toJsString(tasksJson)})")
+    }
+
+    /**
+     * Push a single created task to the webview; the React chatStore appends it
+     * to `tasks`. Calls the `_applyTaskCreate` bridge function in jcef-bridge.ts.
+     */
+    fun applyTaskCreate(taskJson: String) {
+        callJs("_applyTaskCreate(${JsEscape.toJsString(taskJson)})")
+    }
+
+    /**
+     * Push a single updated task to the webview; the React chatStore replaces
+     * the matching task by id. Calls the `_applyTaskUpdate` bridge function.
+     */
+    fun applyTaskUpdate(taskJson: String) {
+        callJs("_applyTaskUpdate(${JsEscape.toJsString(taskJson)})")
+    }
+
     fun loadSessionHistory(historyItemsJson: String) {
         callJs("_loadSessionHistory(${JsEscape.toJsString(historyItemsJson)})")
     }
