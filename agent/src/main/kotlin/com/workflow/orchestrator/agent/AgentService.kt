@@ -895,7 +895,24 @@ class AgentService(private val project: Project) : Disposable {
          * (plan-mode reply turn or consecutive-mistakes recovery). The UI must
          * drop the working spinner, enable steering, and surface the reason.
          */
-        onAwaitingUserInput: ((reason: String) -> Unit)? = null
+        onAwaitingUserInput: ((reason: String) -> Unit)? = null,
+        /**
+         * Optional override for the UI message that will be persisted for this task.
+         * When provided, this message is added to the UI message history instead of
+         * the synthesized USER_MESSAGE. The task text is still sent to the LLM
+         * (via addToApiConversationHistory), so the LLM always gets the full context.
+         * Defaults to null (preserves existing behavior of synthesizing a USER_MESSAGE).
+         *
+         * **Has no effect when `messageStateHandler` is also provided.** When a
+         * messageStateHandler is passed, it manages its own UI message recording before
+         * `executeTask` is called (e.g., in the resume path). The override is only used
+         * when creating a fresh MessageStateHandler.
+         *
+         * **Caller responsibility:** If provided, the caller must set `ts` to a valid
+         * timestamp (`>= System.currentTimeMillis()`) to preserve chronological ordering
+         * in the persisted UI message file.
+         */
+        uiMessageOverride: UiMessage? = null
     ): Job {
         val sid = sessionId ?: UUID.randomUUID().toString()
 
@@ -1225,12 +1242,13 @@ class AgentService(private val project: Project) : Disposable {
                         content = listOf(ContentBlock.Text(task)),
                         ts = System.currentTimeMillis()
                     ))
-                    handler.addToClineMessages(UiMessage(
+                    val uiMsg = uiMessageOverride ?: UiMessage(
                         ts = System.currentTimeMillis(),
                         type = UiMessageType.SAY,
                         say = UiSay.USER_MESSAGE,
                         text = task
-                    ))
+                    )
+                    handler.addToClineMessages(uiMsg)
                     handler
                 }
 
