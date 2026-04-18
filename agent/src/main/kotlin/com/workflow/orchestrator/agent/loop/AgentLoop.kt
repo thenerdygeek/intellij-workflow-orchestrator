@@ -1499,6 +1499,7 @@ class AgentLoop(
                     LOG.info("[Loop] Task completed in $iteration iterations ($totalInputTokens input, $totalOutputTokens output tokens)")
                     // COMPLETION_RESULT already persisted at Site 1 (when toolName switch above).
                     onDebugLog?.invoke("info", "loop_exit", "Exit: $toolName", mapOf("iteration" to iteration))
+                    toolResult.completionData?.let { sessionMetrics?.recordCompletion(it.kind) }
                     return LoopResult.Completed(
                         summary = toolResult.content,
                         iterations = iteration,
