@@ -1,3 +1,5 @@
+import type { Task } from './types';
+
 export {};
 
 declare global {
@@ -55,5 +57,9 @@ declare global {
     setDebugLogVisible?: (visible: boolean) => void;
     // Debug log entry — pushed from Kotlin to append a structured log entry
     addDebugLogEntry?: (entryJson: string) => void;
+    // Task bridge functions (Phase 5 task system port)
+    _applyTaskCreate?: (task: Task) => void;
+    _applyTaskUpdate?: (task: Task) => void;
+    _setTasks?: (tasks: Task[]) => void;
   }
 }

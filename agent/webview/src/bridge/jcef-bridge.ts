@@ -4,6 +4,7 @@ import type {
   SessionStatus,
   UiMessage,
   HistoryItem,
+  Task,
 } from './types';
 import { preloadDiff2Html } from '../components/rich/DiffHtml';
 import { updateChartById } from '../components/rich/chartUtils';
@@ -115,13 +116,6 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   },
   approvePlan() {
     stores?.getChatStore().approvePlan();
-  },
-  updatePlanStep(stepId: string, status: string) {
-    stores?.getChatStore().updatePlanStep(stepId, status);
-  },
-  replaceExecutionSteps(stepsJson: string) {
-    const steps = JSON.parse(stepsJson);
-    stores?.getChatStore().replaceExecutionSteps(steps);
   },
   setPlanPending(state: string) {
     const value = (state === 'approve' || state === 'revise') ? state : null;
@@ -476,6 +470,20 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   },
 };
 
+// Task bridge functions registered separately (Kotlin→JS underscore-prefix convention)
+// These are registered in initBridge() after stores are ready.
+function registerTaskBridges(): void {
+  (window as any)._applyTaskCreate = (task: Task) => {
+    stores?.getChatStore().applyTaskCreate(task);
+  };
+  (window as any)._applyTaskUpdate = (task: Task) => {
+    stores?.getChatStore().applyTaskUpdate(task);
+  };
+  (window as any)._setTasks = (tasks: Task[]) => {
+    stores?.getChatStore().setTasks(tasks);
+  };
+}
+
 // ═══ JS → Kotlin bridge wrappers (25 unique methods) ═══
 // Note: Spec lists 26 but #26 (sendMessageWithMentionsQuery) = #25 (sendMessageWithMentions)
 
@@ -637,6 +645,9 @@ export function initBridge(storeAccessors: StoreAccessors): void {
   (window as any)._loadSessionHistory = bridgeFunctions.loadSessionHistory;
   (window as any)._showHistoryView = bridgeFunctions.showHistoryView;
   (window as any)._showChatView = bridgeFunctions.showChatView;
+
+  // Register task bridge functions (Kotlin→JS, Phase 5 task system port)
+  registerTaskBridges();
 
   // Replay any calls that arrived before stores were ready
   for (const call of pendingCalls) {

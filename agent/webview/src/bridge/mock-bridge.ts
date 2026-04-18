@@ -46,10 +46,6 @@ export async function simulatePlan(): Promise<void> {
     approved: false,
   });
   w.renderPlan?.(planJson);
-  await delay(2000);
-  w.updatePlanStep?.('step-2', 'completed');
-  await delay(500);
-  w.updatePlanStep?.('step-3', 'running');
 }
 
 export async function simulateQuestions(): Promise<void> {
