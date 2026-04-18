@@ -914,9 +914,17 @@ class AgentController(
     //  Core: executeTask — send user message to agent loop
     // ═══════════════════════════════════════════════════
 
-    /** Display user message in chat UI, with mention chips if available. */
-    private fun displayUserMessage(text: String, mentionsJson: String?) {
-        if (mentionsJson != null) {
+    /** Display user message in chat UI, with mention chips if available.
+     *
+     * When [uiMessageOverride] has [UiSay.PLAN_APPROVED], renders the dedicated
+     * [appendPlanApprovedMessage] bubble (with icon + "View implementation plan" link)
+     * instead of a plain user message, so the live session matches what is restored from disk.
+     */
+    private fun displayUserMessage(text: String, mentionsJson: String?, uiMessageOverride: com.workflow.orchestrator.agent.session.UiMessage? = null) {
+        if (uiMessageOverride?.say == UiSay.PLAN_APPROVED) {
+            val markdown = uiMessageOverride.planApprovalData?.planMarkdown.orEmpty()
+            dashboard.appendPlanApprovedMessage(markdown)
+        } else if (mentionsJson != null) {
             dashboard.appendUserMessageWithMentions(text, mentionsJson)
         } else {
             dashboard.appendUserMessage(text)
@@ -1049,7 +1057,7 @@ class AgentController(
         val channel = userInputChannel
         if (loopWaitingForInput && channel != null && currentJob?.isActive == true) {
             LOG.info("AgentController: feeding user message into existing loop via channel — setting busy=true, steeringMode=true")
-            displayUserMessage(uiText, displayMentionsJson)
+            displayUserMessage(uiText, displayMentionsJson, uiMessageOverride)
             dashboard.setBusy(true)
             dashboard.setSteeringMode(true)
             // Input is NOT locked — user can always type freely (Cline behavior)
@@ -1091,7 +1099,7 @@ class AgentController(
         }
 
         // Show user message in the chat UI
-        displayUserMessage(uiText, displayMentionsJson)
+        displayUserMessage(uiText, displayMentionsJson, uiMessageOverride)
         LOG.info("executeTask: setting busy=true, steeringMode=true (turn start)")
         dashboard.setBusy(true)
         dashboard.setSteeringMode(true)

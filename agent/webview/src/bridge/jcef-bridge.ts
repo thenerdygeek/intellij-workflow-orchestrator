@@ -29,7 +29,7 @@ export function isJcefEnvironment(): boolean {
   return window.location.origin === 'http://workflow-agent';
 }
 
-// ═══ Kotlin → JS bridge functions (39 chat + 3 theme = 42 unique JS functions) ═══
+// ═══ Kotlin → JS bridge functions (40 chat + 3 theme = 43 unique JS functions) ═══
 // Note: Kotlin side has 44 methods but some are composites:
 //   setText() = clearChat + appendToken + endStream
 //   appendError() = appendStatus('ERROR')

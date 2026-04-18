@@ -654,6 +654,10 @@ class AgentCefPanel(
         callJs("appendUserMessage(${JsEscape.toJsString(text)})")
     }
 
+    fun appendPlanApprovedMessage(planMarkdown: String) {
+        callJs("appendPlanApprovedMessage(${JsEscape.toJsString(planMarkdown)})")
+    }
+
     fun appendUserMessageWithMentions(text: String, mentionsJson: String) {
         callJs("appendUserMessageWithMentions(${JsEscape.toJsString(text)}, ${JsEscape.toJsString(mentionsJson)})")
     }

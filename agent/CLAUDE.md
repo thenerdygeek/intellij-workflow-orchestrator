@@ -625,7 +625,7 @@ The `agent` tool spawns, resumes, and manages subagent workers:
 Coroutine context element carrying `agentId`, `workerType`, `messageBus`, and `fileOwnership` to all tools within a worker's scope.
 
 ### No Wall-Clock Timeouts
-Workers are bounded by iteration limits (default 32) and context budget, not wall-clock timeouts.
+Workers are bounded by iteration limits (default 200, same as orchestrator) and context budget, not wall-clock timeouts.
 
 ## Custom Subagents
 
@@ -641,7 +641,7 @@ User-definable agent definitions via markdown files with YAML frontmatter:
 | `tools` | inherit all | Tool allowlist |
 | `disallowed-tools` | [] | Tool denylist |
 | `model` | inherit | Model override |
-| `max-turns` | 10 | Max agentic iterations |
+| `max-turns` | — | Not parsed — all sub-agents use `DEFAULT_MAX_ITERATIONS = 200` |
 | `skills` | [] | Skills preloaded at startup |
 | `memory` | none | Persistent memory: user/project/local |
 

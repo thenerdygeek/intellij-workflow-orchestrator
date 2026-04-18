@@ -471,6 +471,11 @@ class AgentDashboardPanel(
         broadcast { it.appendUserMessage(text) }
     }
 
+    fun appendPlanApprovedMessage(planMarkdown: String) {
+        cefPanel?.appendPlanApprovedMessage(planMarkdown) ?: fallbackPanel?.appendUserMessage("Implementation plan approved")
+        broadcast { it.appendUserMessage("Implementation plan approved") }
+    }
+
     fun finalizeQuestionsAsMessage() {
         cefPanel?.finalizeQuestionsAsMessage()
         broadcast { it.finalizeQuestionsAsMessage() }
