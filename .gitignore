@@ -55,6 +55,10 @@ docs/superpowers/plans/
 agent/webview/.vite/
 agent/webview/tsconfig.tsbuildinfo
 
+# API probe (config contains tokens, results contain API data)
+scripts/api-probe-config.json
+scripts/api-probe-results/
+
 # Plugin
 /run/
 .superpowers/
