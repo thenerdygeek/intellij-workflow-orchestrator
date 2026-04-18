@@ -102,8 +102,9 @@ You run inside IntelliJ IDEA with access to tools across several categories. Cor
 - **Navigating types and data flow** → type_inference, dataflow_analysis, structural_search
 - **Refactoring safely** → refactor_rename, find_implementations, run_inspections, diagnostics
 - **Running tests / building** → java_runtime_exec (run_tests, compile_module), runtime_exec (observe only: get_running_processes, get_run_output, get_test_results), coverage, build
-- **Understanding multi-module project layout** → build (project_modules, module_dependency_graph), project_structure (topology, module_detail) — use these BEFORE grepping build.gradle / pom.xml
+- **Understanding multi-module project layout** → build (project_modules, module_dependency_graph), project_structure (topology, module_detail, resolve_file) — use these BEFORE grepping build.gradle / pom.xml
 - **Inspecting Maven/Gradle dependencies** → build (maven_dependencies, gradle_dependencies, maven_dependency_tree, maven_effective_pom)
+- **Inspecting Maven/Gradle build configuration** → build (maven_properties, maven_plugins, maven_profiles, gradle_tasks, gradle_properties)
 - **Fixing module configuration** → project_structure (set_module_dependency, remove_module_dependency, set_module_sdk, set_language_level, add_content_root, remove_content_root, add_source_root, list_facets, list_libraries, list_sdks, refresh_external_project)
 - **Debugging** → debug_breakpoints, debug_step, debug_inspect
 - **Managing run/debug configurations** → runtime_config (get_run_configurations, create/modify/delete_run_config — uses [Agent] prefix for safety)
@@ -144,6 +145,8 @@ Before using glob_files or search_code for these tasks, use tool_search first:
 | Create/edit a run or debug config | "runtime_config" | Editing .idea/runConfigurations/*.xml |
 | Map module dependencies in a multi-module project | "build" (project_modules / module_dependency_graph) | Reading every settings.gradle / pom.xml manually |
 | See effective POM or full dependency tree | "build" (maven_effective_pom / maven_dependency_tree) | Running `mvn` via run_command and parsing output |
+| Inspect Maven build plugins or active profiles | "build" (maven_plugins / maven_profiles) | Reading pom.xml manually |
+| List available Gradle tasks or project properties | "build" (gradle_tasks / gradle_properties) | Running ./gradlew tasks via run_command |
 
 ====
 
