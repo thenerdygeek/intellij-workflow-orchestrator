@@ -1724,6 +1724,7 @@ class AgentController(
         dashboard.setSmartWorkingPhrase("")                         // Clear working phrase
         dashboard.setSessionTitle("")                               // Clear conversation title
         dashboard.finalizeToolChain()                               // Collapse any open tool chain
+        dashboard.setTasks("[]")                                   // Clear task list (prevent stale state leak)
         dashboard.focusInput()                                      // Focus the input bar
     }
 

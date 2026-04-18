@@ -362,6 +362,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       checkpoints: [],
       queuedSteeringMessages: [],
       restoredInputText: null,
+      tasks: [],
       viewMode: 'chat' as const,
       session: {
         status: 'RUNNING',
@@ -703,6 +704,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       questions: null,
       questionSummary: null,
       retryMessage: null,
+      tasks: [],
       viewMode: 'chat',
       resumeSessionId: null,
     });
