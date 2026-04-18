@@ -3,8 +3,7 @@ import type {
   ToolCall,
   ToolCallStatus,
   Plan,
-  PlanStep,
-  PlanStepStatus,
+  Task,
   Question,
   SessionInfo,
   SessionStatus,
@@ -157,6 +156,9 @@ interface ChatState {
   // Resume bar state — non-null when viewing a resumable session
   resumeSessionId: string | null;
 
+  // Task state (task system port — Phase 5)
+  tasks: Task[];
+
   // Actions
   startSession(task: string, mentions?: Mention[]): void;
   completeSession(info: SessionInfo): void;
@@ -176,9 +178,12 @@ interface ChatState {
   setPlan(plan: Plan): void;
   clearPlan(): void;
   approvePlan(): void;
-  updatePlanStep(stepId: string, status: string): void;
-  replaceExecutionSteps(steps: PlanStep[]): void;
   setPlanPending(state: 'approve' | 'revise' | null): void;
+
+  // Task actions (task system port — Phase 5)
+  setTasks(tasks: Task[]): void;
+  applyTaskCreate(task: Task): void;
+  applyTaskUpdate(task: Task): void;
   setPlanCommentCount(count: number): void;
   showQuestions(questions: Question[]): void;
   finalizeQuestionsAsMessage(): void;
@@ -326,6 +331,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   historyItems: [],
   historySearch: '',
   resumeSessionId: null,
+  tasks: [],
 
   // Actions
   startSession(task: string, _mentions?: Mention[]) {
@@ -708,7 +714,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const isIdentical = current !== null &&
         plan.title === current.title &&
         plan.summary === current.summary &&
-        JSON.stringify(plan.steps) === JSON.stringify(current.steps) &&
         plan.markdown === current.markdown;
       if (isIdentical) {
         // Content unchanged — update non-comment fields but keep planCommentCount
@@ -738,33 +743,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setPlanCommentCount(count: number) {
     set({ planCommentCount: count });
-  },
-
-  updatePlanStep(stepId: string, status: string) {
-    set(state => {
-      if (!state.plan) return {};
-      const steps = state.plan.steps.map(step =>
-        step.id === stepId ? { ...step, status: status as PlanStepStatus } : step
-      );
-      const terminalStatuses = new Set(['completed', 'done', 'failed', 'skipped']);
-      const allTerminal = steps.length > 0 && steps.every(s => terminalStatuses.has(s.status));
-      return {
-        plan: { ...state.plan, steps },
-        planCompletedPendingClear: allTerminal,
-      };
-    });
-  },
-
-  replaceExecutionSteps(steps: PlanStep[]) {
-    set(state => {
-      if (!state.plan) return {};
-      const terminalStatuses = new Set(['completed', 'done', 'failed', 'skipped']);
-      const allTerminal = steps.length > 0 && steps.every(s => terminalStatuses.has(s.status));
-      return {
-        plan: { ...state.plan, steps },
-        planCompletedPendingClear: allTerminal,
-      };
-    });
   },
 
   setPlanPending(state: 'approve' | 'revise' | null) {
@@ -1590,7 +1568,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     });
 
-    // Restore plan from last PLAN_UPDATE message
+    // Restore plan from last PLAN_UPDATE message (steps field removed in Phase 5 — task system port)
     let restoredPlan: Plan | null = null;
     for (let i = upgraded.length - 1; i >= 0; i--) {
       const m = upgraded[i]!;
@@ -1598,12 +1576,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const pd = m.planData;
         restoredPlan = {
           title: 'Plan',
-          steps: pd.steps.map((s, si) => ({
-            id: `plan-step-${si}`,
-            title: s.title,
-            status: (s.status as PlanStepStatus) || 'pending',
-            comment: pd.comments?.[si] ?? undefined,
-          })),
           approved: pd.status === 'APPROVED' || pd.status === 'EXECUTING',
         };
         break;
@@ -1632,4 +1604,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setResumeSessionId(sessionId: string | null) {
     set({ resumeSessionId: sessionId });
   },
+
+  // ── Task Actions (task system port — Phase 5) ──
+  setTasks: (tasks) => set({ tasks }),
+  applyTaskCreate: (task) => set((state) => ({ tasks: [...state.tasks, task] })),
+  applyTaskUpdate: (task) => set((state) => ({
+    tasks: state.tasks.map((t) => (t.id === task.id ? task : t)),
+  })),
 }));
