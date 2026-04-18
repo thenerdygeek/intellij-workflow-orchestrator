@@ -1106,7 +1106,7 @@ class AgentService(private val project: Project) : Disposable {
                         additionalContext = projectInstructions,
                         availableSkills = availableSkills,
                         activeSkillContent = ctx.getActiveSkill(),
-                        taskProgress = ctx.renderTaskProgressMarkdown() ?: ctx.getTaskProgress(),
+                        taskProgress = ctx.renderTaskProgressMarkdown(),
                         deferredToolCatalog = deferredCatalog,
                         coreMemoryXml = coreMemory?.compile(),
                         toolDefinitionsMarkdown = toolDefsMarkdown,
