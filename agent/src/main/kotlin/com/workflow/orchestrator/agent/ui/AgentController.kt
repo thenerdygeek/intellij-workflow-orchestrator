@@ -1518,7 +1518,7 @@ class AgentController(
             dashboard.setSmartWorkingPhrase("")
 
             // The spinner-cleanup footer below MUST run even if rendering inside the
-            // when-block throws (e.g. a bad completion summary breaks appendCompletionSummary).
+            // when-block throws (e.g. a bad completion card breaks appendCompletionCard).
             // Without this guard, the UI was left "working" forever after any UI-side error.
             var handledHandoff = false
             try {
