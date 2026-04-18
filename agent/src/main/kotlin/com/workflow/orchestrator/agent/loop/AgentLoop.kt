@@ -18,6 +18,7 @@ import com.workflow.orchestrator.agent.security.CommandSafetyAnalyzer
 import com.workflow.orchestrator.agent.security.CommandRisk
 import com.workflow.orchestrator.agent.session.*
 import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
 import com.workflow.orchestrator.agent.tools.ToolOutputConfig
 import com.workflow.orchestrator.agent.tools.ToolOutputSpiller
 import com.workflow.orchestrator.agent.tools.ToolResult
@@ -1286,6 +1287,7 @@ class AgentLoop(
             )
 
             // Execute tool (with per-tool timeout and CancellationException propagation)
+            if (toolName == "run_command") RunCommandTool.currentToolCallId.set(toolCallId)
             val toolResult = try {
                 val timeout = tool.timeoutMs
                 if (timeout == Long.MAX_VALUE) {
@@ -1319,6 +1321,8 @@ class AgentLoop(
                     mapOf("tool" to toolName, "error" to errorMsg.take(200)))
                 reportToolError(call, startTime, errorMsg)
                 continue
+            } finally {
+                if (toolName == "run_command") RunCommandTool.currentToolCallId.remove()
             }
 
             val durationMs = System.currentTimeMillis() - startTime

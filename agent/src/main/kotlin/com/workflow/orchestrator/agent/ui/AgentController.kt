@@ -1725,7 +1725,6 @@ class AgentController(
         steeringQueue.clear()
         streamBatcher.clear()
         toolStreamBatcher.flush()   // drain any buffered output on cancel
-        RunCommandTool.streamCallback = null
     }
 
     fun newChat() {

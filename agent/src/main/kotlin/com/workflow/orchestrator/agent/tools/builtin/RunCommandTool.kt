@@ -267,8 +267,8 @@ class RunCommandTool(
                             bytesRead = reader.read(buffer)
                         }
                     }
-                } catch (_: Exception) {
-                    // Process killed or stream closed — expected during timeout/cancel
+                } catch (e: Exception) {
+                    LOG.warn("RunCommand stdout reader for $toolCallId terminated abnormally: ${e.message}", e)
                 } finally {
                     managed.readerDone.countDown()
                 }
@@ -291,8 +291,8 @@ class RunCommandTool(
                                 bytesRead = reader.read(buffer)
                             }
                         }
-                    } catch (_: Exception) {
-                        // Expected on kill/cancel
+                    } catch (e: Exception) {
+                        LOG.warn("RunCommand stderr reader for $toolCallId terminated abnormally: ${e.message}", e)
                     }
                 }.apply {
                     isDaemon = true
