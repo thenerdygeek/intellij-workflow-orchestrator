@@ -163,14 +163,6 @@ class AgentPlanEditor(
         cefBrowser?.executeJavaScript(js, "", 0)
     }
 
-    fun updatePlanStep(stepId: String, status: String) {
-        val safeId = stepId.replace("'", "\\'")
-        val safeStatus = status.replace("'", "\\'")
-        browser.cefBrowser.executeJavaScript(
-            "updatePlanStep('$safeId', '$safeStatus');", "", 0
-        )
-    }
-
     /** Programmatically trigger the Revise action in the plan editor. Called from chat card's Revise button. */
     fun triggerRevise() {
         browser.cefBrowser.executeJavaScript(

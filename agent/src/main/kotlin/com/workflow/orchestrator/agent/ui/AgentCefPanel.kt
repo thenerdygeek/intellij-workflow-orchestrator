@@ -673,8 +673,8 @@ class AgentCefPanel(
         callJs("finalizeToolChain()")
     }
 
-    fun appendCompletionSummary(result: String, verifyCommand: String? = null) {
-        val cmdArg = if (verifyCommand != null) JsEscape.toJsString(verifyCommand) else "undefined"
+    fun appendCompletionSummary(result: String, verifyHow: String? = null) {
+        val cmdArg = if (verifyHow != null) JsEscape.toJsString(verifyHow) else "undefined"
         callJs("appendCompletionSummary(${JsEscape.toJsString(result)},$cmdArg)")
     }
 
@@ -751,10 +751,6 @@ class AgentCefPanel(
 
     fun clearPlanInUi() {
         callJs("clearPlan()")
-    }
-
-    fun updatePlanStep(stepId: String, status: String) {
-        callJs("updatePlanStep(${JsEscape.toJsString(stepId)}, ${JsEscape.toJsString(status)})")
     }
 
     fun setPlanCommentCount(count: Int) {

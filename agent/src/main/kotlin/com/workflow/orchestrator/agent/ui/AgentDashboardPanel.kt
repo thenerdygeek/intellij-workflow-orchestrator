@@ -288,11 +288,6 @@ class AgentDashboardPanel(
         broadcast(replay = false) { it.approvePlanInUi() }
     }
 
-    fun updatePlanStep(stepId: String, status: String) {
-        cefPanel?.updatePlanStep(stepId, status)
-        broadcast(replay = false) { it.updatePlanStep(stepId, status) }
-    }
-
     fun setPlanCommentCount(count: Int) {
         cefPanel?.setPlanCommentCount(count)
         broadcast(replay = false) { it.setPlanCommentCount(count) }
@@ -500,10 +495,10 @@ class AgentDashboardPanel(
         broadcast { it.finalizeToolChain() }
     }
 
-    fun appendCompletionSummary(result: String, verifyCommand: String? = null) {
-        cefPanel?.appendCompletionSummary(result, verifyCommand)
+    fun appendCompletionSummary(result: String, verifyHow: String? = null) {
+        cefPanel?.appendCompletionSummary(result, verifyHow)
             ?: fallbackPanel?.appendStatus("Task completed: $result", RichStreamingPanel.StatusType.SUCCESS)
-        broadcast { it.appendCompletionSummary(result, verifyCommand) }
+        broadcast { it.appendCompletionSummary(result, verifyHow) }
     }
 
     fun appendToolCall(
