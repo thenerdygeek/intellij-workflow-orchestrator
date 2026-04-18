@@ -102,10 +102,22 @@ class TaskUpdateTool(
             )
         }
 
-        if (updated == null) return ToolResult.error(
-            "Task not found: $taskId",
-            "task_update failed: Task not found: $taskId",
-        )
+        if (updated == null) {
+            // Build a recovery hint: list existing tasks (id → subject) so the LLM
+            // can pick the correct id on the next attempt instead of guessing.
+            // Ported from Claude Code's TodoWrite miss behavior — bare "not found"
+            // routinely strands the model, while a short ID table lets it self-correct.
+            val available = store.listTasks().filter { it.status != TaskStatus.DELETED }
+            val hint = if (available.isEmpty()) {
+                "No tasks exist in this session. Use task_create to add one before calling task_update."
+            } else {
+                "Available tasks:\n" + available.joinToString("\n") { t ->
+                    "  id=\"${t.id}\" status=${t.status.name.lowercase()} — ${t.subject}"
+                }
+            }
+            val message = "Task not found: \"$taskId\".\n$hint"
+            return ToolResult.error(message, "task_update failed: task id \"$taskId\" not found")
+        }
 
         // Emit TaskChanged so AgentController can push the updated task to the webview.
         // Best-effort: if the event bus is unavailable (e.g. in unit tests without a Project

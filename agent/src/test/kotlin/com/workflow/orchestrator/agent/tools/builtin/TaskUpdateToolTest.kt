@@ -84,6 +84,60 @@ class TaskUpdateToolTest {
         assertTrue(result.isError)
     }
 
+    // ── Issue: LLM drifted to id="1" when task_create returned a UUID. When that
+    // task_update lands on an unknown id, the bare "Task not found: 1" response gives
+    // the LLM nothing to recover with. List available tasks in the error so the LLM
+    // can pick the correct id on the next attempt.
+    @Test
+    fun `unknown taskId error lists available tasks with their ids`(@TempDir tmp: File) = runTest {
+        val store = TaskStore(baseDir = tmp, sessionId = "s1")
+        store.addTask(Task(id = "1", subject = "Fix auth bug", description = "login"))
+        store.addTask(Task(id = "2", subject = "Add rate limit", description = "auth"))
+        val tool = TaskUpdateTool { store }
+        val project = mockk<Project>(relaxed = true)
+
+        val result = tool.execute(
+            buildJsonObject {
+                put("taskId", "99")
+                put("status", "completed")
+            },
+            project,
+        )
+
+        assertTrue(result.isError, "expected error for unknown id")
+        assertTrue(
+            result.content.contains("Fix auth bug") && result.content.contains("Add rate limit"),
+            "error must surface available task subjects so the LLM can recover; got: ${result.content}"
+        )
+        assertTrue(
+            result.content.contains("\"1\"") || result.content.contains("id=1") ||
+                Regex("""\b1\b""").containsMatchIn(result.content),
+            "error must surface available task ids so the LLM can recover; got: ${result.content}"
+        )
+    }
+
+    @Test
+    fun `unknown taskId error in empty store suggests task_create`(@TempDir tmp: File) = runTest {
+        val store = TaskStore(baseDir = tmp, sessionId = "s1")
+        val tool = TaskUpdateTool { store }
+        val project = mockk<Project>(relaxed = true)
+
+        val result = tool.execute(
+            buildJsonObject {
+                put("taskId", "1")
+                put("status", "completed")
+            },
+            project,
+        )
+
+        assertTrue(result.isError)
+        assertTrue(
+            result.content.contains("task_create", ignoreCase = true) ||
+                result.content.contains("no tasks", ignoreCase = true),
+            "empty-store miss should steer the LLM toward task_create; got: ${result.content}"
+        )
+    }
+
     @Test
     fun `cycle-creating update is rejected with error toolresult`(@TempDir tmp: File) = runTest {
         val store = TaskStore(baseDir = tmp, sessionId = "s1")

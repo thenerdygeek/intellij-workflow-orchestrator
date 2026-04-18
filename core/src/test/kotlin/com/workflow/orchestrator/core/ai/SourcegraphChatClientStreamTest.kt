@@ -217,4 +217,54 @@ class SourcegraphChatClientStreamTest {
         assertTrue(toolCalls[0].function.arguments.contains("A.kt"))
         assertTrue(toolCalls[1].function.arguments.contains("B.kt"))
     }
+
+    @Test
+    fun `assembles tool call when function name is split across deltas`() = runTest {
+        // Reproduces symptom: tool names like `search_code` arrive as two deltas
+        // (`search` + `_code`). Our builder must accumulate name fragments the same
+        // way it accumulates argument fragments; otherwise the last delta wins and
+        // the assembled name becomes `_code`.
+        val chunk1 = """{"id":"c1","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"search","arguments":""}}]},"finish_reason":null}]}"""
+        val chunk2 = """{"id":"c1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"_code"}}]},"finish_reason":null}]}"""
+        val chunk3 = """{"id":"c1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"pattern\":\"foo\"}"}}]},"finish_reason":"tool_calls"}]}"""
+        val usageChunk = """{"id":"c1","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"""
+
+        server.enqueue(sseResponse(chunk1, chunk2, chunk3, usageChunk))
+
+        val result = client.sendMessageStream(
+            messages = listOf(ChatMessage(role = "user", content = "search")),
+            tools = null,
+            onChunk = {}
+        )
+
+        assertInstanceOf(ApiResult.Success::class.java, result)
+        val toolCalls = (result as ApiResult.Success).data.choices.first().message.toolCalls
+        assertNotNull(toolCalls)
+        assertEquals(1, toolCalls!!.size)
+        assertEquals("search_code", toolCalls[0].function.name)
+    }
+
+    @Test
+    fun `assembles tool call when function name is split into three deltas`() = runTest {
+        // Extreme case: single-character-ish fragments. Accumulation must be
+        // stable regardless of how the upstream tokenizer chooses to split.
+        val chunk1 = """{"id":"c1","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"run","arguments":""}}]},"finish_reason":null}]}"""
+        val chunk2 = """{"id":"c1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"_comm"}}]},"finish_reason":null}]}"""
+        val chunk3 = """{"id":"c1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"and"}}]},"finish_reason":null}]}"""
+        val chunk4 = """{"id":"c1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"command\":\"ls\"}"}}]},"finish_reason":"tool_calls"}]}"""
+
+        server.enqueue(sseResponse(chunk1, chunk2, chunk3, chunk4))
+
+        val result = client.sendMessageStream(
+            messages = listOf(ChatMessage(role = "user", content = "run ls")),
+            tools = null,
+            onChunk = {}
+        )
+
+        assertInstanceOf(ApiResult.Success::class.java, result)
+        val toolCalls = (result as ApiResult.Success).data.choices.first().message.toolCalls
+        assertNotNull(toolCalls)
+        assertEquals(1, toolCalls!!.size)
+        assertEquals("run_command", toolCalls[0].function.name)
+    }
 }

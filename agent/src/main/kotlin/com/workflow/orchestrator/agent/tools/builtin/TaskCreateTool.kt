@@ -12,7 +12,6 @@ import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import java.util.UUID
 
 class TaskCreateTool(
     private val storeProvider: () -> TaskStore?,
@@ -71,7 +70,7 @@ class TaskCreateTool(
         val activeForm = params["activeForm"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
 
         val task = Task(
-            id = UUID.randomUUID().toString(),
+            id = store.nextId(),
             subject = subject,
             description = description,
             activeForm = activeForm,
@@ -87,8 +86,12 @@ class TaskCreateTool(
         }
 
         return ToolResult(
-            content = "Created task ${task.id}: $subject",
-            summary = "Created task: $subject",
+            // Format surfaces the id in a way the LLM will verbatim-reuse on task_update.
+            // Quotes around the id make copy/paste unambiguous and resistant to tokenizer
+            // drift (which previously let models reflexively emit "1" after a UUID).
+            content = "Created task id=\"${task.id}\" — $subject. " +
+                "Use id=\"${task.id}\" on subsequent task_update / task_get calls.",
+            summary = "Created task ${task.id}: $subject",
             tokenEstimate = 20,
         )
     }

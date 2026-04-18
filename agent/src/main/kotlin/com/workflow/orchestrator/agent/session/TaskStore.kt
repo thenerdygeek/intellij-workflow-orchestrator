@@ -20,6 +20,20 @@ class TaskStore(
     private val sessionDir: File get() = File(baseDir, "sessions/$sessionId")
     private val tasksFile: File get() = File(sessionDir, "tasks.json")
 
+    /**
+     * Generate the next sequential task id as a short string ("1", "2", …).
+     * Matches Claude Code's Task tool convention: LLMs reliably cite short numeric
+     * ids on the next turn, whereas UUIDs routinely decay into "1" after
+     * compaction strips the original task_create tool result.
+     *
+     * Picks `max(existing) + 1` rather than `size + 1` so ids remain stable across
+     * deletions and disk reloads.
+     */
+    suspend fun nextId(): String = mutex.withLock {
+        val maxExisting = tasks.mapNotNull { it.id.toIntOrNull() }.maxOrNull() ?: 0
+        (maxExisting + 1).toString()
+    }
+
     suspend fun addTask(task: Task) = mutex.withLock {
         checkNoCycles(task)
         tasks.add(task)

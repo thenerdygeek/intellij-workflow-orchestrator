@@ -101,4 +101,52 @@ class TaskCreateToolTest {
         val ids = store.listTasks().map { it.id }.toSet()
         assertEquals(2, ids.size, "distinct UUIDs expected, got: $ids")
     }
+
+    // ── Issue: LLMs call task_update with id="1" after task_create returned a UUID.
+    // Root cause: Claude Code's Task tool uses simple sequential string ids ("1","2",…)
+    // which matches the LLM's training distribution. UUIDs make the tool result unusable
+    // across turns (especially after compaction strips the original tool output).
+
+    @Test
+    fun `ids are sequential strings starting at 1`(@TempDir tmp: File) = runTest {
+        val store = TaskStore(baseDir = tmp, sessionId = "s1")
+        val tool = TaskCreateTool { store }
+        val project = mockk<Project>(relaxed = true)
+
+        repeat(3) { i ->
+            tool.execute(
+                buildJsonObject {
+                    put("subject", "task $i")
+                    put("description", "d")
+                },
+                project,
+            )
+        }
+
+        assertEquals(listOf("1", "2", "3"), store.listTasks().map { it.id })
+    }
+
+    @Test
+    fun `task_create content includes the exact id to reuse for task_update`(@TempDir tmp: File) = runTest {
+        val store = TaskStore(baseDir = tmp, sessionId = "s1")
+        val tool = TaskCreateTool { store }
+        val project = mockk<Project>(relaxed = true)
+
+        val result = tool.execute(
+            buildJsonObject {
+                put("subject", "Fix auth")
+                put("description", "login broken")
+            },
+            project,
+        )
+
+        assertFalse(result.isError)
+        // The returned content must name the id ("1") so the LLM can cite it verbatim
+        // on the next task_update call. Embedding the id in a sentence like
+        // "Created task 1:" is not enough — we make the correlation explicit.
+        assertTrue(
+            result.content.contains("id=\"1\""),
+            "task_create result must surface id=\"1\" so the LLM reuses it; got: ${result.content}"
+        )
+    }
 }
