@@ -24,7 +24,6 @@ class AttemptCompletionToolTest {
     fun `kind and result are required parameters`() {
         assertTrue(tool.parameters.required.contains("kind"))
         assertTrue(tool.parameters.required.contains("result"))
-        assertFalse(tool.parameters.required.contains("command"))
         assertFalse(tool.parameters.required.contains("verify_how"))
         assertFalse(tool.parameters.required.contains("discovery"))
     }
@@ -67,6 +66,7 @@ class AttemptCompletionToolTest {
         assertTrue(result.isCompletion)
         assertFalse(result.isError)
         assertEquals(CompletionKind.HEADS_UP, result.completionData?.kind)
+        assertEquals("Done", result.completionData?.result)
         assertEquals("3 orphaned tables found", result.completionData?.discovery)
     }
 

@@ -52,7 +52,7 @@ class AttemptCompletionTool : AgentTool {
     override val allowedWorkers = setOf(WorkerType.ORCHESTRATOR)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
-        val kindStr = params["kind"]?.jsonPrimitive?.content
+        val kindStr = params["kind"]?.jsonPrimitive?.content?.trim()
             ?: return ToolResult.error(
                 message = "Missing required parameter: kind",
                 summary = "attempt_completion failed: missing kind"
