@@ -1142,8 +1142,7 @@ class AgentService(private val project: Project) : Disposable {
                                 tool.name != "plan_mode_respond" && tool.name != "discard_plan"
                             }
                         }
-                        .map { AgentTool.injectTaskProgress(it.toToolDefinition()) }
-                        .map { AgentTool.injectOutputParams(it) }
+                        .map { AgentTool.injectOutputParams(it.toToolDefinition()) }
 
                     // Update system prompt when tool set changes (plan mode switch, deferred tool load)
                     val defsHash = defs.map { it.function.name }.hashCode()
