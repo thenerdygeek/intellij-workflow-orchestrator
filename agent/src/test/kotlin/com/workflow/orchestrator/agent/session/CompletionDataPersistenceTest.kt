@@ -69,8 +69,6 @@ class CompletionDataPersistenceTest {
             )
         )
 
-        // Load via second handler instance (same session ID, same base dir)
-        val readHandler = handler()
         val sessionDir = File(tempDir.toFile(), "sessions/test-session")
         val loaded = MessageStateHandler.loadUiMessages(sessionDir)
 
@@ -85,21 +83,19 @@ class CompletionDataPersistenceTest {
 
     @Test
     fun `UiMessage without completionData reads back as null (backward compat)`() = runTest {
-        val writeHandler = handler()
-        writeHandler.addToClineMessages(
-            UiMessage(
-                ts = 3000L,
-                type = UiMessageType.ASK,
-                ask = UiAsk.COMPLETION_RESULT,
-                text = "Old-style completion with no completionData field",
-            )
+        // Simulate a ui_messages.json written by an older version of the plugin that had no
+        // completionData field. The JSON intentionally omits the key — this is the real risk
+        // scenario, not a Kotlin object with completionData = null.
+        val sessionDir = File(tempDir.toFile(), "sessions/test-session")
+        sessionDir.mkdirs()
+        File(sessionDir, "ui_messages.json").writeText(
+            """[{"ts":3000,"type":"ASK","ask":"COMPLETION_RESULT","text":"Old-style completion","partial":false}]"""
         )
 
-        val sessionDir = File(tempDir.toFile(), "sessions/test-session")
         val loaded = MessageStateHandler.loadUiMessages(sessionDir)
 
         assertEquals(1, loaded.size)
         assertNull(loaded[0].completionData)
-        assertEquals("Old-style completion with no completionData field", loaded[0].text)
+        assertEquals("Old-style completion", loaded[0].text)
     }
 }

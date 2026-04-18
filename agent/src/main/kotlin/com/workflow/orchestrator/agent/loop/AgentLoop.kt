@@ -1497,15 +1497,7 @@ class AgentLoop(
             when (toolResult.type) {
                 is ToolResultType.Completion -> {
                     LOG.info("[Loop] Task completed in $iteration iterations ($totalInputTokens input, $totalOutputTokens output tokens)")
-                    // Persist completion as ASK/COMPLETION_RESULT so resume detects completed sessions
-                    // and the CompletionCard renders on rehydration.
-                    messageStateHandler?.addToClineMessages(UiMessage(
-                        ts = System.currentTimeMillis(),
-                        type = UiMessageType.ASK,
-                        ask = UiAsk.COMPLETION_RESULT,
-                        text = toolResult.content,
-                        completionData = toolResult.completionData,
-                    ))
+                    // COMPLETION_RESULT already persisted at Site 1 (when toolName switch above).
                     onDebugLog?.invoke("info", "loop_exit", "Exit: $toolName", mapOf("iteration" to iteration))
                     return LoopResult.Completed(
                         summary = toolResult.content,
