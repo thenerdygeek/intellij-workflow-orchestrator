@@ -239,14 +239,10 @@ function ComponentsTab() {
       </Section>
 
       {/* ── Completion Card ── */}
-      <Section title="Completion Card" description="Shown when agent calls attempt_completion. Supports optional verify command.">
-        <CompletionCard
-          result="**Authentication refactor complete.** Extracted `TokenService`, added 12 unit tests, updated all 3 API routes, and removed deprecated middleware. Coverage increased from 68% to 84%."
-          verifyCommand="./gradlew :auth:test && ./gradlew :auth:check"
-        />
-        <CompletionCard
-          result="Created the feature branch `feature/auth-refactor` and opened PR #47 for review. Two reviewers assigned."
-        />
+      <Section title="Completion Card" description="Shown when agent calls attempt_completion. Three kinds: done (green), review (amber), heads_up (blue). Supports optional verify_how and discovery fields.">
+        <CompletionCard data={{ kind: 'done', result: '**Authentication refactor complete.** Extracted `TokenService`, added 12 unit tests, updated all 3 API routes, and removed deprecated middleware. Coverage increased from 68% to 84%.', verifyHow: './gradlew :auth:test && ./gradlew :auth:check' }} />
+        <CompletionCard data={{ kind: 'review', result: 'Added the feature flag. Two reviewers assigned.', verifyHow: 'Check the admin panel to confirm the toggle is visible.' }} />
+        <CompletionCard data={{ kind: 'heads_up', result: 'Migration complete.', discovery: 'The old schema still has 3 orphaned tables not in the migration spec.' }} />
       </Section>
 
       {/* ── Edit Diff View ── */}
@@ -646,10 +642,7 @@ function PlanTab() {
         title="Completion Card"
         description="Shown when agent calls attempt_completion after all plan steps verified."
       >
-        <CompletionCard
-          result="**Authentication refactor complete.** Extracted `TokenService`, added 12 unit tests (coverage 68% → 84%), updated all 3 API routes, removed deprecated middleware. No breaking changes."
-          verifyCommand="./gradlew :auth:test && ./gradlew :auth:check"
-        />
+        <CompletionCard data={{ kind: 'done', result: '**Authentication refactor complete.** Extracted `TokenService`, added 12 unit tests (coverage 68% → 84%), updated all 3 API routes, removed deprecated middleware. No breaking changes.', verifyHow: './gradlew :auth:test && ./gradlew :auth:check' }} />
       </Section>
     </>
   );
@@ -845,10 +838,7 @@ function ChatFlowTab() {
           <ToolCallChain toolCalls={CHAT_FLOW_TOOL_CALLS_3} />
 
           {/* 13. Completion card */}
-          <CompletionCard
-            result="**Authentication refactor complete.** Extracted `TokenService`, added 12 unit tests (coverage 68% → 84%), updated all 3 API routes, removed deprecated middleware. CI build #456 passing."
-            verifyCommand="./gradlew :auth:test && ./gradlew :auth:check"
-          />
+          <CompletionCard data={{ kind: 'done', result: '**Authentication refactor complete.** Extracted `TokenService`, added 12 unit tests (coverage 68% → 84%), updated all 3 API routes, removed deprecated middleware. CI build #456 passing.', verifyHow: './gradlew :auth:test && ./gradlew :auth:check' }} />
 
           {/* Working indicator (shown while agent is busy) */}
           <div className="flex items-center gap-2 px-1 py-1">

@@ -478,7 +478,7 @@ export const ChatView = memo(function ChatView() {
           if (msg.ask === 'COMPLETION_RESULT') {
             return (
               <ErrorBoundary key={key}>
-                <CompletionCard result={msg.text ?? ''} />
+                <CompletionCard data={msg.completionData ?? { kind: 'done' as const, result: msg.text ?? '' }} />
               </ErrorBoundary>
             );
           }
