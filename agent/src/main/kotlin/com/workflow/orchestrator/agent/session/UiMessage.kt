@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.session
 
+import com.workflow.orchestrator.agent.tools.CompletionData
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -145,4 +146,5 @@ data class UiMessage(
     val questionData: QuestionWizardData? = null,
     val subagentData: SubagentCardData? = null,
     val toolCallData: ToolCallData? = null,
+    val completionData: CompletionData? = null,
 )

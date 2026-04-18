@@ -1405,6 +1405,7 @@ class AgentLoop(
                     type = UiMessageType.ASK,
                     ask = UiAsk.COMPLETION_RESULT,
                     text = toolResult.content.take(2000),
+                    completionData = toolResult.completionData,
                 )
                 // All other tools: persist as TOOL with full toolCallData
                 else -> UiMessage(
@@ -1502,7 +1503,8 @@ class AgentLoop(
                         ts = System.currentTimeMillis(),
                         type = UiMessageType.ASK,
                         ask = UiAsk.COMPLETION_RESULT,
-                        text = toolResult.content
+                        text = toolResult.content,
+                        completionData = toolResult.completionData,
                     ))
                     onDebugLog?.invoke("info", "loop_exit", "Exit: $toolName", mapOf("iteration" to iteration))
                     return LoopResult.Completed(
