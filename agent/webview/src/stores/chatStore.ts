@@ -189,6 +189,7 @@ interface ChatState {
   applyTaskUpdate(task: Task): void;
   setPlanCommentCount(count: number): void;
   showQuestions(questions: Question[]): void;
+  clearQuestions(): void;
   finalizeQuestionsAsMessage(): void;
   showQuestion(index: number): void;
   showQuestionSummary(summary: any): void;
@@ -767,6 +768,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   showQuestions(questions: Question[]) {
     set({ questions, activeQuestionIndex: 0, questionSummary: null });
+  },
+
+  clearQuestions() {
+    set({ questions: null, questionSummary: null, activeQuestionIndex: 0 });
   },
 
   finalizeQuestionsAsMessage() {

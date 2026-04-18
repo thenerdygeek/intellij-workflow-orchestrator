@@ -155,6 +155,7 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
   const [customSelected, setCustomSelected] = useState(false);
   const storeAnswer = useChatStore(s => s.answerQuestion);
   const storeSkip = useChatStore(s => s.skipQuestion);
+  const storeClear = useChatStore(s => s.clearQuestions);
 
   const question = questions[activeIndex];
   const isLastQuestion = activeIndex === questions.length - 1;
@@ -245,8 +246,9 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
 
   const handleCancel = useCallback(() => {
     setCustomSelected(false);
+    storeClear();
     window._questionsCancelled?.();
-  }, []);
+  }, [storeClear]);
 
   // ── Summary page ──
   if (showSummary || allAnswered) {
