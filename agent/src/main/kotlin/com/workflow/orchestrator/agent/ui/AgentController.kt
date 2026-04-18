@@ -218,8 +218,13 @@ class AgentController(
 
     /** Routes per-tool-call process output chunks to the tool's own Terminal block in the chat UI. */
     private val toolStreamBatcher = PerToolStreamBatcher(
-        onFlush = { id, batched -> dashboard.appendToolOutput(id, batched) }
+        onFlush = { id, batched ->
+            // Log only the first flush per tool call ID to confirm data is flowing, without spamming on every chunk.
+            if (firstFlushSeen.add(id)) LOG.info("run_command[$id]: first flush to UI (${batched.length} chars)")
+            dashboard.appendToolOutput(id, batched)
+        }
     )
+    private val firstFlushSeen = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     /** Resolves @file, @folder, @symbol, @tool, /skill, #ticket mentions into rich context for the LLM. */
     private val mentionContextBuilder = MentionContextBuilder(project)
@@ -263,13 +268,26 @@ class AgentController(
      * missing from the store by the time the event fires, the event is ignored.
      */
     private fun subscribeToTaskChanges() {
-        val eventBus = project.getService(EventBus::class.java) ?: return
+        val eventBus = project.getService(EventBus::class.java)
+        if (eventBus == null) {
+            LOG.warn("[Tasks] subscribeToTaskChanges: EventBus service not available; task UI will not update.")
+            return
+        }
         controllerScope.launch {
             eventBus.events.collect { event ->
                 if (event !is WorkflowEvent.TaskChanged) return@collect
-                val store = service.currentTaskStore() ?: return@collect
-                val task = store.getTask(event.taskId) ?: return@collect
+                val store = service.currentTaskStore()
+                if (store == null) {
+                    LOG.warn("[Tasks] TaskChanged(id=${event.taskId}, isCreate=${event.isCreate}) — no active TaskStore; event dropped.")
+                    return@collect
+                }
+                val task = store.getTask(event.taskId)
+                if (task == null) {
+                    LOG.warn("[Tasks] TaskChanged(id=${event.taskId}, isCreate=${event.isCreate}) — store.getTask returned null; event dropped (possible race).")
+                    return@collect
+                }
                 val taskJson = taskEventJson.encodeToString(task)
+                LOG.info("[Tasks] forwarding to webview — id=${event.taskId} isCreate=${event.isCreate} status=${task.status} subject='${task.subject}'")
                 if (event.isCreate) {
                     dashboard.applyTaskCreate(taskJson)
                 } else {
@@ -637,13 +655,12 @@ class AgentController(
         // If the buffered calls already flushed successfully, this is a harmless idempotent re-push.
         dashboard.setCefPageReadyCallback { pushInitialState() }
 
-        // Route tool process output to per-tool-call Terminal blocks via toolStreamBatcher
+        // Route tool process output to per-tool-call Terminal blocks via toolStreamBatcher.
         // TODO: RunCommandTool.streamCallback is a JVM-static field — if two projects are open
         //       simultaneously, the second controller overwrites the first's callback. Migrate to
         //       passing the callback explicitly via AgentService/AgentLoop context to fix multi-project routing.
-        RunCommandTool.streamCallback = { toolCallId, chunk ->
-            toolStreamBatcher.append(toolCallId, chunk)
-        }
+        RunCommandTool.streamCallback = { toolCallId, chunk -> toolStreamBatcher.append(toolCallId, chunk) }
+        LOG.info("AgentController: run_command streamCallback armed")
     }
 
     // ═══════════════════════════════════════════════════
@@ -1737,6 +1754,7 @@ class AgentController(
         steeringQueue.clear()
         streamBatcher.clear()
         toolStreamBatcher.flush()   // drain any buffered output on cancel
+        firstFlushSeen.clear()
     }
 
     fun newChat() {

@@ -713,6 +713,11 @@ class AgentCefPanel(
     }
 
     fun appendToolOutput(toolCallId: String, chunk: String) {
+        if (bridgeDispatcher?.isLoaded == false) LOG.warn(
+            "appendToolOutput[$toolCallId]: JS bridge not loaded yet — output buffered " +
+            "(pendingCallCount=${bridgeDispatcher?.pendingCallCount}). " +
+            "If this count keeps growing without markLoaded() firing, the webview load event was missed."
+        )
         callJs("appendToolOutput(${JsEscape.toJsString(toolCallId)},${JsEscape.toJsString(chunk)})")
     }
 
@@ -1114,6 +1119,7 @@ class AgentCefPanel(
      * to `tasks`. Calls the `_applyTaskCreate` bridge function in jcef-bridge.ts.
      */
     fun applyTaskCreate(taskJson: String) {
+        LOG.info("[Tasks] applyTaskCreate dispatch (${taskJson.length} chars, dispatcher loaded=${bridgeDispatcher?.isLoaded == true}, pending=${bridgeDispatcher?.pendingCallCount ?: -1})")
         callJs("_applyTaskCreate(${JsEscape.toJsString(taskJson)})")
     }
 
@@ -1122,6 +1128,7 @@ class AgentCefPanel(
      * the matching task by id. Calls the `_applyTaskUpdate` bridge function.
      */
     fun applyTaskUpdate(taskJson: String) {
+        LOG.info("[Tasks] applyTaskUpdate dispatch (${taskJson.length} chars, dispatcher loaded=${bridgeDispatcher?.isLoaded == true}, pending=${bridgeDispatcher?.pendingCallCount ?: -1})")
         callJs("_applyTaskUpdate(${JsEscape.toJsString(taskJson)})")
     }
 

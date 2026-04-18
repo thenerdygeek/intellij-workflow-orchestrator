@@ -235,8 +235,15 @@ class RunCommandTool(
             val process = commandLine.createProcess()
 
             // Determine tool call ID for ProcessRegistry and streaming
-            val toolCallId = currentToolCallId.get()
-                ?: "run-cmd-${processIdCounter.incrementAndGet()}"
+            val rawId = currentToolCallId.get()
+            val toolCallId = rawId ?: "run-cmd-${processIdCounter.incrementAndGet()}"
+            if (rawId == null) {
+                LOG.warn(
+                    "run_command[$toolCallId]: ThreadLocal toolCallId not set — falling back to synthetic id. " +
+                    "Streaming output will NOT appear in the terminal UI. " +
+                    "Root cause: AgentLoop must call RunCommandTool.currentToolCallId.set(id) before execute()."
+                )
+            }
 
             // Register in ProcessRegistry for kill/killAll/stdin support
             val managed = ProcessRegistry.register(toolCallId, process, command)
@@ -252,6 +259,13 @@ class RunCommandTool(
 
             // 10. Start reader thread(s)
             val activeStreamCallback: ((String, String) -> Unit)? = streamCallback
+            if (activeStreamCallback == null) {
+                LOG.warn(
+                    "run_command[$toolCallId]: streamCallback is null — stdout chunks will be silently dropped. " +
+                    "Root cause: AgentController.wireCallbacks() was not called or streamCallback was cleared after init."
+                )
+            }
+            LOG.info("run_command[$toolCallId]: process started (streamCallback=${activeStreamCallback != null})")
 
             // Stdout reader thread
             val readerThread = Thread {

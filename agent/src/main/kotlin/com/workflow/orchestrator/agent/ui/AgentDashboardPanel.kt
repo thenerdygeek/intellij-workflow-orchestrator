@@ -546,6 +546,10 @@ class AgentDashboardPanel(
     }
 
     fun appendToolOutput(toolCallId: String, chunk: String) {
+        if (cefPanel == null) LOG.warn(
+            "appendToolOutput[$toolCallId]: cefPanel is null — streaming output dropped. " +
+            "JCEF may not be initialised (check AgentCefPanel.isAvailable())."
+        )
         cefPanel?.appendToolOutput(toolCallId, chunk)
         broadcast(replay = false) { it.appendToolOutput(toolCallId, chunk) }
     }
