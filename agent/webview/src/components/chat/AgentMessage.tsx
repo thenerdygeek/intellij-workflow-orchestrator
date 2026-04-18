@@ -7,6 +7,7 @@ import {
 } from '@/components/ui/prompt-kit/message';
 import { CopyButton } from '@/components/ui/copy-button';
 import { cn } from '@/lib/utils';
+import { PlanApprovedBubble } from './PlanApprovedBubble';
 
 // ── Mention chip rendering for user message bubbles ──
 
@@ -130,6 +131,10 @@ export const AgentMessage = memo(function AgentMessage({
   message,
   isStreaming = false,
 }: AgentMessageProps) {
+  if (message.say === 'PLAN_APPROVED') {
+    return <PlanApprovedBubble message={message} />;
+  }
+
   const isUser = message.say === 'USER_MESSAGE';
   const content = message.text ?? '';
 

@@ -165,6 +165,7 @@ interface ChatState {
   startSession(task: string, mentions?: Mention[]): void;
   completeSession(info: SessionInfo): void;
   addUserMessage(text: string, mentions?: Mention[]): void;
+  addPlanApprovedMessage(planMarkdown: string): void;
   addAgentText(text: string): void;
   appendToken(token: string): void;
   endStream(): void;
@@ -426,6 +427,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const msg: UiMessage = {
       ts: uniqueTs(), type: 'SAY', say: 'USER_MESSAGE', text,
       ...(mentions && mentions.length > 0 ? { mentions } : {}),
+    };
+    set(state => ({ messages: [...state.messages, msg] }));
+  },
+
+  addPlanApprovedMessage(planMarkdown: string) {
+    const msg: UiMessage = {
+      ts: uniqueTs(),
+      type: 'SAY',
+      say: 'PLAN_APPROVED',
+      text: 'Implementation plan approved',
+      planApprovalData: { planMarkdown },
     };
     set(state => ({ messages: [...state.messages, msg] }));
   },

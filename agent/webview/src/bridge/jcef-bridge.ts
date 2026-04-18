@@ -49,6 +49,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   appendUserMessage(text: string) {
     stores?.getChatStore().addUserMessage(text);
   },
+  appendPlanApprovedMessage(planMarkdown: string) {
+    stores?.getChatStore().addPlanApprovedMessage(planMarkdown);
+  },
   appendUserMessageWithMentions(text: string, mentionsJson: string) {
     try {
       const mentions = JSON.parse(mentionsJson);

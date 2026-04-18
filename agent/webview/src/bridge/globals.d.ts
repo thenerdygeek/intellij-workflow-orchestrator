@@ -62,5 +62,6 @@ declare global {
     _applyTaskUpdate?: (task: Task) => void;
     _setTasks?: (tasks: Task[]) => void;
     _appendCompletionCard?: (json: string) => void;
+    _openApprovedPlan?: () => void;
   }
 }

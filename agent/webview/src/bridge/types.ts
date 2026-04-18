@@ -279,7 +279,7 @@ export type UiSay =
   | 'TOOL' | 'CHECKPOINT_CREATED' | 'ERROR' | 'PLAN_UPDATE'
   | 'ARTIFACT_RESULT' | 'SUBAGENT_STARTED' | 'SUBAGENT_PROGRESS'
   | 'SUBAGENT_COMPLETED' | 'STEERING_RECEIVED' | 'CONTEXT_COMPRESSED'
-  | 'MEMORY_SAVED' | 'ROLLBACK_PERFORMED';
+  | 'MEMORY_SAVED' | 'ROLLBACK_PERFORMED' | 'PLAN_APPROVED';
 
 export interface UiMessageModelInfo {
   modelId?: string;
@@ -346,6 +346,10 @@ export interface CompletionData {
   discovery?: string | null;
 }
 
+export interface UiMessagePlanApprovalData {
+  planMarkdown: string;
+}
+
 export interface UiMessage {
   ts: number;
   type: UiMessageType;
@@ -367,6 +371,7 @@ export interface UiMessage {
   subagentData?: UiMessageSubagentData;
   toolCallData?: UiMessageToolCallData;
   completionData?: CompletionData;
+  planApprovalData?: UiMessagePlanApprovalData;
   /** Mentions attached to a USER_MESSAGE (ticket chips, file refs, etc.) */
   mentions?: Mention[];
 }
