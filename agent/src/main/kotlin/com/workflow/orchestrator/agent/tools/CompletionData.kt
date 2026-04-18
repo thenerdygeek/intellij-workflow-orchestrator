@@ -13,8 +13,6 @@ enum class CompletionKind {
 
 /**
  * Structured payload carried by [ToolResult] when [ToolResultType.Completion] is signalled.
- *
- * Structured payload carried by [ToolResult] when [ToolResultType.Completion] is signalled.
  * Travels end-to-end from [AttemptCompletionTool] through AgentLoop → LoopResult → UiMessage →
  * JCEF bridge → React, giving every downstream layer a stable, typed shape.
  *
