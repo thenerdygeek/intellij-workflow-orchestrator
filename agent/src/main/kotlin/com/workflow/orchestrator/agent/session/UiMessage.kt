@@ -29,6 +29,7 @@ enum class UiSay {
     API_REQ_FINISHED,
     TEXT,
     USER_MESSAGE,
+    PLAN_APPROVED,
     REASONING,
     TOOL,
     CHECKPOINT_CREATED,
@@ -79,6 +80,9 @@ data class PlanCardData(
     val status: PlanStatus,
     val comments: Map<Int, String> = emptyMap(),
 )
+
+@Serializable
+data class PlanApprovalData(val planMarkdown: String)
 
 @Serializable
 data class ApprovalGateData(
@@ -147,4 +151,5 @@ data class UiMessage(
     val subagentData: SubagentCardData? = null,
     val toolCallData: ToolCallData? = null,
     val completionData: CompletionData? = null,
+    val planApprovalData: PlanApprovalData? = null,
 )
