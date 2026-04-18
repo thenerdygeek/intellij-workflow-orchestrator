@@ -15,39 +15,80 @@ class AttemptCompletionTool : AgentTool {
 
     override val name = "attempt_completion"
 
-    override val description = "Once you've confirmed that all tool uses succeeded and the task is complete, use this tool to signal completion. Your detailed explanation should go in the text content BEFORE this tool call (the user reads it in real-time as it streams). The result parameter here is a SHORT summary card — not a repeat of what you already explained. The user may respond with feedback if they are not satisfied, which you can use to make improvements and try again. IMPORTANT: This tool CANNOT be used until you've confirmed from the user that any previous tool uses were successful. Before using this tool, you must verify that all previous tool uses completed successfully."
+    override val description = """
+        Call this tool to stop the current task. This is the ONLY way to end a task — text-only responses without a tool call are NOT valid exits.
+
+        Choose the kind that describes what kind of completion this is:
+        - "done": Work is complete. No user action needed. Example result: "Refactored AuthService to use constructor injection. All 14 tests pass."
+        - "review": The output needs the user to inspect, validate, or decide something before they can be confident. Put the verify-by instruction in verify_how. Example result: "Added the feature flag. Please check the admin panel to confirm the toggle is visible."
+        - "heads_up": You discovered something important that the user should know — a hidden risk, a scope gap, a notable finding — even though the immediate task is complete. Put the finding in discovery. Example result: "Completed the migration. Discovery: the old schema still has 3 orphaned tables that were not in the migration spec."
+
+        Use ask_followup_question instead if you are blocked and user input can unblock you.
+    """.trimIndent()
 
     override val parameters = FunctionParameters(
         properties = mapOf(
+            "kind" to ParameterProperty(
+                type = "string",
+                description = "Classification of this completion. Must be 'done', 'review', or 'heads_up'. See tool description for criteria.",
+                enumValues = listOf("done", "review", "heads_up")
+            ),
             "result" to ParameterProperty(
                 type = "string",
-                description = "A short summary of what was done, explored, or found. Do NOT repeat your detailed explanation — the user already read that in your streamed text. Keep it concise."
+                description = "Short summary card shown to the user. Must be concise — your detailed explanation should be in the streamed text BEFORE this tool call, not here."
             ),
-            "command" to ParameterProperty(
+            "verify_how" to ParameterProperty(
                 type = "string",
-                description = "A CLI command to execute to show a live demo of the result to the user. For example, use './gradlew test' to run tests, or 'open localhost:3000' to display a locally running development server. But DO NOT use commands like 'echo' or 'cat' that merely print text. This command should be valid for the current operating system. Ensure the command is properly formatted and does not contain any harmful instructions."
+                description = "Optional: a CLI command, URL, or instruction the user can follow to verify the result. Valid on all kinds. When kind=review, this is the primary CTA and should clearly describe what to check."
+            ),
+            "discovery" to ParameterProperty(
+                type = "string",
+                description = "Required when kind=heads_up: the surprising finding, hidden risk, or scope gap the user needs to know about. Must be omitted or null for done and review."
             )
         ),
-        required = listOf("result")
+        required = listOf("kind", "result")
     )
 
     override val allowedWorkers = setOf(WorkerType.ORCHESTRATOR)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
-        val result = params["result"]?.jsonPrimitive?.content
-            ?: return ToolResult(
-                content = "Missing required parameter: result",
-                summary = "attempt_completion failed: missing result",
-                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true
+        val kindStr = params["kind"]?.jsonPrimitive?.content
+            ?: return ToolResult.error(
+                message = "Missing required parameter: kind",
+                summary = "attempt_completion failed: missing kind"
             )
-        val command = params["command"]?.jsonPrimitive?.content
+
+        val kind = when (kindStr) {
+            "done" -> CompletionKind.DONE
+            "review" -> CompletionKind.REVIEW
+            "heads_up" -> CompletionKind.HEADS_UP
+            else -> return ToolResult.error(
+                message = "Invalid value for 'kind': '$kindStr'. Must be one of: done, review, heads_up",
+                summary = "attempt_completion failed: invalid kind '$kindStr'"
+            )
+        }
+
+        val result = params["result"]?.jsonPrimitive?.content
+            ?: return ToolResult.error(
+                message = "Missing required parameter: result",
+                summary = "attempt_completion failed: missing result"
+            )
+
+        val verifyHow = params["verify_how"]?.jsonPrimitive?.content
+        val discovery = params["discovery"]?.jsonPrimitive?.content
+
+        if (kind == CompletionKind.HEADS_UP && discovery.isNullOrBlank()) {
+            return ToolResult.error(
+                message = "kind=heads_up requires a non-empty 'discovery' field describing the finding",
+                summary = "attempt_completion failed: heads_up requires discovery"
+            )
+        }
 
         return ToolResult.completion(
             content = result,
-            summary = "Task completed: ${result.take(200)}",
+            summary = "Task $kindStr: ${result.take(200)}",
             tokenEstimate = result.length / 4,
-            completionData = CompletionData(kind = CompletionKind.DONE, result = result, verifyHow = command)
+            completionData = CompletionData(kind = kind, result = result, verifyHow = verifyHow, discovery = discovery)
         )
     }
 }
