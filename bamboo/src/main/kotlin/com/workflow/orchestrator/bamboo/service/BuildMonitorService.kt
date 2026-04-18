@@ -85,6 +85,7 @@ class BuildMonitorService {
 
     private var previousBuildNumber: Int? = null
     private var previousStatus: BuildStatus? = null
+    private var lastLogFetchedForBuild: Int? = null
     private var poller: SmartPoller? = null
 
     fun startPolling(planKey: String, branch: String, intervalMs: Long = 30_000) {
@@ -92,6 +93,7 @@ class BuildMonitorService {
         stopPolling()
         previousBuildNumber = null
         previousStatus = null
+        lastLogFetchedForBuild = null
         poller = SmartPoller(
             name = "BuildMonitor",
             baseIntervalMs = intervalMs,
@@ -169,6 +171,55 @@ class BuildMonitorService {
                 )
 
                 sendBuildNotification(planKey, dto.buildNumber, buildState.overallStatus)
+            }
+
+            // Fetch build log and emit BuildLogReady for terminal builds.
+            // Emitted on first poll too (unlike BuildFinished) so consumers like
+            // Automation tab get the current state when they subscribe.
+            if (isTerminal && dto.buildNumber != lastLogFetchedForBuild) {
+                lastLogFetchedForBuild = dto.buildNumber
+                // Fetch logs from ALL jobs — the docker tag line can appear in any
+                // job's output, not necessarily the first. Plan-level logs are useless
+                // (404 or ~101 bytes), so we use job-level result keys.
+                val jobResultKeys = buildState.stages
+                    .map { it.resultKey }
+                    .filter { it.isNotBlank() }
+                val resultKey = jobResultKeys.firstOrNull() ?: run {
+                    log.debug("[Bamboo:Monitor] No job-level resultKeys in stages, falling back to plan-level: $planKey-${dto.buildNumber}")
+                    "${planKey}-${dto.buildNumber}"
+                }
+                val eventStatus = when (buildState.overallStatus) {
+                    BuildStatus.SUCCESS -> WorkflowEvent.BuildEventStatus.SUCCESS
+                    else -> WorkflowEvent.BuildEventStatus.FAILED
+                }
+                val keysToFetch = jobResultKeys.ifEmpty { listOf(resultKey) }
+                val logParts = mutableListOf<String>()
+                for (key in keysToFetch) {
+                    try {
+                        when (val logResult = apiClient.getBuildLog(key)) {
+                            is ApiResult.Success -> {
+                                if (logResult.data.isNotBlank()) logParts.add(logResult.data)
+                            }
+                            is ApiResult.Error -> {
+                                log.warn("[Bamboo:Monitor] Failed to fetch log for $key: ${logResult.message}")
+                            }
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        log.warn("[Bamboo:Monitor] Exception fetching log for $key: ${e.message}")
+                    }
+                }
+                log.info("[Bamboo:Monitor] Fetched ${logParts.size}/${keysToFetch.size} job logs for build $planKey-${dto.buildNumber}")
+                eventBus.emit(
+                    WorkflowEvent.BuildLogReady(
+                        planKey = planKey,
+                        buildNumber = dto.buildNumber,
+                        resultKey = resultKey,
+                        status = eventStatus,
+                        logText = logParts.joinToString("\n")
+                    )
+                )
             }
 
             previousBuildNumber = dto.buildNumber

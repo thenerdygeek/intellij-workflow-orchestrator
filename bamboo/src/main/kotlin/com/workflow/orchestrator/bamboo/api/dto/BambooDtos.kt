@@ -135,6 +135,14 @@ data class BambooJobResultDto(
 
 // --- Plan Variables DTOs ---
 
+/** Response from GET /plan/{key}?expand=variableContext */
+@Serializable
+data class BambooPlanDetailResponse(
+    val key: String = "",
+    val name: String = "",
+    val variableContext: BambooVariableCollection = BambooVariableCollection()
+)
+
 @Serializable
 data class BambooVariableListResponse(
     val variables: BambooVariableCollection = BambooVariableCollection()

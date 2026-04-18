@@ -79,7 +79,7 @@ class BambooApiClient(
         } else {
             "/rest/api/latest/result/$planKey/latest?expand=stages.stage.results.result"
         }
-        log.debug("[Bamboo:API] Fetching latest result: $path")
+        log.info("[Bamboo:API] getLatestResult: GET $path")
         return get(path)
     }
 
@@ -98,9 +98,19 @@ class BambooApiClient(
         return get("/rest/api/latest/result/$jobResultKey?expand=testResults.failedTests.testResult,testResults.successfulTests.testResult")
     }
 
-    suspend fun getVariables(planKey: String): ApiResult<List<BambooPlanVariableDto>> =
-        get<BambooVariableListResponse>("/rest/api/latest/plan/$planKey/variable")
+    /** Primary: plan variables via variableContext expand (works on all Bamboo versions). */
+    suspend fun getPlanVariableContext(planKey: String): ApiResult<List<BambooPlanVariableDto>> {
+        log.info("[Bamboo:API] getPlanVariableContext: GET /plan/$planKey?expand=variableContext")
+        return get<BambooPlanDetailResponse>("/rest/api/latest/plan/$planKey?expand=variableContext")
+            .map { it.variableContext.variable }
+    }
+
+    /** Fallback: plan variables via /variable sub-resource (404 on some Bamboo servers). */
+    suspend fun getPlanVariableDirect(planKey: String): ApiResult<List<BambooPlanVariableDto>> {
+        log.info("[Bamboo:API] getPlanVariableDirect: GET /plan/$planKey/variable")
+        return get<BambooVariableListResponse>("/rest/api/latest/plan/$planKey/variable")
             .map { it.variables.variable }
+    }
 
     suspend fun triggerBuild(
         planKey: String,
@@ -146,9 +156,22 @@ class BambooApiClient(
         planKey: String,
         maxResults: Int = 10
     ): ApiResult<List<BambooResultDto>> {
-        return get<BambooBuildStatusResponse>(
-            "/rest/api/latest/result/$planKey?max-results=$maxResults&expand=stages.stage.results.result,variables"
-        ).map { it.results.result }
+        // Collection endpoint requires results.result. prefix for nested expands.
+        // Expand variables.variable to populate the inner variable list (not just the wrapper)
+        // — needed by the Automation tab's variable-key dropdown for the automation Bamboo plan.
+        val path = "/rest/api/latest/result/$planKey?max-results=$maxResults" +
+            "&expand=results.result.stages.stage.results.result,results.result.variables.variable"
+        log.info("[Bamboo:API] getRecentResults: GET $path")
+        return get<BambooBuildStatusResponse>(path).also { result ->
+            when (result) {
+                is ApiResult.Success -> {
+                    val results = result.data.results.result
+                    val varCounts = results.take(3).joinToString { "#${it.buildNumber}:${it.variables.variable.size}vars" }
+                    log.info("[Bamboo:API] getRecentResults: ${results.size} result(s) for $planKey ($varCounts)")
+                }
+                is ApiResult.Error -> log.info("[Bamboo:API] getRecentResults: FAILED for $planKey — ${result.type}: ${result.message}")
+            }
+        }.map { it.results.result }
     }
 
     /** Rerun failed/incomplete jobs for a build via Bamboo's restartBuild action. */

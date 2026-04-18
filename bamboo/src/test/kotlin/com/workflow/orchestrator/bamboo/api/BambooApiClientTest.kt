@@ -88,10 +88,10 @@ class BambooApiClientTest {
     }
 
     @Test
-    fun `getVariables returns plan variables`() = runTest {
+    fun `getPlanVariableDirect returns plan variables`() = runTest {
         server.enqueue(MockResponse().setBody(fixture("plan-variables.json")))
 
-        val result = client.getVariables("PROJ-BUILD")
+        val result = client.getPlanVariableDirect("PROJ-BUILD")
 
         assertTrue(result.isSuccess)
         val vars = (result as ApiResult.Success).data
@@ -101,6 +101,33 @@ class BambooApiClientTest {
 
         val recorded = server.takeRequest()
         assertEquals("/rest/api/latest/plan/PROJ-BUILD/variable", recorded.path)
+    }
+
+    @Test
+    fun `getPlanVariableContext returns variables via variableContext expand`() = runTest {
+        server.enqueue(MockResponse().setBody("""
+            {
+              "key": "PROJ-BUILD",
+              "name": "Build Plan",
+              "variableContext": {
+                "size": 2,
+                "variable": [
+                  { "name": "dockerTagsAsJson", "value": "{}" },
+                  { "name": "skipTests", "value": "false" }
+                ]
+              }
+            }
+        """.trimIndent()))
+
+        val result = client.getPlanVariableContext("PROJ-BUILD")
+
+        assertTrue(result.isSuccess)
+        val vars = (result as ApiResult.Success).data
+        assertEquals(2, vars.size)
+        assertEquals("dockerTagsAsJson", vars[0].name)
+
+        val recorded = server.takeRequest()
+        assertEquals("/rest/api/latest/plan/PROJ-BUILD?expand=variableContext", recorded.path)
     }
 
     @Test

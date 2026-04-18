@@ -125,6 +125,7 @@ data class PlanData(
 data class PlanBranchData(
     val key: String,
     val name: String,
+    val shortName: String = "",
     val enabled: Boolean = true
 )
 
