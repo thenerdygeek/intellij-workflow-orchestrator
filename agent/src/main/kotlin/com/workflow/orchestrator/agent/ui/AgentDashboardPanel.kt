@@ -293,11 +293,6 @@ class AgentDashboardPanel(
         broadcast(replay = false) { it.updatePlanStep(stepId, status) }
     }
 
-    fun replaceExecutionSteps(stepsJson: String) {
-        cefPanel?.replaceExecutionSteps(stepsJson)
-        broadcast(replay = false) { it.replaceExecutionSteps(stepsJson) }
-    }
-
     fun setPlanCommentCount(count: Int) {
         cefPanel?.setPlanCommentCount(count)
         broadcast(replay = false) { it.setPlanCommentCount(count) }

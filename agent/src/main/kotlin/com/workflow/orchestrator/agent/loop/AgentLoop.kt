@@ -187,9 +187,8 @@ class AgentLoop(
      *
      * @param planText the plan markdown from the LLM
      * @param needsMoreExploration if true, loop continues immediately (LLM explores more)
-     * @param planSteps structured step titles provided by the LLM
      */
-    private val onPlanResponse: ((planText: String, needsMoreExploration: Boolean, planSteps: List<String>) -> Unit)? = null,
+    private val onPlanResponse: ((planText: String, needsMoreExploration: Boolean) -> Unit)? = null,
     /**
      * Channel for receiving user input during the loop.
      * Used in plan mode: after the LLM presents a plan (needsMoreExploration=false),
@@ -1381,12 +1380,7 @@ class AgentLoop(
                     type = UiMessageType.SAY,
                     say = UiSay.PLAN_UPDATE,
                     text = toolResult.content.take(2000),
-                    planData = ((toolResult.type as? ToolResultType.PlanResponse)?.steps ?: emptyList()).let { steps ->
-                        if (steps.isNotEmpty()) PlanCardData(
-                            steps = steps.map { PlanStep(title = it, status = PlanStepStatus.PENDING) },
-                            status = PlanStatus.AWAITING_APPROVAL,
-                        ) else null
-                    },
+                    planData = null,
                 )
                 // ask_followup_question: persist as TEXT — the question is rendered via the
                 // showSimpleQuestionCallback (streaming text) or showQuestionsCallback (wizard).
@@ -1539,8 +1533,8 @@ class AgentLoop(
                 }
                 is ToolResultType.PlanResponse -> {
                     val pr = toolResult.type
-                    LOG.info("[Loop] Plan presented (needsMoreExploration=${pr.needsMoreExploration}, steps=${pr.steps.size})")
-                    onPlanResponse?.invoke(toolResult.content, pr.needsMoreExploration, pr.steps)
+                    LOG.info("[Loop] Plan presented (needsMoreExploration=${pr.needsMoreExploration})")
+                    onPlanResponse?.invoke(toolResult.content, pr.needsMoreExploration)
 
                     if (!pr.needsMoreExploration && userInputChannel != null) {
                         // Wait for user input (matches Cline's ask() pattern).

@@ -757,10 +757,6 @@ class AgentCefPanel(
         callJs("updatePlanStep(${JsEscape.toJsString(stepId)}, ${JsEscape.toJsString(status)})")
     }
 
-    fun replaceExecutionSteps(stepsJson: String) {
-        callJs("replaceExecutionSteps(${JsEscape.toJsString(stepsJson)})")
-    }
-
     fun setPlanCommentCount(count: Int) {
         callJs("setPlanCommentCount($count)")
     }

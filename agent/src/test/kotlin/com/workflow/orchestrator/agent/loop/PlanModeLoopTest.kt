@@ -104,7 +104,7 @@ class PlanModeLoopTest {
         brain: LlmBrain,
         tools: List<AgentTool>,
         planMode: Boolean = false,
-        onPlanResponse: ((String, Boolean, List<String>) -> Unit)? = null,
+        onPlanResponse: ((String, Boolean) -> Unit)? = null,
         userInputChannel: Channel<String>? = null
     ): AgentLoop {
         val toolMap = tools.associateBy { it.name }
@@ -155,7 +155,7 @@ class PlanModeLoopTest {
             val loop = buildLoop(
                 brain, tools,
                 planMode = true,
-                onPlanResponse = { text, explore, _ -> planCallbackFired.add(text to explore) },
+                onPlanResponse = { text, explore -> planCallbackFired.add(text to explore) },
                 userInputChannel = channel
             )
 
@@ -208,7 +208,7 @@ class PlanModeLoopTest {
             val loop = buildLoop(
                 brain, tools,
                 planMode = true,
-                onPlanResponse = { text, explore, _ -> planCallbackFired.add(text to explore) },
+                onPlanResponse = { text, explore -> planCallbackFired.add(text to explore) },
                 userInputChannel = channel
             )
 
@@ -258,7 +258,7 @@ class PlanModeLoopTest {
             val loop = buildLoop(
                 brain, tools,
                 planMode = true,
-                onPlanResponse = { _, _, _ -> },
+                onPlanResponse = { _, _ -> },
                 userInputChannel = channel
             )
 
@@ -294,7 +294,7 @@ class PlanModeLoopTest {
             val loop = buildLoop(
                 brain, tools,
                 planMode = true,
-                onPlanResponse = { text, _, _ -> planCallbackFired.add(text) },
+                onPlanResponse = { text, _ -> planCallbackFired.add(text) },
                 userInputChannel = null
             )
 
@@ -327,7 +327,7 @@ class PlanModeLoopTest {
             val loop = buildLoop(
                 brain, tools,
                 planMode = true,
-                onPlanResponse = { _, _, _ -> },
+                onPlanResponse = { _, _ -> },
                 userInputChannel = channel
             )
 
@@ -407,7 +407,7 @@ class PlanModeLoopTest {
             val loop = buildLoop(
                 brain, tools,
                 planMode = true,
-                onPlanResponse = { _, _, _ -> },
+                onPlanResponse = { _, _ -> },
                 userInputChannel = channel
             )
 

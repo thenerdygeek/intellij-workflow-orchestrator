@@ -199,7 +199,7 @@ sealed class ToolResultType {
     data object Standard : ToolResultType()
     data object Error : ToolResultType()
     data object Completion : ToolResultType()
-    data class PlanResponse(val needsMoreExploration: Boolean, val steps: List<String> = emptyList()) : ToolResultType()
+    data class PlanResponse(val needsMoreExploration: Boolean) : ToolResultType()
     data class SkillActivation(val skillName: String, val skillContent: String) : ToolResultType()
     data class SessionHandoff(val context: String) : ToolResultType()
     data object PlanModeToggle : ToolResultType()
@@ -267,7 +267,7 @@ data class ToolResult(
     val type: ToolResultType = when {
         isCompletion -> ToolResultType.Completion
         isSessionHandoff -> ToolResultType.SessionHandoff(handoffContext ?: "")
-        isPlanResponse -> ToolResultType.PlanResponse(needsMoreExploration, planSteps)
+        isPlanResponse -> ToolResultType.PlanResponse(needsMoreExploration)
         isSkillActivation -> ToolResultType.SkillActivation(activatedSkillName ?: "", activatedSkillContent ?: "")
         enablePlanMode -> ToolResultType.PlanModeToggle
         isError -> ToolResultType.Error
@@ -283,8 +283,8 @@ data class ToolResult(
         fun completion(content: String, summary: String, tokenEstimate: Int, verifyCommand: String? = null) =
             ToolResult(content, summary, tokenEstimate, isCompletion = true, verifyCommand = verifyCommand, type = ToolResultType.Completion)
 
-        fun planResponse(content: String, summary: String, tokenEstimate: Int, needsMoreExploration: Boolean, steps: List<String> = emptyList()) =
-            ToolResult(content, summary, tokenEstimate, isPlanResponse = true, needsMoreExploration = needsMoreExploration, planSteps = steps, type = ToolResultType.PlanResponse(needsMoreExploration, steps))
+        fun planResponse(content: String, summary: String, tokenEstimate: Int, needsMoreExploration: Boolean) =
+            ToolResult(content, summary, tokenEstimate, isPlanResponse = true, needsMoreExploration = needsMoreExploration, type = ToolResultType.PlanResponse(needsMoreExploration))
 
         fun skillActivation(content: String, summary: String, tokenEstimate: Int, skillName: String, skillContent: String) =
             ToolResult(content, summary, tokenEstimate, isSkillActivation = true, activatedSkillName = skillName, activatedSkillContent = skillContent, type = ToolResultType.SkillActivation(skillName, skillContent))

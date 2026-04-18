@@ -55,10 +55,9 @@ class ToolResultTest {
 
     @Test
     fun `planResponse factory produces PlanResponse type`() {
-        val result = ToolResult.planResponse("plan", "planned", 10, needsMoreExploration = true, steps = listOf("step1", "step2"))
+        val result = ToolResult.planResponse("plan", "planned", 10, needsMoreExploration = true)
         val pr = result.type as ToolResultType.PlanResponse
         assertTrue(pr.needsMoreExploration)
-        assertEquals(listOf("step1", "step2"), pr.steps)
     }
 
     @Test
@@ -94,10 +93,9 @@ class ToolResultTest {
 
     @Test
     fun `planResponse type preserves backward compat properties`() {
-        val result = ToolResult.planResponse("plan", "planned", 10, needsMoreExploration = false, steps = listOf("s1"))
+        val result = ToolResult.planResponse("plan", "planned", 10, needsMoreExploration = false)
         assertTrue(result.isPlanResponse)
         assertFalse(result.needsMoreExploration)
-        assertEquals(listOf("s1"), result.planSteps)
         assertFalse(result.isCompletion)
     }
 

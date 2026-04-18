@@ -805,7 +805,7 @@ class AgentService(private val project: Project) : Disposable {
          * Callback fired when the LLM presents a plan via plan_mode_respond.
          * Used by the UI to render the plan card. Does NOT exit the loop.
          */
-        onPlanResponse: ((planText: String, needsMoreExploration: Boolean, planSteps: List<String>) -> Unit)? = null,
+        onPlanResponse: ((planText: String, needsMoreExploration: Boolean) -> Unit)? = null,
         /**
          * Callback fired when the LLM toggles plan mode via enable_plan_mode tool.
          * Used by the UI to update the plan mode button and rebuild tool definitions.
@@ -1519,7 +1519,7 @@ class AgentService(private val project: Project) : Disposable {
         onUiMessagesLoaded: ((List<UiMessage>) -> Unit)? = null,
         onRetry: ((attempt: Int, maxAttempts: Int, reason: String, delayMs: Long) -> Unit)? = null,
         onModelSwitch: ((fromModel: String, toModel: String, reason: String) -> Unit)? = null,
-        onPlanResponse: ((planText: String, needsMoreExploration: Boolean, planSteps: List<String>) -> Unit)? = null,
+        onPlanResponse: ((planText: String, needsMoreExploration: Boolean) -> Unit)? = null,
         onPlanModeToggled: ((Boolean) -> Unit)? = null,
         onPlanDiscarded: (() -> Unit)? = null,
         userInputChannel: Channel<String>? = null,

@@ -20,8 +20,6 @@ import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.loop.SessionApprovalStore
 import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.loop.PlanJson
-import com.workflow.orchestrator.agent.loop.PlanStep
-import com.workflow.orchestrator.agent.session.PlanStepStatus
 import com.workflow.orchestrator.agent.loop.SteeringMessage
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
 import com.workflow.orchestrator.agent.session.HistoryItem
@@ -145,8 +143,8 @@ class AgentController(
 
     /**
      * Structured plan data from the last plan_mode_respond call.
-     * Populated in [onPlanResponse] from the LLM's structured steps and used by
-     * [openPlanInEditor] to open the plan in a full JCEF editor tab.
+     * Populated in [onPlanResponse] and used by [openPlanInEditor] to open the plan
+     * in a full JCEF editor tab.
      */
     private var currentPlanData: PlanJson? = null
 
@@ -257,8 +255,6 @@ class AgentController(
                 } else {
                     dashboard.applyTaskUpdate(taskJson)
                 }
-                // Refresh execution-step UI from the authoritative TaskStore snapshot.
-                refreshExecutionStepsFromTaskStore()
             }
         }
     }
@@ -1142,7 +1138,7 @@ class AgentController(
                     }
                 }
             },
-            onPlanResponse = { text, explore, steps -> onPlanResponse(text, explore, steps) },
+            onPlanResponse = { text, explore -> onPlanResponse(text, explore) },
             onPlanModeToggled = { enabled -> invokeLater { togglePlanMode(enabled) } },
             onPlanDiscarded = { invokeLater { onPlanDiscardedByLlm() } },
             userInputChannel = userInputChannel,
@@ -1393,36 +1389,6 @@ class AgentController(
             // promptTokens = current context window usage (what matters for the progress bar)
             dashboard.updateProgress("", promptTokens, maxTokens)
         }
-    }
-
-    /**
-     * Build [PlanStep]s from the current TaskStore snapshot and push them to the
-     * dashboard's execution-step list. Filters out `DELETED` tasks. An `IN_PROGRESS`
-     * task with an `activeForm` renders with the present-continuous phrasing; all
-     * other tasks render with their `subject`.
-     *
-     * Called from the [WorkflowEvent.TaskChanged] subscription.
-     */
-    private fun refreshExecutionStepsFromTaskStore() {
-        val store = service.currentTaskStore() ?: return
-        val tasks = store.listTasks().filter { it.status != com.workflow.orchestrator.agent.loop.TaskStatus.DELETED }
-        val steps = tasks.map { task ->
-            val title = if (task.status == com.workflow.orchestrator.agent.loop.TaskStatus.IN_PROGRESS
-                && !task.activeForm.isNullOrBlank()
-            ) task.activeForm!! else task.subject
-            val status = when (task.status) {
-                com.workflow.orchestrator.agent.loop.TaskStatus.COMPLETED -> PlanStepStatus.COMPLETED
-                com.workflow.orchestrator.agent.loop.TaskStatus.IN_PROGRESS -> PlanStepStatus.RUNNING
-                else -> PlanStepStatus.PENDING
-            }
-            PlanStep(
-                id = task.id,
-                title = title,
-                status = status,
-            )
-        }
-        val stepsJson = Json.encodeToString(steps)
-        invokeLater { dashboard.replaceExecutionSteps(stepsJson) }
     }
 
     /** Tool names that render through dedicated UI paths, not generic tool cards. */
@@ -2070,7 +2036,7 @@ class AgentController(
                     }
                 }
             },
-            onPlanResponse = { text, explore, steps -> onPlanResponse(text, explore, steps) },
+            onPlanResponse = { text, explore -> onPlanResponse(text, explore) },
             onPlanModeToggled = { enabled -> invokeLater { togglePlanMode(enabled) } },
             onPlanDiscarded = { invokeLater { onPlanDiscardedByLlm() } },
             userInputChannel = userInputChannel,
@@ -2149,8 +2115,6 @@ class AgentController(
         val tasks = service.currentTaskStore()?.listTasks().orEmpty()
         val tasksJson = taskEventJson.encodeToString(tasks)
         dashboard.setTasks(tasksJson)
-        // Also refresh the execution-step widget from the newly-loaded tasks.
-        refreshExecutionStepsFromTaskStore()
     }
 
     /**
@@ -2206,7 +2170,7 @@ class AgentController(
      * If needsMoreExploration=false, the loop will wait on userInputChannel
      * for the user to respond (type chat, add comments, or approve).
      */
-    private fun onPlanResponse(planText: String, needsMoreExploration: Boolean, planSteps: List<String>) {
+    private fun onPlanResponse(planText: String, needsMoreExploration: Boolean) {
         // Save plan to disk and store path in ContextManager for compaction survival.
         // Done outside invokeLater so it's synchronous and guaranteed before UI render.
         val sid = currentSessionId
@@ -2231,16 +2195,11 @@ class AgentController(
         }
 
         invokeLater {
-            // Build plan from LLM-provided steps (not parsed from markdown).
-            // The LLM provides structured step titles via the mandatory "steps" parameter.
-            val steps = planSteps.mapIndexed { index, title ->
-                PlanStep(id = (index + 1).toString(), title = title)
-            }
             val summary = planText.lines()
                 .firstOrNull { it.isNotBlank() && !it.startsWith("#") }
                 ?.trim()?.take(300)
-                ?: "Plan with ${steps.size} steps"
-            val planData = PlanJson(summary = summary, steps = steps, markdown = planText)
+                ?: "Implementation plan"
+            val planData = PlanJson(summary = summary, markdown = planText)
             currentPlanData = planData
             val planJson = Json.encodeToString(planData)
             dashboard.renderPlan(planJson)
@@ -2318,10 +2277,6 @@ class AgentController(
         // When context was cleared, the plan content is no longer in the conversation.
         // Include it inline so the LLM can proceed without needing read_file on the
         // external plan path (which PathValidator blocks as outside the project).
-        val stepsChecklist = currentPlanData?.steps?.joinToString("\n") { step ->
-            "- [ ] ${step.title}"
-        } ?: ""
-
         val instruction = buildString {
             appendLine("The user has approved the plan.")
             if (clearContext) {
@@ -2332,11 +2287,6 @@ class AgentController(
                     appendLine(planMarkdown)
                     appendLine("</approved_plan>")
                 }
-            }
-            if (stepsChecklist.isNotBlank()) {
-                appendLine()
-                appendLine("Task checklist:")
-                appendLine(stepsChecklist)
             }
         }.trim()
 
