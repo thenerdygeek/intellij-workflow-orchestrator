@@ -912,7 +912,16 @@ class AgentService(private val project: Project) : Disposable {
          * timestamp (`>= System.currentTimeMillis()`) to preserve chronological ordering
          * in the persisted UI message file.
          */
-        uiMessageOverride: UiMessage? = null
+        uiMessageOverride: UiMessage? = null,
+        /**
+         * Optional callback invoked when the loop receives a message from [userInputChannel].
+         * Called with the raw task string; returns the [UiMessage] to persist for that turn,
+         * or null if no UI message should be written (e.g. for plan-mode comment injections
+         * that are already shown via other UI means).
+         *
+         * Forwarded directly to [AgentLoop] — see its own KDoc for the contract.
+         */
+        onUserInputReceived: ((task: String) -> com.workflow.orchestrator.agent.session.UiMessage?)? = null
     ): Job {
         val sid = sessionId ?: UUID.randomUUID().toString()
 
@@ -1384,6 +1393,7 @@ class AgentService(private val project: Project) : Disposable {
                     toolNameProvider = { registry.allToolNames() },
                     paramNameProvider = { registry.allParamNames() },
                     outputSpiller = _outputSpiller,
+                    onUserInputReceived = onUserInputReceived,
                 )
 
                 // I4: Set activeTask atomically after both loop and job are available
@@ -1551,6 +1561,7 @@ class AgentService(private val project: Project) : Disposable {
         onSteeringDrained: ((drainedIds: List<String>) -> Unit)? = null,
         sessionApprovalStore: com.workflow.orchestrator.agent.loop.SessionApprovalStore = com.workflow.orchestrator.agent.loop.SessionApprovalStore(),
         onAwaitingUserInput: ((reason: String) -> Unit)? = null,
+        onUserInputReceived: ((task: String) -> com.workflow.orchestrator.agent.session.UiMessage?)? = null,
     ): Job? {
         val basePath = project.basePath ?: System.getProperty("user.home")
         val sessionBaseDir = ProjectIdentifier.agentDir(basePath)
@@ -1708,6 +1719,7 @@ class AgentService(private val project: Project) : Disposable {
                 onSteeringDrained = onSteeringDrained,
                 sessionApprovalStore = sessionApprovalStore,
                 onAwaitingUserInput = onAwaitingUserInput,
+                onUserInputReceived = onUserInputReceived,
             )
             innerJob.join()
         }

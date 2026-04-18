@@ -99,6 +99,16 @@ class AgentController(
     private var userInputChannel: Channel<String>? = null
     /** True when the loop is actively waiting for user input (plan presented, not exploring). */
     private var loopWaitingForInput = false
+    /**
+     * Typed UI message to persist when the loop next receives from [userInputChannel].
+     * Set in the [loopWaitingForInput] branch of [executeTask] when a [uiMessageOverride]
+     * is provided (e.g. a PLAN_APPROVED bubble from [handleApprovalChoice]).
+     * Consumed once by the [onUserInputReceived] callback wired into [AgentService.executeTask],
+     * then cleared atomically via [java.util.concurrent.atomic.AtomicReference.getAndSet].
+     * Cleared in all cleanup paths (cancel, newChat, resumeSession) to prevent stale override
+     * from polluting the next session.
+     */
+    private val pendingUiMessageOverride = java.util.concurrent.atomic.AtomicReference<com.workflow.orchestrator.agent.session.UiMessage?>(null)
 
     /**
      * Thread-safe queue for mid-turn steering messages.
@@ -1044,6 +1054,11 @@ class AgentController(
             dashboard.setSteeringMode(true)
             // Input is NOT locked — user can always type freely (Cline behavior)
             loopWaitingForInput = false
+            // Stash the typed UI message override so the loop can persist it when it
+            // consumes this channel message (e.g. PLAN_APPROVED instead of raw XML).
+            if (uiMessageOverride != null) {
+                pendingUiMessageOverride.set(uiMessageOverride)
+            }
             runBlocking { channel.send(task) }
             return
         }
@@ -1179,6 +1194,13 @@ class AgentController(
             },
             onAwaitingUserInput = ::onLoopAwaitingUserInput,
             uiMessageOverride = uiMessageOverride,
+            onUserInputReceived = { _ ->
+                // Consume and clear the pending override atomically.
+                // The override was set in the loopWaitingForInput branch by handleApprovalChoice
+                // (and similar callers) so that the persisted bubble shows the typed message
+                // (e.g. PLAN_APPROVED) rather than the raw XML instruction text.
+                pendingUiMessageOverride.getAndSet(null)
+            },
         )
 
         // Start 30s Haiku phrase timer (if smart working indicator is enabled)
@@ -1691,6 +1713,7 @@ class AgentController(
         userInputChannel?.close()
         userInputChannel = null
         loopWaitingForInput = false
+        pendingUiMessageOverride.set(null)
         steeringQueue.clear()
         streamBatcher.clear()
         toolStreamBatcher.flush()   // drain any buffered output on cancel
@@ -2011,6 +2034,8 @@ class AgentController(
 
         // Create a fresh input channel for the resumed loop
         userInputChannel = Channel(Channel.RENDEZVOUS)
+        loopWaitingForInput = false
+        pendingUiMessageOverride.set(null)
         taskStartTime = System.currentTimeMillis()
 
         val debugEnabled = AgentSettings.getInstance(project).state.showDebugLog
@@ -2079,6 +2104,10 @@ class AgentController(
             },
             sessionApprovalStore = sessionApprovalStore,
             onAwaitingUserInput = ::onLoopAwaitingUserInput,
+            onUserInputReceived = { _ ->
+                // Consumed and cleared atomically — same contract as the executeTask path.
+                pendingUiMessageOverride.getAndSet(null)
+            },
         )
 
         if (job != null) {
@@ -2301,10 +2330,16 @@ class AgentController(
         // Include it inline (with the original task for full intent) so the LLM can
         // proceed without needing read_file on the external plan path (which PathValidator
         // blocks as outside the project).
+        //
+        // originalTaskText is set by executeTask on first message — but resumeSession()
+        // bypasses executeTask, so it is null for resumed sessions. Fall back to the
+        // MessageStateHandler.taskText (200-char task summary written at session creation).
+        val effectiveOriginalTask = originalTaskText
+            ?: service.activeMessageStateHandler?.taskText?.takeIf { it.isNotBlank() }
         val instruction = buildString {
             appendLine("The user has approved the plan.")
             if (clearContext) {
-                originalTaskText?.takeIf { it.isNotBlank() }?.let {
+                effectiveOriginalTask?.let {
                     appendLine()
                     appendLine("<original_task>")
                     appendLine(it)

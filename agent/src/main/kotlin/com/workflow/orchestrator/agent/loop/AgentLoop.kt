@@ -323,6 +323,20 @@ class AgentLoop(
      * Fires from the AgentLoop coroutine; invoke UI work via invokeLater on the EDT.
      */
     private val onAwaitingUserInput: ((reason: String) -> Unit)? = null,
+    /**
+     * Optional callback invoked synchronously after [userInputChannel] delivers a message
+     * and before that message is added to the conversation context.
+     *
+     * Returns the [UiMessage] that should be persisted to ui_messages.json for this turn.
+     * When null is returned (or the callback is not set), no UI message is persisted here
+     * — the caller is responsible for having persisted it already (the normal flow for
+     * regular chat turns where the controller calls addToClineMessages directly).
+     *
+     * Primary use: plan-mode approval. [AgentController] sets a [pendingUiMessageOverride]
+     * (a typed PLAN_APPROVED message) before sending to the channel so that the persisted
+     * bubble shows "Implementation plan approved" rather than raw XML instruction text.
+     */
+    private val onUserInputReceived: ((task: String) -> UiMessage?)? = null,
 ) {
     private val cancelled = AtomicBoolean(false)
     private var totalTokensUsed = 0
@@ -1007,7 +1021,10 @@ class AgentLoop(
                         val reason = "Plan-mode reply — waiting for your next message."
                         onDebugLog?.invoke("info", "await_user", reason, null)
                         onAwaitingUserInput?.invoke(reason)
-                        contextManager.addUserMessage(withEnvDetails(userInputChannel.receive()))
+                        val receivedTask = userInputChannel.receive()
+                        // Persist typed UI message override if provided (e.g. PLAN_APPROVED bubble).
+                        onUserInputReceived?.invoke(receivedTask)?.let { messageStateHandler?.addToClineMessages(it) }
+                        contextManager.addUserMessage(withEnvDetails(receivedTask))
                         consecutiveMistakes = 0
                         consecutiveEmpties = 0  // reset: plan-mode chat is a genuine exchange, not a stall
                     } else if (consecutiveMistakes >= maxConsecutiveMistakes && userInputChannel != null) {
@@ -1017,7 +1034,10 @@ class AgentLoop(
                         val reason = "The model keeps replying without using a tool. Send guidance to continue."
                         onDebugLog?.invoke("warn", "await_user", reason, mapOf("consecutiveMistakes" to consecutiveMistakes))
                         onAwaitingUserInput?.invoke(reason)
-                        contextManager.addUserMessage(withEnvDetails(userInputChannel.receive()))
+                        val receivedTask = userInputChannel.receive()
+                        // Persist typed UI message override if provided.
+                        onUserInputReceived?.invoke(receivedTask)?.let { messageStateHandler?.addToClineMessages(it) }
+                        contextManager.addUserMessage(withEnvDetails(receivedTask))
                         consecutiveMistakes = 0
                     } else if (consecutiveMistakes >= maxConsecutiveMistakes) {
                         // No user input channel (sub-agent) — fail
@@ -1535,7 +1555,10 @@ class AgentLoop(
                         // Wait for user input (matches Cline's ask() pattern).
                         // The user can: type in chat, add step comments, or click approve.
                         // Each sends a message into the channel, which resumes the loop.
-                        contextManager.addUserMessage(withEnvDetails(userInputChannel.receive()))
+                        val receivedTask = userInputChannel.receive()
+                        // Persist typed UI message override if provided (e.g. PLAN_APPROVED bubble).
+                        onUserInputReceived?.invoke(receivedTask)?.let { messageStateHandler?.addToClineMessages(it) }
+                        contextManager.addUserMessage(withEnvDetails(receivedTask))
                         // Continue the loop — LLM will see the user's message and respond
                     }
                     // needs_more_exploration=true OR no channel: loop continues immediately

@@ -10,7 +10,7 @@ import java.io.File
 class MessageStateHandler(
     private val baseDir: File,
     val sessionId: String,
-    private val taskText: String,
+    val taskText: String,
 ) {
     private val mutex = Mutex()
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; prettyPrint = false }
