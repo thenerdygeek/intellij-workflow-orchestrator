@@ -45,7 +45,7 @@ function VerifyPill({ command }: { command: string }) {
       <svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" className="flex-shrink-0">
         <path d="M2 4l4 4-4 4M8 12h6" stroke="var(--fg-muted, #888)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
-      <code className="flex-1 text-[12px] font-mono" style={{ color: 'var(--fg-secondary)' }}>
+      <code className="flex-1 text-[12px] font-mono" style={{ color: 'var(--fg-secondary, #969696)' }}>
         {command}
       </code>
       <CopyButton text={command} size="sm" label="Copy command" />
@@ -120,10 +120,10 @@ export const CompletionCard = memo(function CompletionCard({ data }: CompletionC
       {/* heads_up kind: discovery callout below body */}
       {data.kind === 'heads_up' && (
         <div
+          className="rounded-md"
           style={{
             background: 'color-mix(in srgb, var(--info, #3B82F6) 8%, var(--bg))',
             border: '1px solid color-mix(in srgb, var(--info, #3B82F6) 25%, var(--border))',
-            borderRadius: 6,
             padding: '8px 12px',
             margin: '0 16px 12px',
           }}
