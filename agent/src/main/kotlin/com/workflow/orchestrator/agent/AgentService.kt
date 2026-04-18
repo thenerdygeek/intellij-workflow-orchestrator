@@ -20,6 +20,7 @@ import com.workflow.orchestrator.agent.ide.PythonProvider
 import com.workflow.orchestrator.agent.ide.ToolRegistrationFilter
 import com.workflow.orchestrator.agent.loop.AgentLoop
 import com.workflow.orchestrator.agent.loop.ContextManager
+import com.workflow.orchestrator.agent.loop.FailureReason
 import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.loop.SteeringMessage
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
@@ -1488,7 +1489,7 @@ class AgentService(private val project: Project) : Disposable {
                     lastMessageAt = System.currentTimeMillis()
                 )
                 fileLogger.logSessionEnd(sid, 0, 0, System.currentTimeMillis() - sessionStartTime, error = e.message)
-                onComplete(LoopResult.Failed(error = e.message ?: "Unknown error"))
+                onComplete(LoopResult.Failed(error = e.message ?: "Unknown error", reason = FailureReason.EXCEPTION))
             } finally {
                 activeTask.set(null)
                 activeMessageStateHandler = null

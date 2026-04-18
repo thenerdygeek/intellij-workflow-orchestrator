@@ -917,8 +917,8 @@ class AgentCefPanel(
         callJs("updateSkillsList(${JsEscape.toJsString(skillsJson)})")
     }
 
-    fun showRetryButton(lastMessage: String) {
-        callJs("showRetryButton(${JsEscape.toJsString(lastMessage)})")
+    fun showRetryButton(kind: String, caption: String) {
+        callJs("showRetryButton(${JsEscape.toJsString(kind)}, ${JsEscape.toJsString(caption)})")
     }
 
     fun focusInput() {

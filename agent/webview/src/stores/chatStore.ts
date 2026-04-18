@@ -127,7 +127,7 @@ interface ChatState {
   showingToolsPanel: boolean;
   toolsPanelData: string | null;
   showingSkeleton: boolean;
-  retryMessage: string | null;
+  retryState: { kind: 'continue' | 'retry'; caption: string } | null;
   toasts: Toast[];
   skillBanner: string | null;
   skillsList: Skill[];
@@ -214,7 +214,7 @@ interface ChatState {
   hideSkillBanner(): void;
   showToolsPanel(toolsJson: string): void;
   hideToolsPanel(): void;
-  showRetryButton(lastMessage: string): void;
+  showRetryButton(kind: 'continue' | 'retry', caption: string): void;
   focusInput(): void;
   addChart(chartConfigJson: string): void;
   addAnsiOutput(text: string): void;
@@ -308,7 +308,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   showingToolsPanel: false,
   toolsPanelData: null,
   showingSkeleton: false,
-  retryMessage: null,
+  retryState: null,
   toasts: [],
   skillBanner: null,
   skillsList: [],
@@ -358,7 +358,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       questionSummary: null,
       busy: true,
       steeringMode: true,
-      retryMessage: null,
+      retryState: null,
       smartWorkingPhrase: null,
       sessionTitle: null,
       editStats: null,
@@ -717,7 +717,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       planCompletedPendingClear: false,
       questions: null,
       questionSummary: null,
-      retryMessage: null,
+      retryState: null,
       tasks: [],
       viewMode: 'chat',
       resumeSessionId: null,
@@ -901,8 +901,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ showingToolsPanel: false, toolsPanelData: null });
   },
 
-  showRetryButton(lastMessage: string) {
-    set({ retryMessage: lastMessage });
+  showRetryButton(kind: 'continue' | 'retry', caption: string) {
+    set({ retryState: { kind, caption } });
   },
 
   focusInput() {
@@ -1093,6 +1093,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // Do NOT add the user message here — Kotlin is authoritative.
     // For first messages: startSession() adds it atomically.
     // For subsequent messages: appendUserMessage() adds it from Kotlin.
+    // Clear the retry pill immediately so it doesn't persist into the new turn.
+    set({ retryState: null });
     import('../bridge/jcef-bridge').then(({ kotlinBridge }) => {
       if (mentions.length > 0) {
         kotlinBridge.sendMessageWithMentions(text, JSON.stringify(mentions));

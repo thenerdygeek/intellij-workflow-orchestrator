@@ -217,9 +217,9 @@ class AgentDashboardPanel(
         broadcast(replay = false) { it.setInputLocked(locked) }
     }
 
-    fun showRetryButton(lastMessage: String) {
-        cefPanel?.showRetryButton(lastMessage)
-        broadcast(replay = false) { it.showRetryButton(lastMessage) }
+    fun showRetryButton(kind: String, caption: String) {
+        cefPanel?.showRetryButton(kind, caption)
+        broadcast(replay = false) { it.showRetryButton(kind, caption) }
     }
 
     fun focusInput() {

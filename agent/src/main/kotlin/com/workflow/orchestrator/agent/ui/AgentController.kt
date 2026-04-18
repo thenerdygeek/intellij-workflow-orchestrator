@@ -19,6 +19,7 @@ import com.workflow.orchestrator.agent.hooks.HookResult
 import com.workflow.orchestrator.agent.hooks.HookType
 import com.workflow.orchestrator.agent.loop.ApprovalResult
 import com.workflow.orchestrator.agent.loop.ContextManager
+import com.workflow.orchestrator.agent.loop.FailureReason
 import com.workflow.orchestrator.agent.loop.SessionApprovalStore
 import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.loop.PlanJson
@@ -324,10 +325,12 @@ class AgentController(
         // Action callbacks shared with mirror panels
         wireSharedDashboardCallbacks(dashboard)
 
-        // Retry callback — re-executes last task with original mention context + clean display
+        // Retry callback — sends "continue" so the LLM resumes its prior plan rather than
+        // restarting from scratch (replaying the original task makes the model think its
+        // previous work was wrong and pick a different approach).
         dashboard.setCefRetryCallback {
-            lastTaskText?.let { task ->
-                executeTask(task, lastDisplayText, lastDisplayMentionsJson)
+            if (lastTaskText != null) {
+                executeTask("continue", "continue", null)
             }
         }
 
@@ -1618,8 +1621,17 @@ class AgentController(
                         durationMs = durationMs,
                         status = RichStreamingPanel.SessionStatus.FAILED
                     )
-                    // Gap 17: Show retry button so user can re-execute the last task
-                    lastTaskText?.let { dashboard.showRetryButton(lastDisplayText ?: it) }
+                    // Gap 17: Show retry/continue button based on failure type
+                    if (lastTaskText != null) {
+                        val isMaxIter = result.reason == FailureReason.MAX_ITERATIONS
+                        val kind = if (isMaxIter) "continue" else "retry"
+                        val caption = if (isMaxIter) {
+                            "The agent worked for many iterations without finishing. Click Continue to keep going."
+                        } else {
+                            "Something went wrong while running the task."
+                        }
+                        dashboard.showRetryButton(kind, caption)
+                    }
                 }
 
                 is LoopResult.Cancelled -> {

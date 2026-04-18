@@ -861,7 +861,7 @@ class AgentLoop(
                     "apiRetryCount" to apiRetryCount,
                     "message" to apiResult.message.take(200)
                 ))
-                return makeFailed(apiResult.message, iteration)
+                return makeFailed(apiResult.message, iteration, FailureReason.API_ERROR)
             }
 
             val response = (apiResult as ApiResult.Success).data
@@ -1043,7 +1043,7 @@ class AgentLoop(
                     } else if (consecutiveMistakes >= maxConsecutiveMistakes) {
                         // No user input channel (sub-agent) — fail
                         onDebugLog?.invoke("error", "loop_exit", "Exit: max_consecutive_mistakes (sub-agent, no user channel)", mapOf("max" to maxConsecutiveMistakes))
-                        return makeFailed("Agent failed to use tools after $maxConsecutiveMistakes attempts.", iteration)
+                        return makeFailed("Agent failed to use tools after $maxConsecutiveMistakes attempts.", iteration, FailureReason.NO_TOOLS_USED)
                     } else {
                         // Below max — inject nudge and continue (Cline: noToolsUsed message).
                         // Collapse any earlier trailing nudge chain first so we never have
@@ -1074,7 +1074,8 @@ class AgentLoop(
                         ))
                         return makeFailed(
                             "Provider returned $MAX_CONSECUTIVE_EMPTIES consecutive empty responses. Check model/provider configuration.",
-                            iteration
+                            iteration,
+                            FailureReason.EMPTY_RESPONSES
                         )
                     }
                     // Same rationale as TEXT_ONLY_NUDGE: collapse any trailing chain first
@@ -1096,7 +1097,8 @@ class AgentLoop(
         onDebugLog?.invoke("error", "loop_exit", "Exit: max_iterations ($maxIterations)", mapOf("iteration" to iteration))
         return makeFailed(
             "Exceeded maximum iterations ($maxIterations). The task may be too complex or the model is stuck.",
-            iteration
+            iteration,
+            FailureReason.MAX_ITERATIONS
         )
     }
 
@@ -1161,7 +1163,8 @@ class AgentLoop(
                     ))
                     return makeFailed(
                         "Loop detected: '$toolName' called ${loopDetector.currentCount} times with identical arguments.",
-                        iteration
+                        iteration,
+                        FailureReason.DOOM_LOOP
                     )
                 }
                 LoopStatus.SOFT_WARNING -> {
@@ -1591,8 +1594,9 @@ class AgentLoop(
     private fun filesModifiedList(): List<String> = modifiedFiles.toList()
 
     /** Build a Failed result with current loop tracking state. */
-    private fun makeFailed(error: String, iterations: Int): LoopResult.Failed = LoopResult.Failed(
+    private fun makeFailed(error: String, iterations: Int, reason: FailureReason): LoopResult.Failed = LoopResult.Failed(
         error = error,
+        reason = reason,
         iterations = iterations,
         tokensUsed = totalTokensUsed,
         inputTokens = totalInputTokens,

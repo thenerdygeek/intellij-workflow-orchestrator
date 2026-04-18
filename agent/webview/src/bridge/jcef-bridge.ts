@@ -224,8 +224,8 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     const skills = JSON.parse(skillsJson);
     stores?.getChatStore().updateSkillsList(skills);
   },
-  showRetryButton(lastMessage: string) {
-    stores?.getChatStore().showRetryButton(lastMessage);
+  showRetryButton(kind: 'continue' | 'retry', caption: string) {
+    stores?.getChatStore().showRetryButton(kind, caption);
   },
   focusInput() {
     stores?.getChatStore().focusInput();
