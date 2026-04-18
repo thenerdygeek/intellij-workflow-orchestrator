@@ -13,7 +13,7 @@ import { QuestionView } from '@/components/agent/QuestionView';
 import { ApprovalView } from '@/components/agent/ApprovalView';
 import { ProcessInputView } from '@/components/agent/ProcessInputView';
 import { RollbackCard } from '@/components/agent/RollbackCard';
-import type { UiMessage, ToolCall, Plan, PlanStepStatus, SubAgentState } from '@/bridge/types';
+import type { UiMessage, ToolCall, Plan, SubAgentState } from '@/bridge/types';
 import {
   ChatContainerRoot,
   ChatContainerContent,
@@ -545,26 +545,18 @@ export const ChatView = memo(function ChatView() {
             );
           }
 
-          // Plan updates — render inline as a progress snapshot so they appear
+          // Plan updates — render inline as a plan summary snapshot so they appear
           // in chronological order on resume. The global plan widget at the
           // bottom handles the live interactive approve/revise flow.
           if (msg.say === 'PLAN_UPDATE' && msg.planData) {
             const pd = msg.planData;
             const inlinePlan: Plan = {
               title: 'Plan',
-              steps: pd.steps.map((s, si) => ({
-                id: `plan-step-${msg.ts}-${si}`,
-                title: s.title,
-                status: (s.status as PlanStepStatus) || 'pending',
-                comment: pd.comments?.[si] ?? undefined,
-              })),
               approved: pd.status === 'APPROVED' || pd.status === 'EXECUTING',
             };
             return (
               <ErrorBoundary key={key}>
-                {inlinePlan.approved
-                  ? <PlanProgressWidget plan={inlinePlan} />
-                  : <PlanSummaryCard plan={inlinePlan} />}
+                {!inlinePlan.approved && <PlanSummaryCard plan={inlinePlan} />}
               </ErrorBoundary>
             );
           }
@@ -643,7 +635,7 @@ export const ChatView = memo(function ChatView() {
         {/* Plan — global widget for live interactive approve/revise flow.
             On resume, the plan renders inline via PLAN_UPDATE messages above. */}
         {plan && !plan.approved && <PlanSummaryCard plan={plan} />}
-        {plan && plan.approved && <PlanProgressWidget plan={plan} />}
+        <PlanProgressWidget />
 
         {/* Questions */}
         {questions && questions.length > 0 && (
