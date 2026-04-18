@@ -45,10 +45,26 @@ export interface PlanStep {
 
 export interface Plan {
   title: string;
-  steps: PlanStep[];
   approved: boolean;
   markdown?: string;
   summary?: string;
+}
+
+// ── Task types ──
+
+export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'deleted';
+
+export interface Task {
+  id: string;
+  subject: string;
+  description: string;
+  activeForm?: string;
+  status: TaskStatus;
+  owner?: string;
+  blocks: string[];
+  blockedBy: string[];
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 // ── Question types ──
