@@ -51,15 +51,6 @@ let pendingPlanData: AgentPlanData | null = null;
   }
 };
 
-(window as any).updatePlanStep = (stepId: string, status: string) => {
-  if (setPlanDataExternal) {
-    // Use the external setter to trigger a re-render with updated step status
-    setPlanDataExternal(null as any); // trigger re-read via internal update
-  }
-  // Direct state update via dedicated mechanism
-  updateStepStatusInternal?.(stepId, status);
-};
-
 let updateStepStatusInternal: ((stepId: string, status: string) => void) | null = null;
 let triggerReviseInternal: (() => void) | null = null;
 

@@ -190,14 +190,6 @@ describe('Plan Editor Integration', () => {
     expect(comments[0]!.lineContent).toBeTruthy();
   });
 
-  it('updatePlanStep overlays status emoji on step headings', () => {
-    // When updatePlanStep is called, the step status changes
-    const steps = [...mockPlanWithMarkdown.steps];
-    const updated = steps.map(s => s.id === 's1' ? { ...s, status: 'completed' } : s);
-    expect(updated[0]!.status).toBe('completed');
-    expect(updated[1]!.status).toBe('pending');
-  });
-
   it('approved plan shows badge and hides buttons', () => {
     const isApproved = true;
     // In the component: {!isApproved && (<div>buttons</div>)}
