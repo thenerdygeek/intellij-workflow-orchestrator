@@ -29,7 +29,7 @@ The sub-agent tool (`spawn_agent`) is inspired by Claude Code's observable behav
 | Empty response recovery (3-strike) | Codex CLI + Cline |
 | Loop detection (3 soft / 5 hard) | Cline (`loop-detection.ts`) |
 | 3-stage compaction (dedup, truncate, summarize) | Cline + our addition (Stage 3 LLM summarization) |
-| Task progress via `task_progress` param | Cline (`FocusChainManager`) |
+| Typed task system (`task_create/update/list/get`, `TaskStore`, blocks/blockedBy DAG) | Our addition (replaces Cline `task_progress` param) |
 | Plan mode with `plan_mode_respond` / `act_mode_respond` | Cline |
 | Skill system with `use_skill` | Cline (`skills.ts`) |
 | Session handoff via `new_task` | Cline |
@@ -54,7 +54,7 @@ graph TB
     Loop["AgentLoop<br/>(ReAct)"]
     Brain["LlmBrain<br/>(OpenAI-compat API)"]
     CTX["ContextManager<br/>(Messages + 3-stage compaction)"]
-    TaskProg["TaskProgress<br/>(survives compaction)"]
+    TaskProg["TaskStore<br/>(typed tasks, blocks/blockedBy DAG)"]
     Tools["ToolRegistry<br/>(3-tier: core/deferred/active)"]
     Store["SessionStore<br/>(JSONL + checkpoints)"]
     Hooks["HookManager<br/>(7 lifecycle events)"]
@@ -80,7 +80,7 @@ graph TB
     Loop -->|"recordToolCall()"| LoopDet
     Loop -->|"dispatch PRE/POST"| Hooks
 
-    CTX -->|"stores/updates"| TaskProg
+    CTX -->|"attachTaskStore()"| TaskProg
 
     Brain -->|"HTTP/SSE"| SG
     Tools -->|"PSI, VFS, shell"| IDE
@@ -88,7 +88,7 @@ graph TB
     Controller -->|"onStreamChunk"| Dashboard
     Controller -->|"onToolCall"| Dashboard
     Controller -->|"onTokenUpdate"| Dashboard
-    Controller -->|"onTaskProgress"| Dashboard
+    Controller -->|"task-update bridge"| Dashboard
     Controller -->|"onComplete"| Dashboard
 
     style Loop fill:#e1f5fe,stroke:#0288d1,stroke-width:2px
@@ -145,8 +145,7 @@ flowchart TD
     CHECK_LENGTH -->|No| ADD_ASST["Add assistant message to context"]
     ADD_ASST --> CLASSIFY{Response type?}
 
-    CLASSIFY -->|"Tool calls"| EXTRACT_PROG["Extract task_progress param"]
-    EXTRACT_PROG --> LOOP_DET{"Loop detection?"}
+    CLASSIFY -->|"Tool calls"| LOOP_DET{"Loop detection?"}
     LOOP_DET -->|"HARD_LIMIT (5x)"| RETURN_LOOP([LoopResult.Failed<br/>'loop detected'])
     LOOP_DET -->|"SOFT_WARNING (3x)"| WARN["Inject LOOP_SOFT_WARNING"]
     WARN --> PRE_HOOK["PRE_TOOL_USE hook"]
@@ -218,7 +217,7 @@ When context is exhausted beyond compaction's ability to recover, the LLM calls 
 
 ### Loop Detection (from Cline)
 
-`LoopDetector` tracks consecutive identical tool calls (same name + canonical argument signature, ignoring `task_progress`):
+`LoopDetector` tracks consecutive identical tool calls (same name + canonical argument signature):
 - **3 consecutive** (soft): inject `LOOP_SOFT_WARNING` into context, continue execution
 - **5 consecutive** (hard): return `LoopResult.Failed` immediately
 
@@ -249,7 +248,7 @@ Pattern-matches API errors for context/token overflow keywords. On detection:
 | `onStreamChunk` | Each SSE chunk from LLM | Stream text to UI |
 | `onToolCall` | Tool start + tool completion | Show tool progress in UI |
 | `onTokenUpdate` | After each API response | Running token totals |
-| `onTaskProgress` | When `task_progress` param extracted | Update progress checklist |
+| `onTaskChanged` | When `TaskStore` mutation emits `WorkflowEvent.TaskChanged` | Update task list in UI |
 | `onCheckpoint` | After every tool result added to context | Persist state (JSONL append) |
 | `onWriteCheckpoint` | After write tools (`edit_file`, `create_file`, etc.) | Named checkpoint for reversion |
 
@@ -379,7 +378,7 @@ The system prompt follows Cline's `generic` variant template section order, sepa
 | # | Section | Cline Source | Content |
 |---|---|---|---|
 | 1 | **Agent Role** | `agent_role.ts` | "You are a highly skilled software engineer..." |
-| 2 | **Task Progress** | `task_progress.ts` | Instructions for `task_progress` parameter + current checklist (optional) |
+| 2 | **Task Management** | Our addition | Typed task system instructions + current task list from `TaskStore` (optional, rendered by `renderTaskProgressMarkdown`) |
 | 3 | **Editing Files** | `editing_files.ts` | `create_file` vs `edit_file` guidance, auto-formatting considerations |
 | 4 | **Act vs Plan Mode** | `act_vs_plan_mode.ts` | Current mode declaration, mode-specific instructions |
 | 5 | **Capabilities** | `capabilities.ts` | What tools can do, working directory context, tool usage patterns |
@@ -865,19 +864,26 @@ Ported from Cline's `DiffViewProvider` pattern:
 
 ---
 
-## 14. Task Progress (from Cline)
+## 14. Typed Task System
 
-**File:** `agent/src/main/kotlin/com/workflow/orchestrator/agent/loop/TaskProgress.kt`
+> See `docs/plans/2026-04-18-task-system-port.md` for the port plan and `docs/research/2026-04-18-claude-code-task-system-research.md` for the design research.
 
-Ported from Cline's `FocusChainManager` + `focus-chain-utils.ts`:
+**Key files:** `agent/src/main/kotlin/com/workflow/orchestrator/agent/task/TaskStore.kt`, `task/Task.kt`, `task/TaskStatus.kt`, `tools/builtin/task/Task{Create,Update,List,Get}Tool.kt`
 
-- The LLM includes a `task_progress` parameter in tool call JSON arguments
-- `AgentLoop.extractTaskProgress()` parses this parameter from every tool call
-- Progress is a markdown checklist: `- [x] done item` / `- [ ] pending item`
-- Stored in `ContextManager.taskProgressMarkdown`
-- **Survives compaction**: included in system prompt Section 2 (Task Progress)
-- Included in session checkpoint for resume
-- `onTaskProgress` callback notifies the UI
+Four hook-exempt LLM tools replace the old `task_progress` markdown parameter:
+
+| Tool | Description |
+|---|---|
+| `task_create` | Create a task; optional `blocks`/`blockedBy` dependency edges |
+| `task_update` | Update status (`TODO`/`IN_PROGRESS`/`DONE`/`BLOCKED`), title, description |
+| `task_list` | Minimal list (id, title, status) — low token cost |
+| `task_get` | Full detail including dependency edges |
+
+- **Persistence**: `sessions/{sessionId}/tasks.json`, atomic writes under `Mutex`, same cadence as conversation history
+- **Hook-exemption**: task tools bypass `PreToolUse`/`PostToolUse` — they are internal bookkeeping
+- **Dependency DAG**: `blocks`/`blockedBy` cycle detection via DFS on every mutation in `TaskStore`
+- **UI push**: mutations emit `WorkflowEvent.TaskChanged` → `AgentController` → `task-update` JCEF bridge event
+- **Compaction survival**: `ContextManager.attachTaskStore(store)` + `renderTaskProgressMarkdown()` re-renders tasks into system prompt Section 2 on every rebuild
 
 ---
 
@@ -992,7 +998,7 @@ override fun dispose() {
 | Context management | `agent/src/main/kotlin/com/workflow/orchestrator/agent/loop/ContextManager.kt` |
 | Loop result types | `agent/src/main/kotlin/com/workflow/orchestrator/agent/loop/LoopResult.kt` |
 | Loop detection | `agent/src/main/kotlin/com/workflow/orchestrator/agent/loop/LoopDetector.kt` |
-| Task progress | `agent/src/main/kotlin/com/workflow/orchestrator/agent/loop/TaskProgress.kt` |
+| Task store | `agent/src/main/kotlin/com/workflow/orchestrator/agent/task/TaskStore.kt` |
 | System prompt | `agent/src/main/kotlin/com/workflow/orchestrator/agent/prompt/SystemPrompt.kt` |
 | Instruction loader | `agent/src/main/kotlin/com/workflow/orchestrator/agent/prompt/InstructionLoader.kt` |
 | Session model | `agent/src/main/kotlin/com/workflow/orchestrator/agent/session/Session.kt` |

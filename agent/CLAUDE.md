@@ -33,12 +33,12 @@ AgentController (UI entry point, owns AgentCefPanel + JCEF bridges)
   - Stage 1: Duplicate file read detection — tracks files read by path, replaces older reads with placeholder, keeps most recent read. If savings ≥ 30%, stop here.
   - Stage 2: Conversation truncation (Cline's `getNextTruncationRange`) — preserves first user-assistant exchange and last N messages, removes middle messages in even-count blocks.
   - Stage 3: LLM summarization (our addition) — summary chaining includes previous summary in next compaction, inserts summary as assistant message.
-  - Tracks active skill content, task progress, file read indices.
+  - Tracks active skill content, TaskStore reference, file read indices.
 - **LoopDetector** (`loop/LoopDetector.kt`, ~118 lines) — Detects identical consecutive tool calls. 3 identical = soft warning injected as system message. 5 identical = hard failure stops the loop.
 - **MessageStateHandler** (`session/MessageStateHandler.kt`, ~302 lines) — Two-file JSON persistence (api_conversation_history.json + ui_messages.json). Atomic file writes via write-then-rename, per-session `kotlinx.coroutines.sync.Mutex`.
 - **SessionLock** (`session/SessionLock.kt`) — `java.nio.channels.FileLock` on `.lock` file to prevent dual-instance access.
 - **ToolRegistry** (`tools/ToolRegistry.kt`, ~229 lines) — Three-tier registry: core (always sent to LLM), deferred (available via `tool_search`), active-deferred (loaded during session). Reduces per-call schema tokens from ~10K to ~4K.
-- **SystemPrompt** (`prompt/SystemPrompt.kt`, ~507 lines) — Builds the system prompt per turn. 11 sections following Cline's generic variant template: Agent Role → Task Progress → Editing Files → Act vs Plan Mode → Capabilities → Skills → Deferred Tool Catalog → Rules → System Info → Objective → Memory → User Instructions.
+- **SystemPrompt** (`prompt/SystemPrompt.kt`, ~507 lines) — Builds the system prompt per turn. 11 sections following Cline's generic variant template: Agent Role → Task Management → Editing Files → Act vs Plan Mode → Capabilities → Skills → Deferred Tool Catalog → Rules → System Info → Objective → Memory → User Instructions.
 - **InstructionLoader** (`prompt/InstructionLoader.kt`, ~453 lines) — Loads skill and agent config files from resources and disk. Handles YAML frontmatter parsing, substitution variable expansion (`$ARGUMENTS`, `$1`-`$N`, `${CLAUDE_SKILL_DIR}`). Dynamic injection via `` !`command` `` for preprocessing.
 - **SpawnAgentTool** (`tools/builtin/SpawnAgentTool.kt`) — Primary tool for spawning subagents. Only `description` and `prompt` required. Optional `name` makes agents addressable for resume/send. `subagent_type` selects built-in or custom agents. Defaults to general-purpose. Explorer type restricted to read-only tools.
 - **SubagentRunner** (`tools/subagent/SubagentRunner.kt`) — Executes subagent with isolated context and budget. `buildComposedSystemPrompt()` appends a standard "COMPLETING YOUR TASK" section (via `COMPLETING_YOUR_TASK_SECTION` constant) to every sub-agent's composed system prompt so all personas know to call `task_report`, not `attempt_completion`.
@@ -53,7 +53,7 @@ AgentController (UI entry point, owns AgentCefPanel + JCEF bridges)
 Built by `SystemPrompt.build()`, called from `AgentService` at task start and when tool set changes. 11 sections following Cline's section ordering:
 
 1. **Agent Role** — role, capabilities (IDE, debugger, integrations)
-2. **Task Progress** (optional) — Markdown checklist via `task_progress` parameter on every tool call
+2. **Task Management** (optional) — Typed task system instructions + current task list rendered from `TaskStore` (when tasks exist)
 3. **Editing Files** — edit_file vs create_file guidance, multi-change batching rules
 4. **Act vs Plan Mode** — mode descriptions, blocked tools in plan mode, switching rules
 5. **Capabilities** — core tools listing, deferred tool workflow hints, usage tips (database, sonar, project_context, render_artifact)
@@ -284,8 +284,31 @@ All context management runs through `ContextManager` — a 3-stage compaction pi
 - **Token tracking**: `lastPromptTokens` from API response, invalidated after compaction
 - **Tool output**: Full content in context. `truncateOutput()` middle-truncates at 50KB (60% head + 40% tail).
 - **Active skill**: Stored in `ContextManager`, re-injected into system prompt after compaction
-- **Task progress**: Stored in `ContextManager`, survives compaction via system prompt rebuild
+- **Task store**: `ContextManager.attachTaskStore(TaskStore)` wires the task store; current tasks rendered into system prompt Section 2 after every compaction rebuild
 - **History overwrite callback**: After compaction, `onHistoryOverwrite` persists modified conversation via `MessageStateHandler`
+
+## TaskStore + Task Tools
+
+> See `docs/plans/2026-04-18-task-system-port.md` for the port plan and `docs/research/2026-04-18-claude-code-task-system-research.md` for the design research.
+
+Four hook-exempt tools let the LLM manage typed tasks within a session:
+
+| Tool | Purpose |
+|---|---|
+| `task_create` | Create a task with title, description, optional `blocks`/`blockedBy` dependencies |
+| `task_update` | Update status (`TODO`/`IN_PROGRESS`/`DONE`/`BLOCKED`), title, or description |
+| `task_list` | Minimal summary list (id, title, status) — low token cost |
+| `task_get` | Full task detail including dependency edges |
+
+**Persistence:** `~/.workflow-orchestrator/{proj}/agent/sessions/{sessionId}/tasks.json` (atomic JSON, Mutex-guarded, same write cadence as conversation history).
+
+**Hook-exemption:** `task_create`, `task_update`, `task_list`, `task_get` bypass `PreToolUse` and `PostToolUse` hooks entirely — they are internal bookkeeping and should never trigger user approval gates.
+
+**Dependency DAG:** `blocks`/`blockedBy` fields form a directed graph. `TaskStore` enforces no-cycle invariant via DFS on every mutation.
+
+**UI push:** Each mutation emits `WorkflowEvent.TaskChanged` via `EventBus`, which `AgentController` converts to a `task-update` bridge event for the webview.
+
+**System prompt integration:** `ContextManager.attachTaskStore(store)` wires the store. `renderTaskProgressMarkdown()` serializes current tasks into Section 2 ("Task Management") on every prompt rebuild, so task state survives compaction.
 
 ## Real-Time Steering
 
@@ -344,7 +367,7 @@ try {
 - **Token estimate**: Computed after output truncation, not before, so context fill is accurate.
 - **Doom loop detection**: 3 identical consecutive tool calls = warning. 5 = hard failure.
 - **Context overflow**: Compress via `ContextManager` + REPLAY the failed request (OpenCode pattern)
-- **Task progress**: Extracted from `task_progress` parameter on every tool call (Cline's FocusChain pattern), injected via `AgentTool.injectTaskProgress()` into every tool schema
+- **Task system**: Managed via `TaskStore` (four tools: `task_create`, `task_update`, `task_list`, `task_get`). Tasks are hook-exempt (bypass PreToolUse/PostToolUse). Progress rendered into system prompt Section 2 from `ContextManager.attachTaskStore`.
 - **Dumb mode checks**: `OptimizeImportsTool` and `FormatCodeTool` check `DumbService.isDumb(project)` before operating — prevents removing used imports during indexing
 - **Session-scoped state**: `EditFileTool.lastEditLineRanges` keyed by `sessionId:canonicalPath` to prevent cross-session contamination of diagnostics edit ranges
 - **Middle-truncation**: Runtime/build/coverage tools use first-60% + last-40% truncation (via shared `truncateOutput()`) instead of head-biased `.take(N)` — preserves error messages and stack traces at end of output
