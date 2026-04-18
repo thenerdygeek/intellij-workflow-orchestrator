@@ -1431,34 +1431,35 @@ class AgentController(
     /**
      * Task progress callback — agent loop reports checklist updates.
      *
-     * The LLM's task_progress checklist (focus-chain) is the sole source of truth
-     * for execution progress. LLM-provided steps drive both the plan card and progress.
+     * The TaskStore (typed task system) is the sole source of truth for execution
+     * progress. The legacy `task_progress` markdown parameter is kept as a wake-up
+     * signal only; the UI is rebuilt from [refreshExecutionStepsFromTaskStore] using
+     * live TaskStore state, not from the incoming [progress] argument.
      *
-     * On each update, we replace the plan card's steps entirely with the LLM's
-     * checklist items. This handles the LLM adding, removing, or reordering items.
+     * Phase 6 will delete the legacy [TaskProgress] parameter and this callback will
+     * be removed entirely — the [WorkflowEvent.TaskChanged] subscription alone is
+     * sufficient to drive the execution-step widget.
      */
     private fun onTaskProgress(progress: TaskProgress) {
+        val store = service.currentTaskStore()
+        if (store != null) {
+            val tasks = store.listTasks()
+                .filter { it.status != com.workflow.orchestrator.agent.loop.TaskStatus.DELETED }
+            if (tasks.isNotEmpty()) {
+                val completed = tasks.count {
+                    it.status == com.workflow.orchestrator.agent.loop.TaskStatus.COMPLETED
+                }
+                val summary = "$completed/${tasks.size} steps completed"
+                invokeLater { dashboard.appendStatus(summary, RichStreamingPanel.StatusType.INFO) }
+                refreshExecutionStepsFromTaskStore()
+                return
+            }
+        }
+        // Fallback: no TaskStore attached (pre-session / standalone loop). Surface the
+        // legacy markdown counts so existing progress-free paths still render something.
         invokeLater {
             val summary = "${progress.completedCount}/${progress.totalCount} steps completed"
             dashboard.appendStatus(summary, RichStreamingPanel.StatusType.INFO)
-
-            // Build execution steps directly from the LLM's task_progress checklist.
-            // The first incomplete item is "running"; completed items are "completed"; rest "pending".
-            var foundFirstIncomplete = false
-            val steps = progress.items.mapIndexed { index, item ->
-                val status = when {
-                    item.completed -> PlanStepStatus.COMPLETED
-                    !foundFirstIncomplete -> { foundFirstIncomplete = true; PlanStepStatus.RUNNING }
-                    else -> PlanStepStatus.PENDING
-                }
-                PlanStep(
-                    id = (index + 1).toString(),
-                    title = item.description,
-                    status = status
-                )
-            }
-            val stepsJson = Json.encodeToString(steps)
-            dashboard.replaceExecutionSteps(stepsJson)
         }
     }
 
