@@ -3,6 +3,7 @@ import { useChatStore } from '@/stores/chatStore';
 import { kotlinBridge } from '@/bridge/jcef-bridge';
 import type { UiMessage } from '@/bridge/types';
 import { SessionStatsChips } from './SessionStatsChips';
+import { SessionTitle } from './SessionTitle';
 
 /**
  * Top bar for the agent chat — shows token budget indicator and new chat button.
@@ -13,7 +14,6 @@ export const TopBar = memo(function TopBar() {
   const tokenBudget = useChatStore(s => s.tokenBudget);
   const memoryStats = useChatStore(s => s.memoryStats);
   const busy = useChatStore(s => s.busy);
-  const sessionTitle = useChatStore(s => s.sessionTitle);
   const debugVisible = useChatStore(s => s.debugLogVisible);
   const debugEntries = useChatStore(s => s.debugLogEntries);
   const hasErrors = debugEntries.some(e => e.level === 'error');
@@ -46,8 +46,8 @@ export const TopBar = memo(function TopBar() {
       if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
       return `${n}`;
     };
-    return `${formatK(used)} / ${formatK(max)}`;
-  }, [used, max, hasTokenData]);
+    return `${fillPercent.toFixed(0)}% (${formatK(used)})`;
+  }, [used, fillPercent, hasTokenData]);
 
   const statusLabel = useMemo(() => {
     if (!hasTokenData) return '';
@@ -59,7 +59,7 @@ export const TopBar = memo(function TopBar() {
 
   return (
     <div
-      className="flex items-center justify-between px-3 py-1.5 shrink-0 select-none"
+      className="flex items-center gap-2 px-3 py-1.5 shrink-0 select-none"
       style={{
         borderBottom: '1px solid var(--border, #333)',
         background: 'var(--toolbar-bg, var(--bg, #1e1e1e))',
@@ -69,6 +69,13 @@ export const TopBar = memo(function TopBar() {
       <div className="flex items-center gap-2 min-w-0">
         {hasTokenData ? (
           <div className="flex items-center gap-1.5" title={`Context: ${used.toLocaleString()} / ${max.toLocaleString()} tokens (${fillPercent.toFixed(1)}%)`}>
+            {/* Label */}
+            <span
+              className="text-[10px] font-medium uppercase tracking-wider"
+              style={{ color: 'var(--fg-muted, #6b7280)' }}
+            >
+              Context
+            </span>
             {/* Mini progress bar */}
             <div
               className="relative h-1.5 rounded-full overflow-hidden"
@@ -85,7 +92,7 @@ export const TopBar = memo(function TopBar() {
                 }}
               />
             </div>
-            {/* Token count text */}
+            {/* Percent + utilised context */}
             <span
               className="text-[10px] font-medium tabular-nums whitespace-nowrap"
               style={{ color: tokenColor }}
@@ -188,19 +195,17 @@ export const TopBar = memo(function TopBar() {
         )}
       </div>
 
-      {/* Center: Session title */}
-      {sessionTitle && (
-        <span
-          className="text-[11px] font-medium truncate max-w-[200px]"
-          style={{ color: 'var(--fg-secondary, #9ca3af)' }}
-          title={sessionTitle}
-        >
-          {sessionTitle}
-        </span>
-      )}
+      {/* Center: Session title — flex-1 so it takes whatever space is left
+          between the left chip group and the right action group. min-w-0 lets
+          it shrink past its content width so the truncate kicks in.
+          SessionTitle plays a scramble animation when Haiku replaces the title
+          after a task completes. */}
+      <div className="flex-1 min-w-0 flex justify-center px-2">
+        <SessionTitle />
+      </div>
 
       {/* Right: Debug toggle + View in Editor + New chat button */}
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1 shrink-0">
       <SessionStatsChips />
       <button
         onClick={() => useChatStore.getState().setDebugLogVisible(!debugVisible)}

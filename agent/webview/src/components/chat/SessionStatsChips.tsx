@@ -16,24 +16,6 @@ export const SessionStatsChips = memo(function SessionStatsChips() {
 
   return (
     <div className="flex items-center gap-1.5">
-      {stats.modelId && (
-        <span
-          className="text-[10px] font-medium px-1.5 py-0.5 rounded"
-          style={{
-            color: 'var(--fg-muted, #6b7280)',
-            border: '1px solid var(--border, #333)',
-            maxWidth: '80px',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            display: 'inline-block',
-          }}
-          title={stats.modelId}
-        >
-          ◎ {stats.modelId}
-        </span>
-      )}
-
       {(stats.tokensIn > 0 || stats.tokensOut > 0) && (
         <span
           className="text-[10px] tabular-nums"
