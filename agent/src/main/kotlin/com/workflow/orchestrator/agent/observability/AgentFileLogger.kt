@@ -130,6 +130,7 @@ class AgentFileLogger(private val logDir: File) {
         sessionId: String,
         reason: String,
         iteration: Int,
+        failureType: com.workflow.orchestrator.core.model.FailureType? = null,
     ) {
         write(
             LogEntry(
@@ -138,6 +139,7 @@ class AgentFileLogger(private val logDir: File) {
                 event = "retry",
                 iteration = iteration,
                 error = reason.take(500),
+                failureType = failureType?.name,
             )
         )
     }
@@ -163,6 +165,7 @@ class AgentFileLogger(private val logDir: File) {
         totalTokens: Int,
         durationMs: Long,
         error: String? = null,
+        failureType: com.workflow.orchestrator.core.model.FailureType? = null,
     ) {
         write(
             LogEntry(
@@ -173,6 +176,7 @@ class AgentFileLogger(private val logDir: File) {
                 tokens = totalTokens,
                 durationMs = durationMs,
                 error = error?.take(500),
+                failureType = failureType?.name,
             )
         )
     }
@@ -273,5 +277,6 @@ class AgentFileLogger(private val logDir: File) {
         val tokensAfter: Int? = null,
         val finishReason: String? = null,
         val toolsCalled: List<String>? = null,
+        val failureType: String? = null,
     )
 }

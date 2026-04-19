@@ -118,6 +118,41 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
 
         // Multi-repo configuration
         var repos by list<RepoConfig>()
+
+        // ── Raw API trace (diagnostic feature) ──────────────────────────────
+        // Controls verbatim LLM traffic capture. These fields are read at startup by
+        // RawApiTraceConfig to prime the singleton state. A settings UI page may be
+        // added in a later phase — for now these can be toggled programmatically or
+        // via the registry XML if needed.
+
+        /** Master enable switch — when false, no trace files are written. */
+        var rawApiTraceEnabled by property(false)
+
+        /** Trace mode: "OFF", "ALWAYS_ON", or "BURST". */
+        var rawApiTraceMode by string("OFF")
+
+        /** How many days to keep dated raw-api trace directories on disk. */
+        var rawApiTraceRetentionDays by property(3)
+
+        /** Maximum size of each captured request/response body in megabytes. */
+        var rawApiTraceMaxBodyMb by property(10)
+
+        /**
+         * When true, request bodies are passed through CredentialRedactor before writing.
+         * Off by default — prompts ARE the diagnostic data.
+         */
+        var rawTraceRedactPromptSecrets by property(false)
+
+        // ── Telemetry & Logs settings ─────────────────────────────────────────────
+        var logLevel by string("INFO")
+        var diagnosticJsonlEnabled by property(true)
+        var retentionDays by property(7)
+        var includeCommandOutputInLogs by property(false)
+        var costDisplayEnabled by property(true)
+
+        // ── Insights: weekly digest ───────────────────────────────────────────────
+        /** When true, a report is auto-generated every Monday morning at startup. */
+        var weeklyDigestEnabled by property(false)
     }
 
     /**

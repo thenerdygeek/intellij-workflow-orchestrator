@@ -30,6 +30,7 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
+import com.workflow.orchestrator.core.model.ModelPricingRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -338,6 +339,16 @@ class AgentLoop(
      * bubble shows "Implementation plan approved" rather than raw XML instruction text.
      */
     private val onUserInputReceived: ((task: String) -> UiMessage?)? = null,
+    /**
+     * Optional callback fired after each API call with cumulative session stats.
+     * Used by the UI to show model chip, token counts, and estimated cost in the TopBar.
+     *
+     * @param modelId     the raw model ID of the current brain
+     * @param tokensIn    cumulative prompt tokens for this loop run
+     * @param tokensOut   cumulative completion tokens for this loop run
+     * @param costUsd     cumulative estimated cost in USD, or null if model not in pricing table
+     */
+    private val onSessionStats: ((modelId: String, tokensIn: Long, tokensOut: Long, costUsd: Double?) -> Unit)? = null,
 ) {
     private val cancelled = AtomicBoolean(false)
     private var totalTokensUsed = 0
@@ -345,6 +356,8 @@ class AgentLoop(
     private var totalInputTokens = 0
     /** Cumulative output (completion) tokens across all API calls in this loop. */
     private var totalOutputTokens = 0
+    /** Cumulative estimated cost in USD across all API calls in this loop. Null when model is not in pricing table. */
+    private var totalCostUsd: Double? = null
 
     /** Files modified during this loop run (from tool artifacts). Gap 1+14: file tracking. */
     private val modifiedFiles = mutableSetOf<String>()
@@ -500,6 +513,8 @@ class AgentLoop(
         )
 
         contextManager.addUserMessage(withEnvDetails(task))
+        sessionMetrics?.initTimers()
+        sessionMetrics?.recordUserTurn()
 
         var iteration = 0
         /** Tracks the last accumulated assistant text across iterations for abort persistence. */
@@ -535,6 +550,7 @@ class AgentLoop(
         while (!cancelled.get() && iteration < maxIterations) {
             iteration++
             val iterationStartTime = System.currentTimeMillis()
+            sessionMetrics?.recordIterationStart()
             LOG.info("[Loop] Iteration $iteration -- ${contextManager.messageCount()} messages, ${"%.1f".format(contextManager.utilizationPercent())}% context")
 
             // Stage 0: Compact if needed
@@ -733,6 +749,7 @@ class AgentLoop(
                             val revertModel = fallbackManager.onEscalationFailed()
                             brain = brainFactory.invoke(revertModel, "Fallback escalation failed — reverting from $oldModel to $revertModel")
                             onModelSwitch?.invoke(oldModel, revertModel, "Escalation failed — reverting")
+                            sessionMetrics?.recordModelSwitch(oldModel, revertModel, "Escalation failed — reverting")
                             LOG.info("[Loop] Escalation failed, reverting: $oldModel → $revertModel")
                             pendingEscalation = false
                             // Tier swap: resync L2 index + refill recycle budget for the new tier
@@ -745,6 +762,7 @@ class AgentLoop(
                             if (nextModel != null) {
                                 brain = brainFactory.invoke(nextModel, "Network error on $oldModel: ${apiResult.type.name} — falling back to $nextModel")
                                 onModelSwitch?.invoke(oldModel, nextModel, "Network error — falling back")
+                                sessionMetrics?.recordModelSwitch(oldModel, nextModel, "Network error — falling back")
                                 LOG.info("[Loop] Model fallback: $oldModel → $nextModel")
                                 // Tier swap: resync L2 index + refill recycle budget for the new tier
                                 l2TierIdx = cachedFallbackChain?.indexOf(nextModel) ?: -1
@@ -786,6 +804,7 @@ class AgentLoop(
                         // indicator (amber border + Zap icon) with the recycle reason as tooltip,
                         // matching the existing onModelSwitch convention.
                         onModelSwitch?.invoke(sameModel, sameModel, "Brain recycled #$sameTierRecycles — fresh OkHttp pool (${apiResult.type.name})")
+                        sessionMetrics?.recordModelSwitch(sameModel, sameModel, "Brain recycled #$sameTierRecycles — fresh OkHttp pool (${apiResult.type.name})")
                         brainSwapAttempted = true
                     }
 
@@ -820,6 +839,7 @@ class AgentLoop(
                         ))
                         brain = brainFactory.invoke(newTierModel, reason)
                         onModelSwitch?.invoke(oldModel, newTierModel, "Same-tier recovery exhausted — escalating tier")
+                        sessionMetrics?.recordModelSwitch(oldModel, newTierModel, "Same-tier recovery exhausted — escalating tier")
                         sameTierRecycles = 0  // reset budget for the new tier
                         brainSwapAttempted = true
                     }
@@ -880,6 +900,7 @@ class AgentLoop(
                     val oldModel = brain.modelId
                     brain = brainFactory.invoke(escalationModel, "Fallback cooldown elapsed — escalating from $oldModel to $escalationModel")
                     onModelSwitch?.invoke(oldModel, escalationModel, "Escalating back")
+                    sessionMetrics?.recordModelSwitch(oldModel, escalationModel, "Escalating back")
                     LOG.info("[Loop] Model escalation: $oldModel → $escalationModel")
                     pendingEscalation = true
                     // Tier swap: resync L2 index for the new tier
@@ -941,14 +962,40 @@ class AgentLoop(
 
             // Stage 4: Add assistant message to context
             contextManager.addAssistantMessage(assistantMessage)
+            sessionMetrics?.recordResponseTime()
 
             // Persist assistant message to api_conversation_history (Cline pattern).
+            val cacheReadToks = response.usage?.cacheReadTokens ?: 0
+            val cacheCreationToks = response.usage?.cacheCreationTokens ?: 0
+            // Sourcegraph currently strips cache_control headers; cacheReadToks/cacheCreationToks will be 0
+            // until the API starts forwarding Anthropic's cache-usage fields.
+            val pricingEntry = ModelPricingRegistry.lookup(brain.modelId)
+            val apiCallCost = pricingEntry?.computeCost(
+                inputTokens = promptTokens,
+                outputTokens = completionTokens,
+                cacheReadTokens = cacheReadToks,
+                cacheWriteTokens = cacheCreationToks,
+            )
+
+            // Accumulate session cost — null stays null when model has no pricing entry,
+            // otherwise add to running total (starting from 0.0 on first priced call).
+            if (apiCallCost != null) {
+                totalCostUsd = (totalCostUsd ?: 0.0) + apiCallCost
+            }
+            onSessionStats?.invoke(brain.modelId, totalInputTokens.toLong(), totalOutputTokens.toLong(), totalCostUsd)
+
             messageStateHandler?.addToApiConversationHistory(ApiMessage(
                 role = ApiRole.ASSISTANT,
                 content = buildApiContentBlocks(assistantMessage),
                 ts = System.currentTimeMillis(),
                 modelInfo = ModelInfo(modelId = brain.modelId),
-                metrics = ApiRequestMetrics(inputTokens = promptTokens, outputTokens = completionTokens)
+                metrics = ApiRequestMetrics(
+                    inputTokens = promptTokens,
+                    outputTokens = completionTokens,
+                    cost = apiCallCost,
+                    cacheReadTokens = cacheReadToks,
+                    cacheCreationTokens = cacheCreationToks,
+                ),
             ))
 
             val hasToolCalls = !assistantMessage.toolCalls.isNullOrEmpty()
@@ -1527,6 +1574,7 @@ class AgentLoop(
                     // COMPLETION_RESULT already persisted at Site 1 (when toolName switch above).
                     onDebugLog?.invoke("info", "loop_exit", "Exit: $toolName", mapOf("iteration" to iteration))
                     toolResult.completionData?.let { sessionMetrics?.recordCompletion(it.kind) }
+                    sessionMetrics?.recordIterationEnd()
                     return LoopResult.Completed(
                         summary = toolResult.content,
                         iterations = iteration,
@@ -1542,6 +1590,7 @@ class AgentLoop(
                 is ToolResultType.SessionHandoff -> {
                     val handoff = toolResult.type
                     onDebugLog?.invoke("info", "loop_exit", "Exit: new_task_session_handoff", mapOf("iteration" to iteration))
+                    sessionMetrics?.recordIterationEnd()
                     return LoopResult.SessionHandoff(
                         context = handoff.context,
                         iterations = iteration,
@@ -1573,6 +1622,7 @@ class AgentLoop(
                 is ToolResultType.PlanModeToggle -> {
                     LOG.info("[Loop] Plan mode enabled by LLM via enable_plan_mode tool")
                     onPlanModeToggle?.invoke(true)
+                    sessionMetrics?.recordPlanModeToggle(true)
                 }
                 is ToolResultType.PlanDiscarded -> {
                     LOG.info("[Loop] Plan discarded by LLM via discard_plan tool")

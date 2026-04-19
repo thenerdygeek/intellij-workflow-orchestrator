@@ -63,5 +63,7 @@ declare global {
     _setTasks?: (tasks: Task[]) => void;
     _appendCompletionCard?: (json: string) => void;
     _openApprovedPlan?: () => void;
+    _receiveSessionStats?: (json: string) => void;
+    _openInsightsTab?: () => void;
   }
 }

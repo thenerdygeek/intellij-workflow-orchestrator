@@ -47,5 +47,9 @@ data class Choice(
 data class UsageInfo(
     @SerialName("prompt_tokens") val promptTokens: Int,
     @SerialName("completion_tokens") val completionTokens: Int,
-    @SerialName("total_tokens") val totalTokens: Int
+    @SerialName("total_tokens") val totalTokens: Int,
+    // Anthropic prompt-cache fields (Sourcegraph currently strips cache_control;
+    // these will be 0 unless the API starts forwarding them).
+    @SerialName("cache_read_input_tokens") val cacheReadTokens: Int = 0,
+    @SerialName("cache_creation_input_tokens") val cacheCreationTokens: Int = 0,
 )

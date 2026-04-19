@@ -1210,6 +1210,7 @@ class AgentController(
             onCheckpointSaved = ::onCheckpointSaved,
             onSubagentProgress = ::onSubagentProgress,
             onTokenUpdate = ::onTokenUpdate,
+            onSessionStats = ::onSessionStats,
             onDebugLog = if (debugEnabled) { level, event, detail, meta ->
                 dashboard.pushDebugLogEntry(level, event, detail, meta)
             } else null,
@@ -1459,6 +1460,12 @@ class AgentController(
             val maxTokens = AgentSettings.getInstance(project).state.maxInputTokens
             // promptTokens = current context window usage (what matters for the progress bar)
             dashboard.updateProgress("", promptTokens, maxTokens)
+        }
+    }
+
+    private fun onSessionStats(modelId: String, tokensIn: Long, tokensOut: Long, costUsd: Double?) {
+        invokeLater {
+            dashboard.updateSessionStats(modelId, tokensIn, tokensOut, costUsd)
         }
     }
 
@@ -2129,6 +2136,7 @@ class AgentController(
             onCheckpointSaved = ::onCheckpointSaved,
             onSubagentProgress = ::onSubagentProgress,
             onTokenUpdate = ::onTokenUpdate,
+            onSessionStats = ::onSessionStats,
             onDebugLog = if (debugEnabled) { level, event, detail, meta ->
                 dashboard.pushDebugLogEntry(level, event, detail, meta)
             } else null,

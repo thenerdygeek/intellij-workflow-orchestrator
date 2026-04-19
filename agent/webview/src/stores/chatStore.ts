@@ -150,6 +150,14 @@ interface ChatState {
   queuedSteeringMessages: { id: string; text: string; timestamp: number }[];
   restoredInputText: string | null;
 
+  // Session stats chips (model, tokens, cost)
+  sessionStats: {
+    modelId: string | null;
+    tokensIn: number;
+    tokensOut: number;
+    estimatedCostUsd: number | null;
+  } | null;
+
   // History view state
   viewMode: 'history' | 'chat';
   historyItems: HistoryItem[];
@@ -253,6 +261,10 @@ interface ChatState {
   restoreInputText(text: string): void;
   clearRestoredInputText(): void;
 
+  // Session stats actions
+  updateSessionStats(stats: { modelId: string | null; tokensIn: number; tokensOut: number; estimatedCostUsd: number | null }): void;
+  clearSessionStats(): void;
+
   // Artifact Actions
   addArtifact(payload: string): void;
 
@@ -331,6 +343,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   planCompletedPendingClear: false,
   queuedSteeringMessages: [],
   restoredInputText: null,
+  sessionStats: null,
   viewMode: 'chat' as const,
   historyItems: [],
   historySearch: '',
@@ -367,6 +380,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       queuedSteeringMessages: [],
       restoredInputText: null,
       tasks: [],
+      sessionStats: null,
       viewMode: 'chat' as const,
       session: {
         status: 'RUNNING',
@@ -720,6 +734,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       questionSummary: null,
       retryState: null,
       tasks: [],
+      sessionStats: null,
       viewMode: 'chat',
       resumeSessionId: null,
     });
@@ -1627,6 +1642,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setResumeSessionId(sessionId: string | null) {
     set({ resumeSessionId: sessionId });
+  },
+
+  // ── Session Stats Actions ──
+  updateSessionStats(stats) {
+    set({ sessionStats: stats });
+  },
+
+  clearSessionStats() {
+    set({ sessionStats: null });
   },
 
   // ── Task Actions (task system port — Phase 5) ──

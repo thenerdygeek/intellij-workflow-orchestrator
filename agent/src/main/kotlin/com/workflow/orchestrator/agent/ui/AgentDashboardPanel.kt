@@ -175,6 +175,10 @@ class AgentDashboardPanel(
         broadcast(replay = false) { it.updateProgress(step, tokensUsed, maxTokens) }
     }
 
+    fun updateSessionStats(modelId: String?, tokensIn: Long, tokensOut: Long, costUsd: Double?) {
+        runOnEdt { cefPanel?.updateSessionStats(modelId, tokensIn, tokensOut, costUsd) }
+    }
+
     /**
      * Push current memory stats (core memory total chars + archival entry count) to the
      * TopBar memory indicator in the chat UI. Clicking the indicator opens Settings.

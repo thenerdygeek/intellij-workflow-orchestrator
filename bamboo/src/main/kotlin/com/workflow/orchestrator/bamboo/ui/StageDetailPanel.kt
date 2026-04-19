@@ -13,8 +13,7 @@ import com.intellij.execution.testframework.sm.SMTestRunnerConnectionUtil
 import com.intellij.execution.testframework.sm.runner.SMTRunnerConsoleProperties
 import com.intellij.execution.testframework.sm.runner.SMTestLocator
 import com.intellij.ide.BrowserUtil
-import com.intellij.notification.NotificationGroupManager
-import com.intellij.notification.NotificationType
+import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.intellij.openapi.editor.ScrollType
 import com.intellij.openapi.editor.markup.HighlighterLayer
 import com.intellij.openapi.editor.markup.HighlighterTargetArea
@@ -489,23 +488,20 @@ class StageDetailPanel(
         scope.launch {
             val result = bambooService.downloadArtifact(artifact.downloadUrl, targetFile)
             invokeLater {
+                val ns = WorkflowNotificationService.getInstance(project)
                 if (result.data) {
-                    NotificationGroupManager.getInstance()
-                        .getNotificationGroup("Workflow Orchestrator")
-                        .createNotification(
-                            "Downloaded ${artifact.name} to ${targetFile.parentFile.absolutePath}",
-                            NotificationType.INFORMATION
-                        )
-                        .notify(project)
+                    ns.notifyInfo(
+                        WorkflowNotificationService.GROUP_BUILD,
+                        "Artifact Downloaded",
+                        "Downloaded ${artifact.name} to ${targetFile.parentFile.absolutePath}"
+                    )
                     log.info("[Build:Artifacts] Downloaded ${artifact.name} to ${targetFile.absolutePath}")
                 } else {
-                    NotificationGroupManager.getInstance()
-                        .getNotificationGroup("Workflow Orchestrator")
-                        .createNotification(
-                            "Failed to download ${artifact.name}: ${result.summary}",
-                            NotificationType.ERROR
-                        )
-                        .notify(project)
+                    ns.notifyError(
+                        WorkflowNotificationService.GROUP_BUILD,
+                        "Artifact Download Failed",
+                        "Failed to download ${artifact.name}: ${result.summary}"
+                    )
                 }
             }
         }

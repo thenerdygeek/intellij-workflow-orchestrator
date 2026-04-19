@@ -34,6 +34,9 @@ class WorkflowNotificationService(private val project: Project) {
     companion object {
         const val GROUP_BUILD = "workflow.build"
         const val GROUP_QUALITY = "workflow.quality"
+        const val GROUP_JIRA = "workflow.jira"
+        const val GROUP_AGENT = "workflow.agent"
+        const val GROUP_PR = "workflow.pr"
 
         fun getInstance(project: Project): WorkflowNotificationService {
             return project.getService(WorkflowNotificationService::class.java)

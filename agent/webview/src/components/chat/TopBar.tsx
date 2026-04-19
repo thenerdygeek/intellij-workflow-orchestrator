@@ -2,6 +2,7 @@ import { memo, useMemo } from 'react';
 import { useChatStore } from '@/stores/chatStore';
 import { kotlinBridge } from '@/bridge/jcef-bridge';
 import type { UiMessage } from '@/bridge/types';
+import { SessionStatsChips } from './SessionStatsChips';
 
 /**
  * Top bar for the agent chat — shows token budget indicator and new chat button.
@@ -200,6 +201,7 @@ export const TopBar = memo(function TopBar() {
 
       {/* Right: Debug toggle + View in Editor + New chat button */}
       <div className="flex items-center gap-1">
+      <SessionStatsChips />
       <button
         onClick={() => useChatStore.getState().setDebugLogVisible(!debugVisible)}
         className="flex items-center rounded px-1 py-0.5 transition-colors hover:bg-[var(--hover-overlay)]"

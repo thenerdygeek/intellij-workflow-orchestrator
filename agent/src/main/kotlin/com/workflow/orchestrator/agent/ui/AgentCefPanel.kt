@@ -11,6 +11,7 @@ import com.intellij.ui.jcef.JBCefJSQuery
 import com.intellij.util.ui.UIUtil
 import com.workflow.orchestrator.agent.tools.CompletionData
 import com.workflow.orchestrator.agent.util.JsEscape
+import com.workflow.orchestrator.core.model.ModelIdNormalizer
 import kotlinx.serialization.encodeToString
 import org.cef.browser.CefBrowser
 import org.cef.handler.CefLoadHandlerAdapter
@@ -118,6 +119,7 @@ class AgentCefPanel(
     private var requestHistoryQuery: JBCefJSQuery? = null
     private var resumeViewedSessionQuery: JBCefJSQuery? = null
     private var copyToClipboardQuery: JBCefJSQuery? = null
+    private var openInsightsTabQuery: JBCefJSQuery? = null
     var mentionSearchProvider: MentionSearchProvider? = null
     var onSendMessageWithMentions: ((String, String) -> Unit)? = null  // (text, mentionsJson)
 
@@ -253,6 +255,9 @@ class AgentCefPanel(
     var onRequestHistory: (() -> Unit)? = null
     /** Callback when user clicks "Resume" in the resume bar. */
     var onResumeViewedSession: (() -> Unit)? = null
+
+    /** Callback when user clicks the cost chip to open the Insights tab. */
+    var onOpenInsightsTab: (() -> Unit)? = null
 
     /**
      * Fired after the page is fully loaded and all bridges are injected.
@@ -495,6 +500,12 @@ class AgentCefPanel(
             com.workflow.orchestrator.core.ui.ClipboardUtil.copyToClipboard(text)
             JBCefJSQuery.Response("ok")
         }
+        openInsightsTabQuery = registerQuery(b) { _ ->
+            // TODO Phase 1.1: navigate to Insights tab
+            LOG.info("openInsightsTab requested from agent chat")
+            onOpenInsightsTab?.invoke()
+            JBCefJSQuery.Response("ok")
+        }
 
         // Wait for page load before executing JS
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
@@ -584,6 +595,7 @@ class AgentCefPanel(
                     injectBridge("_requestHistory") { requestHistoryQuery?.let { q -> js("window._requestHistory = function() { ${q.inject("''")} }") } }
                     injectBridge("_resumeViewedSession") { resumeViewedSessionQuery?.let { q -> js("window._resumeViewedSession = function() { ${q.inject("''")} }") } }
                     injectBridge("_copyToClipboard") { copyToClipboardQuery?.let { q -> js("window._copyToClipboard = function(text) { ${q.inject("text")} }") } }
+                    injectBridge("_openInsightsTab") { openInsightsTabQuery?.let { q -> js("window._openInsightsTab = function() { ${q.inject("'insights'")} }") } }
 
                     if (bridgeFailures > 0) {
                         LOG.error("AgentCefPanel: $bridgeFailures bridge injection(s) FAILED — some JS→Kotlin callbacks may be missing")
@@ -1150,6 +1162,17 @@ class AgentCefPanel(
 
     fun hideResumeBar() {
         callJs("hideResumeBar()")
+    }
+
+    fun updateSessionStats(modelId: String?, tokensIn: Long, tokensOut: Long, costUsd: Double?) {
+        val normalizedModel = modelId?.let { ModelIdNormalizer.normalize(it) }
+        val json = buildJsonObject {
+            if (normalizedModel != null) put("modelId", normalizedModel) else put("modelId", JsonNull)
+            put("tokensIn", tokensIn)
+            put("tokensOut", tokensOut)
+            if (costUsd != null) put("estimatedCostUsd", costUsd) else put("estimatedCostUsd", JsonNull)
+        }.toString()
+        callJs("window._receiveSessionStats && window._receiveSessionStats(${JsEscape.toJsString(json)})")
     }
 
     // ═══════════════════════════════════════════════════

@@ -854,6 +854,11 @@ class AgentService(private val project: Project) : Disposable {
          */
         onTokenUpdate: ((inputTokens: Int, outputTokens: Int) -> Unit)? = null,
         /**
+         * Optional callback fired after each API call with cumulative session stats.
+         * Used by the UI to show the model chip, token counts, and estimated cost in the TopBar.
+         */
+        onSessionStats: ((modelId: String, tokensIn: Long, tokensOut: Long, costUsd: Double?) -> Unit)? = null,
+        /**
          * Optional callback for real-time debug log entries.
          * Pushed to the JCEF debug panel when showDebugLog setting is enabled.
          */
@@ -1318,6 +1323,7 @@ class AgentService(private val project: Project) : Disposable {
                     hookManager = if (hookManager.hasAnyHooks()) hookManager else null,
                     sessionId = sid,
                     onTokenUpdate = onTokenUpdate,
+                    onSessionStats = onSessionStats,
                     onPlanResponse = onPlanResponse,
                     onPlanModeToggle = { enabled ->
                         planModeActive.set(enabled)
@@ -1556,6 +1562,7 @@ class AgentService(private val project: Project) : Disposable {
         onCheckpointSaved: ((sessionId: String) -> Unit)? = null,
         onSubagentProgress: ((agentId: String, update: SubagentProgressUpdate) -> Unit)? = null,
         onTokenUpdate: ((inputTokens: Int, outputTokens: Int) -> Unit)? = null,
+        onSessionStats: ((modelId: String, tokensIn: Long, tokensOut: Long, costUsd: Double?) -> Unit)? = null,
         onDebugLog: ((level: String, event: String, detail: String, meta: Map<String, Any?>?) -> Unit)? = null,
         onSessionStarted: ((sessionId: String) -> Unit)? = null,
         steeringQueue: java.util.concurrent.ConcurrentLinkedQueue<SteeringMessage>? = null,
@@ -1714,6 +1721,7 @@ class AgentService(private val project: Project) : Disposable {
                 onCheckpointSaved = onCheckpointSaved,
                 onSubagentProgress = onSubagentProgress,
                 onTokenUpdate = onTokenUpdate,
+                onSessionStats = onSessionStats,
                 onDebugLog = onDebugLog,
                 onSessionStarted = onSessionStarted,
                 steeringQueue = steeringQueue,

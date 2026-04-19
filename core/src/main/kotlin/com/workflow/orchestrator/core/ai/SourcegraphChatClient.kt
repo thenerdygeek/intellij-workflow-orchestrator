@@ -6,6 +6,9 @@ import com.workflow.orchestrator.core.ai.dto.ListModelsResponse
 import com.workflow.orchestrator.core.http.AuthInterceptor
 import com.workflow.orchestrator.core.http.AuthScheme
 import com.workflow.orchestrator.core.http.ChatHttpEventListener
+import com.workflow.orchestrator.core.http.PreSanitizeDumper
+import com.workflow.orchestrator.core.http.RawApiTraceConfig
+import com.workflow.orchestrator.core.http.RawApiTraceInterceptor
 import com.workflow.orchestrator.core.http.RetryInterceptor
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
@@ -13,6 +16,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.serialization.encodeToString
@@ -83,6 +88,30 @@ class SourcegraphChatClient(
          * LLM calls and client recreation on model fallback.
          */
         private val xmlToolIdCounter = AtomicInteger(0)
+
+        /**
+         * Per-process counter for raw trace request IDs.
+         * Format: `HHmmss-{counter:03d}` — human-sortable, unique per second.
+         */
+        private val traceReqIdCounter = AtomicInteger(0)
+        private val TRACE_TIME_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("HHmmss")
+    }
+
+    /**
+     * Base project directory used to resolve the raw-API trace output location.
+     * Set by the caller (e.g., AgentService) when a session is active.
+     * When null, trace files are not written even if [RawApiTraceConfig.shouldTrace] is true.
+     */
+    @Volatile var agentLogsDir: java.io.File? = null
+
+    /**
+     * Generate a human-sortable trace request ID: `HHmmss-{counter:03d}`.
+     * The counter is process-wide so IDs are unique even across parallel clients.
+     */
+    private fun nextTraceReqId(): String {
+        val time = LocalTime.now().format(TRACE_TIME_FMT)
+        val n = traceReqIdCounter.incrementAndGet()
+        return "$time-${n.toString().padStart(3, '0')}"
     }
 
     // Uses longer read timeout (120s) than default (30s) because LLM calls are slow.
@@ -99,6 +128,17 @@ class SourcegraphChatClient(
             .eventListener(ChatHttpEventListener())
             .addInterceptor(AuthInterceptor(tokenProvider, AuthScheme.TOKEN))
             .addInterceptor(RetryInterceptor())
+            .addInterceptor(RawApiTraceInterceptor(
+                config = RawApiTraceConfig,
+                traceDir = {
+                    // Resolve lazily so it picks up the current agentLogsDir at call time.
+                    agentLogsDir?.let { dir -> RawApiTraceConfig.traceDir(dir) }
+                        ?: java.io.File(
+                            System.getProperty("user.home"),
+                            ".workflow-orchestrator/trace-fallback"
+                        ).also { it.mkdirs() }
+                }
+            ))
             .build()
     }
 
@@ -308,6 +348,14 @@ class SourcegraphChatClient(
         knownParamNames: Set<String> = emptySet()
     ): ApiResult<ChatCompletionResponse> = withContext(Dispatchers.IO) {
         try {
+            // Generate a trace reqId before sanitization so PreSanitizeDumper and the
+            // interceptor (which reads the X-Workflow-Trace-Id header) share the same ID.
+            val traceReqId = nextTraceReqId()
+            val traceDirNow = agentLogsDir?.let { RawApiTraceConfig.traceDir(it) }
+            if (RawApiTraceConfig.shouldTrace() && traceDirNow != null) {
+                PreSanitizeDumper.dump(messages, traceReqId, traceDirNow)
+            }
+
             val sanitized = sanitizeMessages(messages)
             val request = ChatCompletionRequest(
                 model = model,
@@ -329,6 +377,8 @@ class SourcegraphChatClient(
             val httpRequest = Request.Builder()
                 .url(chatCompletionsUrl())
                 .post(jsonBody.toRequestBody("application/json".toMediaType()))
+                .header(RawApiTraceInterceptor.TRACE_HEADER, traceReqId)
+                .tag(String::class.java, traceReqId)
                 .build()
 
             val call = httpClient.newCall(httpRequest)
@@ -551,6 +601,14 @@ class SourcegraphChatClient(
         knownParamNames: Set<String> = emptySet()
     ): ApiResult<ChatCompletionResponse> = withContext(Dispatchers.IO) {
         try {
+            // Generate trace reqId before sanitization — correlates pre-sanitize dump
+            // with the interceptor's request/response files via X-Workflow-Trace-Id header.
+            val traceReqId = nextTraceReqId()
+            val traceDirNow = agentLogsDir?.let { RawApiTraceConfig.traceDir(it) }
+            if (RawApiTraceConfig.shouldTrace() && traceDirNow != null) {
+                PreSanitizeDumper.dump(messages, traceReqId, traceDirNow)
+            }
+
             val sanitized = sanitizeMessages(messages)
             val request = ChatCompletionRequest(
                 model = model,
@@ -570,6 +628,8 @@ class SourcegraphChatClient(
             val httpRequest = Request.Builder()
                 .url(chatCompletionsUrl())
                 .post(jsonBody.toRequestBody("application/json".toMediaType()))
+                .header(RawApiTraceInterceptor.TRACE_HEADER, traceReqId)
+                .tag(String::class.java, traceReqId)
                 .build()
 
             val call = httpClient.newCall(httpRequest)

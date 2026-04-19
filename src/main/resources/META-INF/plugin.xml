@@ -40,6 +40,10 @@
             qualifiedName="com.workflow.orchestrator.agentChatRedirect"
             interface="com.workflow.orchestrator.core.ai.AgentChatRedirect"
             dynamic="true"/>
+        <extensionPoint
+            qualifiedName="com.workflow.orchestrator.sessionHistoryReader"
+            interface="com.workflow.orchestrator.core.services.SessionHistoryReader"
+            dynamic="true"/>
     </extensionPoints>
 
     <extensions defaultExtensionNs="com.intellij">
@@ -81,6 +85,13 @@
 
         <projectConfigurable
             parentId="workflow.orchestrator"
+            instance="com.workflow.orchestrator.core.settings.TelemetryConfigurable"
+            id="workflow.orchestrator.telemetry"
+            displayName="Telemetry &amp; Logs"
+            nonDefaultProject="true"/>
+
+        <projectConfigurable
+            parentId="workflow.orchestrator"
             instance="com.workflow.orchestrator.bamboo.settings.BuildsAndHealthChecksConfigurable"
             id="workflow.orchestrator.builds_health"
             displayName="Builds &amp; Health Checks"
@@ -103,6 +114,7 @@
         <!-- Notification Groups -->
         <notificationGroup id="workflow.build" displayType="BALLOON"/>
         <notificationGroup id="workflow.quality" displayType="BALLOON"/>
+        <notificationGroup id="workflow.jira" displayType="BALLOON"/>
         <notificationGroup id="workflow.queue" displayType="BALLOON"/>
         <notificationGroup id="workflow.automation" displayType="BALLOON"/>
         <notificationGroup id="workflow.autodetect"
@@ -251,6 +263,8 @@
 
         <!-- Agent Module -->
         <notificationGroup id="workflow.agent" displayType="BALLOON"/>
+        <!-- Insights Module -->
+        <notificationGroup id="workflow.insights" displayType="BALLOON"/>
         <projectService
             serviceImplementation="com.workflow.orchestrator.agent.settings.AgentSettings"/>
         <projectService
@@ -291,6 +305,8 @@
             nonDefaultProject="true"/>
         <postStartupActivity
             implementation="com.workflow.orchestrator.agent.listeners.AgentStartupActivity"/>
+        <postStartupActivity
+            implementation="com.workflow.orchestrator.core.insights.WeeklyDigestStartupActivity"/>
         <projectService
             serviceImplementation="com.workflow.orchestrator.agent.database.DatabaseSettings"/>
         <fileEditorProvider
@@ -338,6 +354,8 @@
         <tabProvider implementation="com.workflow.orchestrator.automation.ui.AutomationTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.handover.ui.HandoverTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.agent.ui.AgentTabProvider"/>
+        <tabProvider implementation="com.workflow.orchestrator.core.toolwindow.insights.InsightsTabProvider"/>
+        <sessionHistoryReader implementation="com.workflow.orchestrator.agent.insights.AgentSessionHistoryReader"/>
     </extensions>
 
     <applicationListeners>
@@ -358,6 +376,13 @@
             text="Agent Tool Testing"
             description="Open interactive agent tool testing harness"
             class="com.workflow.orchestrator.agent.testing.OpenToolTestingAction">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action
+            id="Workflow.GenerateInsightsReport"
+            text="Generate Insights Report"
+            description="Generate an AI-powered insights HTML report for recent agent sessions"
+            class="com.workflow.orchestrator.core.insights.GenerateReportAction">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
     </actions>

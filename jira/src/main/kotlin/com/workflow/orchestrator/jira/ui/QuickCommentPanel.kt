@@ -1,14 +1,13 @@
 package com.workflow.orchestrator.jira.ui
 
 import com.intellij.icons.AllIcons
-import com.intellij.notification.NotificationGroupManager
-import com.intellij.notification.NotificationType
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.workflow.orchestrator.jira.service.JiraServiceImpl
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -62,7 +61,11 @@ class QuickCommentPanel(private val project: Project) : JPanel(BorderLayout()), 
                 withContext(Dispatchers.EDT) {
                     sendButton.isEnabled = true
                     commentField.isEnabled = true
-                    showNotification("Jira not configured. Cannot post comment.", NotificationType.WARNING)
+                    WorkflowNotificationService.getInstance(project).notifyWarning(
+                        WorkflowNotificationService.GROUP_JIRA,
+                        "Jira",
+                        "Jira not configured. Cannot post comment."
+                    )
                 }
                 return@launch
             }
@@ -78,20 +81,17 @@ class QuickCommentPanel(private val project: Project) : JPanel(BorderLayout()), 
                     }
                     is ApiResult.Error -> {
                         log.warn("[Jira:UI] Failed to post comment to $issueKey: ${result.message}")
-                        showNotification("Failed to post comment: ${result.message}", NotificationType.ERROR)
+                        WorkflowNotificationService.getInstance(project).notifyError(
+                            WorkflowNotificationService.GROUP_JIRA,
+                            "Comment Failed",
+                            "Failed to post comment: ${result.message}"
+                        )
                     }
                 }
                 sendButton.isEnabled = true
                 commentField.isEnabled = true
             }
         }
-    }
-
-    private fun showNotification(message: String, type: NotificationType) {
-        NotificationGroupManager.getInstance()
-            .getNotificationGroup("Workflow Orchestrator")
-            .createNotification(message, type)
-            .notify(project)
     }
 
     override fun dispose() {

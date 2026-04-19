@@ -9,8 +9,7 @@ import com.intellij.openapi.fileChooser.FileChooser
 import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.vfs.LocalFileSystem
-import com.intellij.notification.NotificationGroupManager
-import com.intellij.notification.NotificationType
+import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
@@ -346,19 +345,24 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                                 label.foreground = StatusColors.LINK
                                 label.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
 
-                                val notificationType = when {
-                                    results.isEmpty() -> NotificationType.ERROR
-                                    results.size < attachments.size -> NotificationType.WARNING
-                                    else -> NotificationType.INFORMATION
-                                }
-                                NotificationGroupManager.getInstance()
-                                    .getNotificationGroup("Workflow Orchestrator")
-                                    .createNotification(
+                                val ns = WorkflowNotificationService.getInstance(project)
+                                when {
+                                    results.isEmpty() -> ns.notifyError(
+                                        WorkflowNotificationService.GROUP_JIRA,
                                         "Attachments Downloaded",
-                                        summary,
-                                        notificationType
+                                        summary
                                     )
-                                    .notify(project)
+                                    results.size < attachments.size -> ns.notifyWarning(
+                                        WorkflowNotificationService.GROUP_JIRA,
+                                        "Attachments Downloaded",
+                                        summary
+                                    )
+                                    else -> ns.notifyInfo(
+                                        WorkflowNotificationService.GROUP_JIRA,
+                                        "Attachments Downloaded",
+                                        summary
+                                    )
+                                }
                             }
                         }
                     }
@@ -529,14 +533,11 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                         val result = attachmentDownloadService.downloadAttachment(att, targetDir)
                         if (result != null) {
                             withContext(Dispatchers.EDT) {
-                                NotificationGroupManager.getInstance()
-                                    .getNotificationGroup("Workflow Orchestrator")
-                                    .createNotification(
-                                        "Attachment Downloaded",
-                                        "${att.filename} saved to ${targetDir.absolutePath}",
-                                        NotificationType.INFORMATION
-                                    )
-                                    .notify(project)
+                                WorkflowNotificationService.getInstance(project).notifyInfo(
+                                    WorkflowNotificationService.GROUP_JIRA,
+                                    "Attachment Downloaded",
+                                    "${att.filename} saved to ${targetDir.absolutePath}"
+                                )
                             }
                         }
                     }

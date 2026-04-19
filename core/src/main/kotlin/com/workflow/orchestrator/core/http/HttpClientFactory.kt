@@ -50,6 +50,7 @@ class HttpClientFactory(
                 else -> AuthScheme.BEARER
             }
             baseClient.newBuilder()
+                .addInterceptor(HttpMetricsInterceptor())
                 .addInterceptor(AuthInterceptor({ tokenProvider(service) }, scheme))
                 .build()
         }

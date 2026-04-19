@@ -3,6 +3,14 @@ package com.workflow.orchestrator.agent.observability
 import com.workflow.orchestrator.agent.tools.CompletionKind
 import kotlinx.serialization.Serializable
 
+@Serializable
+data class ModelSwitchRecord(
+    val tsMs: Long,
+    val fromModel: String,
+    val toModel: String,
+    val reason: String
+)
+
 /**
  * Per-session metrics accumulator — tracks tool execution times, API latencies,
  * success/failure counts, and compaction events across a single agent session.
@@ -41,6 +49,76 @@ class SessionMetrics {
     private val apiRecords = mutableListOf<ApiRecord>()
     private val compactionRecords = mutableListOf<CompactionRecord>()
     private val completionKindCounts = mutableMapOf<String, Int>()
+
+    // ── New Phase 2 fields ──────────────────────────────────────────────────────
+
+    private var planModeStartMs: Long = 0L
+    private var planModeActive: Boolean = false
+
+    @Volatile var planModeMs: Long = 0L
+        private set
+    @Volatile var actModeMs: Long = 0L
+        private set
+
+    @Synchronized
+    fun recordPlanModeToggle(enteringPlanMode: Boolean) {
+        val now = System.currentTimeMillis()
+        if (enteringPlanMode) {
+            actModeMs += now - planModeStartMs
+            planModeStartMs = now
+            planModeActive = true
+        } else {
+            planModeMs += now - planModeStartMs
+            planModeStartMs = now
+            planModeActive = false
+        }
+    }
+
+    @Synchronized
+    fun initTimers() {
+        planModeStartMs = System.currentTimeMillis()
+        planModeActive = false
+    }
+
+    private val modelSwitchList = mutableListOf<ModelSwitchRecord>()
+    @Synchronized
+    fun recordModelSwitch(fromModel: String, toModel: String, reason: String) {
+        modelSwitchList.add(ModelSwitchRecord(System.currentTimeMillis(), fromModel, toModel, reason))
+    }
+
+    private var userTurnCountInternal = 0
+    private val userTurnHourBucketsInternal = IntArray(24)
+    private val responseTimeMsList = mutableListOf<Long>()
+    private var lastUserTurnSubmitMs: Long = 0L
+
+    @Synchronized
+    fun recordUserTurn() {
+        userTurnCountInternal++
+        val hour = java.time.ZonedDateTime.now().hour
+        userTurnHourBucketsInternal[hour]++
+        lastUserTurnSubmitMs = System.currentTimeMillis()
+    }
+
+    @Synchronized
+    fun recordResponseTime() {
+        if (lastUserTurnSubmitMs > 0L) {
+            responseTimeMsList.add(System.currentTimeMillis() - lastUserTurnSubmitMs)
+            lastUserTurnSubmitMs = 0L
+        }
+    }
+
+    private val iterationStartList = mutableListOf<Long>()
+    private val iterationEndList = mutableListOf<Long>()
+
+    @Synchronized
+    fun recordIterationStart() {
+        iterationStartList.add(System.currentTimeMillis())
+    }
+
+    @Synchronized
+    fun recordIterationEnd() {
+        iterationEndList.add(System.currentTimeMillis())
+    }
 
     // ── Public recording methods ─────────────────────────────────────────────
 
@@ -99,7 +177,15 @@ class SessionMetrics {
             totalPromptTokens = apiRecords.sumOf { it.promptTokens },
             totalCompletionTokens = apiRecords.sumOf { it.completionTokens },
             compactionCount = compactionRecords.size,
-            completionKindCounts = completionKindCounts.toMap()
+            completionKindCounts = completionKindCounts.toMap(),
+            planModeMs = this.planModeMs,
+            actModeMs = this.actModeMs,
+            modelSwitches = modelSwitchList.toList(),
+            userTurnCount = userTurnCountInternal,
+            userTurnHourBuckets = userTurnHourBucketsInternal.toList(),
+            responseTimesMs = responseTimeMsList.toList(),
+            iterationStartTimesMs = iterationStartList.toList(),
+            iterationEndTimesMs = iterationEndList.toList(),
         )
     }
 
@@ -124,6 +210,14 @@ class SessionMetrics {
         val totalPromptTokens: Int = 0,
         val totalCompletionTokens: Int = 0,
         val compactionCount: Int = 0,
-        val completionKindCounts: Map<String, Int> = emptyMap()
+        val completionKindCounts: Map<String, Int> = emptyMap(),
+        val planModeMs: Long = 0,
+        val actModeMs: Long = 0,
+        val modelSwitches: List<ModelSwitchRecord> = emptyList(),
+        val userTurnCount: Int = 0,
+        val userTurnHourBuckets: List<Int> = emptyList(),
+        val responseTimesMs: List<Long> = emptyList(),
+        val iterationStartTimesMs: List<Long> = emptyList(),
+        val iterationEndTimesMs: List<Long> = emptyList(),
     )
 }

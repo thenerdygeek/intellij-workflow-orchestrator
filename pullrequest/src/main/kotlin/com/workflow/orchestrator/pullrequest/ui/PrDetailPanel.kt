@@ -39,6 +39,7 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketReviewerUser
 import com.workflow.orchestrator.core.bitbucket.BitbucketUser
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
+import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.workflow.orchestrator.pullrequest.service.PrActionService
 import com.workflow.orchestrator.pullrequest.service.PrDetailService
 import com.workflow.orchestrator.pullrequest.service.PrListService
@@ -686,13 +687,11 @@ class PrDetailPanel(
                         createButton.text = "Create Pull Request"
                         // Show the newly created PR by loading it
                         showPr(pr.id)
-                        com.intellij.notification.NotificationGroupManager.getInstance()
-                            .getNotificationGroup("workflow.build")
-                            .createNotification(
-                                "PR #${pr.id} created successfully",
-                                com.intellij.notification.NotificationType.INFORMATION
-                            )
-                            .notify(project)
+                        WorkflowNotificationService.getInstance(project).notifyInfo(
+                            WorkflowNotificationService.GROUP_BUILD,
+                            "Pull Request Created",
+                            "PR #${pr.id} created successfully"
+                        )
                     }
                 }
                 is ApiResult.Error -> {
@@ -942,10 +941,11 @@ class PrDetailPanel(
                     }
                 } catch (e: Exception) {
                     invokeLater {
-                        com.intellij.notification.NotificationGroupManager.getInstance()
-                            .getNotificationGroup("workflow.build")
-                            .createNotification("PR action failed: ${e.message}", com.intellij.notification.NotificationType.ERROR)
-                            .notify(project)
+                        WorkflowNotificationService.getInstance(project).notifyError(
+                            WorkflowNotificationService.GROUP_BUILD,
+                            "PR Action Failed",
+                            "PR action failed: ${e.message}"
+                        )
                     }
                 }
             }
@@ -985,10 +985,11 @@ class PrDetailPanel(
                             }
                         } catch (e: Exception) {
                             invokeLater {
-                                com.intellij.notification.NotificationGroupManager.getInstance()
-                                    .getNotificationGroup("workflow.build")
-                                    .createNotification("PR action failed: ${e.message}", com.intellij.notification.NotificationType.ERROR)
-                                    .notify(project)
+                                WorkflowNotificationService.getInstance(project).notifyError(
+                                    WorkflowNotificationService.GROUP_BUILD,
+                                    "PR Action Failed",
+                                    "PR action failed: ${e.message}"
+                                )
                             }
                         }
                     }
@@ -1017,10 +1018,11 @@ class PrDetailPanel(
                     }
                 } catch (e: Exception) {
                     invokeLater {
-                        com.intellij.notification.NotificationGroupManager.getInstance()
-                            .getNotificationGroup("workflow.build")
-                            .createNotification("PR action failed: ${e.message}", com.intellij.notification.NotificationType.ERROR)
-                            .notify(project)
+                        WorkflowNotificationService.getInstance(project).notifyError(
+                            WorkflowNotificationService.GROUP_BUILD,
+                            "PR Action Failed",
+                            "PR action failed: ${e.message}"
+                        )
                     }
                 }
             }
@@ -1325,10 +1327,11 @@ class PrDetailPanel(
     }
 
     private fun showNotification(message: String) {
-        com.intellij.notification.NotificationGroupManager.getInstance()
-            .getNotificationGroup("workflow.build")
-            .createNotification(message, com.intellij.notification.NotificationType.ERROR)
-            .notify(project)
+        WorkflowNotificationService.getInstance(project).notifyError(
+            WorkflowNotificationService.GROUP_BUILD,
+            "PR Error",
+            message
+        )
     }
 
     /**
@@ -1861,13 +1864,11 @@ class PrDetailPanel(
                                     commentField.isEnabled = true
                                     sendCommentButton.isEnabled = true
                                     log.warn("[PR:Activity] Comment failed: ${result.message}")
-                                    com.intellij.notification.NotificationGroupManager.getInstance()
-                                        .getNotificationGroup("Workflow Orchestrator")
-                                        .createNotification(
-                                            "Failed to post comment: ${result.message}",
-                                            com.intellij.notification.NotificationType.ERROR
-                                        )
-                                        .notify(project)
+                                    WorkflowNotificationService.getInstance(project).notifyError(
+                                        WorkflowNotificationService.GROUP_PR,
+                                        "Comment Failed",
+                                        "Failed to post comment: ${result.message}"
+                                    )
                                 }
                             }
                         }

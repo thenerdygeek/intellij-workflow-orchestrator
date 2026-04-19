@@ -1,13 +1,12 @@
 package com.workflow.orchestrator.agent.listeners
 
-import com.intellij.notification.NotificationGroupManager
-import com.intellij.notification.NotificationType
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
 import com.workflow.orchestrator.agent.session.MessageStateHandler
 import com.workflow.orchestrator.agent.session.SessionMigrator
 import com.workflow.orchestrator.agent.settings.AgentSettings
+import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.workflow.orchestrator.core.util.ProjectIdentifier
 import java.io.File
 
@@ -61,19 +60,12 @@ class AgentStartupActivity : ProjectActivity {
                 LOG.info("AgentStartupActivity: found interrupted session '${interrupted.id}' — '${title}'")
 
                 // Show notification balloon
-                try {
-                    val notificationGroup = NotificationGroupManager.getInstance()
-                        .getNotificationGroup("Workflow Orchestrator")
-                    notificationGroup.createNotification(
-                        "Interrupted Agent Session",
-                        "Agent session \"${title.take(60)}\" was interrupted. " +
-                            "Open the Agent tab to resume it.",
-                        NotificationType.INFORMATION
-                    ).notify(project)
-                } catch (e: Exception) {
-                    // Notification group may not be registered — log and continue
-                    LOG.info("AgentStartupActivity: interrupted session found but notification failed: ${e.message}")
-                }
+                WorkflowNotificationService.getInstance(project).notifyInfo(
+                    WorkflowNotificationService.GROUP_AGENT,
+                    "Interrupted Agent Session",
+                    "Agent session \"${title.take(60)}\" was interrupted. " +
+                        "Open the Agent tab to resume it."
+                )
             } else {
                 LOG.info("AgentStartupActivity: no interrupted sessions found")
             }

@@ -9,7 +9,7 @@ object SessionMigrator {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
-    private const val MIGRATION_VERSION = 2
+    private const val MIGRATION_VERSION = 3
     private const val MIGRATION_MARKER = ".migrated-v$MIGRATION_VERSION"
 
     fun migrate(baseDir: File) {
@@ -95,9 +95,12 @@ object SessionMigrator {
         } else null
 
         if (item != null) items.add(item)
+        metaFile.delete()
     }
 
     private fun addToIndex(baseDir: File, sessionDir: File, items: MutableList<HistoryItem>) {
+        // Clean up any leftover old-format sibling metadata file (migration v2 artifact)
+        File(sessionDir.parent, "${sessionDir.name}.json").delete()
         // Read existing api_history to build a HistoryItem
         val apiHistory = MessageStateHandler.loadApiHistory(sessionDir)
         if (apiHistory.isEmpty()) return

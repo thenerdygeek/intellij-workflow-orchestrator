@@ -33,6 +33,8 @@ data class ApiRequestMetrics(
     val inputTokens: Int = 0,
     val outputTokens: Int = 0,
     val cost: Double? = null,
+    val cacheReadTokens: Int = 0,
+    val cacheCreationTokens: Int = 0,
 )
 
 @Serializable
