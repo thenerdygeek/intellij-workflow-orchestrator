@@ -1626,6 +1626,10 @@ class AgentController(
                         durationMs = durationMs,
                         status = RichStreamingPanel.SessionStatus.SUCCESS
                     )
+                    // Re-evaluate the conversation title with Haiku now that we have the
+                    // assistant's final response. Replaces provisional user-message-derived
+                    // titles with crisp action-oriented ones once per successful turn.
+                    evaluateTitleOnCompletion(result.summary)
                 }
 
                 is LoopResult.Failed -> {
@@ -2668,32 +2672,59 @@ class AgentController(
     }
 
     /**
-     * Generate or update the conversation title via Haiku.
-     * On first message: generate a fresh title.
-     * On subsequent messages: check if scope has shifted enough to warrant a new title.
-     * Async — never blocks the agent loop.
+     * Set the conversation title. On first message this is synchronous — derive
+     * a provisional title from the first ~50 chars of the user message so the
+     * TopBar shows something meaningful immediately instead of blank.
+     *
+     * The Haiku re-evaluation happens later in [evaluateTitleOnCompletion],
+     * which fires at loop exit with the user message PLUS the assistant response
+     * for much better context.
      */
     private fun generateConversationTitle(task: String, isFirstMessage: Boolean) {
+        if (!isFirstMessage) return
+        if (currentHaikuTitle != null) return
+
+        val provisional = deriveInitialTitle(task)
+        currentHaikuTitle = provisional
+        currentSessionId?.let { service.updateSessionTitle(it, provisional) }
+        invokeLater { dashboard.setSessionTitle(provisional) }
+        LOG.info("AgentController: provisional title set from user message: '$provisional'")
+    }
+
+    /** Trim the user's first message to a display-friendly title under 50 chars. */
+    private fun deriveInitialTitle(task: String): String {
+        val cleaned = task.trim().replace(Regex("\\s+"), " ")
+        return if (cleaned.length <= 50) cleaned else cleaned.take(49).trimEnd() + "\u2026"
+    }
+
+    /**
+     * Called at loop exit on successful completion. Hands Haiku the user
+     * message, the assistant's final response, and the current title — Haiku
+     * decides KEEP or returns a replacement title. The update is pushed with
+     * an "animated" flag so the frontend can play the scramble transition.
+     *
+     * Failure-tolerant: any error leaves the current title untouched.
+     */
+    private fun evaluateTitleOnCompletion(assistantResponse: String) {
+        val currentTitle = currentHaikuTitle ?: return
+        val userMessage = lastTaskText ?: return
+        if (assistantResponse.isBlank()) return
+
         val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         scope.launch {
             try {
-                val newTitle = if (isFirstMessage) {
-                    HaikuPhraseGenerator.generateTitle(task)
-                } else {
-                    val existing = currentHaikuTitle ?: return@launch
-                    HaikuPhraseGenerator.checkTitleUpdate(existing, task)
-                }
+                val newTitle = HaikuPhraseGenerator.evaluateTitleFromCompletion(
+                    currentTitle = currentTitle,
+                    userMessage = userMessage,
+                    assistantResponse = assistantResponse,
+                ) ?: return@launch
 
-                if (newTitle != null) {
-                    currentHaikuTitle = newTitle
-                    // Update session metadata in store
-                    currentSessionId?.let { service.updateSessionTitle(it, newTitle) }
-                    // Push to chat UI top bar
-                    invokeLater { dashboard.setSessionTitle(newTitle) }
-                    LOG.info("AgentController: conversation title set to: $newTitle")
-                }
+                currentHaikuTitle = newTitle
+                currentSessionId?.let { service.updateSessionTitle(it, newTitle) }
+                invokeLater { dashboard.setSessionTitleAnimated(newTitle) }
+                LOG.info("AgentController: title replaced via completion eval: '$newTitle'")
             } catch (e: Exception) {
-                LOG.debug("AgentController: title generation failed: ${e.message}")
+                LOG.debug("AgentController: completion-title eval failed: ${e.message}")
             }
         }
     }

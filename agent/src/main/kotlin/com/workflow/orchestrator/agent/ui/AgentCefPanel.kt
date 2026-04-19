@@ -1088,6 +1088,10 @@ class AgentCefPanel(
         callJs("setSessionTitle(${JsEscape.toJsString(title)})")
     }
 
+    fun setSessionTitleAnimated(title: String) {
+        callJs("setSessionTitleAnimated(${JsEscape.toJsString(title)})")
+    }
+
     // ── Queued steering message rendering ──
 
     fun addQueuedSteeringMessage(id: String, text: String) {

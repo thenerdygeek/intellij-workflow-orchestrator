@@ -145,6 +145,10 @@ interface ChatState {
   rollbackEvents: RollbackInfo[];
   smartWorkingPhrase: string | null;
   sessionTitle: string | null;
+  /** Monotonic counter bumped every time Kotlin asks for an animated title
+   *  replacement. SessionTitle component watches this counter to trigger the
+   *  scramble animation without conflating with simple provisional-title sets. */
+  sessionTitleAnimateKey: number;
   planPending: 'approve' | 'revise' | null;
   planCompletedPendingClear: boolean;
   queuedSteeringMessages: { id: string; text: string; timestamp: number }[];
@@ -339,6 +343,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   rollbackEvents: [],
   smartWorkingPhrase: null,
   sessionTitle: null,
+  sessionTitleAnimateKey: 0,
   planPending: null,
   planCompletedPendingClear: false,
   queuedSteeringMessages: [],
@@ -1205,6 +1210,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setSessionTitle(title: string) {
     set({ sessionTitle: title });
+  },
+  /** Bumps sessionTitleAnimateKey so the SessionTitle component plays the
+   *  scramble transition. Called by Kotlin after Haiku's on-completion eval. */
+  setSessionTitleAnimated(title: string) {
+    set(state => ({
+      sessionTitle: title,
+      sessionTitleAnimateKey: state.sessionTitleAnimateKey + 1,
+    }));
   },
 
   // ── Queued Steering Actions ──

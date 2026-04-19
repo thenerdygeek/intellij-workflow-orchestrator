@@ -694,6 +694,14 @@ class AgentDashboardPanel(
         broadcast(replay = false) { it.setSessionTitle(title) }
     }
 
+    /** Same as [setSessionTitle] but asks the frontend to play the scramble-transition
+     *  animation when the new title replaces the old one. Used after Haiku's
+     *  on-completion title re-evaluation. */
+    fun setSessionTitleAnimated(title: String) {
+        runOnEdt { cefPanel?.setSessionTitleAnimated(title) }
+        broadcast(replay = false) { it.setSessionTitleAnimated(title) }
+    }
+
     fun setCefRevertCheckpointCallback(onRevert: (String) -> Unit) {
         cefPanel?.onRevertCheckpoint = onRevert
     }

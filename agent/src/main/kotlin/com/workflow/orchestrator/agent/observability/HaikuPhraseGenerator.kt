@@ -74,6 +74,31 @@ RULES:
 
 Be conservative: minor follow-ups, refinements, or related questions are NOT a scope change. Only generate a new title when the user has moved to a genuinely different task."""
 
+    private const val TITLE_EVAL_SYSTEM_PROMPT = """You evaluate whether a conversation title still fits after a task completed.
+
+You see three things:
+- The current title (may be a provisional placeholder that reads like raw user input)
+- The latest user message
+- The assistant's final response summarizing what was done
+
+Respond with ONLY one of:
+- KEEP — the current title still accurately describes the conversation
+- A new title (under 50 chars) — the title needs replacement or refinement
+
+Replace when:
+- The title looks like a raw user message or placeholder ("fix this please", "can you help...", truncated text with "…")
+- The title is vague while the actual work was specific
+- The conversation scope has clearly shifted from what the title suggests
+
+Keep when:
+- The title is specific, action-oriented, and accurately describes the work
+- The new turn is a minor follow-up or refinement of the same task
+
+Format for new titles:
+- Under 50 characters
+- Verb + specific thing (e.g. "Fix auth token expiry in LoginService")
+- No quotes, no punctuation at end"""
+
     // ── Shared brain creation ───────────────────────────────────────
 
     private suspend fun createBrain(tag: String): OpenAiCompatBrain? {
@@ -232,6 +257,60 @@ Be conservative: minor follow-ups, refinements, or related questions are NOT a s
             }
         } catch (e: Exception) {
             LOG.info("[HaikuTitleCheck] Exception: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Evaluate the conversation title at task completion. Takes the current title
+     * plus the user message and the assistant's final response, and returns:
+     *   - null if the title should stay the same (either Haiku said KEEP or a failure)
+     *   - a new title string if Haiku decided a replacement is warranted
+     *
+     * Called at loop-exit (LoopResult.Completed). Gives Haiku far richer context
+     * than the old task-start-only path had: it sees what was actually done, not
+     * just what the user asked for. This is what lets a provisional
+     * first-50-chars-of-user-message title get replaced with a crisp
+     * "Fix null check in LoginService" once the task finishes.
+     */
+    suspend fun evaluateTitleFromCompletion(
+        currentTitle: String,
+        userMessage: String,
+        assistantResponse: String,
+    ): String? {
+        return try {
+            val brain = createBrain("HaikuTitleEval") ?: return null
+
+            val result = brain.chat(
+                messages = listOf(
+                    ChatMessage(role = "system", content = TITLE_EVAL_SYSTEM_PROMPT),
+                    ChatMessage(
+                        role = "user",
+                        content = """Current title: "$currentTitle"
+User message: "${userMessage.take(300)}"
+Assistant response: "${assistantResponse.take(500)}""""
+                    )
+                ),
+                maxTokens = 40
+            )
+
+            val text = extractText(result, "HaikuTitleEval") ?: return null
+            val cleaned = text.removeSurrounding("\"").removeSurrounding("'").trim()
+
+            if (cleaned.equals("KEEP", ignoreCase = true) || cleaned.startsWith("KEEP")) {
+                LOG.info("[HaikuTitleEval] Keeping: '$currentTitle'")
+                null
+            } else {
+                val newTitle = cleaned.take(50)
+                if (newTitle.isBlank() || newTitle.equals(currentTitle, ignoreCase = true)) {
+                    null
+                } else {
+                    LOG.info("[HaikuTitleEval] '$currentTitle' → '$newTitle'")
+                    newTitle
+                }
+            }
+        } catch (e: Exception) {
+            LOG.info("[HaikuTitleEval] Exception: ${e.message}")
             null
         }
     }

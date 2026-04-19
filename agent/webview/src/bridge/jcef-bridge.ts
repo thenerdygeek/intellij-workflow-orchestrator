@@ -371,6 +371,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   setSessionTitle(title: string) {
     stores?.getChatStore().setSessionTitle(title);
   },
+  setSessionTitleAnimated(title: string) {
+    stores?.getChatStore().setSessionTitleAnimated(title);
+  },
 
   // Queued steering message methods from Kotlin
   addQueuedSteeringMessage(id: string, text: string) {
