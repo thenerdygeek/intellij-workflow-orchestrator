@@ -289,6 +289,17 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     // Track the mention
     mentionsRef.current.push(mention);
 
+    // When a chip is inserted directly in the valid state (e.g. from the ticket dropdown,
+    // where the ticket was already validated by the backend), fire the same success glow
+    // that updateChipStatus uses. Otherwise the dropdown path gives no visual confirmation.
+    if (mention.type === 'ticket' && status === 'valid') {
+      ensureGlowStyle();
+      chip.style.animation = 'chip-success-glow 0.8s ease-out';
+      chip.addEventListener('animationend', () => {
+        chip.style.animation = '';
+      }, { once: true });
+    }
+
     // Notify parent
     fireChange();
   }, []);

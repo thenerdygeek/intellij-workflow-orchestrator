@@ -351,12 +351,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   tasks: [],
 
   // Actions
-  startSession(task: string, _mentions?: Mention[]) {
+  startSession(task: string, mentions?: Mention[]) {
     const firstMessage: UiMessage = {
       ts: uniqueTs(),
       type: 'SAY',
       say: 'USER_MESSAGE',
       text: task,
+      ...(mentions && mentions.length > 0 ? { mentions } : {}),
     };
     set({
       messages: [firstMessage],
