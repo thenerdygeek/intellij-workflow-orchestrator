@@ -221,4 +221,13 @@ class ProjectScannerTest {
     fun `detectIsMultiModuleFromPath returns false for empty project`() {
         assertFalse(ProjectScanner.detectIsMultiModuleFromPath(projectRoot))
     }
+
+    @Test
+    fun `detectIsMultiModuleFromPath returns false for includeBuild only`() {
+        projectRoot.resolve("settings.gradle").writeText("""
+            rootProject.name = "composite"
+            includeBuild("build-logic")
+        """.trimIndent())
+        assertFalse(ProjectScanner.detectIsMultiModuleFromPath(projectRoot))
+    }
 }
