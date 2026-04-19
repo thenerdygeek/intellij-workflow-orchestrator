@@ -480,16 +480,36 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
 };
 
 // Task bridge functions registered separately (Kotlin→JS underscore-prefix convention)
+
+// Task bridge functions registered separately (Kotlin→JS underscore-prefix convention)
 // These are registered in initBridge() after stores are ready.
 function registerTaskBridges(): void {
-  (window as any)._applyTaskCreate = (task: Task) => {
-    stores?.getChatStore().applyTaskCreate(task);
+  (window as any)._applyTaskCreate = (raw: string) => {
+    console.log('[Tasks] _applyTaskCreate: typeof=', typeof raw, 'preview=', String(raw).slice(0, 120));
+    try {
+      const task: Task = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      stores?.getChatStore().applyTaskCreate(task);
+    } catch (e) {
+      console.error('[Tasks] _applyTaskCreate parse error', e, 'raw=', String(raw).slice(0, 200));
+    }
   };
-  (window as any)._applyTaskUpdate = (task: Task) => {
-    stores?.getChatStore().applyTaskUpdate(task);
+  (window as any)._applyTaskUpdate = (raw: string) => {
+    console.log('[Tasks] _applyTaskUpdate: typeof=', typeof raw, 'preview=', String(raw).slice(0, 120));
+    try {
+      const task: Task = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      stores?.getChatStore().applyTaskUpdate(task);
+    } catch (e) {
+      console.error('[Tasks] _applyTaskUpdate parse error', e, 'raw=', String(raw).slice(0, 200));
+    }
   };
-  (window as any)._setTasks = (tasks: Task[]) => {
-    stores?.getChatStore().setTasks(tasks);
+  (window as any)._setTasks = (raw: string) => {
+    console.log('[Tasks] _setTasks: typeof=', typeof raw, 'preview=', String(raw).slice(0, 120));
+    try {
+      const tasks: Task[] = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      stores?.getChatStore().setTasks(tasks);
+    } catch (e) {
+      console.error('[Tasks] _setTasks parse error', e, 'raw=', String(raw).slice(0, 200));
+    }
   };
 }
 
@@ -601,6 +621,8 @@ export const kotlinBridge = {
   }): void {
     callKotlin('_reportArtifactResult', JSON.stringify(payload));
   },
+
+  openInsightsTab(): void { callKotlin('_openInsightsTab'); },
 };
 
 // ═══ Editor Tab Popout ═══
@@ -641,9 +663,21 @@ for (const [name, fn] of Object.entries(bridgeFunctions)) {
 // Uses same pendingCalls buffer pattern as bridgeFunctions above.
 // In initBridge(), these are replaced with direct functions via registerTaskBridges().
 const taskBridgeFunctions: Record<string, (...args: any[]) => void> = {
-  _applyTaskCreate: (task: Task) => { stores?.getChatStore().applyTaskCreate(task); },
-  _applyTaskUpdate: (task: Task) => { stores?.getChatStore().applyTaskUpdate(task); },
-  _setTasks: (tasks: Task[]) => { stores?.getChatStore().setTasks(tasks); },
+  _applyTaskCreate: (raw: string) => {
+    console.log('[Tasks-early] _applyTaskCreate: typeof=', typeof raw, 'preview=', String(raw).slice(0, 120));
+    try { stores?.getChatStore().applyTaskCreate(typeof raw === 'string' ? JSON.parse(raw) : raw); }
+    catch (e) { console.error('[Tasks-early] _applyTaskCreate parse error', e); }
+  },
+  _applyTaskUpdate: (raw: string) => {
+    console.log('[Tasks-early] _applyTaskUpdate: typeof=', typeof raw, 'preview=', String(raw).slice(0, 120));
+    try { stores?.getChatStore().applyTaskUpdate(typeof raw === 'string' ? JSON.parse(raw) : raw); }
+    catch (e) { console.error('[Tasks-early] _applyTaskUpdate parse error', e); }
+  },
+  _setTasks: (raw: string) => {
+    console.log('[Tasks-early] _setTasks: typeof=', typeof raw, 'preview=', String(raw).slice(0, 120));
+    try { stores?.getChatStore().setTasks(typeof raw === 'string' ? JSON.parse(raw) : raw); }
+    catch (e) { console.error('[Tasks-early] _setTasks parse error', e); }
+  },
 };
 for (const [name, fn] of Object.entries(taskBridgeFunctions)) {
   (window as any)[name] = (...args: any[]) => {
@@ -680,6 +714,16 @@ export function initBridge(storeAccessors: StoreAccessors): void {
   for (const [name, fn] of Object.entries(taskBridgeFunctions)) {
     (window as any)[name] = fn;
   }
+
+  // Session stats push — called by Kotlin after each API response
+  (window as any)._receiveSessionStats = (json: string) => {
+    try {
+      const stats = JSON.parse(json);
+      stores?.getChatStore().updateSessionStats(stats);
+    } catch (e) {
+      console.warn('[bridge] _receiveSessionStats: malformed JSON', e);
+    }
+  };
 
   // Replay any calls that arrived before stores were ready
   for (const call of pendingCalls) {
