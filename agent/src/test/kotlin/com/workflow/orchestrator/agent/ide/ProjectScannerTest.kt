@@ -230,4 +230,22 @@ class ProjectScannerTest {
         """.trimIndent())
         assertFalse(ProjectScanner.detectIsMultiModuleFromPath(projectRoot))
     }
+
+    @Test
+    fun `detectIsMultiModuleFromPath returns false for settings_includeBuild only`() {
+        projectRoot.resolve("settings.gradle.kts").writeText("""
+            rootProject.name = "composite"
+            settings.includeBuild("build-logic")
+        """.trimIndent())
+        assertFalse(ProjectScanner.detectIsMultiModuleFromPath(projectRoot))
+    }
+
+    @Test
+    fun `detectIsMultiModuleFromPath returns false for gradle_includeBuild only`() {
+        projectRoot.resolve("settings.gradle").writeText("""
+            rootProject.name = "composite"
+            gradle.includeBuild("../shared")
+        """.trimIndent())
+        assertFalse(ProjectScanner.detectIsMultiModuleFromPath(projectRoot))
+    }
 }

@@ -90,7 +90,8 @@ object ProjectScanner {
             ?: root.resolve("settings.gradle.kts").takeIf { it.exists() }
         if (settingsFile != null) {
             val content = readFileIfExists(settingsFile) ?: ""
-            if (Regex("""(?<!\w)include\s*\(|(?<!\w)include\s+['"]""").containsMatchIn(content)) {
+            if (Regex("""(?:^|[^\w.])include\s*\(|(?:^|[^\w.])include\s+['"]""", RegexOption.MULTILINE)
+                    .containsMatchIn(content)) {
                 return true
             }
         }

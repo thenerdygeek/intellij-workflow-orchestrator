@@ -99,7 +99,7 @@ object IdeContextDetector {
             throw e
         } catch (e: com.intellij.openapi.progress.ProcessCanceledException) {
             throw e
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
             val basePath = project.basePath ?: return false
             ProjectScanner.detectIsMultiModuleFromPath(Path.of(basePath))
         }
