@@ -25,6 +25,7 @@ data class IdeContext(
     val detectedFrameworks: Set<Framework>,
     val detectedBuildTools: Set<BuildTool>,
     val hasPyTestConfigType: Boolean = false,
+    val isMultiModule: Boolean = false,
 ) {
     val supportsJava: Boolean
         get() = Language.JAVA in languages
@@ -49,6 +50,9 @@ data class IdeContext(
         }
         if (detectedBuildTools.isNotEmpty()) {
             append("\nBuild tools: ${detectedBuildTools.joinToString { it.name.lowercase() }}.")
+        }
+        if (isMultiModule) {
+            append("\nProject structure: Multi-module (project_structure, build, runtime_config available as core tools).")
         }
     }
 }
@@ -88,6 +92,9 @@ object ToolRegistrationFilter {
     /** Whether a detected framework's meta-tool should be promoted to core */
     fun shouldPromoteFrameworkTool(context: IdeContext, framework: Framework): Boolean =
         framework in context.detectedFrameworks
+
+    /** Whether multi-module management tools should be promoted to core */
+    fun shouldPromoteMultiModuleTools(context: IdeContext): Boolean = context.isMultiModule
 
     // --- Python tool filters (for Plan B2/C) ---
 

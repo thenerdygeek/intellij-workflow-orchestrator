@@ -196,6 +196,18 @@ class ContextAwareRegistrationTest {
         assertFalse(ToolRegistrationFilter.shouldRegisterPythonDebugTools(context))
     }
 
+    @Test
+    fun `shouldPromoteMultiModuleTools returns true when isMultiModule`() {
+        val context = makeContext(isMultiModule = true)
+        assertTrue(ToolRegistrationFilter.shouldPromoteMultiModuleTools(context))
+    }
+
+    @Test
+    fun `shouldPromoteMultiModuleTools returns false for single-module project`() {
+        val context = makeContext()
+        assertFalse(ToolRegistrationFilter.shouldPromoteMultiModuleTools(context))
+    }
+
     private fun makeContext(
         product: IdeProduct = IdeProduct.INTELLIJ_ULTIMATE,
         hasJavaPlugin: Boolean = false,
@@ -204,6 +216,7 @@ class ContextAwareRegistrationTest {
         hasSpringPlugin: Boolean = false,
         detectedFrameworks: Set<Framework> = emptySet(),
         detectedBuildTools: Set<BuildTool> = emptySet(),
+        isMultiModule: Boolean = false,
     ): IdeContext = IdeContext(
         product = product,
         productName = product.name,
@@ -215,5 +228,6 @@ class ContextAwareRegistrationTest {
         hasSpringPlugin = hasSpringPlugin,
         detectedFrameworks = detectedFrameworks,
         detectedBuildTools = detectedBuildTools,
+        isMultiModule = isMultiModule,
     )
 }

@@ -242,4 +242,47 @@ class IdeContextDetectorTest {
         )
         assertTrue(context.hasPyTestConfigType)
     }
+
+    @Test
+    fun `IdeContext isMultiModule defaults to false`() {
+        val context = IdeContext(
+            product = IdeProduct.INTELLIJ_ULTIMATE,
+            productName = "IntelliJ IDEA Ultimate",
+            edition = Edition.ULTIMATE,
+            languages = setOf(Language.JAVA, Language.KOTLIN),
+            hasJavaPlugin = true, hasPythonPlugin = false, hasPythonCorePlugin = false,
+            hasSpringPlugin = false, detectedFrameworks = emptySet(),
+            detectedBuildTools = setOf(BuildTool.GRADLE),
+        )
+        assertFalse(context.isMultiModule)
+    }
+
+    @Test
+    fun `IdeContext summary includes Multi-module line when isMultiModule is true`() {
+        val context = IdeContext(
+            product = IdeProduct.INTELLIJ_ULTIMATE,
+            productName = "IntelliJ IDEA Ultimate",
+            edition = Edition.ULTIMATE,
+            languages = setOf(Language.JAVA, Language.KOTLIN),
+            hasJavaPlugin = true, hasPythonPlugin = false, hasPythonCorePlugin = false,
+            hasSpringPlugin = false, detectedFrameworks = emptySet(),
+            detectedBuildTools = setOf(BuildTool.GRADLE),
+            isMultiModule = true,
+        )
+        assertTrue(context.summary().contains("Multi-module"))
+    }
+
+    @Test
+    fun `IdeContext summary does not include Multi-module line when isMultiModule is false`() {
+        val context = IdeContext(
+            product = IdeProduct.INTELLIJ_ULTIMATE,
+            productName = "IntelliJ IDEA Ultimate",
+            edition = Edition.ULTIMATE,
+            languages = setOf(Language.JAVA, Language.KOTLIN),
+            hasJavaPlugin = true, hasPythonPlugin = false, hasPythonCorePlugin = false,
+            hasSpringPlugin = false, detectedFrameworks = emptySet(),
+            detectedBuildTools = setOf(BuildTool.GRADLE),
+        )
+        assertFalse(context.summary().contains("Multi-module"))
+    }
 }

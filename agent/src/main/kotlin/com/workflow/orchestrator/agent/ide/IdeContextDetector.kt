@@ -4,7 +4,9 @@ import com.intellij.execution.configurations.ConfigurationType
 import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.openapi.application.ApplicationInfo
 import com.intellij.openapi.extensions.PluginId
+import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
+import java.nio.file.Path
 
 /**
  * Classifies the current IDE product, edition, and available languages based on
@@ -34,6 +36,7 @@ object IdeContextDetector {
         val languages = deriveLanguages(product, hasJava, hasPythonPro || hasPythonCore)
         val frameworks = ProjectScanner.detectFrameworks(project)
         val buildTools = ProjectScanner.detectBuildTools(project)
+        val isMultiModule = detectIsMultiModule(project)
 
         return IdeContext(
             product = product,
@@ -47,6 +50,7 @@ object IdeContextDetector {
             detectedFrameworks = frameworks,
             detectedBuildTools = buildTools,
             hasPyTestConfigType = hasPyTestConfigType,
+            isMultiModule = isMultiModule,
         )
     }
 
@@ -84,4 +88,13 @@ object IdeContextDetector {
 
     internal fun isPluginInstalled(pluginId: String): Boolean =
         PluginManagerCore.getPlugin(PluginId.getId(pluginId))?.isEnabled == true
+
+    private fun detectIsMultiModule(project: Project): Boolean {
+        return try {
+            ModuleManager.getInstance(project).modules.size > 1
+        } catch (_: Exception) {
+            val basePath = project.basePath ?: return false
+            ProjectScanner.detectIsMultiModuleFromPath(Path.of(basePath))
+        }
+    }
 }
