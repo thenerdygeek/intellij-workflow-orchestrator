@@ -57,6 +57,24 @@ class RuntimeConfigToolTest {
     }
 
     @Test
+    fun `module parameter is present in schema`() {
+        val moduleProp = tool.parameters.properties["module"]
+        assertNotNull(moduleProp)
+        assertTrue(
+            moduleProp!!.description.contains("module", ignoreCase = true),
+            "module param description should reference module: ${moduleProp.description}"
+        )
+    }
+
+    @Test
+    fun `create_run_config description mentions module parameter`() {
+        assertTrue(
+            tool.description.contains("module?", ignoreCase = true),
+            "Tool description should mention module? param in create_run_config action"
+        )
+    }
+
+    @Test
     fun `missing action returns error`() = runTest {
         val result = tool.execute(buildJsonObject { }, project)
         assertTrue(result.isError)

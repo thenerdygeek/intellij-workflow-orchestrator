@@ -6,6 +6,7 @@ import com.intellij.execution.application.ApplicationConfigurationType
 import com.intellij.execution.configurations.ConfigurationFactory
 import com.intellij.execution.configurations.RunConfiguration
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
@@ -312,7 +313,7 @@ description optional: for approval dialog on create/modify/delete.
             val failures = applyCreateConfigSettings(
                 config, configType, mainClass, testClass, testMethod, module,
                 envVars, vmOptions, programArgs, workingDir ?: project.basePath,
-                activeProfiles, port ?: 5005
+                activeProfiles, port ?: 5005, project
             )
 
             ApplicationManager.getApplication().invokeAndWait {
@@ -380,12 +381,12 @@ description optional: for approval dialog on create/modify/delete.
         config: RunConfiguration, configType: String, mainClass: String?,
         testClass: String?, testMethod: String?, module: String?,
         envVars: Map<String, String>?, vmOptions: String?, programArgs: String?,
-        workingDir: String?, activeProfiles: String?, port: Int
+        workingDir: String?, activeProfiles: String?, port: Int, project: Project
     ): List<String> {
         return when (configType) {
-            "application" -> applyApplicationConfig(config, mainClass, vmOptions, programArgs, envVars, workingDir)
-            "spring_boot" -> applyReflectionConfig(config, mainClass, vmOptions, programArgs, envVars, workingDir, activeProfiles)
-            "junit" -> applyJUnitConfig(config, testClass, testMethod, vmOptions, envVars, workingDir)
+            "application" -> applyApplicationConfig(config, mainClass, vmOptions, programArgs, envVars, workingDir, module, project)
+            "spring_boot" -> applyReflectionConfig(config, mainClass, vmOptions, programArgs, envVars, workingDir, activeProfiles, module, project)
+            "junit" -> applyJUnitConfig(config, testClass, testMethod, vmOptions, envVars, workingDir, module, project)
             "remote_debug" -> applyRemoteConfig(config, port)
             "gradle" -> applyGradleConfig(config, programArgs, vmOptions, envVars, workingDir)
             else -> emptyList()
@@ -394,7 +395,8 @@ description optional: for approval dialog on create/modify/delete.
 
     private fun applyApplicationConfig(
         config: RunConfiguration, mainClass: String?, vmOptions: String?,
-        programArgs: String?, envVars: Map<String, String>?, workingDir: String?
+        programArgs: String?, envVars: Map<String, String>?, workingDir: String?,
+        module: String?, project: Project
     ): List<String> {
         val failures = mutableListOf<String>()
         if (config is ApplicationConfiguration) {
@@ -403,6 +405,7 @@ description optional: for approval dialog on create/modify/delete.
             programArgs?.let { trySetProperty(failures, "program_args") { config.programParameters = it } }
             envVars?.let { trySetProperty(failures, "env_vars") { config.envs = it } }
             workingDir?.let { trySetProperty(failures, "working_dir") { config.workingDirectory = it } }
+            module?.let { applyModuleByName(config, it, project, failures) }
         }
         return failures
     }
@@ -410,7 +413,7 @@ description optional: for approval dialog on create/modify/delete.
     private fun applyReflectionConfig(
         config: RunConfiguration, mainClass: String?, vmOptions: String?,
         programArgs: String?, envVars: Map<String, String>?, workingDir: String?,
-        activeProfiles: String?
+        activeProfiles: String?, module: String?, project: Project
     ): List<String> {
         val failures = mutableListOf<String>()
         mainClass?.let { trySetReflection(failures, "main_class", config, "setMainClassName", it) }
@@ -419,12 +422,14 @@ description optional: for approval dialog on create/modify/delete.
         envVars?.let { trySetEnvsReflection(failures, "env_vars", config, it) }
         workingDir?.let { trySetReflection(failures, "working_dir", config, "setWorkingDirectory", it) }
         activeProfiles?.let { trySetReflection(failures, "active_profiles", config, "setActiveProfiles", it) }
+        module?.let { applyModuleByName(config, it, project, failures) }
         return failures
     }
 
     private fun applyJUnitConfig(
         config: RunConfiguration, testClass: String?, testMethod: String?,
-        vmOptions: String?, envVars: Map<String, String>?, workingDir: String?
+        vmOptions: String?, envVars: Map<String, String>?, workingDir: String?,
+        module: String?, project: Project
     ): List<String> {
         val failures = mutableListOf<String>()
         testClass?.let {
@@ -449,6 +454,7 @@ description optional: for approval dialog on create/modify/delete.
         vmOptions?.let { trySetReflection(failures, "vm_options", config, "setVMParameters", it) }
         envVars?.let { trySetEnvsReflection(failures, "env_vars", config, it) }
         workingDir?.let { trySetReflection(failures, "working_dir", config, "setWorkingDirectory", it) }
+        module?.let { applyModuleByName(config, it, project, failures) }
         return failures
     }
 
@@ -512,6 +518,27 @@ description optional: for approval dialog on create/modify/delete.
         config: RunConfiguration, envs: Map<String, String>
     ) {
         trySetProperty(failures, propertyName) { setEnvsViaReflection(config, envs) }
+    }
+
+    private fun applyModuleByName(
+        config: RunConfiguration, moduleName: String, project: Project, failures: MutableList<String>
+    ) {
+        trySetProperty(failures, "module") {
+            val mod = ModuleManager.getInstance(project).findModuleByName(moduleName)
+                ?: throw IllegalArgumentException(
+                    "Module '$moduleName' not found. Available: ${
+                        ModuleManager.getInstance(project).modules.map { it.name }.sorted()
+                    }"
+                )
+            if (config is ApplicationConfiguration) {
+                config.setModule(mod)
+            } else {
+                val method = config.javaClass.methods.find { m ->
+                    m.name == "setModule" && m.parameterCount == 1
+                } ?: throw NoSuchMethodException("setModule not found on ${config.javaClass.simpleName}")
+                method.invoke(config, mod)
+            }
+        }
     }
 
     // ══════════════════════════════════════════════════════════════════════
