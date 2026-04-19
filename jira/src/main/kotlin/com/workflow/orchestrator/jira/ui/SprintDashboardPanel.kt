@@ -626,7 +626,10 @@ class SprintDashboardPanel(
             "Status" -> issues.sortedBy { statusOrder(it.fields.status.statusCategory?.key) }
             "Updated" -> issues.sortedByDescending { it.fields.updated ?: "" }
             "Key" -> issues.sortedBy { it.key }
-            else -> issues
+            // Default: sort by status so active work (In Progress, To Do) floats above Done.
+            // The Jira Agile API returns issues in board-rank order which puts Done tickets
+            // at the top when a sprint is nearly finished.
+            else -> issues.sortedBy { statusOrder(it.fields.status.statusCategory?.key) }
         }
     }
 
