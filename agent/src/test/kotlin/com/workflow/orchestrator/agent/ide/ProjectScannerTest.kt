@@ -165,4 +165,60 @@ class ProjectScannerTest {
         assertTrue(BuildTool.MAVEN in result)
         assertTrue(BuildTool.PIP in result)
     }
+
+    // --- Multi-Module Detection ---
+
+    @Test
+    fun `detectIsMultiModuleFromPath returns true for Gradle settings_gradle with include`() {
+        projectRoot.resolve("settings.gradle").writeText("""
+            rootProject.name = "my-project"
+            include("core", "api", "service")
+        """.trimIndent())
+        assertTrue(ProjectScanner.detectIsMultiModuleFromPath(projectRoot))
+    }
+
+    @Test
+    fun `detectIsMultiModuleFromPath returns true for Gradle settings_gradle_kts with include`() {
+        projectRoot.resolve("settings.gradle.kts").writeText("""
+            rootProject.name = "my-project"
+            include("core", "api")
+        """.trimIndent())
+        assertTrue(ProjectScanner.detectIsMultiModuleFromPath(projectRoot))
+    }
+
+    @Test
+    fun `detectIsMultiModuleFromPath returns false for settings_gradle without include`() {
+        projectRoot.resolve("settings.gradle").writeText("""
+            rootProject.name = "single-module"
+        """.trimIndent())
+        assertFalse(ProjectScanner.detectIsMultiModuleFromPath(projectRoot))
+    }
+
+    @Test
+    fun `detectIsMultiModuleFromPath returns true for Maven pom with modules section`() {
+        projectRoot.resolve("pom.xml").writeText("""
+            <project>
+              <modules>
+                <module>core</module>
+                <module>service</module>
+              </modules>
+            </project>
+        """.trimIndent())
+        assertTrue(ProjectScanner.detectIsMultiModuleFromPath(projectRoot))
+    }
+
+    @Test
+    fun `detectIsMultiModuleFromPath returns false for single-module Maven pom`() {
+        projectRoot.resolve("pom.xml").writeText("""
+            <project>
+              <artifactId>single</artifactId>
+            </project>
+        """.trimIndent())
+        assertFalse(ProjectScanner.detectIsMultiModuleFromPath(projectRoot))
+    }
+
+    @Test
+    fun `detectIsMultiModuleFromPath returns false for empty project`() {
+        assertFalse(ProjectScanner.detectIsMultiModuleFromPath(projectRoot))
+    }
 }

@@ -84,6 +84,23 @@ object ProjectScanner {
         return buildTools
     }
 
+    fun detectIsMultiModuleFromPath(root: Path): Boolean {
+        // Gradle multi-project: settings.gradle or settings.gradle.kts containing include(
+        val settingsFile = root.resolve("settings.gradle").takeIf { it.exists() }
+            ?: root.resolve("settings.gradle.kts").takeIf { it.exists() }
+        if (settingsFile != null) {
+            val content = readFileIfExists(settingsFile) ?: ""
+            if (Regex("""include\s*\(|include\s+'|include\s+"""").containsMatchIn(content)) {
+                return true
+            }
+        }
+        // Maven multi-module: root pom.xml with <modules> section
+        val pomContent = readFileIfExists(root.resolve("pom.xml")) ?: ""
+        if (pomContent.contains("<modules>")) return true
+
+        return false
+    }
+
     private fun readDependencyContent(root: Path): String {
         val parts = mutableListOf<String>()
         readFileIfExists(root.resolve("requirements.txt"))?.let { parts.add(it) }
