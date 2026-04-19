@@ -507,7 +507,20 @@ class MentionSearchProvider(private val project: Project) {
                 }.also { cachedSprintTickets = it }
             }
 
-            // Filter by query
+            // Status priority: open/active statuses float to the top so they appear before
+            // Done/Closed/Resolved. The API returns issues in arbitrary order (often alphabetical
+            // by key), so without sorting a sprint that's mostly done would show only closed
+            // tickets in the first 8 results.
+            val statusOrder = mapOf(
+                "In Progress" to 0,
+                "In Review"   to 1,
+                "To Do"       to 2,
+                "Open"        to 2,
+                "Reopened"    to 2,
+                "Done"        to 3,
+                "Closed"      to 3,
+                "Resolved"    to 3,
+            )
             val filtered = if (query.isBlank()) {
                 sprintTickets
             } else {
@@ -516,7 +529,7 @@ class MentionSearchProvider(private val project: Project) {
                     ticket.key.uppercase().contains(q) ||
                     ticket.summary.uppercase().contains(q)
                 }
-            }.take(8)
+            }.sortedBy { statusOrder[it.status] ?: 2 }.take(8)
 
             buildJsonArray {
                 for (ticket in filtered) {

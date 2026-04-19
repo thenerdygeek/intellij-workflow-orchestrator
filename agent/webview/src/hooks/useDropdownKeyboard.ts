@@ -52,11 +52,22 @@ export function useDropdownKeyboard<T>({
     setSelectedIndex(0);
   }, [items, isOpen]);
 
-  // Auto-scroll selected item into view whenever selectedIndex changes
+  // Auto-scroll selected item into view whenever selectedIndex changes.
+  // Uses getBoundingClientRect (viewport coords) instead of scrollIntoView because
+  // the list container is position:static — items' offsetParent skips past it to the
+  // outer absolute wrapper, causing scrollIntoView to miscalculate scroll deltas.
   useEffect(() => {
     if (!listRef.current) return;
-    const selected = listRef.current.querySelector<HTMLElement>('[data-highlighted="true"]');
-    selected?.scrollIntoView({ block: 'nearest' });
+    const list = listRef.current;
+    const selected = list.querySelector<HTMLElement>('[data-highlighted="true"]');
+    if (!selected) return;
+    const listRect = list.getBoundingClientRect();
+    const itemRect = selected.getBoundingClientRect();
+    if (itemRect.top < listRect.top) {
+      list.scrollTop -= listRect.top - itemRect.top;
+    } else if (itemRect.bottom > listRect.bottom) {
+      list.scrollTop += itemRect.bottom - listRect.bottom;
+    }
   }, [selectedIndex]);
 
   const handleKeyDown = useCallback(
