@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.ide
 import com.intellij.execution.configurations.ConfigurationType
 import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.openapi.application.ApplicationInfo
+import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.extensions.PluginId
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
@@ -91,7 +92,13 @@ object IdeContextDetector {
 
     private fun detectIsMultiModule(project: Project): Boolean {
         return try {
-            ModuleManager.getInstance(project).modules.size > 1
+            ReadAction.compute<Boolean, Throwable> {
+                ModuleManager.getInstance(project).modules.size > 1
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: com.intellij.openapi.progress.ProcessCanceledException) {
+            throw e
         } catch (_: Exception) {
             val basePath = project.basePath ?: return false
             ProjectScanner.detectIsMultiModuleFromPath(Path.of(basePath))
