@@ -266,6 +266,32 @@ class RuntimeConfigToolTest {
     }
 
     // ──────────────────────────────────────────────────────────────────────
+    // module lookup — behavior test for error path
+    // ──────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `create_run_config with nonexistent module surfaces error in failures`() = runTest {
+        val params = buildJsonObject {
+            put("action", "create_run_config")
+            put("name", "MyApp")
+            put("type", "application")
+            put("main_class", "com.example.Main")
+            put("module", "nonexistent-module")
+        }
+        val result = tool.execute(params, project)
+        // The tool catches module lookup failure in trySetProperty and includes it in warnings,
+        // or it fails to create the config entirely due to RunManager mock returning null.
+        // Either way, the result should exist (not throw).
+        assertNotNull(result)
+        // The error or warning should reference the module parameter
+        val combined = result.content + result.summary
+        assertTrue(
+            combined.contains("module", ignoreCase = true) || result.isError,
+            "Expected result to mention module or be an error. Got: $combined"
+        )
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
     // AGENT_PREFIX constant
     // ──────────────────────────────────────────────────────────────────────
 

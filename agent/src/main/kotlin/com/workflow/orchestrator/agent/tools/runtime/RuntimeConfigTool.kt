@@ -6,6 +6,7 @@ import com.intellij.execution.application.ApplicationConfigurationType
 import com.intellij.execution.configurations.ConfigurationFactory
 import com.intellij.execution.configurations.RunConfiguration
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
@@ -524,12 +525,13 @@ description optional: for approval dialog on create/modify/delete.
         config: RunConfiguration, moduleName: String, project: Project, failures: MutableList<String>
     ) {
         trySetProperty(failures, "module") {
-            val mod = ModuleManager.getInstance(project).findModuleByName(moduleName)
-                ?: throw IllegalArgumentException(
-                    "Module '$moduleName' not found. Available: ${
-                        ModuleManager.getInstance(project).modules.map { it.name }.sorted()
-                    }"
-                )
+            val (mod, availableNames) = ReadAction.compute<Pair<com.intellij.openapi.module.Module?, List<String>>, Throwable> {
+                val mgr = ModuleManager.getInstance(project)
+                mgr.findModuleByName(moduleName) to mgr.modules.map { it.name }.sorted()
+            }
+            mod ?: throw IllegalArgumentException(
+                "Module '$moduleName' not found. Available: $availableNames"
+            )
             if (config is ApplicationConfiguration) {
                 config.setModule(mod)
             } else {
