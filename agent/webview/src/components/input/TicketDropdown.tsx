@@ -42,7 +42,7 @@ export const TicketDropdown = memo(function TicketDropdown({
   const [results, setResults] = useState<MentionSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // Search tickets via Kotlin bridge
+  // Search tickets via Kotlin bridge — debounced 200ms to avoid firing on every keystroke
   useEffect(() => {
     const cbId = `__ticketSearch_${Math.random().toString(36).slice(2)}`;
     setLoading(true);
@@ -58,24 +58,24 @@ export const TicketDropdown = memo(function TicketDropdown({
     (window as any)[cbId] = handler;
     (window as any).__ticketSearchCallback = handler;
 
-    window._searchTickets?.(query ?? '');
+    const timerId = setTimeout(() => {
+      window._searchTickets?.(query ?? '');
+    }, 200);
 
     return () => {
+      clearTimeout(timerId);
       delete (window as any)[cbId];
       if ((window as any).__ticketSearchCallback === handler) {
         delete (window as any).__ticketSearchCallback;
       }
     };
-  }, [query]);
+  }, [query, onResultsChange]);
 
   const isEmpty = results.length === 0;
 
   return (
     <div className="absolute bottom-full left-0 mb-1 min-w-[420px] max-w-[560px] w-max z-50">
-      {/* onMouseDown preventDefault keeps focus in the contenteditable input
-          so insertChip can find the trigger text when onClick fires */}
       <div
-        onMouseDown={(e) => e.preventDefault()}
         className="rounded-lg overflow-hidden"
         style={{
           backgroundColor: 'var(--surface-elevated, var(--toolbar-bg, var(--popover)))',
@@ -133,6 +133,7 @@ export const TicketDropdown = memo(function TicketDropdown({
                 <div
                   key={r.path ?? r.label}
                   data-highlighted={highlighted ? 'true' : undefined}
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={() => onSelect(r)}
                   onMouseEnter={() => setSelectedIndex(i)}
                   className="flex items-center gap-2 px-2 py-1.5 rounded text-xs cursor-default"

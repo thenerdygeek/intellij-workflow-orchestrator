@@ -61,35 +61,35 @@ export function useDropdownKeyboard<T>({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent | KeyboardEvent): boolean => {
-      if (!isOpen || items.length === 0) return false;
+      if (!isOpen) return false;
 
       switch (e.key) {
         case 'ArrowDown':
+          if (items.length === 0) return false;
           e.preventDefault();
           e.stopPropagation();
           setSelectedIndex(prev => (prev + 1) % items.length);
           return true;
 
         case 'ArrowUp':
+          if (items.length === 0) return false;
           e.preventDefault();
           e.stopPropagation();
           setSelectedIndex(prev => (prev - 1 + items.length) % items.length);
           return true;
 
         case 'Enter':
-          e.preventDefault();
-          e.stopPropagation();
-          if (items[selectedIndex] !== undefined) {
-            onSelect(items[selectedIndex]!);
-          }
-          return true;
-
         case 'Tab':
-          // Tab selects like VS Code autocomplete — prevents focus shift
+          // Consume Enter/Tab whenever the dropdown is open — even if items haven't
+          // loaded yet. This prevents Enter from falling through to form-submit while
+          // the debounced search is still in-flight. If items exist, select; if not,
+          // dismiss (user can press Enter again to send the message).
           e.preventDefault();
           e.stopPropagation();
-          if (items[selectedIndex] !== undefined) {
+          if (items.length > 0 && items[selectedIndex] !== undefined) {
             onSelect(items[selectedIndex]!);
+          } else {
+            onDismiss();
           }
           return true;
 

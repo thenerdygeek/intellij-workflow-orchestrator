@@ -610,12 +610,14 @@ export const InputBar = memo(function InputBar() {
   const validateTicket = useCallback((ticketKey: string) => {
     const callbackKey = `__validateTicket_${ticketKey}`;
     let resolved = false;
+    console.log('[Mention] validateTicket: starting validation for', ticketKey);
 
     // Timeout: if no response in 5s, strip the chip
     const timeoutId = setTimeout(() => {
       if (resolved) return;
       resolved = true;
       delete (window as any)[callbackKey];
+      console.warn('[Mention] validateTicket: timeout for', ticketKey, '— removing chip');
       richInputRef.current?.removeChipByLabel?.(ticketKey);
     }, 5000);
 
@@ -663,7 +665,14 @@ export const InputBar = memo(function InputBar() {
   }, []);
 
   const handleTicketSelect = useCallback((result: MentionSearchResult) => {
+    // Clear prevTicketQueryRef BEFORE insertChip — same pattern as the null-trigger path in
+    // handleRichInputChange. insertChip fires fireChange() synchronously, which re-invokes
+    // handleRichInputChange. If prevTicketQueryRef still holds the typed query, that recursive
+    // call sees a full ticket key and launches a duplicate validateTicket that removes the
+    // just-selected chip on validation failure or 5s timeout.
+    prevTicketQueryRef.current = '';
     const mention: Mention = { type: 'ticket', label: result.label, path: result.path, icon: result.icon };
+    console.log('[Mention] handleTicketSelect: inserting chip', result.label, 'path=', result.path);
     richInputRef.current?.insertChip(mention, '#', 'valid');
     setShowTickets(false); setTicketQuery('');
     setTicketItems([]);
@@ -680,6 +689,7 @@ export const InputBar = memo(function InputBar() {
     if (!ri) return;
     const text = ri.getText();
     const mentions = ri.getMentions();
+    console.log('[Mention] handleSend: text=', JSON.stringify(text.slice(0, 80)), 'mentions=', JSON.stringify(mentions));
     if (!text.trim() && mentions.length === 0) return;
     const state = useChatStore.getState();
     if (state.inputState.locked) return;
