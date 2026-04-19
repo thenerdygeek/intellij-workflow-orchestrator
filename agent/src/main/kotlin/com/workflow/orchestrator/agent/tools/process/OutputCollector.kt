@@ -99,16 +99,14 @@ object OutputCollector {
         val maxLines = (maxResultChars / avgLineLen).coerceAtLeast(2)
 
         val truncated = truncateByLines(sanitized, maxLines)
-
-        // Append size info footer
-        val footer = if (spillPath != null) {
-            "\n[Total output: $totalChars chars, $totalLines lines. Full output: $spillPath]"
+        val content = if (spillPath != null) {
+            truncated + "\n[Total output: $totalChars chars, $totalLines lines. Full output: $spillPath]"
         } else {
-            "\n[Total output: $totalChars chars. Use a more targeted command to see specific sections.]"
+            truncated
         }
 
         return ProcessedOutput(
-            content = truncated + footer,
+            content = content,
             wasTruncated = true,
             totalLines = totalLines,
             totalChars = totalChars,
@@ -215,14 +213,14 @@ object OutputCollector {
         }
 
         val truncated = truncateToTail(sanitized, maxResultChars)
-        val footer = if (spillPath != null) {
-            "\n[Total output: $totalChars chars, $totalLines lines. Full output: $spillPath]"
+        val content = if (spillPath != null) {
+            truncated + "\n[Total output: $totalChars chars, $totalLines lines. Full output: $spillPath]"
         } else {
-            "\n[Total output: $totalChars chars. Use output_file=true or a more targeted command to see the head.]"
+            truncated
         }
 
         return ProcessedOutput(
-            content = truncated + footer,
+            content = content,
             wasTruncated = true,
             totalLines = totalLines,
             totalChars = totalChars,

@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { AnsiUp } from 'ansi_up';
 import { CopyButton } from '@/components/ui/copy-button';
+import { highlightPlainText } from '@/lib/terminal-highlight';
 
 // ── Singleton AnsiUp instance ──
 
@@ -17,8 +18,11 @@ interface AnsiOutputProps {
 const ANSI_RE = /\x1B\[[0-9;]*[a-zA-Z]/g;
 
 export function AnsiOutput({ text }: AnsiOutputProps) {
-  const html = useMemo(() => ansiUp.ansi_to_html(text), [text]);
   const strippedText = useMemo(() => text.replace(ANSI_RE, ''), [text]);
+  const html = useMemo(
+    () => strippedText === text ? highlightPlainText(text) : ansiUp.ansi_to_html(text),
+    [text, strippedText],
+  );
 
   return (
     <div className="my-2 overflow-hidden rounded-lg border border-[var(--border)]">

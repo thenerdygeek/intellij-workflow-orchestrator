@@ -426,7 +426,7 @@ class OutputCollectorTest {
             assertTrue(result.wasTruncated)
             assertTrue(result.content.contains("[... "))
             assertTrue(result.content.contains("lines omitted ..."))
-            assertTrue(result.content.contains("[Total output:"))
+            assertFalse(result.content.contains("[Total output:"))
             assertTrue(result.content.length <= content.length)
         }
     }
@@ -472,13 +472,13 @@ class OutputCollectorTest {
         }
 
         @Test
-        fun `large output triggers truncation with advice message`() {
+        fun `large output triggers truncation without footer when no spill dir`() {
             val line = "x".repeat(200)
             val content = (1..300).joinToString("\n") { line }
             val result = OutputCollector.processOutput(content, maxResultChars = 5_000)
 
             assertTrue(result.wasTruncated)
-            assertTrue(result.content.contains("Use a more targeted command"))
+            assertFalse(result.content.contains("[Total output:"))
             assertNull(result.spillPath)
         }
 

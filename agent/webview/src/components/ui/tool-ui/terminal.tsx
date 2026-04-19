@@ -7,6 +7,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { AnsiUp } from 'ansi_up';
 import { cn } from '@/lib/utils';
+import { highlightPlainText } from '@/lib/terminal-highlight';
 import { Button } from '@/components/ui/button';
 import { CopyButton } from '@/components/ui/copy-button';
 import { Terminal as TerminalIcon, ChevronDown, ChevronUp, Square } from 'lucide-react';
@@ -56,9 +57,17 @@ export function Terminal({
     ? lines.slice(-maxCollapsedLines).join('\n')
     : output;
 
-  // Convert ANSI escape codes to colored HTML
-  const displayHtml = useMemo(() => ansiUp.ansi_to_html(displayOutput), [displayOutput]);
   const hasAnsi = output !== stripAnsi(output);
+  // ANSI output: let ansi_up handle coloring. Plain text: apply heuristic token highlights.
+  const displayHtml = useMemo(
+    () => {
+      const strippedDisplay = stripAnsi(displayOutput);
+      return strippedDisplay === displayOutput
+        ? highlightPlainText(displayOutput)
+        : ansiUp.ansi_to_html(displayOutput);
+    },
+    [displayOutput],
+  );
 
   // Auto-scroll to bottom when output changes or when expanding
   useEffect(() => {
