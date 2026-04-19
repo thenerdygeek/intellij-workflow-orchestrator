@@ -547,8 +547,13 @@ class AgentService(private val project: Project) : Disposable {
             safeRegisterDeferred("Code Intelligence") { ReadWriteAccessTool(providerRegistry) }
         }
 
-        // Project Structure — module/SDK/library model (always available, no PSI dependency)
-        safeRegisterDeferred("Code Intelligence") { com.workflow.orchestrator.agent.tools.project.ProjectStructureTool() }
+        // Project Structure — promote to core for multi-module projects
+        if (ToolRegistrationFilter.shouldPromoteMultiModuleTools(ideContext)) {
+            safeRegisterCore { com.workflow.orchestrator.agent.tools.project.ProjectStructureTool() }
+            log.info("project_structure promoted to core (multi-module project detected)")
+        } else {
+            safeRegisterDeferred("Code Intelligence") { com.workflow.orchestrator.agent.tools.project.ProjectStructureTool() }
+        }
 
         // Code Quality — formatting, refactoring, inspections
         safeRegisterDeferred("Code Quality") { FormatCodeTool() }
@@ -566,7 +571,12 @@ class AgentService(private val project: Project) : Disposable {
         val hasBuildSupport = ToolRegistrationFilter.shouldRegisterJavaBuildTools(ideContext) ||
             ToolRegistrationFilter.shouldRegisterPythonBuildTools(ideContext)
         if (hasBuildSupport) {
-            safeRegisterDeferred("Build & Run") { BuildTool() }
+            if (ToolRegistrationFilter.shouldPromoteMultiModuleTools(ideContext)) {
+                safeRegisterCore { BuildTool() }
+                log.info("build promoted to core (multi-module project detected)")
+            } else {
+                safeRegisterDeferred("Build & Run") { BuildTool() }
+            }
         } else {
             log.info("Skipping build tools — neither Java nor Python build tools available")
         }
@@ -604,7 +614,12 @@ class AgentService(private val project: Project) : Disposable {
         }
         // Universal process observation (no compile or test runner)
         safeRegisterDeferred("Build & Run") { RuntimeExecTool() }
-        safeRegisterDeferred("Build & Run") { RuntimeConfigTool() }
+        if (ToolRegistrationFilter.shouldPromoteMultiModuleTools(ideContext)) {
+            safeRegisterCore { RuntimeConfigTool() }
+            log.info("runtime_config promoted to core (multi-module project detected)")
+        } else {
+            safeRegisterDeferred("Build & Run") { RuntimeConfigTool() }
+        }
 
         // Java/Kotlin native test runner + Java compiler
         if (ToolRegistrationFilter.shouldRegisterJavaBuildTools(ideContext)) {
