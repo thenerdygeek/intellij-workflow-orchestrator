@@ -453,8 +453,11 @@ class SubagentRunner(
             AgentSettings.getInstance(project).state.useUnifiedSubagentPrompt
         } catch (e: ProcessCanceledException) {
             throw e
-        } catch (_: IllegalStateException) {
-            // AgentSettings service not registered (unit tests without IntelliJ platform). Default to unified path.
+        } catch (_: Exception) {
+            // Service not bootable in unit tests (IllegalStateException from ServiceManager,
+            // ClassCastException when the test platform registers a stub, etc.).
+            // Default to unified path — sub-agent tests that matter pin the behavior explicitly
+            // via agentConfig presence or direct assertions, not this flag.
             true
         }
     }
