@@ -13,6 +13,7 @@ import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.dto.*
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
+import com.workflow.orchestrator.core.model.ModelPricingRegistry
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
@@ -57,6 +58,10 @@ class SpawnAgentToolTest {
     @AfterEach
     fun tearDown() {
         AgentConfigLoader.resetForTests()
+        // Shut down the ModelPricingRegistry file-watcher daemon thread so its native
+        // FileSystemWatcher on macOS doesn't trip IntelliJ's ThreadLeakTracker after
+        // each test. See SubagentRunnerTest.stopModelPricingWatcher for context.
+        runCatching { ModelPricingRegistry.resetForTests() }
     }
 
     // ---- Helpers ----

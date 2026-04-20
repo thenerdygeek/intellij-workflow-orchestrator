@@ -255,8 +255,13 @@ object ModelPricingRegistry {
         watchThread = null
     }
 
-    /** Reset for tests — clears registry and restores the default override path. */
-    internal fun resetForTests() {
+    /**
+     * Reset for tests — clears registry, stops the file-watcher daemon thread, and
+     * restores the default override path. Public so cross-module agent tests can call
+     * it to prevent the macOS native FileSystemWatcher from tripping IntelliJ's
+     * ThreadLeakTracker between tests.
+     */
+    fun resetForTests() {
         stopWatching()
         registry.clear()
         overridePath = USER_OVERRIDE_PATH

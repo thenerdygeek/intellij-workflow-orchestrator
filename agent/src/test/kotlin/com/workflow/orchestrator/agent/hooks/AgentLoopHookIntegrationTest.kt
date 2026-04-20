@@ -15,10 +15,12 @@ import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.dto.*
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
+import com.workflow.orchestrator.core.model.ModelPricingRegistry
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -38,6 +40,16 @@ class AgentLoopHookIntegrationTest {
     fun setUp() {
         project = mockk(relaxed = true)
         contextManager = ContextManager(maxInputTokens = 100_000)
+    }
+
+    /**
+     * Shut down the ModelPricingRegistry file-watcher daemon after each test. Same
+     * reason as SubagentRunnerTest: AgentLoop.lookup() starts the registry lazily,
+     * and its native FileSystemWatcher on macOS trips ThreadLeakTracker without cleanup.
+     */
+    @AfterEach
+    fun stopModelPricingWatcher() {
+        runCatching { ModelPricingRegistry.resetForTests() }
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
