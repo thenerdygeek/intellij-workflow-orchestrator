@@ -11,6 +11,63 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 
+class HttpScratchTemplateTest {
+    @Test
+    fun `renders GET endpoint with no body`() {
+        val block = renderHttpBlock(
+            handlerId = "UserController.getById",
+            method = "GET",
+            url = "http://localhost:8080/api/users/{id}",
+            bodyPlaceholder = null,
+        )
+        val expected = """
+            ### UserController.getById
+            GET http://localhost:8080/api/users/{id}
+        """.trimIndent() + "\n"
+        assertEquals(expected, block)
+    }
+
+    @Test
+    fun `renders POST endpoint with JSON body and content type`() {
+        val block = renderHttpBlock(
+            handlerId = "UserController.create",
+            method = "POST",
+            url = "http://localhost:8080/api/users",
+            bodyPlaceholder = """{"name":"","email":""}""",
+        )
+        val expected = """
+            ### UserController.create
+            POST http://localhost:8080/api/users
+            Content-Type: application/json
+
+            {"name":"","email":""}
+        """.trimIndent() + "\n"
+        assertEquals(expected, block)
+    }
+}
+
+class DtoPlaceholderTest {
+    @Test
+    fun `primitive Kotlin types return valid JSON literals`() {
+        assertEquals("\"\"", defaultJsonLiteral("String"))
+        assertEquals("0", defaultJsonLiteral("Int"))
+        assertEquals("0", defaultJsonLiteral("Long"))
+        assertEquals("0.0", defaultJsonLiteral("Double"))
+        assertEquals("false", defaultJsonLiteral("Boolean"))
+    }
+
+    @Test
+    fun `collections return empty array`() {
+        assertEquals("[]", defaultJsonLiteral("List<String>"))
+        assertEquals("[]", defaultJsonLiteral("Set<Int>"))
+    }
+
+    @Test
+    fun `unknown type returns null literal`() {
+        assertEquals("null", defaultJsonLiteral("SomeCustomType"))
+    }
+}
+
 /**
  * Surface + dispatcher contract tests for [EndpointsTool].
  *
