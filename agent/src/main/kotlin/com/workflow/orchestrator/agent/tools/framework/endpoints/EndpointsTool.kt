@@ -66,6 +66,10 @@ Actions and their parameters:
                 type = "string",
                 description = "Full URL path to resolve (e.g. '/api/users/{id}') — for find_usages",
             ),
+            "method" to ParameterProperty(
+                type = "string",
+                description = "Optional HTTP method hint (GET/POST/…) to narrow resolution — for find_usages",
+            ),
         ),
         required = listOf("action"),
     )
@@ -90,7 +94,7 @@ Actions and their parameters:
 
         return when (action) {
             "list" -> executeListEndpoints(params, project)
-            "find_usages" -> executeFindUsagesStub(params, project)
+            "find_usages" -> executeFindUsages(params, project)
             "export_openapi" -> executeExportOpenApiStub(params, project)
             else -> ToolResult(
                 content = "Unknown action '$action'. Valid actions: list, find_usages, export_openapi.",
@@ -102,31 +106,7 @@ Actions and their parameters:
     }
 }
 
-// Stubs — replaced by dedicated action files in Tasks 11 and 13.
-// Named "…Stub" to avoid collision when the real functions land with
-// names `executeFindUsages` / `executeExportOpenApi`.
-
-internal suspend fun executeFindUsagesStub(
-    params: JsonObject,
-    @Suppress("UNUSED_PARAMETER") project: Project,
-): ToolResult {
-    val url = params["url"]?.jsonPrimitive?.content
-    if (url.isNullOrBlank()) {
-        return ToolResult(
-            content = "Error: 'url' parameter required for find_usages",
-            summary = "Error: missing url",
-            tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-            isError = true,
-        )
-    }
-    return ToolResult(
-        content = "find_usages not yet implemented",
-        summary = "Stub",
-        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-        isError = true,
-    )
-}
-
+// Stub — replaced by a dedicated action file in Task 13.
 internal suspend fun executeExportOpenApiStub(
     @Suppress("UNUSED_PARAMETER") params: JsonObject,
     @Suppress("UNUSED_PARAMETER") project: Project,
