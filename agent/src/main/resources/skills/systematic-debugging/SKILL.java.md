@@ -3,7 +3,8 @@
 ### Spring Boot Diagnostics
 ```
 spring(action="context")              # Bean graph — find wiring issues
-spring(action="endpoints")            # All HTTP endpoints
+endpoints(action="list")              # All HTTP endpoints (Ultimate/Pro/WebStorm)
+spring(action="endpoints")            # Spring-only, used as fallback on IntelliJ Community
 spring(action="boot_autoconfig")      # Auto-configuration decisions
 spring(action="config_properties")    # Bound configuration
 ```

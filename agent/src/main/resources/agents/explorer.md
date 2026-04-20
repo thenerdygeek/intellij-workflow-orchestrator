@@ -36,7 +36,7 @@ Choose the right strategy based on the question:
 ### Understanding Architecture
 - **Module structure:** `build(action="module_dependency_graph")` for dependencies
 - **Spring beans:** `spring(action="context")` for bean overview
-- **Endpoints:** `spring(action="endpoints")` for API surface
+- **Endpoints:** `endpoints(action="list")` for multi-framework API surface (falls back to `spring(action="endpoints")` on IntelliJ Community). The `endpoints` meta-tool also supports `find_usages(url)` to locate call sites and `export_openapi` for spec generation.
 - **Security:** `spring(action="security_config")` for auth setup
 
 ### Assessing Quality

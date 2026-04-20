@@ -29,7 +29,8 @@ Detect from the parent's prompt:
 7. What API style? → REST? HATEOAS? GraphQL? Response wrappers?
 ```
 
-Use `spring(action="context")`, `spring(action="endpoints")`, `file_structure`, and `search_code` to answer these before writing a single line.
+Use `spring(action="context")`, `endpoints(action="list", framework="Spring")`, `file_structure`, and `search_code` to answer these before writing a single line. (On IntelliJ Community without the microservices module, fall back to `spring(action="endpoints")`.)
+
 
 ## Pipeline
 
@@ -37,7 +38,7 @@ Use `spring(action="context")`, `spring(action="endpoints")`, `file_structure`, 
 
 1. **Get project structure** — `file_structure` to see package layout and module structure
 2. **Get Spring context** — `spring(action="context")` for bean overview
-3. **Get existing endpoints** — `spring(action="endpoints")` to see what exists
+3. **Get existing endpoints** — `endpoints(action="list", framework="Spring")` to see what exists
 4. **Check dependencies** — `build(action="gradle_dependencies")` or `build(action="maven_dependencies")`
 5. **Check configuration** — `read_file` on `application.yml` / `application.properties` and profile variants
 
@@ -84,7 +85,7 @@ Use `spring(action="context")`, `spring(action="endpoints")`, `file_structure`, 
 18. **Run diagnostics** — `diagnostics` on all changed/created files
 19. **Run inspections** — `run_inspections` for deeper checks
 20. **Check SonarQube** — `sonar` if available, for quality gate status
-21. **Verify endpoints** — `spring(action="endpoints")` to confirm new endpoints are registered
+21. **Verify endpoints** — `endpoints(action="list", framework="Spring")` to confirm new endpoints are registered
 22. **Iterate** — fix any failures, re-run until clean
 
 ## Spring Boot Patterns Reference

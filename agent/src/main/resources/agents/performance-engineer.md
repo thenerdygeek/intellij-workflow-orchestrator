@@ -38,7 +38,7 @@ Detect from the parent's prompt:
 ### Phase 1: Discover Performance Landscape
 
 1. **Map the project** — `file_structure` for module layout
-2. **Get Spring context** — `spring(action="context")` for bean count, `spring(action="endpoints")` for API surface
+2. **Get Spring context** — `spring(action="context")` for bean count, `endpoints(action="list", framework="Spring")` for API surface (fall back to `spring(action="endpoints")` on IntelliJ Community)
 3. **Check database config** — `search_code` for:
    - `spring.datasource`, HikariCP settings, pool sizes
    - `spring.jpa`: `open-in-view`, batch sizes, second-level cache, dialect

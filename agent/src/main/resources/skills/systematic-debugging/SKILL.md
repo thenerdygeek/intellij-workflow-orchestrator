@@ -233,7 +233,7 @@ Before diving into generic debugging, check if the bug matches a project-specifi
 
 **Spring Boot failures:**
 1. Check `spring(action="context")` for the bean graph — is the expected bean registered?
-2. Check `spring(action="endpoints")` — is the endpoint mapped correctly?
+2. Check `endpoints(action="list", framework="Spring")` (or `spring(action="endpoints")` on IntelliJ Community) — is the endpoint mapped correctly?
 3. For startup failures: search logs for `BeanCreationException`, `UnsatisfiedDependencyException`
 4. For auto-config issues: check `spring(action="boot_autoconfig")` for matched/unmatched conditions
 
@@ -288,7 +288,7 @@ If you catch yourself thinking:
 | 2. Pattern | `search_code`, `read_file`, `find_definition`, `type_hierarchy`, `think` | Find working patterns |
 | 3. Hypothesis | `think`, `runtime_exec(action="run_tests")`, `runtime_exec(action="compile_module")`, `diagnostics` | Test theory minimally |
 | 4. Implementation | `edit_file`, `runtime_exec(action="run_tests")`, `runtime_exec(action="compile_module")`, `diagnostics`, `sonar(action="issues")` | Fix and verify |
-| Spring-specific | `spring(action="context/endpoints/boot_autoconfig")`, `diagnostics` | Framework diagnostics |
+| Spring-specific | `spring(action="context/boot_autoconfig")`, `endpoints(action="list")`, `diagnostics` | Framework diagnostics |
 
 ## Defense-in-Depth
 

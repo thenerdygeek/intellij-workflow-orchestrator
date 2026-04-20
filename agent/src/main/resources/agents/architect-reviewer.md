@@ -43,7 +43,7 @@ Detect from the parent's prompt:
 
 1. **Get module/project structure** — `build(action="module_dependency_graph")` and `file_structure`
 2. **Identify the architecture style** — read key files to determine the layering pattern, package structure conventions, and module boundaries
-3. **Get Spring context** — `spring(action="context")` for bean overview, `spring(action="endpoints")` for API surface
+3. **Get Spring context** — `spring(action="context")` for bean overview, `endpoints(action="list", framework="Spring")` for API surface (fall back to `spring(action="endpoints")` on IntelliJ Community)
 4. **If reviewing changes** — `git(action="diff")` to see what changed structurally (new files, moved files, new dependencies)
 5. **Use `think`** to document the discovered architecture before proceeding
 

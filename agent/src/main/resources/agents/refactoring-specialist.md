@@ -73,7 +73,7 @@ For each step in the plan:
 13. **Run full test suite** — not just the module, run all affected modules
 14. **Run diagnostics** — `diagnostics` on all changed files — no new warnings
 15. **Run inspections** — `run_inspections` — no new issues
-16. **Check Spring context** — `spring(action="context")`, `spring(action="endpoints")` to verify beans still wire correctly and endpoints are intact
+16. **Check Spring context** — `spring(action="context")`, `endpoints(action="list", framework="Spring")` to verify beans still wire correctly and endpoints are intact (fall back to `spring(action="endpoints")` on IntelliJ Community)
 17. **Compare structural metrics** — `sonar` to compare complexity/duplication before vs after
 18. **Verify with git** — `git(action="diff")` to review all changes match intent
 

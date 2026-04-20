@@ -311,6 +311,7 @@ In each user message, the environment_details will specify the current mode. The
 
         ideContext?.let { ctx ->
             val hints = mutableListOf<String>()
+            if (ctx.hasMicroservicesModule) hints.add("endpoints")
             if (ctx.supportsSpring) hints.add("spring")
             if (Framework.DJANGO in ctx.detectedFrameworks) hints.add("django")
             if (Framework.FASTAPI in ctx.detectedFrameworks) hints.add("fastapi")

@@ -128,7 +128,8 @@ Query forms:
         val related = mutableSetOf<String>()
         for (name in loadedNames) {
             when {
-                name.startsWith("spring") -> related.addAll(listOf("build", "coverage", "db_schema"))
+                name == "endpoints" -> related.addAll(listOf("spring", "build", "coverage", "db_schema"))
+                name.startsWith("spring") -> related.addAll(listOf("endpoints", "build", "coverage", "db_schema"))
                 name.startsWith("django") -> related.addAll(listOf("build", "db_schema", "db_query"))
                 name.startsWith("fastapi") -> related.addAll(listOf("build", "db_schema"))
                 name.startsWith("flask") -> related.addAll(listOf("build", "db_schema"))
