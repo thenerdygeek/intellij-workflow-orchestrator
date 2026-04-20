@@ -41,42 +41,49 @@ import kotlinx.serialization.json.jsonPrimitive
  * dispatcher that exposes the tool surface (name, description, parameter schema)
  * and routes the `action` parameter to the corresponding handler.
  */
-class SpringTool : AgentTool {
+class SpringTool(
+    private val includeEndpointActions: Boolean = true,
+) : AgentTool {
 
     override val name = "spring"
 
-    override val description = """
-Spring framework intelligence — beans, endpoints, configuration, JPA, security, actuator.
-
-Actions and their parameters:
-- context(filter?) → Spring bean context
-- endpoints(filter?, include_params?) → REST endpoint mappings
-- bean_graph(bean_name) → Bean dependency graph
-- config(property) → Configuration property value
-- version_info(module) → Framework version info
-- profiles() → Active Spring profiles
-- repositories(filter?) → Spring Data repositories
-- security_config() → Security configuration
-- scheduled_tasks() → @Scheduled methods
-- event_listeners() → @EventListener methods
-- boot_endpoints(class_name?) → Boot endpoint mappings
-- boot_autoconfig(filter?, project_only?) → Auto-configuration classes (project_only default true)
-- boot_config_properties(class_name?, prefix?) → @ConfigurationProperties bindings
-- boot_actuator() → Actuator endpoints
-- jpa_entities(entity?) → JPA entity analysis
-""".trimIndent()
+    override val description: String
+        get() = buildString {
+            appendLine("Spring framework intelligence — beans, endpoints, configuration, JPA, security, actuator.")
+            appendLine()
+            appendLine("Actions and their parameters:")
+            appendLine("- context(filter?) → Spring bean context")
+            if (includeEndpointActions) appendLine("- endpoints(filter?, include_params?) → REST endpoint mappings")
+            appendLine("- bean_graph(bean_name) → Bean dependency graph")
+            appendLine("- config(property) → Configuration property value")
+            appendLine("- version_info(module) → Framework version info")
+            appendLine("- profiles() → Active Spring profiles")
+            appendLine("- repositories(filter?) → Spring Data repositories")
+            appendLine("- security_config() → Security configuration")
+            appendLine("- scheduled_tasks() → @Scheduled methods")
+            appendLine("- event_listeners() → @EventListener methods")
+            if (includeEndpointActions) appendLine("- boot_endpoints(class_name?) → Boot endpoint mappings")
+            appendLine("- boot_autoconfig(filter?, project_only?) → Auto-configuration classes (project_only default true)")
+            appendLine("- boot_config_properties(class_name?, prefix?) → @ConfigurationProperties bindings")
+            appendLine("- boot_actuator() → Actuator endpoints")
+            append("- jpa_entities(entity?) → JPA entity analysis")
+        }
 
     override val parameters = FunctionParameters(
         properties = mapOf(
             "action" to ParameterProperty(
                 type = "string",
                 description = "Operation to perform",
-                enumValues = listOf(
-                    "context", "endpoints", "bean_graph", "config", "version_info",
-                    "profiles", "repositories", "security_config", "scheduled_tasks",
-                    "event_listeners", "boot_endpoints", "boot_autoconfig",
-                    "boot_config_properties", "boot_actuator", "jpa_entities"
-                )
+                enumValues = buildList {
+                    add("context")
+                    if (includeEndpointActions) add("endpoints")
+                    addAll(listOf(
+                        "bean_graph", "config", "version_info", "profiles", "repositories",
+                        "security_config", "scheduled_tasks", "event_listeners",
+                    ))
+                    if (includeEndpointActions) add("boot_endpoints")
+                    addAll(listOf("boot_autoconfig", "boot_config_properties", "boot_actuator", "jpa_entities"))
+                },
             ),
             "filter" to ParameterProperty(
                 type = "string",
@@ -132,7 +139,7 @@ Actions and their parameters:
 
         return when (action) {
             "context" -> executeContext(params, project)
-            "endpoints" -> executeEndpoints(params, project)
+            "endpoints" -> if (includeEndpointActions) executeEndpoints(params, project) else unsupportedAction(action)
             "bean_graph" -> executeBeanGraph(params, project)
             "config" -> executeConfig(params, project)
             "version_info" -> executeVersionInfo(params, project)
@@ -141,7 +148,7 @@ Actions and their parameters:
             "security_config" -> executeSecurityConfig(params, project)
             "scheduled_tasks" -> executeScheduledTasks(params, project)
             "event_listeners" -> executeEventListeners(params, project)
-            "boot_endpoints" -> executeBootEndpoints(params, project)
+            "boot_endpoints" -> if (includeEndpointActions) executeBootEndpoints(params, project) else unsupportedAction(action)
             "boot_autoconfig" -> executeBootAutoConfig(params, project)
             "boot_config_properties" -> executeBootConfigProperties(params, project)
             "boot_actuator" -> executeBootActuator(params, project)
@@ -154,6 +161,14 @@ Actions and their parameters:
             )
         }
     }
+
+    private fun unsupportedAction(action: String): ToolResult = ToolResult(
+        content = "Action '$action' is served by the `endpoints` meta-tool in this IDE. " +
+            "Use `endpoints(action=list)` or `endpoints(action=list, framework=\"Spring\")`.",
+        summary = "Use endpoints tool",
+        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+        isError = true,
+    )
 
     companion object {
         internal const val SPRING_PLUGIN_MISSING_MSG =
