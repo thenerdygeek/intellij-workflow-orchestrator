@@ -4,6 +4,7 @@ package com.workflow.orchestrator.agent.tools.subagent
 
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.ide.IdeContext
 import com.workflow.orchestrator.agent.loop.AgentLoop
 import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.loop.LoopResult
@@ -83,6 +84,19 @@ class SubagentRunner(
      * Null in production. Allows tests to capture the composed prompt without running a full loop.
      */
     internal val onSystemPromptBuilt: ((String) -> Unit)? = null,
+    /**
+     * Optional IDE context forwarded from [com.workflow.orchestrator.agent.AgentService].
+     * When non-null and [useUnifiedSubagentPrompt] returns true, this is passed into
+     * [SubagentSystemPromptBuilder.build] so the sub-agent's system prompt adapts to
+     * the running IDE (PyCharm vs IntelliJ IDEA vs WebStorm). Null = legacy path defaults.
+     */
+    private val ideContext: IdeContext? = null,
+    /**
+     * Optional resolved [AgentConfig] for this sub-agent (forwarded from [SpawnAgentTool]).
+     * When non-null, passed into [SubagentSystemPromptBuilder.build]. Accepted and threaded
+     * through; Task 4 will consume agentConfig.promptSections when the YAML schema lands.
+     */
+    private val agentConfig: AgentConfig? = null,
 ) {
     private val abortRequested = AtomicBoolean(false)
 
@@ -217,6 +231,8 @@ class SubagentRunner(
                             onProgress(SubagentProgressUpdate(
                                 toolCompleteName = progress.toolName,
                                 toolCompleteResult = progress.result,
+                                toolCompleteOutput = progress.output,
+                                toolCompleteDiff = progress.editDiff,
                                 toolCompleteDurationMs = progress.durationMs,
                                 toolCompleteIsError = progress.isError,
                                 toolCallId = progress.toolCallId,
@@ -359,7 +375,25 @@ class SubagentRunner(
         }.trimEnd()
     }
 
+    /**
+     * Dispatcher: routes to the unified or legacy prompt builder based on the feature flag.
+     * Called both for the initial prompt (step 2 in [run]) and for dynamic rebuilds
+     * wired into [AgentLoop.systemPromptProvider].
+     */
     private fun buildComposedSystemPrompt(registry: ToolRegistry): String {
+        return if (useUnifiedSubagentPrompt()) {
+            buildUnifiedSystemPrompt(registry)
+        } else {
+            buildLegacyComposedSystemPrompt(registry)
+        }
+    }
+
+    /**
+     * Legacy prompt composer — the original [buildComposedSystemPrompt] body, preserved
+     * verbatim as a rollback path. Reachable when [useUnifiedSubagentPrompt] returns false.
+     * Do NOT delete this method.
+     */
+    private fun buildLegacyComposedSystemPrompt(registry: ToolRegistry): String {
         val coreDefinitions = registry.getActiveDefinitions()
         val coreMarkdown = ToolPromptBuilder.build(coreDefinitions)
         val deferredCatalog = buildDeferredCatalogSection(registry)
@@ -374,6 +408,49 @@ class SubagentRunner(
             }
             append("\n\n====\n\n")
             append(COMPLETING_YOUR_TASK_SECTION)
+        }
+    }
+
+    /**
+     * Unified prompt composer — delegates to [SubagentSystemPromptBuilder] which in turn
+     * calls the shared [com.workflow.orchestrator.agent.prompt.SystemPrompt.build] with
+     * sub-agent-scoped opt-in flags. IDE-aware sections (role, capabilities, rules,
+     * system info) automatically adapt to the runtime IDE via [ideContext].
+     */
+    private fun buildUnifiedSystemPrompt(registry: ToolRegistry): String {
+        val coreDefinitions = registry.getActiveDefinitions()
+        val toolDefinitionsMarkdown = ToolPromptBuilder.build(coreDefinitions)
+        val deferredToolCatalog = registry.getDeferredCatalogGroupedWithDescriptions()
+            .takeIf { it.isNotEmpty() }
+
+        return SubagentSystemPromptBuilder.build(
+            personaRole = systemPrompt,
+            agentConfig = agentConfig,
+            ideContext = ideContext,
+            projectName = project.name,
+            projectPath = project.basePath ?: "",
+            toolDefinitionsMarkdown = toolDefinitionsMarkdown,
+            deferredToolCatalog = deferredToolCatalog,
+            completingYourTaskSection = COMPLETING_YOUR_TASK_SECTION,
+        )
+    }
+
+    /**
+     * Feature flag: returns true to use [buildUnifiedSystemPrompt], false to fall back to
+     * [buildLegacyComposedSystemPrompt]. Reads [AgentSettings] when the IntelliJ platform
+     * is available; defaults to true (unified path ON) in unit tests where the platform
+     * service locator is not booted.
+     *
+     * The unified path is also gated on [agentConfig] being non-null, so that existing
+     * callers that omit the new constructor params (e.g. tests) transparently get the
+     * legacy path even if the flag is true — preserving all existing test behaviour.
+     */
+    private fun useUnifiedSubagentPrompt(): Boolean {
+        if (agentConfig == null) return false
+        return try {
+            com.workflow.orchestrator.agent.settings.AgentSettings.getInstance(project).state.useUnifiedSubagentPrompt
+        } catch (_: Exception) {
+            true
         }
     }
 

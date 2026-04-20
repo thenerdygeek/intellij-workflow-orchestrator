@@ -39,7 +39,7 @@ import java.util.concurrent.ConcurrentHashMap
  * Read-only agents (no write tools) support parallel prompts for fan-out research.
  */
 class SpawnAgentTool(
-    private val brainProvider: suspend () -> LlmBrain,
+    private val brainProvider: suspend (modelOverride: String?) -> LlmBrain,
     private val toolRegistry: ToolRegistry,
     private val project: Project,
     var contextBudget: Int = DEFAULT_CONTEXT_BUDGET,
@@ -90,6 +90,7 @@ Do NOT use this when:
 Parallel execution (read-only agents only):
 - For read-only agents (like "explorer"), you can provide up to 5 prompts (prompt, prompt_2, ..., prompt_5).
 - Each prompt runs as a separate parallel subagent with its own context.
+- Pair each extra prompt with a matching description (description_2 for prompt_2, description_3 for prompt_3, etc.) so each worker gets a unique 3-5 word UI label. If a description_N is omitted, the primary description is reused.
 - Use this to fan out multiple research questions simultaneously.
 - For agents with write tools, only the primary prompt is used (sequential).
 
@@ -138,9 +139,29 @@ Tips:
                 type = "string",
                 description = "Optional fifth prompt (parallel execution, read-only agents only)."
             ),
+            "description_2" to ParameterProperty(
+                type = "string",
+                description = "Optional 3-5 word label for prompt_2's worker card. Falls back to the primary description when omitted."
+            ),
+            "description_3" to ParameterProperty(
+                type = "string",
+                description = "Optional 3-5 word label for prompt_3's worker card. Falls back to the primary description when omitted."
+            ),
+            "description_4" to ParameterProperty(
+                type = "string",
+                description = "Optional 3-5 word label for prompt_4's worker card. Falls back to the primary description when omitted."
+            ),
+            "description_5" to ParameterProperty(
+                type = "string",
+                description = "Optional 3-5 word label for prompt_5's worker card. Falls back to the primary description when omitted."
+            ),
             "agent_type" to ParameterProperty(
                 type = "string",
                 description = "Agent type to use. Defaults to 'general-purpose' if not specified. Each type has a curated system prompt and tool set."
+            ),
+            "model" to ParameterProperty(
+                type = "string",
+                description = "Optional model ID override for this subagent (e.g. 'anthropic::2024-10-22::claude-3-5-sonnet-latest'). Overrides the agent config's model and the default auto-selected model. Use when a specific model capability is required."
             ),
         ),
         required = listOf("description", "prompt")
@@ -155,6 +176,8 @@ Tips:
         val prompt = params["prompt"]?.jsonPrimitive?.content
             ?: return errorResult("Missing required parameter: prompt")
         val agentType = params["agent_type"]?.jsonPrimitive?.content ?: DEFAULT_AGENT_TYPE
+        // model param > agent config's modelId > auto-selected default
+        val modelOverride = params["model"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
 
         val config = configLoader?.getCachedConfig(agentType)
             ?: return errorResult(buildUnknownAgentTypeError(agentType))
@@ -166,21 +189,30 @@ Tips:
 
         val isReadOnly = inferPlanMode(coreTools)
 
-        // Collect parallel prompts for read-only agents
-        val prompts = if (isReadOnly) {
-            PROMPT_KEYS.mapNotNull { key -> params[key]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() } }
+        // Collect parallel prompts for read-only agents, paired with their per-worker descriptions.
+        // Alignment: PROMPT_KEYS[i] ↔ DESCRIPTION_KEYS[i]. Missing description_N falls back to the primary description.
+        val promptPairs: List<Pair<String, String>> = if (isReadOnly) {
+            PROMPT_KEYS.mapIndexedNotNull { i, pKey ->
+                val p = params[pKey]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() } ?: return@mapIndexedNotNull null
+                val dKey = DESCRIPTION_KEYS[i]
+                val d = params[dKey]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() } ?: description
+                p to d
+            }
         } else {
-            listOf(prompt)
+            listOf(prompt to description)
         }
 
-        if (prompts.isEmpty()) {
+        if (promptPairs.isEmpty()) {
             return errorResult("No valid prompts provided")
         }
 
-        return if (prompts.size == 1) {
-            executeSingle(description, prompts.first(), config, coreTools, deferredToolsForConfig, isReadOnly)
+        // Effective model: explicit param > YAML frontmatter > default auto-selection
+        val effectiveModelOverride = modelOverride ?: config.modelId
+
+        return if (promptPairs.size == 1) {
+            executeSingle(description, promptPairs.first().first, config, coreTools, deferredToolsForConfig, isReadOnly, effectiveModelOverride)
         } else {
-            executeParallel(description, prompts, config, coreTools, deferredToolsForConfig)
+            executeParallel(description, promptPairs, config, coreTools, deferredToolsForConfig, effectiveModelOverride)
         }
     }
 
@@ -289,9 +321,10 @@ Tips:
         config: AgentConfig,
         coreTools: Map<String, AgentTool>,
         deferredTools: Map<String, Pair<AgentTool, String>>,
-        planMode: Boolean
+        planMode: Boolean,
+        modelOverride: String? = null
     ): ToolResult {
-        val brain = brainProvider()
+        val brain = brainProvider(modelOverride)
         // Scope the brain's XML parser to the subagent's tools, not the parent's.
         // Without this, the SourcegraphChatClient post-stream XML parser can't find
         // tool calls for tools not in the parent's active set (e.g., deferred tools
@@ -318,6 +351,8 @@ Tips:
             fileLogger = fileLogger,
             onDebugLog = onDebugLog,
             onCheckpoint = onCheckpoint,
+            ideContext = ideContext,
+            agentConfig = config,
         )
 
         val agentId = generateAgentId()
@@ -371,13 +406,15 @@ Tips:
 
     private suspend fun executeParallel(
         description: String,
-        prompts: List<String>,
+        promptPairs: List<Pair<String, String>>,
         config: AgentConfig,
         coreTools: Map<String, AgentTool>,
-        deferredTools: Map<String, Pair<AgentTool, String>>
+        deferredTools: Map<String, Pair<AgentTool, String>>,
+        modelOverride: String? = null
     ): ToolResult {
         val maxIter = DEFAULT_MAX_ITERATIONS
         val uiLabel = "$description (${config.name})"
+        val prompts = promptPairs.map { it.first }
 
         // Create status entries for each prompt
         val entries = prompts.mapIndexed { idx, p ->
@@ -393,7 +430,7 @@ Tips:
         val results = supervisorScope {
             prompts.mapIndexed { idx, p ->
                 async {
-                    val brain = brainProvider()
+                    val brain = brainProvider(modelOverride)
                     // Scope brain's XML parser to subagent's tool set (same as executeSingle)
                     brain.toolNameSet = coreTools.keys
                     brain.paramNameSet = coreTools.values.flatMap { it.parameters.properties.keys }.toSet()
@@ -415,10 +452,13 @@ Tips:
                         fileLogger = fileLogger,
                         onDebugLog = onDebugLog,
                         onCheckpoint = onCheckpoint,
+                        ideContext = ideContext,
+                        agentConfig = config,
                     )
 
                     val childAgentId = generateAgentId()
-                    val childLabel = "${description} #${idx + 1} (${config.name})"
+                    val perChildDesc = promptPairs[idx].second
+                    val childLabel = "${perChildDesc} #${idx + 1} (${config.name})"
                     runningAgents[childAgentId] = runner
 
                     // Emit ONE explicit spawn event for this child. The UI dedupes
@@ -554,6 +594,7 @@ Tips:
         const val MAX_PARALLEL_PROMPTS = 5
         const val DEFAULT_AGENT_TYPE = "general-purpose"
         val PROMPT_KEYS = listOf("prompt", "prompt_2", "prompt_3", "prompt_4", "prompt_5")
+        val DESCRIPTION_KEYS = listOf("description", "description_2", "description_3", "description_4", "description_5")
 
         /**
          * Fixed iteration cap matching the main agent — sub-agents run until

@@ -118,6 +118,13 @@ class AgentService(private val project: Project) : Disposable {
     lateinit var ideContext: IdeContext
         private set
 
+    /**
+     * Returns the current [IdeContext], or null if [registerAllTools] has not yet run.
+     * Used by [com.workflow.orchestrator.agent.tools.builtin.SpawnAgentTool] to thread
+     * IDE context into [com.workflow.orchestrator.agent.tools.subagent.SubagentRunner].
+     */
+    fun getIdeContextOrNull(): IdeContext? = if (::ideContext.isInitialized) ideContext else null
+
     /** Shells available for run_command — populated by registerAllTools() before any consumer reads it. */
     private var allowedShells: List<String> = emptyList()
 
@@ -282,6 +289,9 @@ class AgentService(private val project: Project) : Disposable {
     /** Provider for the task-system tools — returns null when no session is active. */
     fun currentTaskStore(): TaskStore? = taskStore
 
+    /** Model ID of the currently active parent brain. Subagents inherit this as their default model. */
+    @Volatile private var currentBrainModelId: String? = null
+
     // ── Auto Memory ────────────────────────────────────────────────────────
 
     /**
@@ -368,7 +378,7 @@ class AgentService(private val project: Project) : Disposable {
      * Creates a fresh LLM brain for each task execution.
      * Never cached — always picks up the latest settings (model, URL, token).
      */
-    private suspend fun createBrain(): LlmBrain {
+    private suspend fun createBrain(modelOverride: String? = null): LlmBrain {
         val connections = ConnectionSettings.getInstance()
         val sgUrl = connections.state.sourcegraphUrl.trimEnd('/')
         val credentialStore = CredentialStore()
@@ -378,38 +388,43 @@ class AgentService(private val project: Project) : Disposable {
             throw IllegalStateException("No Sourcegraph URL configured. Set one in Settings > AI & Advanced.")
         }
 
-        // Always fetch models and pick the best (latest Opus).
-        // If fetch fails, fall back to settings or factory auto-resolution.
-        val client = SourcegraphChatClient(baseUrl = sgUrl, tokenProvider = tokenProvider, model = "")
-        val models = try {
-            ModelCache.getModels(client)
-        } catch (e: Exception) {
-            log.warn("[Agent] Failed to fetch models from Sourcegraph: ${e.message}")
-            emptyList()
-        }
-        val best = ModelCache.pickBest(models)
-
-        val modelId = if (best != null) {
-            log.info("[Agent] Auto-selected model: ${best.modelName} (${best.id})")
-            best.id
+        val modelId = if (!modelOverride.isNullOrBlank()) {
+            log.info("[Agent] Using caller-specified model override: $modelOverride")
+            modelOverride
         } else {
-            // Model fetch failed or returned empty — try settings
-            val settingsModel = AgentSettings.getInstance(project).state.sourcegraphChatModel
-            if (!settingsModel.isNullOrBlank()) {
-                log.info("[Agent] Models unavailable, using settings model: $settingsModel")
-                settingsModel
+            // Always fetch models and pick the best (latest Opus).
+            // If fetch fails, fall back to settings or factory auto-resolution.
+            val client = SourcegraphChatClient(baseUrl = sgUrl, tokenProvider = tokenProvider, model = "")
+            val models = try {
+                ModelCache.getModels(client)
+            } catch (e: Exception) {
+                log.warn("[Agent] Failed to fetch models from Sourcegraph: ${e.message}")
+                emptyList()
+            }
+            val best = ModelCache.pickBest(models)
+
+            if (best != null) {
+                log.info("[Agent] Auto-selected model: ${best.modelName} (${best.id})")
+                best.id
             } else {
-                // Last resort — try factory which may have cached models
-                log.warn("[Agent] No models available and no model configured. Trying factory auto-resolution.")
-                try {
-                    return LlmBrainFactory.create(project)
-                } catch (e: Exception) {
-                    throw IllegalStateException(
-                        "Cannot start agent: failed to fetch models from Sourcegraph ($sgUrl) " +
-                        "and no model is configured in settings. " +
-                        "Please check your Sourcegraph URL and token in Settings > AI & Advanced. " +
-                        "Error: ${e.message}"
-                    )
+                // Model fetch failed or returned empty — try settings
+                val settingsModel = AgentSettings.getInstance(project).state.sourcegraphChatModel
+                if (!settingsModel.isNullOrBlank()) {
+                    log.info("[Agent] Models unavailable, using settings model: $settingsModel")
+                    settingsModel
+                } else {
+                    // Last resort — try factory which may have cached models
+                    log.warn("[Agent] No models available and no model configured. Trying factory auto-resolution.")
+                    try {
+                        return LlmBrainFactory.create(project)
+                    } catch (e: Exception) {
+                        throw IllegalStateException(
+                            "Cannot start agent: failed to fetch models from Sourcegraph ($sgUrl) " +
+                            "and no model is configured in settings. " +
+                            "Please check your Sourcegraph URL and token in Settings > AI & Advanced. " +
+                            "Error: ${e.message}"
+                        )
+                    }
                 }
             }
         }
@@ -425,6 +440,24 @@ class AgentService(private val project: Project) : Disposable {
             toolNameSet = allToolNames,
             paramNameSet = allParamNames
         )
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────────
+
+    /** Format available models as bullet-point strings for injection into the system prompt. */
+    private fun formatModelsForPrompt(models: List<com.workflow.orchestrator.core.ai.dto.ModelInfo>): List<String>? {
+        if (models.isEmpty()) return null
+        return models
+            .sortedWith(compareBy({ it.tier }, { -it.created }))
+            .map { m ->
+                val tags = mutableListOf<String>()
+                if (m.isOpusClass) tags.add("most capable")
+                if (m.modelName.lowercase().contains("sonnet")) tags.add("balanced")
+                if (m.modelName.lowercase().contains("haiku")) tags.add("fastest, cheapest")
+                if (m.isThinkingModel) tags.add("extended thinking")
+                val tagStr = if (tags.isNotEmpty()) " — ${tags.joinToString(", ")}" else ""
+                "- `${m.id}` (${m.displayName})$tagStr"
+            }
     }
 
     // ── Manual Compaction ──────────────────────────────────────────────────
@@ -523,7 +556,7 @@ class AgentService(private val project: Project) : Disposable {
 
         // Sub-agent delegation tool — progress callback wired at task level
         safeRegisterCore { SpawnAgentTool(
-            brainProvider = { createBrain() },
+            brainProvider = { modelOverride -> createBrain(modelOverride ?: currentBrainModelId) },
             toolRegistry = registry,
             project = project,
             configLoader = AgentConfigLoader.getInstance(),
@@ -946,10 +979,6 @@ class AgentService(private val project: Project) : Disposable {
     ): Job {
         val sid = sessionId ?: UUID.randomUUID().toString()
 
-        // Scope edit-range tracking to this session so that stale ranges from a
-        // previous session cannot leak into SemanticDiagnosticsTool calls.
-        com.workflow.orchestrator.agent.tools.builtin.EditFileTool.currentSessionId = sid
-
         var session = Session(
             id = sid,
             title = task.take(100),
@@ -990,6 +1019,7 @@ class AgentService(private val project: Project) : Disposable {
                 // I3: Create a fresh brain each time to pick up settings changes
                 val brain = createBrain()
                 brainRef = brain
+                currentBrainModelId = brain.modelId
                 log.info("[Agent] Task started: sessionId=$sid, model=${brain.modelId}")
 
                 // Wire API debug dumps — save request/response JSON per session
@@ -1078,6 +1108,7 @@ class AgentService(private val project: Project) : Disposable {
                     // coroutine cancellation through brain.chatStream()'s suspension points
                     // regardless of which brain instance is currently in use.
                     brainRef = newBrain
+                    currentBrainModelId = newBrain.modelId
 
                     // Write a recycle marker file into api-debug/ so the directory listing
                     // tells the recovery story: "after call NNN, the brain was recycled
@@ -1159,7 +1190,8 @@ class AgentService(private val project: Project) : Disposable {
                         toolDefinitionsMarkdown = toolDefsMarkdown,
                         recalledMemoryXml = recalledMemoryXml,
                         ideContext = ideContext,
-                        availableShells = allowedShells
+                        availableShells = allowedShells,
+                        availableModels = formatModelsForPrompt(ModelCache.getCached())
                     )
                 }
                 // Set initial system prompt (XML defs added on first toolDefinitionProvider call)
@@ -1594,9 +1626,6 @@ class AgentService(private val project: Project) : Disposable {
             return null
         }
 
-        // Scope edit-range tracking to this session (same as executeTask)
-        com.workflow.orchestrator.agent.tools.builtin.EditFileTool.currentSessionId = sessionId
-
         // Acquire session lock — prevents double-resume across IDE instances
         val lock = SessionLock.tryAcquire(sessionDir)
         if (lock == null) {
@@ -1700,7 +1729,8 @@ class AgentService(private val project: Project) : Disposable {
                 projectPath = project.basePath ?: "",
                 planModeEnabled = planModeActive.get(),
                 ideContext = ideContext,
-                availableShells = allowedShells
+                availableShells = allowedShells,
+                availableModels = formatModelsForPrompt(ModelCache.getCached())
             )
             ctx.setSystemPrompt(systemPrompt)
 
