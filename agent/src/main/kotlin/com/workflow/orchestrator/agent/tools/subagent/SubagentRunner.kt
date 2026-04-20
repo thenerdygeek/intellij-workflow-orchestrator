@@ -53,6 +53,14 @@ class SubagentRunner(
      */
     private val approvalGate: (suspend (toolName: String, args: String, riskLevel: String, allowSessionApproval: Boolean) -> com.workflow.orchestrator.agent.loop.ApprovalResult)? = null,
     /**
+     * Optional session-approval store shared with the parent session. When set, sub-agent
+     * write tools honor "Allow for session" decisions the user has already made in this
+     * conversation, and approvals granted inside the sub-agent propagate back to the
+     * parent's later turns (shared reference, not a copy). Null = fresh empty store
+     * (tests, disconnected sub-agents).
+     */
+    private val sessionApprovalStore: com.workflow.orchestrator.agent.loop.SessionApprovalStore? = null,
+    /**
      * Optional hook manager forwarded from the parent session. When set, PRE_TOOL_USE /
      * POST_TOOL_USE / etc. fire for sub-agent tool calls with the same semantics as the
      * main agent.
@@ -254,6 +262,7 @@ class SubagentRunner(
                 },
                 toolExecutionMode = effectiveToolExecutionMode,
                 approvalGate = approvalGate,
+                sessionApprovalStore = sessionApprovalStore ?: com.workflow.orchestrator.agent.loop.SessionApprovalStore(),
                 hookManager = hookManager,
                 sessionMetrics = sessionMetrics,
                 fileLogger = fileLogger,

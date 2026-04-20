@@ -54,6 +54,15 @@ class SpawnAgentTool(
      * `edit_file` / `run_command` to a sub-agent to avoid the approval UI.
      */
     var approvalGate: (suspend (toolName: String, args: String, riskLevel: String, allowSessionApproval: Boolean) -> com.workflow.orchestrator.agent.loop.ApprovalResult)? = null,
+    /**
+     * Parent-session approval store. Forwarded to every [SubagentRunner] so a sub-agent
+     * honors "Allow for session" decisions the user has already made in this
+     * conversation — without this, each sub-agent would start with an empty store and
+     * re-prompt on every write tool, even when the parent already approved.
+     * Shared reference, not a copy: approvals granted inside a sub-agent also propagate
+     * back to the parent's subsequent turns.
+     */
+    var sessionApprovalStore: com.workflow.orchestrator.agent.loop.SessionApprovalStore? = null,
     /** Parent hook manager — fires PRE/POST_TOOL_USE etc. for sub-agent tool calls. */
     var hookManager: com.workflow.orchestrator.agent.hooks.HookManager? = null,
     /** Parent session metrics — sub-agent tool / API timings flow into parent scorecard. */
@@ -346,6 +355,7 @@ Tips:
             apiDebugDir = subagentDebugDir(description),
             toolExecutionMode = toolExecutionMode,
             approvalGate = approvalGate,
+            sessionApprovalStore = sessionApprovalStore,
             hookManager = hookManager,
             sessionMetrics = sessionMetrics,
             fileLogger = fileLogger,
@@ -447,6 +457,7 @@ Tips:
                         apiDebugDir = subagentDebugDir("${description}-${idx + 1}"),
                         toolExecutionMode = toolExecutionMode,
                         approvalGate = approvalGate,
+                        sessionApprovalStore = sessionApprovalStore,
                         hookManager = hookManager,
                         sessionMetrics = sessionMetrics,
                         fileLogger = fileLogger,

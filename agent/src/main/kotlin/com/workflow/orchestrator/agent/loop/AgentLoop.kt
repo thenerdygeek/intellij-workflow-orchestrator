@@ -349,15 +349,25 @@ class AgentLoop(
      * @param costUsd     cumulative estimated cost in USD, or null if model not in pricing table
      */
     private val onSessionStats: ((modelId: String, tokensIn: Long, tokensOut: Long, costUsd: Double?) -> Unit)? = null,
+    /**
+     * Session-carried token/cost running totals. A fresh AgentLoop is constructed per
+     * user message by [com.workflow.orchestrator.agent.AgentService.executeTask]; seeding
+     * these fields from the session keeps the cumulative numbers pushed via
+     * [onSessionStats] monotonic across turns. Default 0/null preserves backward
+     * compatibility for tests and sub-agents that run one-shot.
+     */
+    initialInputTokens: Int = 0,
+    initialOutputTokens: Int = 0,
+    initialCostUsd: Double? = null,
 ) {
     private val cancelled = AtomicBoolean(false)
     private var totalTokensUsed = 0
-    /** Cumulative input (prompt) tokens across all API calls in this loop. */
-    private var totalInputTokens = 0
-    /** Cumulative output (completion) tokens across all API calls in this loop. */
-    private var totalOutputTokens = 0
-    /** Cumulative estimated cost in USD across all API calls in this loop. Null when model is not in pricing table. */
-    private var totalCostUsd: Double? = null
+    /** Cumulative input (prompt) tokens across all API calls in this session (seeded from prior turns). */
+    private var totalInputTokens = initialInputTokens
+    /** Cumulative output (completion) tokens across all API calls in this session (seeded from prior turns). */
+    private var totalOutputTokens = initialOutputTokens
+    /** Cumulative estimated cost in USD across all API calls in this session (seeded from prior turns). Null when no priced call has happened yet. */
+    private var totalCostUsd: Double? = initialCostUsd
 
     /** Files modified during this loop run (from tool artifacts). Gap 1+14: file tracking. */
     private val modifiedFiles = mutableSetOf<String>()

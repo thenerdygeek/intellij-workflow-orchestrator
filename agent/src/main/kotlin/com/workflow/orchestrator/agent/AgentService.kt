@@ -292,6 +292,28 @@ class AgentService(private val project: Project) : Disposable {
     /** Model ID of the currently active parent brain. Subagents inherit this as their default model. */
     @Volatile private var currentBrainModelId: String? = null
 
+    /**
+     * Per-conversation runtime state that must persist across multiple [executeTask] calls
+     * within the same session (multi-turn chat). Without this, every user message would
+     * reset the api-debug call counter and the token/cost running totals to zero —
+     * clobbering `call-001-*.txt` from the previous turn and making the TopBar stats
+     * display snap back mid-conversation.
+     *
+     * Keyed by sessionId. Entries are created lazily on first [executeTask] call for a
+     * session and cleared wholesale in [resetForNewChat].
+     */
+    private class SessionRuntimeState {
+        val apiCallCounter: java.util.concurrent.atomic.AtomicInteger = java.util.concurrent.atomic.AtomicInteger(0)
+        @Volatile var cumulativeInputTokens: Long = 0L
+        @Volatile var cumulativeOutputTokens: Long = 0L
+        @Volatile var cumulativeCostUsd: Double? = null
+    }
+
+    private val sessionRuntime = java.util.concurrent.ConcurrentHashMap<String, SessionRuntimeState>()
+
+    private fun getOrCreateSessionRuntime(sessionId: String): SessionRuntimeState =
+        sessionRuntime.computeIfAbsent(sessionId) { SessionRuntimeState() }
+
     // ── Auto Memory ────────────────────────────────────────────────────────
 
     /**
@@ -1036,10 +1058,13 @@ class AgentService(private val project: Project) : Disposable {
                     java.io.File(sessionDebugDir, "tool-output").toPath()
                 )
                 // Session-scoped API call counter — shared across the initial brain AND any
-                // brains spawned by the brainFactory below (recycle, model fallback). Keeps
-                // `api-debug/call-NNN-*.txt` filenames monotonic across the entire task,
-                // even if the brain is replaced mid-loop. Owned by this executeTask scope.
-                val sharedApiCounter = java.util.concurrent.atomic.AtomicInteger(0)
+                // brains spawned by the brainFactory below (recycle, model fallback), AND
+                // across every follow-up user message within the same session. Owned by
+                // [sessionRuntime] so `api-debug/call-NNN-*.txt` filenames stay monotonic
+                // across the entire conversation, not just a single [executeTask] call.
+                // Cleared wholesale in [resetForNewChat].
+                val runtime = getOrCreateSessionRuntime(sid)
+                val sharedApiCounter = runtime.apiCallCounter
                 if (brain is OpenAiCompatBrain) {
                     brain.setApiDebugDir(sessionDebugDir)
                     brain.setSharedApiCallCounter(sharedApiCounter)
@@ -1246,6 +1271,7 @@ class AgentService(private val project: Project) : Disposable {
                     spawnAgentTool.sessionDebugDir = sessionDebugDir
                     spawnAgentTool.toolExecutionMode = agentSettings.state.toolExecutionMode ?: "accumulate"
                     spawnAgentTool.approvalGate = approvalGate
+                    spawnAgentTool.sessionApprovalStore = sessionApprovalStore
                     spawnAgentTool.hookManager = hookManager
                     spawnAgentTool.sessionMetrics = sessionMetrics
                     spawnAgentTool.fileLogger = fileLogger
@@ -1370,7 +1396,19 @@ class AgentService(private val project: Project) : Disposable {
                     hookManager = if (hookManager.hasAnyHooks()) hookManager else null,
                     sessionId = sid,
                     onTokenUpdate = onTokenUpdate,
-                    onSessionStats = onSessionStats,
+                    // Seed cumulative totals from prior turns in this session so the TopBar
+                    // display stays monotonic across user messages (bug: fresh loop reset
+                    // to 0). The wrapper below captures the loop's cumulative push so
+                    // the NEXT executeTask can pick up where this one left off.
+                    initialInputTokens = runtime.cumulativeInputTokens.toInt(),
+                    initialOutputTokens = runtime.cumulativeOutputTokens.toInt(),
+                    initialCostUsd = runtime.cumulativeCostUsd,
+                    onSessionStats = { modelId, tokensIn, tokensOut, costUsd ->
+                        runtime.cumulativeInputTokens = tokensIn
+                        runtime.cumulativeOutputTokens = tokensOut
+                        runtime.cumulativeCostUsd = costUsd
+                        onSessionStats?.invoke(modelId, tokensIn, tokensOut, costUsd)
+                    },
                     onPlanResponse = onPlanResponse,
                     onPlanModeToggle = { enabled ->
                         planModeActive.set(enabled)
@@ -1556,6 +1594,7 @@ class AgentService(private val project: Project) : Disposable {
                 (registry.get("agent") as? com.workflow.orchestrator.agent.tools.builtin.SpawnAgentTool)?.let {
                     it.onSubagentProgress = null
                     it.approvalGate = null
+                    it.sessionApprovalStore = null
                     it.hookManager = null
                     it.sessionMetrics = null
                     it.fileLogger = null
@@ -1997,6 +2036,7 @@ class AgentService(private val project: Project) : Disposable {
         activeTask.set(null)
         _outputSpiller = null  // Clear session-scoped spiller so the next session gets a fresh one
         taskStore = null       // Clear session-scoped task store
+        sessionRuntime.clear() // Drop per-conversation counters + token/cost running totals
         sessionDisposableHolder.resetSession()
     }
 
