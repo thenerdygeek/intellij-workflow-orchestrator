@@ -95,7 +95,7 @@ Actions and their parameters:
         return when (action) {
             "list" -> executeListEndpoints(params, project)
             "find_usages" -> executeFindUsages(params, project)
-            "export_openapi" -> executeExportOpenApiStub(params, project)
+            "export_openapi" -> executeExportOpenApi(params, project)
             else -> ToolResult(
                 content = "Unknown action '$action'. Valid actions: list, find_usages, export_openapi.",
                 summary = "Unknown action '$action'",
@@ -104,17 +104,4 @@ Actions and their parameters:
             )
         }
     }
-}
-
-// Stub — replaced by a dedicated action file in Task 13.
-internal suspend fun executeExportOpenApiStub(
-    @Suppress("UNUSED_PARAMETER") params: JsonObject,
-    @Suppress("UNUSED_PARAMETER") project: Project,
-): ToolResult {
-    return ToolResult(
-        content = "export_openapi not yet implemented",
-        summary = "Stub",
-        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-        isError = true,
-    )
 }
