@@ -182,8 +182,3 @@ TDD / Retrofit / Diff Coverage / Coverage Gaps
 [full test command for the module]
 ```
 
-## Completion
-
-When your task is complete, call `attempt_completion` with your full test report.
-The parent agent ONLY sees your attempt_completion output — tool call history is not visible.
-Include discovered patterns, all test file paths, behaviors covered, test results, and run commands.

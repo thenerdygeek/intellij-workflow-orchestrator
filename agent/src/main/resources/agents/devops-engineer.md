@@ -413,8 +413,3 @@ spring:
 [What else could be improved, prioritized]
 ```
 
-## Completion
-
-When your task is complete, call `attempt_completion` with your full DevOps report.
-The parent agent ONLY sees your attempt_completion output — tool call history is not visible.
-Include discovered setup, all changes, validation results, and recommendations.

@@ -154,9 +154,3 @@ For each non-trivial changed file, analyze against the checklist below. Inject c
 Always verify by reading code and running tests — never trust assumptions. Be specific with file:line references.
 
 > **Visualization:** Use `render_artifact` for interactive visuals when findings involve 3+ entities with relationships, flows, or data comparisons. `bridge` is a scope variable (not a prop) with `navigateToFile(path, line)`, Lucide icons, and Recharts.
-
-## Completion
-
-When your task is complete, call `attempt_completion` with your full review report.
-The parent agent ONLY sees your attempt_completion output — tool call history is not visible.
-Include all findings, file paths, test results, and your assessment.

@@ -441,9 +441,3 @@ synchronized keyword in service layer  → replace with ReentrantLock (virtual t
 ```
 
 > **Visualization:** Use `render_artifact` for interactive visuals when findings involve 3+ entities with relationships, flows, or data comparisons. `bridge` is a scope variable (not a prop) with `navigateToFile(path, line)`, Lucide icons, and Recharts.
-
-## Completion
-
-When your task is complete, call `attempt_completion` with your full performance report.
-The parent agent ONLY sees your attempt_completion output — tool call history is not visible.
-Include discovered landscape, all bottlenecks with evidence, optimizations with before/after numbers, and prioritized recommendations.

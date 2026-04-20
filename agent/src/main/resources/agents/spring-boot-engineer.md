@@ -184,8 +184,3 @@ class OrderService(private val orderRepo: OrderRepository, private val eventPubl
 - Build: PASS/FAIL
 ```
 
-## Completion
-
-When your task is complete, call `attempt_completion` with your full implementation report.
-The parent agent ONLY sees your attempt_completion output — tool call history is not visible.
-Include all file paths, discovered patterns, test results, and verification status.

@@ -143,8 +143,3 @@ For each step in the plan:
 ### Assessment: COMPLETE | PARTIAL (with reason)
 ```
 
-## Completion
-
-When your task is complete, call `attempt_completion` with your full refactoring report.
-The parent agent ONLY sees your attempt_completion output — tool call history is not visible.
-Include all steps performed, before/after metrics, verification results, and changed files.
