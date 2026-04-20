@@ -19,6 +19,7 @@ object IdeContextDetector {
     private const val PYTHON_PRO_PLUGIN_ID = "com.intellij.python"
     private const val PYTHON_CORE_PLUGIN_ID = "PythonCore"
     private const val SPRING_PLUGIN_ID = "com.intellij.spring"
+    private const val SPRING_BOOT_PLUGIN_ID = "com.intellij.spring.boot"
     private const val JAVA_PLUGIN_ID = "com.intellij.java"
 
     fun detect(project: Project): IdeContext {
@@ -31,6 +32,7 @@ object IdeContextDetector {
         val hasPythonPro = isPluginInstalled(PYTHON_PRO_PLUGIN_ID)
         val hasPythonCore = isPluginInstalled(PYTHON_CORE_PLUGIN_ID)
         val hasSpring = isPluginInstalled(SPRING_PLUGIN_ID)
+        val hasSpringBoot = isPluginInstalled(SPRING_BOOT_PLUGIN_ID)
         val hasPyTestConfigType = ConfigurationType.CONFIGURATION_TYPE_EP.extensionList
             .any { it.id == "PyTest" || it.id == "py.test" }
 
@@ -48,6 +50,7 @@ object IdeContextDetector {
             hasPythonPlugin = hasPythonPro,
             hasPythonCorePlugin = hasPythonCore,
             hasSpringPlugin = hasSpring,
+            hasSpringBootPlugin = hasSpringBoot,
             detectedFrameworks = frameworks,
             detectedBuildTools = buildTools,
             hasPyTestConfigType = hasPyTestConfigType,

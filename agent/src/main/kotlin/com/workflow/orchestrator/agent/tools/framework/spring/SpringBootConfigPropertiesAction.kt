@@ -1,6 +1,8 @@
 package com.workflow.orchestrator.agent.tools.framework.spring
 
 import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.module.Module
+import com.intellij.openapi.module.ModuleUtilCore
 import com.intellij.openapi.project.Project
 import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.PsiAnnotation
@@ -90,7 +92,7 @@ private fun collectConfigProperties(
         sb.appendLine("@ConfigurationProperties(prefix = \"${entry.prefix}\")")
         sb.appendLine("class ${entry.simpleClassName}  (${entry.filePath})")
         for (field in entry.fields) {
-            sb.appendLine(formatConfigPropertiesField(entry.prefix, field))
+            sb.appendLine(formatConfigPropertiesField(entry.prefix, entry.module, field))
         }
     }
 
@@ -119,12 +121,15 @@ private fun buildConfigPropertiesEntry(project: Project, cls: PsiClass): ConfigP
         ?.let { PsiToolUtils.relativePath(project, it) }
         ?: "(unknown)"
 
+    val module = ModuleUtilCore.findModuleForPsiElement(cls)
+
     return ConfigPropertiesEntry(
         qualifiedName = fqn,
         simpleClassName = simpleName,
         prefix = prefix,
         fields = fields,
-        filePath = filePath
+        filePath = filePath,
+        module = module,
     )
 }
 
@@ -188,7 +193,7 @@ private fun buildConfigFieldInfo(field: PsiField): ConfigFieldInfo {
     return ConfigFieldInfo(name = name, type = type, defaultValue = defaultValue, constraints = constraints)
 }
 
-private fun formatConfigPropertiesField(prefix: String, field: ConfigFieldInfo): String {
+private fun formatConfigPropertiesField(prefix: String, module: Module?, field: ConfigFieldInfo): String {
     val qualifiedName = if (prefix.isNotEmpty()) "$prefix.${field.name}" else field.name
     val sb = StringBuilder("  $qualifiedName: ${field.type}")
     if (field.defaultValue != null) {
@@ -196,6 +201,19 @@ private fun formatConfigPropertiesField(prefix: String, field: ConfigFieldInfo):
     }
     if (field.constraints.isNotEmpty()) {
         sb.append("  ${field.constraints.joinToString(" ")}")
+    }
+    // Enrich with IDE metadata when a module is resolvable and the Spring Boot plugin is present.
+    if (module != null) {
+        SpringBootMetadataResolver.findMetaConfigKey(module, qualifiedName)?.let { meta ->
+            if (meta.description != null) sb.append("\n    → ${meta.description}")
+            if (meta.deprecated) {
+                val parts = listOfNotNull(
+                    meta.deprecationReason?.let { "reason: $it" },
+                    meta.replacement?.let { "use instead: $it" },
+                ).joinToString("; ")
+                sb.append("\n    ⚠ DEPRECATED${if (parts.isNotEmpty()) " — $parts" else ""}")
+            }
+        }
     }
     return sb.toString()
 }
@@ -212,7 +230,8 @@ private data class ConfigPropertiesEntry(
     val simpleClassName: String,
     val prefix: String,
     val fields: List<ConfigFieldInfo>,
-    val filePath: String
+    val filePath: String,
+    val module: Module?,
 )
 
 private data class ConfigFieldInfo(

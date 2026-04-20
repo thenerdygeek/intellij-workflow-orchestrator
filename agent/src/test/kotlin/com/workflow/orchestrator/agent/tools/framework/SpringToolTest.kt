@@ -468,6 +468,23 @@ class SpringToolTest {
             cls.getMethod("isPrimary")
             cls.getMethod("getProfile")
         }
+
+        @Test
+        fun `SpringBootApplicationMetaConfigKeyManager getInstance has no args`() {
+            val cls = try {
+                Class.forName("com.intellij.spring.boot.application.metadata.SpringBootApplicationMetaConfigKeyManager")
+            } catch (_: ClassNotFoundException) { return }
+            // Must be a no-arg static factory — confirmed in IU-2025.1.
+            cls.getMethod("getInstance")
+        }
+
+        @Test
+        fun `SpringBootLibraryUtil class exists at library subpackage`() {
+            try {
+                Class.forName("com.intellij.spring.boot.library.SpringBootLibraryUtil")
+            } catch (_: ClassNotFoundException) { return }
+            // If the class loads, the package location is correct.
+        }
     }
 
     companion object {

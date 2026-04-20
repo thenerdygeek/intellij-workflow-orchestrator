@@ -64,7 +64,7 @@ class SpringTool(
             appendLine("- event_listeners() → @EventListener methods")
             if (includeEndpointActions) appendLine("- boot_endpoints(class_name?) → Boot endpoint mappings")
             appendLine("- boot_autoconfig(filter?, project_only?) → Auto-configuration classes (project_only default true)")
-            appendLine("- boot_config_properties(class_name?, prefix?) → @ConfigurationProperties bindings")
+            appendLine("- boot_config_properties(class_name?, prefix?) → @ConfigurationProperties bindings with IDE metadata (descriptions, defaults, deprecations, source types)")
             appendLine("- boot_actuator() → Actuator endpoints")
             append("- jpa_entities(entity?) → JPA entity analysis")
         }
