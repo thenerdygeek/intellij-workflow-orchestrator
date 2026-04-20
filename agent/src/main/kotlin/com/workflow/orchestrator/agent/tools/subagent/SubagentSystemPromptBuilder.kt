@@ -14,14 +14,12 @@ import com.workflow.orchestrator.agent.prompt.SystemPrompt
  *    - [includePlanModeSection] = false — sub-agents are act-only
  *    - [planModeEnabled] = false — same reason
  *    - [includeSubagentDelegationInRules] = false — sub-agents can't spawn further
- *    - All other flags = true (sub-agents inherit all shared sections)
+ *    - Per-section flags from [AgentConfig.promptSections] (Task 4 of Track C)
  *
  * 2. Injecting [personaRole] as the agent-role override (section 1).
  *
  * 3. Appending the [completingYourTaskSection] footer so every persona knows
  *    to call `task_report` instead of `attempt_completion`.
- *
- * Task 2 of Track C. Not yet integrated into SubagentRunner — Task 3 does that.
  */
 object SubagentSystemPromptBuilder {
 
@@ -34,7 +32,8 @@ object SubagentSystemPromptBuilder {
      * @param personaRole     The agent config's systemPrompt body (persona definition).
      *                        Replaces the default agent-role section.
      * @param agentConfig     The resolved [AgentConfig] for this sub-agent, or null in
-     *                        tests / legacy paths. Accepted but not yet consumed.
+     *                        tests / legacy paths. When non-null, [AgentConfig.promptSections]
+     *                        controls which sections are included.
      * @param ideContext      Optional IDE context for adapting prompt to the running IDE.
      * @param projectName     Project name injected into the User Instructions section.
      * @param projectPath     Absolute project path for Capabilities section.
@@ -51,6 +50,10 @@ object SubagentSystemPromptBuilder {
      * @param deferredToolCatalog Optional categorised deferred tool one-liners.
      * @param availableShells Optional shell list (shows "Available Shells: …" instead of
      *                        "Default Shell: …" in the System Information section).
+     * @param toolNames       Optional set of all tool names available to this sub-agent.
+     *                        Used when [PromptSectionsConfig.editingFiles] = "auto" to
+     *                        determine whether edit_file / create_file are available.
+     *                        When null, "auto" defaults to including the editing section.
      * @param completingYourTaskSection The "COMPLETING YOUR TASK" footer injected verbatim
      *                        after the main prompt. Passed in so this builder stays
      *                        stateless and the constant lives only in SubagentRunner.
@@ -72,11 +75,23 @@ object SubagentSystemPromptBuilder {
         toolDefinitionsMarkdown: String? = null,
         deferredToolCatalog: Map<String, List<Pair<String, String>>>? = null,
         availableShells: List<String>? = null,
+        toolNames: Set<String>? = null,
         completingYourTaskSection: String,
     ): String {
-        // TODO(task-4): consume agentConfig.promptSections when YAML schema extension lands
-        @Suppress("UNUSED_VARIABLE")
-        val _agentConfigUnused = agentConfig
+        val sections = agentConfig?.promptSections ?: PromptSectionsConfig()
+
+        val includeEditing = when (sections.editingFiles) {
+            "true" -> true
+            "false" -> false
+            "auto" -> toolNames?.let { "edit_file" in it || "create_file" in it } ?: true
+            else -> true  // unrecognised value — default true
+        }
+
+        val includeMemory = sections.memory != "none"
+
+        // When memory is opted out, suppress both the gate flag AND the XML data blocks.
+        val effectiveCoreMemoryXml = if (includeMemory) coreMemoryXml else null
+        val effectiveRecalledMemoryXml = if (includeMemory) recalledMemoryXml else null
 
         val base = SystemPrompt.build(
             projectName = projectName,
@@ -87,8 +102,8 @@ object SubagentSystemPromptBuilder {
             additionalContext = additionalContext,
             availableSkills = availableSkills,
             activeSkillContent = activeSkillContent,
-            coreMemoryXml = coreMemoryXml,
-            recalledMemoryXml = recalledMemoryXml,
+            coreMemoryXml = effectiveCoreMemoryXml,
+            recalledMemoryXml = effectiveRecalledMemoryXml,
             toolDefinitionsMarkdown = toolDefinitionsMarkdown,
             deferredToolCatalog = deferredToolCatalog,
             availableShells = availableShells,
@@ -99,7 +114,14 @@ object SubagentSystemPromptBuilder {
             includePlanModeSection = false,
             planModeEnabled = false,
             includeSubagentDelegationInRules = false,
-            // all other include-flags remain true (inherited)
+            // ---- per-persona prompt-sections flags ----
+            includeCapabilities = sections.capabilities,
+            includeRules = sections.rules,
+            includeEditingFiles = includeEditing,
+            includeObjective = sections.objective,
+            includeSystemInfo = sections.systemInfo,
+            includeUserInstructions = sections.userInstructions,
+            includeMemorySection = includeMemory,
         )
 
         return base + SECTION_SEP + completingYourTaskSection

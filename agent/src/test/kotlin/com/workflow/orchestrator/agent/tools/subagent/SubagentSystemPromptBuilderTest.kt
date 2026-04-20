@@ -124,4 +124,65 @@ class SubagentSystemPromptBuilderTest {
             "Output should contain the productName from the supplied IdeContext"
         )
     }
+
+    @Test
+    fun `agentConfig with memory none suppresses memory XML blocks`() {
+        val config = AgentConfig(
+            name = "test",
+            description = "test",
+            tools = emptyList(),
+            skills = null,
+            modelId = null,
+            systemPrompt = PERSONA_ROLE,
+            promptSections = PromptSectionsConfig(memory = "none"),
+        )
+        val coreXml = "<core_memory><item key=\"k\">some-core-data</item></core_memory>"
+        val prompt = SubagentSystemPromptBuilder.build(
+            personaRole = PERSONA_ROLE,
+            agentConfig = config,
+            ideContext = null,
+            projectName = "TestProject",
+            projectPath = "/tmp/test",
+            osName = "Linux",
+            shell = "/bin/bash",
+            coreMemoryXml = coreXml,
+            recalledMemoryXml = "<recalled_memory>recalled-data</recalled_memory>",
+            completingYourTaskSection = DUMMY_COMPLETING_SECTION,
+        )
+        assertFalse(
+            prompt.contains("some-core-data"),
+            "memory: none must suppress coreMemoryXml content"
+        )
+        assertFalse(
+            prompt.contains("recalled-data"),
+            "memory: none must suppress recalledMemoryXml content"
+        )
+    }
+
+    @Test
+    fun `agentConfig with capabilities false omits CAPABILITIES section`() {
+        val config = AgentConfig(
+            name = "test",
+            description = "test",
+            tools = emptyList(),
+            skills = null,
+            modelId = null,
+            systemPrompt = PERSONA_ROLE,
+            promptSections = PromptSectionsConfig(capabilities = false),
+        )
+        val prompt = SubagentSystemPromptBuilder.build(
+            personaRole = PERSONA_ROLE,
+            agentConfig = config,
+            ideContext = null,
+            projectName = "TestProject",
+            projectPath = "/tmp/test",
+            osName = "Linux",
+            shell = "/bin/bash",
+            completingYourTaskSection = DUMMY_COMPLETING_SECTION,
+        )
+        assertFalse(
+            prompt.contains("CAPABILITIES"),
+            "capabilities: false must omit the CAPABILITIES section header"
+        )
+    }
 }

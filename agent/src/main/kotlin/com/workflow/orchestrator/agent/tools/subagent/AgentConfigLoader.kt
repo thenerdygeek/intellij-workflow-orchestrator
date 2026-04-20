@@ -11,6 +11,39 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
+ * Per-persona opt-in/opt-out configuration for system prompt sections.
+ *
+ * Parsed from the `prompt-sections:` top-level YAML frontmatter key.
+ * All fields default to preserve current behavior — a persona YAML that omits the
+ * `prompt-sections:` block entirely will behave exactly as before.
+ *
+ * YAML convention: keys are kebab-case (`editing-files`), Kotlin fields are camelCase.
+ *
+ * @param capabilities       Whether to include section 5 (Capabilities). Default: true.
+ * @param rules              Whether to include section 7 (Rules). Default: true.
+ * @param editingFiles       Whether to include section 3 (Editing Files).
+ *                           "auto" = include only when the persona's tool set contains
+ *                           `edit_file` or `create_file`; "true" / "false" force the
+ *                           section on or off regardless of tools. Unrecognised values
+ *                           fall through to true. Default: "auto".
+ * @param memory             Memory injection mode. "none" suppresses both the memory
+ *                           explanation section and the XML data blocks entirely.
+ *                           "inherit" / "project" / "user" enable them. Default: "none".
+ * @param objective          Whether to include section 9 (Objective). Default: true.
+ * @param systemInfo         Whether to include section 8 (System Information). Default: true.
+ * @param userInstructions   Whether to include section 11 (User Instructions). Default: true.
+ */
+data class PromptSectionsConfig(
+    val capabilities: Boolean = true,
+    val rules: Boolean = true,
+    val editingFiles: String = "auto",       // "auto" | "true" | "false"
+    val memory: String = "none",              // "none" | "inherit" | "project" | "user"
+    val objective: Boolean = true,
+    val systemInfo: Boolean = true,
+    val userInstructions: Boolean = true,
+)
+
+/**
  * Configuration for a named subagent, parsed from a YAML frontmatter markdown file.
  *
  * Ported from Cline's AgentConfigLoader.ts — adapted from chokidar/zod to
@@ -34,6 +67,8 @@ data class AgentConfig(
     /** True for configs bundled in plugin resources, false for user-defined. */
     val bundled: Boolean = false,
     // maxTurns REMOVED — sub-agents run until completion (DEFAULT_MAX_ITERATIONS = 200)
+    /** Per-persona prompt section opt-in/opt-out. Defaults preserve current behavior. */
+    val promptSections: PromptSectionsConfig = PromptSectionsConfig(),
 )
 
 /**
@@ -224,6 +259,8 @@ class AgentConfigLoader private constructor() : Disposable {
         val modelId = fields["modelId"]?.takeIf { it.isNotBlank() }
         // max-turns: intentionally NOT parsed — removed from AgentConfig
 
+        val promptSections = parsePromptSectionsBlock(frontmatterBlock)
+
         return AgentConfig(
             name = name,
             description = description,
@@ -232,6 +269,7 @@ class AgentConfigLoader private constructor() : Disposable {
             skills = skills,
             modelId = modelId,
             systemPrompt = body,
+            promptSections = promptSections,
         )
     }
 
@@ -426,6 +464,70 @@ class AgentConfigLoader private constructor() : Disposable {
             }
         }
         return fields
+    }
+
+    /**
+     * Parses the optional `prompt-sections:` YAML block from the frontmatter.
+     *
+     * The block is a simple two-level indented section:
+     * ```yaml
+     * prompt-sections:
+     *   capabilities: false
+     *   memory: project
+     *   editing-files: auto
+     * ```
+     *
+     * Kebab-case keys are mapped to camelCase fields in [PromptSectionsConfig].
+     * Missing keys use defaults from [PromptSectionsConfig]. Missing block → defaults.
+     * Unrecognised `editing-files` values (e.g. "maybe") are stored as-is; the
+     * consumer falls through to the `else -> true` branch in [SubagentSystemPromptBuilder].
+     */
+    private fun parsePromptSectionsBlock(frontmatterBlock: String): PromptSectionsConfig {
+        // Find the "prompt-sections:" key line and collect all indented lines that follow it
+        val lines = frontmatterBlock.lines()
+        val sectionStartIdx = lines.indexOfFirst { it.trim() == "prompt-sections:" }
+        if (sectionStartIdx < 0) return PromptSectionsConfig()
+
+        // Collect child lines: any line after the header that starts with whitespace
+        val childLines = mutableListOf<String>()
+        for (i in (sectionStartIdx + 1)..lines.lastIndex) {
+            val line = lines[i]
+            if (line.isBlank()) continue
+            // Stop if we hit a top-level key (no leading whitespace)
+            if (line.isNotEmpty() && !line[0].isWhitespace()) break
+            childLines.add(line)
+        }
+
+        if (childLines.isEmpty()) return PromptSectionsConfig()
+
+        // Parse the child lines as flat key-value pairs
+        val subFields = mutableMapOf<String, String>()
+        for (line in childLines) {
+            val trimmed = line.trim()
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) continue
+            val colonIndex = trimmed.indexOf(':')
+            if (colonIndex < 0) continue
+            val key = trimmed.substring(0, colonIndex).trim()
+            val value = trimmed.substring(colonIndex + 1).trim()
+                .removeSurrounding("\"")
+                .removeSurrounding("'")
+            if (key.isNotEmpty() && value.isNotEmpty()) {
+                subFields[key] = value
+            }
+        }
+
+        fun parseBool(key: String, default: Boolean): Boolean =
+            subFields[key]?.lowercase()?.let { it == "true" } ?: default
+
+        return PromptSectionsConfig(
+            capabilities = parseBool("capabilities", true),
+            rules = parseBool("rules", true),
+            editingFiles = subFields["editing-files"] ?: "auto",
+            memory = subFields["memory"] ?: "none",
+            objective = parseBool("objective", true),
+            systemInfo = parseBool("system-info", true),
+            userInstructions = parseBool("user-instructions", true),
+        )
     }
 
     private fun splitCsvField(raw: String): List<String> =

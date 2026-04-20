@@ -498,6 +498,108 @@ class AgentConfigLoaderTest {
         assertEquals(listOf("db_schema", "db_query", "db_explain"), config.deferredTools)
     }
 
+    // ── PromptSectionsConfig Parsing ──────────────────────────────
+
+    @Test
+    fun `YAML with no prompt-sections uses PromptSectionsConfig defaults`() {
+        val yaml = """
+            ---
+            name: "Agent"
+            description: "Desc"
+            tools: "read_file"
+            ---
+            Prompt.
+        """.trimIndent()
+
+        val config = loader.parseAgentConfigFromYaml(yaml)
+        val ps = config.promptSections
+
+        assertTrue(ps.capabilities)
+        assertTrue(ps.rules)
+        assertEquals("auto", ps.editingFiles)
+        assertEquals("none", ps.memory)
+        assertTrue(ps.objective)
+        assertTrue(ps.systemInfo)
+        assertTrue(ps.userInstructions)
+    }
+
+    @Test
+    fun `YAML with full prompt-sections block parses all 7 fields`() {
+        val yaml = """
+            ---
+            name: "Agent"
+            description: "Desc"
+            tools: "read_file"
+            prompt-sections:
+              capabilities: false
+              rules: false
+              editing-files: "true"
+              memory: project
+              objective: false
+              system-info: false
+              user-instructions: false
+            ---
+            Prompt.
+        """.trimIndent()
+
+        val config = loader.parseAgentConfigFromYaml(yaml)
+        val ps = config.promptSections
+
+        assertFalse(ps.capabilities)
+        assertFalse(ps.rules)
+        assertEquals("true", ps.editingFiles)
+        assertEquals("project", ps.memory)
+        assertFalse(ps.objective)
+        assertFalse(ps.systemInfo)
+        assertFalse(ps.userInstructions)
+    }
+
+    @Test
+    fun `YAML with partial prompt-sections block uses defaults for omitted fields`() {
+        val yaml = """
+            ---
+            name: "Agent"
+            description: "Desc"
+            tools: "read_file"
+            prompt-sections:
+              memory: project
+            ---
+            Prompt.
+        """.trimIndent()
+
+        val config = loader.parseAgentConfigFromYaml(yaml)
+        val ps = config.promptSections
+
+        // Only memory was specified — everything else must be the default
+        assertEquals("project", ps.memory)
+        assertTrue(ps.capabilities)
+        assertTrue(ps.rules)
+        assertEquals("auto", ps.editingFiles)
+        assertTrue(ps.objective)
+        assertTrue(ps.systemInfo)
+        assertTrue(ps.userInstructions)
+    }
+
+    @Test
+    fun `YAML with invalid editing-files value stores raw string for consumer fallback`() {
+        // Unrecognised values are stored as-is; SubagentSystemPromptBuilder's else branch
+        // treats any unrecognised string as true (default-on).
+        val yaml = """
+            ---
+            name: "Agent"
+            description: "Desc"
+            tools: "read_file"
+            prompt-sections:
+              editing-files: maybe
+            ---
+            Prompt.
+        """.trimIndent()
+
+        val config = loader.parseAgentConfigFromYaml(yaml)
+        // Raw unrecognised value preserved
+        assertEquals("maybe", config.promptSections.editingFiles)
+    }
+
     // ── Helpers ───────────────────────────────────────────────────
 
     private fun writeConfigFile(

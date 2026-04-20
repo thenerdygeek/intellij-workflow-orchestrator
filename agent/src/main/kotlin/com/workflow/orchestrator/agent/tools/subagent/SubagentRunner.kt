@@ -433,6 +433,7 @@ class SubagentRunner(
             projectPath = project.basePath ?: "",
             toolDefinitionsMarkdown = toolDefinitionsMarkdown,
             deferredToolCatalog = deferredToolCatalog,
+            toolNames = registry.allToolNames(),
             completingYourTaskSection = COMPLETING_YOUR_TASK_SECTION,
         )
     }
