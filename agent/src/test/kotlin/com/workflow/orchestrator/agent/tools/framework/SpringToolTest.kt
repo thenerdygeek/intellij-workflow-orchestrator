@@ -383,6 +383,44 @@ class SpringToolTest {
         @Test fun `jpa_entities routes`() = smokeTestAction("jpa_entities")
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // Tier 5 — Spring plugin API contract
+    //
+    // Pins the reflection signatures `SpringContextAction` depends on, so
+    // future Spring-plugin API drift surfaces here instead of as a runtime
+    // "Error accessing Spring model" message to users.
+    // ────────────────────────────────────────────────────────────────────────
+
+    @Nested
+    inner class SpringPluginApiContract {
+
+        private val springManagerClass: Class<*>? = try {
+            Class.forName("com.intellij.spring.SpringManager")
+        } catch (_: ClassNotFoundException) {
+            null
+        } catch (_: NoClassDefFoundError) {
+            null
+        }
+
+        @Test
+        fun `SpringManager getInstance takes Project`() {
+            val cls = springManagerClass ?: return // plugin not on test classpath
+            cls.getMethod("getInstance", com.intellij.openapi.project.Project::class.java)
+        }
+
+        @Test
+        fun `SpringManager getAllModels takes Module not Project`() {
+            val cls = springManagerClass ?: return
+            // The actual API is getAllModels(Module). Previously the code
+            // looked up getAllModels(Project), which threw NoSuchMethodException
+            // and produced a misleading "plugin not available" error to users.
+            cls.getMethod("getAllModels", com.intellij.openapi.module.Module::class.java)
+            assertThrows(NoSuchMethodException::class.java) {
+                cls.getMethod("getAllModels", com.intellij.openapi.project.Project::class.java)
+            }
+        }
+    }
+
     companion object {
         val ALL_ACTIONS = listOf(
             "context",
