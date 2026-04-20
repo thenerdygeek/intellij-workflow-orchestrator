@@ -4,6 +4,7 @@ import com.intellij.ide.scratch.ScratchRootType
 import com.intellij.lang.Language
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.application.WriteAction
+import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.tools.ToolResult
@@ -74,11 +75,21 @@ internal suspend fun executeExportHttpScratch(params: JsonObject, project: Proje
             body,
         )
     }
-    if (scratchFile != null) {
+    if (scratchFile == null) {
+        return ToolResult(
+            content = "Scratch file creation failed (ScratchRootType returned null). " +
+                "The generated .http content is included below.\n\n$body",
+            summary = "Scratch file creation failed",
+            tokenEstimate = TokenEstimator.estimate(body),
+            isError = true,
+        )
+    }
+
+    invokeLater {
         FileEditorManager.getInstance(project).openFile(scratchFile, true)
     }
 
-    val summary = "Exported ${filtered.size} endpoint(s) to ${scratchFile?.path ?: "(scratch file)"}"
+    val summary = "Exported ${filtered.size} endpoint(s) to ${scratchFile.path}"
     return ToolResult(
         content = summary + "\n\n" + body,
         summary = summary,
