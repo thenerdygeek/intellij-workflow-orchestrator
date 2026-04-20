@@ -49,27 +49,60 @@ object SystemPrompt {
         /** IDE context for adapting prompt content to the running IDE (null = backward-compatible IntelliJ). */
         ideContext: IdeContext? = null,
         /** When non-null, shows "Available Shells (run_command): bash, cmd" instead of "Default Shell: …". */
-        availableShells: List<String>? = null
+        availableShells: List<String>? = null,
+        /** Pre-formatted model lines ("`id` (Name) — tags") for the agent tool's model param guidance. */
+        availableModels: List<String>? = null,
+        // ---- Per-section opt-in flags (all default true = current behavior preserved) ----
+        /** When false, skips section 2 (Task Management). */
+        includeTaskManagement: Boolean = true,
+        /** When false, skips section 3 (Editing Files). */
+        includeEditingFiles: Boolean = true,
+        /** When false, skips section 4 (Act vs Plan Mode) entirely. Orthogonal to planModeEnabled. */
+        includePlanModeSection: Boolean = true,
+        /** When false, skips section 5 (Capabilities). */
+        includeCapabilities: Boolean = true,
+        /** When false, skips section 7 (Rules). */
+        includeRules: Boolean = true,
+        /** When false, skips section 8 (System Info). */
+        includeSystemInfo: Boolean = true,
+        /** When false, skips section 9 (Objective). */
+        includeObjective: Boolean = true,
+        /** When false, skips section 10 (Memory header + explanation). */
+        includeMemorySection: Boolean = true,
+        /** When false, skips section 11 (User Instructions). */
+        includeUserInstructions: Boolean = true,
+        /** When non-null, replaces the output of agentRole(ideContext) in section 1. */
+        agentRoleOverride: String? = null,
+        /** When false, omits the "# Subagent Delegation" subsection from Rules. */
+        includeSubagentDelegationInRules: Boolean = true
     ): String = buildString {
 
         // 1. AGENT ROLE
-        append(agentRole(ideContext))
+        append(agentRoleOverride ?: agentRole(ideContext))
 
         // 2. TASK MANAGEMENT (typed task system — always emitted)
-        append(SECTION_SEP)
-        append(taskProgress(taskProgress))
+        if (includeTaskManagement) {
+            append(SECTION_SEP)
+            append(taskProgress(taskProgress))
+        }
 
         // 3. EDITING FILES
-        append(SECTION_SEP)
-        append(editingFiles())
+        if (includeEditingFiles) {
+            append(SECTION_SEP)
+            append(editingFiles())
+        }
 
         // 4. ACT VS PLAN MODE
-        append(SECTION_SEP)
-        append(actVsPlanMode(planModeEnabled))
+        if (includePlanModeSection) {
+            append(SECTION_SEP)
+            append(actVsPlanMode(planModeEnabled))
+        }
 
         // 5. CAPABILITIES
-        append(SECTION_SEP)
-        append(capabilities(projectPath, ideContext))
+        if (includeCapabilities) {
+            append(SECTION_SEP)
+            append(capabilities(projectPath, ideContext))
+        }
 
         // 6. SKILLS (optional)
         skills(availableSkills, activeSkillContent)?.let {
@@ -90,20 +123,28 @@ object SystemPrompt {
         }
 
         // 7. RULES
-        append(SECTION_SEP)
-        append(rules(projectPath, ideContext))
+        if (includeRules) {
+            append(SECTION_SEP)
+            append(rules(projectPath, ideContext, availableModels, includeSubagentDelegationInRules))
+        }
 
         // 8. SYSTEM INFO
-        append(SECTION_SEP)
-        append(systemInfo(osName, shell, projectPath, ideContext, availableShells))
+        if (includeSystemInfo) {
+            append(SECTION_SEP)
+            append(systemInfo(osName, shell, projectPath, ideContext, availableShells))
+        }
 
         // 9. OBJECTIVE
-        append(SECTION_SEP)
-        append(objective())
+        if (includeObjective) {
+            append(SECTION_SEP)
+            append(objective())
+        }
 
         // 10. MEMORY
-        append(SECTION_SEP)
-        append(memory())
+        if (includeMemorySection) {
+            append(SECTION_SEP)
+            append(memory())
+        }
 
         // 10b. CORE MEMORY DATA (Letta pattern: always in prompt if non-empty)
         coreMemoryXml?.let {
@@ -117,10 +158,12 @@ object SystemPrompt {
             append(it)
         }
 
-        // 10. USER INSTRUCTIONS (optional)
-        userInstructions(projectName, additionalContext, repoMap)?.let {
-            append(SECTION_SEP)
-            append(it)
+        // 11. USER INSTRUCTIONS (optional)
+        if (includeUserInstructions) {
+            userInstructions(projectName, additionalContext, repoMap)?.let {
+                append(SECTION_SEP)
+                append(it)
+            }
         }
     }
 
@@ -185,9 +228,10 @@ Track work using the task_create, task_update, task_list, and task_get tools. Th
 **Default to edit_file** for most changes — it's safer and more precise. Use **create_file** only when creating new files or when changes are so extensive that targeted edits would be error-prone.
 
 Key rules:
-- When making multiple changes to the same file, use a single edit_file call with multiple SEARCH/REPLACE blocks. Do NOT make separate calls per change.
-- SEARCH blocks must contain complete lines (not partial lines) and be listed in the order they appear in the file.
-- After create_file or edit_file, the IDE may auto-format the file (indentation, imports, quotes, etc.). The tool response includes the final state after formatting — use this as your reference for subsequent edits.
+- edit_file takes a single `old_string` / `new_string` pair per call. For multiple independent edits in the same file, make multiple edit_file calls (parallel calls are fine when edits don't overlap).
+- `old_string` must match the file EXACTLY (whitespace, indentation, line endings). Include 3–5 lines of surrounding context so the match is unique in the file. If the same text appears multiple times, either widen the context to disambiguate, or set `replace_all=true` to replace every occurrence.
+- You MUST read the file with read_file before editing — match against the raw file text (not the line-number prefix from read_file output).
+- After create_file or edit_file, the IDE may auto-format the file (indentation, imports, quotes). The tool response includes a diff context (≈3 lines before/after the edit). If you need to verify formatting of unrelated regions, re-read the file with read_file.
 - Do not create files unless absolutely necessary. Prefer editing existing files to avoid file bloat."""
 
     /**
@@ -229,7 +273,10 @@ In each user message, the environment_details will specify the current mode. The
      * Section 5: Capabilities
      * Ported from: capabilities.ts (getCapabilitiesTemplateText)
      */
-    private fun capabilities(projectPath: String, ideContext: IdeContext?): String = buildString {
+    private fun capabilities(
+        projectPath: String,
+        ideContext: IdeContext?
+    ): String = buildString {
         val ideName = ideContext?.productName ?: "IntelliJ IDEA"
         appendLine("CAPABILITIES")
         appendLine()
@@ -269,7 +316,7 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("**When to load IDE tools (common workflows):**")
         appendLine("- **Understanding code structure** → find_implementations, type_hierarchy, call_hierarchy, file_structure, get_method_body, get_annotations, read_write_access")
         appendLine("- **Locating tests for a class/method** → test_finder (instead of grepping for *Test.kt naming patterns)")
-        appendLine("- **Navigating types and data flow** → type_inference, dataflow_analysis, structural_search")
+        appendLine("- **Navigating types and data flow** → type_inference (Java/Kotlin/Python), dataflow_analysis (Java only — nullability, value ranges, constant values), structural_search (Java/Kotlin only)")
         appendLine("- **Refactoring safely** → refactor_rename, find_implementations, run_inspections, diagnostics")
         val runtimeHint = buildString {
             append("- **Running tests / building** → ")
@@ -316,9 +363,9 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("- Load project_context via tool_search early to get comprehensive state: branch, uncommitted changes, active Jira ticket, service keys, PR status, build results, Sonar quality gate, project type.")
         appendLine("- render_artifact tool: produce interactive React visualizations in chat. Load the frontend-design skill first for component APIs and design guidelines. Available: Tailwind CSS, UI components (Card, Badge, Tabs, Progress, Accordion, Tooltip), Recharts (all chart types), Lucide icons (all 1500+), D3 (full namespace), motion/AnimatePresence (Framer Motion), createGlobe (cobe), react-simple-maps, roughjs, React Flow / @xyflow/react (ReactFlowCanvas, Background, Controls, MiniMap, Handle, Position, MarkerType, useNodesState, useEdgesState — use for flow diagrams, state machines, pipelines, dependency graphs, architecture diagrams; do NOT render these as card grids), @tanstack/react-table (headless tables), date-fns (format, formatDistance, parseISO, addDays, ...), colord (color manipulation). All scope variables — use directly, not as imports or props. The sandbox has NO network access — all data must be inline.")
         appendLine("- Database workflow — always follow this sequence: (1) db_list_profiles to discover configured connections, (2) db_list_databases to list user databases on a server profile (system DBs are filtered out), (3) db_schema to explore structure hierarchically: call with profile only to list schemas, add schema= to list tables in that schema, add table= to describe a specific table with columns/indexes/foreign keys, (4) db_stats to check row counts and table sizes before querying large tables, (5) db_query to run read-only SELECT statements, (6) db_explain to get the execution plan and diagnose slow queries. Profiles are server-level — one PostgreSQL profile can reach all databases on that server via the optional `database` parameter.")
-        appendLine("- After refactoring code, use sonar.local_analysis(files=...) to get immediate SonarQube feedback on the changed files without waiting for the CI pipeline to complete a full scan. This runs the Sonar scanner locally and fetches fresh issues, hotspots, coverage, and duplications for exactly the files you changed.")
+        appendLine("- After refactoring code, use sonar(action=\"local_analysis\", files=...) to get immediate SonarQube feedback on the changed files without waiting for the CI pipeline to complete a full scan. This runs the Sonar scanner locally and fetches fresh issues, hotspots, coverage, and duplications for exactly the files you changed.")
         appendLine("- You can call multiple tools in a single response. If calls are independent, make them all in parallel for efficiency. If calls depend on each other, run them sequentially.")
-        append("- For long-running shell commands started via run_command, use kill_process to terminate and send_stdin to feed input to a still-running process. Use current_time when you need an authoritative timestamp (do not guess). Use ask_user_input for short structured prompts to the user (distinct from ask_followup_question which is conversational).")
+        append("- For long-running shell commands started via run_command, use kill_process to terminate and send_stdin to feed input to a still-running process. Use current_time when you need an authoritative timestamp (do not guess). Use ask_user_input for short structured prompts (distinct from ask_followup_question, which is conversational). ask_followup_question has two modes: simple mode (pass `question` — shown in chat, user types an answer) and wizard mode (pass `questions` as a JSON array — renders a structured multi-step decision wizard with single/multiple-choice options). Default to simple mode; use wizard mode only for genuinely multi-step decisions.")
 
         // Task-to-tool hints — helps the LLM prefer specialized tools over generic fallbacks
         appendLine()
@@ -449,11 +496,11 @@ In each user message, the environment_details will specify the current mode. The
             // IDE-aware tool preference hint
             val preferenceHint = when {
                 ideContext == null || ideContext.supportsJava ->
-                    "Prefer IDE tools over shell commands: diagnostics over mvn compile, run_inspections over checkstyle, java_runtime_exec over mvn test, refactor_rename over find-and-replace. Use run_command only for tasks with no IDE equivalent (deploy, Docker, custom scripts)."
+                    "Prefer IDE tools over shell commands: diagnostics for per-file semantic checks, java_runtime_exec(compile_module) for module compilation, run_inspections over checkstyle, java_runtime_exec(run_tests) over mvn/gradle test, refactor_rename over find-and-replace. Use run_command only for tasks with no IDE equivalent (deploy, Docker, custom scripts, or Maven-authoritative cross-module builds via `mvn compile --also-make`)."
                 ideContext.supportsPython ->
-                    "Prefer IDE tools over shell commands: diagnostics over pytest/pylint, run_inspections over flake8/mypy, python_runtime_exec over python -m pytest, refactor_rename over find-and-replace. Use run_command only for tasks with no IDE equivalent (deploy, Docker, custom scripts)."
+                    "Prefer IDE tools over shell commands: diagnostics for per-file syntax/import checks, run_inspections over flake8/pylint/mypy, python_runtime_exec(run_tests) over pytest, python_runtime_exec(compile_module) over python -m py_compile, refactor_rename over find-and-replace. Use run_command only for tasks with no IDE equivalent (deploy, Docker, custom scripts)."
                 else ->
-                    "Prefer IDE tools over shell commands: diagnostics over manual compilation, run_inspections over external linters, runtime_exec over shell test runners, refactor_rename over find-and-replace. Use run_command only for tasks with no IDE equivalent (deploy, Docker, custom scripts)."
+                    "Prefer IDE tools over shell commands: diagnostics for per-file semantic checks, run_inspections over external linters, runtime_exec to observe test runs, refactor_rename over find-and-replace. Use run_command only for tasks with no IDE equivalent (deploy, Docker, custom scripts)."
             }
             appendLine(preferenceHint)
         }.trimEnd()
@@ -464,7 +511,12 @@ In each user message, the environment_details will specify the current mode. The
      * Ported from: rules.ts (getRulesTemplateText)
      * Adapted: tool names, IDE references, removed browser rules, added IDE-specific rules
      */
-    private fun rules(projectPath: String, ideContext: IdeContext?): String = buildString {
+    private fun rules(
+        projectPath: String,
+        ideContext: IdeContext?,
+        availableModels: List<String>? = null,
+        includeSubagentDelegationInRules: Boolean = true
+    ): String = buildString {
         appendLine("RULES")
         appendLine()
 
@@ -472,15 +524,17 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("# Tool Preference — IDE Tools Over Shell Commands")
         appendLine("Do NOT use run_command when a dedicated IDE tool exists. IDE tools provide structured output, better error reporting, and integrate with the IDE's state. This is critical:")
         if (ideContext == null || ideContext.supportsJava) {
-            appendLine("- Use diagnostics instead of `run_command(\"mvn compile\")` or `run_command(\"./gradlew compileKotlin\")`")
-            appendLine("- Use java_runtime_exec(action=\"run_tests\") instead of `run_command(\"./gradlew test\")`")
-            appendLine("- Use java_runtime_exec(action=\"compile_module\") instead of `run_command(\"mvn compile\")`")
+            appendLine("- Use diagnostics to verify individual file edits (syntax, unresolved references, type errors). Per-file only — not a substitute for a full module compile.")
+            appendLine("- Use java_runtime_exec(action=\"run_tests\") instead of `run_command(\"./gradlew test\")` or `run_command(\"mvn test\")`. A pre-flight validator blocks dispatch with an actionable error if the target class is under main sources (not a test root), has zero `@Test` methods, or belongs to a module that isn't registered in `settings.gradle` / the Maven reactor. Read the blocked-result suggestion — do not work around it with shell commands.")
+            appendLine("- Use java_runtime_exec(action=\"compile_module\") for module compilation. Upstream dependencies are always resolved by IntelliJ, but downstream consumers are NOT recompiled by default. In multi-module projects, after editing an upstream module, pass `check_dependents=true` to also recompile modules that depend on it (catches downstream ABI breakage). Omit `module` entirely to compile the whole project.")
+            appendLine("- For Maven-authoritative cross-module builds (when reactor order matters), use `run_command(\"mvn compile -pl :<module> --also-make\")` — `--also-make` builds the module and every module it depends on.")
             appendLine("- Use project_structure to set module dependencies, SDK, or language level on intrinsic (non-Gradle/Maven) modules instead of editing build files — changes take effect immediately and support undo")
         }
         if (ideContext?.supportsPython == true) {
-            appendLine("- Use diagnostics instead of `run_command(\"python -m py_compile\")` or `run_command(\"pylint\")`")
+            appendLine("- Use diagnostics to verify individual file edits (syntax, unresolved imports, type errors). Per-file only.")
+            appendLine("- Use run_inspections instead of `run_command(\"pylint\")`, `run_command(\"flake8\")`, or `run_command(\"mypy\")` for style and type-quality checks.")
             appendLine("- Use python_runtime_exec(action=\"run_tests\") instead of `run_command(\"pytest\")`")
-            appendLine("- Use python_runtime_exec(action=\"compile_module\") instead of `run_command(\"python -m py_compile\")`")
+            appendLine("- Use python_runtime_exec(action=\"compile_module\") for bytecode-compile verification of a module instead of `run_command(\"python -m py_compile\")`")
         }
         if (ideContext != null && !ideContext.supportsJava && !ideContext.supportsPython) {
             appendLine("- Use diagnostics instead of manual compilation commands")
@@ -548,7 +602,7 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("- Before executing actions, consider reversibility and blast radius. Freely take local, reversible actions (edit files, run tests). For hard-to-reverse actions (force push, delete branches, drop tables, kill processes), confirm with the user first.")
         appendLine("- run_command with destructive operations (rm -rf, git reset --hard, DROP TABLE, kubectl delete) always requires user approval. Think before running.")
         appendLine("- When executing commands, do not assume success when output is missing. Run follow-up checks before proceeding.")
-        appendLine("- Tools have execution timeouts (120s default, 600s for run_command). If a tool times out, retry with a more focused query or smaller scope — split large operations into multiple targeted calls.")
+        appendLine("- Tools have execution timeouts (120s default; 600s for run_command; 300s default / 900s max for run_tests via the `timeout` param; 10s for debug_inspect's `evaluate` action; unlimited for the agent tool). If a tool times out, retry with a more focused query or smaller scope — split large operations into multiple targeted calls.")
         appendLine()
 
         // Task Execution
@@ -563,41 +617,51 @@ In each user message, the environment_details will specify the current mode. The
         appendLine()
 
         // Subagent Delegation — agent list is IDE-aware
-        appendLine("# Subagent Delegation")
-        appendLine("Use the agent tool to delegate self-contained tasks to a sub-agent with its own context window. This keeps your main context clean. Each agent_type has a curated tool set and system prompt.")
-        appendLine()
-        appendLine("**When to use which agent type:**")
-        appendLine("- \"explorer\" — fast read-only codebase exploration. Use when you need to find files by patterns (e.g., \"**/*Service.kt\"), search code for keywords (e.g., \"all @Transactional methods\"), trace call paths, or answer questions about the codebase (e.g., \"how does authentication work?\"). When calling explorer, specify the desired thoroughness in your prompt: \"quick\" for basic searches, \"medium\" for moderate exploration, or \"very thorough\" for comprehensive analysis across multiple locations and naming conventions. Supports parallel prompts (prompt_2..prompt_5) for fan-out research.")
-        appendLine("- \"general-purpose\" — (default) full write access for ad-hoc implementation tasks that don't fit a specialist.")
-        appendLine("- \"code-reviewer\" — code review on diffs, commits, branches, or file sets. Reports findings with severity.")
-        appendLine("- \"architect-reviewer\" — architecture review: dependency direction, module boundaries, API surface design.")
-        appendLine("- \"test-automator\" — writing tests: TDD (test-first) or retrofit (existing code). Discovers project testing patterns.")
-        if (ideContext == null || ideContext.supportsJava) {
-            appendLine("- \"spring-boot-engineer\" — Spring Boot feature development. Discovers project patterns before implementing.")
+        if (includeSubagentDelegationInRules) {
+            appendLine("# Subagent Delegation")
+            appendLine("Use the agent tool to delegate self-contained tasks to a sub-agent with its own context window. This keeps your main context clean. Each agent_type has a curated tool set and system prompt.")
+            appendLine()
+            appendLine("**When to use which agent type:**")
+            appendLine("- \"explorer\" — fast read-only codebase exploration. Use when you need to find files by patterns (e.g., \"**/*Service.kt\"), search code for keywords (e.g., \"all @Transactional methods\"), trace call paths, or answer questions about the codebase (e.g., \"how does authentication work?\"). When calling explorer, specify the desired thoroughness in your prompt: \"quick\" for basic searches, \"medium\" for moderate exploration, or \"very thorough\" for comprehensive analysis across multiple locations and naming conventions. Supports parallel prompts (prompt_2..prompt_5) for fan-out research.")
+            appendLine("- \"general-purpose\" — (default) full write access for ad-hoc implementation tasks that don't fit a specialist.")
+            appendLine("- \"code-reviewer\" — code review on diffs, commits, branches, or file sets. Reports findings with severity.")
+            appendLine("- \"architect-reviewer\" — architecture review: dependency direction, module boundaries, API surface design.")
+            appendLine("- \"test-automator\" — writing tests: TDD (test-first) or retrofit (existing code). Discovers project testing patterns.")
+            if (ideContext == null || ideContext.supportsJava) {
+                appendLine("- \"spring-boot-engineer\" — Spring Boot feature development. Discovers project patterns before implementing.")
+            }
+            if (ideContext?.supportsPython == true) {
+                // python-engineer persona ships with Plan C — forward reference, safe to list
+                appendLine("- \"python-engineer\" — Python feature development. Discovers project patterns (Django, FastAPI, Flask) before implementing.")
+            }
+            appendLine("- \"refactoring-specialist\" — safe refactoring with tests before/after every step and per-file rollback.")
+            appendLine("- \"devops-engineer\" — CI/CD, Docker, Maven build config, AWS deployment configs.")
+            appendLine("- \"security-auditor\" — security audit: OWASP Top 10, Spring Security, secrets scanning, dependency CVEs.")
+            appendLine("- \"performance-engineer\" — performance analysis and optimization: database, caching, HTTP clients, JVM tuning.")
+            appendLine()
+            appendLine("**When NOT to use agent (use direct tools instead):**")
+            appendLine("- If you want to read a specific file path — use read_file directly.")
+            appendLine("- If you are searching for a specific class or function by name — use search_code or glob_files directly.")
+            appendLine("- If you are searching code within a specific file or 2-3 files — use read_file directly.")
+            appendLine("- If a single tool call would suffice — don't over-delegate.")
+            appendLine("- If the task requires your conversation context to understand — sub-agents can't see it.")
+            appendLine()
+            appendLine("**When to use explorer vs direct tools:**")
+            appendLine("- For simple, directed searches (a specific file, class, or function) — use read_file, search_code, or glob_files directly. These are faster.")
+            appendLine("- For broader codebase exploration and deep research — use agent(agent_type=\"explorer\"). This is slower but keeps your main context clean. Use it when a simple search proves insufficient or when the task will clearly require more than 3 queries.")
+            appendLine()
+            appendLine("**Rules:**")
+            appendLine("- Include ALL context in the prompt — the sub-agent has NO access to your conversation history.")
+            appendLine("- Parallel execution is only available for read-only agents (explorer). Write agents always run sequentially.")
+            appendLine("- By default subagents use the same model as you. Use the `model` parameter only when a different capability tier is genuinely needed.")
+            appendLine()
+
+            // List available models so the LLM knows valid values for the `model` parameter
+            if (!availableModels.isNullOrEmpty()) {
+                appendLine("**Available model IDs for the `model` parameter** (pass the full ID string):")
+                availableModels.forEach { appendLine(it) }
+            }
         }
-        if (ideContext?.supportsPython == true) {
-            // python-engineer persona ships with Plan C — forward reference, safe to list
-            appendLine("- \"python-engineer\" — Python feature development. Discovers project patterns (Django, FastAPI, Flask) before implementing.")
-        }
-        appendLine("- \"refactoring-specialist\" — safe refactoring with tests before/after every step and per-file rollback.")
-        appendLine("- \"devops-engineer\" — CI/CD, Docker, Maven build config, AWS deployment configs.")
-        appendLine("- \"security-auditor\" — security audit: OWASP Top 10, Spring Security, secrets scanning, dependency CVEs.")
-        appendLine("- \"performance-engineer\" — performance analysis and optimization: database, caching, HTTP clients, JVM tuning.")
-        appendLine()
-        appendLine("**When NOT to use agent (use direct tools instead):**")
-        appendLine("- If you want to read a specific file path — use read_file directly.")
-        appendLine("- If you are searching for a specific class or function by name — use search_code or glob_files directly.")
-        appendLine("- If you are searching code within a specific file or 2-3 files — use read_file directly.")
-        appendLine("- If a single tool call would suffice — don't over-delegate.")
-        appendLine("- If the task requires your conversation context to understand — sub-agents can't see it.")
-        appendLine()
-        appendLine("**When to use explorer vs direct tools:**")
-        appendLine("- For simple, directed searches (a specific file, class, or function) — use read_file, search_code, or glob_files directly. These are faster.")
-        appendLine("- For broader codebase exploration and deep research — use agent(agent_type=\"explorer\"). This is slower but keeps your main context clean. Use it when a simple search proves insufficient or when the task will clearly require more than 3 queries.")
-        appendLine()
-        appendLine("**Rules:**")
-        appendLine("- Include ALL context in the prompt — the sub-agent has NO access to your conversation history.")
-        append("- Parallel execution is only available for read-only agents (explorer). Write agents always run sequentially.")
     }.trimEnd()
 
     /**
