@@ -954,3 +954,161 @@ All four assumed APIs used in the earlier research (§2.2, §A.3) are verified t
 - `UrlPath.fromExactString(...)` — yes, `@JvmStatic` companion factory.
 
 Task 11 can proceed as planned. No rethink required.
+
+---
+
+## Appendix C: OasExportUtils API verification
+
+**Date verified:** 2026-04-20. **Purpose:** Lock down exact signatures for Task 13 (`ExportOpenApiAction` / `export_openapi` agent tool).
+
+### C.1 Exact class FQNs
+
+| Symbol | Kind | FQN | Source |
+|---|---|---|---|
+| `OasExportUtils.kt` | Kotlin **top-level file** — NOT a class/object. Top-level functions. Java-visible facade class: `com.intellij.microservices.oas.OasExportUtilsKt` | `com.intellij.microservices.oas` | [OasExportUtils.kt](https://github.com/JetBrains/intellij-community/blob/master/platform/lang-api/src/com/intellij/microservices/oas/OasExportUtils.kt) |
+| `OpenApiSpecification` | `class` (plain DTO, no serializer) | `com.intellij.microservices.oas.OpenApiSpecification` | [OpenApiSpecification.kt](https://github.com/JetBrains/intellij-community/blob/master/platform/lang-api/src/com/intellij/microservices/oas/OpenApiSpecification.kt) |
+| `OasSerializationUtils.kt` | Kotlin top-level; Java facade `OasSerializationUtilsKt` | `com.intellij.microservices.oas.serialization` | [OasSerializationUtils.kt](https://github.com/JetBrains/intellij-community/blob/master/platform/lang-api/src/com/intellij/microservices/oas/serialization/OasSerializationUtils.kt) |
+| `OasSpecificationProvider` | `interface` (EP: `com.intellij.microservices.oasSpecificationProvider`) | `com.intellij.microservices.oas.OasSpecificationProvider` | [OasSpecificationProvider.kt](https://github.com/JetBrains/intellij-community/blob/master/platform/lang-api/src/com/intellij/microservices/oas/OasSpecificationProvider.kt) |
+
+> **Important naming correction:** the earlier research note called this `OasExportUtils` as if it were an `object`/class. It is **not**. The file is a free-function Kotlin file; from Kotlin you call the functions unqualified after `import com.intellij.microservices.oas.getSpecificationByUrls`; from Java the synthetic class is `OasExportUtilsKt.getSpecificationByUrls(...)`.
+
+### C.2 Exact function signatures (copy-pasteable)
+
+All four functions live at top level in `OasExportUtils.kt` with **no** class or object wrapper:
+
+```kotlin
+// 1. The one Task 13 needs. Note parameter is Iterable<UrlTargetInfo>, NOT List/Collection.
+fun getSpecificationByUrls(urls: Iterable<UrlTargetInfo>): OpenApiSpecification
+
+// 2. Combine many specs (dedup paths, merge tags + components.schemas).
+fun squashOpenApiSpecifications(specifications: List<OpenApiSpecification>): OpenApiSpecification
+
+// 3. Single-endpoint route: routes through EndpointsUrlTargetProvider.getOpenApiSpecification(...)
+//    and falls back to getSpecificationByUrls(provider.getUrlTargetInfo(group, endpoint)).
+fun <G : Any, E : Any> getOpenApi(
+    provider: EndpointsProvider<G, E>,
+    group: G,
+    endpoint: E,
+): OpenApiSpecification?
+
+// 4. Whole-tool-window route: takes the EndpointsListItem collection the Endpoints tool
+//    window renders and squashes all per-endpoint specs into one.
+fun getOpenApiSpecification(endpointsList: Collection<EndpointsListItem>): OpenApiSpecification?
+
+// 5. Compile-time constant.
+val EMPTY_OPENAPI_SPECIFICATION: OpenApiSpecification
+```
+
+**Function signature for Task 13 — one line:**
+
+```kotlin
+val spec: OpenApiSpecification = getSpecificationByUrls(targets)   // targets: Iterable<UrlTargetInfo>
+```
+
+Where `targets` is whatever Task 11 already produces (`UrlResolverManager.resolve(request)` returns `Iterable<UrlTargetInfo>` — a perfect fit, no `.toList()` needed).
+
+Note on URL filtering: `getSpecificationByUrls` does **not** filter by scheme or endpoint kind. It blindly maps every `UrlTargetInfo` to an `OasEndpointPath`. If we only want "HTTP-Server" endpoints (to match the Endpoints tool window's "OpenAPI" tab behaviour), filter upstream:
+
+```kotlin
+val httpTargets = targets.filter { it.schemes.any { s -> s in HTTP_SCHEMES } }
+//                                                       // from com.intellij.microservices.url.HTTP_SCHEMES
+```
+
+The real gate the Endpoints tool window uses is `EndpointsUrlTargetProvider.shouldShowOpenApiPanel()` (default `true`), applied per-provider in `getOpenApi(provider, group, endpoint)` above.
+
+### C.3 `OpenApiSpecification` DTO shape
+
+```kotlin
+class OpenApiSpecification(
+    val paths: Collection<OasEndpointPath>,
+    val components: OasComponents? = null,
+    val tags: List<OasTag>? = null,
+) {
+    fun isEmpty(): Boolean            // (note: implementation returns paths.iterator().hasNext()
+                                      //  which is the opposite of what the name suggests — bug;
+                                      //  do NOT rely on it)
+    fun findSinglePathRequestBodyData(contentType: String = APPLICATION_JSON): OasSchema?
+}
+```
+
+**Crucially: no `toYaml()`, no `toJson()`, no `toString()` override, no `writeTo(OutputStream)`.** This is a pure DTO. See C.4.
+
+### C.4 Serializing `OpenApiSpecification` to YAML / JSON text — THIS IS THE CATCH
+
+There is **exactly one** serializer exposed by the platform, and it is hostile to use:
+
+**File:** [OasSerializationUtils.kt](https://github.com/JetBrains/intellij-community/blob/master/platform/lang-api/src/com/intellij/microservices/oas/serialization/OasSerializationUtils.kt)
+
+```kotlin
+@Deprecated("You must use generateOasDraft from OpenAPI Specifications plugin instead")
+@ApiStatus.Internal
+@NlsSafe
+fun generateOasDraft(projectName: String, models: OpenApiSpecification): String {
+  return EP_NAME.extensionList.firstOrNull()?.generateOasDraft(projectName, models) ?: ""
+}
+```
+
+Three compounding problems:
+
+1. **`@ApiStatus.Internal`** — explicitly not for third-party plugins. Using it emits an IJ inspection warning; JetBrains can remove it in any release.
+2. **`@Deprecated`** — the message literally says *"You must use generateOasDraft from OpenAPI Specifications plugin instead"*. There is no public replacement in the platform; the replacement lives in a different plugin we'd have to depend on (`com.intellij.swagger`, see below).
+3. **Empty-string fallback** — the function returns `""` when no `OasSerializationCompatibilityProvider` is registered. No error, no `null`. Task 13 would have to detect `result.isBlank()` and surface that as *"OpenAPI Specifications plugin not installed; install it from the marketplace."*
+
+The real implementation is registered via extension point `com.intellij.microservices.oasSerializationCompatibilityProvider` by the **OpenAPI Specifications plugin** (`xmlId: com.intellij.swagger`, bundled in IntelliJ Ultimate but disableable; NOT bundled in Community/PyCharm Community). A global GitHub search across all mirrors finds **zero** public implementations — the class lives only inside the closed-source `com.intellij.swagger` plugin JAR that ships with Ultimate.
+
+**One-line serialization call — if and only if the Swagger plugin is active:**
+
+```kotlin
+val yaml: String = generateOasDraft(project.name, spec)   // "" when com.intellij.swagger not installed
+```
+
+**Stability flags for this serializer path:** `@Deprecated` + `@ApiStatus.Internal`. Do NOT use without an inspection suppression and a runtime guard.
+
+### C.5 API stability flags (overall)
+
+| Entry | `api-dump.txt` (reviewed / stable) | `api-dump-unreviewed.txt` (unstable) | Annotations on source |
+|---|---|---|---|
+| `OasExportUtilsKt.getSpecificationByUrls` | - | yes (line 2735) | none |
+| `OasExportUtilsKt.getOpenApi(...)` | - | yes (line 2733) | none |
+| `OasExportUtilsKt.getOpenApiSpecification(Collection)` | - | yes (line 2734) | none |
+| `OasExportUtilsKt.squashOpenApiSpecifications` | - | yes (line 2736) | none |
+| `OasExportUtilsKt.EMPTY_OPENAPI_SPECIFICATION` | - | yes (line 2732) | none |
+| `OpenApiSpecification` (all accessors) | - | yes (line 2995+) | none |
+| `OasEndpointPath`, `OasOperation`, `OasHttpMethod`, `OasParameter*`, `OasSchema*` | - | yes | none |
+| `EndpointsProvider.getOpenApiSpecification(group, endpoint)` | **yes** | - | none |
+| `OasSpecificationProvider.getOasSpecification(UrlTargetInfo)` | - | yes (line 2978/2981) | none |
+| `OasSerializationUtilsKt.generateOasDraft` | - | not listed (filtered out as internal) | `@Deprecated` + `@ApiStatus.Internal` |
+| `OasSerializationCompatibilityProvider` (interface) | - | not listed | `@Deprecated` + `@ApiStatus.Internal` |
+
+**Summary of stability:** everything Task 13 needs is **unreviewed but not deprecated and not internal** — same tier as the resolve chain Task 11 relies on (§B.8). The only red flag is the serializer, not the exporter.
+
+### C.6 Concrete callers inside intellij-community
+
+1. **`OpenInScratchClientGeneratorInlayAction.kt`** — [platform/lang-impl/...](https://github.com/JetBrains/intellij-community/blob/master/platform/lang-impl/src/com/intellij/microservices/client/generator/OpenInScratchClientGeneratorInlayAction.kt). The "Open in Scratch" inlay action that appears next to every `@GetMapping` URL. Resolves `UrlPathContext` → `UrlTargetInfo`s → calls the companion form `OasSpecificationProvider.Companion.getOasSpecification(urlTarget)` for each, then **never serializes the result** — it hands the in-memory `OpenApiSpecification` directly to `ClientGenerator.generate(project, oas)` which returns a native HTTP-client file (HTTP Client scratch, cURL, JS fetch, etc.). **Takeaway:** the platform's own "export" flows go DTO → code generator, not DTO → YAML. Confirms §C.4.
+
+   ```kotlin
+   // Lines 90-99, trimmed.
+   val oas = withModalProgress(project, ...) {
+       readAction { blockingContextToIndicator { getOpenApiSpecification(urlPathContext) } }
+   }
+   if (oas == null) { /* show error */ return@launch }
+   createScratchFile(clientGenerator, oas)
+   ```
+
+2. **`OasExportUtils.kt` itself — `getOpenApi(provider, group, endpoint)`** — the Endpoints tool window's "OpenAPI" tab calls this to produce the in-memory DTO it displays. The tab's on-screen YAML view is rendered by code in the closed-source `com.intellij.swagger` plugin, via the same `OasSerializationCompatibilityProvider` EP. So even the "Show OpenAPI" button in the stock tool window cannot render YAML without the Swagger plugin installed and enabled.
+
+### C.7 Bottom line for Task 13
+
+- **Not BLOCKED, but DEGRADED.** `getSpecificationByUrls` exists with the exact signature the plan assumes — one-line DTO production works.
+- **YAML/JSON string is NOT a one-liner.** The only public emitter is `@Deprecated + @Internal` and returns `""` without the `com.intellij.swagger` plugin. Task 13 must do one of:
+  1. **Preferred.** Depend on `com.intellij.swagger` (`<depends optional="true" config-file="openapi-export.xml">com.intellij.swagger</depends>`), call `generateOasDraft(project.name, spec)` with an `@Suppress("DEPRECATION", "UnstableApiUsage")`, and fall back to option (2) if the return is blank. This gives us the same YAML the Endpoints tool window shows.
+  2. **Fallback.** Emit YAML ourselves by walking the DTO with SnakeYAML (already on the platform classpath as `org.yaml.snakeyaml.Yaml`). Every field we need is a public getter (`OasEndpointPath.path / summary / operations`, `OasOperation.method / tags / parameters / requestBody / responses`, etc. — see C.3 / source links). Effort: ~80 LoC for an OpenAPI 3.0 emitter covering the subset `getSpecificationByUrls` produces (paths, ops, params — no components/schemas unless `OasSpecificationProvider` is chained in).
+  3. **JSON fallback.** `com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(spec)` emits a reasonably shaped JSON thanks to Jackson's default bean introspection, but the field casing and OpenAPI-required wrapping (`openapi: "3.0.3"`, `info: {...}`, `paths` keyed by path string) still require a hand-written envelope. Same ~80 LoC regardless of JSON vs YAML.
+
+**Recommendation for Task 13:** do (1) + (2). Primary path = `com.intellij.swagger` / `generateOasDraft`; fallback when plugin absent or returns blank = SnakeYAML walker. Surface the degradation in `ToolResult.summary` so the agent can tell the user *"Exported via built-in emitter; install the OpenAPI Specifications plugin for richer output."*
+
+### C.8 Three lines, one reply
+
+- **DTO build:** `val spec = getSpecificationByUrls(targets)` — import from `com.intellij.microservices.oas`.
+- **Serialize (Swagger plugin present):** `val yaml = generateOasDraft(project.name, spec)` — import from `com.intellij.microservices.oas.serialization`, `@Suppress("DEPRECATION", "UnstableApiUsage")`.
+- **Serialize (Swagger plugin absent):** no public one-liner exists — walk the DTO with SnakeYAML. Plan §4 must budget for this.
