@@ -485,6 +485,14 @@ class SpringToolTest {
             } catch (_: ClassNotFoundException) { return }
             // If the class loads, the package location is correct.
         }
+
+        @Test
+        fun `SpringBootApplicationMetaConfigKeyManagerImpl getAllMetaConfigKeys takes Module`() {
+            val cls = try {
+                Class.forName("com.intellij.spring.boot.application.metadata.SpringBootApplicationMetaConfigKeyManagerImpl")
+            } catch (_: ClassNotFoundException) { return }
+            cls.getMethod("getAllMetaConfigKeys", com.intellij.openapi.module.Module::class.java)
+        }
     }
 
     companion object {

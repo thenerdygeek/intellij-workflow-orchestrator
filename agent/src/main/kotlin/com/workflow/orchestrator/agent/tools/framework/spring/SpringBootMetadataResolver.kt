@@ -35,6 +35,9 @@ internal object SpringBootMetadataResolver {
     @Volatile private var cached: Api? = null
     @Volatile private var initialized: Boolean = false
 
+    @Volatile private var cachedGetAllKeys: Method? = null
+    @Volatile private var cachedGetAllKeysInitialized: Boolean = false
+
     /** Returns metadata for a single property name, or null if not found / plugin absent. */
     fun findMetaConfigKey(module: Module, propertyName: String): MetaConfigKeyInfo? =
         allMetaConfigKeys(module).firstOrNull { it.name == propertyName }
@@ -52,10 +55,10 @@ internal object SpringBootMetadataResolver {
 
         // getAllMetaConfigKeys(Module) lives on the Impl, not the abstract base.
         // Resolve it on the concrete runtime class so it is found even when the
-        // abstract type doesn't expose it.
-        val getAllKeys: Method = try {
-            manager.javaClass.getMethod("getAllMetaConfigKeys", Module::class.java)
-        } catch (_: NoSuchMethodException) { return emptyList() }
+        // abstract type doesn't expose it. The method handle is cached to avoid
+        // re-traversing the class hierarchy and acquiring the reflection lock on
+        // every call (manager singleton means javaClass is stable within a JVM session).
+        val getAllKeys = resolveGetAllKeys(manager) ?: return emptyList()
 
         val rawKeys: Collection<Any> = try {
             @Suppress("UNCHECKED_CAST")
@@ -69,7 +72,10 @@ internal object SpringBootMetadataResolver {
 
     private fun toInfo(rawKey: Any): MetaConfigKeyInfo? = try {
         val name = invokeString(rawKey, "getName") ?: return null
-        val description = invoke(rawKey, "getDescriptionText")?.toString()
+        // getDescriptionText() returns a DescriptionText wrapper (Lazy<String?> wrapper),
+        // not a raw String. Calling .toString() directly yields "ClassName@hash" garbage.
+        val description = extractDescriptionText(invoke(rawKey, "getDescriptionText"))
+        // getDefaultValue() returns String directly (confirmed in research doc).
         val defaultValue = invokeString(rawKey, "getDefaultValue")
 
         // Use getDeprecationFast() to avoid PSI resolve — see research-doc performance note.
@@ -90,6 +96,46 @@ internal object SpringBootMetadataResolver {
             sourceType = sourceType,
         )
     } catch (_: Exception) { null }
+
+    /**
+     * Extracts a human-readable string from a DescriptionText wrapper object.
+     *
+     * `getDescriptionText()` on `SpringBootApplicationMetaConfigKeyImpl` returns a
+     * `DescriptionText` object (a Lazy<String?> wrapper), not a plain String. Calling
+     * `.toString()` on it produces `com.intellij.spring.boot...DescriptionText@abcd1234`
+     * which is useless. This helper tries common extractor method names in order, and
+     * falls back to null rather than leaking garbage object-reference strings.
+     *
+     * The guard `!result.startsWith(target.javaClass.name + "@")` detects the default
+     * Object.toString() output (ClassName@hashHex) and treats it as "no description".
+     */
+    private fun extractDescriptionText(target: Any?): String? {
+        if (target == null) return null
+        for (methodName in listOf("getText", "getValue", "getDescription", "toString")) {
+            try {
+                val result = target.javaClass.getMethod(methodName).invoke(target) as? String
+                if (result != null && !result.startsWith(target.javaClass.name + "@")) return result
+            } catch (_: Exception) { /* try next */ }
+        }
+        return null
+    }
+
+    /**
+     * Resolves and caches the `getAllMetaConfigKeys(Module)` method from the concrete
+     * manager impl class. The manager is a singleton so its javaClass is stable within a
+     * JVM session. Uses double-checked locking to avoid repeated Class.getMethod traversals.
+     */
+    private fun resolveGetAllKeys(manager: Any): Method? {
+        if (cachedGetAllKeysInitialized) return cachedGetAllKeys
+        synchronized(this) {
+            if (cachedGetAllKeysInitialized) return cachedGetAllKeys
+            cachedGetAllKeys = try {
+                manager.javaClass.getMethod("getAllMetaConfigKeys", Module::class.java)
+            } catch (_: NoSuchMethodException) { null }
+            cachedGetAllKeysInitialized = true
+            return cachedGetAllKeys
+        }
+    }
 
     /**
      * Extracts reason and replacement from a Deprecation object.
