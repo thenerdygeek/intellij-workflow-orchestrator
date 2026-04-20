@@ -22,6 +22,7 @@ dependencies {
             "Git4Idea",
             "com.intellij.java",
             "com.intellij.spring",
+            "com.intellij.spring.boot",
             "org.jetbrains.kotlin",
             "com.intellij.modules.microservices",
         ))
