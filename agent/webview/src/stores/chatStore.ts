@@ -1362,10 +1362,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const newMap = new Map(state.activeSubAgents);
       const agent = newMap.get(data.agentId);
       if (agent) {
+        // Field names use the `tool*` prefix to match the Kotlin payload keys from
+        // AgentCefPanel.addSubAgentToolCall (put("toolArgs", ...)). Reading bare
+        // `data.args` here silently returned undefined, which is one reason the
+        // expanded view rendered empty.
         const tc: ToolCall = {
           id: data.toolCallId || `sa-tc-${uniqueTs()}`,
           name: data.toolName || 'unknown',
-          args: data.args || '',
+          args: data.toolArgs || '',
           status: 'RUNNING',
         };
         newMap.set(data.agentId, {
@@ -1397,25 +1401,50 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ? [...agent.activeToolChain.slice(0, matchIdx), ...agent.activeToolChain.slice(matchIdx + 1)]
           : agent.activeToolChain;
 
+        // Kotlin payload keys use the `tool*` prefix (toolResult / toolDurationMs /
+        // toolOutput / toolDiff — see AgentCefPanel.updateSubAgentToolCall). Reading
+        // `data.result` / `data.durationMs` returned undefined previously, which is
+        // why the expanded sub-agent tool view rendered empty even when the tool
+        // produced output.
+        const finalizedId = finalized?.id || data.toolCallId || `sa-tc-${uniqueTs()}`;
+        // Fallback to accumulated stream chunks when the Kotlin side didn't ship an
+        // explicit `toolOutput` (happens when ToolResult.content equals .summary —
+        // e.g. a run_command whose only detail is in streamed stdout). Mirrors the
+        // main agent's finalizeToolChain merge so the completed message carries the
+        // full output instead of losing it when the stream entry is later cleared.
+        const streamOutput = state.toolOutputStreams[finalizedId];
+        const mergedOutput = data.toolOutput || streamOutput || undefined;
+
         const toolMsg: UiMessage = {
           ts: uniqueTs(),
           type: 'SAY',
           say: 'TOOL',
           toolCallData: {
-            toolCallId: finalized?.id || data.toolCallId || `sa-tc-${uniqueTs()}`,
+            toolCallId: finalizedId,
             toolName: data.toolName || 'unknown',
             args: finalized?.args || '',
             status,
-            result: data.result || '',
-            durationMs: data.durationMs || 0,
+            result: data.toolResult || '',
+            output: mergedOutput,
+            diff: data.toolDiff,
+            durationMs: data.toolDurationMs || 0,
           },
         };
+
+        // Release the accumulated stream entry now that its content is baked into
+        // the finalized message — prevents unbounded toolOutputStreams growth over
+        // long sessions with many sub-agent tool invocations.
+        const newStreams = { ...state.toolOutputStreams };
+        if (streamOutput !== undefined) {
+          delete newStreams[finalizedId];
+        }
 
         newMap.set(data.agentId, {
           ...agent,
           activeToolChain: remaining,
           messages: [...agent.messages, toolMsg],
         });
+        return { activeSubAgents: newMap, toolOutputStreams: newStreams };
       }
       return { activeSubAgents: newMap };
     });

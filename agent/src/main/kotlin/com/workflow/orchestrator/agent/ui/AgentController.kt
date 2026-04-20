@@ -81,6 +81,13 @@ class AgentController(
     private val sessionApprovalStore = SessionApprovalStore()
     private var currentJob: Job? = null
     private var taskStartTime: Long = 0L
+
+    // Accumulated subagent token usage — added to parent session totals in updateSessionStats.
+    @Volatile private var subagentAccumIn = 0L
+    @Volatile private var subagentAccumOut = 0L
+    // Last stats pushed by the parent AgentLoop; re-pushed when subagents complete.
+    private data class SessionStatsSnapshot(val modelId: String, val tokensIn: Long, val tokensOut: Long, val costUsd: Double?)
+    @Volatile private var lastParentStats: SessionStatsSnapshot? = null
     /** Last task text for retry button (may include XML mention context). Gap 17. */
     private var lastTaskText: String? = null
     /** Clean display text for retry/restore (without XML). Null = same as lastTaskText. */
@@ -1382,6 +1389,13 @@ class AgentController(
                     dashboard.spawnSubAgent(agentId, label)
                 }
                 SubagentExecutionStatus.COMPLETED -> {
+                    update.stats?.let { s ->
+                        subagentAccumIn += s.inputTokens.toLong()
+                        subagentAccumOut += s.outputTokens.toLong()
+                        lastParentStats?.let { p ->
+                            dashboard.updateSessionStats(p.modelId, p.tokensIn + subagentAccumIn, p.tokensOut + subagentAccumOut, p.costUsd)
+                        }
+                    }
                     dashboard.completeSubAgent(
                         agentId,
                         update.result ?: "Completed",
@@ -1390,6 +1404,13 @@ class AgentController(
                     )
                 }
                 SubagentExecutionStatus.FAILED -> {
+                    update.stats?.let { s ->
+                        subagentAccumIn += s.inputTokens.toLong()
+                        subagentAccumOut += s.outputTokens.toLong()
+                        lastParentStats?.let { p ->
+                            dashboard.updateSessionStats(p.modelId, p.tokensIn + subagentAccumIn, p.tokensOut + subagentAccumOut, p.costUsd)
+                        }
+                    }
                     dashboard.completeSubAgent(
                         agentId,
                         update.error ?: "Failed",
@@ -1418,6 +1439,8 @@ class AgentController(
                             update.toolCallId,
                             name,
                             update.toolCompleteResult ?: "",
+                            update.toolCompleteOutput,
+                            update.toolCompleteDiff,
                             update.toolCompleteDurationMs,
                             update.toolCompleteIsError
                         )
@@ -1429,7 +1452,7 @@ class AgentController(
                         dashboard.appendSubAgentStreamDelta(agentId, delta)
                     }
                     update.stats?.let { stats ->
-                        dashboard.updateSubAgentIteration(agentId, stats.toolCalls)
+                        dashboard.updateSubAgentIteration(agentId, stats.toolCalls, stats.inputTokens + stats.outputTokens)
                     }
                 }
             }
@@ -1464,8 +1487,9 @@ class AgentController(
     }
 
     private fun onSessionStats(modelId: String, tokensIn: Long, tokensOut: Long, costUsd: Double?) {
+        lastParentStats = SessionStatsSnapshot(modelId, tokensIn, tokensOut, costUsd)
         invokeLater {
-            dashboard.updateSessionStats(modelId, tokensIn, tokensOut, costUsd)
+            dashboard.updateSessionStats(modelId, tokensIn + subagentAccumIn, tokensOut + subagentAccumOut, costUsd)
         }
     }
 
@@ -1792,6 +1816,9 @@ class AgentController(
         contextManager = null
         sessionApprovalStore.clear()
         taskStartTime = 0L
+        subagentAccumIn = 0L
+        subagentAccumOut = 0L
+        lastParentStats = null
         lastTaskText = null
         lastDisplayText = null
         lastDisplayMentionsJson = null

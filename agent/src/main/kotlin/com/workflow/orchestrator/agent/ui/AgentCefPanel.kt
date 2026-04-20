@@ -861,8 +861,12 @@ class AgentCefPanel(
         callJs("spawnSubAgent(${JsEscape.toJsString(payload)})")
     }
 
-    fun updateSubAgentIteration(agentId: String, iteration: Int) {
-        val payload = buildJsonObject { put("agentId", agentId); put("iteration", iteration) }.toString()
+    fun updateSubAgentIteration(agentId: String, iteration: Int, tokensUsed: Int = 0) {
+        val payload = buildJsonObject {
+            put("agentId", agentId)
+            put("iteration", iteration)
+            put("tokensUsed", tokensUsed)
+        }.toString()
         callJs("updateSubAgentIteration(${JsEscape.toJsString(payload)})")
     }
 
@@ -878,13 +882,20 @@ class AgentCefPanel(
 
     fun updateSubAgentToolCall(
         agentId: String, toolCallId: String, toolName: String, result: String,
+        output: String?, diff: String?,
         durationMs: Long, isError: Boolean
     ) {
         val payload = buildJsonObject {
             put("agentId", agentId)
             put("toolCallId", toolCallId)
             put("toolName", toolName)
-            put("toolResult", result.take(2000))   // guard against huge results in the payload
+            // `result` is the short summary (ToolResult.summary) — 2KB cap is a defensive guard.
+            put("toolResult", result.take(2000))
+            // `output` is the full ToolResult.content used for the expanded view; no cap so
+            // the LLM-relevant detail (e.g. run_command stdout) is not silently dropped.
+            // Large payloads are already middle-truncated / spilled by the tool layer.
+            if (output != null) put("toolOutput", output)
+            if (diff != null) put("toolDiff", diff)
             put("toolDurationMs", durationMs)
             put("isError", isError)
         }.toString()

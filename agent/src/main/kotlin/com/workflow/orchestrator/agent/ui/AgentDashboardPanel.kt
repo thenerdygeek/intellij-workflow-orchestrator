@@ -619,9 +619,9 @@ class AgentDashboardPanel(
         broadcast(replay = false) { it.spawnSubAgent(agentId, label) }
     }
 
-    fun updateSubAgentIteration(agentId: String, iteration: Int) {
-        runOnEdt { cefPanel?.updateSubAgentIteration(agentId, iteration) }
-        broadcast(replay = false) { it.updateSubAgentIteration(agentId, iteration) }
+    fun updateSubAgentIteration(agentId: String, iteration: Int, tokensUsed: Int = 0) {
+        runOnEdt { cefPanel?.updateSubAgentIteration(agentId, iteration, tokensUsed) }
+        broadcast(replay = false) { it.updateSubAgentIteration(agentId, iteration, tokensUsed) }
     }
 
     fun addSubAgentToolCall(agentId: String, toolCallId: String, toolName: String, toolArgs: String) {
@@ -634,12 +634,14 @@ class AgentDashboardPanel(
         toolCallId: String,
         toolName: String,
         result: String,
+        output: String?,
+        diff: String?,
         durationMs: Long,
         isError: Boolean
     ) {
-        runOnEdt { cefPanel?.updateSubAgentToolCall(agentId, toolCallId, toolName, result, durationMs, isError) }
+        runOnEdt { cefPanel?.updateSubAgentToolCall(agentId, toolCallId, toolName, result, output, diff, durationMs, isError) }
         broadcast(replay = false) {
-            it.updateSubAgentToolCall(agentId, toolCallId, toolName, result, durationMs, isError)
+            it.updateSubAgentToolCall(agentId, toolCallId, toolName, result, output, diff, durationMs, isError)
         }
     }
 

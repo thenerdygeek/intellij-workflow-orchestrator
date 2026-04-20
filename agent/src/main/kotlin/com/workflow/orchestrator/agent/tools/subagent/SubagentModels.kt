@@ -70,6 +70,13 @@ data class SubagentProgressUpdate(
     // Tool lifecycle (complete)
     val toolCompleteName: String? = null,
     val toolCompleteResult: String? = null,
+    /**
+     * Full tool output content for the expanded UI view. Mirrors [ToolCallProgress.output].
+     * Null when the tool's result equals its summary (no extra body to show).
+     */
+    val toolCompleteOutput: String? = null,
+    /** Unified diff for file edits (edit_file, create_file). Mirrors [ToolCallProgress.editDiff]. */
+    val toolCompleteDiff: String? = null,
     val toolCompleteDurationMs: Long = 0L,
     val toolCompleteIsError: Boolean = false,
     /**
