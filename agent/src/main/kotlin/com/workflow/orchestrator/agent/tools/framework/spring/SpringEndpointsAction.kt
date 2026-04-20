@@ -1,9 +1,11 @@
 package com.workflow.orchestrator.agent.tools.framework.spring
 
+import com.intellij.codeInsight.AnnotationUtil
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.project.Project
 import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.PsiAnnotation
+import com.intellij.psi.PsiArrayInitializerMemberValue
 import com.intellij.psi.PsiClass
 import com.intellij.psi.PsiMethod
 import com.intellij.psi.search.GlobalSearchScope
@@ -104,12 +106,26 @@ private fun collectEndpoints(project: Project, filter: String?, includeParams: B
 
 private fun extractMappingPath(annotation: PsiAnnotation?): String {
     if (annotation == null) return ""
-    val value = annotation.findAttributeValue("value")
+
+    // Constant references, concatenations, and inherited interface constants
+    // all resolve here via JavaPsiFacade.getConstantEvaluationHelper.
+    for (attr in arrayOf("value", "path")) {
+        val resolved = AnnotationUtil.getStringAttributeValue(annotation, attr)
+        if (!resolved.isNullOrBlank()) return resolved
+    }
+
+    // `@RequestMapping({"/a", "/b"})` — evaluate each array element.
+    val raw = annotation.findAttributeValue("value")
         ?: annotation.findAttributeValue("path")
-    return value?.text
-        ?.removeSurrounding("\"")
-        ?.removeSurrounding("{", "}")
-        ?: ""
+    if (raw is PsiArrayInitializerMemberValue) {
+        val evaluator = JavaPsiFacade.getInstance(annotation.project)
+            .constantEvaluationHelper
+        for (element in raw.initializers) {
+            val v = evaluator.computeConstantExpression(element) as? String
+            if (!v.isNullOrBlank()) return v
+        }
+    }
+    return ""
 }
 
 private fun extractRequestMethod(annotation: PsiAnnotation): String? {
