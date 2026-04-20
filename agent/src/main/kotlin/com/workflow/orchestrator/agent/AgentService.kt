@@ -63,6 +63,7 @@ import com.workflow.orchestrator.agent.tools.debug.DebugInspectTool
 import com.workflow.orchestrator.agent.tools.debug.DebugInvocation
 import com.workflow.orchestrator.agent.tools.debug.DebugStepTool
 import com.workflow.orchestrator.agent.tools.framework.*
+import com.workflow.orchestrator.agent.tools.framework.endpoints.EndpointsTool
 import com.workflow.orchestrator.agent.tools.ide.*
 import com.workflow.orchestrator.agent.tools.integration.*
 import com.workflow.orchestrator.agent.tools.memory.*
@@ -635,8 +636,21 @@ class AgentService(private val project: Project) : Disposable {
         } else {
             log.info("Skipping build tools — neither Java nor Python build tools available")
         }
+        val registerEndpoints = ToolRegistrationFilter.shouldRegisterMicroservicesEndpoints(ideContext)
+        val registerSpringEndpointActions = ToolRegistrationFilter.shouldRegisterSpringEndpointActions(ideContext)
+
+        if (registerEndpoints) {
+            safeRegisterDeferred("Build & Run") { EndpointsTool() }
+            log.info("endpoints tool registered (microservices module available)")
+        }
+
         if (ToolRegistrationFilter.shouldRegisterSpringTools(ideContext)) {
-            safeRegisterDeferred("Build & Run") { SpringTool() }
+            safeRegisterDeferred("Build & Run") {
+                SpringTool(includeEndpointActions = registerSpringEndpointActions)
+            }
+            if (!registerSpringEndpointActions) {
+                log.info("SpringTool registered without endpoints/boot_endpoints actions (superseded by endpoints tool)")
+            }
         } else {
             log.info("Skipping Spring tools — Spring plugin not available")
         }
