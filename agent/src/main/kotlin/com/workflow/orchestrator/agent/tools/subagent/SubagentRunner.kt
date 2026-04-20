@@ -3,9 +3,7 @@
 package com.workflow.orchestrator.agent.tools.subagent
 
 import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.Project
-import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.ide.IdeContext
 import com.workflow.orchestrator.agent.loop.AgentLoop
 import com.workflow.orchestrator.agent.loop.ContextManager
@@ -88,9 +86,9 @@ class SubagentRunner(
     internal val onSystemPromptBuilt: ((String) -> Unit)? = null,
     /**
      * Optional IDE context forwarded from [com.workflow.orchestrator.agent.AgentService].
-     * When non-null and [useUnifiedSubagentPrompt] returns true, this is passed into
-     * [SubagentSystemPromptBuilder.build] so the sub-agent's system prompt adapts to
-     * the running IDE (PyCharm vs IntelliJ IDEA vs WebStorm). Null = legacy path defaults.
+     * When non-null, passed into [SubagentSystemPromptBuilder.build] so the sub-agent's
+     * system prompt adapts to the running IDE (PyCharm vs IntelliJ IDEA vs WebStorm).
+     * Null produces IntelliJ-flavored defaults (backward compatible).
      */
     private val ideContext: IdeContext? = null,
     /**
@@ -361,64 +359,17 @@ class SubagentRunner(
         }
     }
 
-    private fun buildDeferredCatalogSection(registry: ToolRegistry): String {
-        val catalog = registry.getDeferredCatalogGroupedWithDescriptions()
-        if (catalog.isEmpty()) return ""
-        return buildString {
-            appendLine("## Deferred Tools (load with tool_search)")
-            appendLine("These tools are available but not loaded. Use tool_search to activate them when needed.")
-            appendLine()
-            for ((category, tools) in catalog) {
-                appendLine("### $category")
-                for ((name, description) in tools) {
-                    appendLine("- `$name`: $description")
-                }
-            }
-        }.trimEnd()
-    }
-
     /**
-     * Dispatcher: routes to the unified or legacy prompt builder based on the feature flag.
-     * Called both for the initial prompt (step 2 in [run]) and for dynamic rebuilds
-     * wired into [AgentLoop.systemPromptProvider].
+     * Composes the sub-agent system prompt by delegating to [SubagentSystemPromptBuilder],
+     * which calls the shared [com.workflow.orchestrator.agent.prompt.SystemPrompt.build]
+     * with sub-agent-scoped opt-in flags. Called both for the initial prompt (step 2 in
+     * [run]) and for dynamic rebuilds wired into [AgentLoop.systemPromptProvider].
+     * IDE-aware sections (role, capabilities, rules, system info) automatically adapt
+     * to the runtime IDE via [ideContext].
      */
-    private fun buildComposedSystemPrompt(registry: ToolRegistry): String {
-        return if (useUnifiedSubagentPrompt()) {
-            buildUnifiedSystemPrompt(registry)
-        } else {
-            buildLegacyComposedSystemPrompt(registry)
-        }
-    }
+    private fun buildComposedSystemPrompt(registry: ToolRegistry): String =
+        buildUnifiedSystemPrompt(registry)
 
-    /**
-     * Legacy prompt composer — the original [buildComposedSystemPrompt] body, preserved
-     * verbatim as a rollback path. Reachable when [useUnifiedSubagentPrompt] returns false.
-     * Do NOT delete this method.
-     */
-    private fun buildLegacyComposedSystemPrompt(registry: ToolRegistry): String {
-        val coreDefinitions = registry.getActiveDefinitions()
-        val coreMarkdown = ToolPromptBuilder.build(coreDefinitions)
-        val deferredCatalog = buildDeferredCatalogSection(registry)
-
-        return buildString {
-            append(systemPrompt)
-            append("\n\n====\n\n")
-            append(coreMarkdown)
-            if (deferredCatalog.isNotEmpty()) {
-                append("\n\n====\n\n")
-                append(deferredCatalog)
-            }
-            append("\n\n====\n\n")
-            append(COMPLETING_YOUR_TASK_SECTION)
-        }
-    }
-
-    /**
-     * Unified prompt composer — delegates to [SubagentSystemPromptBuilder] which in turn
-     * calls the shared [com.workflow.orchestrator.agent.prompt.SystemPrompt.build] with
-     * sub-agent-scoped opt-in flags. IDE-aware sections (role, capabilities, rules,
-     * system info) automatically adapt to the runtime IDE via [ideContext].
-     */
     private fun buildUnifiedSystemPrompt(registry: ToolRegistry): String {
         val coreDefinitions = registry.getActiveDefinitions()
         val toolDefinitionsMarkdown = ToolPromptBuilder.build(coreDefinitions)
@@ -436,31 +387,6 @@ class SubagentRunner(
             toolNames = registry.allToolNames(),
             completingYourTaskSection = COMPLETING_YOUR_TASK_SECTION,
         )
-    }
-
-    /**
-     * Feature flag: returns true to use [buildUnifiedSystemPrompt], false to fall back to
-     * [buildLegacyComposedSystemPrompt]. Reads [AgentSettings] when the IntelliJ platform
-     * is available; defaults to true (unified path ON) in unit tests where the platform
-     * service locator is not booted.
-     *
-     * The unified path is also gated on [agentConfig] being non-null, so that existing
-     * callers that omit the new constructor params (e.g. tests) transparently get the
-     * legacy path even if the flag is true — preserving all existing test behaviour.
-     */
-    private fun useUnifiedSubagentPrompt(): Boolean {
-        if (agentConfig == null) return false
-        return try {
-            AgentSettings.getInstance(project).state.useUnifiedSubagentPrompt
-        } catch (e: ProcessCanceledException) {
-            throw e
-        } catch (_: Exception) {
-            // Service not bootable in unit tests (IllegalStateException from ServiceManager,
-            // ClassCastException when the test platform registers a stub, etc.).
-            // Default to unified path — sub-agent tests that matter pin the behavior explicitly
-            // via agentConfig presence or direct assertions, not this flag.
-            true
-        }
     }
 
     private fun cancelledResult(stats: MutableSubagentStats): SubagentRunResult =

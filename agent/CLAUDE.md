@@ -41,7 +41,7 @@ AgentController (UI entry point, owns AgentCefPanel + JCEF bridges)
 - **SystemPrompt** (`prompt/SystemPrompt.kt`, ~507 lines) — Builds the system prompt per turn. 11 sections following Cline's generic variant template: Agent Role → Task Management → Editing Files → Act vs Plan Mode → Capabilities → Skills → Deferred Tool Catalog → Rules → System Info → Objective → Memory → User Instructions.
 - **InstructionLoader** (`prompt/InstructionLoader.kt`, ~453 lines) — Loads skill and agent config files from resources and disk. Handles YAML frontmatter parsing, substitution variable expansion (`$ARGUMENTS`, `$1`-`$N`, `${CLAUDE_SKILL_DIR}`). Dynamic injection via `` !`command` `` for preprocessing.
 - **SpawnAgentTool** (`tools/builtin/SpawnAgentTool.kt`) — Primary tool for spawning subagents. Only `description` and `prompt` required. Optional `name` makes agents addressable for resume/send. `subagent_type` selects built-in or custom agents. Defaults to general-purpose. Explorer type restricted to read-only tools.
-- **SubagentRunner** (`tools/subagent/SubagentRunner.kt`) — Executes subagent with isolated context and budget. Routes prompt construction through `buildComposedSystemPrompt()` dispatcher: when `AgentSettings.useUnifiedSubagentPrompt=true` (default) and `agentConfig` is non-null, delegates to `SubagentSystemPromptBuilder`; otherwise falls back to `buildLegacyComposedSystemPrompt()` (preserved for rollback). Appends `COMPLETING_YOUR_TASK_SECTION` so all personas call `task_report`, not `attempt_completion`.
+- **SubagentRunner** (`tools/subagent/SubagentRunner.kt`) — Executes subagent with isolated context and budget. Routes prompt construction through `buildComposedSystemPrompt()`, which delegates unconditionally to `SubagentSystemPromptBuilder`. Appends `COMPLETING_YOUR_TASK_SECTION` so all personas call `task_report`, not `attempt_completion`.
 - **SubagentSystemPromptBuilder** (`tools/subagent/SubagentSystemPromptBuilder.kt`) — Stateless façade that calls the shared `SystemPrompt.build()` with sub-agent-scoped flags (`includeTaskManagement=false`, `includePlanModeSection=false`, `includeSubagentDelegationInRules=false`, `agentRoleOverride=<persona body>`), then appends the `COMPLETING_YOUR_TASK_SECTION` footer. Per-persona section overrides are read from `AgentConfig.promptSections`.
 - **ModelFallbackManager** (`loop/ModelFallbackManager.kt`) — Opt-in model fallback. On NETWORK_ERROR/TIMEOUT, advances through fallback chain (Opus thinking → Opus → Sonnet thinking → Sonnet). After 3 successful iterations on fallback, attempts escalation back to primary.
 - **HookManager** (`hooks/HookManager.kt`) — 8 lifecycle hook types (TaskStart, UserPromptSubmit, TaskResume, PreCompact, TaskCancel, PreToolUse, PostToolUse, TaskComplete). Config: `.agent-hooks.json` in project root.
@@ -666,8 +666,8 @@ Bundled opt-ins: `security-auditor` and `architect-reviewer` declare `memory: pr
 Sub-agents build their system prompt via `SubagentSystemPromptBuilder` (in `tools/subagent/`), which delegates to the same `SystemPrompt.build()` the orchestrator uses — ensuring IDE-aware sections (role, capabilities, rules, system info) are consistent between parent and child agents.
 
 **Composition flow:**
-1. `SpawnAgentTool` resolves `AgentConfig` + passes parent `IdeContext` and `ideContext` to `SubagentRunner`
-2. `SubagentRunner.buildComposedSystemPrompt()` checks `useUnifiedSubagentPrompt()` — reads `AgentSettings.useUnifiedSubagentPrompt` (default `true`); also requires `agentConfig != null` (null → legacy path, preserving all existing test behavior)
+1. `SpawnAgentTool` resolves `AgentConfig` + passes parent `IdeContext` to `SubagentRunner`
+2. `SubagentRunner.buildComposedSystemPrompt()` delegates unconditionally to `buildUnifiedSystemPrompt()`
 3. `buildUnifiedSystemPrompt()` calls `SubagentSystemPromptBuilder.build()` with scoped flags:
    - `includeTaskManagement = false` — sub-agents don't own task trees
    - `includePlanModeSection = false` — sub-agents are act-only
@@ -677,8 +677,6 @@ Sub-agents build their system prompt via `SubagentSystemPromptBuilder` (in `tool
 4. Appends `COMPLETING_YOUR_TASK_SECTION` footer (task_report instructions)
 
 **IdeContext propagation:** `SpawnAgentTool` passes the parent's `IdeContext` into `SubagentRunner`. A sub-agent running in PyCharm sees "PyCharm" in role and system-info sections; one running in IntelliJ IDEA sees "IntelliJ IDEA". Context is null-safe — omitting it produces IntelliJ-flavored defaults (backward compatible).
-
-**Feature flag:** `AgentSettings.useUnifiedSubagentPrompt` (default `true`). Set to `false` to fall back to `buildLegacyComposedSystemPrompt()` (persona body + raw tool XML + `COMPLETING_YOUR_TASK_SECTION`, no IDE adaptation). The legacy path is preserved intact and will not be deleted until after a stable release confirms the unified path.
 
 **Snapshot tests:** `SubagentSystemPromptSnapshotTest` pins 5 variants to lock in composed output:
 

@@ -16,6 +16,8 @@ import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import com.workflow.orchestrator.core.model.ModelPricingRegistry
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
@@ -30,6 +32,19 @@ class SubagentRunnerTest {
         project = mockk(relaxed = true)
         every { project.name } returns "TestProject"
         every { project.basePath } returns "/tmp/test-project"
+    }
+
+    /**
+     * Shut down the ModelPricingRegistry's file-watcher daemon thread after each test.
+     * The watcher starts lazily when AgentLoop calls `ModelPricingRegistry.lookup()`;
+     * without this cleanup, the native `FileSystemWatcher` it spawns on macOS trips
+     * IntelliJ's `ThreadLeakTracker`, failing tests on an unrelated infrastructure
+     * issue. Follows the same pattern as DatabaseConnectionManagerTest's MySQL
+     * cleanup-thread shutdown.
+     */
+    @AfterEach
+    fun stopModelPricingWatcher() {
+        runCatching { ModelPricingRegistry.resetForTests() }
     }
 
     // ---- Helpers (same patterns as SpawnAgentToolTest) ----
@@ -148,7 +163,7 @@ class SubagentRunnerTest {
                     "read_file" to """{"path":"src/main.kt"}"""
                 )),
                 ApiResult.Success(toolCallResponse(
-                    "attempt_completion" to """{"result":"Found the answer: 42."}"""
+                    "attempt_completion" to """{"kind":"done","result":"Found the answer: 42."}"""
                 ))
             ))
 
@@ -184,7 +199,7 @@ class SubagentRunnerTest {
                     "search_code" to """{"query":"foo"}"""
                 )),
                 ApiResult.Success(toolCallResponse(
-                    "attempt_completion" to """{"result":"Done searching."}"""
+                    "attempt_completion" to """{"kind":"done","result":"Done searching."}"""
                 ))
             ))
 
@@ -231,7 +246,7 @@ class SubagentRunnerTest {
         fun `stats track context window from budget`() = runTest {
             val brain = SequenceBrain(listOf(
                 ApiResult.Success(toolCallResponse(
-                    "attempt_completion" to """{"result":"Quick task."}"""
+                    "attempt_completion" to """{"kind":"done","result":"Quick task."}"""
                 ))
             ))
 
@@ -270,7 +285,7 @@ class SubagentRunnerTest {
         fun `abort before run returns cancelled`() = runTest {
             val brain = SequenceBrain(listOf(
                 ApiResult.Success(toolCallResponse(
-                    "attempt_completion" to """{"result":"Should not reach this."}"""
+                    "attempt_completion" to """{"kind":"done","result":"Should not reach this."}"""
                 ))
             ))
 
@@ -326,7 +341,7 @@ class SubagentRunnerTest {
         fun `progress reports running then completed`() = runTest {
             val brain = SequenceBrain(listOf(
                 ApiResult.Success(toolCallResponse(
-                    "attempt_completion" to """{"result":"All done."}"""
+                    "attempt_completion" to """{"kind":"done","result":"All done."}"""
                 ))
             ))
 
@@ -368,7 +383,7 @@ class SubagentRunnerTest {
         fun `runner accepts toolExecutionMode parameter`() = runTest {
             val brain = SequenceBrain(listOf(
                 ApiResult.Success(toolCallResponse(
-                    "attempt_completion" to """{"result":"Done with stream_interrupt mode."}"""
+                    "attempt_completion" to """{"kind":"done","result":"Done with stream_interrupt mode."}"""
                 ))
             ))
 
@@ -394,7 +409,7 @@ class SubagentRunnerTest {
         fun `runner defaults to accumulate mode`() = runTest {
             val brain = SequenceBrain(listOf(
                 ApiResult.Success(toolCallResponse(
-                    "attempt_completion" to """{"result":"Done with default mode."}"""
+                    "attempt_completion" to """{"kind":"done","result":"Done with default mode."}"""
                 ))
             ))
 
@@ -416,7 +431,7 @@ class SubagentRunnerTest {
         fun `system prompt includes XML tool definitions`() = runTest {
             val brain = SequenceBrain(listOf(
                 ApiResult.Success(toolCallResponse(
-                    "attempt_completion" to """{"result":"Done."}"""
+                    "attempt_completion" to """{"kind":"done","result":"Done."}"""
                 ))
             ))
 
@@ -447,7 +462,7 @@ class SubagentRunnerTest {
             val brain = SequenceBrain(
                 responses = listOf(
                     ApiResult.Success(toolCallResponse(
-                        "attempt_completion" to """{"result":"Done."}"""
+                        "attempt_completion" to """{"kind":"done","result":"Done."}"""
                     ))
                 ),
                 toolNames = mainAgentToolNames,
@@ -487,7 +502,7 @@ class SubagentRunnerTest {
         fun `system prompt preserves original config prompt`() = runTest {
             val brain = SequenceBrain(listOf(
                 ApiResult.Success(toolCallResponse(
-                    "attempt_completion" to """{"result":"Done."}"""
+                    "attempt_completion" to """{"kind":"done","result":"Done."}"""
                 ))
             ))
 
@@ -542,7 +557,7 @@ class SubagentRunnerTest {
             // The brain calls attempt_completion, so the loop completes without using tool_search.
             val brain = SequenceBrain(listOf(
                 ApiResult.Success(toolCallResponse(
-                    "attempt_completion" to """{"result":"Done without tool_search."}"""
+                    "attempt_completion" to """{"kind":"done","result":"Done without tool_search."}"""
                 ))
             ))
 
@@ -574,7 +589,7 @@ class SubagentRunnerTest {
         fun `SubagentRunner system prompt contains deferred catalog when deferredTools provided`() = runTest {
             val brain = SequenceBrain(listOf(
                 ApiResult.Success(toolCallResponse(
-                    "attempt_completion" to """{"result":"Done."}"""
+                    "attempt_completion" to """{"kind":"done","result":"Done."}"""
                 ))
             ))
 
@@ -605,8 +620,8 @@ class SubagentRunnerTest {
                 "System prompt should list the deferred tool name"
             )
             assertTrue(
-                prompt.contains("Deferred Tools"),
-                "System prompt should contain 'Deferred Tools' section header"
+                prompt.contains("ADDITIONAL TOOLS"),
+                "System prompt should contain 'ADDITIONAL TOOLS' section header"
             )
         }
 
@@ -614,7 +629,7 @@ class SubagentRunnerTest {
         fun `SubagentRunner with no deferred tools produces clean system prompt without Deferred Tools section`() = runTest {
             val brain = SequenceBrain(listOf(
                 ApiResult.Success(toolCallResponse(
-                    "attempt_completion" to """{"result":"Done."}"""
+                    "attempt_completion" to """{"kind":"done","result":"Done."}"""
                 ))
             ))
 
@@ -636,8 +651,8 @@ class SubagentRunnerTest {
             assertTrue(capturedSystemPrompt.isNotEmpty(), "Hook must fire")
             val prompt = capturedSystemPrompt.first()
             assertFalse(
-                prompt.contains("Deferred Tools"),
-                "System prompt must NOT contain 'Deferred Tools' section when there are no deferred tools"
+                prompt.contains("ADDITIONAL TOOLS"),
+                "System prompt must NOT contain 'ADDITIONAL TOOLS' section when there are no deferred tools"
             )
         }
     }
@@ -664,7 +679,7 @@ class SubagentRunnerTest {
                     "edit_file" to """{"path":"a.kt","old_string":"a","new_string":"b"}""",
                 )),
                 ApiResult.Success(toolCallResponse(
-                    "attempt_completion" to """{"result":"done"}""",
+                    "attempt_completion" to """{"kind":"done","result":"done"}""",
                 )),
             ))
 
@@ -712,7 +727,7 @@ class SubagentRunnerTest {
                     "edit_file" to """{"path":"a.kt","old_string":"a","new_string":"b"}""",
                 )),
                 ApiResult.Success(toolCallResponse(
-                    "attempt_completion" to """{"result":"done"}""",
+                    "attempt_completion" to """{"kind":"done","result":"done"}""",
                 )),
             ))
 
@@ -782,7 +797,7 @@ class SubagentRunnerTest {
                 )),
                 // Turn 3: complete
                 ApiResult.Success(toolCallResponse(
-                    "attempt_completion" to """{"result":"Query uses seq scan — add index on orders.id"}"""
+                    "attempt_completion" to """{"kind":"done","result":"Query uses seq scan — add index on orders.id"}"""
                 )),
             ))
 
@@ -824,7 +839,7 @@ class SubagentRunnerTest {
                 )),
                 // After getting "no tools found" result, completes gracefully
                 ApiResult.Success(toolCallResponse(
-                    "attempt_completion" to """{"result":"jira not available for this sub-agent task"}"""
+                    "attempt_completion" to """{"kind":"done","result":"jira not available for this sub-agent task"}"""
                 )),
             ))
 
@@ -857,7 +872,7 @@ class SubagentRunnerTest {
         fun `initial system prompt includes deferred catalog when deferredTools provided`() = runTest {
             val brain = SequenceBrain(listOf(
                 ApiResult.Success(toolCallResponse(
-                    "attempt_completion" to """{"result":"done"}"""
+                    "attempt_completion" to """{"kind":"done","result":"done"}"""
                 )),
             ))
 
@@ -889,8 +904,8 @@ class SubagentRunnerTest {
                 "Initial system prompt must mention deferred tool 'db_explain'. Got:\n${capturedSystemPrompt!!.take(500)}"
             )
             assertTrue(
-                capturedSystemPrompt!!.contains("Deferred Tools"),
-                "Initial system prompt must contain 'Deferred Tools' section header"
+                capturedSystemPrompt!!.contains("ADDITIONAL TOOLS"),
+                "Initial system prompt must contain 'ADDITIONAL TOOLS' section header"
             )
         }
     }
@@ -979,7 +994,7 @@ class SubagentRunnerTest {
         fun `composed system prompt always contains COMPLETING YOUR TASK section`() = runTest {
             val brain = SequenceBrain(listOf(
                 ApiResult.Success(toolCallResponse(
-                    "attempt_completion" to """{"result":"Done."}"""
+                    "attempt_completion" to """{"kind":"done","result":"Done."}"""
                 ))
             ))
 
@@ -1011,7 +1026,7 @@ class SubagentRunnerTest {
         fun `COMPLETING YOUR TASK section explains parent cannot see streamed text`() = runTest {
             val brain = SequenceBrain(listOf(
                 ApiResult.Success(toolCallResponse(
-                    "attempt_completion" to """{"result":"Done."}"""
+                    "attempt_completion" to """{"kind":"done","result":"Done."}"""
                 ))
             ))
 

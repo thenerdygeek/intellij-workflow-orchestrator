@@ -56,13 +56,6 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
          * - "stream_interrupt": execute each tool as soon as it appears (Cline-style, responsive)
          */
         var toolExecutionMode by string("accumulate")
-        /**
-         * When true (default), SubagentRunner composes sub-agent system prompts via
-         * SubagentSystemPromptBuilder, which delegates to the shared SystemPrompt.build()
-         * with IDE-aware sections. Set to false to fall back to the legacy inline
-         * buildComposedSystemPrompt body for rollback.
-         */
-        var useUnifiedSubagentPrompt by property(true)
     }
 
     companion object {
