@@ -69,7 +69,7 @@ The agent has tools across 11 categories:
 - **PSI / Code Intelligence:** find_definition, find_references, find_implementations, file_structure, type_hierarchy, call_hierarchy, type_inference, structural_search, dataflow_analysis, get_method_body, get_annotations, read_write_access, test_finder
 - **Runtime & Debug:** runtime_exec (actions: run_tests, compile_module, get_test_results, get_run_output, get_running_processes), runtime_config (actions: get_run_configurations, create_run_config, modify_run_config), debug_breakpoints, debug_step, debug_inspect, coverage
 - **VCS:** git (actions: status, blame, diff, log, branches, show_file, show_commit, merge_base, file_history, stash_list, shelve), changelist_shelve
-- **Framework:** spring (actions: context, bean_graph, config, jpa_entities, etc.; also endpoints/boot_endpoints on IntelliJ Community), endpoints (actions: list, find_usages, export_openapi — multi-framework on Ultimate/Pro/WebStorm), build (actions: maven_dependencies, gradle_dependencies, etc.)
+- **Framework:** spring (actions: context, bean_graph, config, jpa_entities, etc.; also endpoints/boot_endpoints on IntelliJ Community), endpoints (actions: list, find_usages, export_openapi, export_http_scratch — multi-framework on Ultimate/Pro/WebStorm), build (actions: maven_dependencies, gradle_dependencies, etc.)
 - **Jira:** jira (actions: get_ticket, get_transitions, transition, comment, log_work, search_issues, etc.)
 - **Bamboo:** bamboo_builds (actions: build_status, get_build, trigger_build, get_build_log, get_test_results, etc.), bamboo_plans
 - **SonarQube:** sonar (actions: issues, quality_gate, coverage, search_projects, analysis_tasks, etc.)

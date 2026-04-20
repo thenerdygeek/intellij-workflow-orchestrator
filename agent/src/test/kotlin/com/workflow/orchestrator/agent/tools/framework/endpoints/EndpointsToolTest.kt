@@ -89,17 +89,18 @@ class EndpointsToolTest {
         }
 
         @Test
-        fun `action enum contains list, find_usages, export_openapi`() {
+        fun `action enum contains list, find_usages, export_openapi, export_http_scratch`() {
             val actions = tool.parameters.properties["action"]?.enumValues?.toSet()
-            assertEquals(setOf("list", "find_usages", "export_openapi"), actions)
+            assertEquals(setOf("list", "find_usages", "export_openapi", "export_http_scratch"), actions)
         }
 
         @Test
-        fun `description mentions all three actions`() {
+        fun `description mentions all four actions`() {
             val d = tool.description
             assertTrue(d.contains("list"))
             assertTrue(d.contains("find_usages"))
             assertTrue(d.contains("export_openapi"))
+            assertTrue(d.contains("export_http_scratch"))
         }
 
         @Test
@@ -141,6 +142,13 @@ class EndpointsToolTest {
             val result = tool.execute(buildJsonObject { put("action", "find_usages") }, project)
             assertTrue(result.isError)
             assertTrue(result.content.contains("url", ignoreCase = true))
+        }
+
+        @Test
+        fun `export_http_scratch action is in enum`() {
+            val actions = tool.parameters.properties["action"]?.enumValues ?: emptyList()
+            assertTrue(actions.contains("export_http_scratch"),
+                "action enum should include export_http_scratch; got $actions")
         }
     }
 }

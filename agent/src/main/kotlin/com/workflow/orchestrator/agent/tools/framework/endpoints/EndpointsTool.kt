@@ -41,6 +41,7 @@ Actions and their parameters:
 - list(filter?, framework?, endpoint_type?) → list every discovered endpoint
 - find_usages(url) → find all call sites of a URL (handler + client string literals)
 - export_openapi(framework?) → render discovered endpoints as an OpenAPI 3 spec
+- export_http_scratch(filter?, host?) → Generate a JetBrains HTTP Client .http scratch file from discovered endpoints and open it
 """.trimIndent()
 
     override val parameters = FunctionParameters(
@@ -48,11 +49,11 @@ Actions and their parameters:
             "action" to ParameterProperty(
                 type = "string",
                 description = "Operation to perform",
-                enumValues = listOf("list", "find_usages", "export_openapi"),
+                enumValues = listOf("list", "find_usages", "export_openapi", "export_http_scratch"),
             ),
             "filter" to ParameterProperty(
                 type = "string",
-                description = "Free-text filter on URL, HTTP method, or handler class — for list",
+                description = "Free-text filter on URL, HTTP method, or handler class — for list, export_http_scratch",
             ),
             "framework" to ParameterProperty(
                 type = "string",
@@ -69,6 +70,10 @@ Actions and their parameters:
             "method" to ParameterProperty(
                 type = "string",
                 description = "Optional HTTP method hint (GET/POST/…) to narrow resolution — for find_usages",
+            ),
+            "host" to ParameterProperty(
+                type = "string",
+                description = "Base URL prefix for .http blocks, defaults to http://localhost:8080 — for export_http_scratch",
             ),
         ),
         required = listOf("action"),
@@ -96,8 +101,9 @@ Actions and their parameters:
             "list" -> executeListEndpoints(params, project)
             "find_usages" -> executeFindUsages(params, project)
             "export_openapi" -> executeExportOpenApi(params, project)
+            "export_http_scratch" -> executeExportHttpScratch(params, project)
             else -> ToolResult(
-                content = "Unknown action '$action'. Valid actions: list, find_usages, export_openapi.",
+                content = "Unknown action '$action'. Valid actions: list, find_usages, export_openapi, export_http_scratch.",
                 summary = "Unknown action '$action'",
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true,
