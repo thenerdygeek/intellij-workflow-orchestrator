@@ -10,9 +10,17 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import java.io.File
 
+/**
+ * Manual prototype: hits a real Sourcegraph endpoint with live session data.
+ * Not runnable in CI — `@Disabled` by default. Remove the annotation locally
+ * when working on the insights prompt; requires `SOURCEGRAPH_URL` and
+ * `SOURCEGRAPH_TOKEN` env vars and actual session history on disk.
+ */
+@Disabled("Manual prototype — requires SOURCEGRAPH_URL/TOKEN and real session data; not a unit test")
 class InsightsPromptPrototype {
 
     @Test

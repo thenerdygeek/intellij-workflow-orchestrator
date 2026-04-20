@@ -19,22 +19,25 @@ import javax.xml.parsers.DocumentBuilderFactory
 class NotificationGroupRegistrationTest {
 
     /**
-     * The set of group IDs declared in plugin.xml.
-     * Parsed once from the project root resource.
+     * The set of group IDs declared in the project's root plugin.xml.
+     *
+     * We read directly from the source tree rather than via
+     * `classLoader.getResourceAsStream("META-INF/plugin.xml")` because the test
+     * classpath under the IntelliJ instrumented runner also contains platform
+     * plugin.xml files (the Coverage plugin, etc.), and the classloader would
+     * return whichever one it finds first — typically NOT ours.
      */
     private val registeredGroups: Set<String> by lazy {
-        val pluginXml = javaClass.classLoader
-            .getResourceAsStream("META-INF/plugin.xml")
-            ?: run {
-                // Fall back to reading from the source tree (test classpath may not include it)
-                val root = resolveProjectRoot()
-                root.resolve("src/main/resources/META-INF/plugin.xml").inputStream()
-            }
+        parseNotificationGroupIds().toSet()
+    }
 
-        pluginXml.use { stream ->
+    private fun parseNotificationGroupIds(): List<String> {
+        val pluginXml = resolveProjectRoot()
+            .resolve("src/main/resources/META-INF/plugin.xml")
+        return pluginXml.inputStream().use { stream ->
             val doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(stream)
             val nodes = doc.getElementsByTagName("notificationGroup")
-            buildSet {
+            buildList {
                 for (i in 0 until nodes.length) {
                     val el = nodes.item(i) as Element
                     val id = el.getAttribute("id")
@@ -69,21 +72,7 @@ class NotificationGroupRegistrationTest {
 
     @Test
     fun `plugin xml declares no duplicate notification group ids`() {
-        val pluginXml = resolveProjectRoot()
-            .resolve("src/main/resources/META-INF/plugin.xml")
-            .inputStream()
-
-        val ids = mutableListOf<String>()
-        pluginXml.use { stream ->
-            val doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(stream)
-            val nodes = doc.getElementsByTagName("notificationGroup")
-            for (i in 0 until nodes.length) {
-                val el = nodes.item(i) as Element
-                val id = el.getAttribute("id")
-                if (id.isNotBlank()) ids.add(id)
-            }
-        }
-
+        val ids = parseNotificationGroupIds()
         val duplicates = ids.groupBy { it }.filter { it.value.size > 1 }.keys
         assertTrue(duplicates.isEmpty()) {
             "Duplicate notificationGroup ids found in plugin.xml: $duplicates"
@@ -95,14 +84,30 @@ class NotificationGroupRegistrationTest {
     // ---------------------------------------------------------------------------
 
     /**
-     * Resolves the root project directory by walking up from this test's
-     * class file location until we find the root `build.gradle.kts`.
+     * Resolves the root project directory.
+     *
+     * Walks up from candidate starting points (class file location if available,
+     * then `user.dir`) until a directory containing `settings.gradle.kts` is
+     * found. The classfile-location approach fails under the IntelliJ
+     * instrumented test runner because [java.security.CodeSource.getLocation]
+     * returns null, so `user.dir` is used as a fallback.
      */
     private fun resolveProjectRoot(): java.io.File {
-        var dir = java.io.File(javaClass.protectionDomain.codeSource.location.toURI())
-        while (!dir.resolve("settings.gradle.kts").exists() && dir.parentFile != null) {
-            dir = dir.parentFile
+        val candidates = buildList {
+            runCatching {
+                javaClass.protectionDomain?.codeSource?.location?.toURI()?.let {
+                    add(java.io.File(it))
+                }
+            }
+            add(java.io.File(System.getProperty("user.dir")))
         }
-        return dir
+        for (start in candidates) {
+            var dir: java.io.File? = start
+            while (dir != null) {
+                if (dir.resolve("settings.gradle.kts").exists()) return dir
+                dir = dir.parentFile
+            }
+        }
+        error("Could not locate project root (no settings.gradle.kts found walking up from: $candidates)")
     }
 }
