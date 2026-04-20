@@ -67,7 +67,11 @@ object SystemPrompt {
         includeSystemInfo: Boolean = true,
         /** When false, skips section 9 (Objective). */
         includeObjective: Boolean = true,
-        /** When false, skips section 10 (Memory header + explanation). */
+        /**
+         * Gates section 10 (Memory header + explanation) **AND** the optional `<core_memory>` /
+         * `<recalled_memory>` XML blocks. Set to `false` to suppress all memory-related content
+         * in the prompt.
+         */
         includeMemorySection: Boolean = true,
         /** When false, skips section 11 (User Instructions). */
         includeUserInstructions: Boolean = true,
@@ -147,15 +151,19 @@ object SystemPrompt {
         }
 
         // 10b. CORE MEMORY DATA (Letta pattern: always in prompt if non-empty)
-        coreMemoryXml?.let {
-            append(SECTION_SEP)
-            append(it)
+        if (includeMemorySection) {
+            coreMemoryXml?.let {
+                append(SECTION_SEP)
+                append(it)
+            }
         }
 
         // 10c. RECALLED MEMORY (auto-retrieved archival entries relevant to this task)
-        recalledMemoryXml?.let {
-            append(SECTION_SEP)
-            append(it)
+        if (includeMemorySection) {
+            recalledMemoryXml?.let {
+                append(SECTION_SEP)
+                append(it)
+            }
         }
 
         // 11. USER INSTRUCTIONS (optional)
