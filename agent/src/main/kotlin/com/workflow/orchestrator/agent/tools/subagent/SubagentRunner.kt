@@ -3,7 +3,9 @@
 package com.workflow.orchestrator.agent.tools.subagent
 
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.ide.IdeContext
 import com.workflow.orchestrator.agent.loop.AgentLoop
 import com.workflow.orchestrator.agent.loop.ContextManager
@@ -448,8 +450,11 @@ class SubagentRunner(
     private fun useUnifiedSubagentPrompt(): Boolean {
         if (agentConfig == null) return false
         return try {
-            com.workflow.orchestrator.agent.settings.AgentSettings.getInstance(project).state.useUnifiedSubagentPrompt
-        } catch (_: Exception) {
+            AgentSettings.getInstance(project).state.useUnifiedSubagentPrompt
+        } catch (e: ProcessCanceledException) {
+            throw e
+        } catch (_: IllegalStateException) {
+            // AgentSettings service not registered (unit tests without IntelliJ platform). Default to unified path.
             true
         }
     }
