@@ -52,6 +52,7 @@ object IdeContextDetector {
             detectedBuildTools = buildTools,
             hasPyTestConfigType = hasPyTestConfigType,
             isMultiModule = isMultiModule,
+            hasMicroservicesModule = MicroservicesDetector.isAvailable(),
         )
     }
 

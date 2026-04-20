@@ -208,6 +208,65 @@ class ContextAwareRegistrationTest {
         assertFalse(ToolRegistrationFilter.shouldPromoteMultiModuleTools(context))
     }
 
+    @Test
+    fun `shouldRegisterMicroservicesEndpoints returns true for IU with microservices module`() {
+        val context = makeContext(
+            product = IdeProduct.INTELLIJ_ULTIMATE,
+            hasJavaPlugin = true,
+            hasSpringPlugin = true,
+            hasMicroservicesModule = true
+        )
+        assertTrue(ToolRegistrationFilter.shouldRegisterMicroservicesEndpoints(context))
+    }
+
+    @Test
+    fun `shouldRegisterMicroservicesEndpoints returns false for IC`() {
+        val context = makeContext(
+            product = IdeProduct.INTELLIJ_COMMUNITY,
+            hasJavaPlugin = true,
+            hasSpringPlugin = false,
+            hasMicroservicesModule = false
+        )
+        assertFalse(ToolRegistrationFilter.shouldRegisterMicroservicesEndpoints(context))
+    }
+
+    @Test
+    fun `shouldRegisterMicroservicesEndpoints returns true for WebStorm without Spring`() {
+        val context = makeContext(
+            product = IdeProduct.OTHER,
+            hasJavaPlugin = false,
+            hasSpringPlugin = false,
+            hasMicroservicesModule = true
+        )
+        // WebStorm bundles microservices; Retrofit/OkHttp/HTTP Client endpoints should show.
+        assertTrue(ToolRegistrationFilter.shouldRegisterMicroservicesEndpoints(context))
+    }
+
+    @Test
+    fun `shouldRegisterSpringEndpointActions returns true when microservices is absent`() {
+        val context = makeContext(
+            product = IdeProduct.INTELLIJ_COMMUNITY,
+            hasJavaPlugin = true,
+            hasSpringPlugin = true,
+            hasMicroservicesModule = false
+        )
+        assertTrue(ToolRegistrationFilter.shouldRegisterSpringEndpointActions(context))
+    }
+
+    @Test
+    fun `shouldRegisterSpringEndpointActions returns false when microservices is present`() {
+        val context = makeContext(
+            product = IdeProduct.INTELLIJ_ULTIMATE,
+            hasJavaPlugin = true,
+            hasSpringPlugin = true,
+            hasMicroservicesModule = true
+        )
+        // Either-or: when microservices is present, the Spring meta-tool must NOT
+        // include `endpoints`/`boot_endpoints` actions; they're served by the new
+        // `endpoints` meta-tool.
+        assertFalse(ToolRegistrationFilter.shouldRegisterSpringEndpointActions(context))
+    }
+
     private fun makeContext(
         product: IdeProduct = IdeProduct.INTELLIJ_ULTIMATE,
         hasJavaPlugin: Boolean = false,
@@ -217,6 +276,7 @@ class ContextAwareRegistrationTest {
         detectedFrameworks: Set<Framework> = emptySet(),
         detectedBuildTools: Set<BuildTool> = emptySet(),
         isMultiModule: Boolean = false,
+        hasMicroservicesModule: Boolean = false,
     ): IdeContext = IdeContext(
         product = product,
         productName = product.name,
@@ -229,5 +289,6 @@ class ContextAwareRegistrationTest {
         detectedFrameworks = detectedFrameworks,
         detectedBuildTools = detectedBuildTools,
         isMultiModule = isMultiModule,
+        hasMicroservicesModule = hasMicroservicesModule,
     )
 }

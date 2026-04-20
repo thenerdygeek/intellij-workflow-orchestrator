@@ -26,6 +26,7 @@ data class IdeContext(
     val detectedBuildTools: Set<BuildTool>,
     val hasPyTestConfigType: Boolean = false,
     val isMultiModule: Boolean = false,
+    val hasMicroservicesModule: Boolean = false,
 ) {
     val supportsJava: Boolean
         get() = Language.JAVA in languages
@@ -76,6 +77,27 @@ object ToolRegistrationFilter {
     /** Spring framework meta-tool */
     fun shouldRegisterSpringTools(context: IdeContext): Boolean =
         context.hasSpringPlugin && context.hasJavaPlugin
+
+    /**
+     * Microservices-backed multi-framework `endpoints` meta-tool.
+     *
+     * Requires the `com.intellij.modules.microservices` platform module, which
+     * is bundled with Ultimate / PyCharm Pro / WebStorm / Rider / GoLand /
+     * RubyMine. Not Spring-specific — covers Micronaut, JAX-RS, Ktor, gRPC,
+     * OpenAPI, Retrofit, HTTP Client `.http` files, etc.
+     */
+    fun shouldRegisterMicroservicesEndpoints(context: IdeContext): Boolean =
+        context.hasMicroservicesModule
+
+    /**
+     * The Spring meta-tool's `endpoints` and `boot_endpoints` actions.
+     *
+     * Mutually exclusive with [shouldRegisterMicroservicesEndpoints]: when the
+     * microservices platform tool is registered, the Spring tool drops these
+     * two actions (they would otherwise duplicate the new `endpoints` tool).
+     */
+    fun shouldRegisterSpringEndpointActions(context: IdeContext): Boolean =
+        shouldRegisterSpringTools(context) && !context.hasMicroservicesModule
 
     /** Java/Kotlin build tools (Maven/Gradle actions in build meta-tool) */
     fun shouldRegisterJavaBuildTools(context: IdeContext): Boolean =
