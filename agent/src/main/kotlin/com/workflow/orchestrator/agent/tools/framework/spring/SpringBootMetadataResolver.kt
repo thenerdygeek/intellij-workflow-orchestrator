@@ -11,9 +11,11 @@ import java.lang.reflect.Method
  * from the module's META-INF/spring-configuration-metadata.json files — the same index the
  * IDE uses for application.yml autocomplete.
  *
- * Callers should have gated on [com.workflow.orchestrator.agent.ide.IdeContext.hasSpringBootPlugin].
- * When the plugin is absent every method returns an empty value without raising, so callers
- * see a clean "not found" rather than a reflection trace.
+ * The resolver is self-gating — `ClassNotFoundException` when the Spring Boot plugin is absent
+ * is caught during reflection initialization and every public method falls through to null /
+ * empty results without raising. Callers do not need to consult
+ * [com.workflow.orchestrator.agent.ide.IdeContext.hasSpringBootPlugin] before invoking; that
+ * flag exists for future registration-layer decisions.
  *
  * Signatures verified 2026-04-21 against IU-2025.1. See
  * docs/research/2026-04-21-intellij-spring-boot-metadata-api-signatures.md for the full surface.
