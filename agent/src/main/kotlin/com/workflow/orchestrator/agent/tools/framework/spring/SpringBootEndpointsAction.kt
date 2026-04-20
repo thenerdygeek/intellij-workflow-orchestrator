@@ -1,11 +1,14 @@
 package com.workflow.orchestrator.agent.tools.framework.spring
 
+import com.intellij.codeInsight.AnnotationUtil
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.project.Project
 import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.PsiAnnotation
+import com.intellij.psi.PsiArrayInitializerMemberValue
 import com.intellij.psi.PsiClass
 import com.intellij.psi.PsiMethod
+import com.intellij.psi.PsiReferenceExpression
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.search.searches.AnnotatedElementsSearch
 import com.workflow.orchestrator.agent.tools.ToolResult
@@ -200,19 +203,34 @@ private fun buildPath(contextPath: String, classPrefix: String, methodPath: Stri
 
 private fun extractBootMappingPath(annotation: PsiAnnotation?): String {
     if (annotation == null) return ""
-    val value = annotation.findAttributeValue("value")
+
+    for (attr in arrayOf("value", "path")) {
+        val resolved = AnnotationUtil.getStringAttributeValue(annotation, attr)
+        if (!resolved.isNullOrBlank()) return resolved.trim('/')
+    }
+
+    val raw = annotation.findAttributeValue("value")
         ?: annotation.findAttributeValue("path")
-    return value?.text
-        ?.removeSurrounding("\"")
-        ?.removeSurrounding("{", "}")
-        ?.trim('/')
-        ?: ""
+    if (raw is PsiArrayInitializerMemberValue) {
+        val evaluator = JavaPsiFacade.getInstance(annotation.project)
+            .constantEvaluationHelper
+        for (element in raw.initializers) {
+            val v = evaluator.computeConstantExpression(element) as? String
+            if (!v.isNullOrBlank()) return v.trim('/')
+        }
+    }
+    return ""
 }
 
 private fun extractBootRequestMethod(annotation: PsiAnnotation): String? {
-    val method = annotation.findAttributeValue("method") ?: return null
-    val text = method.text ?: return null
-    return text.replace("RequestMethod.", "").removeSurrounding("{", "}").trim()
+    val attr = annotation.findAttributeValue("method") ?: return null
+    return when (attr) {
+        is PsiReferenceExpression -> attr.referenceName
+        is PsiArrayInitializerMemberValue ->
+            attr.initializers.filterIsInstance<PsiReferenceExpression>()
+                .firstNotNullOfOrNull { it.referenceName }
+        else -> null
+    }
 }
 
 private fun extractMediaTypes(annotation: PsiAnnotation, attribute: String): String {
