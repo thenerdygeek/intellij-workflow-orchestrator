@@ -54,7 +54,7 @@ class SpringTool(
             appendLine("Actions and their parameters:")
             appendLine("- context(filter?) → Spring bean context")
             if (includeEndpointActions) appendLine("- endpoints(filter?, include_params?) → REST endpoint mappings")
-            appendLine("- bean_graph(bean_name) → Bean dependency graph")
+            appendLine("- bean_graph(bean_name) → Bean dependency graph (accepts bean name, alias, class, or @Bean method name)")
             appendLine("- config(property) → Configuration property value")
             appendLine("- version_info(module) → Framework version info")
             appendLine("- profiles() → Active Spring profiles")
@@ -91,7 +91,7 @@ class SpringTool(
             ),
             "bean_name" to ParameterProperty(
                 type = "string",
-                description = "Bean class name (simple or fully qualified) — for bean_graph"
+                description = "Bean identifier — accepts canonical bean name, alias, simple or fully-qualified class name, or @Bean method name. Resolved via the Spring plugin's bean model. For bean_graph"
             ),
             "property" to ParameterProperty(
                 type = "string",

@@ -419,6 +419,55 @@ class SpringToolTest {
                 cls.getMethod("getAllModels", com.intellij.openapi.project.Project::class.java)
             }
         }
+
+        @Test
+        fun `CommonSpringModel is at com intellij spring package not model subpackage`() {
+            // Non-obvious: CommonSpringModel lives at com.intellij.spring.CommonSpringModel,
+            // not com.intellij.spring.model.CommonSpringModel as the package structure suggests.
+            Class.forName("com.intellij.spring.CommonSpringModel")
+        }
+
+        @Test
+        fun `SpringModelSearchers findBean takes CommonSpringModel and String`() {
+            val searchers = try {
+                Class.forName("com.intellij.spring.model.utils.SpringModelSearchers")
+            } catch (_: ClassNotFoundException) { return }
+            val commonSpringModel = try {
+                Class.forName("com.intellij.spring.CommonSpringModel")
+            } catch (_: ClassNotFoundException) { return }
+            searchers.getMethod("findBean", commonSpringModel, String::class.java)
+        }
+
+        @Test
+        fun `CommonSpringModel getAllCommonBeans is parameterless`() {
+            val commonSpringModel = try {
+                Class.forName("com.intellij.spring.CommonSpringModel")
+            } catch (_: ClassNotFoundException) { return }
+            commonSpringModel.getMethod("getAllCommonBeans")
+        }
+
+        @Test
+        fun `SpringBeanPointer exposes getName getBeanClass getSpringBean getEffectiveBeanTypes`() {
+            val cls = try {
+                Class.forName("com.intellij.spring.model.SpringBeanPointer")
+            } catch (_: ClassNotFoundException) { return }
+            cls.getMethod("getName")
+            cls.getMethod("getBeanClass")
+            cls.getMethod("getSpringBean")
+            cls.getMethod("getEffectiveBeanTypes")
+            cls.getMethod("getAliases")
+        }
+
+        @Test
+        fun `CommonSpringBean exposes getBeanName getSpringScope isPrimary getProfile`() {
+            val cls = try {
+                Class.forName("com.intellij.spring.model.CommonSpringBean")
+            } catch (_: ClassNotFoundException) { return }
+            cls.getMethod("getBeanName")
+            cls.getMethod("getSpringScope")
+            cls.getMethod("isPrimary")
+            cls.getMethod("getProfile")
+        }
     }
 
     companion object {
