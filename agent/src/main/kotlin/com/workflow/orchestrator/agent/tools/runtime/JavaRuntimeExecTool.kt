@@ -90,7 +90,7 @@ Java/Kotlin runtime execution — JUnit/TestNG test running and module compilati
 
 Actions and their parameters:
 - run_tests(class_name, method?, timeout?, use_native_runner?) → Run tests for a specific Java/Kotlin class via IntelliJ's JUnit/TestNG runner, with Maven/Gradle shell fallback (timeout default 300s, max 900s). class_name is required and must be fully qualified — use test_finder to discover test classes first.
-- compile_module(module?) → Compile a Java/Kotlin module via CompilerManager (compiles entire project if omitted).
+- compile_module(module?, check_dependents?) → Compile a Java/Kotlin module via CompilerManager. If `module` is omitted, compiles the entire project. When `module` is given and `check_dependents=true`, also recompiles modules that depend on it (catches downstream ABI breakage after editing an upstream module). Default check_dependents is false.
 
 description optional: shown to user in approval dialog on run_tests, compile_module.
 """.trimIndent()
@@ -121,6 +121,10 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             "module" to ParameterProperty(
                 type = "string",
                 description = "Module name — for compile_module (compiles entire project if omitted)"
+            ),
+            "check_dependents" to ParameterProperty(
+                type = "boolean",
+                description = "When true (and `module` is set), also recompile modules that depend on the target — catches downstream ABI breakage after editing an upstream module. Default: false — for compile_module"
             ),
             "description" to ParameterProperty(
                 type = "string",
@@ -1108,6 +1112,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
 
     private suspend fun executeCompileModule(params: JsonObject, project: Project): ToolResult {
         val moduleName = params["module"]?.jsonPrimitive?.content
+        val checkDependents = params["check_dependents"]?.jsonPrimitive?.booleanOrNull ?: false
 
         return try {
             val result = withTimeoutOrNull(120_000L) {
@@ -1119,7 +1124,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                         val scope = if (moduleName != null) {
                             val module = ModuleManager.getInstance(project).modules.find { it.name == moduleName }
                             if (module != null) {
-                                compiler.createModuleCompileScope(module, false)
+                                compiler.createModuleCompileScope(module, checkDependents)
                             } else {
                                 val available = ModuleManager.getInstance(project).modules
                                     .map { it.name }

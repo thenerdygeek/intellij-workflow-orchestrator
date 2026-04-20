@@ -88,11 +88,6 @@ class CreateFileTool : AgentTool {
 
         val lineCount = content.lines().size
 
-        // Track in EditFileTool.lastEditLineRanges for diff-aware diagnostics
-        try {
-            EditFileTool.lastEditLineRanges[EditFileTool.scopedKey(file.canonicalPath)] = 1..lineCount
-        } catch (_: Exception) { }
-
         // Change tracking: AgentLoop.modifiedFiles collects artifacts from ToolResult
 
         val summary = "Created $rawPath ($lineCount lines, ${content.length} chars)"

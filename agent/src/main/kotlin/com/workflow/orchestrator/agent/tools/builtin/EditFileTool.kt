@@ -27,43 +27,6 @@ import kotlinx.serialization.json.jsonPrimitive
  */
 class EditFileTool : AgentTool {
 
-    companion object {
-        /**
-         * Tracks the line range of the most recent edit per file, scoped by session.
-         * Key format: `"sessionId:canonicalPath"` to prevent cross-session contamination.
-         * Used by SemanticDiagnosticsTool to filter results to only LLM-introduced issues.
-         * Cleared when diagnostics runs, so each edit→diagnostics cycle is fresh.
-         */
-        val lastEditLineRanges = java.util.concurrent.ConcurrentHashMap<String, IntRange>()
-
-        /**
-         * Current agent session ID. Set by AgentService before each task execution.
-         * Used to scope [lastEditLineRanges] entries so that session A's edit ranges
-         * do not leak into session B's diagnostics calls.
-         */
-        @Volatile
-        var currentSessionId: String? = null
-
-        /**
-         * Build a session-scoped key for [lastEditLineRanges].
-         * Falls back to bare canonical path when no session is active (e.g., tests).
-         */
-        fun scopedKey(canonicalPath: String): String {
-            val sid = currentSessionId
-            return if (sid != null) "$sid:$canonicalPath" else canonicalPath
-        }
-
-        /**
-         * Clear all edit ranges for the current session. Called when a new session starts
-         * to prevent stale data from a previous session leaking into the new one.
-         */
-        fun clearSessionRanges() {
-            val sid = currentSessionId ?: return
-            val prefix = "$sid:"
-            lastEditLineRanges.keys.removeAll { it.startsWith(prefix) }
-        }
-    }
-
     override val name = "edit_file"
     override val description = "Make targeted edits to an existing file using exact string replacement. This tool should be used when you need to make targeted changes to specific parts of a file. The old_string must match EXACTLY — character-for-character including whitespace, indentation, and line endings. Include enough surrounding context (3-5 lines) to ensure old_string matches uniquely in the file. If old_string matches multiple times, the edit will fail — provide a larger context to disambiguate, or set replace_all=true to replace all occurrences. You MUST read the file with read_file before editing to see the exact content. Keep edits concise — include just the changing lines, and a few surrounding lines if needed for uniqueness. Do not include long runs of unchanging lines. Prefer this over create_file for modifying existing files."
     override val parameters = FunctionParameters(
@@ -158,7 +121,9 @@ class EditFileTool : AgentTool {
             )
         }
 
-        // Track edited line range for diff-aware diagnostics
+        // Change tracking: AgentLoop.modifiedFiles collects artifacts from ToolResult
+
+        // Compute the 1-based line range of the edit for diff context display.
         var startLine = 0
         var endLine = 0
         try {
@@ -167,11 +132,8 @@ class EditFileTool : AgentTool {
                 startLine = content.substring(0, editStart).count { it == '\n' } + 1
                 val newLines = newString.count { it == '\n' } + 1
                 endLine = startLine + newLines - 1
-                lastEditLineRanges[scopedKey(java.io.File(resolvedPath).canonicalPath)] = startLine..endLine
             }
-        } catch (_: Exception) { /* tracking is best-effort */ }
-
-        // Change tracking: AgentLoop.modifiedFiles collects artifacts from ToolResult
+        } catch (_: Exception) { /* best-effort */ }
 
         // Build diff context (3 lines before/after edit) for LLM verification
         val contextLines = try {

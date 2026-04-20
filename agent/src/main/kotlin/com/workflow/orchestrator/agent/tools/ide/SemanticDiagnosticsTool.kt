@@ -15,15 +15,13 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.builtin.PathValidator
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 class SemanticDiagnosticsTool(
     private val registry: LanguageProviderRegistry
 ) : AgentTool {
     companion object {
-        /** Lines of buffer around the edited range to include in diagnostics. */
-        private const val EDIT_LINE_BUFFER = 5
-
         /**
          * Head-preview entry count for the inline prose preview (Phase 7 structured-preview strategy).
          * 20 entries fit comfortably in the LLM's context and give enough signal to act without
@@ -34,10 +32,12 @@ class SemanticDiagnosticsTool(
     }
 
     override val name = "diagnostics"
-    override val description = "Check a file for compilation errors using the IDE's semantic analysis engine — syntax errors, unresolved references, type mismatches, missing imports. Faster and more precise than running mvn compile or gradle build. Use this instead of shell build commands to verify code correctness. When run after edit_file, automatically scopes to only NEW issues near the edited lines."
+    override val description = "Check a file for compilation errors using the IDE's semantic analysis engine — syntax errors, unresolved references, type mismatches, missing imports. Faster and more precise than running mvn compile or gradle build. Use this instead of shell build commands to verify code correctness. Checks the whole file by default; pass start_line and end_line to scope diagnostics to a specific line range."
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "path" to ParameterProperty(type = "string", description = "File path to check (e.g., 'src/main/kotlin/UserService.kt')")
+            "path" to ParameterProperty(type = "string", description = "File path to check (e.g., 'src/main/kotlin/UserService.kt')"),
+            "start_line" to ParameterProperty(type = "integer", description = "First line of the range to check (1-based, inclusive). Requires end_line."),
+            "end_line" to ParameterProperty(type = "integer", description = "Last line of the range to check (1-based, inclusive). Requires start_line."),
         ),
         required = listOf("path")
     )
@@ -76,12 +76,9 @@ class SemanticDiagnosticsTool(
      *
      * ### Success payloads (`isError = false`)
      *
-     * - `"No errors in {file} near your changes."` — clean file with an edit
-     *   range set. Optional `" (N pre-existing issue(s) outside your edit
-     *   range were excluded)"` suffix when Wolf/pre-existing issues were
-     *   filtered out.
-     * - `"No errors in {file} near your changes."` — clean file with no edit
-     *   range (whole-file check, nothing found).
+     * - `"No errors in {file}."` — clean whole-file check, nothing found.
+     * - `"No errors in {file}. (N issue(s) outside the specified range were excluded)"` —
+     *   clean within the requested line range; issues outside the range were filtered.
      * - `"Code intelligence not available for {language}"` — no provider
      *   registered for this language (e.g. YAML, JSON, Go). Token estimate = 5.
      *   This is a legitimate outcome, not a failure — the agent should move
@@ -129,10 +126,8 @@ class SemanticDiagnosticsTool(
             return ToolResult("IDE is still indexing. Try again shortly.", "Indexing", 5, isError = true)
         }
 
-        // Check if there's a recent edit range for this file (set by EditFileTool)
-        val canonicalPath = try { java.io.File(path!!).canonicalPath } catch (_: Exception) { path!! }
-        val scopedKey = com.workflow.orchestrator.agent.tools.builtin.EditFileTool.scopedKey(canonicalPath)
-        val editRange = com.workflow.orchestrator.agent.tools.builtin.EditFileTool.lastEditLineRanges.remove(scopedKey)
+        val startLine = params["start_line"]?.jsonPrimitive?.intOrNull
+        val endLine = params["end_line"]?.jsonPrimitive?.intOrNull
 
         return try {
             val result = ReadAction.nonBlocking<ToolResult?> {
@@ -150,12 +145,7 @@ class SemanticDiagnosticsTool(
                         5
                     )
 
-                // Compute the line filter: if we have an edit range, only report issues near it
-                val filterRange = editRange?.let {
-                    val start = maxOf(1, it.first - EDIT_LINE_BUFFER)
-                    val end = it.last + EDIT_LINE_BUFFER
-                    start..end
-                }
+                val filterRange = if (startLine != null && endLine != null) startLine..endLine else null
 
                 // Delegate diagnostics to the language provider
                 val allProblems = provider.getDiagnostics(psiFile, null)
@@ -164,7 +154,7 @@ class SemanticDiagnosticsTool(
                 val wolf = WolfTheProblemSolver.getInstance(project)
                 val hasProblemFlag = wolf.isProblemFile(vf)
 
-                // Filter to only issues near the edited lines (if edit range is known).
+                // Filter to the caller-specified line range if provided; otherwise whole file.
                 // `relevantProblems` is the SCOPED set — it reflects the semantic
                 // contract of the edit-range feature ("report only issues near
                 // your changes"). Structured DiagnosticEntry output uses the same
@@ -180,9 +170,9 @@ class SemanticDiagnosticsTool(
 
                 if (relevantProblems.isEmpty() && !hasProblemFlag) {
                     val suffix = if (filterRange != null && skippedCount > 0) {
-                        " ($skippedCount pre-existing issue(s) outside your edit range were excluded)"
+                        " ($skippedCount issue(s) outside the specified range were excluded)"
                     } else ""
-                    ToolResult("No errors in ${vf.name} near your changes.$suffix", "No errors", 5)
+                    ToolResult("No errors in ${vf.name}.$suffix", "No errors", 5)
                 } else {
                     // Task 5.1 / F1: build the LOSSLESS structured list from
                     // `relevantProblems` (the edit-range-filtered set) BEFORE
@@ -222,8 +212,8 @@ class SemanticDiagnosticsTool(
                     val previewEntries = relevantProblems.take(PREVIEW_ENTRIES)
                     val lines = previewEntries.map { diag -> "  Line ${diag.line}: ${diag.message}" }
                     val scopeNote = if (filterRange != null) " (lines ${filterRange.first}-${filterRange.last})" else ""
-                    val skippedNote = if (skippedCount > 0) "\n  ($skippedCount pre-existing issue(s) outside edit range excluded)" else ""
-                    val flagNote = if (hasProblemFlag && filterRange != null) "\n  Note: IDE flags this file as problematic (may have issues outside your edit)" else ""
+                    val skippedNote = if (skippedCount > 0) "\n  ($skippedCount issue(s) outside the specified range excluded)" else ""
+                    val flagNote = if (hasProblemFlag && filterRange != null) "\n  Note: IDE flags this file as problematic (may have issues outside the specified range)" else ""
                     val prose = "${relevantProblems.size} issue(s) in ${vf.name}$scopeNote:\n${lines.joinToString("\n")}$skippedNote$flagNote"
                     val content = renderDiagnosticBody(prose, entries)
                     // F6: problems-found is a SUCCESSFUL tool result (isError=false).
