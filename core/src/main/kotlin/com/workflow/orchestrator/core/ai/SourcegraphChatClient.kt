@@ -372,7 +372,7 @@ class SourcegraphChatClient(
             log.debug("[Agent:API] POST $CHAT_COMPLETIONS_PATH (stream, ${jsonBody.length} chars)")
 
             // Dump request for streaming calls too
-            dumpApiRequest(sanitized, tools, jsonBody.length)
+            dumpApiRequest(sanitized, tools, jsonBody.length, jsonBody)
 
             val httpRequest = Request.Builder()
                 .url(chatCompletionsUrl())
@@ -405,6 +405,7 @@ class SourcegraphChatClient(
                 var role = "assistant"
                 var finishReason = "stop"
                 var streamUsage: UsageInfo? = null
+                val rawSseBuf = if (apiDebugSessionDir != null) StringBuilder() else null
 
                 // Read SSE lines with cancellation check on every line.
                 // When cancelActiveRequest() is called, call.cancel() closes the socket,
@@ -417,6 +418,8 @@ class SourcegraphChatClient(
                         log.info("[Agent:API] Stream interrupted by caller (mid-stream tool execution)")
                         break
                     }
+
+                    rawSseBuf?.appendLine(line)
 
                     if (line.startsWith("data: ") && line != "data: [DONE]") {
                         val chunkJson = line.removePrefix("data: ")
@@ -557,7 +560,7 @@ class SourcegraphChatClient(
                     choices = listOf(Choice(index = 0, message = finalMessage, finishReason = finalFinishReason)),
                     usage = streamUsage
                 )
-                dumpApiResponse(streamResponse)
+                dumpApiResponse(streamResponse, rawSseBuf?.toString())
                 ApiResult.Success(streamResponse)
             }
             } finally {
@@ -623,7 +626,7 @@ class SourcegraphChatClient(
             log.debug("[Agent:API] POST $CHAT_COMPLETIONS_PATH (${jsonBody.length} chars)")
 
             // Dump full request/response to file for debugging multi-turn issues
-            dumpApiRequest(sanitized, tools, jsonBody.length)
+            dumpApiRequest(sanitized, tools, jsonBody.length, jsonBody)
 
             val httpRequest = Request.Builder()
                 .url(chatCompletionsUrl())
@@ -661,13 +664,13 @@ class SourcegraphChatClient(
                                         val updatedMsg = choice.message.copy(content = textOnly, toolCalls = toolCallDtos)
                                         val updatedFr = if (choice.finishReason == "stop") "tool_calls" else choice.finishReason
                                         val updatedResp = parsed.copy(choices = listOf(choice.copy(message = updatedMsg, finishReason = updatedFr)))
-                                        dumpApiResponse(updatedResp)
+                                        dumpApiResponse(updatedResp, body)
                                         return@withContext ApiResult.Success(updatedResp)
                                     }
                                 }
                             }
 
-                            dumpApiResponse(parsed)
+                            dumpApiResponse(parsed, body)
                             ApiResult.Success(parsed)
                         }
                         else -> {
@@ -835,7 +838,7 @@ class SourcegraphChatClient(
         lastDumpedCallNum = 0
     }
 
-    private fun dumpApiRequest(messages: List<ChatMessage>, tools: List<ToolDefinition>?, bodyLength: Int) {
+    private fun dumpApiRequest(messages: List<ChatMessage>, tools: List<ToolDefinition>?, bodyLength: Int, rawJsonBody: String) {
         val dir = apiDebugDir ?: return
         try {
             val idx = nextCallNumber()
@@ -877,12 +880,15 @@ class SourcegraphChatClient(
                 }
             })
             log.info("[Agent:API] Request dumped to ${file.name} (${messages.size} messages, ${tools?.size ?: 0} tools, $bodyLength chars)")
+
+            val rawFile = java.io.File(dir, "call-${String.format("%03d", idx)}-request.json")
+            rawFile.writeText(sanitizeForDebug(rawJsonBody))
         } catch (e: Exception) {
             log.debug("[Agent:API] Failed to dump request: ${e.message}")
         }
     }
 
-    private fun dumpApiResponse(response: ChatCompletionResponse) {
+    private fun dumpApiResponse(response: ChatCompletionResponse, rawResponseBody: String? = null) {
         val dir = apiDebugDir ?: return
         try {
             val idx = lastDumpedCallNum
@@ -903,6 +909,11 @@ class SourcegraphChatClient(
                 }
             })
             log.info("[Agent:API] Response dumped to ${file.name} (finish=${choice?.finishReason}, tools=${choice?.message?.toolCalls?.size ?: 0})")
+
+            // Raw dump: exact bytes received (non-streaming) or assembled SSE chunks (streaming)
+            val rawContent = rawResponseBody ?: json.encodeToString(response)
+            val rawFile = java.io.File(dir, "call-${String.format("%03d", idx)}-response.json")
+            rawFile.writeText(sanitizeForDebug(rawContent))
         } catch (e: Exception) {
             log.debug("[Agent:API] Failed to dump response: ${e.message}")
         }
