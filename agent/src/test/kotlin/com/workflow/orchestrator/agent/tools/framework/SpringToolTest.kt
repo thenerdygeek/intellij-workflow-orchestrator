@@ -70,10 +70,26 @@ class SpringToolTest {
         }
 
         @Test
-        fun `action enum contains exactly 15 actions`() {
+        fun `default constructor action enum contains 15 actions`() {
             val actions = tool.parameters.properties["action"]?.enumValues
             assertNotNull(actions)
             assertEquals(15, actions!!.size)
+        }
+
+        @Test
+        fun `includeEndpointActions=false omits endpoints and boot_endpoints`() {
+            val trimmed = SpringTool(includeEndpointActions = false)
+            val actions = trimmed.parameters.properties["action"]?.enumValues!!.toSet()
+            assertEquals(13, actions.size)
+            assertFalse(actions.contains("endpoints"))
+            assertFalse(actions.contains("boot_endpoints"))
+        }
+
+        @Test
+        fun `includeEndpointActions=false description omits endpoint actions`() {
+            val trimmed = SpringTool(includeEndpointActions = false)
+            assertFalse(trimmed.description.contains("endpoints(filter?"))
+            assertFalse(trimmed.description.contains("boot_endpoints(class_name"))
         }
 
         @Test
@@ -221,6 +237,20 @@ class SpringToolTest {
             }, project)
             assertTrue(result.isError)
             assertTrue(result.content.contains("Unknown action"))
+        }
+
+        @Test
+        fun `endpoints action returns 'use endpoints tool' error when flag is off`() = runTest {
+            val trimmed = SpringTool(includeEndpointActions = false)
+            val result = trimmed.execute(
+                buildJsonObject { put("action", "endpoints") },
+                project,
+            )
+            assertTrue(result.isError)
+            assertTrue(
+                result.content.contains("endpoints", ignoreCase = true),
+                "error message should point at the endpoints tool"
+            )
         }
     }
 
