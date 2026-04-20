@@ -39,8 +39,8 @@ object SubagentSystemPromptBuilder {
      * @param projectName     Project name injected into the User Instructions section.
      * @param projectPath     Absolute project path for Capabilities section.
      * @param osName          Operating system name (defaults to `os.name` property).
-     * @param shell           Default shell; null lets [SystemPrompt.build] use its own
-     *                        default so the parameter can be cleanly omitted.
+     * @param shell           Default shell; defaults to the platform's default shell via
+     *                        [defaultShellFallback] so callers can cleanly omit it.
      * @param repoMap         Optional repository map string.
      * @param additionalContext Optional extra context appended to User Instructions.
      * @param availableSkills Optional list of available skill metadata.
@@ -62,7 +62,7 @@ object SubagentSystemPromptBuilder {
         projectName: String,
         projectPath: String,
         osName: String = System.getProperty("os.name") ?: "Unknown",
-        shell: String? = null,
+        shell: String = defaultShellFallback(),
         repoMap: String? = null,
         additionalContext: String? = null,
         availableSkills: List<SkillMetadata>? = null,
@@ -78,55 +78,40 @@ object SubagentSystemPromptBuilder {
         @Suppress("UNUSED_VARIABLE")
         val _agentConfigUnused = agentConfig
 
-        val base = if (shell != null) {
-            SystemPrompt.build(
-                projectName = projectName,
-                projectPath = projectPath,
-                osName = osName,
-                shell = shell,
-                repoMap = repoMap,
-                additionalContext = additionalContext,
-                availableSkills = availableSkills,
-                activeSkillContent = activeSkillContent,
-                coreMemoryXml = coreMemoryXml,
-                recalledMemoryXml = recalledMemoryXml,
-                toolDefinitionsMarkdown = toolDefinitionsMarkdown,
-                deferredToolCatalog = deferredToolCatalog,
-                availableShells = availableShells,
-                ideContext = ideContext,
-                // ---- sub-agent scoping ----
-                agentRoleOverride = personaRole,
-                includeTaskManagement = false,
-                includePlanModeSection = false,
-                planModeEnabled = false,
-                includeSubagentDelegationInRules = false,
-                // all other include-flags remain true (inherited)
-            )
-        } else {
-            SystemPrompt.build(
-                projectName = projectName,
-                projectPath = projectPath,
-                osName = osName,
-                repoMap = repoMap,
-                additionalContext = additionalContext,
-                availableSkills = availableSkills,
-                activeSkillContent = activeSkillContent,
-                coreMemoryXml = coreMemoryXml,
-                recalledMemoryXml = recalledMemoryXml,
-                toolDefinitionsMarkdown = toolDefinitionsMarkdown,
-                deferredToolCatalog = deferredToolCatalog,
-                availableShells = availableShells,
-                ideContext = ideContext,
-                // ---- sub-agent scoping ----
-                agentRoleOverride = personaRole,
-                includeTaskManagement = false,
-                includePlanModeSection = false,
-                planModeEnabled = false,
-                includeSubagentDelegationInRules = false,
-                // all other include-flags remain true (inherited)
-            )
-        }
+        val base = SystemPrompt.build(
+            projectName = projectName,
+            projectPath = projectPath,
+            osName = osName,
+            shell = shell,
+            repoMap = repoMap,
+            additionalContext = additionalContext,
+            availableSkills = availableSkills,
+            activeSkillContent = activeSkillContent,
+            coreMemoryXml = coreMemoryXml,
+            recalledMemoryXml = recalledMemoryXml,
+            toolDefinitionsMarkdown = toolDefinitionsMarkdown,
+            deferredToolCatalog = deferredToolCatalog,
+            availableShells = availableShells,
+            ideContext = ideContext,
+            // ---- sub-agent scoping ----
+            agentRoleOverride = personaRole,
+            includeTaskManagement = false,
+            includePlanModeSection = false,
+            planModeEnabled = false,
+            includeSubagentDelegationInRules = false,
+            // all other include-flags remain true (inherited)
+        )
 
         return base + SECTION_SEP + completingYourTaskSection
+    }
+
+    // Mirrors SystemPrompt.defaultShell() (private there) — duplicated rather than exposing it.
+    private fun defaultShellFallback(): String {
+        val os = System.getProperty("os.name")?.lowercase() ?: ""
+        return if (os.contains("win")) {
+            System.getenv("COMSPEC") ?: "cmd.exe"
+        } else {
+            System.getenv("SHELL") ?: "/bin/bash"
+        }
     }
 }
