@@ -24,6 +24,7 @@ data class IdeContext(
     val hasSpringPlugin: Boolean,
     val hasSpringBootPlugin: Boolean = false,
     val hasPersistencePlugin: Boolean = false,
+    val hasDatabasePlugin: Boolean = false,
     val detectedFrameworks: Set<Framework>,
     val detectedBuildTools: Set<BuildTool>,
     val hasPyTestConfigType: Boolean = false,

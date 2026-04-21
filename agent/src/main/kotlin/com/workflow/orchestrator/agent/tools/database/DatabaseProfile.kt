@@ -37,6 +37,11 @@ data class DatabaseProfile(
     // pre-refactor profiles, which are auto-parsed back into host/port/defaultDatabase
     // on read by [resolvedHost] / [resolvedPort] / [resolvedDefaultDatabase].
     val jdbcUrl: String = "",
+    // Origin of this profile — MANUAL for Settings-UI profiles (persisted in
+    // workflowDatabases.xml), IDE for profiles discovered from IntelliJ's
+    // Database tool window at runtime. Default is MANUAL for backward compatibility:
+    // existing persisted profiles without this field deserialize to MANUAL.
+    val source: ProfileSource = ProfileSource.MANUAL,
 ) {
     /** True if this profile uses the structured (host/port/database) connection model. */
     val isServerProfile: Boolean
@@ -90,3 +95,13 @@ enum class DbType(val displayName: String, val driverClass: String) {
     MSSQL("SQL Server",       "com.microsoft.sqlserver.jdbc.SQLServerDriver"),
     GENERIC("Generic JDBC",   ""),  // user-supplied driver via classpath
 }
+
+/**
+ * Origin of a database profile. MANUAL profiles are entered via the
+ * agent's Settings UI and persisted in DatabaseSettings. IDE profiles
+ * are discovered at runtime from IntelliJ Ultimate's configured
+ * data sources (View | Tool Windows | Database). IDE profiles are
+ * read-only from the agent's perspective — the user manages them
+ * through the IDE's own UI.
+ */
+enum class ProfileSource { MANUAL, IDE }
