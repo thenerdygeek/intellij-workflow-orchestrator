@@ -167,16 +167,24 @@ internal object AsyncEndpointsDiscoverer {
         return try {
             val managerClass = Class.forName(MQ_RESOLVER_MANAGER_FQN)
             val typesClass = Class.forName(MQ_TYPES_FQN)
-            val getAllVariants = managerClass.methods
-                .firstOrNull { it.name == "getAllVariants" && it.parameterCount == 1 }
+            val getAllVariants = managerClass.methods.firstOrNull { it.name == "getAllVariants" && it.parameterCount == 1 }
                 ?: return null
 
-            // Collect public static MQType fields from MQTypes (NamedMQType, DestinationMQType, etc.)
+            // Load MQType interface to filter out non-MQType static fields (e.g., Kotlin
+            // object INSTANCE fields). If MQType itself isn't loadable, fall back to
+            // accepting all static fields — the getAllVariants call will throw
+            // individually per bad field and we'll swallow it.
+            val mqTypeInterface = try {
+                Class.forName("com.intellij.microservices.jvm.mq.MQType")
+            } catch (_: ClassNotFoundException) { null }
+
             val mqTypes = typesClass.fields
                 .filter { java.lang.reflect.Modifier.isStatic(it.modifiers) }
                 .mapNotNull { field ->
                     val instance = try { field.get(null) } catch (_: Exception) { return@mapNotNull null }
-                    if (instance != null) field.name to instance else null
+                    if (instance == null) return@mapNotNull null
+                    if (mqTypeInterface != null && !mqTypeInterface.isInstance(instance)) return@mapNotNull null
+                    field.name to instance
                 }
 
             if (mqTypes.isEmpty()) return null

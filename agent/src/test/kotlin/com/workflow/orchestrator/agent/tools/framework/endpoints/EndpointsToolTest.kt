@@ -213,5 +213,29 @@ class EndpointsToolTest {
             // If the class loads, KAFKA_TOPIC_TYPE must be present
             cls.getField("KAFKA_TOPIC_TYPE")
         }
+
+        @Test
+        fun `MQResolverManager getAllVariants takes one MQType param`() {
+            val cls = try {
+                Class.forName("com.intellij.microservices.jvm.mq.MQResolverManager")
+            } catch (_: ClassNotFoundException) { return }
+            // getAllVariants takes a single MQType parameter (any subtype). We don't pin the
+            // exact parameter type because MQType is an interface and the method may take
+            // a narrower subtype; finding a method named "getAllVariants" with arity 1
+            // is the practical drift check.
+            val method = cls.methods.firstOrNull { it.name == "getAllVariants" && it.parameterCount == 1 }
+            org.junit.jupiter.api.Assertions.assertNotNull(method,
+                "MQResolverManager.getAllVariants(MQType) not found — Spring messaging API may have drifted")
+        }
+
+        @Test
+        fun `MQTargetInfo exposes getDestination getAccessType resolveToPsiElement`() {
+            val cls = try {
+                Class.forName("com.intellij.microservices.jvm.mq.MQTargetInfo")
+            } catch (_: ClassNotFoundException) { return }
+            cls.getMethod("getDestination")
+            cls.getMethod("getAccessType")
+            cls.getMethod("resolveToPsiElement")
+        }
     }
 }
