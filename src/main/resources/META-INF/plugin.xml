@@ -112,6 +112,7 @@
             factoryClass="com.workflow.orchestrator.core.toolwindow.WorkflowToolWindowFactory"/>
 
         <!-- Notification Groups -->
+        <notificationGroup id="Workflow Commit AI" displayType="BALLOON"/>
         <notificationGroup id="workflow.build" displayType="BALLOON"/>
         <notificationGroup id="workflow.quality" displayType="BALLOON"/>
         <notificationGroup id="workflow.jira" displayType="BALLOON"/>

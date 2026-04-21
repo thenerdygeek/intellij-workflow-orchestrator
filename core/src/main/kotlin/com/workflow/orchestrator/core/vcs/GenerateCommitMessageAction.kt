@@ -1,20 +1,27 @@
 package com.workflow.orchestrator.core.vcs
 
 import com.intellij.icons.AllIcons
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.vcs.CheckinProjectPanel
 import com.intellij.openapi.vcs.VcsDataKeys
 import com.intellij.openapi.vcs.changes.Change
-import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.intellij.openapi.vcs.ui.CommitMessage
+import com.intellij.openapi.vcs.ui.Refreshable
+import com.intellij.ui.AnimatedIcon
+import com.intellij.vcs.commit.CommitWorkflowUi
+import com.intellij.openapi.command.CommandProcessor
 import com.workflow.orchestrator.core.psi.PsiContextEnricher
 import com.workflow.orchestrator.core.ai.LlmBrainFactory
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
@@ -22,6 +29,8 @@ import com.workflow.orchestrator.core.ai.prompts.CommitMessagePromptBuilder
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoContextResolver
+import com.workflow.orchestrator.core.ui.CommitMessageFlash
+import com.workflow.orchestrator.core.ui.CommitMessageStreamBatcher
 import com.workflow.orchestrator.core.workflow.JiraTicketProvider
 import com.workflow.orchestrator.core.workflow.TicketDetails
 import git4idea.commands.Git
@@ -48,6 +57,7 @@ class GenerateCommitMessageAction : AnAction(
 
     private companion object {
         private val TICKET_PATTERN = Regex("([A-Z][A-Z0-9]+-\\d+)")
+        private const val NOTIFICATION_GROUP = "Workflow Commit AI"
     }
 
     override fun actionPerformed(e: AnActionEvent) {
@@ -65,14 +75,23 @@ class GenerateCommitMessageAction : AnAction(
         // Resolve the target repo on EDT (before launching background work)
         val targetRepo = resolveTargetRepo(project)
 
-        // Capture the user's ticked/selected changes on EDT — SELECTED_CHANGES reflects
-        // checkbox selection in the commit dialog; CHANGES is the active changelist as
-        // fallback (some dialog layouts expose only one of the two).
-        val selectedChanges: List<Change> =
-            e.getData(VcsDataKeys.SELECTED_CHANGES)?.toList()
-                ?: e.getData(VcsDataKeys.CHANGES)?.toList()
-                ?: emptyList()
-        log.info("[AI:CommitMsg] Selected changes: ${selectedChanges.size}")
+        // Resolve the user's checked (included-for-commit) changes on EDT.
+        // Priority: modern commit tool-window UI → legacy checkin panel → SELECTED_CHANGES.
+        // CHANGES is deliberately excluded — it returns the whole changelist regardless of
+        // what the user has checked, which was the root-cause bug.
+        val (selectedChanges, sourceTag) = resolveCheckedChanges(e)
+        log.info("[AI:CommitMsg] Checked changes: ${selectedChanges.size} (source: $sourceTag)")
+
+        if (selectedChanges.isEmpty()) {
+            ApplicationManager.getApplication().invokeLater({
+                commitMessage.setCommitMessage(
+                    "// No files checked for commit. Check at least one file and try again.\n" +
+                    "// (The AI only uses the files you've checked — not the whole changelist.)"
+                )
+            }, modalityState)
+            generating.set(false)
+            return
+        }
 
         // Run as a backgroundable task with progress in the status bar.
         // Uses runBlocking inside the background thread (NOT EDT — safe per project rules).
@@ -85,25 +104,40 @@ class GenerateCommitMessageAction : AnAction(
                 indicator.isIndeterminate = true
                 indicator.text = "Analyzing changes..."
 
+                val renderer = CommitMessageProgressRenderer(commitMessage, modalityState)
+                renderer.update("Starting...")
+
                 try {
                     // runBlocking is safe here — we're on a background thread, not EDT
-                    val message = runBlocking { generateMessage(project, targetRepo, selectedChanges) }
+                    val message = runBlocking {
+                        generateMessage(
+                            project, targetRepo, selectedChanges, indicator, renderer,
+                            commitMessage, modalityState
+                        )
+                    }
 
                     if (indicator.isCanceled) {
                         log.info("[AI:CommitMsg] Generation cancelled by user")
+                        renderer.cancelled()
                         return
                     }
 
-                    ApplicationManager.getApplication().invokeLater({
-                        if (message != null) {
-                            commitMessage.setCommitMessage(message)
-                            log.info("[AI:CommitMsg] Commit message generated (${message.length} chars)")
-                        } else {
-                            log.warn("[AI:CommitMsg] Failed to generate commit message")
-                        }
-                    }, modalityState)
-                } catch (e: Exception) {
-                    log.warn("[AI:CommitMsg] Generation failed: ${e.message}")
+                    if (message != null) {
+                        renderer.success(message)
+                        CommitMessageFlash.flashSuccess(commitMessage, modalityState)
+                        log.info("[AI:CommitMsg] Commit message generated (${message.length} chars)")
+                    } else {
+                        renderer.failed()
+                        log.warn("[AI:CommitMsg] Failed to generate commit message")
+                        showErrorBalloon(project, "No message returned — check idea.log")
+                    }
+                } catch (ex: ProcessCanceledException) {
+                    log.info("[AI:CommitMsg] Generation cancelled (ProcessCanceledException)")
+                    renderer.cancelled()
+                } catch (ex: Exception) {
+                    log.warn("[AI:CommitMsg] Generation failed: ${ex.message}")
+                    renderer.failed()
+                    showErrorBalloon(project, ex.message ?: "Unknown error — check idea.log")
                 } finally {
                     generating.set(false)
                 }
@@ -118,7 +152,7 @@ class GenerateCommitMessageAction : AnAction(
         e.presentation.isEnabled = hasCommitControl && !generating.get()
         if (generating.get()) {
             e.presentation.text = "Generating..."
-            e.presentation.icon = AllIcons.Process.Step_1
+            e.presentation.icon = AnimatedIcon.Default()
         } else {
             e.presentation.text = "Generate with Workflow"
             e.presentation.icon = AllIcons.Actions.Lightning
@@ -127,10 +161,25 @@ class GenerateCommitMessageAction : AnAction(
 
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
 
+    private fun showErrorBalloon(project: Project, reason: String) {
+        NotificationGroupManager.getInstance()
+            .getNotificationGroup(NOTIFICATION_GROUP)
+            ?.createNotification(
+                "Commit message generation failed",
+                reason,
+                NotificationType.ERROR
+            )
+            ?.notify(project)
+    }
+
     private suspend fun generateMessage(
         project: Project,
         targetRepo: git4idea.repo.GitRepository? = null,
-        selectedChanges: List<Change> = emptyList()
+        selectedChanges: List<Change> = emptyList(),
+        indicator: ProgressIndicator,
+        renderer: CommitMessageProgressRenderer,
+        commitMessage: CommitMessage? = null,
+        modalityState: ModalityState? = null
     ): String? {
         return try {
             val settings = PluginSettings.getInstance(project)
@@ -149,7 +198,8 @@ class GenerateCommitMessageAction : AnAction(
                 (change.afterRevision ?: change.beforeRevision)?.file?.path
             }
 
-            // Get the actual git diff (no truncation — Sourcegraph supports 150K input tokens)
+            // Phase 1 — git diff
+            withPhase(indicator, renderer, "Fetching git diff...") {}
             val diff = getGitDiff(project, targetRepo, selectedAbsPaths)
             if (diff.isNullOrBlank()) {
                 log.warn("[AI:CommitMsg] No diff found")
@@ -157,15 +207,16 @@ class GenerateCommitMessageAction : AnAction(
             }
 
             // Build a short summary of changed files for the analysis step.
-            // Prefer scoped selection; fall back to the whole changelist when the
-            // toolbar action fires without VcsDataKeys.SELECTED_CHANGES/CHANGES populated.
+            // scopedChanges is always non-empty here — the empty guard in actionPerformed
+            // ensures we never reach generateMessage with an empty selection.
+            // If all checked files belong to a different repo root, scopedChanges may end up
+            // empty after repo-scoping; in that case we bail rather than silently widening.
+            if (scopedChanges.isEmpty()) {
+                log.warn("[AI:CommitMsg] All checked files are outside repo root '$repoRoot' — aborting")
+                return null
+            }
             val filesSummary = try {
-                val source: Collection<Change> = if (scopedChanges.isNotEmpty()) {
-                    scopedChanges
-                } else {
-                    ChangeListManager.getInstance(project).allChanges
-                }
-                source.mapNotNull { change ->
+                scopedChanges.mapNotNull { change ->
                     val path = (change.afterRevision ?: change.beforeRevision)?.file?.path ?: return@mapNotNull null
                     val fileName = path.substringAfterLast('/')
                     val changeType = when {
@@ -177,11 +228,10 @@ class GenerateCommitMessageAction : AnAction(
                 }.joinToString(", ")
             } catch (_: Exception) { "" }
 
-            // Fetch recent commits for context + style
-            val recentCommits = getRecentCommits(project, targetRepo)
-
-            // Gather PSI code intelligence — scoped to selection when present.
-            val codeContext = buildCodeContext(project, selectedAbsPaths)
+            // Phase 2 — PSI code context
+            val codeContext = withPhase(indicator, renderer, "Analyzing code structure...") {
+                buildCodeContext(project, selectedAbsPaths)
+            }
 
             // Ticket resolution — settings first, then branch-name extraction.
             // Reading from PluginSettings (not ActiveTicketService) matches how the rest
@@ -190,40 +240,116 @@ class GenerateCommitMessageAction : AnAction(
                 ?: targetRepo?.currentBranch?.name?.let { extractTicketIdFromBranch(it) }
                 ?: ""
 
+            // Phase 3 — Jira ticket (only if relevant)
             val ticketDetails = if (ticketId.isNotBlank()) {
-                fetchTicketDetails(ticketId)
+                withPhase(indicator, renderer, "Fetching Jira ticket...") {
+                    fetchTicketDetails(ticketId)
+                }
             } else null
+
+            // Phase 4 — recent commits
+            val recentCommits = withPhase(indicator, renderer, "Reading recent commits...") {
+                getRecentCommits(project, targetRepo)
+            }
 
             log.info("[AI:CommitMsg] Generating: ${diff.length} char diff, ticket='$ticketId' details=${ticketDetails != null}, ${recentCommits.size} recent commits, codeContext=${codeContext.length} chars")
 
-            // Use Sonnet thinking model for better commit message quality
-            val brain = LlmBrainFactory.createForTextGeneration(project)
-            val messages = CommitMessagePromptBuilder.buildMessages(
-                diff = diff,
-                ticketId = ticketId,
-                filesSummary = filesSummary,
-                recentCommits = recentCommits,
-                codeContext = codeContext,
-                ticketDetails = ticketDetails
-            )
-            // maxTokens MUST be set explicitly — omitting it causes Sourcegraph to
-            // return HTTP 500 for thinking models (the thinking budget needs to be
-            // allocated up front). 8000 gives thinking models ~7500 tokens for
-            // reasoning plus ~500 for the commit message itself. Sourcegraph has no
-            // fixed cap here; the agent sends up to 64K successfully.
-            val result = brain.chat(messages, tools = null, maxTokens = 8000)
-            when (result) {
-                is ApiResult.Success ->
-                    result.data.choices.firstOrNull()?.message?.content
-                        ?.replace(Regex("^```[a-z]*\\n?"), "")
-                        ?.replace(Regex("\\n?```$"), "")
-                        ?.trim()
-                is ApiResult.Error -> null
+            // Phase 5 — AI generation (streaming)
+            // Stream tokens live into the commit field so the user sees the message
+            // being written character-by-character. Partial writes are undo-transparent;
+            // the final renderer.success() write participates in undo.
+            withPhase(indicator, renderer, "Generating with AI...") {
+                val brain = LlmBrainFactory.createForTextGeneration(project)
+                val messages = CommitMessagePromptBuilder.buildMessages(
+                    diff = diff,
+                    ticketId = ticketId,
+                    filesSummary = filesSummary,
+                    recentCommits = recentCommits,
+                    codeContext = codeContext,
+                    ticketDetails = ticketDetails
+                )
+
+                val accumulated = StringBuilder()
+
+                // Set up the 16ms EDT coalescing batcher only when we have a live
+                // commit field to write to (null during unit tests without a UI).
+                // Partial writes are wrapped in runUndoTransparentAction so each streaming
+                // token does NOT pollute IntelliJ's undo stack. Only the final
+                // renderer.success(finalText) write participates in undo.
+                val batcher: CommitMessageStreamBatcher? = if (commitMessage != null && modalityState != null) {
+                    CommitMessageStreamBatcher(modalityState) { partial ->
+                        CommandProcessor.getInstance().runUndoTransparentAction {
+                            commitMessage.setCommitMessage(partial)
+                        }
+                    }.also { it.start() }
+                } else null
+
+                try {
+                    // maxTokens MUST be set explicitly — omitting it causes Sourcegraph to
+                    // return HTTP 500 for thinking models (the thinking budget needs to be
+                    // allocated up front). 8000 gives thinking models ~7500 tokens for
+                    // reasoning plus ~500 for the commit message itself.
+                    val result = brain.chatStream(messages, tools = null, maxTokens = 8000) { chunk ->
+                        // StreamChunk → choices[0].delta.content carries the partial text delta.
+                        // Append each delta to the accumulator, then push the full accumulated
+                        // text to the batcher (so the field always shows accumulated state,
+                        // never a raw delta fragment).
+                        val delta = chunk.choices.firstOrNull()?.delta?.content
+                        if (delta != null) {
+                            accumulated.append(delta)
+                            batcher?.submit(accumulated.toString())
+                        }
+
+                        // Cooperative cancellation — stop streaming immediately if the
+                        // user cancels the progress indicator.
+                        if (indicator.isCanceled) {
+                            brain.interruptStream()
+                            brain.cancelActiveRequest()
+                        }
+                    }
+
+                    // Flush any last partial token that arrived between timer ticks
+                    batcher?.flush()
+
+                    when (result) {
+                        is ApiResult.Success -> {
+                            // Code-fence stripping is deferred to the final text — partial
+                            // fences look ugly mid-stream. Strip once on the complete output.
+                            accumulated.toString()
+                                .replace(Regex("^```[a-z]*\\n?"), "")
+                                .replace(Regex("\\n?```$"), "")
+                                .trim()
+                                .takeIf { it.isNotBlank() }
+                        }
+                        is ApiResult.Error -> null
+                    }
+                } finally {
+                    batcher?.dispose()
+                }
             }
+        } catch (ex: ProcessCanceledException) {
+            throw ex
         } catch (ex: Exception) {
             log.warn("[AI:CommitMsg] Generation failed: ${ex.message}")
             null
         }
+    }
+
+    /**
+     * Checks for cancellation, updates the progress indicator text, notifies the live
+     * placeholder renderer, and then executes [block]. Throws [ProcessCanceledException]
+     * if the indicator is already cancelled before the phase begins.
+     */
+    internal suspend fun <T> withPhase(
+        indicator: ProgressIndicator,
+        renderer: CommitMessageProgressRenderer,
+        phase: String,
+        block: suspend () -> T
+    ): T {
+        if (indicator.isCanceled) throw ProcessCanceledException()
+        indicator.text = phase
+        renderer.update(phase)
+        return block()
     }
 
     /**
@@ -237,13 +363,11 @@ class GenerateCommitMessageAction : AnAction(
     private suspend fun buildCodeContext(project: Project, selectedPaths: List<String> = emptyList()): String {
         return try {
             val enricher = PsiContextEnricher(project)
-            val changedFiles = if (selectedPaths.isNotEmpty()) {
-                selectedPaths.take(5)
-            } else {
-                ChangeListManager.getInstance(project).allChanges.take(5).mapNotNull { change ->
-                    change.afterRevision?.file?.path
-                }
-            }
+            // selectedPaths is always non-empty when called from generateMessage (the empty
+            // guard in actionPerformed ensures this). The default-empty signature is kept for
+            // testability. No ChangeListManager fallback — that was a silent whole-changelist
+            // backdoor and has been removed.
+            val changedFiles = selectedPaths.take(5)
 
             // Enrich all files in parallel instead of sequentially
             val contexts = coroutineScope {
@@ -274,6 +398,51 @@ class GenerateCommitMessageAction : AnAction(
             }
             contexts.joinToString("\n")
         } catch (_: Exception) { "" }
+    }
+
+    /**
+     * Resolve the user's checked (included-for-commit) changes from the action event.
+     *
+     * Priority chain:
+     * 1. [VcsDataKeys.COMMIT_WORKFLOW_UI] → [CommitWorkflowUi.getIncludedChanges] — modern
+     *    non-modal commit tool window. Non-null UI means checkbox state is authoritative;
+     *    an empty list means "nothing checked", which is a legitimate state.
+     * 2. [Refreshable.PANEL_KEY] cast to [CheckinProjectPanel] → [CheckinProjectPanel.getSelectedChanges] —
+     *    legacy commit dialog. "Selected" here means checked for commit (same semantic as
+     *    [CommitWorkflowUi.getIncludedChanges] — confirmed by HealthCheckCheckinHandlerFactory usage).
+     * 3. [VcsDataKeys.SELECTED_CHANGES] — tertiary fallback for unusual action contexts.
+     * 4. All three null/empty → `(emptyList(), "NONE")`.
+     *
+     * [VcsDataKeys.CHANGES] is deliberately excluded — it returns the whole active changelist
+     * regardless of what the user has checked, which was the root-cause bug.
+     *
+     * Returns a [Pair] of (list of included changes, source tag string).
+     * The source tag is one of: "COMMIT_WORKFLOW_UI", "CHECKIN_PROJECT_PANEL",
+     * "SELECTED_CHANGES", or "NONE".
+     */
+    @Suppress("UnstableApiUsage")
+    internal fun resolveCheckedChanges(e: AnActionEvent): Pair<List<Change>, String> {
+        // 1. Modern commit tool window — VcsDataKeys.COMMIT_WORKFLOW_UI is stable (no
+        //    @ApiStatus.Internal annotation in IntelliJ 2025.1.7 app.jar).
+        val commitWorkflowUi: CommitWorkflowUi? = e.getData(VcsDataKeys.COMMIT_WORKFLOW_UI)
+        if (commitWorkflowUi != null) {
+            return Pair(commitWorkflowUi.getIncludedChanges(), "COMMIT_WORKFLOW_UI")
+        }
+
+        // 2. Legacy modal commit dialog — CheckinProjectPanel via Refreshable.PANEL_KEY.
+        val panel = e.getData(Refreshable.PANEL_KEY) as? CheckinProjectPanel
+        if (panel != null) {
+            return Pair(panel.selectedChanges.toList(), "CHECKIN_PROJECT_PANEL")
+        }
+
+        // 3. Tertiary fallback — SELECTED_CHANGES in unusual action contexts.
+        val selected = e.getData(VcsDataKeys.SELECTED_CHANGES)
+        if (selected != null) {
+            return Pair(selected.toList(), "SELECTED_CHANGES")
+        }
+
+        // 4. No authoritative source found — caller should show empty-state feedback.
+        return Pair(emptyList(), "NONE")
     }
 
     /**
@@ -405,4 +574,40 @@ class GenerateCommitMessageAction : AnAction(
         } catch (_: Exception) { emptyList() }
     }
 
+}
+
+/**
+ * Writes live placeholder text into the commit message field during generation phases,
+ * then replaces with the generated message (or clears on cancel/failure).
+ *
+ * All updates are marshalled to the EDT via [ApplicationManager.getApplication().invokeLater]
+ * with the supplied [ModalityState] so they run while the commit dialog is open.
+ *
+ * Draft-preservation policy: REPLACE SILENTLY — no prompt is shown to save existing text.
+ */
+internal class CommitMessageProgressRenderer(
+    private val commitMessage: CommitMessage,
+    private val modalityState: ModalityState
+) {
+    private val prefix = "[Workflow AI] "
+    fun update(phase: String) {
+        ApplicationManager.getApplication().invokeLater({
+            commitMessage.setCommitMessage("$prefix$phase")
+        }, modalityState)
+    }
+    fun success(generated: String) {
+        ApplicationManager.getApplication().invokeLater({
+            commitMessage.setCommitMessage(generated)
+        }, modalityState)
+    }
+    fun cancelled() {
+        ApplicationManager.getApplication().invokeLater({
+            commitMessage.setCommitMessage("")
+        }, modalityState)
+    }
+    fun failed() {
+        ApplicationManager.getApplication().invokeLater({
+            commitMessage.setCommitMessage("")
+        }, modalityState)
+    }
 }
