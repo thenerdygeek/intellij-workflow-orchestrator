@@ -42,6 +42,8 @@ Actions and their parameters:
 - find_usages(url) → find all call sites of a URL (handler + client string literals)
 - export_openapi(framework?) → render discovered endpoints as an OpenAPI 3 spec
 - export_http_scratch(filter?, host?) → Generate a JetBrains HTTP Client .http scratch file from discovered endpoints and open it
+- list_async(filter?) → Async messaging endpoints (Kafka/RabbitMQ/JMS destinations)
+- service_graph() → Mermaid graph of services by module (node-only skeleton)
 """.trimIndent()
 
     override val parameters = FunctionParameters(
@@ -49,7 +51,7 @@ Actions and their parameters:
             "action" to ParameterProperty(
                 type = "string",
                 description = "Operation to perform",
-                enumValues = listOf("list", "find_usages", "export_openapi", "export_http_scratch"),
+                enumValues = listOf("list", "find_usages", "export_openapi", "export_http_scratch", "list_async", "service_graph"),
             ),
             "filter" to ParameterProperty(
                 type = "string",
@@ -102,8 +104,10 @@ Actions and their parameters:
             "find_usages" -> executeFindUsages(params, project)
             "export_openapi" -> executeExportOpenApi(params, project)
             "export_http_scratch" -> executeExportHttpScratch(params, project)
+            "list_async" -> executeListAsync(params, project)
+            "service_graph" -> executeServiceGraph(params, project)
             else -> ToolResult(
-                content = "Unknown action '$action'. Valid actions: list, find_usages, export_openapi, export_http_scratch.",
+                content = "Unknown action '$action'. Valid actions: list, find_usages, export_openapi, export_http_scratch, list_async, service_graph.",
                 summary = "Unknown action '$action'",
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true,

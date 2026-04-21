@@ -20,10 +20,12 @@ dependencies {
         intellijIdeaUltimate(providers.gradleProperty("platformVersion"))
         bundledPlugins(listOf(
             "Git4Idea",
+            "com.intellij.grpc",
             "com.intellij.java",
             "com.intellij.persistence",
             "com.intellij.spring",
             "com.intellij.spring.boot",
+            "com.intellij.spring.messaging",
             "org.jetbrains.kotlin",
             "com.intellij.modules.microservices",
         ))

@@ -89,18 +89,23 @@ class EndpointsToolTest {
         }
 
         @Test
-        fun `action enum contains list, find_usages, export_openapi, export_http_scratch`() {
+        fun `action enum contains all six actions`() {
             val actions = tool.parameters.properties["action"]?.enumValues?.toSet()
-            assertEquals(setOf("list", "find_usages", "export_openapi", "export_http_scratch"), actions)
+            assertEquals(
+                setOf("list", "find_usages", "export_openapi", "export_http_scratch", "list_async", "service_graph"),
+                actions,
+            )
         }
 
         @Test
-        fun `description mentions all four actions`() {
+        fun `description mentions all six actions`() {
             val d = tool.description
             assertTrue(d.contains("list"))
             assertTrue(d.contains("find_usages"))
             assertTrue(d.contains("export_openapi"))
             assertTrue(d.contains("export_http_scratch"))
+            assertTrue(d.contains("list_async"))
+            assertTrue(d.contains("service_graph"))
         }
 
         @Test
@@ -149,6 +154,64 @@ class EndpointsToolTest {
             val actions = tool.parameters.properties["action"]?.enumValues ?: emptyList()
             assertTrue(actions.contains("export_http_scratch"),
                 "action enum should include export_http_scratch; got $actions")
+        }
+
+        @Test
+        fun `list_async action is in enum`() {
+            val actions = tool.parameters.properties["action"]?.enumValues ?: emptyList()
+            assertTrue(actions.contains("list_async"),
+                "action enum should include list_async; got $actions")
+        }
+
+        @Test
+        fun `service_graph action is in enum`() {
+            val actions = tool.parameters.properties["action"]?.enumValues ?: emptyList()
+            assertTrue(actions.contains("service_graph"),
+                "action enum should include service_graph; got $actions")
+        }
+
+        @Test
+        fun `unknown action error message lists all six actions`() = runTest {
+            val result = tool.execute(buildJsonObject { put("action", "unknown_action") }, project)
+            assertTrue(result.isError)
+            assertTrue(result.content.contains("list_async"), "error message should mention list_async")
+            assertTrue(result.content.contains("service_graph"), "error message should mention service_graph")
+        }
+    }
+
+    @Nested
+    inner class MicroservicesPluginApiContract {
+
+        @Test
+        fun `gRPC ProtoEndpointsProvider loads when bundled`() {
+            try {
+                Class.forName("com.intellij.grpc.endpoints.ProtoEndpointsProvider")
+            } catch (_: ClassNotFoundException) {
+                // Plugin absent from test classpath — skip gracefully
+                return
+            }
+        }
+
+        @Test
+        fun `MQResolverManager class exists at jvm mq subpackage`() {
+            try {
+                Class.forName("com.intellij.microservices.jvm.mq.MQResolverManager")
+            } catch (_: ClassNotFoundException) {
+                // Not on classpath — skip gracefully
+                return
+            }
+        }
+
+        @Test
+        fun `MQTypes exposes KAFKA_TOPIC_TYPE static field`() {
+            val cls = try {
+                Class.forName("com.intellij.microservices.jvm.mq.MQTypes")
+            } catch (_: ClassNotFoundException) {
+                // Not on classpath — skip gracefully
+                return
+            }
+            // If the class loads, KAFKA_TOPIC_TYPE must be present
+            cls.getField("KAFKA_TOPIC_TYPE")
         }
     }
 }

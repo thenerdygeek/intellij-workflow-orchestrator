@@ -36,7 +36,7 @@ Choose the right strategy based on the question:
 ### Understanding Architecture
 - **Module structure:** `build(action="module_dependency_graph")` for dependencies
 - **Spring beans:** `spring(action="context")` for bean overview
-- **Endpoints:** `endpoints(action="list")` for multi-framework API surface (falls back to `spring(action="endpoints")` on IntelliJ Community). The `endpoints` meta-tool also supports `find_usages(url)` to locate call sites, `export_openapi` for spec generation, and `export_http_scratch` to generate a runnable JetBrains HTTP Client `.http` file.
+- **Endpoints:** `endpoints(action="list")` for multi-framework API surface (falls back to `spring(action="endpoints")` on IntelliJ Community). The `endpoints` meta-tool also supports `find_usages(url)` to locate call sites, `export_openapi` for spec generation, `export_http_scratch` to generate a runnable JetBrains HTTP Client `.http` file, `list_async` for Kafka/RabbitMQ/JMS destinations, and `service_graph` for a Mermaid service topology diagram.
 - **Security:** `spring(action="security_config")` for auth setup
 
 ### Assessing Quality
