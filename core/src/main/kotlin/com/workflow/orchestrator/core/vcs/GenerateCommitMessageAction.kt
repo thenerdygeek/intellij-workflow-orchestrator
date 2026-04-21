@@ -12,6 +12,7 @@ import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.VcsDataKeys
+import com.intellij.openapi.vcs.changes.Change
 import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.intellij.openapi.vcs.ui.CommitMessage
 import com.workflow.orchestrator.core.psi.PsiContextEnricher
@@ -21,6 +22,8 @@ import com.workflow.orchestrator.core.ai.prompts.CommitMessagePromptBuilder
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoContextResolver
+import com.workflow.orchestrator.core.workflow.JiraTicketProvider
+import com.workflow.orchestrator.core.workflow.TicketDetails
 import git4idea.commands.Git
 import git4idea.commands.GitCommand
 import git4idea.commands.GitLineHandler
@@ -43,6 +46,10 @@ class GenerateCommitMessageAction : AnAction(
     private val log = Logger.getInstance(GenerateCommitMessageAction::class.java)
     private val generating = AtomicBoolean(false)
 
+    private companion object {
+        private val TICKET_PATTERN = Regex("([A-Z][A-Z0-9]+-\\d+)")
+    }
+
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         val commitMessage = e.getData(VcsDataKeys.COMMIT_MESSAGE_CONTROL) as? CommitMessage ?: return
@@ -58,6 +65,15 @@ class GenerateCommitMessageAction : AnAction(
         // Resolve the target repo on EDT (before launching background work)
         val targetRepo = resolveTargetRepo(project)
 
+        // Capture the user's ticked/selected changes on EDT — SELECTED_CHANGES reflects
+        // checkbox selection in the commit dialog; CHANGES is the active changelist as
+        // fallback (some dialog layouts expose only one of the two).
+        val selectedChanges: List<Change> =
+            e.getData(VcsDataKeys.SELECTED_CHANGES)?.toList()
+                ?: e.getData(VcsDataKeys.CHANGES)?.toList()
+                ?: emptyList()
+        log.info("[AI:CommitMsg] Selected changes: ${selectedChanges.size}")
+
         // Run as a backgroundable task with progress in the status bar.
         // Uses runBlocking inside the background thread (NOT EDT — safe per project rules).
         ProgressManager.getInstance().run(object : Task.Backgroundable(
@@ -71,7 +87,7 @@ class GenerateCommitMessageAction : AnAction(
 
                 try {
                     // runBlocking is safe here — we're on a background thread, not EDT
-                    val message = runBlocking { generateMessage(project, targetRepo) }
+                    val message = runBlocking { generateMessage(project, targetRepo, selectedChanges) }
 
                     if (indicator.isCanceled) {
                         log.info("[AI:CommitMsg] Generation cancelled by user")
@@ -111,22 +127,45 @@ class GenerateCommitMessageAction : AnAction(
 
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
 
-    private suspend fun generateMessage(project: Project, targetRepo: git4idea.repo.GitRepository? = null): String? {
+    private suspend fun generateMessage(
+        project: Project,
+        targetRepo: git4idea.repo.GitRepository? = null,
+        selectedChanges: List<Change> = emptyList()
+    ): String? {
         return try {
             val settings = PluginSettings.getInstance(project)
-            val ticketId = settings.state.activeTicketId.orEmpty()
+
+            // Scope selection to the target repo — guards against multi-repo projects
+            // where the user may have changes from another root in the list.
+            val repoRoot = targetRepo?.root?.path
+            val scopedChanges = if (repoRoot != null && selectedChanges.isNotEmpty()) {
+                selectedChanges.filter { change ->
+                    val path = (change.afterRevision ?: change.beforeRevision)?.file?.path
+                    path != null && (path == repoRoot || path.startsWith("$repoRoot/"))
+                }
+            } else selectedChanges
+
+            val selectedAbsPaths = scopedChanges.mapNotNull { change ->
+                (change.afterRevision ?: change.beforeRevision)?.file?.path
+            }
 
             // Get the actual git diff (no truncation — Sourcegraph supports 150K input tokens)
-            val diff = getGitDiff(project, targetRepo)
+            val diff = getGitDiff(project, targetRepo, selectedAbsPaths)
             if (diff.isNullOrBlank()) {
                 log.warn("[AI:CommitMsg] No diff found")
                 return null
             }
 
-            // Build a short summary of changed files for the analysis step
+            // Build a short summary of changed files for the analysis step.
+            // Prefer scoped selection; fall back to the whole changelist when the
+            // toolbar action fires without VcsDataKeys.SELECTED_CHANGES/CHANGES populated.
             val filesSummary = try {
-                val changeListManager = ChangeListManager.getInstance(project)
-                changeListManager.allChanges.mapNotNull { change ->
+                val source: Collection<Change> = if (scopedChanges.isNotEmpty()) {
+                    scopedChanges
+                } else {
+                    ChangeListManager.getInstance(project).allChanges
+                }
+                source.mapNotNull { change ->
                     val path = (change.afterRevision ?: change.beforeRevision)?.file?.path ?: return@mapNotNull null
                     val fileName = path.substringAfterLast('/')
                     val changeType = when {
@@ -141,10 +180,21 @@ class GenerateCommitMessageAction : AnAction(
             // Fetch recent commits for context + style
             val recentCommits = getRecentCommits(project, targetRepo)
 
-            // Gather PSI code intelligence for changed files
-            val codeContext = buildCodeContext(project)
+            // Gather PSI code intelligence — scoped to selection when present.
+            val codeContext = buildCodeContext(project, selectedAbsPaths)
 
-            log.info("[AI:CommitMsg] Generating: ${diff.length} char diff, ${recentCommits.size} recent commits, codeContext=${codeContext.length} chars")
+            // Ticket resolution — settings first, then branch-name extraction.
+            // Reading from PluginSettings (not ActiveTicketService) matches how the rest
+            // of the plugin persists the active ticket; clearing in the UI writes "" here.
+            val ticketId = settings.state.activeTicketId.orEmpty().takeIf { it.isNotBlank() }
+                ?: targetRepo?.currentBranch?.name?.let { extractTicketIdFromBranch(it) }
+                ?: ""
+
+            val ticketDetails = if (ticketId.isNotBlank()) {
+                fetchTicketDetails(ticketId)
+            } else null
+
+            log.info("[AI:CommitMsg] Generating: ${diff.length} char diff, ticket='$ticketId' details=${ticketDetails != null}, ${recentCommits.size} recent commits, codeContext=${codeContext.length} chars")
 
             // Use Sonnet thinking model for better commit message quality
             val brain = LlmBrainFactory.createForTextGeneration(project)
@@ -153,7 +203,8 @@ class GenerateCommitMessageAction : AnAction(
                 ticketId = ticketId,
                 filesSummary = filesSummary,
                 recentCommits = recentCommits,
-                codeContext = codeContext
+                codeContext = codeContext,
+                ticketDetails = ticketDetails
             )
             // maxTokens MUST be set explicitly — omitting it causes Sourcegraph to
             // return HTTP 500 for thinking models (the thinking budget needs to be
@@ -183,12 +234,15 @@ class GenerateCommitMessageAction : AnAction(
      * Enriches up to 5 files in parallel to keep processing reasonable
      * while avoiding sequential 500ms-2s PSI reads per file.
      */
-    private suspend fun buildCodeContext(project: Project): String {
+    private suspend fun buildCodeContext(project: Project, selectedPaths: List<String> = emptyList()): String {
         return try {
             val enricher = PsiContextEnricher(project)
-            val changeListManager = ChangeListManager.getInstance(project)
-            val changedFiles = changeListManager.allChanges.take(5).mapNotNull { change ->
-                change.afterRevision?.file?.path
+            val changedFiles = if (selectedPaths.isNotEmpty()) {
+                selectedPaths.take(5)
+            } else {
+                ChangeListManager.getInstance(project).allChanges.take(5).mapNotNull { change ->
+                    change.afterRevision?.file?.path
+                }
             }
 
             // Enrich all files in parallel instead of sequentially
@@ -229,13 +283,36 @@ class GenerateCommitMessageAction : AnAction(
     private fun resolveTargetRepo(project: Project): git4idea.repo.GitRepository? =
         RepoContextResolver.getInstance(project).resolveCurrentEditorRepoOrPrimary()
 
-    private fun getGitDiff(project: Project, preResolvedRepo: git4idea.repo.GitRepository? = null): String? {
+    private fun getGitDiff(
+        project: Project,
+        preResolvedRepo: git4idea.repo.GitRepository? = null,
+        selectedPaths: List<String> = emptyList()
+    ): String? {
         val repo = preResolvedRepo ?: resolveTargetRepo(project) ?: return null
         val root = repo.root
+        val rootPath = root.path
+
+        // Convert absolute paths to repo-relative for the pathspec. Paths outside
+        // the repo root are dropped silently.
+        val relativePaths = selectedPaths.mapNotNull { abs ->
+            when {
+                abs == rootPath -> null
+                abs.startsWith("$rootPath/") -> abs.removePrefix("$rootPath/")
+                else -> null
+            }
+        }
+
+        fun applyPathspec(handler: GitLineHandler) {
+            if (relativePaths.isNotEmpty()) {
+                handler.endOptions()
+                handler.addParameters(*relativePaths.toTypedArray())
+            }
+        }
 
         // Try staged changes first (what would be committed)
         val stagedHandler = GitLineHandler(project, root, GitCommand.DIFF).apply {
             addParameters("--cached", "--no-color")
+            applyPathspec(this)
         }
         val stagedResult = Git.getInstance().runCommand(stagedHandler)
         if (stagedResult.success() && stagedResult.output.isNotEmpty()) {
@@ -245,6 +322,7 @@ class GenerateCommitMessageAction : AnAction(
         // Fall back to unstaged changes
         val unstagedHandler = GitLineHandler(project, root, GitCommand.DIFF).apply {
             addParameters("--no-color")
+            applyPathspec(this)
         }
         val unstagedResult = Git.getInstance().runCommand(unstagedHandler)
         if (unstagedResult.success() && unstagedResult.output.isNotEmpty()) {
@@ -252,6 +330,26 @@ class GenerateCommitMessageAction : AnAction(
         }
 
         return null
+    }
+
+    /**
+     * Extract a Jira ticket key from a branch name (e.g. "feature/ABC-123-foo" → "ABC-123").
+     * Mirrors the regex used in :jira's ActiveTicketService — duplicated here because :core
+     * cannot depend on :jira, and the pattern is four lines of code.
+     */
+    private fun extractTicketIdFromBranch(branchName: String): String? =
+        TICKET_PATTERN.find(branchName)?.groupValues?.get(1)
+
+    /**
+     * Fetch ticket summary/description via the JiraTicketProvider extension point.
+     * Returns null if the :jira module is not loaded or the lookup fails — the prompt
+     * still generates, it just omits the TICKET CONTEXT section.
+     */
+    private suspend fun fetchTicketDetails(ticketId: String): TicketDetails? = try {
+        JiraTicketProvider.getInstance()?.getTicketDetails(ticketId)
+    } catch (ex: Exception) {
+        log.warn("[AI:CommitMsg] Ticket details fetch failed for $ticketId: ${ex.message}")
+        null
     }
 
     /**
