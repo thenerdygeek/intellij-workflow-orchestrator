@@ -388,6 +388,7 @@ In each user message, the environment_details will specify the current mode. The
         if (ideContext == null || ideContext.supportsJava) {
             appendLine("| Find API endpoints | \"endpoints\" or \"spring\" | Grepping for @PostMapping |")
             appendLine("| Understand Spring beans/config | \"spring\" | Grepping for @Bean/@Component |")
+            appendLine("| Find all methods with a specific annotation | \"spring\" (annotated_methods action) | Grepping for @Transactional/@Scheduled |")
         }
         if (ideContext?.supportsPython == true) {
             if (Framework.DJANGO in ideContext.detectedFrameworks) {

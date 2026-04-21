@@ -179,7 +179,7 @@ Spring uses CGLIB proxies for `@Transactional`, `@Cacheable`, etc. When stepping
 
 **Spring Security debugging:** Set method breakpoint on the specific filter class (e.g., `JwtAuthenticationFilter`) or use log breakpoints on `FilterChainProxy.doFilter()` to trace the filter chain without stopping.
 
-**Use the `spring` and `endpoints` meta-tools first:** Before setting breakpoints, use `spring(action="context")` to understand the bean graph and `endpoints(action="list", framework="Spring")` (or `spring(action="endpoints")` on IntelliJ Community) to find the handler method for a given URL. On Ultimate, `endpoints(action="find_usages", url="/api/...")` locates both the handler and any client call sites.
+**Use the `spring` and `endpoints` meta-tools first:** Before setting breakpoints, use `spring(action="context")` to understand the bean graph and `endpoints(action="list", framework="Spring")` (or `spring(action="endpoints")` on IntelliJ Community) to find the handler method for a given URL. On Ultimate, `endpoints(action="find_usages", url="/api/...")` locates both the handler and any client call sites. Use `spring(action="context", profile="dev")` when debugging profile-specific wiring failures. Use `spring(action="annotated_methods", annotation="@Transactional")` to enumerate all transactional methods before setting transaction-boundary breakpoints — avoids hunting through the call graph manually.
 
 ## Budget Rules
 

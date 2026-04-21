@@ -59,6 +59,8 @@ Detect from the parent's prompt:
 ### Phase 2: OWASP Top 10 Audit
 
 #### A01: Broken Access Control
+- `spring(action="annotated_methods", annotation="@PreAuthorize")` — enumerate all guarded methods and verify coverage; cross-reference with `endpoints(action="list")` to spot unguarded endpoints
+- `spring(action="annotated_methods", annotation="@Secured")` — surface role-based method guards
 - `search_code` for endpoints missing `@PreAuthorize` or `@Secured`
 - Check `SecurityFilterChain` — are all sensitive paths authenticated?
 - `find_implementations` on auth interfaces — any bypass paths?

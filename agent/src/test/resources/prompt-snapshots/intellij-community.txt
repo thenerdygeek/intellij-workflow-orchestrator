@@ -140,6 +140,7 @@ Before using glob_files or search_code for these tasks, use tool_search first:
 |---|---|---|
 | Find API endpoints | "endpoints" or "spring" | Grepping for @PostMapping |
 | Understand Spring beans/config | "spring" | Grepping for @Bean/@Component |
+| Find all methods with a specific annotation | "spring" (annotated_methods action) | Grepping for @Transactional/@Scheduled |
 | Understand class/type relationships | "type_hierarchy" | Manually reading extends/impl |
 | Trace who calls a function | "call_hierarchy" | Grepping for function name |
 | Check test coverage | "coverage" | Reading coverage reports manually |

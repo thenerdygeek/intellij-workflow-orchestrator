@@ -75,7 +75,7 @@ Detect from the parent's prompt:
 13. **Check service interfaces** — are they well-defined? Do they hide implementation details?
 14. **Check DTO boundaries** — are entities exposed directly in API responses or properly mapped?
 15. **Check contract consistency** — do similar endpoints follow the same patterns (naming, error responses, pagination)?
-16. **Check Spring beans** — `spring(action="bean_graph")` for dependency graph, look for god-services and over-injection
+16. **Check Spring beans** — `spring(action="bean_graph")` for dependency graph, look for god-services and over-injection; `spring(action="annotated_methods", annotation="@Transactional")` to verify transaction boundaries are on the correct layer
 
 ### Phase 5: Structural Health Checks
 

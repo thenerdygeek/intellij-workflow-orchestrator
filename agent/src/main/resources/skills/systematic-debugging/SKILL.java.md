@@ -3,10 +3,14 @@
 ### Spring Boot Diagnostics
 ```
 spring(action="context")              # Bean graph — find wiring issues
+spring(action="context", profile="dev") # Beans active under a specific profile
 endpoints(action="list")              # All HTTP endpoints (Ultimate/Pro/WebStorm)
 spring(action="endpoints")            # Spring-only, used as fallback on IntelliJ Community
 spring(action="boot_autoconfig")      # Auto-configuration decisions
 spring(action="config_properties")    # Bound configuration
+spring(action="annotated_methods", annotation="@Transactional") # Find all transactional methods — trace transaction boundaries
+spring(action="annotated_methods", annotation="@Scheduled")     # Find all scheduled tasks — spot overlapping or runaway jobs
+spring(action="annotated_methods", annotation="@PreAuthorize")  # Find all authorization-guarded methods — verify coverage
 ```
 
 ### Common Java/Spring Failures

@@ -142,6 +142,7 @@ Before using glob_files or search_code for these tasks, use tool_search first:
 |---|---|---|
 | Find API endpoints | "endpoints" or "spring" | Grepping for @PostMapping |
 | Understand Spring beans/config | "spring" | Grepping for @Bean/@Component |
+| Find all methods with a specific annotation | "spring" (annotated_methods action) | Grepping for @Transactional/@Scheduled |
 | Find Django URLs/views | "django" | Reading urls.py manually |
 | Analyze Django models | "django" | Reading models.py manually |
 | Understand class/type relationships | "type_hierarchy" | Manually reading extends/impl |

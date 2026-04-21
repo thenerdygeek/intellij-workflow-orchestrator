@@ -54,8 +54,9 @@ Use `spring(action="context")`, `endpoints(action="list", framework="Spring")`, 
 6. **Find similar code** — if adding an endpoint, read an existing controller. If adding a service, read an existing service. Match what's already there.
 7. **Check error handling** — `search_code` for `@ControllerAdvice`, `@ExceptionHandler`, `ResponseStatusException`
 8. **Check validation** — `search_code` for `@Valid`, `@Validated`, custom validators
-9. **Check testing patterns** — `test_finder` + `glob_files(pattern="**/*Test.kt")` to see how existing code is tested
-10. **Check git history** — `git(action="log")` to understand recent changes in the area you're touching
+9. **Check annotation usage** — `spring(action="annotated_methods", annotation="@Transactional")` to see existing transaction boundaries; `spring(action="annotated_methods", annotation="@Scheduled")` when adding scheduled tasks
+10. **Check testing patterns** — `test_finder` + `glob_files(pattern="**/*Test.kt")` to see how existing code is tested
+11. **Check git history** — `git(action="log")` to understand recent changes in the area you're touching
 
 ### Phase 3: Plan
 
