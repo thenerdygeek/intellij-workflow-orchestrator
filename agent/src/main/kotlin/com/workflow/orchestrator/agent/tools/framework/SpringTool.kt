@@ -14,6 +14,7 @@ import com.workflow.orchestrator.agent.tools.framework.spring.executeBootEndpoin
 import com.workflow.orchestrator.agent.tools.framework.spring.executeConfig
 import com.workflow.orchestrator.agent.tools.framework.spring.executeContext
 import com.workflow.orchestrator.agent.tools.framework.spring.executeEndpoints
+import com.workflow.orchestrator.agent.tools.framework.spring.executeAnnotatedMethods
 import com.workflow.orchestrator.agent.tools.framework.spring.executeEventListeners
 import com.workflow.orchestrator.agent.tools.framework.spring.executeJpaEntities
 import com.workflow.orchestrator.agent.tools.framework.spring.executeProfiles
@@ -62,6 +63,7 @@ class SpringTool(
             appendLine("- security_config() → Security configuration")
             appendLine("- scheduled_tasks() → @Scheduled methods")
             appendLine("- event_listeners() → @EventListener methods")
+            appendLine("- annotated_methods(annotation, filter?) → Generic scan for any Spring annotation (@Scheduled, @EventListener, @Transactional, @Cacheable, @Async, @PreAuthorize, @Secured, custom FQN)")
             if (includeEndpointActions) appendLine("- boot_endpoints(class_name?) → Boot endpoint mappings")
             appendLine("- boot_autoconfig(filter?, project_only?) → Auto-configuration classes (project_only default true)")
             appendLine("- boot_config_properties(class_name?, prefix?) → @ConfigurationProperties bindings with IDE metadata (descriptions, defaults, deprecations, source types)")
@@ -79,7 +81,7 @@ class SpringTool(
                     if (includeEndpointActions) add("endpoints")
                     addAll(listOf(
                         "bean_graph", "config", "version_info", "profiles", "repositories",
-                        "security_config", "scheduled_tasks", "event_listeners",
+                        "security_config", "scheduled_tasks", "event_listeners", "annotated_methods",
                     ))
                     if (includeEndpointActions) add("boot_endpoints")
                     addAll(listOf("boot_autoconfig", "boot_config_properties", "boot_actuator", "jpa_entities"))
@@ -120,7 +122,11 @@ class SpringTool(
             "entity" to ParameterProperty(
                 type = "string",
                 description = "Specific entity class name — for jpa_entities"
-            )
+            ),
+            "annotation" to ParameterProperty(
+                type = "string",
+                description = "Annotation name — short form (@Scheduled, Transactional, etc.) or fully-qualified (e.g. org.springframework.cache.annotation.Cacheable) — for annotated_methods"
+            ),
         ),
         required = listOf("action")
     )
@@ -148,6 +154,7 @@ class SpringTool(
             "security_config" -> executeSecurityConfig(params, project)
             "scheduled_tasks" -> executeScheduledTasks(params, project)
             "event_listeners" -> executeEventListeners(params, project)
+            "annotated_methods" -> executeAnnotatedMethods(params, project)
             "boot_endpoints" -> if (includeEndpointActions) executeBootEndpoints(params, project) else unsupportedAction(action)
             "boot_autoconfig" -> executeBootAutoConfig(params, project)
             "boot_config_properties" -> executeBootConfigProperties(params, project)

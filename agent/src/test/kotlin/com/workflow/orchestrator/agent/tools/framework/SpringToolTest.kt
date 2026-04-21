@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.tools.framework
 
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.tools.WorkerType
+import com.workflow.orchestrator.agent.tools.framework.spring.resolveAnnotationFqn
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
@@ -14,7 +15,7 @@ import org.junit.jupiter.api.Test
 /**
  * Scenario-based tests for [SpringTool].
  *
- * Strategy: SpringTool is a meta-tool with 15 actions; many actions touch real
+ * Strategy: SpringTool is a meta-tool with 16 actions; many actions touch real
  * IntelliJ PSI / Maven services that require a running IDE fixture and cannot
  * be exercised in plain unit tests. These tests therefore lock in:
  *
@@ -62,7 +63,7 @@ class SpringToolTest {
         }
 
         @Test
-        fun `description lists all 15 actions`() {
+        fun `description lists all 16 actions`() {
             val desc = tool.description
             ALL_ACTIONS.forEach { action ->
                 assertTrue(desc.contains(action), "description should mention action '$action'")
@@ -70,17 +71,17 @@ class SpringToolTest {
         }
 
         @Test
-        fun `default constructor action enum contains 15 actions`() {
+        fun `default constructor action enum contains 16 actions`() {
             val actions = tool.parameters.properties["action"]?.enumValues
             assertNotNull(actions)
-            assertEquals(15, actions!!.size)
+            assertEquals(16, actions!!.size)
         }
 
         @Test
         fun `includeEndpointActions=false omits endpoints and boot_endpoints`() {
             val trimmed = SpringTool(includeEndpointActions = false)
             val actions = trimmed.parameters.properties["action"]?.enumValues!!.toSet()
-            assertEquals(13, actions.size)
+            assertEquals(14, actions.size)
             assertFalse(actions.contains("endpoints"))
             assertFalse(actions.contains("boot_endpoints"))
         }
@@ -167,9 +168,9 @@ class SpringToolTest {
         }
 
         @Test
-        fun `total parameter count is 10`() {
-            // 1 action discriminator + 9 action-specific parameters
-            assertEquals(10, tool.parameters.properties.size)
+        fun `total parameter count is 11`() {
+            // 1 action discriminator + 10 action-specific parameters
+            assertEquals(11, tool.parameters.properties.size)
         }
 
         @Test
@@ -193,7 +194,7 @@ class SpringToolTest {
             assertEquals("spring", def.function.name)
             assertTrue(def.function.description.isNotBlank())
             assertEquals("object", def.function.parameters.type)
-            assertEquals(10, def.function.parameters.properties.size)
+            assertEquals(11, def.function.parameters.properties.size)
             assertEquals(listOf("action"), def.function.parameters.required)
         }
     }
@@ -381,6 +382,7 @@ class SpringToolTest {
         @Test fun `boot_config_properties routes`() = smokeTestAction("boot_config_properties")
         @Test fun `boot_actuator routes`() = smokeTestAction("boot_actuator")
         @Test fun `jpa_entities routes`() = smokeTestAction("jpa_entities")
+        @Test fun `annotated_methods routes`() = smokeTestAction("annotated_methods", mapOf("annotation" to "Scheduled"))
     }
 
     // ────────────────────────────────────────────────────────────────────────
@@ -519,6 +521,40 @@ class SpringToolTest {
         }
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // Tier 6 — resolveAnnotationFqn pure-function unit tests
+    // ────────────────────────────────────────────────────────────────────────
+
+    @Nested
+    inner class AnnotationAliases {
+        @Test
+        fun `short name with at sign resolves to FQN`() {
+            assertEquals(
+                "org.springframework.scheduling.annotation.Scheduled",
+                resolveAnnotationFqn("@Scheduled"),
+            )
+        }
+        @Test
+        fun `short name without at sign case insensitive`() {
+            assertEquals(
+                "org.springframework.transaction.annotation.Transactional",
+                resolveAnnotationFqn("transactional"),
+            )
+        }
+        @Test
+        fun `unknown FQN passes through`() {
+            assertEquals(
+                "com.example.MyAnnotation",
+                resolveAnnotationFqn("com.example.MyAnnotation"),
+            )
+        }
+        @Test
+        fun `unknown short name returns as-is`() {
+            // No alias for 'foo' — returns the input as-is (FQN fallback path)
+            assertEquals("foo", resolveAnnotationFqn("foo"))
+        }
+    }
+
     companion object {
         val ALL_ACTIONS = listOf(
             "context",
@@ -531,6 +567,7 @@ class SpringToolTest {
             "security_config",
             "scheduled_tasks",
             "event_listeners",
+            "annotated_methods",
             "boot_endpoints",
             "boot_autoconfig",
             "boot_config_properties",
