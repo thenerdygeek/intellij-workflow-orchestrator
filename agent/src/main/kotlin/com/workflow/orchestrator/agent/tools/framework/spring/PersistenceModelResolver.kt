@@ -12,12 +12,19 @@ import com.intellij.openapi.project.Project
  * without the Persistence plugin), every public method returns empty results without
  * raising, so callers see a clean "not found" rather than a reflection trace.
  *
- * Entry point: PersistenceHelper.getHelper() (static, no-args) → getSharedModelBrowser()
- * Facet enumeration: FacetManager.allFacets filtered by class name containing "PersistenceFacet"
- * or "JpaFacet" — avoids needing a PsiElement per module (FacetManager is always available).
+ * Traversal: for each module, [FacetManager.getInstance(module).allFacets] is filtered
+ * using [Api.persistenceFacetInterface].isInstance(facet) — a strict type check against
+ * [com.intellij.persistence.facet.PersistenceFacet]. Each matching facet is then walked
+ * via getAnnotationEntityMappings → getModelHelper → getPersistentEntities to build the
+ * entity list. FacetManager is always available regardless of plugin presence; the
+ * PersistenceFacet interface class is loaded once during initialization and stored on
+ * [Api] for reuse.
  *
- * If the FacetManager path returns no facets, allEntities returns empty and the action
- * reports the plugin absent / no JPA facet attached message.
+ * The resolver is self-gating — [ClassNotFoundException] when the Persistence plugin is
+ * absent is caught during reflection initialization and every public method falls through
+ * to empty results without raising. Callers do not need to consult
+ * [com.workflow.orchestrator.agent.ide.IdeContext.hasPersistencePlugin] before invoking;
+ * that flag exists for future registration-layer decisions.
  *
  * Signatures pinned by SpringToolTest.SpringPluginApiContract. See
  * docs/research/2026-04-21-intellij-persistence-api-signatures.md for the full surface
@@ -48,7 +55,10 @@ internal object PersistenceModelResolver {
 
     // ─── Constants ──────────────────────────────────────────────────────────
 
+    /** Used for plugin-presence detection (Class.forName succeeds only on Ultimate with Persistence plugin). */
     private const val PERSISTENCE_HELPER_FQN = "com.intellij.persistence.PersistenceHelper"
+    /** Strict type used to filter [FacetManager.allFacets] — avoids substring false-positives. */
+    private const val PERSISTENCE_FACET_INTERFACE_FQN = "com.intellij.persistence.facet.PersistenceFacet"
     private const val RELATIONSHIP_ATTR_MODEL_HELPER_FQN =
         "com.intellij.persistence.model.helpers.PersistentRelationshipAttributeModelHelper"
 
@@ -64,10 +74,10 @@ internal object PersistenceModelResolver {
      * Returns empty when the Persistence plugin is absent.
      *
      * Facet enumeration strategy: iterate FacetManager.getInstance(module).allFacets
-     * and filter by class name containing "PersistenceFacet" or "JpaFacet". This is
-     * preferred over browser.queryPersistenceFacets(PsiElement) because it requires
-     * no PsiElement for the whole-module case, and FacetManager is always available
-     * regardless of whether the Persistence plugin is installed.
+     * and filter via [Api.persistenceFacetInterface].isInstance(facet). This is a strict
+     * type check that avoids false positives from unrelated plugins whose class names
+     * happen to contain "PersistenceFacet". FacetManager is always available regardless
+     * of whether the Persistence plugin is installed.
      */
     fun allEntities(project: Project): List<EntityMetadata> {
         val api = api() ?: return emptyList()
@@ -75,10 +85,7 @@ internal object PersistenceModelResolver {
         for (module in ModuleManager.getInstance(project).modules) {
             val facets = try {
                 FacetManager.getInstance(module).allFacets
-                    .filter { facet ->
-                        facet.javaClass.name.contains("PersistenceFacet", ignoreCase = true) ||
-                            facet.javaClass.name.contains("JpaFacet", ignoreCase = true)
-                    }
+                    .filter { facet -> api.persistenceFacetInterface.isInstance(facet) }
             } catch (_: Exception) { emptyList() }
 
             for (facet in facets) {
@@ -317,26 +324,37 @@ internal object PersistenceModelResolver {
         if (initialized) return cached
         synchronized(this) {
             if (initialized) return cached
-            cached = try {
-                val helperClass = Class.forName(PERSISTENCE_HELPER_FQN)
-                // Verify getHelper() exists (static, no-args) — contract test pins this too
-                helperClass.getMethod("getHelper")
-                // Cache the relationship helper class for instanceof checks at call time
-                val relHelperClass = try {
-                    Class.forName(RELATIONSHIP_ATTR_MODEL_HELPER_FQN)
-                } catch (_: ClassNotFoundException) { null }
-                Api(
-                    persistenceHelperClass = helperClass,
-                    relationshipHelperClass = relHelperClass,
-                )
-            } catch (_: Throwable) { null }
+            cached = buildApi()
             initialized = true
             return cached
         }
     }
 
+    private fun buildApi(): Api? {
+        return try {
+            // Plugin-presence check: Class.forName succeeds only on Ultimate with the
+            // Persistence plugin installed. The helper class itself is never invoked —
+            // the actual traversal goes through FacetManager + PersistenceFacet.
+            Class.forName(PERSISTENCE_HELPER_FQN).getMethod("getHelper")
+            // Load PersistenceFacet interface for strict facet filtering (replaces the
+            // former substring match on class names).
+            val facetInterface = try {
+                Class.forName(PERSISTENCE_FACET_INTERFACE_FQN)
+            } catch (_: ClassNotFoundException) { null } ?: return null
+            // Cache the relationship helper class for instanceof checks at call time.
+            val relHelperClass = try {
+                Class.forName(RELATIONSHIP_ATTR_MODEL_HELPER_FQN)
+            } catch (_: ClassNotFoundException) { null }
+            Api(
+                persistenceFacetInterface = facetInterface,
+                relationshipHelperClass = relHelperClass,
+            )
+        } catch (_: Throwable) { null }
+    }
+
     private class Api(
-        val persistenceHelperClass: Class<*>,
+        /** [com.intellij.persistence.facet.PersistenceFacet] interface — used to filter allFacets. */
+        val persistenceFacetInterface: Class<*>,
         val relationshipHelperClass: Class<*>?,
     )
 }
