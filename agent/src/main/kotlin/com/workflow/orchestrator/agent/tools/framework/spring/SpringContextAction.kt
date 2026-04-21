@@ -21,9 +21,10 @@ internal suspend fun executeContext(params: JsonObject, project: Project): ToolR
     if (PsiToolUtils.isDumb(project)) return PsiToolUtils.dumbModeError()
 
     val filter = params["filter"]?.jsonPrimitive?.contentOrNull
+    val profileFilter = params["profile"]?.jsonPrimitive?.contentOrNull
 
     val content: String = ReadAction.nonBlocking<String> {
-        collectBeans(project, filter)
+        collectBeans(project, filter, profileFilter)
     }.inSmartMode(project).executeSynchronously()
 
     return ToolResult(
@@ -33,7 +34,7 @@ internal suspend fun executeContext(params: JsonObject, project: Project): ToolR
     )
 }
 
-private fun collectBeans(project: Project, filter: String?): String {
+private fun collectBeans(project: Project, filter: String?, profileFilter: String?): String {
     val allBeans = SpringModelResolver.allBeans(project)
     if (allBeans.isEmpty()) {
         return if (SpringModelResolver.getAllModels(project).isEmpty()) {
@@ -43,26 +44,45 @@ private fun collectBeans(project: Project, filter: String?): String {
         }
     }
 
-    val filtered = if (filter != null) {
+    val filteredByProfile = if (profileFilter != null) {
         allBeans.filter { bean ->
-            val name = SpringModelResolver.beanName(bean).orEmpty()
-            val type = typeQualifiedName(bean).orEmpty()
-            name.contains(filter, ignoreCase = true) || type.contains(filter, ignoreCase = true)
+            val profile = SpringModelResolver.beanProfile(bean)
+            profile != null && profile != "DefaultSpringProfile" &&
+                profile.contains(profileFilter, ignoreCase = true)
         }
     } else {
         allBeans
     }
 
-    if (filtered.isEmpty()) {
-        return "No beans found${if (filter != null) " matching '$filter'" else ""}."
+    val filtered = if (filter != null) {
+        filteredByProfile.filter { bean ->
+            val name = SpringModelResolver.beanName(bean).orEmpty()
+            val type = typeQualifiedName(bean).orEmpty()
+            name.contains(filter, ignoreCase = true) || type.contains(filter, ignoreCase = true)
+        }
+    } else {
+        filteredByProfile
     }
 
+    if (filtered.isEmpty()) {
+        val filterPart = if (filter != null) " filter='$filter'" else ""
+        val profilePart = if (profileFilter != null) " profile='$profileFilter'" else ""
+        return "No beans found${if (filter != null || profileFilter != null) " matching$filterPart$profilePart." else "."}"
+    }
+
+    val headerParts = buildList {
+        if (filter != null) add("filter='$filter'")
+        if (profileFilter != null) add("profile='$profileFilter'")
+    }
+    val header = if (headerParts.isNotEmpty()) " (${filtered.size} entries, ${headerParts.joinToString(", ")})" else " (${filtered.size} entries)"
+
     val rendered = filtered.take(50).joinToString("\n") { bean -> renderBeanLine(bean) }
-    return if (filtered.size > 50) {
+    val body = if (filtered.size > 50) {
         "$rendered\n... (${filtered.size - 50} more beans not shown)"
     } else {
         rendered
     }
+    return "Spring beans listed$header\n$body"
 }
 
 private fun renderBeanLine(bean: Any): String {

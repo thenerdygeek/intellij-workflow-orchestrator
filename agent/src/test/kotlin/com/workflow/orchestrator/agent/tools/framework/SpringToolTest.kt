@@ -168,9 +168,16 @@ class SpringToolTest {
         }
 
         @Test
-        fun `total parameter count is 11`() {
-            // 1 action discriminator + 10 action-specific parameters
-            assertEquals(11, tool.parameters.properties.size)
+        fun `profile parameter exists and is string type`() {
+            val prop = tool.parameters.properties["profile"]
+            assertNotNull(prop)
+            assertEquals("string", prop!!.type)
+        }
+
+        @Test
+        fun `total parameter count is 12`() {
+            // 1 action discriminator + 11 action-specific parameters
+            assertEquals(12, tool.parameters.properties.size)
         }
 
         @Test
@@ -194,7 +201,7 @@ class SpringToolTest {
             assertEquals("spring", def.function.name)
             assertTrue(def.function.description.isNotBlank())
             assertEquals("object", def.function.parameters.type)
-            assertEquals(11, def.function.parameters.properties.size)
+            assertEquals(12, def.function.parameters.properties.size)
             assertEquals(listOf("action"), def.function.parameters.required)
         }
     }
@@ -368,6 +375,7 @@ class SpringToolTest {
             }
 
         @Test fun `context routes`() = smokeTestAction("context")
+        @Test fun `context with profile filter routes`() = smokeTestAction("context", mapOf("profile" to "dev"))
         @Test fun `endpoints routes`() = smokeTestAction("endpoints")
         @Test fun `bean_graph routes`() = smokeTestAction("bean_graph", mapOf("bean_name" to "FooService"))
         @Test fun `config routes`() = smokeTestAction("config")

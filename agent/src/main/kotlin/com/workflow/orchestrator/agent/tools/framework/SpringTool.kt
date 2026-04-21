@@ -53,7 +53,7 @@ class SpringTool(
             appendLine("Spring framework intelligence — beans, endpoints, configuration, JPA, security, actuator.")
             appendLine()
             appendLine("Actions and their parameters:")
-            appendLine("- context(filter?) → Spring bean context")
+            appendLine("- context(filter?, profile?) → Spring bean context (filter by name/type and/or @Profile value)")
             if (includeEndpointActions) appendLine("- endpoints(filter?, include_params?) → REST endpoint mappings")
             appendLine("- bean_graph(bean_name) → Bean dependency graph (accepts bean name, alias, class, or @Bean method name)")
             appendLine("- config(property) → Configuration property value")
@@ -90,6 +90,10 @@ class SpringTool(
             "filter" to ParameterProperty(
                 type = "string",
                 description = "Filter results by name/pattern — for context, endpoints, boot_autoconfig"
+            ),
+            "profile" to ParameterProperty(
+                type = "string",
+                description = "Filter to beans whose @Profile matches this substring (case-insensitive) — for context"
             ),
             "bean_name" to ParameterProperty(
                 type = "string",
