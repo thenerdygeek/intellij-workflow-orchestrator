@@ -52,25 +52,114 @@ private fun executeMavenVersionInfo(manager: Any, moduleFilter: String?): ToolRe
         return ToolResult("No Maven projects found.", "No Maven projects", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
     }
 
-    val targetProject = MavenUtils.findMavenProject(mavenProjects, manager, moduleFilter)
-        ?: return ToolResult(
-            "Module '${moduleFilter}' not found. Available: ${MavenUtils.getProjectNames(mavenProjects)}",
-            "Module not found", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
-        )
+    if (moduleFilter != null) {
+        val targetProject = MavenUtils.findMavenProject(mavenProjects, manager, moduleFilter)
+            ?: return ToolResult(
+                "Module '${moduleFilter}' not found. Available: ${MavenUtils.getProjectNames(mavenProjects)}",
+                "Module not found", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
+            )
+        return renderSingleMavenModule(targetProject)
+    }
 
+    return renderAllMavenModules(mavenProjects)
+}
+
+private fun renderSingleMavenModule(targetProject: Any): ToolResult {
     val projectName = MavenUtils.getDisplayName(targetProject)
     val projectVersion = MavenUtils.getMavenId(targetProject, "getVersion") ?: "unknown"
+    val versions = extractVersionsForMavenProject(targetProject)
 
-    val dependencies = MavenUtils.getDependencies(targetProject)
-    val properties = MavenUtils.getProperties(targetProject)
+    if (versions.isEmpty()) {
+        return ToolResult(
+            "Project: $projectName ($projectVersion)\nNo recognized framework versions detected from Maven dependencies.",
+            "No frameworks", 10
+        )
+    }
 
-    val versions = mutableMapOf<String, String>()
+    val content = buildString {
+        appendLine("Project: $projectName ($projectVersion)")
+        for ((name, version) in versions) {
+            appendLine("$name: $version")
+        }
+    }
+
+    return ToolResult(
+        content = content.trimEnd(),
+        summary = versions.entries.joinToString(", ") { "${it.key} ${it.value}" },
+        tokenEstimate = TokenEstimator.estimate(content)
+    )
+}
+
+/**
+ * Multi-module Maven aggregation. For each detected framework, collapse to a
+ * single line if every module that references it agrees on the version; when
+ * versions diverge across modules, render one line per version with the
+ * originating module list — so a mixed-Spring-Boot monorepo doesn't hide a
+ * version mismatch behind the root pom.
+ */
+private fun renderAllMavenModules(mavenProjects: List<Any>): ToolResult {
+    val totalModules = mavenProjects.size
+    val frameworkMap = linkedMapOf<String, LinkedHashMap<String, MutableList<String>>>()
+
+    for (project in mavenProjects) {
+        val moduleName = MavenUtils.getDisplayName(project)
+        val versions = extractVersionsForMavenProject(project)
+        for ((framework, version) in versions) {
+            frameworkMap.getOrPut(framework) { linkedMapOf() }
+                .getOrPut(version) { mutableListOf() }
+                .add(moduleName)
+        }
+    }
+
+    if (frameworkMap.isEmpty()) {
+        return ToolResult(
+            "No recognized framework versions detected across $totalModules Maven module(s).",
+            "No frameworks", 10
+        )
+    }
+
+    val rootName = MavenUtils.getDisplayName(mavenProjects.first())
+    val content = buildString {
+        appendLine("Project: $rootName (Maven, $totalModules module${if (totalModules == 1) "" else "s"})")
+        val moduleNames = mavenProjects.joinToString(", ") { MavenUtils.getDisplayName(it) }
+        appendLine("Modules: $moduleNames")
+        appendLine()
+        for ((framework, versionMap) in frameworkMap) {
+            if (versionMap.size == 1) {
+                val (version, modules) = versionMap.entries.first()
+                val suffix = if (modules.size == totalModules) "" else " (in: ${modules.joinToString(", ")})"
+                appendLine("$framework: $version$suffix")
+            } else {
+                appendLine("$framework: (diverges across modules)")
+                for ((version, modules) in versionMap) {
+                    appendLine("  $version — ${modules.joinToString(", ")}")
+                }
+            }
+        }
+    }
+
+    val summary = frameworkMap.entries.joinToString(", ") { (framework, versionMap) ->
+        if (versionMap.size == 1) "$framework ${versionMap.keys.first()}"
+        else "$framework (${versionMap.size} versions)"
+    }
+
+    return ToolResult(
+        content = content.trimEnd(),
+        summary = summary,
+        tokenEstimate = TokenEstimator.estimate(content)
+    )
+}
+
+private fun extractVersionsForMavenProject(mavenProject: Any): Map<String, String> {
+    val dependencies = MavenUtils.getDependencies(mavenProject)
+    val properties = MavenUtils.getProperties(mavenProject)
+    val versions = linkedMapOf<String, String>()
 
     findVersion(dependencies, "org.springframework.boot", "spring-boot-starter", "spring-boot")?.let {
         versions["Spring Boot"] = it
     }
     if ("Spring Boot" !in versions) {
-        getParentVersion(targetProject, "org.springframework.boot")?.let {
+        getParentVersion(mavenProject, "org.springframework.boot")?.let {
             versions["Spring Boot"] = it
         }
     }
@@ -117,25 +206,7 @@ private fun executeMavenVersionInfo(manager: Any, moduleFilter: String?): ToolRe
         versions["Logback"] = it
     }
 
-    if (versions.isEmpty()) {
-        return ToolResult(
-            "Project: $projectName ($projectVersion)\nNo recognized framework versions detected from Maven dependencies.",
-            "No frameworks", 10
-        )
-    }
-
-    val content = buildString {
-        appendLine("Project: $projectName ($projectVersion)")
-        for ((name, version) in versions) {
-            appendLine("$name: $version")
-        }
-    }
-
-    return ToolResult(
-        content = content.trimEnd(),
-        summary = versions.entries.joinToString(", ") { "${it.key} ${it.value}" },
-        tokenEstimate = TokenEstimator.estimate(content)
-    )
+    return versions
 }
 
 private suspend fun executeGradleVersionInfo(basePath: String): ToolResult = withContext(Dispatchers.IO) {

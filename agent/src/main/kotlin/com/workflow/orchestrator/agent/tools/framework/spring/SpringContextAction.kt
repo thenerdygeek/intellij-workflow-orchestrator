@@ -57,7 +57,8 @@ private fun collectBeans(project: Project, filter: String?, profileFilter: Strin
     val filtered = if (filter != null) {
         filteredByProfile.filter { bean ->
             val name = SpringModelResolver.beanName(bean).orEmpty()
-            val type = typeQualifiedName(bean).orEmpty()
+            val cls = beanClass(bean)
+            val type = (cls?.qualifiedName ?: cls?.name).orEmpty()
             name.contains(filter, ignoreCase = true) || type.contains(filter, ignoreCase = true)
         }
     } else {
@@ -86,19 +87,18 @@ private fun collectBeans(project: Project, filter: String?, profileFilter: Strin
 }
 
 private fun renderBeanLine(bean: Any): String {
-    val name = SpringModelResolver.beanName(bean) ?: "(unnamed)"
-    val type = typeQualifiedName(bean) ?: "(unknown type)"
+    val resolvedClass = beanClass(bean)
+    val name = SpringModelResolver.beanName(bean)
+        ?: resolvedClass?.name?.replaceFirstChar { it.lowercaseChar() }
+        ?: "(unnamed)"
+    val type = resolvedClass?.qualifiedName ?: resolvedClass?.name ?: "(unknown type)"
     val scope = SpringModelResolver.beanScope(bean) ?: "singleton"
-    val stereotype = stereotypeOf(bean)
+    val stereotype = stereotypeOf(bean, resolvedClass)
     return "$stereotype $name: $type (scope: $scope)"
 }
 
-private fun typeQualifiedName(bean: Any): String? {
-    val typeClass = beanClass(bean) ?: return null
-    return typeClass.qualifiedName ?: typeClass.name
-}
-
 private fun beanClass(bean: Any): PsiClass? {
+    SpringModelResolver.beanClass(bean)?.let { return it }
     val defining = SpringModelResolver.beanDefiningElement(bean)
     if (defining is PsiClass) return defining
     if (defining is com.intellij.psi.PsiMethod) {
@@ -107,13 +107,11 @@ private fun beanClass(bean: Any): PsiClass? {
     return null
 }
 
-private fun stereotypeOf(bean: Any): String {
+private fun stereotypeOf(bean: Any, resolvedClass: PsiClass?): String {
     val defining = SpringModelResolver.beanDefiningElement(bean)
-    return when (defining) {
-        is com.intellij.psi.PsiMethod -> "@Bean"
-        is PsiClass -> detectStereotype(defining)
-        else -> "@Bean"
-    }
+    if (defining is com.intellij.psi.PsiMethod) return "@Bean"
+    val classToInspect = (defining as? PsiClass) ?: resolvedClass
+    return detectStereotype(classToInspect)
 }
 
 internal fun detectStereotype(psiClass: PsiClass?): String {

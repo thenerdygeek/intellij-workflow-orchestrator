@@ -29,17 +29,9 @@ private val defaultActuatorEndpoints = listOf(
 )
 
 internal suspend fun executeBootActuator(params: JsonObject, project: Project): ToolResult {
-    val basePath = project.basePath
-        ?: return ToolResult(
-            "Error: project base path not available",
-            "Error",
-            ToolResult.ERROR_TOKEN_ESTIMATE,
-            isError = true
-        )
-
     return try {
         withContext(Dispatchers.IO) {
-            analyzeActuator(project, File(basePath))
+            analyzeActuator(project)
         }
     } catch (e: Exception) {
         ToolResult(
@@ -51,10 +43,10 @@ internal suspend fun executeBootActuator(params: JsonObject, project: Project): 
     }
 }
 
-private fun analyzeActuator(project: Project, baseDir: File): ToolResult {
-    val actuatorDetected = checkActuatorDependency(project, baseDir)
+private fun analyzeActuator(project: Project): ToolResult {
+    val actuatorDetected = checkActuatorDependency(project)
 
-    val mgmtProps = readManagementProperties(baseDir)
+    val mgmtProps = readManagementProperties(project)
 
     val basePath = mgmtProps["management.endpoints.web.base-path"]
         ?: mgmtProps["management.server.base-path"]
@@ -148,7 +140,7 @@ private fun analyzeActuator(project: Project, baseDir: File): ToolResult {
     )
 }
 
-private fun checkActuatorDependency(project: Project, baseDir: File): Boolean {
+private fun checkActuatorDependency(project: Project): Boolean {
     try {
         val manager = MavenUtils.getMavenManager(project)
         if (manager != null) {
@@ -164,12 +156,9 @@ private fun checkActuatorDependency(project: Project, baseDir: File): Boolean {
     } catch (_: Exception) { /* fall through to file-based check */ }
 
     val buildFileNames = listOf("build.gradle", "build.gradle.kts", "pom.xml")
-    val searchRoots = mutableListOf(baseDir)
-    baseDir.listFiles()
-        ?.filter { it.isDirectory && !it.name.startsWith(".") }
-        ?.let { searchRoots.addAll(it) }
+    val roots = collectModuleContentRoots(project)
 
-    for (root in searchRoots) {
+    for (root in roots) {
         for (buildFileName in buildFileNames) {
             val buildFile = File(root, buildFileName)
             if (buildFile.isFile) {
@@ -182,36 +171,32 @@ private fun checkActuatorDependency(project: Project, baseDir: File): Boolean {
     return false
 }
 
-private fun readManagementProperties(baseDir: File): Map<String, String> {
+private fun collectModuleContentRoots(project: Project): List<File> {
+    val modules = com.intellij.openapi.module.ModuleManager.getInstance(project).modules
+    if (modules.isEmpty()) {
+        return listOfNotNull(project.basePath?.let { File(it) })
+    }
+    val out = linkedSetOf<File>()
+    for (module in modules) {
+        for (root in com.intellij.openapi.roots.ModuleRootManager.getInstance(module).contentRoots) {
+            val f = File(root.path)
+            if (f.isDirectory) out.add(f)
+        }
+    }
+    return out.toList()
+}
+
+private fun readManagementProperties(project: Project): Map<String, String> {
     val result = mutableMapOf<String, String>()
-
-    val searchDirs = listOf(
-        "src/main/resources",
-        "src/main/resources/config"
-    )
-    val fileNames = listOf(
-        "application.properties",
-        "application.yml",
-        "application.yaml"
+    val files = scanSpringResourceFiles(
+        project,
+        listOf("application.properties", "application.yml", "application.yaml"),
     )
 
-    val roots = mutableListOf(baseDir)
-    baseDir.listFiles()
-        ?.filter { it.isDirectory && !it.name.startsWith(".") }
-        ?.let { roots.addAll(it) }
-
-    for (root in roots) {
-        for (dir in searchDirs) {
-            val resourceDir = File(root, dir)
-            if (!resourceDir.isDirectory) continue
-            for (fileName in fileNames) {
-                val file = File(resourceDir, fileName)
-                if (!file.isFile) continue
-                when (file.extension.lowercase()) {
-                    "properties" -> readPropertiesManagement(file, result)
-                    "yml", "yaml" -> readYamlManagement(file, result)
-                }
-            }
+    for (entry in files) {
+        when (entry.file.extension.lowercase()) {
+            "properties" -> readPropertiesManagement(entry.file, result)
+            "yml", "yaml" -> readYamlManagement(entry.file, result)
         }
     }
 

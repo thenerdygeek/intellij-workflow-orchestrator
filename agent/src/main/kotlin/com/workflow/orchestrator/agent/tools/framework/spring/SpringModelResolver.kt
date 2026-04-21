@@ -102,6 +102,14 @@ internal object SpringModelResolver {
 
     fun beanName(bean: Any): String? = invoke(bean, "getBeanName") as? String
 
+    /**
+     * Resolves the bean's class directly via `CommonSpringBean.getBeanClass()`
+     * when available. Covers XML beans and auto-configured beans whose
+     * defining PSI element is a `DomElement` (not a `PsiClass`/`PsiMethod`),
+     * so the PSI-walking fallback in [SpringContextAction] can't see them.
+     */
+    fun beanClass(bean: Any): PsiClass? = invoke(bean, "getBeanClass") as? PsiClass
+
     fun beanScope(bean: Any): String? = invoke(bean, "getSpringScope")?.toString()
 
     fun beanProfile(bean: Any): String? = invoke(bean, "getProfile")?.toString()

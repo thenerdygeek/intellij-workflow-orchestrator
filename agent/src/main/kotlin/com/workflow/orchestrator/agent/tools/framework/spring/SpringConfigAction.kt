@@ -12,12 +12,14 @@ import java.util.Properties
 
 internal suspend fun executeConfig(params: JsonObject, project: Project): ToolResult {
     val propertyName = params["property"]?.jsonPrimitive?.content
-    val basePath = project.basePath
-        ?: return ToolResult("Error: project base path not available", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
     return try {
         withContext(Dispatchers.IO) {
-            val configFiles = findConfigFiles(File(basePath))
+            // Pattern-based scan so any user profile matches:
+            // application-mydocker.properties, application-staging.yml, etc.
+            val configFiles = scanSpringResourceFilesMatching(project) {
+                SPRING_CONFIG_FILE_PATTERN.matches(it.name)
+            }
             if (configFiles.isEmpty()) {
                 return@withContext ToolResult(
                     "No Spring configuration files found (application.properties, application.yml, application.yaml).",
@@ -27,13 +29,11 @@ internal suspend fun executeConfig(params: JsonObject, project: Project): ToolRe
 
             val allProperties = mutableMapOf<String, MutableList<ConfigPropertyEntry>>()
 
-            for (configFile in configFiles) {
-                val relativePath = configFile.absolutePath.removePrefix("$basePath/")
-                val extension = configFile.extension.lowercase()
-
+            for (entry in configFiles) {
+                val extension = entry.file.extension.lowercase()
                 when (extension) {
-                    "properties" -> parsePropertiesFile(configFile, relativePath, allProperties)
-                    "yml", "yaml" -> parseYamlFile(configFile, relativePath, allProperties)
+                    "properties" -> parsePropertiesFile(entry.file, entry.relativePath, allProperties)
+                    "yml", "yaml" -> parseYamlFile(entry.file, entry.relativePath, allProperties)
                 }
             }
 
@@ -49,58 +49,13 @@ internal suspend fun executeConfig(params: JsonObject, project: Project): ToolRe
 
             ToolResult(
                 content = content,
-                summary = if (propertyName != null) "Lookup: $propertyName" else "${allProperties.size} properties from ${configFiles.size} file(s)",
+                summary = if (propertyName != null) "Lookup: $propertyName" else "${allProperties.size} properties from ${configFiles.size} file(s) across ${configFiles.mapNotNull { it.moduleName }.toSet().size.coerceAtLeast(1)} module(s)",
                 tokenEstimate = TokenEstimator.estimate(content)
             )
         }
     } catch (e: Exception) {
         ToolResult("Error reading Spring config: ${e.message}", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
     }
-}
-
-private fun findConfigFiles(baseDir: File): List<File> {
-    val searchDirs = listOf(
-        "src/main/resources",
-        "src/main/resources/config",
-        "src/test/resources"
-    )
-    val fileNames = listOf(
-        "application.properties",
-        "application.yml",
-        "application.yaml",
-        "application-dev.properties",
-        "application-dev.yml",
-        "application-test.properties",
-        "application-test.yml",
-        "application-prod.properties",
-        "application-prod.yml",
-        "bootstrap.properties",
-        "bootstrap.yml"
-    )
-
-    val found = mutableListOf<File>()
-
-    for (dir in searchDirs) {
-        val resourceDir = File(baseDir, dir)
-        if (!resourceDir.isDirectory) continue
-        for (fileName in fileNames) {
-            val file = File(resourceDir, fileName)
-            if (file.isFile) found.add(file)
-        }
-    }
-
-    baseDir.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") }?.forEach { subDir ->
-        for (dir in searchDirs) {
-            val resourceDir = File(subDir, dir)
-            if (!resourceDir.isDirectory) continue
-            for (fileName in fileNames) {
-                val file = File(resourceDir, fileName)
-                if (file.isFile) found.add(file)
-            }
-        }
-    }
-
-    return found
 }
 
 private fun parsePropertiesFile(file: File, relativePath: String, target: MutableMap<String, MutableList<ConfigPropertyEntry>>) {
