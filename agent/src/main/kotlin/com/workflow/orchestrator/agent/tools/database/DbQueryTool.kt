@@ -5,7 +5,6 @@ import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.database.DatabaseConnectionManager
-import com.workflow.orchestrator.agent.tools.database.DatabaseSettings
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
@@ -71,13 +70,20 @@ class DbQueryTool : AgentTool {
         // Validate read-only before touching the database
         DatabaseConnectionManager.validateReadOnly(sql)?.let { msg -> return error(msg) }
 
-        val profile = try {
-            DatabaseSettings.getInstance(project).getProfile(profileId)
-        } catch (_: Exception) {
-            return error("DatabaseSettings service not available.")
-        } ?: return error(
-            "Profile '$profileId' not found. Call db_list_profiles to see available profiles."
-        )
+        val profile = when (val lookup = lookupDbProfile(project, profileId)) {
+            is DbProfileLookup.Found -> lookup.profile
+            is DbProfileLookup.IdeManaged -> return ToolResult(
+                content = "Profile '$profileId' (${lookup.displayName}) is an IDE-managed data source. " +
+                    "IDE profile credentials are not available to the agent. " +
+                    "To run queries, configure a manual profile in Settings → Tools → Workflow Orchestrator → Agent → Database Profiles.",
+                summary = "db_query: IDE profile credentials not available",
+                tokenEstimate = 80,
+                isError = true,
+            )
+            is DbProfileLookup.NotFound -> return error(
+                "Profile '$profileId' not found. Call db_list_profiles to see available profiles."
+            )
+        }
 
         val result = DatabaseConnectionManager.withConnection(profile, database) { conn ->
             DatabaseConnectionManager.createStatement(conn).use { stmt ->

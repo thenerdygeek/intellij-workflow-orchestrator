@@ -50,7 +50,17 @@ internal object IdeDataSourceResolver {
             api.getDataSources.invoke(manager) as? List<Any>
         } catch (_: Exception) { null } ?: return emptyList()
 
-        return rawSources.mapNotNull { toProfile(it) }
+        val profiles = rawSources.mapNotNull { toProfile(it) }
+
+        // Deduplicate ids by suffixing a counter when two IDE data sources
+        // have names that normalize to the same slug (e.g. "Local DB" and
+        // "Local.DB" both becoming ide-Local_DB). First occurrence keeps the
+        // clean id; subsequent collisions get _2, _3, etc.
+        val seenCounts = mutableMapOf<String, Int>()
+        return profiles.map { profile ->
+            val count = seenCounts.merge(profile.id, 1, Int::plus)!!
+            if (count == 1) profile else profile.copy(id = "${profile.id}_$count")
+        }
     }
 
     private fun toProfile(rawDataSource: Any): DatabaseProfile? {
