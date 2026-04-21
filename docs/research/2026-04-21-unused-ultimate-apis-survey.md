@@ -136,6 +136,10 @@ Significant Ultimate-only surface remains untapped. This survey enumerates **18 
 
 **Complexity:** Medium. Plugin: already declared. gRPC/async providers activate only when those plugins are installed — degrade gracefully.
 
+**2026-04-21 update — A5.1/A5.2 verification findings:**
+
+gRPC: `ProtoEndpointsProvider` (`com.intellij.grpc.endpoints`) implements `EndpointsUrlTargetProvider` and is registered as a `<microservices.endpointsProvider>` EP — meaning the existing `EndpointsDiscoverer` already handles it with zero code changes. Adding `"com.intellij.grpc"` to `bundledPlugins` is the only action required. Async messaging (Kafka, RabbitMQ, JMS): no `EndpointsProvider`-based SPI exists; instead, `MQResolverManager.getAllVariants(MQType)` in `com.intellij.microservices.jvm.mq` (already on classpath) is the discovery path, requiring a dedicated `AsyncEndpointsDiscoverer` for A5.3. The `spring-messaging` plugin must also be added to `bundledPlugins` to load framework-specific resolvers (`SpringKafkaListenerMQResolver`, `SpringRabbitListenerMQResolver`, `SpringJmsListenerMQResolver`). See `docs/research/2026-04-21-intellij-async-endpoints-api-signatures.md` for verified signatures and full findings.
+
 ---
 
 ## Tier B — Nice to have
