@@ -493,6 +493,30 @@ class SpringToolTest {
             } catch (_: ClassNotFoundException) { return }
             cls.getMethod("getAllMetaConfigKeys", com.intellij.openapi.module.Module::class.java)
         }
+
+        @Test
+        fun `PersistenceHelper getHelper has no args`() {
+            val cls = try {
+                Class.forName("com.intellij.persistence.PersistenceHelper")
+            } catch (_: ClassNotFoundException) { return }
+            cls.getMethod("getHelper")
+        }
+
+        @Test
+        fun `PersistenceModelBrowser is at util subpackage`() {
+            try {
+                Class.forName("com.intellij.persistence.util.PersistenceModelBrowser")
+            } catch (_: ClassNotFoundException) { return }
+            // Class loads — FQN is correct.
+        }
+
+        @Test
+        fun `PersistenceMappingsModelHelper exposes getPersistentEntities`() {
+            val cls = try {
+                Class.forName("com.intellij.persistence.model.helpers.PersistenceMappingsModelHelper")
+            } catch (_: ClassNotFoundException) { return }
+            cls.getMethod("getPersistentEntities")
+        }
     }
 
     companion object {

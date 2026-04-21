@@ -21,6 +21,7 @@ object IdeContextDetector {
     private const val SPRING_PLUGIN_ID = "com.intellij.spring"
     private const val SPRING_BOOT_PLUGIN_ID = "com.intellij.spring.boot"
     private const val JAVA_PLUGIN_ID = "com.intellij.java"
+    private const val PERSISTENCE_PLUGIN_ID = "com.intellij.persistence"
 
     fun detect(project: Project): IdeContext {
         val appInfo = ApplicationInfo.getInstance()
@@ -33,6 +34,7 @@ object IdeContextDetector {
         val hasPythonCore = isPluginInstalled(PYTHON_CORE_PLUGIN_ID)
         val hasSpring = isPluginInstalled(SPRING_PLUGIN_ID)
         val hasSpringBoot = isPluginInstalled(SPRING_BOOT_PLUGIN_ID)
+        val hasPersistence = isPluginInstalled(PERSISTENCE_PLUGIN_ID)
         val hasPyTestConfigType = ConfigurationType.CONFIGURATION_TYPE_EP.extensionList
             .any { it.id == "PyTest" || it.id == "py.test" }
 
@@ -51,6 +53,7 @@ object IdeContextDetector {
             hasPythonCorePlugin = hasPythonCore,
             hasSpringPlugin = hasSpring,
             hasSpringBootPlugin = hasSpringBoot,
+            hasPersistencePlugin = hasPersistence,
             detectedFrameworks = frameworks,
             detectedBuildTools = buildTools,
             hasPyTestConfigType = hasPyTestConfigType,
