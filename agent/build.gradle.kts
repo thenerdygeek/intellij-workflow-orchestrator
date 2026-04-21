@@ -20,6 +20,7 @@ dependencies {
         intellijIdeaUltimate(providers.gradleProperty("platformVersion"))
         bundledPlugins(listOf(
             "Git4Idea",
+            "com.intellij.database",
             "com.intellij.grpc",
             "com.intellij.java",
             "com.intellij.persistence",
