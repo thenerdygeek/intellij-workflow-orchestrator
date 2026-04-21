@@ -41,17 +41,16 @@ class DebugBreakpointsToolTest {
     }
 
     @Test
-    fun `action enum contains all 8 actions`() {
+    fun `action enum contains all 7 actions`() {
         val actions = tool.parameters.properties["action"]?.enumValues
         assertNotNull(actions)
-        assertEquals(8, actions!!.size)
+        assertEquals(7, actions!!.size)
         assertTrue("add_breakpoint" in actions)
         assertTrue("method_breakpoint" in actions)
         assertTrue("exception_breakpoint" in actions)
         assertTrue("field_watchpoint" in actions)
         assertTrue("remove_breakpoint" in actions)
         assertTrue("list_breakpoints" in actions)
-        assertTrue("start_session" in actions)
         assertTrue("attach_to_process" in actions)
     }
 

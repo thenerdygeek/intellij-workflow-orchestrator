@@ -86,13 +86,14 @@ class JavaRuntimeExecTool : AgentTool {
     override val name = "java_runtime_exec"
 
     override val description = """
-Java/Kotlin runtime execution — JUnit/TestNG test running and module compilation.
+Java/Kotlin runtime execution — JUnit/TestNG test running, module compilation, and rerun of failed tests.
 
 Actions and their parameters:
 - run_tests(class_name, method?, timeout?, use_native_runner?) → Run tests for a specific Java/Kotlin class via IntelliJ's JUnit/TestNG runner, with Maven/Gradle shell fallback (timeout default 300s, max 900s). class_name is required and must be fully qualified — use test_finder to discover test classes first.
 - compile_module(module?, check_dependents?) → Compile a Java/Kotlin module via CompilerManager. If `module` is omitted, compiles the entire project. When `module` is given and `check_dependents=true`, also recompiles modules that depend on it (catches downstream ABI breakage after editing an upstream module). Default check_dependents is false.
+- rerun_failed_tests(session_id?) → Re-run only the failed/errored tests from the last test session. Resolves the most-recent test run via RunContentManager (or the session matching session_id if provided). Returns NO_PRIOR_TEST_SESSION if no test session exists, or an informational message if all tests passed.
 
-description optional: shown to user in approval dialog on run_tests, compile_module.
+description optional: shown to user in approval dialog on run_tests, compile_module, rerun_failed_tests.
 """.trimIndent()
 
     override val parameters = FunctionParameters(
@@ -100,7 +101,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             "action" to ParameterProperty(
                 type = "string",
                 description = "Operation to perform",
-                enumValues = listOf("run_tests", "compile_module")
+                enumValues = listOf("run_tests", "compile_module", "rerun_failed_tests")
             ),
             "class_name" to ParameterProperty(
                 type = "string",
@@ -128,7 +129,11 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             ),
             "description" to ParameterProperty(
                 type = "string",
-                description = "Brief description of what this action does and why (shown to user in approval dialog) — for run_tests, compile_module"
+                description = "Brief description of what this action does and why (shown to user in approval dialog) — for run_tests, compile_module, rerun_failed_tests"
+            ),
+            "session_id" to ParameterProperty(
+                type = "string",
+                description = "Name or partial name of the prior test session to rerun failures from — for rerun_failed_tests. Defaults to most-recent test session when omitted."
             )
         ),
         required = listOf("action")
@@ -157,8 +162,9 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         return when (action) {
             "run_tests" -> executeRunTests(params, project)
             "compile_module" -> executeCompileModule(params, project)
+            "rerun_failed_tests" -> executeRerunFailedTests(params, project)
             else -> ToolResult(
-                content = "Unknown action '$action' in java_runtime_exec. Valid actions: run_tests, compile_module",
+                content = "Unknown action '$action' in java_runtime_exec. Valid actions: run_tests, compile_module, rerun_failed_tests",
                 summary = "Unknown action '$action' in java_runtime_exec",
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
@@ -1104,6 +1110,362 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
     internal fun extractMavenTestsRunCount(rawOutput: String): Int? {
         val regex = Regex("""Tests run:\s*(\d+)""")
         return regex.findAll(rawOutput).lastOrNull()?.groupValues?.get(1)?.toIntOrNull()
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Action: rerun_failed_tests
+    // ══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Re-run only the failed / errored tests from the most-recent (or named) test session.
+     *
+     * Strategy (research doc Section C, checklist D3):
+     * 1. Resolve the last test session via [RunContentManager.allDescriptors], filtered by
+     *    those whose console is an [SMTRunnerConsoleView]. Optional [session_id] narrows to a
+     *    specific descriptor by display-name substring.
+     * 2. Extract failed tests via [collectTestResults] + [TestStatus.FAILED] / [TestStatus.ERROR].
+     * 3. Find the original run configuration via [RunManager.allSettings] by display-name match.
+     * 4. Build a new [RunnerAndConfigurationSettings] with only the failed test classes wired in
+     *    (via JUnit [PersistentData] reflection — same technique as [createJUnitRunSettings]).
+     * 5. Launch via [ProgramRunnerUtil.executeConfigurationAsync] + full [RunInvocation] machinery
+     *    (same as run_tests).
+     *
+     * Error categories specific to this action:
+     * - [NO_PRIOR_TEST_SESSION]: no active descriptor with a test console found.
+     * - [CONFIGURATION_NOT_FOUND]: descriptor exists but the original run config can't be resolved.
+     *
+     * Note: pytest rerun (--lf flag) follows a different path — see [PythonRuntimeExecTool].
+     * TODO: wire python_runtime_exec for pytest --lf (defer per research Section C2).
+     */
+    private suspend fun executeRerunFailedTests(params: JsonObject, project: Project): ToolResult {
+        coroutineContext.ensureActive()
+
+        val sessionId = params["session_id"]?.jsonPrimitive?.content
+        val timeoutSeconds = (params["timeout"]?.jsonPrimitive?.intOrNull?.toLong() ?: RUN_TESTS_DEFAULT_TIMEOUT)
+            .coerceIn(1, RUN_TESTS_MAX_TIMEOUT)
+
+        // Step 1: Resolve the last (or named) test session descriptor.
+        val runContentManager = com.intellij.execution.ui.RunContentManager.getInstance(project)
+        val allDescriptors = runContentManager.allDescriptors
+
+        val descriptor = if (sessionId != null) {
+            allDescriptors.firstOrNull { it.displayName?.contains(sessionId, ignoreCase = true) == true &&
+                TestConsoleUtils.unwrapToTestConsole(it.executionConsole) != null }
+        } else {
+            // allDescriptors ordering is implementation-defined; callers needing a specific session should pass session_id.
+            allDescriptors.lastOrNull { TestConsoleUtils.unwrapToTestConsole(it.executionConsole) != null }
+        }
+
+        if (descriptor == null) {
+            val sessionHint = if (sessionId != null) " matching '$sessionId'" else ""
+            return ToolResult(
+                content = "NO_PRIOR_TEST_SESSION: No previous test session$sessionHint found.\n\n" +
+                    "Run a test first with run_tests, then use rerun_failed_tests to re-execute failed tests.",
+                summary = "NO_PRIOR_TEST_SESSION",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+        }
+
+        // Step 2: Extract failed / errored tests from the descriptor's test tree.
+        val testRoot = TestConsoleUtils.findTestRoot(descriptor)
+        if (testRoot == null) {
+            return ToolResult(
+                content = "NO_PRIOR_TEST_SESSION: The test session '${descriptor.displayName}' has no test results available.\n\n" +
+                    "Run a test first with run_tests, then use rerun_failed_tests.",
+                summary = "NO_PRIOR_TEST_SESSION: no test results",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+        }
+
+        val allTests = collectTestResults(testRoot)
+        val failedTests = allTests.filter { it.status == TestStatus.FAILED || it.status == TestStatus.ERROR }
+
+        if (failedTests.isEmpty()) {
+            val passed = allTests.count { it.status == TestStatus.PASSED }
+            return ToolResult(
+                content = "No failed tests to rerun in session '${descriptor.displayName}'.\n\n" +
+                    "$passed test(s) passed. All tests are green — nothing to rerun.",
+                summary = "No failed tests to rerun",
+                tokenEstimate = 20,
+                isError = false
+            )
+        }
+
+        // Step 3: Find the original run configuration by display name.
+        val runManager = RunManager.getInstance(project)
+        val originalSettings = runManager.allSettings.find { it.name == descriptor.displayName }
+            ?: runManager.allSettings.firstOrNull { it.name?.contains(descriptor.displayName ?: "", ignoreCase = true) == true }
+            ?: return ToolResult(
+                content = "CONFIGURATION_NOT_FOUND: Could not find the original run configuration for session '${descriptor.displayName}'.\n\n" +
+                    "Available configs: [${runManager.allSettings.joinToString(", ") { it.name }}]",
+                summary = "CONFIGURATION_NOT_FOUND: ${descriptor.displayName}",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+
+        // Step 4: Build a filtered configuration containing only the failed tests.
+        // Extract class names from the test result entries (format: "com.example.FooTest.testMethod").
+        val failedClassMethods = failedTests.map { entry ->
+            val name = entry.name
+            // Split on last '.' if the name looks fully qualified (contains a '.'), otherwise
+            // treat the whole name as a class (method-level name is not always available).
+            val dotIdx = name.lastIndexOf('.')
+            if (dotIdx > 0 && dotIdx < name.length - 1) {
+                val cls = name.substring(0, dotIdx)
+                val method = name.substring(dotIdx + 1)
+                cls to method
+            } else {
+                name to null
+            }
+        }
+        val failedClasses = failedClassMethods.map { it.first }.toSet()
+        val testTarget = failedClasses.first()   // Primary class for breadcrumb and config name
+
+        // Create a new (temporary) run configuration mirroring the original but scoped to the
+        // failed tests. Use reflection — same pattern as createJUnitRunSettings.
+        val reasonOut = StringBuilder()
+        val filteredSpec = try {
+            val isTestNG = originalSettings.configuration.type.id == "TestNG"
+            val configTypeId = if (isTestNG) "TestNG" else "JUnit"
+            val testConfigType = com.intellij.execution.configurations.ConfigurationType.CONFIGURATION_TYPE_EP
+                .extensionList.find { it.id == configTypeId }
+                ?: run {
+                    reasonOut.append("no '$configTypeId' ConfigurationType registered")
+                    null
+                }
+
+            if (testConfigType != null) {
+                val factory = testConfigType.configurationFactories.firstOrNull()
+                val failedDesc = if (failedClasses.size == 1) {
+                    failedClasses.first().substringAfterLast('.')
+                } else {
+                    "${failedClasses.first().substringAfterLast('.')}+${failedClasses.size - 1}more"
+                }
+                val newConfigName = "[Rerun] $failedDesc"
+                val newSettings = factory?.let { runManager.createConfiguration(newConfigName, it) }
+
+                if (newSettings != null) {
+                    val config = newSettings.configuration
+                    try {
+                        val dataMethodName = if (isTestNG) "getPersistantData" else "getPersistentData"
+                        val getDataMethod = config.javaClass.methods.find { it.name == dataMethodName }
+                        val data = getDataMethod?.invoke(config)
+                        if (data != null) {
+                            val testObjectField = data.javaClass.getField("TEST_OBJECT")
+                            val mainClassField = data.javaClass.getField("MAIN_CLASS_NAME")
+                            // Use "class" mode for single class; for multiple classes use
+                            // "pattern" mode with comma-separated class names.
+                            if (failedClasses.size == 1) {
+                                testObjectField.set(data, if (isTestNG) "CLASS" else "class")
+                                mainClassField.set(data, failedClasses.first())
+                            } else {
+                                // Pattern mode: multiple classes
+                                testObjectField.set(data, if (isTestNG) "CLASS" else "pattern")
+                                mainClassField.set(data, failedClasses.first())
+                                try {
+                                    // JUnit 5 pattern support via PATTERNS field
+                                    val patternsField = data.javaClass.getField("PATTERNS")
+                                    @Suppress("UNCHECKED_CAST")
+                                    val patterns = patternsField.get(data) as? java.util.LinkedHashSet<String>
+                                        ?: java.util.LinkedHashSet()
+                                    patterns.clear()
+                                    patterns.addAll(failedClasses)
+                                    patternsField.set(data, patterns)
+                                } catch (_: Exception) { /* PATTERNS field not available in JUnit 4 */ }
+                            }
+                        }
+                    } catch (_: Exception) { /* best-effort field population */ }
+
+                    // Assign module from original config if possible
+                    val testModule = findModuleForClass(project, testTarget)
+                    if (testModule != null) {
+                        try {
+                            val setModuleMethod = newSettings.configuration.javaClass.getMethod(
+                                "setModule", com.intellij.openapi.module.Module::class.java
+                            )
+                            setModuleMethod.invoke(newSettings.configuration, testModule)
+                        } catch (_: Exception) { }
+                    }
+
+                    newSettings.isTemporary = true
+                    newSettings to (testModule ?: findModuleForClass(project, testTarget))
+                } else {
+                    reasonOut.append("could not create run configuration")
+                    null
+                }
+            } else null
+        } catch (e: Exception) {
+            reasonOut.append("exception during filtered config setup: ${e.message}")
+            null
+        }
+
+        if (filteredSpec == null) {
+            // Fall back to relaunching the original config with all tests — still useful
+            // even if we couldn't narrow to just the failures.
+            val reason = reasonOut.toString().ifBlank { "could not build filtered config" }
+            return ToolResult(
+                content = "CONFIGURATION_NOT_FOUND: Could not build a filtered run configuration for rerun: $reason.\n\n" +
+                    "Hint: use run_tests(class_name='${testTarget}') to run that class again.",
+                summary = "CONFIGURATION_NOT_FOUND: cannot build filtered config",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+        }
+
+        val (rerunSettings, rerunModule) = filteredSpec
+
+        // Step 5: Launch via full RunInvocation machinery (same as executeWithNativeRunner).
+        val invocation = project.service<AgentService>().newRunInvocation("rerun-failed-${System.currentTimeMillis()}")
+        try {
+            val result = withTimeoutOrNull(timeoutSeconds * 1000) {
+                suspendCancellableCoroutine { continuation ->
+                    continuation.invokeOnCancellation {
+                        Disposer.dispose(invocation)
+                    }
+                    com.intellij.openapi.application.invokeLater {
+                        try {
+                            val compileContextRef = AtomicReference<com.intellij.openapi.compiler.CompileContext?>(null)
+                            val buildConnection = project.messageBus.connect()
+                            invocation.subscribeTopic(buildConnection)
+                            buildConnection.subscribe(
+                                CompilerTopics.COMPILATION_STATUS,
+                                object : CompilationStatusListener {
+                                    override fun compilationFinished(
+                                        aborted: Boolean,
+                                        errors: Int,
+                                        warnings: Int,
+                                        compileContext: com.intellij.openapi.compiler.CompileContext,
+                                    ) {
+                                        if (aborted || errors > 0) compileContextRef.set(compileContext)
+                                    }
+                                }
+                            )
+
+                            val module = rerunModule
+                            if (module != null) {
+                                try {
+                                    com.intellij.task.ProjectTaskManager.getInstance(project)
+                                        .build(module)
+                                        .onSuccess { buildResult ->
+                                            if (buildResult.hasErrors() || buildResult.isAborted) {
+                                                if (continuation.isActive) {
+                                                    continuation.resume(
+                                                        buildCompileFailureResult(
+                                                            compileContextRef.get(), testTarget, buildResult.isAborted
+                                                        )
+                                                    )
+                                                }
+                                                return@onSuccess
+                                            }
+                                            launchRerun(rerunSettings, invocation, project, continuation, testTarget, failedTests.size)
+                                        }
+                                        .onError { _ ->
+                                            if (continuation.isActive) {
+                                                continuation.resume(
+                                                    buildCompileFailureResult(compileContextRef.get(), testTarget, aborted = false)
+                                                )
+                                            }
+                                        }
+                                } catch (e: Exception) {
+                                    if (continuation.isActive) continuation.resume(null)
+                                }
+                            } else {
+                                // No module to build — launch directly
+                                launchRerun(rerunSettings, invocation, project, continuation, testTarget, failedTests.size)
+                            }
+                        } catch (e: Exception) {
+                            if (continuation.isActive) continuation.resume(null)
+                        }
+                    }
+                }
+            }
+
+            if (result == null) {
+                return ToolResult(
+                    "[TIMEOUT] Rerun of failed tests timed out after ${timeoutSeconds}s for $testTarget.",
+                    "Rerun timeout", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
+                )
+            }
+            return result
+        } finally {
+            Disposer.dispose(invocation)
+        }
+    }
+
+    /** Launch the rerun environment and wire up result collection via RunInvocation. */
+    private fun launchRerun(
+        settings: RunnerAndConfigurationSettings,
+        invocation: RunInvocation,
+        project: Project,
+        continuation: kotlinx.coroutines.CancellableContinuation<ToolResult?>,
+        testTarget: String,
+        failedCount: Int,
+    ) {
+        try {
+            val executor = DefaultRunExecutor.getRunExecutorInstance()
+            val env = ExecutionEnvironmentBuilder.createOrNull(executor, settings)?.build()
+            if (env == null) {
+                if (continuation.isActive) continuation.resume(ToolResult(
+                    "PROCESS_START_FAILED: Could not create execution environment for rerun.",
+                    "Rerun failed", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
+                ))
+                return
+            }
+
+            val callback = object : com.intellij.execution.runners.ProgramRunner.Callback {
+                override fun processStarted(descriptor: com.intellij.execution.ui.RunContentDescriptor?) {
+                    if (descriptor == null) {
+                        if (continuation.isActive) continuation.resume(ToolResult(
+                            "PROCESS_START_FAILED: Rerun produced no descriptor.",
+                            "Rerun no descriptor", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
+                        ))
+                        return
+                    }
+                    invocation.onDispose {
+                        val currentDesc = invocation.descriptorRef.get() ?: return@onDispose
+                        val runExecutor = DefaultRunExecutor.getRunExecutorInstance()
+                        ApplicationManager.getApplication().invokeLater {
+                            com.intellij.execution.ui.RunContentManager.getInstance(project)
+                                .removeRunContent(runExecutor, currentDesc)
+                        }
+                    }
+                    handleDescriptorReady(descriptor, continuation, "$testTarget (rerun $failedCount failed)", invocation, project)
+                }
+            }
+
+            try {
+                ProgramRunnerUtil.executeConfigurationAsync(env, false, true, callback)
+            } catch (_: NoSuchMethodError) {
+                env.callback = callback
+                ProgramRunnerUtil.executeConfiguration(env, false, true)
+            }
+
+            val runConnection = project.messageBus.connect()
+            invocation.subscribeTopic(runConnection)
+            runConnection.subscribe(
+                com.intellij.execution.ExecutionManager.EXECUTION_TOPIC,
+                object : com.intellij.execution.ExecutionListener {
+                    override fun processNotStarted(
+                        executorId: String,
+                        e: com.intellij.execution.runners.ExecutionEnvironment,
+                    ) {
+                        if (e === env && continuation.isActive) {
+                            continuation.resume(ToolResult(
+                                "PROCESS_START_FAILED: Rerun did not start (no runner registered or executor disabled).",
+                                "Rerun not started", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
+                            ))
+                        }
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            if (continuation.isActive) continuation.resume(ToolResult(
+                "UNEXPECTED_ERROR: ${e.javaClass.simpleName}: ${e.message}",
+                "Rerun error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
+            ))
+        }
     }
 
     // ══════════════════════════════════════════════════════════════════════

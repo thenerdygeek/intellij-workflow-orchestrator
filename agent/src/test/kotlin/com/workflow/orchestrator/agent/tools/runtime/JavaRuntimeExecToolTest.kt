@@ -2,14 +2,23 @@ package com.workflow.orchestrator.agent.tools.runtime
 
 import com.intellij.execution.testframework.sm.runner.SMTestProxy
 import com.intellij.execution.testframework.sm.runner.states.TestStateInfo
+import com.intellij.execution.ui.RunContentDescriptor
+import com.intellij.execution.ui.RunContentManager
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.tools.TestConsoleUtils
 import com.workflow.orchestrator.agent.tools.WorkerType
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkObject
+import io.mockk.mockkStatic
+import io.mockk.unmockkAll
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -25,10 +34,10 @@ class JavaRuntimeExecToolTest {
     }
 
     @Test
-    fun `action enum contains only run_tests and compile_module`() {
+    fun `action enum contains run_tests compile_module and rerun_failed_tests`() {
         val actions = tool.parameters.properties["action"]?.enumValues
         assertNotNull(actions)
-        assertEquals(setOf("run_tests", "compile_module"), actions!!.toSet())
+        assertEquals(setOf("run_tests", "compile_module", "rerun_failed_tests"), actions!!.toSet())
     }
 
     @Test
@@ -493,5 +502,212 @@ class JavaRuntimeExecToolTest {
             .onEnter { it.name != "build" && it.name != ".git" && it.name != "node_modules" }
             .filter { it.isFile && it.name == name }
             .firstOrNull()
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // rerun_failed_tests — early-exit path tests
+    //
+    // These tests exercise the dispatch logic in executeRerunFailedTests
+    // without needing a real IntelliJ launch. All scenarios that require a
+    // live launch (step 5 onward) are covered by the integration test suite;
+    // these unit tests guard the pre-launch guards and error categories.
+    //
+    // Setup: mockkStatic(RunContentManager::class) + mockkObject(TestConsoleUtils)
+    // so RunContentManager.getInstance(project) and unwrapToTestConsole are controllable.
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Nested
+    inner class RerunFailedTests {
+        private val rcm = mockk<RunContentManager>(relaxed = true)
+
+        @BeforeEach
+        fun setUp() {
+            mockkStatic(RunContentManager::class)
+            mockkObject(TestConsoleUtils)
+            every { RunContentManager.getInstance(project) } returns rcm
+        }
+
+        @AfterEach
+        fun tearDown() {
+            unmockkAll()
+        }
+
+        // ─── Scenario R1: no prior test session ──────────────────────────
+        @Test
+        fun `rerun_failed_tests returns NO_PRIOR_TEST_SESSION when no descriptors exist`() = runTest {
+            every { rcm.allDescriptors } returns emptyList()
+
+            val result = tool.execute(
+                buildJsonObject { put("action", "rerun_failed_tests") },
+                project
+            )
+
+            assertTrue(result.isError)
+            assertTrue(
+                result.content.contains("NO_PRIOR_TEST_SESSION"),
+                "Empty descriptor list must return NO_PRIOR_TEST_SESSION. Got: ${result.content}"
+            )
+            assertTrue(
+                result.content.contains("run_tests"),
+                "Error hint should mention run_tests. Got: ${result.content}"
+            )
+        }
+
+        // ─── Scenario R2: session_id provided but no matching descriptor ─
+        @Test
+        fun `rerun_failed_tests with session_id returns NO_PRIOR_TEST_SESSION when session not found`() = runTest {
+            val desc = mockk<RunContentDescriptor>(relaxed = true)
+            every { desc.displayName } returns "SomeOtherTest"
+            every { rcm.allDescriptors } returns listOf(desc)
+            // unwrapToTestConsole returns null → desc doesn't count as a test session
+            every { TestConsoleUtils.unwrapToTestConsole(any()) } returns null
+
+            val result = tool.execute(
+                buildJsonObject {
+                    put("action", "rerun_failed_tests")
+                    put("session_id", "MissingSession")
+                },
+                project
+            )
+
+            assertTrue(result.isError)
+            assertTrue(
+                result.content.contains("NO_PRIOR_TEST_SESSION"),
+                "session_id with no match must return NO_PRIOR_TEST_SESSION. Got: ${result.content}"
+            )
+            assertTrue(
+                result.content.contains("MissingSession"),
+                "Error must include the requested session_id. Got: ${result.content}"
+            )
+        }
+
+        // ─── Scenario R3: prior session exists but 0 failures ────────────
+        @Test
+        fun `rerun_failed_tests returns informational message when all tests passed`() = runTest {
+            // Build a descriptor whose console resolves to a test root with 2 passing tests.
+            val passLeaf1 = mockk<SMTestProxy>(relaxed = true).apply {
+                every { isLeaf } returns true
+                every { locationUrl } returns "java:test://com.example.FooTest/testA"
+                every { isDefect } returns false
+                every { wasTerminated() } returns false
+                every { isIgnored } returns false
+                every { getMagnitudeInfo() } returns TestStateInfo.Magnitude.PASSED_INDEX
+                every { name } returns "testA"
+                every { duration } returns 10
+                every { stacktrace } returns null
+                every { errorMessage } returns null
+            }
+            val passLeaf2 = mockk<SMTestProxy>(relaxed = true).apply {
+                every { isLeaf } returns true
+                every { locationUrl } returns "java:test://com.example.FooTest/testB"
+                every { isDefect } returns false
+                every { wasTerminated() } returns false
+                every { isIgnored } returns false
+                every { getMagnitudeInfo() } returns TestStateInfo.Magnitude.PASSED_INDEX
+                every { name } returns "testB"
+                every { duration } returns 10
+                every { stacktrace } returns null
+                every { errorMessage } returns null
+            }
+            val root = mockk<SMTestProxy.SMRootTestProxy>(relaxed = true)
+            every { root.allTests } returns listOf(passLeaf1, passLeaf2)
+            every { root.isDefect } returns false
+            every { root.wasTerminated() } returns false
+            every { root.isEmptySuite } returns false
+            every { root.errorMessage } returns null
+
+            val console = mockk<com.intellij.execution.testframework.sm.runner.ui.SMTRunnerConsoleView>(relaxed = true)
+            val desc = mockk<RunContentDescriptor>(relaxed = true)
+            every { desc.displayName } returns "FooTest"
+            every { desc.executionConsole } returns console
+            every { rcm.allDescriptors } returns listOf(desc)
+            every { TestConsoleUtils.unwrapToTestConsole(console) } returns console
+            every { TestConsoleUtils.findTestRoot(desc) } returns root
+
+            val result = tool.execute(
+                buildJsonObject { put("action", "rerun_failed_tests") },
+                project
+            )
+
+            assertFalse(result.isError, "0-failure session must not be an error")
+            assertTrue(
+                result.content.contains("No failed tests") || result.content.contains("passed"),
+                "Result should mention no failures. Got: ${result.content}"
+            )
+        }
+
+        // ─── Scenario R4: session_id override matches by substring ───────
+        @Test
+        fun `rerun_failed_tests session_id override selects correct descriptor by name substring`() = runTest {
+            // Two descriptors: "AuthServiceTest" and "PaymentServiceTest".
+            // session_id="Payment" should select the second one.
+            val desc1 = mockk<RunContentDescriptor>(relaxed = true)
+            every { desc1.displayName } returns "AuthServiceTest"
+
+            val desc2 = mockk<RunContentDescriptor>(relaxed = true)
+            every { desc2.displayName } returns "PaymentServiceTest"
+            val console2 = mockk<com.intellij.execution.testframework.sm.runner.ui.SMTRunnerConsoleView>(relaxed = true)
+            every { desc2.executionConsole } returns console2
+
+            // desc1 doesn't have a test console, desc2 does
+            every { rcm.allDescriptors } returns listOf(desc1, desc2)
+            every { TestConsoleUtils.unwrapToTestConsole(null) } returns null
+            every { TestConsoleUtils.unwrapToTestConsole(console2) } returns console2
+
+            // desc2's test root: 1 passing test (0 failures)
+            val passLeaf = mockk<SMTestProxy>(relaxed = true).apply {
+                every { isLeaf } returns true
+                every { locationUrl } returns "java:test://com.example.PaymentServiceTest/testPay"
+                every { isDefect } returns false
+                every { wasTerminated() } returns false
+                every { isIgnored } returns false
+                every { getMagnitudeInfo() } returns TestStateInfo.Magnitude.PASSED_INDEX
+                every { name } returns "testPay"
+                every { duration } returns 5
+                every { stacktrace } returns null
+                every { errorMessage } returns null
+            }
+            val root2 = mockk<SMTestProxy.SMRootTestProxy>(relaxed = true)
+            every { root2.allTests } returns listOf(passLeaf)
+            every { root2.isDefect } returns false
+            every { root2.wasTerminated() } returns false
+            every { root2.isEmptySuite } returns false
+            every { root2.errorMessage } returns null
+            every { TestConsoleUtils.findTestRoot(desc2) } returns root2
+
+            val result = tool.execute(
+                buildJsonObject {
+                    put("action", "rerun_failed_tests")
+                    put("session_id", "Payment")   // partial match
+                },
+                project
+            )
+
+            // The session was found (desc2) and had 0 failures — returns informational message
+            assertFalse(result.isError, "Matching session with 0 failures must not be an error")
+            assertTrue(
+                result.content.contains("No failed tests") || result.content.contains("passed"),
+                "session_id='Payment' found PaymentServiceTest and found 0 failures. Got: ${result.content}"
+            )
+            // desc1 (AuthServiceTest) must NOT have been selected
+            assertFalse(
+                result.content.contains("AuthServiceTest"),
+                "session_id='Payment' must not select AuthServiceTest. Got: ${result.content}"
+            )
+        }
+
+        // ─── Scenario R5: description contains rerun_failed_tests ────────
+        @Test
+        fun `description mentions rerun_failed_tests action`() {
+            val desc = tool.description
+            assertTrue(
+                desc.contains("rerun_failed_tests"),
+                "tool description should document the rerun_failed_tests action"
+            )
+            assertTrue(
+                desc.contains("NO_PRIOR_TEST_SESSION"),
+                "description should mention NO_PRIOR_TEST_SESSION error category"
+            )
+        }
     }
 }

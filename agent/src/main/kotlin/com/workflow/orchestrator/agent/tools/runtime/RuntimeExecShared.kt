@@ -45,8 +45,6 @@ internal const val RUN_TESTS_MAX_TIMEOUT = 900L
 internal const val TEST_TREE_RETRY_ATTEMPTS = 10
 internal const val TEST_TREE_RETRY_INTERVAL_MS = 500L  // 10 * 500ms = 5s max wait
 
-/** Build watchdog timeout — how long to wait for CompilationStatusListener callback. */
-internal const val BUILD_WATCHDOG_MAX_MS = 300_000L     // Hard cap at 5 min (matches test timeout)
 // RUN_TESTS_MAX_OUTPUT_CHARS and RUN_TESTS_TOKEN_CAP_CHARS deleted — replaced by spillOrFormat (Phase 7 Task 6.4)
 
 // compile_module constants

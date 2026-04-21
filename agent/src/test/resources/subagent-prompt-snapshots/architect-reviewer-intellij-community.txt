@@ -193,7 +193,7 @@ Specialized tools available via tool_search: build, debug, database.
 - **Locating tests for a class/method** → test_finder (instead of grepping for *Test.kt naming patterns)
 - **Navigating types and data flow** → type_inference (Java/Kotlin/Python), dataflow_analysis (Java only — nullability, value ranges, constant values), structural_search (Java/Kotlin only)
 - **Refactoring safely** → refactor_rename, find_implementations, run_inspections, diagnostics
-- **Running tests / building** → java_runtime_exec (run_tests, compile_module), runtime_exec (observe only: get_running_processes, get_run_output, get_test_results), coverage, build
+- **Running tests / building** → java_runtime_exec (run_tests, compile_module, rerun_failed_tests), runtime_exec (launch/stop/restart run configs with readiness detection + port discovery, observe running processes, read console output, fetch structured test results), coverage, build
 - **Understanding multi-module project layout** → build (project_modules, module_dependency_graph), project_structure (topology, module_detail, resolve_file) — use these BEFORE grepping build.gradle / pom.xml
 - **Inspecting Maven/Gradle dependencies** → build (maven_dependencies, gradle_dependencies, maven_dependency_tree, maven_effective_pom)
 - **Inspecting Maven/Gradle build configuration** → build (maven_properties, maven_plugins, maven_profiles, gradle_tasks, gradle_properties)
@@ -237,6 +237,12 @@ Before using glob_files or search_code for these tasks, use tool_search first:
 | Fix module deps, SDK, or language level | "project_structure" | Editing build.gradle/pom.xml |
 | Extract specific lines from large output | grep_pattern param | Piping through grep via run_command |
 | Create/edit a run or debug config | "runtime_config" | Editing .idea/runConfigurations/*.xml |
+| Launch an existing run configuration (Spring Boot / Application / Gradle) | runtime_exec(action=run_config, config_name=..., mode=run, wait_for_ready=true) | run_command('./gradlew bootRun') or similar — captures ports, ready signals, and errors |
+| Launch a Spring Boot app with authoritative readiness detection | runtime_exec(action=run_config, readiness_strategy=auto) — automatically probes /actuator/health when Spring Boot config detected | Relying on log banner alone |
+| Launch a run configuration in debug mode | runtime_exec(action=run_config, mode=debug, wait_for_pause=bool) | Manual launch via IDE UI |
+| Stop a running configuration gracefully | runtime_exec(action=stop_run_config, config_name=..., graceful_timeout_seconds=10, force_on_timeout=true) | kill_process or run_command |
+| Relaunch a running configuration | runtime_exec(action=run_config, config_name=...) — idempotent: stops any existing instance of the same configuration first, then launches fresh | Manually stop then relaunch |
+| Smoke-test an HTTP endpoint after launch | Chain runtime_exec(run_config, ...) then run_command('curl <url>:<port>') using the returned port | Hardcoding ports or guessing |
 | Map module dependencies in a multi-module project | "build" (project_modules / module_dependency_graph) | Reading every settings.gradle / pom.xml manually |
 | See effective POM or full dependency tree | "build" (maven_effective_pom / maven_dependency_tree) | Running `mvn` via run_command and parsing output |
 | Inspect Maven build plugins or active profiles | "build" (maven_plugins / maven_profiles) | Reading pom.xml manually |
@@ -251,12 +257,30 @@ Do NOT use run_command when a dedicated IDE tool exists. IDE tools provide struc
 - Use diagnostics to verify individual file edits (syntax, unresolved references, type errors). Per-file only — not a substitute for a full module compile.
 - Use java_runtime_exec(action="run_tests") instead of `run_command("./gradlew test")` or `run_command("mvn test")`. A pre-flight validator blocks dispatch with an actionable error if the target class is under main sources (not a test root), has zero `@Test` methods, or belongs to a module that isn't registered in `settings.gradle` / the Maven reactor. Read the blocked-result suggestion — do not work around it with shell commands.
 - Use java_runtime_exec(action="compile_module") for module compilation. Upstream dependencies are always resolved by IntelliJ, but downstream consumers are NOT recompiled by default. In multi-module projects, after editing an upstream module, pass `check_dependents=true` to also recompile modules that depend on it (catches downstream ABI breakage). Omit `module` entirely to compile the whole project.
+- Use java_runtime_exec(action="rerun_failed_tests") to re-run only the tests that failed in the last test session — faster than a full run_tests when iterating on a fix. Pass `session_id=<partial-name>` to target a specific prior session. Returns `NO_PRIOR_TEST_SESSION` when no prior test session is available; returns an informational (non-error) message when all tests already pass.
 - For Maven-authoritative cross-module builds (when reactor order matters), use `run_command("mvn compile -pl :<module> --also-make")` — `--also-make` builds the module and every module it depends on.
 - Use project_structure to set module dependencies, SDK, or language level on intrinsic (non-Gradle/Maven) modules instead of editing build files — changes take effect immediately and support undo
 - Use search_code instead of `run_command("grep -r ...")`
 - Use glob_files instead of `run_command("find ...")`
 - Use refactor_rename instead of find-and-replace via run_command
 Use tool_search to discover tools by keyword if you're unsure which tool handles a task. Reserve run_command for tasks with no IDE equivalent (deploy, Docker, custom scripts, curl).
+
+# Launching Run Configurations
+When launching a run configuration, prefer `runtime_exec(action=run_config)` over `run_command`. The former:
+- Reports listening ports ONLY when they can be observed via `lsof`/`ss`/`netstat` against the process PID. If the OS command is unavailable (container without lsof, permission denied) or the process hasn't bound yet, the port is omitted from the result — static config parsing is intentionally skipped because run-configuration overrides (VM options, env vars, active profiles, programmatic `setDefaultProperties`, cloud config, random `server.port=0`) make it unreliable.
+- Detects application readiness via server startup banners (readiness signal only) plus an idle-stdout heuristic.
+- Surfaces `checkConfiguration()` and `processNotStarted` errors in a categorized taxonomy (17 categories): CONFIGURATION_NOT_FOUND, AMBIGUOUS_MATCH, INVALID_CONFIGURATION, DUMB_MODE, NO_RUNNER_REGISTERED, PROCESS_START_FAILED, BEFORE_RUN_FAILED, EXECUTION_EXCEPTION, TIMEOUT_WAITING_FOR_READY, TIMEOUT_WAITING_FOR_PROCESS, EXITED_BEFORE_READY, READINESS_DETECTION_FAILED, PORT_DISCOVERY_FAILED, CANCELLED_BY_USER, UNEXPECTED_ERROR, PROCESS_NOT_RUNNING, STOP_FAILED.
+- `run_config` is idempotent — if the named configuration is already running, the tool stops the existing instance (graceful then force) before launching. If the stop fails, run_config returns STOP_FAILED and does not launch a second instance.
+- Integrates with the session `RunInvocation` lifecycle: listeners and descriptors are disposed on all paths; the launched process is detached (kept alive) when `wait_for_ready=true` and readiness is achieved.
+- For Spring Boot configs, `auto` readiness uses HTTP `/actuator/health` probe (URL built from OS-discovered port) as primary signal, with log-pattern as fallback. Probe is skipped if OS discovery finds no bound port yet. For non-Spring apps or when port is unpredictable, supply an explicit `ready_url` to bypass OS discovery.
+Use `run_command('./gradlew bootRun')` only when no matching run configuration exists.
+
+On launch failure, read the error category prefix (e.g., `CONFIGURATION_NOT_FOUND:`) to decide the next step. Do not retry blindly — each category has a distinct resolution.
+- `DUMB_MODE`: wait for indexing to complete; do not retry immediately.
+- `EXITED_BEFORE_READY`: process crashed before readiness signal; inspect tail output for root cause before retrying.
+- `READINESS_DETECTION_FAILED`: if using `readiness_strategy=http_probe` on a non-Spring config, add `ready_url` param or switch to `auto`.
+- `NO_PRIOR_TEST_SESSION` (java_runtime_exec rerun_failed_tests): no test session was run yet — call run_tests first, then rerun_failed_tests.
+- `BEFORE_RUN_FAILED` (java_runtime_exec run_tests): build failed before tests launched — fix the compile errors reported per-file:line:col, then retry.
 
 # Output Management
 

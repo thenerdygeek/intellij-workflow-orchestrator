@@ -61,7 +61,7 @@ class DebugBreakpointsTool(private val controller: AgentDebugController) : Agent
     override val name = "debug_breakpoints"
 
     override val description = """
-Breakpoint management — add, remove, list breakpoints, and start/attach debug sessions.
+Breakpoint management — add, remove, list breakpoints, and attach the debugger to a remote JVM.
 
 Actions and their parameters:
 - add_breakpoint(file, line, condition?, log_expression?, temporary?, suspend_policy?, pass_count?) → Add line breakpoint
@@ -70,10 +70,10 @@ Actions and their parameters:
 - field_watchpoint(class_name, field_name, file?, watch_read?, watch_write?) → Watch field access/modification
 - remove_breakpoint(file, line) → Remove breakpoint at file:line
 - list_breakpoints(file?) → List all breakpoints, optionally filtered by file
-- start_session(config_name, wait_for_pause?) → Launch run config in debug mode
 - attach_to_process(port, host?, name?) → Attach debugger to remote JVM
 
-All breakpoint actions modify IDE state. start_session/attach_to_process create a debug session.
+All breakpoint actions modify IDE state. attach_to_process creates a debug session.
+To launch a run configuration in debug mode, use runtime_exec(action=run_config, mode=debug).
 """.trimIndent()
 
     override val parameters = FunctionParameters(
@@ -83,7 +83,7 @@ All breakpoint actions modify IDE state. start_session/attach_to_process create 
                 description = "Operation to perform",
                 enumValues = listOf(
                     "add_breakpoint", "method_breakpoint", "exception_breakpoint", "field_watchpoint",
-                    "remove_breakpoint", "list_breakpoints", "start_session", "attach_to_process"
+                    "remove_breakpoint", "list_breakpoints", "attach_to_process"
                 )
             ),
             "file" to ParameterProperty(
@@ -155,14 +155,6 @@ All breakpoint actions modify IDE state. start_session/attach_to_process create 
                 type = "boolean",
                 description = "Break on uncaught exceptions (default: true) — for exception_breakpoint"
             ),
-            "config_name" to ParameterProperty(
-                type = "string",
-                description = "Name of the run configuration to launch in debug mode — for start_session"
-            ),
-            "wait_for_pause" to ParameterProperty(
-                type = "integer",
-                description = "Seconds to wait for first breakpoint hit (default 0) — for start_session"
-            ),
             "host" to ParameterProperty(
                 type = "string",
                 description = "Host to connect to (default: localhost) — for attach_to_process"
@@ -202,10 +194,9 @@ All breakpoint actions modify IDE state. start_session/attach_to_process create 
             "field_watchpoint" -> executeFieldWatchpoint(params, project)
             "remove_breakpoint" -> executeRemoveBreakpoint(params, project)
             "list_breakpoints" -> executeListBreakpoints(params, project)
-            "start_session" -> executeStartSession(params, project)
             "attach_to_process" -> executeAttachToProcess(params, project)
             else -> ToolResult(
-                content = "Unknown action '$action'. Valid actions: add_breakpoint, method_breakpoint, exception_breakpoint, field_watchpoint, remove_breakpoint, list_breakpoints, start_session, attach_to_process",
+                content = "Unknown action '$action'. Valid actions: add_breakpoint, method_breakpoint, exception_breakpoint, field_watchpoint, remove_breakpoint, list_breakpoints, attach_to_process",
                 summary = "Unknown action '$action'",
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
@@ -745,101 +736,6 @@ All breakpoint actions modify IDE state. start_session/attach_to_process create 
             ToolResult(content, "$totalCount breakpoints", TokenEstimator.estimate(content))
         } catch (e: Exception) {
             ToolResult("Error listing breakpoints: ${e.message}", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
-        }
-    }
-
-    // ── start_session ───────────────────────────────────────────────────────
-
-    private suspend fun executeStartSession(params: JsonObject, project: Project): ToolResult {
-        val configName = params["config_name"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("config_name")
-        val waitForPause = params["wait_for_pause"]?.jsonPrimitive?.intOrNull ?: 0
-
-        return try {
-            val runManager = RunManager.getInstance(project)
-            val settings = runManager.findConfigurationByName(configName)
-                ?: return ToolResult(
-                    "Run configuration not found: '$configName'. Use get_run_configurations to list available configurations.",
-                    "Config not found",
-                    ToolResult.ERROR_TOKEN_ESTIMATE,
-                    isError = true
-                )
-
-            val sessionId = withTimeoutOrNull(30_000L) {
-                suspendCancellableCoroutine<String> { cont ->
-                    val connection = project.messageBus.connect()
-                    val buildConnRef = java.util.concurrent.atomic.AtomicReference<com.intellij.util.messages.MessageBusConnection?>(null)
-                    cont.invokeOnCancellation { connection.disconnect(); buildConnRef.get()?.disconnect() }
-                    connection.subscribe(XDebuggerManager.TOPIC, object : XDebuggerManagerListener {
-                        override fun processStarted(debugProcess: XDebugProcess) {
-                            val session = debugProcess.session
-                            val id = controller.registerSession(session)
-                            connection.disconnect()
-                            if (cont.isActive) cont.resume(id)
-                        }
-                    })
-
-                    invokeLater {
-                        try {
-                            val executor = DefaultDebugExecutor.getDebugExecutorInstance()
-                            val env = ExecutionEnvironmentBuilder.create(project, executor, settings.configuration).build()
-                            ProgramRunnerUtil.executeConfiguration(env, true, true)
-
-                            // Detect build failure before debug process starts
-                            val buildConn = project.messageBus.connect()
-                            buildConnRef.set(buildConn)
-                            buildConn.subscribe(com.intellij.execution.ExecutionManager.EXECUTION_TOPIC,
-                                object : com.intellij.execution.ExecutionListener {
-                                    override fun processNotStarted(executorId: String, e: com.intellij.execution.runners.ExecutionEnvironment) {
-                                        if (e == env) {
-                                            buildConn.disconnect()
-                                            connection.disconnect()
-                                            if (cont.isActive) cont.resume("")
-                                        }
-                                    }
-                                    override fun processStarted(executorId: String, e: com.intellij.execution.runners.ExecutionEnvironment, handler: com.intellij.execution.process.ProcessHandler) {
-                                        if (e == env) buildConn.disconnect()
-                                    }
-                                }
-                            )
-                        } catch (e: Exception) {
-                            connection.disconnect()
-                            if (cont.isActive) cont.resume("")
-                        }
-                    }
-                }
-            }
-
-            if (sessionId == null || sessionId.isEmpty()) {
-                return ToolResult(
-                    "Debug session failed to start. Check run configuration, build errors, or port conflicts.",
-                    "Debug session failed",
-                    ToolResult.ERROR_TOKEN_ESTIMATE,
-                    isError = true
-                )
-            }
-
-            val pauseEvent = if (waitForPause > 0) {
-                controller.waitForPause(sessionId, waitForPause * 1000L)
-            } else {
-                null
-            }
-
-            val sb = StringBuilder("Debug session started: $sessionId\n")
-            sb.append("Configuration: $configName\n")
-            if (pauseEvent != null) {
-                sb.append("Status: paused\n")
-                sb.append("Location: ${pauseEvent.file ?: "unknown"}:${pauseEvent.line ?: "?"}\n")
-                sb.append("Reason: ${pauseEvent.reason}")
-            } else if (waitForPause > 0) {
-                sb.append("Status: running (no breakpoint hit within ${waitForPause}s)")
-            } else {
-                sb.append("Status: running")
-            }
-
-            val content = sb.toString()
-            ToolResult(content, "Debug session $sessionId started", TokenEstimator.estimate(content))
-        } catch (e: Exception) {
-            ToolResult("Error starting debug session: ${e.message}", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
     }
 

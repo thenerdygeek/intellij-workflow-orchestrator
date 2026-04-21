@@ -124,12 +124,12 @@ These tools consolidate multiple operations behind an `action` enum:
 
 | Meta-Tool | Action Count | Examples |
 |-----------|-------------|----------|
-| **runtime_exec** | 3 | get_test_results, get_running_processes, get_run_output (universal observation). `get_test_results` unified through `interpretTestRoot` — empty suites return `NO_TESTS_FOUND` (not `PASSED`) and failed runs propagate `isError=true`. |
-| **java_runtime_exec** | 2 | run_tests (JUnit/TestNG), compile_module (CompilerManager) — registered only when Java plugin present. **run_tests runs a pre-flight `BuildSystemValidator` check** (Phase 2 Tasks 2.7–2.9) before any dispatch — catches main-sources classes, zero @Test methods, missing `settings.gradle` entries, and unregistered Maven modules with actionable suggestions. Authoritative Gradle/Maven paths from the validator supersede filesystem-derived subproject paths in the shell fallback; a breadcrumb (`Running tests in module: X (Build path: Y, N test methods detected in Z)`) is prepended to every successful result. **run_tests explicitly calls `ProjectTaskManager.build(module)` before launching JUnit** (commit 9b164bf3 guard: config is transient/unregistered so factory-default "Build" before-run task is NOT wired; we call the build API ourselves to prevent `initializationError`). On build failure, `run_tests` returns per-file compile errors (path:line:col — message) via `formatCompileErrors` instead of a bare count. Shell fallback parses Surefire/Gradle XML reports and returns `NO_TESTS_FOUND` on empty suites (not `PASSED`). |
+| **runtime_exec** | 5 | get_running_processes, get_run_output, get_test_results, run_config, stop_run_config. Observation actions: `get_test_results` unified through `interpretTestRoot` — empty suites return `NO_TESTS_FOUND` (not `PASSED`) and failed runs propagate `isError=true`. Launch actions: `run_config` launches an existing run configuration with readiness detection (log-scrape + idle-stdout heuristic) and port discovery (lsof/ss/netstat) — idempotent: if an instance of the named configuration is already running it is stopped first (via `stopProcessesForConfig` helper) before launching; if the stop fails, `run_config` returns `STOP_FAILED` and does not launch a second instance; `stop_run_config` gracefully stops a running config. |
+| **java_runtime_exec** | 3 | run_tests (JUnit/TestNG), compile_module (CompilerManager), rerun_failed_tests — registered only when Java plugin present. **run_tests runs a pre-flight `BuildSystemValidator` check** (Phase 2 Tasks 2.7–2.9) before any dispatch — catches main-sources classes, zero @Test methods, missing `settings.gradle` entries, and unregistered Maven modules with actionable suggestions. Authoritative Gradle/Maven paths from the validator supersede filesystem-derived subproject paths in the shell fallback; a breadcrumb (`Running tests in module: X (Build path: Y, N test methods detected in Z)`) is prepended to every successful result. **run_tests explicitly calls `ProjectTaskManager.build(module)` before launching JUnit** (commit 9b164bf3 guard: config is transient/unregistered so factory-default "Build" before-run task is NOT wired; we call the build API ourselves to prevent `initializationError`). On build failure, `run_tests` returns per-file compile errors (path:line:col — message) via `formatCompileErrors` instead of a bare count. Shell fallback parses Surefire/Gradle XML reports and returns `NO_TESTS_FOUND` on empty suites (not `PASSED`). **rerun_failed_tests** resolves the most-recent test session from `RunContentManager.allDescriptors` (or the session matching optional `session_id`), extracts FAILED/ERROR tests via `collectTestResults`, builds a filtered JUnit/TestNG run config via reflection (same as `run_tests`), and re-launches via full `RunInvocation` machinery. Error categories: `NO_PRIOR_TEST_SESSION` (no active test descriptor found — run `run_tests` first); `CONFIGURATION_NOT_FOUND` (original run config not found in `RunManager`). Returns informational (non-error) result when prior session had 0 failures. |
 | **python_runtime_exec** | 2 | run_tests (pytest via PytestNativeLauncher → PyTestConfigurationType native runner first, shell-based PytestActions fallback), compile_module (python -m py_compile) — registered only when Python plugin present. Native runner integrates with PyCharm's test UI; fallback covers non-PyCharm IDEs. Pytest output reconciles verbose PASSED/FAILED/ERROR counts against the summary line and emits a heuristic warning when the suite reports passes with near-zero duration and no stdout. |
 | **runtime_config** | 4 | get_run_configurations, create/modify/delete_run_config |
 | **coverage** | 2 | run_with_coverage, get_file_coverage. `run_with_coverage` unified through `interpretTestRoot`; failed coverage runs propagate `isError=true`. |
-| **debug_breakpoints** | 8 | add_breakpoint, method_breakpoint, exception_breakpoint, field_watchpoint, remove_breakpoint, list_breakpoints, start_session, attach_to_process |
+| **debug_breakpoints** | 7 | add_breakpoint, method_breakpoint, exception_breakpoint, field_watchpoint, remove_breakpoint, list_breakpoints, attach_to_process |
 | **debug_step** | 8 | get_state, step_over, step_into, step_out, resume, pause, run_to_cursor, stop |
 | **debug_inspect** | 8 | evaluate, get_stack_frames, get_variables, thread_dump, memory_view, hotswap, force_return, drop_frame |
 | **spring** | 15 | context, endpoints, bean_graph, config, version_info, profiles, etc. |
@@ -142,6 +142,50 @@ These tools consolidate multiple operations behind an `action` enum:
 | **bitbucket_pr** | 14 | create/approve/merge/decline_pr, get_pr_detail, check_merge_status, etc. |
 | **bitbucket_review** | 6 | add_pr_comment, add_inline_comment, reply_to_comment, etc. |
 | **bitbucket_repo** | 6 | get_branches, create_branch, search_users, get_file_content, etc. |
+
+### runtime_exec Launch Actions — Implementation Notes
+
+**Idempotent `run_config`:** Before launching, `run_config` calls the private `stopProcessesForConfig(project, settings.name)` helper (gracefulMs=10s, forceMs=5s). Outcomes: `NotRunning` → proceed silently; `StoppedGracefully(pids)` → append note to result; `StoppedForced(pids)` → append note to result; `FailedToStop(pids, msg)` → return `STOP_FAILED` immediately, do NOT launch. The resolved `settings.name` (post-name-resolution) is used, not the raw user-provided `config_name`.
+
+**`stopProcessesForConfig` helper (private):** Shared stop state machine used by both `stop_run_config` (via its own handler-resolution logic) and `run_config` (idempotent pre-launch). Matches by exact `RunContentDescriptor.displayName == configName`. Graceful `destroyProcess()` → poll `STOP_POLL_INTERVAL_MS` → force `destroyProcess()` → poll `FORCE_KILL_TIMEOUT_MS`. Returns sealed `StopOutcome`: `NotRunning` / `StoppedGracefully(pids)` / `StoppedForced(pids)` / `FailedToStop(pids, message)`. Handles coroutine cancellation via `ensureActive()` and re-throws `CancellationException`.
+
+**Readiness state machine:** `run_config` drives a three-state lifecycle — `process_started` (OS process alive, PID resolved) → `ready` (readiness signal received or idle-stdout threshold elapsed) → `exited` (process terminated before or after ready). The `wait_for_ready` parameter (default true) suspends the tool until the `ready` state or `ready_timeout_seconds` (default 120s).
+
+**Readiness detection strategies (per config type):**
+
+| Strategy | When active | Primary signal | Fallback |
+|---|---|---|---|
+| `http_probe` | `readiness_strategy=http_probe` OR `auto` with Spring Boot config detected | HTTP GET `{actuatorBasePath}/health` → 200 | Log-pattern (concurrent, first wins) |
+| `log_pattern` | `readiness_strategy=log_pattern` OR explicit Spring Boot config (no http_probe) | Spring startup banners (Tomcat/Netty/Jetty/Undertow) | idle-stdout |
+| `idle_stdout` | `readiness_strategy=idle_stdout` OR `auto` for non-Spring/non-http apps | No new stdout for 2000ms | timeout |
+| `explicit_pattern` | `readiness_strategy=explicit_pattern` | User-supplied `ready_pattern` regex | timeout |
+| `process_started` | `readiness_strategy=process_started` | OS process spawned (no wait) | N/A |
+
+**HTTP probe details (`http_probe` strategy):**
+- Probe URL: built from OS-discovered port (see Port Discovery below) + actuator paths from `SpringBootConfigParser.parseActuatorPaths()`. If OS discovery has not yet found a bound port, the HTTP probe is **skipped** and log-pattern readiness is used as fallback. Do NOT fall back to static config parsing for the port.
+- Backoff: 200ms start, 1.5× multiplier, 2000ms cap. Grace period: 5s (JVM bootstrap window; connection-refused failures ignored).
+- Spring Boot 3.x: tries `/actuator/health/readiness` path; falls back to `/actuator/health`.
+- When `ready_url` param is provided, it is used **verbatim** — no OS discovery, no static parsing. The user owns correctness.
+- Non-Spring + no `ready_url` → `READINESS_DETECTION_FAILED` (validation error before launch).
+
+**Port discovery contract (`discoverListeningPorts`):**
+- **Only authoritative source**: OS commands by PID — `lsof -iTCP -sTCP:LISTEN -P -n -p <pid>` (macOS), `ss -tlnp` with pid filter (Linux fallback), `netstat -ano | findstr LISTENING | findstr <pid>` (Windows).
+- If OS command is unavailable or returns nothing, port is **omitted** from the result. No guessing, no static fallback.
+- Log-banner regex (e.g., `Tomcat started on port(s): (\d+)`) is kept **only as a readiness signal** — the app has finished bootstrapping. The matched port number is intentionally discarded and not reported to the LLM.
+- `SpringBootConfigParser` port fields (`serverPort`, `managementPort`) were **removed** (2026-04-21). Static parsing cannot see run-config overrides via VM options, env vars, active profiles, programmatic `setDefaultProperties`, cloud config, or random port (`server.port=0`). Only `actuatorBasePath` and `healthPath` are retained for probe URL path construction.
+
+- Spring Boot (Tomcat/Netty/Jetty/Undertow): log-scrape using exact regex patterns on startup banners (e.g., `Tomcat started on port(s): (\d+)`, `Started [A-Za-z0-9._-]+ in [0-9.]+s`) — used as a **readiness signal only** (not a port source). Used as concurrent fallback when http_probe is active.
+- Generic JVM applications: idle-stdout heuristic — no new stdout for 2000ms after process start and process is not terminated.
+- JUnit/TestNG and Maven/Gradle test configs: blocked at input validation (`READINESS_DETECTION_FAILED` — readiness is not applicable for test runners).
+
+**Error category taxonomy (all 17 categories):**
+`CONFIGURATION_NOT_FOUND`, `AMBIGUOUS_MATCH`, `NO_RUNNER_REGISTERED`, `INVALID_CONFIGURATION`, `DUMB_MODE`, `BEFORE_RUN_FAILED`, `EXECUTION_EXCEPTION`, `PROCESS_START_FAILED`, `TIMEOUT_WAITING_FOR_READY`, `TIMEOUT_WAITING_FOR_PROCESS`, `EXITED_BEFORE_READY`, `READINESS_DETECTION_FAILED`, `PORT_DISCOVERY_FAILED`, `CANCELLED_BY_USER`, `UNEXPECTED_ERROR` (run_config); `PROCESS_NOT_RUNNING`, `STOP_FAILED` (stop_run_config and run_config idempotent pre-launch stop). The LLM should read the category prefix from the error message and take category-specific action rather than retrying blindly.
+- `DUMB_MODE`: wait for indexing to complete; do not retry immediately.
+- `EXITED_BEFORE_READY`: process crashed before readiness signal; inspect tail output for root cause before retrying.
+
+**Detach-on-ready semantics:** When `wait_for_ready=true` and readiness is achieved, the tool clears `invocation.descriptorRef.set(null)` and `invocation.processHandlerRef.set(null)` before calling `Disposer.dispose(invocation)`. This detaches the running process from the `RunInvocation` lifecycle so it keeps running after the tool returns. Ownership transfers to `ExecutionManagerImpl` and the IDE's Run tool window. A subsequent "New Chat" (`SessionDisposableHolder.resetSession()`) does NOT cascade-stop already-detached processes — the app continues running across sessions until explicitly stopped via `stop_run_config` or the user terminates it manually.
+
+**Debug-mode launches:** Use `runtime_exec(action=run_config, mode=debug, wait_for_pause=bool)` — this is the canonical path (subsumes the removed `debug_breakpoints.start_session` action). It drives the same `DefaultDebugExecutor` + `XDebugSession` semantics with the full readiness state machine, port discovery, and error taxonomy.
 
 ## Tool Selection
 

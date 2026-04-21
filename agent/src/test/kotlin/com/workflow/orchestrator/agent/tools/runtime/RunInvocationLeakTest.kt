@@ -345,6 +345,16 @@ class RunInvocationLeakTest {
     }
 
     @Test
+    fun `JavaRuntimeExecTool — executeRerunFailedTests must dispose invocation in a finally block`() {
+        val text = readSource("JavaRuntimeExecTool.kt")
+        val scopedText = extractFunctionBody(text, "executeRerunFailedTests") ?: text
+        assertTrue(
+            hasFinallyDisposePattern(scopedText),
+            "executeRerunFailedTests must wrap RunInvocation work in try/finally with Disposer.dispose"
+        )
+    }
+
+    @Test
     fun `CoverageTool — executeRunWithCoverage must dispose invocation in a finally block`() {
         val text = readSource("CoverageTool.kt")
         assertTrue(
@@ -462,21 +472,29 @@ class RunInvocationLeakTest {
         val twoArgAddCount = Regex("""addProcessListener\s*\([^()]*,[^()]*\)""")
             .findAll(source)
             .count()
+        // invocation.attachProcessListener(handler, listener) is the RunInvocation-mediated
+        // form that internally calls the 2-arg addProcessListener(listener, disposable) —
+        // it is inherently leak-free (auto-cleaned on invocation.dispose()). Count these as
+        // "auto-cleaned" so that a function using exclusively attachProcessListener (and
+        // zero direct addProcessListener calls) satisfies the precondition.
+        val attachCount = Regex("""\battachProcessListener\b""").findAll(source).count()
         val oneArgAddCount = totalAddCount - twoArgAddCount
 
         assertTrue(
-            totalAddCount >= 1,
-            "Precondition: $toolName must call addProcessListener at least once " +
-                "(totalAddCount=$totalAddCount)"
+            totalAddCount + attachCount >= 1,
+            "Precondition: $toolName must call addProcessListener or attachProcessListener at least once " +
+                "(totalAddCount=$totalAddCount, attachProcessListenerCount=$attachCount)"
         )
         assertEquals(
             oneArgAddCount,
             removeCount,
             "Leak: $toolName has $oneArgAddCount 1-arg addProcessListener call(s) " +
-                "(totalAddCount=$totalAddCount, twoArgAddCount=$twoArgAddCount) but only " +
+                "(totalAddCount=$totalAddCount, twoArgAddCount=$twoArgAddCount, " +
+                "attachProcessListenerCount=$attachCount) but only " +
                 "$removeCount removeProcessListener call(s). Every 1-arg addProcessListener " +
                 "MUST be matched by a removeProcessListener — or switch to the 2-arg form " +
-                "`addProcessListener(listener, parentDisposable)` which is auto-cleaned. " +
+                "`addProcessListener(listener, parentDisposable)` or " +
+                "`invocation.attachProcessListener(handler, listener)` which are auto-cleaned. " +
                 "Route disposal through RunInvocation.dispose()."
         )
     }
@@ -511,5 +529,182 @@ class RunInvocationLeakTest {
             )
         }
         return path.readText()
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // run_config — SOURCE-TEXT leak-contract assertions.
+    //
+    // These four assertions lock in the structural requirements for the NEW
+    // `run_config` action in RuntimeExecTool.kt (Phase 1 / TEST-FIRST).
+    // They MUST fail on current HEAD (the action doesn't exist yet).
+    // Phase 2 (implementation) must satisfy all four before merging.
+    //
+    // Contract overview (from research doc Section 6 / Section 8 / CLAUDE.md):
+    //   A1. addProcessListener usage: every 1-arg form must be matched by
+    //       removeProcessListener, OR the 2-arg Disposable form is used.
+    //   A2. finally { Disposer.dispose(invocation) } is present in the
+    //       executeRunConfig function body — dispose-on-all-paths.
+    //   A3. removeRunContent call is present in the file for cleanup.
+    //   A4. invocation.subscribeTopic( is present in the run_config launch
+    //       path — proves ExecutionManager.EXECUTION_TOPIC subscription
+    //       is routed through the RunInvocation lifecycle.
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * A1 — ProcessListener leak contract for RuntimeExecTool.
+     *
+     * Every `addProcessListener(listener)` 1-arg call in the `executeRunConfig`
+     * function body of RuntimeExecTool.kt must be matched by a
+     * `removeProcessListener(listener)` call, OR the tool must exclusively use
+     * the 2-arg `addProcessListener(listener, disposable)` form that is
+     * auto-cleaned via `RunInvocation.disposable`.
+     *
+     * Fix 10 (code-review): the check is SCOPED to the `executeRunConfig`
+     * function body only (from "fun executeRunConfig" or "private fun executeRunConfig"
+     * to the next top-level function boundary). This prevents the existing
+     * `awaitProcessTermination` function — which already has a balanced
+     * `addProcessListener`/`removeProcessListener` pair via `invokeOnCancellation`
+     * — from accidentally satisfying the invariant for NEW un-balanced code inside
+     * `executeRunConfig`.
+     *
+     * NOTE: the scoping is done via a regex that extracts the body between the
+     * function declaration and the next top-level `(private |internal )?fun `
+     * or end-of-file. If the function spans more than ~10 000 characters, or uses
+     * nested `fun` declarations that start a new `private fun ` at column 0, the
+     * extraction may be inaccurate — see the fallback message in the assertion.
+     *
+     * NOTE: this assertion is file-global when scoping fails (regex returns null);
+     * intentional leaks outside executeRunConfig would also fail this test in the
+     * fallback path.
+     *
+     * Pre-Phase-2: RuntimeExecTool.kt has no `executeRunConfig` function at all
+     * → the scoped text is empty / null → the precondition assertion inside
+     * [assertLeaklessProcessListener] fires first, failing with a clear message.
+     *
+     * Post-Phase-2: the run_config launch path adds process listeners;
+     * the assertion validates they are all 2-arg or symmetrically removed.
+     */
+    @Test
+    fun `RuntimeExecTool run_config — every addProcessListener must be paired with remove or 2-arg Disposable`() {
+        val fullText = readSource("RuntimeExecTool.kt")
+
+        // Fix 10: extract just the executeRunConfig function body so existing
+        // awaitProcessTermination balanced pairs don't mask new leaks inside
+        // executeRunConfig.
+        val scopedText = extractFunctionBody(fullText, "executeRunConfig")
+            ?: run {
+                // Scoping failed — fall back to whole-file assertion with a
+                // comment explaining the limitation.
+                // NOTE: this fallback means intentional leaks outside
+                // executeRunConfig would also fail this test.
+                fullText
+            }
+
+        assertLeaklessProcessListener(scopedText, "RuntimeExecTool (run_config)")
+    }
+
+    /**
+     * Extracts the text of a named function from [source].
+     *
+     * Finds the first occurrence of `fun $functionName` (with optional `private `/
+     * `internal ` prefix) and returns the text from that line to — but not including
+     * — the next top-level function declaration (`private fun`, `internal fun`,
+     * or `fun ` at the start of a line after at least one blank line) or end-of-file.
+     *
+     * Returns null if [functionName] is not found.
+     */
+    private fun extractFunctionBody(source: String, functionName: String): String? {
+        // Match the start of the target function declaration.
+        val startRegex = Regex("""(?:private\s+|internal\s+)?fun\s+$functionName\b""")
+        val startMatch = startRegex.find(source) ?: return null
+        val startIdx = startMatch.range.first
+
+        // Match the start of the NEXT top-level function after our target.
+        // We look for `\nfun ` or `\nprivate fun ` or `\ninternal fun ` that
+        // appears after startIdx.  The leading newline anchors to column 0.
+        val nextFunRegex = Regex("""\n(?:private\s+|internal\s+|override\s+)?fun\s+""")
+        val nextMatch = nextFunRegex.find(source, startIdx + startMatch.value.length)
+        val endIdx = nextMatch?.range?.first ?: source.length
+
+        return source.substring(startIdx, endIdx)
+    }
+
+    /**
+     * A2 — Dispose-on-all-paths contract for RuntimeExecTool.run_config.
+     *
+     * The `executeRunConfig` function (or whichever private function implements
+     * the `run_config` action) MUST contain a `finally { … Disposer.dispose(invocation) … }`
+     * block. This ensures the `RunInvocation` is disposed on success, timeout,
+     * exception, and coroutine cancellation — matching the contract proven for
+     * `JavaRuntimeExecTool` and `CoverageTool` by the existing tests above.
+     *
+     * Pre-Phase-2: no `executeRunConfig` exists → `finally` with dispose is absent →
+     * [hasFinallyDisposePattern] returns false → FAIL.
+     */
+    @Test
+    fun `RuntimeExecTool run_config — executeRunConfig must dispose invocation in a finally block`() {
+        val text = readSource("RuntimeExecTool.kt")
+        assertTrue(
+            hasFinallyDisposePattern(text),
+            "Leak: RuntimeExecTool.kt has no `finally { … Disposer.dispose(invocation) … }` " +
+                "block for the run_config action. Disposal MUST run on ALL exit paths from " +
+                "executeRunConfig (success / processNotStarted / timeout / exception / " +
+                "coroutine cancel) — Phase 2 must introduce a RunInvocation and wrap the " +
+                "run body in `try { … } finally { Disposer.dispose(invocation) }`."
+        )
+    }
+
+    /**
+     * A3 — RunContentDescriptor cleanup via removeRunContent.
+     *
+     * RuntimeExecTool.kt must contain a literal `removeRunContent` call in the
+     * run_config launch path. Per the design note in RunInvocation.kt:
+     *   "Per design, the literal `removeRunContent` call lives in the tool file
+     *    (source-text test anchor)."
+     *
+     * This proves the cleanup path exists and is not accidentally omitted.
+     * Pre-Phase-2: call doesn't exist → FAIL.
+     */
+    @Test
+    fun `RuntimeExecTool run_config — RunContentDescriptor must be released via removeRunContent`() {
+        val text = readSource("RuntimeExecTool.kt")
+        assertTrue(
+            text.contains("removeRunContent"),
+            "Leak: RuntimeExecTool.kt does not call RunContentManager.removeRunContent anywhere. " +
+                "The run_config launch path MUST register an invocation.onDispose { … } block " +
+                "that calls removeRunContent(executor, descriptor) to release the " +
+                "RunContentDescriptor when the invocation is disposed — matching the pattern " +
+                "in JavaRuntimeExecTool.kt. Source-text anchor: a literal `removeRunContent` " +
+                "token must appear in the file (see Phase 2 implementation checklist B3)."
+        )
+    }
+
+    /**
+     * A4 — ExecutionManager.EXECUTION_TOPIC subscription via invocation.subscribeTopic.
+     *
+     * The `run_config` action must subscribe to `ExecutionManager.EXECUTION_TOPIC`
+     * **before** calling `executeConfigurationAsync`, and the subscription must be
+     * routed through `invocation.subscribeTopic(connection)` so the
+     * `MessageBusConnection` is auto-disposed when the invocation disposes.
+     *
+     * Presence of `invocation.subscribeTopic(` in the source proves both:
+     *   (a) The topic is subscribed (required for processNotStarted / processStarted events).
+     *   (b) The subscription is lifecycle-managed (prevents MessageBusConnection leak).
+     *
+     * Pre-Phase-2: `executeRunConfig` doesn't exist → `invocation.subscribeTopic(` is absent →
+     * FAIL.
+     */
+    @Test
+    fun `RuntimeExecTool run_config — must subscribe to EXECUTION_TOPIC via invocation subscribeTopic`() {
+        val text = readSource("RuntimeExecTool.kt")
+        assertTrue(
+            text.contains("invocation.subscribeTopic("),
+            "Leak: RuntimeExecTool.kt does not contain `invocation.subscribeTopic(` anywhere. " +
+                "The run_config launch path MUST subscribe to ExecutionManager.EXECUTION_TOPIC " +
+                "via `invocation.subscribeTopic(runConnection)` BEFORE calling " +
+                "executeConfigurationAsync — this ensures processNotStarted / processStarted " +
+                "events are received and the MessageBusConnection is auto-disposed when the " +
+                "invocation disposes (see Phase 2 implementation checklist A5)."
+        )
     }
 }

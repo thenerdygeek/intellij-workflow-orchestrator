@@ -19,13 +19,19 @@ class RuntimeExecToolTest {
     }
 
     @Test
-    fun `action enum contains only 3 universal actions`() {
+    fun `action enum contains 5 universal actions including run_config lifecycle`() {
         val actions = tool.parameters.properties["action"]?.enumValues
         assertNotNull(actions)
-        assertEquals(3, actions!!.size)
+        assertEquals(5, actions!!.size)
+        // Observation actions (original 3)
         assertTrue("get_running_processes" in actions)
         assertTrue("get_run_output" in actions)
         assertTrue("get_test_results" in actions)
+        // Run-config lifecycle actions
+        assertTrue("run_config" in actions)
+        assertTrue("stop_run_config" in actions)
+        // restart_run_config deleted — run_config is now idempotent
+        assertFalse("restart_run_config" in actions)
         // These two moved to java_runtime_exec / python_runtime_exec.
         assertFalse("run_tests" in actions)
         assertFalse("compile_module" in actions)

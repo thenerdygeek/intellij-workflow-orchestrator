@@ -76,6 +76,7 @@ Actions and their parameters:
 description optional: shown to user in approval dialog on run_tests, compile_module.
 """.trimIndent()
 
+    // TODO: rerun_failed_tests for pytest — delegate via pytest --lf flag. See docs/research/2026-04-21-followups-research.md Section C2.
     override val parameters = FunctionParameters(
         properties = mapOf(
             "action" to ParameterProperty(
