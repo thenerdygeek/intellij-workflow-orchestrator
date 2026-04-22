@@ -3,6 +3,7 @@ package com.workflow.orchestrator.pullrequest.ui
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
+import com.workflow.orchestrator.core.events.EventBus
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBPanel
@@ -41,7 +42,13 @@ class CommentsTabPanel(
     private val prId: Int,
 ) : JBPanel<CommentsTabPanel>(BorderLayout()), AutoCloseable {
 
-    val vm = CommentsViewModel(service, projectKey, repoSlug, prId)
+    val vm = CommentsViewModel(
+        service = service,
+        projectKey = projectKey,
+        repoSlug = repoSlug,
+        prId = prId,
+        eventBus = project.getService(EventBus::class.java),
+    )
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /** Auto-refresh poller: 30s base, 1.5× backoff, 5m cap. Starts/stops on tab visibility. */

@@ -1,5 +1,7 @@
 package com.workflow.orchestrator.pullrequest.ui
 
+import com.workflow.orchestrator.core.events.EventBus
+import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.PrComment
 import com.workflow.orchestrator.core.services.BitbucketService
 
@@ -10,12 +12,16 @@ import com.workflow.orchestrator.core.services.BitbucketService
  * Thread-safety: intended to be called from a single coroutine scope
  * (Dispatchers.IO). UI change listeners are fired from whatever thread
  * calls refresh/postGeneralComment/etc.; callers must dispatch to EDT.
+ *
+ * @param eventBus optional EventBus instance for cross-module event publication.
+ *   Omit (null) in unit tests that don't need event coverage.
  */
 class CommentsViewModel(
     private val service: BitbucketService,
     private val projectKey: String,
     private val repoSlug: String,
     private val prId: Int,
+    private val eventBus: EventBus? = null,
 ) {
     private val _comments: MutableList<PrComment> = mutableListOf()
     val comments: List<PrComment> get() = _comments.toList()
@@ -47,6 +53,15 @@ class CommentsViewModel(
             lastError = null
             _comments.clear()
             _comments.addAll(result.data)
+            eventBus?.emit(
+                WorkflowEvent.PrCommentsUpdated(
+                    projectKey = projectKey,
+                    repoSlug = repoSlug,
+                    prId = prId,
+                    total = _comments.size,
+                    unreadCount = 0,
+                )
+            )
         }
         fire()
     }

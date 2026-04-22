@@ -1,5 +1,7 @@
 package com.workflow.orchestrator.pullrequest.ui
 
+import com.workflow.orchestrator.core.events.EventBus
+import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.PrComment
 import com.workflow.orchestrator.core.model.PrCommentAuthor
 import com.workflow.orchestrator.core.model.PrCommentSeverity
@@ -9,6 +11,7 @@ import com.workflow.orchestrator.core.services.ToolResult
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
@@ -89,5 +92,34 @@ class CommentsViewModelTest {
         val ok = vm.reply(50L, "ack")
         assertTrue(ok)
         assertEquals(2, vm.comments.size)
+    }
+
+    @Test
+    fun `refresh publishes PrCommentsUpdated event`() = runTest {
+        val service = mockk<BitbucketService>()
+        coEvery { service.listPrComments("P", "R", 1, false, false) } returns
+            ToolResult.success(listOf(makeComment("1")), summary = "1")
+
+        val bus = EventBus()
+        var captured: WorkflowEvent.PrCommentsUpdated? = null
+        val collectorJob = launch {
+            bus.events.collect { event ->
+                if (event is WorkflowEvent.PrCommentsUpdated) captured = event
+            }
+        }
+        // Let the collector subscribe before emitting
+        testScheduler.advanceUntilIdle()
+
+        CommentsViewModel(service, "P", "R", 1, eventBus = bus).refresh()
+        testScheduler.advanceUntilIdle()
+
+        collectorJob.cancel()
+
+        assertNotNull(captured)
+        assertEquals(1, captured!!.total)
+        assertEquals(0, captured!!.unreadCount)
+        assertEquals("P", captured!!.projectKey)
+        assertEquals("R", captured!!.repoSlug)
+        assertEquals(1, captured!!.prId)
     }
 }

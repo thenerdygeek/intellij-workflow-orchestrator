@@ -135,5 +135,17 @@ sealed class WorkflowEvent {
         val isCreate: Boolean,
     ) : WorkflowEvent()
 
+    /**
+     * Emitted by :pullrequest after each successful comments refresh.
+     * [unreadCount] is always 0 for MVP — Phase 5 will add unread-since-last-view tracking.
+     */
+    data class PrCommentsUpdated(
+        val projectKey: String,
+        val repoSlug: String,
+        val prId: Int,
+        val total: Int,
+        val unreadCount: Int,
+    ) : WorkflowEvent()
+
     enum class BuildEventStatus { SUCCESS, FAILED }
 }
