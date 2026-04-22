@@ -52,12 +52,14 @@
 
 Methods in `BitbucketService` interface (`core/src/main/kotlin/com/workflow/orchestrator/core/services/BitbucketService.kt`) and their implementations in `BitbucketServiceImpl` (`pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/BitbucketServiceImpl.kt`) that are specifically involved in diff/change inspection:
 
+These are service-layer methods (not tool actions). Schema intentionally differs from the action tables above.
+
 | Method | Location | Test file | Verdict |
 |---|---|---|---|
-| `getPullRequestDiff` | `core/src/main/kotlin/com/workflow/orchestrator/core/services/BitbucketService.kt:82` / `pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/BitbucketServiceImpl.kt:555` | none | |
-| `getPullRequestChanges` | `core/src/main/kotlin/com/workflow/orchestrator/core/services/BitbucketService.kt:79` / `pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/BitbucketServiceImpl.kt:530` | none | |
-| `getPullRequestActivities` | `core/src/main/kotlin/com/workflow/orchestrator/core/services/BitbucketService.kt:76` / `pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/BitbucketServiceImpl.kt:496` | none | |
-| `getPullRequestCommits` | `core/src/main/kotlin/com/workflow/orchestrator/core/services/BitbucketService.kt:23` / `pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/BitbucketServiceImpl.kt:135` | none | |
+| `getPullRequestDiff` | `core/src/main/kotlin/com/workflow/orchestrator/core/services/BitbucketService.kt:82` / `pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/BitbucketServiceImpl.kt:555` | — | |
+| `getPullRequestChanges` | `core/src/main/kotlin/com/workflow/orchestrator/core/services/BitbucketService.kt:79` / `pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/BitbucketServiceImpl.kt:530` | — | |
+| `getPullRequestActivities` | `core/src/main/kotlin/com/workflow/orchestrator/core/services/BitbucketService.kt:76` / `pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/BitbucketServiceImpl.kt:496` | — | |
+| `getPullRequestCommits` | `core/src/main/kotlin/com/workflow/orchestrator/core/services/BitbucketService.kt:23` / `pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/BitbucketServiceImpl.kt:135` | — | |
 
 ### Action-by-action notes
 
