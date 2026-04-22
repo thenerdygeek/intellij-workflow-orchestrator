@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.jira.vcs
 
+import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.CheckinProjectPanel
@@ -9,7 +10,7 @@ import com.intellij.openapi.vcs.checkin.CheckinHandlerFactory
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
-import com.workflow.orchestrator.core.model.jira.TransitionInput
+import com.workflow.orchestrator.core.services.jira.TransitionDialogOpener
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.jira.api.JiraApiClient
 import kotlinx.coroutines.CoroutineScope
@@ -19,8 +20,9 @@ import kotlinx.coroutines.launch
 
 /**
  * After a successful commit, suggests transitioning the Jira ticket
- * to "In Progress" if it's still in "To Do" or "Open" status.
- * Uses a non-blocking notification with an action button.
+ * if it's still in a "not started" status.
+ * Uses a non-blocking notification with an action button that opens
+ * [TransitionDialogOpener] rather than performing a direct transition.
  */
 class PostCommitTransitionHandlerFactory : CheckinHandlerFactory() {
     override fun createHandler(panel: CheckinProjectPanel, commitContext: CommitContext): CheckinHandler {
@@ -54,40 +56,23 @@ class PostCommitTransitionHandler(private val project: Project) : CheckinHandler
                     is ApiResult.Success -> {
                         val currentStatus = issueResult.data.fields.status.name
                         if (PostCommitTransitionLogic.shouldSuggestTransition(currentStatus)) {
-                            val transitionsResult = client.getTransitions(ticketId)
-                            when (transitionsResult) {
-                                is ApiResult.Success -> {
-                                    val inProgressTransition = transitionsResult.data.find {
-                                        it.toStatus.name.equals("In Progress", ignoreCase = true)
-                                    }
-                                    if (inProgressTransition != null) {
-                                        com.intellij.openapi.application.invokeLater {
-                                            val notification = com.intellij.notification.NotificationGroupManager.getInstance()
-                                                .getNotificationGroup("workflow.automation")
-                                                .createNotification(
-                                                    "Transition $ticketId?",
-                                                    "$ticketId is still '$currentStatus'. Move to In Progress?",
-                                                    com.intellij.notification.NotificationType.INFORMATION
-                                                )
-                                            notification.addAction(object : com.intellij.notification.NotificationAction("Transition") {
-                                                override fun actionPerformed(e: com.intellij.openapi.actionSystem.AnActionEvent, notification: com.intellij.notification.Notification) {
-                                                    notification.expire()
-                                                    CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-                                                        if (project.isDisposed) return@launch
-                                                        try {
-                                                            client.transitionIssue(ticketId, TransitionInput(inProgressTransition.id, emptyMap(), null))
-                                                            log.info("[Jira:PostCommit] Transitioned $ticketId to In Progress")
-                                                        } catch (e: Exception) {
-                                                            log.warn("[Jira:PostCommit] Failed to transition $ticketId: ${e.message}")
-                                                        }
-                                                    }
-                                                }
-                                            })
-                                            notification.notify(project)
+                            com.intellij.openapi.application.invokeLater {
+                                val notification = com.intellij.notification.NotificationGroupManager.getInstance()
+                                    .getNotificationGroup("workflow.automation")
+                                    .createNotification(
+                                        "Transition $ticketId?",
+                                        "$ticketId is still '$currentStatus'. Open transition dialog?",
+                                        com.intellij.notification.NotificationType.INFORMATION
+                                    )
+                                notification.addAction(object : com.intellij.notification.NotificationAction("Open transition dialog\u2026") {
+                                    override fun actionPerformed(e: com.intellij.openapi.actionSystem.AnActionEvent, notification: com.intellij.notification.Notification) {
+                                        notification.expire()
+                                        if (!project.isDisposed) {
+                                            project.service<TransitionDialogOpener>().open(project, ticketId, transitionId = null)
                                         }
                                     }
-                                }
-                                is ApiResult.Error -> log.debug("[Jira:PostCommit] Could not fetch transitions for $ticketId")
+                                })
+                                notification.notify(project)
                             }
                         }
                     }

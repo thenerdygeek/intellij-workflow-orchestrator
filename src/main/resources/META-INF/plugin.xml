@@ -176,6 +176,9 @@
         <projectService
             serviceInterface="com.workflow.orchestrator.core.services.jira.JiraSearchService"
             serviceImplementation="com.workflow.orchestrator.jira.service.JiraSearchServiceImpl"/>
+        <projectService
+            serviceInterface="com.workflow.orchestrator.core.services.jira.TransitionDialogOpener"
+            serviceImplementation="com.workflow.orchestrator.jira.ui.TransitionDialogOpenerImpl"/>
 
         <!-- Jira Active Ticket -->
         <projectService

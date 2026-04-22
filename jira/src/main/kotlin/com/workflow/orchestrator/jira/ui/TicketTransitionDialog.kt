@@ -39,8 +39,7 @@ import javax.swing.JPanel
  * 4. Validates all required fields before submission.
  * 5. Executes the chosen transition via [TicketTransitionService.executeTransition].
  *
- * Intended as the single shared transition dialog, replacing the legacy [TransitionDialog].
- * Caller migration is handled in T28; the old file remains until T30/T31.
+ * This is the single shared transition dialog; the legacy TransitionDialog has been removed.
  */
 class TicketTransitionDialog(
     private val project: Project,

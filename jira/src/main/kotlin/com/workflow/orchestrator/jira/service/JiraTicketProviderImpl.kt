@@ -11,11 +11,8 @@ import com.workflow.orchestrator.core.workflow.TicketComment
 import com.workflow.orchestrator.core.workflow.TicketContext
 import com.workflow.orchestrator.core.workflow.TicketDetails
 import com.workflow.orchestrator.core.workflow.TicketTransition
-import com.intellij.openapi.progress.runBackgroundableTask
 import com.workflow.orchestrator.core.model.jira.TransitionInput
 import com.workflow.orchestrator.jira.api.JiraApiClient
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
 
 /**
  * Implementation of [JiraTicketProvider] that delegates to [JiraApiClient].
@@ -195,71 +192,14 @@ class JiraTicketProviderImpl : JiraTicketProvider {
         ticketId: String,
         onTransitioned: () -> Unit
     ) {
-        val client = createClient() ?: return
-
-        runBackgroundableTask("Loading transitions for $ticketId", project, false) {
-            val result = runBlocking(Dispatchers.IO) {
-                client.getTransitions(ticketId)
-            }
-            val transitions = when (result) {
-                is ApiResult.Success -> result.data
-                is ApiResult.Error -> {
-                    log.warn("[Jira:TicketProvider] Failed to get transitions for $ticketId")
-                    return@runBackgroundableTask
-                }
-            }
-
-            com.intellij.openapi.application.invokeLater {
-                if (transitions.isEmpty()) {
-                    log.warn("[Jira:TicketProvider] No transitions available for $ticketId")
-                    return@invokeLater
-                }
-
-                if (transitions.size == 1 && transitions[0].fields.isEmpty()) {
-                    // Single transition, no required fields — execute directly
-                    runBackgroundableTask("Transitioning $ticketId", project, false) {
-                        runBlocking(Dispatchers.IO) {
-                            transitionTicket(ticketId, transitions[0].id)
-                        }
-                        com.intellij.openapi.application.invokeLater { onTransitioned() }
-                    }
-                } else {
-                    // Show popup to pick transition, then show dialog if fields required
-                    val popup = javax.swing.JPopupMenu()
-                    for (transition in transitions) {
-                        val item = javax.swing.JMenuItem(transition.name)
-                        item.addActionListener {
-                            val hasRequiredFields = transition.fields.any { it.required }
-                            if (hasRequiredFields) {
-                                com.workflow.orchestrator.jira.ui.TransitionDialog(
-                                    project, ticketId, transition, onTransitioned
-                                ).show()
-                            } else {
-                                runBackgroundableTask("Transitioning $ticketId", project, false) {
-                                    runBlocking(Dispatchers.IO) {
-                                        transitionTicket(ticketId, transition.id)
-                                    }
-                                    com.intellij.openapi.application.invokeLater { onTransitioned() }
-                                }
-                            }
-                        }
-                        popup.add(item)
-                    }
-                    // Show popup relative to the focused component
-                    val focusOwner = java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager().focusOwner
-                    if (focusOwner != null) {
-                        popup.show(focusOwner, 0, focusOwner.height)
-                    } else {
-                        // Fallback: show relative to the IDE frame
-                        val frame = com.intellij.openapi.wm.WindowManager.getInstance().getFrame(project)
-                        if (frame != null) {
-                            val mousePos = java.awt.MouseInfo.getPointerInfo().location
-                            javax.swing.SwingUtilities.convertPointFromScreen(mousePos, frame)
-                            popup.show(frame, mousePos.x, mousePos.y)
-                        }
-                    }
-                }
-            }
+        com.intellij.openapi.application.invokeLater {
+            com.workflow.orchestrator.jira.ui.TicketTransitionDialog(
+                project = project,
+                ticketKey = ticketId,
+                projectKey = ticketId.substringBefore("-"),
+                initialTransitionId = null
+            ).showAndGet()
+            onTransitioned()
         }
     }
 }

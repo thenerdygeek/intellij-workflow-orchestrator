@@ -191,14 +191,13 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
 
         val transitionBtn = javax.swing.JButton("${issue.fields.status.name} ▾").apply {
             addActionListener {
-                com.workflow.orchestrator.core.workflow.JiraTicketProvider.getInstance()
-                    ?.showTransitionDialog(
-                        project,
-                        issue.key
-                    ) {
-                        // Refresh after transition
-                        log.info("[Jira:UI] Ticket ${issue.key} transitioned, refreshing")
-                    }
+                TicketTransitionDialog(
+                    project = project,
+                    ticketKey = issue.key,
+                    projectKey = issue.key.substringBefore("-"),
+                    initialTransitionId = null
+                ).showAndGet()
+                log.info("[Jira:UI] Ticket ${issue.key} transition dialog closed")
             }
         }
         buttonPanel.add(transitionBtn)

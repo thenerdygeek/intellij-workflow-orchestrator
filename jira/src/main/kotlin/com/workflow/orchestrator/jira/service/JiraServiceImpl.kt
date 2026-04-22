@@ -863,12 +863,10 @@ class JiraServiceImpl(private val project: Project) : JiraService {
     }
 
     /**
-     * Converts a loosely-typed field value (as passed by [TransitionDialog] via [JiraService.transition])
-     * into a typed [FieldValue] for [TransitionInput].
+     * Converts a loosely-typed field value into a typed [FieldValue] for [TransitionInput].
      *
      * - [Map] → [FieldValue.Text] with the first value (e.g. `{"name":"jdoe"}` → kept as-is via UserRef path
      *   below by checking for "name" key; otherwise Text of the map's string representation).
-     *   Because [TransitionDialog] only emits string values or maps with a "name" key, this is sufficient.
      * - Anything else → [FieldValue.Text] of `.toString()`.
      *
      * Note: callers that need richer field types should construct [TransitionInput] directly.

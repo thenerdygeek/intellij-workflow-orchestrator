@@ -1,16 +1,24 @@
 package com.workflow.orchestrator.jira.service
 
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
+import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranch
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
-import com.workflow.orchestrator.core.model.jira.TransitionInput
+import com.workflow.orchestrator.core.model.jira.StatusCategory
+import com.workflow.orchestrator.core.model.jira.TransitionError
+import com.workflow.orchestrator.core.services.jira.TicketTransitionService
+import com.workflow.orchestrator.core.services.jira.TransitionDialogOpener
+import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.jira.api.JiraApiClient
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.application.EDT
-import com.workflow.orchestrator.core.settings.RepoContextResolver
 import git4idea.branch.GitBrancher
 import git4idea.commands.Git
 import git4idea.repo.GitRepositoryManager
@@ -80,7 +88,7 @@ class BranchingService(
 
     /**
      * Uses an existing branch: fetch from remote, checkout locally,
-     * and transition the Jira ticket to "In Progress".
+     * and transition the Jira ticket via the orchestrator.
      */
     suspend fun useExistingBranch(
         issue: JiraIssue,
@@ -146,12 +154,9 @@ class BranchingService(
             )
         }
 
-        // Transition ticket to "In Progress"
-        log.info("[Jira:Branch] Transitioning ${issue.key} to In Progress")
-        val transitionResult = transitionToInProgress(issue.key)
-        if (transitionResult is ApiResult.Error) {
-            log.warn("[Jira:Branch] Jira transition failed for ${issue.key}, but branch was checked out: ${transitionResult.message}")
-        }
+        // Transition ticket via orchestrator
+        log.info("[Jira:Branch] Triggering start work transition for ${issue.key}")
+        transitionToStartWorkStatus(issue.key)
 
         // Set active ticket
         activeTicketService.setActiveTicket(issue.key, issue.fields.summary)
@@ -162,7 +167,7 @@ class BranchingService(
 
     /**
      * Creates a branch on Bitbucket, fetches it locally, checks it out,
-     * and transitions the Jira ticket to "In Progress".
+     * and transitions the Jira ticket via the orchestrator.
      */
     suspend fun startWork(
         issue: JiraIssue,
@@ -230,12 +235,9 @@ class BranchingService(
             )
         }
 
-        // 3. Transition ticket to "In Progress"
-        log.info("[Jira:Branch] Transitioning ${issue.key} to In Progress")
-        val transitionResult = transitionToInProgress(issue.key)
-        if (transitionResult is ApiResult.Error) {
-            log.warn("[Jira:Branch] Jira transition failed for ${issue.key}, but branch was created: ${transitionResult.message}")
-        }
+        // 3. Transition ticket via orchestrator
+        log.info("[Jira:Branch] Triggering start work transition for ${issue.key}")
+        transitionToStartWorkStatus(issue.key)
 
         // 4. Set active ticket
         activeTicketService.setActiveTicket(issue.key, issue.fields.summary)
@@ -244,25 +246,93 @@ class BranchingService(
         return ApiResult.Success(branchName)
     }
 
-    private suspend fun transitionToInProgress(issueKey: String): ApiResult<Unit> {
-        val transitionsResult = apiClient.getTransitions(issueKey)
-        val transitions = when (transitionsResult) {
-            is ApiResult.Success -> transitionsResult.data
-            is ApiResult.Error -> {
-                log.error("[Jira:Branch] Failed to fetch transitions for $issueKey: ${transitionsResult.message}")
-                return transitionsResult
+    /**
+     * Orchestrates the Jira ticket transition when Start Work is triggered.
+     *
+     * Resolution order:
+     * 1. Read [PluginSettings.ticketTransitionDefaultStartWorkStatusName]. If empty → skip.
+     * 2. Fetch available transitions via [TicketTransitionService].
+     * 3. Pick the transition whose [toStatus.name] matches the configured name (case-insensitive),
+     *    or fall back to the first IN_PROGRESS-category transition. If none found → skip.
+     * 4. If [PluginSettings.ticketTransitionAutoTransitionSilently] is true:
+     *    - Call [TicketTransitionService.tryAutoTransition]. On success → show a balloon.
+     *    - On [TransitionError.RequiresInteraction] → open [TransitionDialogOpener] on EDT.
+     *    - On other error → log and show balloon with the error summary.
+     * 5. If silent = false → open [TransitionDialogOpener] directly on EDT.
+     */
+    private suspend fun transitionToStartWorkStatus(issueKey: String) {
+        val settings = PluginSettings.getInstance(project)
+        val targetStatusName = settings.state.ticketTransitionDefaultStartWorkStatusName.orEmpty().trim()
+        if (targetStatusName.isEmpty()) {
+            log.info("[Jira:Branch] Start Work transition skipped: ticketTransitionDefaultStartWorkStatusName is empty")
+            return
+        }
+
+        val transitionService = try {
+            project.service<TicketTransitionService>()
+        } catch (e: Exception) {
+            log.warn("[Jira:Branch] TicketTransitionService not available: ${e.message}")
+            return
+        }
+
+        val transitionsResult = transitionService.getAvailableTransitions(issueKey)
+        if (transitionsResult.isError) {
+            log.warn("[Jira:Branch] Failed to fetch transitions for $issueKey: ${transitionsResult.summary}")
+            return
+        }
+
+        val transitions = transitionsResult.data.orEmpty()
+        val target = transitions.find { it.toStatus.name.equals(targetStatusName, ignoreCase = true) }
+            ?: transitions.find { it.toStatus.category == StatusCategory.IN_PROGRESS }
+
+        if (target == null) {
+            log.warn("[Jira:Branch] No matching transition for '$targetStatusName' on $issueKey. Available: ${transitions.joinToString { it.name }}")
+            return
+        }
+
+        val targetId = target.id
+        val statusName = target.toStatus.name
+
+        if (settings.state.ticketTransitionAutoTransitionSilently) {
+            val autoResult = transitionService.tryAutoTransition(issueKey, targetId)
+            when {
+                !autoResult.isError -> {
+                    log.info("[Jira:Branch] Auto-transitioned $issueKey → $statusName")
+                    invokeLater {
+                        NotificationGroupManager.getInstance()
+                            .getNotificationGroup("workflow.jira")
+                            .createNotification(
+                                "$issueKey → $statusName",
+                                NotificationType.INFORMATION
+                            )
+                            .notify(project)
+                    }
+                }
+                autoResult.payload is TransitionError.RequiresInteraction -> {
+                    log.info("[Jira:Branch] Transition for $issueKey requires interaction — opening dialog")
+                    invokeLater {
+                        project.service<TransitionDialogOpener>().open(project, issueKey, targetId)
+                    }
+                }
+                else -> {
+                    log.warn("[Jira:Branch] Auto-transition failed for $issueKey: ${autoResult.summary}")
+                    invokeLater {
+                        NotificationGroupManager.getInstance()
+                            .getNotificationGroup("workflow.jira")
+                            .createNotification(
+                                "Transition failed",
+                                autoResult.summary,
+                                NotificationType.WARNING
+                            )
+                            .notify(project)
+                    }
+                }
+            }
+        } else {
+            log.info("[Jira:Branch] Opening transition dialog for $issueKey (silent=false)")
+            invokeLater {
+                project.service<TransitionDialogOpener>().open(project, issueKey, targetId)
             }
         }
-
-        val inProgressTransition = transitions.find {
-            it.name.equals("In Progress", ignoreCase = true) ||
-            it.toStatus.category == com.workflow.orchestrator.core.model.jira.StatusCategory.IN_PROGRESS
-        } ?: run {
-            log.warn("[Jira:Branch] No 'In Progress' transition available for $issueKey. Available: ${transitions.joinToString { it.name }}")
-            return ApiResult.Error(ErrorType.NOT_FOUND, "No 'In Progress' transition available.")
-        }
-
-        log.info("[Jira:Branch] Found transition '${inProgressTransition.name}' (id=${inProgressTransition.id}) for $issueKey")
-        return apiClient.transitionIssue(issueKey, TransitionInput(inProgressTransition.id, emptyMap(), null))
     }
 }

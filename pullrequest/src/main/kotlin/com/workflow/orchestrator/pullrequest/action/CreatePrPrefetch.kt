@@ -1,11 +1,14 @@
 package com.workflow.orchestrator.pullrequest.action
 
 import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.bitbucket.BitbucketUser
 import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.model.jira.TransitionMeta
+import com.workflow.orchestrator.core.services.jira.TicketTransitionService
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.settings.RepoContextResolver
@@ -47,7 +50,14 @@ data class CreatePrContext(
     val initialTicketContexts: Map<String, TicketContext>,
     val transitions: List<TicketTransition>,
     val defaultTitle: String,
-    val defaultReviewers: List<String>
+    val defaultReviewers: List<String>,
+    /**
+     * Rich [TransitionMeta] objects for the primary ticket, fetched from [TicketTransitionService].
+     * Used by the "Transition ticket after PR creation" combo in [CreatePrDialog] so users can
+     * pick a post-PR transition without opening a separate screen. Empty when no ticket is resolved
+     * or the service is unavailable.
+     */
+    val transitionMetas: List<TransitionMeta> = emptyList()
 )
 
 sealed class PrefetchResult {
@@ -124,7 +134,7 @@ object CreatePrPrefetch {
         val keys = listOfNotNull(branchKey, activeKey?.takeIf { it != branchKey })
         log.info("[PR:Prefetch] resolvedKeys=$keys selectedBranch='$selectedBranch'")
 
-        // 5. Parallel fetch: Jira contexts + transitions + default reviewers
+        // 5. Parallel fetch: Jira contexts + transitions + transitionMetas + default reviewers
         return coroutineScope {
             val jiraProvider = JiraTicketProvider.getInstance()
 
@@ -152,6 +162,18 @@ object CreatePrPrefetch {
                 }
             }
 
+            val transitionMetasDeferred = async(Dispatchers.IO) {
+                val primaryKey = keys.firstOrNull()
+                if (primaryKey.isNullOrBlank()) return@async emptyList<TransitionMeta>()
+                try {
+                    val result = project.service<TicketTransitionService>().getAvailableTransitions(primaryKey)
+                    if (!result.isError) result.data.orEmpty() else emptyList()
+                } catch (e: Exception) {
+                    log.warn("[PR:Prefetch] TicketTransitionService.getAvailableTransitions failed: ${e.message}")
+                    emptyList()
+                }
+            }
+
             val defaultReviewersDeferred = async(Dispatchers.IO) {
                 try {
                     PrService.getInstance(project).buildDefaultReviewers().map { it.user.name }
@@ -163,6 +185,7 @@ object CreatePrPrefetch {
 
             val contextPairs = contextPairsDeferred.await()
             val transitions = transitionsDeferred.await()
+            val transitionMetas = transitionMetasDeferred.await()
             val defaultReviewers = defaultReviewersDeferred.await()
 
             val initialTicketContexts: Map<String, TicketContext> = contextPairs
@@ -186,7 +209,8 @@ object CreatePrPrefetch {
                     initialTicketContexts = initialTicketContexts,
                     transitions = transitions,
                     defaultTitle = defaultTitle,
-                    defaultReviewers = defaultReviewers
+                    defaultReviewers = defaultReviewers,
+                    transitionMetas = transitionMetas
                 )
             )
         }

@@ -1,9 +1,11 @@
 package com.workflow.orchestrator.pullrequest.ui
 
 import com.intellij.ide.BrowserUtil
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.invokeLater as platformInvokeLater
+import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
@@ -12,6 +14,7 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.IconLoader
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.JBColor
+import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
@@ -25,6 +28,8 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketUser
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.model.jira.TransitionMeta
+import com.workflow.orchestrator.core.services.jira.TransitionDialogOpener
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.workflow.JiraTicketProvider
@@ -216,9 +221,25 @@ class CreatePrDialog(
     private val repoDefaultReviewerChips = mutableMapOf<String, JPanel>()
     private var userSearchJob: Job? = null
 
-    // Transition
+    // Transition (existing — legacy JiraTicketProvider path)
     private val transitionCheckbox = JCheckBox("Transition ticket to").apply { isSelected = true }
     private val transitionCombo = JComboBox<TransitionItem>()
+
+    // Post-PR transition — uses TransitionDialogOpener so the user can fill any required fields.
+    // Shown only when transitionMetas is non-empty and a default post-PR status is configured.
+    private val postPrTransitionCombo: JComboBox<TransitionMeta?>? = run {
+        val preferred = settings.state.ticketTransitionDefaultPrCreateStatusName.orEmpty().trim()
+        val metas = context.transitionMetas
+        if (metas.isEmpty() || preferred.isEmpty() || context.initialTicketKeys.isEmpty()) return@run null
+        val items: List<TransitionMeta?> = listOf<TransitionMeta?>(null) + metas
+        val combo = JComboBox<TransitionMeta?>(items.toTypedArray())
+        @Suppress("UNCHECKED_CAST")
+        combo.renderer = SimpleListCellRenderer.create<TransitionMeta?>("None") { it?.toStatus?.name ?: "None" }
+        val defaultIdx = items.indexOfFirst { it?.toStatus?.name.equals(preferred, ignoreCase = true) }
+            .let { if (it < 0) 0 else it }
+        combo.selectedIndex = defaultIdx
+        combo
+    }
 
     // Result
     private val resultLabel = JBLabel("")
@@ -487,11 +508,20 @@ class CreatePrDialog(
         content.add(JSeparator())
         content.add(Box.createVerticalStrut(JBUI.scale(8)))
 
-        // Transition
+        // Transition (existing — legacy path via JiraTicketProvider)
         val transPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0))
         transPanel.add(transitionCheckbox)
         transPanel.add(transitionCombo)
         content.add(transPanel)
+
+        // Post-PR transition — only shown when transitionMetas prefetched successfully
+        if (postPrTransitionCombo != null) {
+            val postTransPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0))
+            postTransPanel.add(JBLabel("Transition ticket after PR creation:"))
+            postTransPanel.add(postPrTransitionCombo)
+            content.add(postTransPanel)
+        }
+
         content.add(Box.createVerticalStrut(JBUI.scale(4)))
         content.add(resultLabel)
 
@@ -1051,6 +1081,14 @@ class CreatePrDialog(
                                     JiraTicketProvider.getInstance()
                                         ?.transitionTicket(primary.key, selected.transition.id)
                                 }
+                            }
+                        }
+
+                        // Post-PR transition via TransitionDialogOpener (not blocking PR creation)
+                        val postTransMeta = postPrTransitionCombo?.selectedItem as? TransitionMeta
+                        if (postTransMeta != null && primary != null) {
+                            ApplicationManager.getApplication().invokeLater {
+                                project.service<TransitionDialogOpener>().open(project, primary.key, postTransMeta.id)
                             }
                         }
 
