@@ -22,12 +22,12 @@
 
 | Action | Tool line | Service method | Test file | Verdict |
 |---|---|---|---|---|
-| `add_pr_comment` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketReviewTool.kt:82` | `addPrComment(prId, text, repoName)` | `BitbucketReviewToolTest.kt` (schema only) | |
-| `add_inline_comment` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketReviewTool.kt:90` | `addInlineComment(prId, filePath, line, lineType, text, repoName)` | `BitbucketReviewToolTest.kt` (schema only) | |
-| `reply_to_comment` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketReviewTool.kt:107` | `replyToComment(prId, parentCommentId, text, repoName)` | `BitbucketReviewToolTest.kt` (schema only) | |
-| `add_reviewer` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketReviewTool.kt:122` | `addReviewer(prId, username, repoName)` | `BitbucketReviewToolTest.kt` (schema only) | |
-| `remove_reviewer` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketReviewTool.kt:130` | `removeReviewer(prId, username, repoName)` | `BitbucketReviewToolTest.kt` (schema only) | |
-| `set_reviewer_status` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketReviewTool.kt:138` | `setReviewerStatus(prId, username, status, repoName)` | `BitbucketReviewToolTest.kt` (schema only) | |
+| `add_pr_comment` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketReviewTool.kt:82` | `addPrComment(prId, text, repoName)` | `BitbucketReviewToolTest.kt` (schema only) | UNTESTED |
+| `add_inline_comment` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketReviewTool.kt:90` | `addInlineComment(prId, filePath, line, lineType, text, repoName)` | `BitbucketReviewToolTest.kt` (schema only) | FIX |
+| `reply_to_comment` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketReviewTool.kt:107` | `replyToComment(prId, parentCommentId, text, repoName)` | `BitbucketReviewToolTest.kt` (schema only) | UNTESTED |
+| `add_reviewer` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketReviewTool.kt:122` | `addReviewer(prId, username, repoName)` | `BitbucketReviewToolTest.kt` (schema only) | UNTESTED |
+| `remove_reviewer` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketReviewTool.kt:130` | `removeReviewer(prId, username, repoName)` | `BitbucketReviewToolTest.kt` (schema only) | UNTESTED |
+| `set_reviewer_status` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketReviewTool.kt:138` | `setReviewerStatus(prId, username, status, repoName)` | `BitbucketReviewToolTest.kt` (schema only) | FIX |
 
 ### `bitbucket_pr` actions
 
