@@ -132,17 +132,25 @@ MODELS_PATH = "/.api/llm/models"
 # Defaults
 # ─────────────────────────────────────────────────────────────
 
-# Curated list of "likely vision-capable" models. The instance may not host all
-# of these — missing ones will surface as 4xx and be reported, not crash.
-DEFAULT_MODELS = [
-    "anthropic::2024-10-22::claude-sonnet-4-20250514",
-    "anthropic::2024-10-22::claude-3-7-sonnet-latest",
-    "anthropic::2023-06-01::claude-3-5-sonnet-latest",
-    "openai::2024-02-01::gpt-4o",
-    "openai::2024-02-01::gpt-4o-mini",
-    "google::v1::gemini-2.5-pro",
-    "google::v1::gemini-2.5-flash",
+# Substrings that identify "likely vision-capable" model IDs when we discover
+# the model list from /.api/llm/models. Anything matching is probed; the rest
+# is skipped (they're text-only and would burn time + produce noise).
+# Override with --models or --all-models.
+VISION_MODEL_HINTS = [
+    # Anthropic — every Claude 3+ model is vision-capable
+    "claude-3", "claude-sonnet", "claude-opus", "claude-haiku",
+    # OpenAI vision-capable families
+    "gpt-4o", "gpt-4-turbo", "gpt-4-vision", "gpt-4.1", "gpt-5", "o1", "o3", "o4",
+    # Google
+    "gemini",
+    # Other multimodal providers occasionally seen behind Cody
+    "pixtral", "llava", "qwen-vl", "qwen2-vl",
 ]
+
+
+def looks_vision_capable(model_id: str) -> bool:
+    lower = model_id.lower()
+    return any(h in lower for h in VISION_MODEL_HINTS)
 
 # Default remote test image (used ONLY when URL-source formats are enabled and
 # --image-url is not overridden). Wikipedia "Cat_November_2010-1a.jpg" — a
@@ -640,9 +648,13 @@ def main() -> int:
     ap.add_argument("--url", required=True, help="Sourcegraph base URL (e.g. https://sg.example.com)")
     ap.add_argument("--token", required=True, help="Sourcegraph access token (sgp_...)")
     ap.add_argument("--models", default="",
-                    help="Comma-separated model IDs. Defaults to a curated vision-likely list.")
-    ap.add_argument("--discover", action="store_true",
-                    help="Fetch every model from /.api/llm/models and probe all of them.")
+                    help="Comma-separated model IDs to probe. If omitted, the script "
+                         "fetches the model list from /.api/llm/models and keeps only "
+                         "the vision-capable entries (heuristic match on name).")
+    ap.add_argument("--all-models", action="store_true",
+                    help="Probe EVERY model from /.api/llm/models (including text-only "
+                         "models that will fail every cell). Slow and noisy; only useful "
+                         "if you suspect the vision-name heuristic is missing something.")
     ap.add_argument("--only", default="",
                     help="Run only these format cases (comma-separated names; see --list).")
     ap.add_argument("--list", action="store_true", help="List all format cases and exit.")
@@ -682,16 +694,35 @@ def main() -> int:
     client = SourcegraphClient(args.url, args.token, verify=not args.no_verify,
                                timeout=args.timeout)
 
-    if args.discover:
-        try:
-            models = client.list_models()
-        except requests.RequestException as e:
-            print(f"ERROR: failed to list models from gateway: {e}", file=sys.stderr)
-            return 3
-    elif args.models:
+    if args.models:
         models = [m.strip() for m in args.models.split(",") if m.strip()]
+        discovery_note = "(from --models)"
     else:
-        models = DEFAULT_MODELS
+        try:
+            all_models = client.list_models()
+        except requests.RequestException as e:
+            print(f"ERROR: failed to list models from {_mask_url(args.url)}{MODELS_PATH}: {e}",
+                  file=sys.stderr)
+            print("       Pass --models 'id1,id2,...' explicitly if discovery is unavailable.",
+                  file=sys.stderr)
+            return 3
+        if not all_models:
+            print("ERROR: gateway returned 0 models. Pass --models explicitly.",
+                  file=sys.stderr)
+            return 3
+        if args.all_models:
+            models = all_models
+            discovery_note = f"(--all-models: every entry from {MODELS_PATH})"
+        else:
+            models = [m for m in all_models if looks_vision_capable(m)]
+            discovery_note = (f"(filtered {len(models)}/{len(all_models)} vision-capable "
+                              f"from {MODELS_PATH}; --all-models to probe everything)")
+            if not models:
+                print(f"ERROR: discovered {len(all_models)} models but none matched the "
+                      f"vision-name heuristic. Pass --models explicitly or use --all-models.",
+                      file=sys.stderr)
+                print(f"       Discovered IDs: {all_models}", file=sys.stderr)
+                return 3
 
     print(f"Sourcegraph URL : {_mask_url(args.url)}")
     print(f"Models          : {len(models)} {'(discovered)' if args.discover else ''}")
