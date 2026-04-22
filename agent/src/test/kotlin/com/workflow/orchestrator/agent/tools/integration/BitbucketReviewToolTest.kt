@@ -53,10 +53,10 @@ class BitbucketReviewToolTest {
     }
 
     @Test
-    fun `action enum contains all 8 actions`() {
+    fun `action enum contains all 9 actions`() {
         val actions = tool.parameters.properties["action"]?.enumValues
         assertNotNull(actions)
-        assertEquals(8, actions!!.size)
+        assertEquals(9, actions!!.size)
         assertTrue("add_pr_comment" in actions)
         assertTrue("add_inline_comment" in actions)
         assertTrue("reply_to_comment" in actions)
@@ -65,6 +65,7 @@ class BitbucketReviewToolTest {
         assertTrue("set_reviewer_status" in actions)
         assertTrue("list_comments" in actions)
         assertTrue("get_comment" in actions)
+        assertTrue("edit_comment" in actions)
     }
 
     @Test
@@ -225,5 +226,80 @@ class BitbucketReviewToolTest {
         }, project)
         assertTrue(result.isError)
         assertTrue(result.content.contains("project_key"))
+    }
+
+    // --- Task 3: edit_comment ---
+
+    @Test
+    fun `edit_comment dispatches to service with correct args`() = runTest {
+        val svc = mockBitbucketService()
+        val updated = sampleComment("50", version = 2, text = "updated text")
+        coEvery { svc.editPrComment("PROJ", "my-repo", 5, 50L, "updated text", 1) } returns
+            CoreToolResult(data = updated, summary = "Comment 50 updated")
+
+        val result = tool.execute(buildJsonObject {
+            put("action", "edit_comment")
+            put("project_key", "PROJ")
+            put("repo_slug", "my-repo")
+            put("pr_id", "5")
+            put("comment_id", "50")
+            put("text", "updated text")
+            put("expected_version", "1")
+        }, project)
+
+        assertFalse(result.isError)
+        assertTrue(result.content.contains("Comment 50 updated"))
+    }
+
+    @Test
+    fun `edit_comment surfaces STALE_VERSION error from service`() = runTest {
+        val svc = mockBitbucketService()
+        coEvery { svc.editPrComment("PROJ", "my-repo", 5, 50L, "new text", 0) } returns
+            CoreToolResult(data = sampleComment(), summary = "Error: STALE_VERSION — comment has been modified", isError = true)
+
+        val result = tool.execute(buildJsonObject {
+            put("action", "edit_comment")
+            put("project_key", "PROJ")
+            put("repo_slug", "my-repo")
+            put("pr_id", "5")
+            put("comment_id", "50")
+            put("text", "new text")
+            put("expected_version", "0")
+        }, project)
+
+        assertTrue(result.isError)
+        assertTrue(result.content.contains("STALE_VERSION"))
+    }
+
+    @Test
+    fun `edit_comment missing text returns error`() = runTest {
+        val svc = mockBitbucketService()
+        @Suppress("UNUSED_VARIABLE") val unused = svc
+        val result = tool.execute(buildJsonObject {
+            put("action", "edit_comment")
+            put("project_key", "PROJ")
+            put("repo_slug", "my-repo")
+            put("pr_id", "5")
+            put("comment_id", "50")
+            put("expected_version", "1")
+        }, project)
+        assertTrue(result.isError)
+        assertTrue(result.content.contains("text"))
+    }
+
+    @Test
+    fun `edit_comment missing expected_version returns error`() = runTest {
+        val svc = mockBitbucketService()
+        @Suppress("UNUSED_VARIABLE") val unused = svc
+        val result = tool.execute(buildJsonObject {
+            put("action", "edit_comment")
+            put("project_key", "PROJ")
+            put("repo_slug", "my-repo")
+            put("pr_id", "5")
+            put("comment_id", "50")
+            put("text", "some text")
+        }, project)
+        assertTrue(result.isError)
+        assertTrue(result.content.contains("expected_version"))
     }
 }

@@ -15,8 +15,9 @@ import kotlin.coroutines.coroutineContext
 /**
  * PR review actions — comments, inline comments, replies, reviewer management.
  *
- * 8 actions: add_pr_comment, add_inline_comment, reply_to_comment,
- * add_reviewer, remove_reviewer, set_reviewer_status, list_comments, get_comment
+ * 9 actions: add_pr_comment, add_inline_comment, reply_to_comment,
+ * add_reviewer, remove_reviewer, set_reviewer_status,
+ * list_comments, get_comment, edit_comment
  */
 class BitbucketReviewTool : AgentTool {
 
@@ -34,6 +35,7 @@ Actions and their parameters:
 - set_reviewer_status(pr_id, username, status) → Set reviewer status: APPROVED, NEEDS_WORK, UNAPPROVED
 - list_comments(project_key, repo_slug, pr_id, only_open?, only_inline?) → List all comments on a PR (filter by open/inline)
 - get_comment(project_key, repo_slug, pr_id, comment_id) → Get a single comment by ID
+- edit_comment(project_key, repo_slug, pr_id, comment_id, text, expected_version) → Edit comment text (uses optimistic locking; surfaces STALE_VERSION error)
 
 Common optional: repo_name for multi-repo projects. description for approval dialog on write actions.
 """.trimIndent()
@@ -44,7 +46,7 @@ Common optional: repo_name for multi-repo projects. description for approval dia
                 enumValues = listOf(
                     "add_pr_comment", "add_inline_comment", "reply_to_comment",
                     "add_reviewer", "remove_reviewer", "set_reviewer_status",
-                    "list_comments", "get_comment"
+                    "list_comments", "get_comment", "edit_comment"
                 )),
             "pr_id"             to ParameterProperty("string", "Pull request ID (numeric) — required for all actions"),
             "text"              to ParameterProperty("string", "Comment/reply text — for add_pr_comment, add_inline_comment, reply_to_comment"),
@@ -60,7 +62,8 @@ Common optional: repo_name for multi-repo projects. description for approval dia
             "repo_slug"         to ParameterProperty("string", "Repository slug — for list_comments, get_comment, edit_comment, delete_comment, resolve_comment, reopen_comment"),
             "only_open"         to ParameterProperty("string", "Filter to open comments only: true/false — for list_comments"),
             "only_inline"       to ParameterProperty("string", "Filter to inline comments only: true/false — for list_comments"),
-            "comment_id"        to ParameterProperty("string", "Comment ID (integer) — for get_comment, edit_comment, delete_comment, resolve_comment, reopen_comment")
+            "comment_id"        to ParameterProperty("string", "Comment ID (integer) — for get_comment, edit_comment, delete_comment, resolve_comment, reopen_comment"),
+            "expected_version"  to ParameterProperty("string", "Current comment version for optimistic locking — for edit_comment, delete_comment")
         ),
         required = listOf("action")
     )
@@ -178,6 +181,29 @@ Common optional: repo_name for multi-repo projects. description for approval dia
                     isError = true
                 )
                 service.getPrComment(projectKey, repoSlug, prId, commentId).toAgentToolResult()
+            }
+
+            "edit_comment" -> {
+                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return BitbucketToolUtils.missingParam("project_key")
+                val repoSlug = params["repo_slug"]?.jsonPrimitive?.content ?: return BitbucketToolUtils.missingParam("repo_slug")
+                val prId = BitbucketToolUtils.parsePrId(params) ?: return BitbucketToolUtils.invalidPrId()
+                val commentIdStr = params["comment_id"]?.jsonPrimitive?.content ?: return BitbucketToolUtils.missingParam("comment_id")
+                val commentId = commentIdStr.toLongOrNull() ?: return ToolResult(
+                    "Error: 'comment_id' must be an integer, got '$commentIdStr'",
+                    "Error: invalid comment_id",
+                    ToolResult.ERROR_TOKEN_ESTIMATE,
+                    isError = true
+                )
+                val text = params["text"]?.jsonPrimitive?.content ?: return BitbucketToolUtils.missingParam("text")
+                ToolValidation.validateNotBlank(text, "text")?.let { return it }
+                val versionStr = params["expected_version"]?.jsonPrimitive?.content ?: return BitbucketToolUtils.missingParam("expected_version")
+                val expectedVersion = versionStr.toIntOrNull() ?: return ToolResult(
+                    "Error: 'expected_version' must be an integer, got '$versionStr'",
+                    "Error: invalid expected_version",
+                    ToolResult.ERROR_TOKEN_ESTIMATE,
+                    isError = true
+                )
+                service.editPrComment(projectKey, repoSlug, prId, commentId, text, expectedVersion).toAgentToolResult()
             }
 
             else -> ToolResult(
