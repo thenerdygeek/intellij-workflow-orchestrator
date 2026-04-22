@@ -423,6 +423,17 @@ class BitbucketBranchClient(
         }
 
         /**
+         * Maximum number of characters returned from a PR diff.
+         *
+         * Rationale: the agent session has ~190K input-token budget (see agent/CLAUDE.md).
+         * 327,680 chars ≈ 80K tokens at 4 chars/token, leaving headroom for the system
+         * prompt, Jira ticket context, and tool definitions. This is intentionally larger
+         * than the 10K cap in PrDescriptionGenerator (which is a single-LLM-call flow with
+         * a much tighter budget). May be tuned in Phase 4.
+         */
+        const val MAX_DIFF_CHARS = 327_680
+
+        /**
          * Extract the Bamboo plan key from a Bitbucket build status.
          *
          * Bitbucket build statuses report the *build* key (e.g. `PROJ-PLAN-42`), but
@@ -1524,9 +1535,14 @@ class BitbucketBranchClient(
                 response.use {
                     when (it.code) {
                         in 200..299 -> {
-                            val body = it.body?.string() ?: ""
-                            log.info("[Core:Bitbucket] PR #$prId diff fetched (${body.length} chars)")
-                            ApiResult.Success(body)
+                            val raw = it.body?.string() ?: ""
+                            val capped = if (raw.length > MAX_DIFF_CHARS) {
+                                raw.take(MAX_DIFF_CHARS) + "\n[... diff truncated at $MAX_DIFF_CHARS chars ...]"
+                            } else {
+                                raw
+                            }
+                            log.info("[Core:Bitbucket] PR #$prId diff fetched (${raw.length} chars raw, ${capped.length} chars after cap)")
+                            ApiResult.Success(capped)
                         }
                         401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
                         404 -> ApiResult.Error(ErrorType.NOT_FOUND, "PR #$prId not found in $projectKey/$repoSlug")
