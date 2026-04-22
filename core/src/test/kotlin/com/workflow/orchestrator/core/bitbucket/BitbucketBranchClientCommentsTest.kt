@@ -66,4 +66,25 @@ class BitbucketBranchClientCommentsTest {
         assertTrue(req.getHeader("Accept")!!.contains("application/json"))
         assertTrue(req.path!!.contains("/pull-requests/1/comments"))
     }
+
+    @Test
+    fun `getPrComment returns single comment`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(
+            """{"id":42,"version":3,"text":"hello","author":{"name":"u","displayName":"U"},"state":"OPEN","severity":"NORMAL"}"""
+        ))
+        val result = client.getPrComment("P", "R", 1, 42L)
+        assertTrue(result is ApiResult.Success)
+        val c = (result as ApiResult.Success).data
+        assertEquals(42L, c.id)
+        assertEquals(3, c.version)
+    }
+
+    @Test
+    fun `getPrComment returns 404 as Error`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(404).setBody(
+            """{"errors":[{"message":"not found"}]}"""
+        ))
+        val result = client.getPrComment("P", "R", 1, 999L)
+        assertTrue(result is ApiResult.Error)
+    }
 }

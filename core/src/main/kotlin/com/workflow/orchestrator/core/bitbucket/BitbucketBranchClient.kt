@@ -1760,6 +1760,40 @@ class BitbucketBranchClient(
         )
     }
 
+    /**
+     * Gets a single comment by ID for a pull request.
+     * GET /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/comments/{commentId}
+     */
+    suspend fun getPrComment(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        commentId: Long,
+    ): ApiResult<BitbucketPrCommentResponse> = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder()
+                .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/comments/$commentId")
+                .get()
+                .header("Accept", "application/json")
+                .build()
+            val response = httpClient.newCall(request).execute()
+            response.use {
+                when (it.code) {
+                    in 200..299 -> {
+                        val body = it.body?.string() ?: ""
+                        ApiResult.Success(json.decodeFromString<BitbucketPrCommentResponse>(body))
+                    }
+                    401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                    404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Comment $commentId not found on PR #$prId in $projectKey/$repoSlug")
+                    else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                }
+            }
+        } catch (e: IOException) {
+            log.error("[Core:Bitbucket] Network error fetching comment $commentId on PR #$prId", e)
+            ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+        }
+    }
+
     // --- Commit, Inline Comment, Reply, Reviewer Status, File Browse Methods ---
 
     /**
