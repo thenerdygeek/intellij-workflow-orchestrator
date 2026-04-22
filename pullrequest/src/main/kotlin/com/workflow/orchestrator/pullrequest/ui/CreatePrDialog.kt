@@ -176,6 +176,8 @@ class CreatePrDialog(
     }
     private var descriptionGenJob: Job? = null
     private var lastGen: GenContext? = null
+    /** Incremented on every module change and generation start to detect write-after-cancel races. */
+    private var descriptionGenerationId: Int = 0
 
     // Reviewers
     private val reviewerChipsPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), JBUI.scale(2)))
@@ -428,7 +430,9 @@ class CreatePrDialog(
         sourceBranchLabel.text = newRepo.sourceBranch
         // Reset target to new repo's default
         targetField.text = newRepo.defaultTarget
-        // Invalidate description
+        // Invalidate description — increment the generation counter so any in-flight
+        // invokeLater writes from the cancelled job can detect they are stale and discard.
+        descriptionGenerationId++
         descriptionGenJob?.cancel()
         titleGenJob?.cancel()
         provenanceLabel.text = ""
@@ -557,6 +561,9 @@ class CreatePrDialog(
 
     private fun generateDescription() {
         descriptionGenJob?.cancel()
+        // Capture the generation ID at launch time. Any in-flight write that races a
+        // subsequent onModuleChanged() will detect the counter has moved and discard.
+        val myId = ++descriptionGenerationId
         descriptionGenJob = scope.launch {
             val (targetBranch, tickets, repoAtGenTime) = withContext(Dispatchers.EDT) {
                 Triple(targetField.text.trim(), ticketChipInput.allValid(), currentRepo)
@@ -568,18 +575,30 @@ class CreatePrDialog(
                 val gitRepo = GitRepositoryManager.getInstance(project).repositories
                     .find { it.root.path == repoAtGenTime.config.localVcsRootPath }
 
+                if (gitRepo == null) {
+                    log.warn("[Pr:CreateDialog] No GitRepository found for path '${repoAtGenTime.config.localVcsRootPath}' — cannot generate description")
+                    invokeLater {
+                        if (myId != descriptionGenerationId) return@invokeLater
+                        showDescriptionEmpty()
+                        regenerateButton.isEnabled = true
+                    }
+                    return@launch
+                }
+
                 val description = withTimeoutOrNull(120_000) {
                     PrDescriptionGenerator.generate(project, gitRepo, tickets, repoAtGenTime.sourceBranch, targetBranch)
                 }
                 if (description == null) {
                     log.warn("[Pr:CreateDialog] generate description timed out")
                     invokeLater {
+                        if (myId != descriptionGenerationId) return@invokeLater
                         showDescriptionEmpty()
                         regenerateButton.isEnabled = true
                     }
                     return@launch
                 }
                 invokeLater {
+                    if (myId != descriptionGenerationId) return@invokeLater
                     descriptionArea.text = description
                     showDescriptionTab("edit")
                     regenerateButton.isEnabled = true
@@ -588,6 +607,7 @@ class CreatePrDialog(
                 }
             } catch (e: CancellationException) {
                 invokeLater {
+                    if (myId != descriptionGenerationId) return@invokeLater
                     if (descriptionArea.text.isBlank()) showDescriptionEmpty()
                     else showDescriptionTab("edit")
                     regenerateButton.isEnabled = true
@@ -596,6 +616,7 @@ class CreatePrDialog(
             } catch (e: Exception) {
                 log.warn("[Pr:CreateDialog] generate description failed", e)
                 invokeLater {
+                    if (myId != descriptionGenerationId) return@invokeLater
                     showDescriptionEmpty()
                     regenerateButton.isEnabled = true
                 }

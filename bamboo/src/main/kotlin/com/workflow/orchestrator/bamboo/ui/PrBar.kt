@@ -190,6 +190,9 @@ class PrBar(
         formPanel.add(inner, BorderLayout.CENTER)
 
         cancelButton.addActionListener { showPanel(noPrPanel) }
+        // TODO (Phase 10): submitButton wires to onSubmitPr() which uses legacy single-value
+        // bitbucketProjectKey/repoSlug settings — wrong target for multi-repo projects.
+        // Replace with CreatePrLauncher delegation. See onSubmitPr() KDoc below.
         submitButton.addActionListener { onSubmitPr() }
         regenerateButton.addActionListener { onRegenerateDescription() }
     }
@@ -417,6 +420,11 @@ class PrBar(
 
     private fun resolveCurrentBranch(): String? = getGitRepo()?.currentBranchName
 
+    /**
+     * LATENT BUG: uses legacy single-value bitbucketProjectKey/repoSlug settings. Wrong target
+     * for multi-repo projects. TODO: replace with CreatePrLauncher delegation (Phase 10).
+     * Path reachable via formExpanded + setPrs(empty) — see buildFormPanel.
+     */
     private fun onSubmitPr() {
         val title = titleField.text.orEmpty().trim()
         if (title.isBlank()) {

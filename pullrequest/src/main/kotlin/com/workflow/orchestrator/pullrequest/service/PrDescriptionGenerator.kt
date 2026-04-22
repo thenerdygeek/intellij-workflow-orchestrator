@@ -7,7 +7,6 @@ import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.workflow.orchestrator.core.ai.TextGenerationService
 import com.workflow.orchestrator.core.ai.prompts.PrDescriptionPromptBuilder
 import com.workflow.orchestrator.core.bitbucket.PrService
-import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.core.workflow.TicketContext
 import git4idea.commands.Git
 import git4idea.repo.GitRepository
@@ -31,13 +30,13 @@ object PrDescriptionGenerator {
      * Generate a PR description using a 3-tier cascade.
      * Tries AI with diff first, then AI without diff, then commit-message fallback.
      *
-     * @param repo The [GitRepository] for the selected module. When null, falls back to the
-     *   current-editor resolver (preserving the pre-Phase-9 single-repo behaviour).
+     * @param repo The [GitRepository] for the selected module. Must be non-null; callers are
+     *   responsible for resolving the correct repo before invoking this method.
      * @param tickets Ordered list of [TicketContext]; first element is the primary ticket.
      */
     suspend fun generate(
         project: Project,
-        repo: GitRepository?,
+        repo: GitRepository,
         tickets: List<TicketContext>,
         sourceBranch: String,
         targetBranch: String
@@ -174,14 +173,10 @@ object PrDescriptionGenerator {
         append("**Branch:** $branch")
     }
 
-    private fun resolveTargetRepo(project: Project): GitRepository? =
-        RepoContextResolver.getInstance(project).resolveCurrentEditorRepoOrPrimary()
-
-    private fun getCommitMessages(project: Project, repo: GitRepository?, source: String, target: String): List<String> {
+    private fun getCommitMessages(project: Project, repo: GitRepository, source: String, target: String): List<String> {
         return try {
             ReadAction.compute<List<String>, Throwable> {
-                val r = repo ?: resolveTargetRepo(project) ?: return@compute emptyList()
-                val handler = git4idea.commands.GitLineHandler(project, r.root, git4idea.commands.GitCommand.LOG)
+                val handler = git4idea.commands.GitLineHandler(project, repo.root, git4idea.commands.GitCommand.LOG)
                 handler.addParameters("--oneline", "$target..$source")
                 val result = Git.getInstance().runCommand(handler)
                 if (result.success()) {
@@ -194,11 +189,10 @@ object PrDescriptionGenerator {
         }
     }
 
-    private fun getDiffBetweenBranches(project: Project, repo: GitRepository?, source: String, target: String): String? {
+    private fun getDiffBetweenBranches(project: Project, repo: GitRepository, source: String, target: String): String? {
         return try {
             ReadAction.compute<String?, Throwable> {
-                val r = repo ?: resolveTargetRepo(project) ?: return@compute null
-                val handler = git4idea.commands.GitLineHandler(project, r.root, git4idea.commands.GitCommand.DIFF)
+                val handler = git4idea.commands.GitLineHandler(project, repo.root, git4idea.commands.GitCommand.DIFF)
                 handler.addParameters("$target...$source", "--no-color")
                 val result = Git.getInstance().runCommand(handler)
                 if (result.success() && result.output.isNotEmpty()) {
