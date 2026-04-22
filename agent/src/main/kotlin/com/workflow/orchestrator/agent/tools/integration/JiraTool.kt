@@ -7,7 +7,13 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.core.model.jira.FieldValue
+import com.workflow.orchestrator.core.model.jira.TransitionError
+import com.workflow.orchestrator.core.model.jira.TransitionInput
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
@@ -33,7 +39,16 @@ Jira ticket management — issues, sprints, boards, transitions, comments, time 
 Actions and their parameters:
 - get_ticket(key) → Full ticket details
 - get_transitions(key) → Available status transitions
-- transition(key, transition_id, comment?) → Move ticket to new status
+- transition(key, transition_id, fields?, comment?) → Move ticket to new status.
+  If the response payload is MissingFields, call ask_followup_question for each
+  field to collect values from the user, then retry with fields={<fieldId>: <value>, ...}.
+  fields format:
+    user/assignee/reviewer: {"name": "username"}   (Jira DC)
+    labels:                 ["label1", "label2"]
+    priority/select/option: {"id": "option-id"}
+    multi select:           [{"id": "a"}, {"id": "b"}]
+    cascading:              {"value": "parent", "child": {"value": "child"}}
+    version/component:      {"id": "id"} or [{"id": "id"}, ...]
 - comment(key, body) → Add comment to ticket
 - get_comments(key) → List comments
 - log_work(key, time_spent, comment?) → Log time (format: '2h', '30m', '1h 30m')
@@ -72,6 +87,15 @@ description optional: for approval dialog on write actions.
             "transition_id" to ParameterProperty(
                 type = "string",
                 description = "Transition ID — for transition (use get_transitions first)"
+            ),
+            "fields" to ParameterProperty(
+                type = "object",
+                description = "Optional field values for transition screens — for transition. " +
+                    "Keys are Jira field IDs (e.g. \"assignee\", \"labels\", \"priority\"). " +
+                    "Values follow the Jira field-value format: " +
+                    "user={\"name\":\"username\"}, labels=[\"l1\",\"l2\"], " +
+                    "option/priority={\"id\":\"id\"}, multi-select=[{\"id\":\"a\"},{\"id\":\"b\"}], " +
+                    "cascading={\"value\":\"parent\",\"child\":{\"value\":\"child\"}}."
             ),
             "body" to ParameterProperty(
                 type = "string",
@@ -175,46 +199,100 @@ description optional: for approval dialog on write actions.
                 val comment = params["comment"]?.jsonPrimitive?.content
                 ToolValidation.validateJiraKey(key)?.let { return it }
 
-                // Pre-flight: verify ticket exists and capture current status
-                val ticketResult = service.getTicket(key)
-                if (ticketResult.isError) {
-                    return ToolResult(
-                        content = "Cannot transition: ticket $key not found.\n${ticketResult.summary}",
-                        summary = "Ticket $key not found",
-                        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-                        isError = true
-                    )
-                }
-                val currentStatus = ticketResult.data.status
-
-                // Best-effort pre-flight: verify transition is available from current state.
-                // If getTransitions() itself fails (network/auth), we skip this check and let
-                // service.transition() handle the error with a better message from the API.
-                val transitionsResult = service.getTransitions(key)
-                if (!transitionsResult.isError) {
-                    val match = transitionsResult.data.find { it.id == transitionId }
-                    if (match == null) {
-                        val availableList = transitionsResult.data.joinToString("\n") { "  ID ${it.id}: ${it.name} → ${it.toStatus}" }
-                        val content = "Cannot transition $key: transition ID '$transitionId' is not available from current status '$currentStatus'.\n\nAvailable transitions:\n$availableList"
-                        return ToolResult(
-                            content = content,
-                            summary = "Invalid transition ID '$transitionId' from status '$currentStatus'",
-                            tokenEstimate = TokenEstimator.estimate(content),
-                            isError = true
-                        )
+                // Parse optional fields map from JSON object parameter
+                val fieldValues = run {
+                    val fieldsElement = params["fields"]
+                    if (fieldsElement == null || fieldsElement is kotlinx.serialization.json.JsonNull) {
+                        emptyMap()
+                    } else {
+                        try {
+                            parseFieldsJson(fieldsElement.jsonObject)
+                        } catch (_: Exception) {
+                            emptyMap()
+                        }
                     }
                 }
 
-                val result = service.transition(key, transitionId, comment = comment)
-                if (result.isError) {
-                    result.toAgentToolResult()
-                } else {
-                    val content = "Transitioned $key from '$currentStatus'. ${result.summary}"
-                    ToolResult(
-                        content = content,
-                        summary = "Transitioned $key",
-                        tokenEstimate = TokenEstimator.estimate(content)
+                // Delegate to TicketTransitionService which owns field validation and MissingFields errors
+                val transitionSvc = ServiceLookup.ticketTransition(project)
+                if (transitionSvc != null) {
+                    val input = TransitionInput(
+                        transitionId = transitionId,
+                        fieldValues = fieldValues,
+                        comment = comment
                     )
+                    val result = transitionSvc.executeTransition(key, input)
+                    if (result.isError) {
+                        // Surface the structured payload (MissingFields, InvalidTransition, etc.)
+                        // so the agent's ReAct loop can read it and act on it
+                        val payloadInfo = when (val p = result.payload) {
+                            is TransitionError.MissingFields -> {
+                                val fieldsList = p.payload.fields.joinToString("\n") { f ->
+                                    "  - ${f.id} (${f.name}): required=${f.required}, schema=${f.schema::class.simpleName}"
+                                }
+                                "\npayload_type: missing_required_fields\nfields:\n$fieldsList\nguidance: ${p.payload.guidance}"
+                            }
+                            is TransitionError.InvalidTransition -> "\npayload_type: invalid_transition\nreason: ${p.reason}"
+                            is TransitionError.RequiresInteraction -> "\npayload_type: requires_interaction\ntransition: ${p.meta.name} (id=${p.meta.id})"
+                            is TransitionError.Forbidden -> "\npayload_type: forbidden\nreason: ${p.reason}"
+                            is TransitionError.Network -> "\npayload_type: network_error\ncause: ${p.cause.message}"
+                            else -> ""
+                        }
+                        val content = result.summary + payloadInfo
+                        ToolResult(
+                            content = content,
+                            summary = result.summary,
+                            tokenEstimate = TokenEstimator.estimate(content),
+                            isError = true
+                        )
+                    } else {
+                        val outcome = result.data
+                        val content = "Transitioned $key: ${outcome.fromStatus.name} → ${outcome.toStatus.name}. ${result.summary}"
+                        ToolResult(
+                            content = content,
+                            summary = "Transitioned $key to ${outcome.toStatus.name}",
+                            tokenEstimate = TokenEstimator.estimate(content)
+                        )
+                    }
+                } else {
+                    // Fallback: TicketTransitionService not registered — use legacy JiraService path
+                    val ticketResult = service.getTicket(key)
+                    if (ticketResult.isError) {
+                        return ToolResult(
+                            content = "Cannot transition: ticket $key not found.\n${ticketResult.summary}",
+                            summary = "Ticket $key not found",
+                            tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                            isError = true
+                        )
+                    }
+                    val currentStatus = ticketResult.data.status
+
+                    val transitionsResult = service.getTransitions(key)
+                    if (!transitionsResult.isError) {
+                        val match = transitionsResult.data.find { it.id == transitionId }
+                        if (match == null) {
+                            val availableList = transitionsResult.data.joinToString("\n") { "  ID ${it.id}: ${it.name} → ${it.toStatus}" }
+                            val content = "Cannot transition $key: transition ID '$transitionId' is not available from current status '$currentStatus'.\n\nAvailable transitions:\n$availableList"
+                            return ToolResult(
+                                content = content,
+                                summary = "Invalid transition ID '$transitionId' from status '$currentStatus'",
+                                tokenEstimate = TokenEstimator.estimate(content),
+                                isError = true
+                            )
+                        }
+                    }
+
+                    val result = service.transition(key, transitionId, comment = comment)
+                    if (result.isError) {
+                        result.toAgentToolResult()
+                    } else {
+                        val content = "Transitioned $key from '$currentStatus'. ${result.summary}"
+                        ToolResult(
+                            content = content,
+                            summary = "Transitioned $key",
+                            tokenEstimate = TokenEstimator.estimate(content)
+                        )
+                    }
                 }
             }
 
@@ -373,5 +451,93 @@ description optional: for approval dialog on write actions.
                 isError = true
             )
         }
+    }
+
+    // ---- Fields coercion helpers ----
+
+    /**
+     * Coerce a single [JsonElement] into a [FieldValue].
+     *
+     * Follows the Jira field-value conventions documented in the tool description:
+     *   - String primitives → [FieldValue.Text]
+     *   - Number primitives → [FieldValue.Number]
+     *   - Boolean primitives → [FieldValue.Text] (stringified)
+     *   - Array of strings → [FieldValue.LabelList]
+     *   - Array of objects with "id" → [FieldValue.Options]
+     *   - Array of objects with "name" → [FieldValue.UserRefs]
+     *   - Object with "id" → [FieldValue.Option]
+     *   - Object with "name" → [FieldValue.UserRef]
+     *   - Object with "value" (+ optional "child") → [FieldValue.Cascade]
+     */
+    private fun coerceFieldValueJson(element: kotlinx.serialization.json.JsonElement): FieldValue? = when (element) {
+        is JsonPrimitive -> when {
+            element.isString -> FieldValue.Text(element.content)
+            element.content.toBooleanStrictOrNull() != null -> FieldValue.Text(element.content)
+            element.content.toDoubleOrNull() != null -> FieldValue.Number(element.content.toDouble())
+            else -> FieldValue.Text(element.content)
+        }
+        is JsonArray -> {
+            val first = element.firstOrNull()
+            when {
+                first == null -> null
+                first is JsonPrimitive && first.isString ->
+                    FieldValue.LabelList(element.filterIsInstance<JsonPrimitive>().map { it.content })
+                first is JsonObject && first["id"] != null ->
+                    FieldValue.Options(element.filterIsInstance<JsonObject>()
+                        .mapNotNull { it["id"]?.jsonPrimitive?.content })
+                first is JsonObject && first["name"] != null ->
+                    FieldValue.UserRefs(element.filterIsInstance<JsonObject>()
+                        .mapNotNull { it["name"]?.jsonPrimitive?.content })
+                else -> null
+            }
+        }
+        is JsonObject -> when {
+            element["id"] is JsonPrimitive -> FieldValue.Option(element["id"]!!.jsonPrimitive.content)
+            element["name"] is JsonPrimitive -> FieldValue.UserRef(element["name"]!!.jsonPrimitive.content)
+            element["value"] is JsonPrimitive -> {
+                val parentVal = element["value"]!!.jsonPrimitive.content
+                val childVal = (element["child"] as? JsonObject)?.get("value")?.jsonPrimitive?.content
+                FieldValue.Cascade(parentVal, childVal)
+            }
+            else -> null
+        }
+        else -> null
+    }
+
+    /**
+     * Parse a [JsonObject] representing the `fields` parameter into a typed map.
+     * Keys are Jira field IDs; values are coerced via [coerceFieldValueJson].
+     * Entries whose values cannot be coerced are silently skipped.
+     */
+    internal fun parseFieldsJson(obj: JsonObject): Map<String, FieldValue> {
+        val out = mutableMapOf<String, FieldValue>()
+        for ((rawKey, rawVal) in obj.entries) {
+            val fv = coerceFieldValueJson(rawVal) ?: continue
+            out[rawKey] = fv
+        }
+        return out
+    }
+
+    /**
+     * Package-private test entry point — bypasses IntelliJ service lookup.
+     * Tests can call this directly after constructing the tool with an injected service.
+     */
+    internal suspend fun executeTransitionForTest(
+        key: String,
+        transitionId: String,
+        fieldsJson: JsonObject?,
+        comment: String?,
+        transitionSvc: com.workflow.orchestrator.core.services.jira.TicketTransitionService
+    ): com.workflow.orchestrator.core.services.ToolResult<*> {
+        val fieldValues = fieldsJson?.let {
+            try { parseFieldsJson(it) } catch (_: Exception) { emptyMap() }
+        } ?: emptyMap()
+
+        val input = TransitionInput(
+            transitionId = transitionId,
+            fieldValues = fieldValues,
+            comment = comment
+        )
+        return transitionSvc.executeTransition(key, input)
     }
 }

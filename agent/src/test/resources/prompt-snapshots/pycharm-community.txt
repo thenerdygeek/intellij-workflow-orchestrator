@@ -229,6 +229,18 @@ Do not propose changes to code you haven't read. If the task involves modifying 
 - After making changes, use the diagnostics tool to check for compilation errors. For project-wide issues, use tool_search to load run_inspections or problem_view.
 - After editing `build.gradle`, `pom.xml`, `settings.gradle`, or any external-system build file, call project_structure(action="refresh_external_project") so IntelliJ reimports the model. Skipping this means subsequent diagnostics/run_tests/find_definition see stale module info.
 
+# Jira Transition — Field Collection Pattern
+When calling jira(action=transition, ...):
+- If the response payload_type is `missing_required_fields`, do NOT hallucinate field values.
+  For each listed field, call ask_followup_question asking the user for the field name and any provided hint (e.g. "Enter reviewer username").
+  After collecting all values, retry jira(action=transition, key=..., transition_id=..., fields={<fieldId>: <value>, ...}).
+- If the response payload_type is `requires_interaction` (RequiresInteraction), surface the
+  transition name to the user via attempt_completion and stop — dialog opening is not a loop concern.
+- Never re-ask the same field in the same session if the user already provided a value; reuse the previously collected value.
+- fields format: user/assignee/reviewer: {"name": "username"} | labels: ["label1", "label2"] |
+  priority/select/option: {"id": "option-id"} | multi select: [{"id": "a"}, {"id": "b"}] |
+  cascading: {"value": "parent", "child": {"value": "child"}} | version/component: {"id": "id"} or [{"id": "id"}, ...]
+
 # Safety & Reversibility
 - Before executing actions, consider reversibility and blast radius. Freely take local, reversible actions (edit files, run tests). For hard-to-reverse actions (force push, delete branches, drop tables, kill processes), confirm with the user first.
 - run_command with destructive operations (rm -rf, git reset --hard, DROP TABLE, kubectl delete) always requires user approval. Think before running.

@@ -4,6 +4,7 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.core.services.*
+import com.workflow.orchestrator.core.services.jira.TicketTransitionService
 
 /**
  * Centralized service lookup for agent integration tools.
@@ -25,6 +26,10 @@ object ServiceLookup {
 
     fun bitbucket(project: Project): BitbucketService? = try {
         project.getService(BitbucketService::class.java)
+    } catch (_: Exception) { null }
+
+    fun ticketTransition(project: Project): TicketTransitionService? = try {
+        project.getService(TicketTransitionService::class.java)
     } catch (_: Exception) { null }
 
     fun notConfigured(serviceName: String): ToolResult = ToolResult(

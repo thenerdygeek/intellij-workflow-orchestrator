@@ -643,6 +643,20 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("- After editing `build.gradle`, `pom.xml`, `settings.gradle`, or any external-system build file, call project_structure(action=\"refresh_external_project\") so IntelliJ reimports the model. Skipping this means subsequent diagnostics/run_tests/find_definition see stale module info.")
         appendLine()
 
+        // Jira Transition Retry Pattern
+        appendLine("# Jira Transition — Field Collection Pattern")
+        appendLine("When calling jira(action=transition, ...):")
+        appendLine("- If the response payload_type is `missing_required_fields`, do NOT hallucinate field values.")
+        appendLine("  For each listed field, call ask_followup_question asking the user for the field name and any provided hint (e.g. \"Enter reviewer username\").")
+        appendLine("  After collecting all values, retry jira(action=transition, key=..., transition_id=..., fields={<fieldId>: <value>, ...}).")
+        appendLine("- If the response payload_type is `requires_interaction` (RequiresInteraction), surface the")
+        appendLine("  transition name to the user via attempt_completion and stop — dialog opening is not a loop concern.")
+        appendLine("- Never re-ask the same field in the same session if the user already provided a value; reuse the previously collected value.")
+        appendLine("- fields format: user/assignee/reviewer: {\"name\": \"username\"} | labels: [\"label1\", \"label2\"] |")
+        appendLine("  priority/select/option: {\"id\": \"option-id\"} | multi select: [{\"id\": \"a\"}, {\"id\": \"b\"}] |")
+        appendLine("  cascading: {\"value\": \"parent\", \"child\": {\"value\": \"child\"}} | version/component: {\"id\": \"id\"} or [{\"id\": \"id\"}, ...]")
+        appendLine()
+
         // Safety & Reversibility
         appendLine("# Safety & Reversibility")
         appendLine("- Before executing actions, consider reversibility and blast radius. Freely take local, reversible actions (edit files, run tests). For hard-to-reverse actions (force push, delete branches, drop tables, kill processes), confirm with the user first.")
