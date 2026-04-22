@@ -367,7 +367,7 @@ private data class ReplyCommentRequest(
 private data class CommentParentRef(val id: Int)
 
 @Serializable
-private data class ReviewerStatusRequest(val status: String)
+private data class ReviewerStatusRequest(val status: String, val approved: Boolean)
 
 /**
  * Lightweight Bitbucket Server REST client for branch operations only.
@@ -1769,7 +1769,7 @@ class BitbucketBranchClient(
         withContext(Dispatchers.IO) {
             log.info("[Core:Bitbucket] Setting reviewer status for $username on PR #$prId to $status")
             try {
-                val payload = json.encodeToString(ReviewerStatusRequest(status = status))
+                val payload = json.encodeToString(ReviewerStatusRequest(status = status, approved = (status == "APPROVED")))
                     .toRequestBody("application/json".toMediaType())
                 val request = Request.Builder()
                     .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/participants/$username")
