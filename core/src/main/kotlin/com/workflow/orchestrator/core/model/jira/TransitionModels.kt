@@ -6,6 +6,24 @@ data class StatusRef(val id: String, val name: String, val category: StatusCateg
 
 data class FieldOption(val id: String, val value: String, val iconUrl: String? = null)
 
+sealed class FieldValue {
+    data class Text(val value: String) : FieldValue()
+    data class Number(val value: Double) : FieldValue()
+    data class Date(val iso: String) : FieldValue()
+    data class DateTime(val iso: String) : FieldValue()
+    data class Option(val id: String) : FieldValue()
+    data class Options(val ids: List<String>) : FieldValue()
+    data class Cascade(val parentId: String, val childId: String?) : FieldValue()
+    data class UserRef(val name: String) : FieldValue()
+    data class UserRefs(val names: List<String>) : FieldValue()
+    data class GroupRef(val name: String) : FieldValue()
+    data class VersionRef(val id: String) : FieldValue()
+    data class VersionRefs(val ids: List<String>) : FieldValue()
+    data class ComponentRef(val id: String) : FieldValue()
+    data class ComponentRefs(val ids: List<String>) : FieldValue()
+    data class LabelList(val labels: List<String>) : FieldValue()
+}
+
 data class TransitionField(
     val id: String,
     val name: String,
@@ -13,7 +31,7 @@ data class TransitionField(
     val schema: FieldSchema,
     val allowedValues: List<FieldOption>,
     val autoCompleteUrl: String?,
-    val defaultValue: Any?
+    val defaultValue: FieldValue?
 )
 
 data class TransitionMeta(
@@ -42,3 +60,17 @@ sealed class FieldSchema {
 }
 
 enum class SelectSource { AllowedValues, AutoCompleteUrl, ProjectLookup }
+
+data class TransitionInput(
+    val transitionId: String,
+    val fieldValues: Map<String, FieldValue>,
+    val comment: String?
+)
+
+data class TransitionOutcome(
+    val key: String,
+    val fromStatus: StatusRef,
+    val toStatus: StatusRef,
+    val transitionId: String,
+    val appliedFields: Map<String, FieldValue>
+)
