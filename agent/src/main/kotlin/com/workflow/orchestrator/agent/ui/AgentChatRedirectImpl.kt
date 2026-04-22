@@ -28,4 +28,22 @@ class AgentChatRedirectImpl : AgentChatRedirect {
         }
         controller.executeTask(prompt)
     }
+
+    override fun startPrReviewSession(
+        project: Project,
+        persona: String,
+        initialMessage: String,
+        sessionTag: String,
+    ) {
+        val controller = AgentControllerRegistry.getInstance(project).controller
+        if (controller == null) {
+            log.warn("[AgentRedirect] AgentController not initialized — open the Agent tab first (tag=$sessionTag)")
+            return
+        }
+        controller.startPrReviewSession(
+            persona = persona,
+            initialMessage = initialMessage,
+            sessionTag = sessionTag,
+        )
+    }
 }

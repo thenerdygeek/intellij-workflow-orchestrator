@@ -41,9 +41,15 @@ import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.services.BitbucketService
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
+import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.wm.ToolWindowManager
+import com.workflow.orchestrator.core.ai.AgentChatRedirect
 import com.workflow.orchestrator.pullrequest.service.PrActionService
 import com.workflow.orchestrator.pullrequest.service.PrDetailService
 import com.workflow.orchestrator.pullrequest.service.PrListService
+import com.workflow.orchestrator.pullrequest.service.PrReviewSessionRegistry
+import com.workflow.orchestrator.pullrequest.service.PrReviewTaskBuilder
+import java.util.UUID
 import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.core.util.DefaultBranchResolver
@@ -256,7 +262,8 @@ class PrDetailPanel(
     private val activitySubPanel = ActivitySubPanel()
     private val filesSubPanel = FilesSubPanel()
     private val commitsSubPanel = CommitsSubPanel()
-    private val aiReviewSubPanel = AiReviewSubPanel()
+    /** Lazily created / replaced each time a new PR is loaded. */
+    private var aiReviewTabPanel: AiReviewTabPanel? = null
     /** Lazily created / replaced each time a new PR is loaded. */
     private var commentsTabPanel: CommentsTabPanel? = null
 
@@ -321,6 +328,7 @@ class PrDetailPanel(
                 renderReviewers(prDetail)
                 descriptionSubPanel.showDescription(prDetail.description)
                 rebuildCommentsTab(prId)
+                rebuildAiReviewTab(prId, prDetail)
                 selectToggle(descriptionToggle)
                 (layout as CardLayout).show(this@PrDetailPanel, CARD_DETAIL)
             }
@@ -372,6 +380,7 @@ class PrDetailPanel(
             renderReviewers(pr)
             descriptionSubPanel.showDescription(pr.description)
             rebuildCommentsTab(pr.id)
+            rebuildAiReviewTab(pr.id, pr)
             selectToggle(descriptionToggle)
             (layout as CardLayout).show(this@PrDetailPanel, CARD_DETAIL)
         }
@@ -755,6 +764,113 @@ class PrDetailPanel(
     }
 
     /**
+     * Creates (or replaces) the AI Review tab panel for the given PR.
+     * Must be called on the EDT.
+     */
+    private fun rebuildAiReviewTab(prId: Int, prDetail: BitbucketPrDetail) {
+        aiReviewTabPanel?.close()
+        val settings = PluginSettings.getInstance(project).state
+        val projectKey = settings.bitbucketProjectKey.orEmpty()
+        val repoSlug = settings.bitbucketRepoSlug.orEmpty()
+        val newPanel = AiReviewTabPanel(
+            project = project,
+            projectKey = projectKey,
+            repoSlug = repoSlug,
+            prId = prId,
+            onRunReviewClicked = { runAiReview(projectKey, repoSlug, prId, prDetail) },
+        )
+        aiReviewTabPanel = newPanel
+        val layout = contentCards.layout as CardLayout
+        contentCards.add(newPanel, "aiReview")
+        layout.show(contentCards, "description")   // keep current view unchanged
+    }
+
+    private fun runAiReview(projectKey: String, repoSlug: String, prId: Int, prDetail: BitbucketPrDetail) {
+        val confirmed = Messages.showYesNoDialog(
+            project,
+            "Start a new agent session to review PR-$prId?\n(You'll be switched to the Agent tab.)",
+            "Run AI Review",
+            Messages.getQuestionIcon(),
+        ) == Messages.YES
+        if (!confirmed) return
+
+        scope.launch {
+            val bitbucketService = project.getService(BitbucketService::class.java)
+
+            // Fetch diff and changed files
+            val diffResult = bitbucketService?.getPullRequestDiff(prId)
+            val changesResult = bitbucketService?.getPullRequestChanges(prId)
+
+            if (diffResult == null || diffResult.isError) {
+                invokeLater {
+                    Messages.showErrorDialog(
+                        project,
+                        "Could not fetch PR diff: ${diffResult?.summary ?: "service unavailable"}",
+                        "AI Review Failed",
+                    )
+                }
+                return@launch
+            }
+
+            val diff = diffResult.data
+            val changedFiles = if (changesResult != null && !changesResult.isError) {
+                changesResult.data.map { it.path }
+            } else {
+                emptyList()
+            }
+
+            val sourceBranch = prDetail.fromRef?.displayId ?: ""
+            val targetBranch = prDetail.toRef?.displayId ?: ""
+            val prAuthor = prDetail.author?.user?.displayName ?: prDetail.author?.user?.name ?: "unknown"
+            val reviewerNames = prDetail.reviewers.map { it.user.displayName.ifBlank { it.user.name } }
+
+            val sessionId = UUID.randomUUID().toString()
+            val prompt = PrReviewTaskBuilder().build(
+                projectKey = projectKey,
+                repoSlug = repoSlug,
+                prId = prId,
+                prTitle = prDetail.title,
+                prAuthor = prAuthor,
+                sourceBranch = sourceBranch,
+                targetBranch = targetBranch,
+                reviewers = reviewerNames,
+                changedFiles = changedFiles,
+                diff = diff,
+                jiraTicket = null,   // Phase 5 polish: wire Jira ticket resolution
+                sessionId = sessionId,
+            )
+
+            // Register in session registry before starting the agent
+            project.getService(PrReviewSessionRegistry::class.java)?.register(
+                "$projectKey/$repoSlug/PR-$prId", sessionId, "running",
+            )
+
+            // Start the agent session and switch to the agent tool window
+            invokeLater {
+                val redirect = AgentChatRedirect.getInstance()
+                if (redirect == null) {
+                    Messages.showErrorDialog(
+                        project,
+                        "Agent is not available. Please open the AI Agent tab first.",
+                        "AI Review Failed",
+                    )
+                    return@invokeLater
+                }
+                redirect.startPrReviewSession(
+                    project = project,
+                    persona = "code-reviewer",
+                    initialMessage = prompt,
+                    sessionTag = "pr-review:$projectKey/$repoSlug/PR-$prId",
+                )
+                // Switch to the Workflow tool window so user sees the agent working
+                ToolWindowManager.getInstance(project).getToolWindow("Workflow")?.activate(null)
+                // Notify the AI Review tab so it binds to the new session
+                aiReviewTabPanel?.onSessionChanged()
+            }
+        }
+    }
+
+    /**
      * Creates (or replaces) the Comments tab panel for the given PR.
      * Must be called on the EDT.
      */
@@ -783,6 +899,8 @@ class PrDetailPanel(
         scope.cancel()
         commentsTabPanel?.close()
         commentsTabPanel = null
+        aiReviewTabPanel?.close()
+        aiReviewTabPanel = null
     }
 
     // ---------------------------------------------------------------
@@ -916,7 +1034,7 @@ class PrDetailPanel(
         contentCards.add(activitySubPanel, "activity")
         contentCards.add(filesSubPanel, "files")
         contentCards.add(commitsSubPanel, "commits")
-        contentCards.add(aiReviewSubPanel, "aiReview")
+        // "aiReview" card is added lazily when a PR is loaded (see rebuildAiReviewTab)
         // "comments" card is added lazily when a PR is loaded (see rebuildCommentsTab)
         contentCards.alignmentX = Component.LEFT_ALIGNMENT
         contentPanel.add(contentCards)
@@ -2536,88 +2654,6 @@ class PrDetailPanel(
         }
     }
 
-    // ---------------------------------------------------------------
-    // AI Review sub-panel
-    // ---------------------------------------------------------------
-
-    private inner class AiReviewSubPanel : JPanel(BorderLayout()) {
-        private val runReviewButton = JButton("Run AI Review").apply {
-            icon = AllIcons.Actions.Lightning
-        }
-        private val resultsArea = JBTextArea().apply {
-            lineWrap = true
-            wrapStyleWord = true
-            isEditable = false
-            font = font.deriveFont(JBUI.scale(12).toFloat())
-            border = JBUI.Borders.empty(8)
-            background = CARD_BG
-        }
-        private val statusLabel = JBLabel("Click 'Run AI Review' to analyze this PR.").apply {
-            foreground = SECONDARY_TEXT
-            horizontalAlignment = SwingConstants.CENTER
-            border = JBUI.Borders.emptyTop(20)
-        }
-
-        init {
-            isOpaque = false
-
-            val topPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
-                isOpaque = false
-                border = JBUI.Borders.empty(4, 0, 8, 0)
-                add(runReviewButton)
-            }
-            add(topPanel, BorderLayout.NORTH)
-            add(statusLabel, BorderLayout.CENTER)
-
-            runReviewButton.addActionListener {
-                val prId = currentPrId ?: return@addActionListener
-                runReviewButton.isEnabled = false
-                statusLabel.text = "Running AI review..."
-                remove(statusLabel)
-                add(JPanel(FlowLayout(FlowLayout.CENTER)).apply {
-                    isOpaque = false
-                    add(JBLabel(AnimatedIcon.Default()))
-                    add(JBLabel("Analyzing PR diff with AI..."))
-                }, BorderLayout.CENTER)
-                revalidate()
-                repaint()
-
-                scope.launch {
-                    val detailService = PrDetailService.getInstance(project)
-                    val diff = detailService.getDiff(prId)
-
-                    invokeLater {
-                        runReviewButton.isEnabled = true
-                        removeAll()
-                        add(topPanel, BorderLayout.NORTH)
-
-                        if (diff.isNullOrBlank()) {
-                            add(JBLabel("Could not fetch PR diff for review.").apply {
-                                foreground = SECONDARY_TEXT
-                                horizontalAlignment = SwingConstants.CENTER
-                                border = JBUI.Borders.emptyTop(20)
-                            }, BorderLayout.CENTER)
-                        } else {
-                            // TODO: Wire to AI agent for actual AI review
-                            resultsArea.text = "AI Review is not yet connected.\n\n" +
-                                "Diff size: ${diff.length} characters\n" +
-                                "This feature will analyze the diff and provide:\n" +
-                                "- Code quality observations\n" +
-                                "- Potential bugs\n" +
-                                "- Security considerations\n" +
-                                "- Suggestions for improvement"
-                            resultsArea.caretPosition = 0
-                            add(JBScrollPane(resultsArea).apply {
-                                border = JBUI.Borders.empty()
-                            }, BorderLayout.CENTER)
-                        }
-                        revalidate()
-                        repaint()
-                    }
-                }
-            }
-        }
-    }
 }
 
 /**
