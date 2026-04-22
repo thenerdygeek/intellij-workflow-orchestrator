@@ -245,6 +245,63 @@ data class BitbucketPrChangesResponse(
 )
 
 @Serializable
+data class BitbucketPrCommentResponse(
+    val id: Long,
+    val version: Int = 0,
+    val text: String = "",
+    val author: BitbucketPrCommentAuthor = BitbucketPrCommentAuthor(),
+    val createdDate: Long = 0,
+    val updatedDate: Long = 0,
+    val anchor: BitbucketPrCommentAnchor? = null,
+    val state: String = "OPEN",
+    val severity: String = "NORMAL",
+    val comments: List<BitbucketPrCommentResponse> = emptyList(),
+    val permittedOperations: BitbucketPrCommentPermittedOps? = null,
+    val threadResolvedDate: Long? = null,
+)
+
+@Serializable
+data class BitbucketPrCommentAuthor(
+    val name: String = "",
+    val displayName: String = "",
+    val emailAddress: String? = null,
+    val avatarUrl: String? = null,
+)
+
+@Serializable
+data class BitbucketPrCommentAnchor(
+    val path: String = "",
+    val srcPath: String? = null,
+    val line: Int? = null,
+    val lineType: String? = null,
+    val fileType: String? = null,
+    val fromHash: String? = null,
+    val toHash: String? = null,
+)
+
+@Serializable
+data class BitbucketPrCommentPermittedOps(
+    val editable: Boolean = false,
+    val deletable: Boolean = false,
+    val transitionable: Boolean = false,
+)
+
+@Serializable
+data class BitbucketPrCommentList(
+    val values: List<BitbucketPrCommentResponse> = emptyList(),
+    val isLastPage: Boolean = true,
+    val nextPageStart: Int? = null,
+)
+
+// Request bodies for editing / state changes (private — only used inside the client)
+
+@Serializable
+private data class EditCommentRequest(val text: String, val version: Int)
+
+@Serializable
+private data class ResolveCommentRequest(val state: String)
+
+@Serializable
 private data class AddCommentRequest(
     val text: String
 )
