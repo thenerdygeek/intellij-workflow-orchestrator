@@ -173,6 +173,43 @@ class ContextManager(
     }
 
     /**
+     * Remove contiguous trailing assistant messages that have neither text content nor
+     * tool calls. These are "empty" turns produced by provider errors (degenerate
+     * zero-temp sampling, truncated upstream stream, etc.) — they carry no information
+     * and, left in context, train the model to mimic the pattern on the next call.
+     *
+     * Pairs well with Case C in `AgentLoop` (empty-response branch): each retry cycle
+     * used to append `[empty-assistant, EMPTY_RESPONSE_ERROR-user]` to context; the
+     * user-side of the pair is handled by [pruneTrailingNudgePairs], and this helper
+     * cleans the assistant side on retry/resume where nudges were never persisted.
+     *
+     * Intentionally narrow: only strips *trailing* empties. Earlier empties (with real
+     * work after them) are left alone so prior state stays auditable.
+     *
+     * Not self-persisting: caller decides whether to invoke `onHistoryOverwrite`.
+     * On the retry/resume paths we mirror the disk side via
+     * `MessageStateHandler.pruneTrailingEmptyAssistants`.
+     *
+     * @return number of empty assistant messages removed from the tail
+     */
+    fun pruneTrailingEmptyAssistants(): Int {
+        var removed = 0
+        while (messages.isNotEmpty()) {
+            val tail = messages.last()
+            val isEmptyAssistant = tail.role == "assistant"
+                && tail.content.isNullOrBlank()
+                && tail.toolCalls.isNullOrEmpty()
+            if (!isEmptyAssistant) break
+            messages.removeAt(messages.size - 1)
+            removed++
+        }
+        if (removed > 0) {
+            LOG.info("[Context] Pruned $removed trailing empty-assistant turn(s)")
+        }
+        return removed
+    }
+
+    /**
      * Add a tool result and track file reads for deduplication.
      *
      * When a tool result contains file content, we track which file was read
