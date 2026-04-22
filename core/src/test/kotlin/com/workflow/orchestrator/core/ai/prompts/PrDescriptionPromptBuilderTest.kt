@@ -124,13 +124,14 @@ class PrDescriptionPromptBuilderTest {
     @Test
     fun `more than 10 comments for primary ticket are trimmed to 10 most recent`() {
         val comments = (1..15).map { i ->
-            makeComment("user$i", "2024-01-${i.toString().padStart(2, '0')}T10:00:00Z", "Comment $i")
+            makeComment("user$i", "2024-01-${i.toString().padStart(2, '0')}T10:00:00Z", "Comment body #$i")
         }
         val ticket = makeTicket(comments = comments)
         val result = PrDescriptionPromptBuilder.build(diff = "d", tickets = listOf(ticket))
-        // 15th comment is most recent (highest date) — should appear; 5th comment should not
-        assertTrue(result.contains("Comment 15"), "Most recent comment should be included")
-        assertFalse(result.contains("Comment 5"), "11th-oldest comment should be excluded from primary (max 10 shown)")
+        // 15th comment is most recent (highest date) — should appear; 5th comment should not.
+        // "Comment body #5" is distinct from "Comment body #15" (no substring overlap).
+        assertTrue(result.contains("Comment body #15"), "Most recent comment should be included")
+        assertFalse(result.contains("Comment body #5"), "11th-oldest comment should be excluded from primary (max 10 shown)")
     }
 
     @Test

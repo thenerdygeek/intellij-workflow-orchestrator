@@ -47,7 +47,8 @@ object PrDescriptionGenerator {
                 val chainedResult = try {
                     textGen.generatePrDescription(
                         project, truncatedDiff, commitMessages, changedFilePaths.take(MAX_CONTEXT_FILES),
-                        emptyList(), sourceBranch, targetBranch
+                        emptyList(), // TODO(Phase 3): replace emptyList() with resolved List<TicketContext> from prefetch
+                        sourceBranch, targetBranch
                     )
                 } catch (e: Exception) {
                     log.warn("[Build:PrDesc] Chained generation failed: ${e.message}")

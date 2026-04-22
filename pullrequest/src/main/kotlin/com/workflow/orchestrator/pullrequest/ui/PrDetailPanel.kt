@@ -1776,7 +1776,7 @@ class PrDetailPanel(
                         project = project,
                         diff = truncatedDiff,
                         commitMessages = emptyList(),
-                        tickets = emptyList(),
+                        tickets = emptyList(), // TODO(Phase 3): replace emptyList() with resolved List<TicketContext> from prefetch
                         sourceBranch = pr.fromRef?.displayId ?: "",
                         targetBranch = pr.toRef?.displayId ?: ""
                     )

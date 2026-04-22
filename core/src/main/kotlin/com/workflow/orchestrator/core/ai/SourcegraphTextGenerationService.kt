@@ -101,6 +101,8 @@ class SourcegraphTextGenerationService : TextGenerationService {
                     ?.replace(Regex("^```[a-z]*\\n?"), "")
                     ?.replace(Regex("\\n?```$"), "")
                     ?.trim()
+                    // Title must be a single line — take the first non-blank line in case the model
+                    // returns a preamble or trailing explanation despite the prompt's "output only" rule.
                     ?.lines()
                     ?.firstOrNull { it.isNotBlank() }
                     ?.trim()

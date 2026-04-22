@@ -92,18 +92,20 @@ object PrDescriptionPromptBuilder {
         appendLine()
         appendLine("DIFF:")
         appendLine("```diff")
-        appendLine(if (diff.length > DIFF_CAP) diff.take(DIFF_CAP) + "\n... (diff truncated)" else diff)
+        appendLine(if (diff.length > DIFF_CAP) diff.take(DIFF_CAP) + "\n... (diff truncated)" else diff) // diff uses a custom suffix, not "..."
         appendLine("```")
     }
 
     private fun buildPrimaryBlock(ticket: TicketContext): String = buildString {
         var charCount = 0
 
+        /** Use for strings that already include their own '\n'. Length is taken as-is. */
         fun appendTracked(s: String) {
             append(s)
             charCount += s.length
         }
 
+        /** Use for lines WITHOUT a trailing '\n' in the string. Accounts for the newline appendLine adds. */
         fun appendLineTracked(s: String = "") {
             appendLine(s)
             charCount += s.length + 1
@@ -123,18 +125,19 @@ object PrDescriptionPromptBuilder {
             appendLineTracked("Fix Versions: ${ticket.fixVersions.joinToString(", ")}")
         }
 
+        // Description and acceptance criteria are always included even if they exceed the
+        // block cap — only comments are evicted to satisfy the cap. The per-field caps
+        // (PRIMARY_DESC_CAP, PRIMARY_AC_CAP) bound them independently.
         val desc = ticket.description
         if (!desc.isNullOrBlank()) {
             appendLineTracked("Description:")
-            val truncated = if (desc.length > PRIMARY_DESC_CAP) desc.take(PRIMARY_DESC_CAP) + "..." else desc
-            appendLineTracked(truncated)
+            appendLineTracked(desc.truncateTo(PRIMARY_DESC_CAP))
         }
 
         val ac = ticket.acceptanceCriteria
         if (!ac.isNullOrBlank()) {
             appendLineTracked("Acceptance Criteria:")
-            val truncated = if (ac.length > PRIMARY_AC_CAP) ac.take(PRIMARY_AC_CAP) + "..." else ac
-            appendLineTracked(truncated)
+            appendLineTracked(ac.truncateTo(PRIMARY_AC_CAP))
         }
 
         val sortedComments = ticket.comments.sortedByDescending { it.created }
@@ -145,9 +148,7 @@ object PrDescriptionPromptBuilder {
             if (charCount + headerLine.length <= PRIMARY_BLOCK_CAP) {
                 appendTracked(headerLine)
                 for (comment in topComments) {
-                    val body = if (comment.body.length > PRIMARY_COMMENT_BODY_CAP)
-                        comment.body.take(PRIMARY_COMMENT_BODY_CAP) + "..."
-                    else comment.body
+                    val body = comment.body.truncateTo(PRIMARY_COMMENT_BODY_CAP)
                     val line = "[${comment.author} · ${comment.created}] $body\n"
                     if (charCount + line.length > PRIMARY_BLOCK_CAP) break
                     appendTracked(line)
@@ -159,11 +160,13 @@ object PrDescriptionPromptBuilder {
     private fun buildAdditionalBlock(ticket: TicketContext): String = buildString {
         var charCount = 0
 
+        /** Use for strings that already include their own '\n'. Length is taken as-is. */
         fun appendTracked(s: String) {
             append(s)
             charCount += s.length
         }
 
+        /** Use for lines WITHOUT a trailing '\n' in the string. Accounts for the newline appendLine adds. */
         fun appendLineTracked(s: String = "") {
             appendLine(s)
             charCount += s.length + 1
@@ -172,11 +175,12 @@ object PrDescriptionPromptBuilder {
         appendLineTracked("Related ticket: ${ticket.key} — ${ticket.summary}")
         appendLineTracked("Type: ${ticket.issueType ?: "?"} · Status: ${ticket.status ?: "?"}")
 
+        // Description is always included even if it exceeds the block cap — only comments
+        // are evicted to satisfy the cap. The per-field cap (ADDITIONAL_DESC_CAP) bounds it independently.
         val desc = ticket.description
         if (!desc.isNullOrBlank()) {
             appendLineTracked("Description:")
-            val truncated = if (desc.length > ADDITIONAL_DESC_CAP) desc.take(ADDITIONAL_DESC_CAP) + "..." else desc
-            appendLineTracked(truncated)
+            appendLineTracked(desc.truncateTo(ADDITIONAL_DESC_CAP))
         }
 
         val sortedComments = ticket.comments.sortedByDescending { it.created }
@@ -187,9 +191,7 @@ object PrDescriptionPromptBuilder {
             if (charCount + headerLine.length <= ADDITIONAL_BLOCK_CAP) {
                 appendTracked(headerLine)
                 for (comment in topComments) {
-                    val body = if (comment.body.length > ADDITIONAL_COMMENT_BODY_CAP)
-                        comment.body.take(ADDITIONAL_COMMENT_BODY_CAP) + "..."
-                    else comment.body
+                    val body = comment.body.truncateTo(ADDITIONAL_COMMENT_BODY_CAP)
                     val line = "[${comment.author} · ${comment.created}] $body\n"
                     if (charCount + line.length > ADDITIONAL_BLOCK_CAP) break
                     appendTracked(line)

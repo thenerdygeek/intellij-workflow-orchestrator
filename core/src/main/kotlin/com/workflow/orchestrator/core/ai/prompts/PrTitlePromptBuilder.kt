@@ -26,8 +26,7 @@ object PrTitlePromptBuilder {
         val desc = ticket.description?.ifBlank { null }
         if (desc != null) {
             appendLine("Description:")
-            val truncated = if (desc.length > DESC_CAP) desc.take(DESC_CAP) + "..." else desc
-            appendLine(truncated)
+            appendLine(desc.truncateTo(DESC_CAP))
         }
 
         if (commitMessages.isNotEmpty()) {
