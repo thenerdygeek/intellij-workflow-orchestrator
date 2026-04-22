@@ -34,7 +34,7 @@ data class JiraTicketData(
     val commentCount: Int = 0,
     val attachmentCount: Int = 0,
     // Detail lists
-    val transitions: List<JiraTransitionData> = emptyList(),
+    val transitions: List<TransitionMeta> = emptyList(),
     val attachments: List<JiraAttachmentData> = emptyList(),
     val subtasks: List<JiraSubtaskRef> = emptyList(),
     val linkedIssues: List<JiraLinkedIssueRef> = emptyList(),
@@ -84,7 +84,7 @@ data class JiraTicketData(
         if (transitions.isNotEmpty()) {
             appendLine()
             appendLine("Available Transitions:")
-            transitions.forEach { t -> appendLine("  [${t.id}] ${t.name} → ${t.toStatus}") }
+            transitions.forEach { t -> appendLine("  [${t.id}] ${t.name} → ${t.toStatus.name}") }
         }
 
         // Subtasks with details
@@ -142,16 +142,6 @@ data class JiraAttachmentData(
     val filename: String,
     val mimeType: String? = null,
     val sizeBytes: Long = 0
-)
-
-/**
- * Jira transition — an available status change for a ticket.
- */
-@Serializable
-data class JiraTransitionData(
-    val id: String,
-    val name: String,
-    val toStatus: String
 )
 
 /**

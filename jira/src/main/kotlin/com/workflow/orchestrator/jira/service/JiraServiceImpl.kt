@@ -15,7 +15,9 @@ import com.workflow.orchestrator.core.model.jira.JiraAttachmentData
 import com.workflow.orchestrator.core.model.jira.JiraLinkedIssueRef
 import com.workflow.orchestrator.core.model.jira.JiraSubtaskRef
 import com.workflow.orchestrator.core.model.jira.JiraTicketData
-import com.workflow.orchestrator.core.model.jira.JiraTransitionData
+import com.workflow.orchestrator.core.model.jira.StatusCategory
+import com.workflow.orchestrator.core.model.jira.StatusRef
+import com.workflow.orchestrator.core.model.jira.TransitionMeta
 import com.workflow.orchestrator.core.model.jira.SprintData
 import com.workflow.orchestrator.core.model.jira.StartWorkResultData
 import com.workflow.orchestrator.core.model.jira.WorklogData
@@ -106,7 +108,17 @@ class JiraServiceImpl(private val project: Project) : JiraService {
                     }
                     val transitions = when (transitionsResult) {
                         is ApiResult.Success -> transitionsResult.data.map { t ->
-                            JiraTransitionData(id = t.id, name = t.name, toStatus = t.to.name)
+                            TransitionMeta(
+                                id = t.id,
+                                name = t.name,
+                                toStatus = StatusRef(
+                                    id = "",
+                                    name = t.to.name,
+                                    category = StatusCategory.UNKNOWN
+                                ),
+                                hasScreen = false,
+                                fields = emptyList()
+                            )
                         }
                         else -> emptyList()
                     }
@@ -177,7 +189,7 @@ class JiraServiceImpl(private val project: Project) : JiraService {
         }
     }
 
-    override suspend fun getTransitions(key: String): ToolResult<List<JiraTransitionData>> {
+    override suspend fun getTransitions(key: String): ToolResult<List<TransitionMeta>> {
         val api = client ?: return ToolResult(
             data = emptyList(),
             summary = "Jira not configured. Cannot fetch transitions for $key.",
@@ -188,10 +200,16 @@ class JiraServiceImpl(private val project: Project) : JiraService {
         return when (val result = api.getTransitions(key)) {
             is ApiResult.Success -> {
                 val transitions = result.data.map { t ->
-                    JiraTransitionData(
+                    TransitionMeta(
                         id = t.id,
                         name = t.name,
-                        toStatus = t.to.name
+                        toStatus = StatusRef(
+                            id = "",
+                            name = t.to.name,
+                            category = StatusCategory.UNKNOWN
+                        ),
+                        hasScreen = false,
+                        fields = emptyList()
                     )
                 }
                 val listing = transitions.joinToString(", ") { "${it.name} (id=${it.id})" }

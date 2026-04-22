@@ -6,7 +6,7 @@ import com.workflow.orchestrator.core.model.jira.DevStatusBranchData
 import com.workflow.orchestrator.core.model.jira.DevStatusPrData
 import com.workflow.orchestrator.core.model.jira.JiraCommentData
 import com.workflow.orchestrator.core.model.jira.JiraTicketData
-import com.workflow.orchestrator.core.model.jira.JiraTransitionData
+import com.workflow.orchestrator.core.model.jira.TransitionMeta
 import com.workflow.orchestrator.core.model.jira.SprintData
 import com.workflow.orchestrator.core.model.jira.StartWorkResultData
 import com.workflow.orchestrator.core.model.jira.WorklogData
@@ -20,7 +20,7 @@ interface JiraService {
     suspend fun getTicket(key: String): ToolResult<JiraTicketData>
 
     /** Get available transitions for a ticket. */
-    suspend fun getTransitions(key: String): ToolResult<List<JiraTransitionData>>
+    suspend fun getTransitions(key: String): ToolResult<List<TransitionMeta>>
 
     /** Transition a ticket to a new status, with optional fields and comment. */
     suspend fun transition(
