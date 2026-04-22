@@ -15,8 +15,8 @@ import kotlin.coroutines.coroutineContext
 /**
  * PR review actions — comments, inline comments, replies, reviewer management.
  *
- * 6 actions: add_pr_comment, add_inline_comment, reply_to_comment,
- * add_reviewer, remove_reviewer, set_reviewer_status
+ * 7 actions: add_pr_comment, add_inline_comment, reply_to_comment,
+ * add_reviewer, remove_reviewer, set_reviewer_status, list_comments
  */
 class BitbucketReviewTool : AgentTool {
 
@@ -32,6 +32,7 @@ Actions and their parameters:
 - add_reviewer(pr_id, username) → Add a reviewer to a PR
 - remove_reviewer(pr_id, username) → Remove a reviewer from a PR
 - set_reviewer_status(pr_id, username, status) → Set reviewer status: APPROVED, NEEDS_WORK, UNAPPROVED
+- list_comments(project_key, repo_slug, pr_id, only_open?, only_inline?) → List all comments on a PR (filter by open/inline)
 
 Common optional: repo_name for multi-repo projects. description for approval dialog on write actions.
 """.trimIndent()
@@ -41,7 +42,8 @@ Common optional: repo_name for multi-repo projects. description for approval dia
             "action" to ParameterProperty("string", "Operation to perform",
                 enumValues = listOf(
                     "add_pr_comment", "add_inline_comment", "reply_to_comment",
-                    "add_reviewer", "remove_reviewer", "set_reviewer_status"
+                    "add_reviewer", "remove_reviewer", "set_reviewer_status",
+                    "list_comments"
                 )),
             "pr_id"             to ParameterProperty("string", "Pull request ID (numeric) — required for all actions"),
             "text"              to ParameterProperty("string", "Comment/reply text — for add_pr_comment, add_inline_comment, reply_to_comment"),
@@ -52,7 +54,11 @@ Common optional: repo_name for multi-repo projects. description for approval dia
             "username"          to ParameterProperty("string", "Reviewer username — for add_reviewer, remove_reviewer, set_reviewer_status"),
             "status"            to ParameterProperty("string", "Reviewer status: APPROVED, NEEDS_WORK, UNAPPROVED — for set_reviewer_status"),
             "repo_name"         to ParameterProperty("string", "Repository name for multi-repo projects — omit for primary"),
-            "description"       to ParameterProperty("string", "Approval dialog description for write actions: add_pr_comment, set_reviewer_status")
+            "description"       to ParameterProperty("string", "Approval dialog description for write actions: add_pr_comment, set_reviewer_status"),
+            "project_key"       to ParameterProperty("string", "Bitbucket project key (e.g. PROJ) — for list_comments, get_comment, edit_comment, delete_comment, resolve_comment, reopen_comment"),
+            "repo_slug"         to ParameterProperty("string", "Repository slug — for list_comments, get_comment, edit_comment, delete_comment, resolve_comment, reopen_comment"),
+            "only_open"         to ParameterProperty("string", "Filter to open comments only: true/false — for list_comments"),
+            "only_inline"       to ParameterProperty("string", "Filter to inline comments only: true/false — for list_comments")
         ),
         required = listOf("action")
     )
@@ -147,6 +153,15 @@ Common optional: repo_name for multi-repo projects. description for approval dia
                 )
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
                 service.setReviewerStatus(prId, username, status, repoName = repoName).toAgentToolResult()
+            }
+
+            "list_comments" -> {
+                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return BitbucketToolUtils.missingParam("project_key")
+                val repoSlug = params["repo_slug"]?.jsonPrimitive?.content ?: return BitbucketToolUtils.missingParam("repo_slug")
+                val prId = BitbucketToolUtils.parsePrId(params) ?: return BitbucketToolUtils.invalidPrId()
+                val onlyOpen = params["only_open"]?.jsonPrimitive?.content?.toBoolean() ?: false
+                val onlyInline = params["only_inline"]?.jsonPrimitive?.content?.toBoolean() ?: false
+                service.listPrComments(projectKey, repoSlug, prId, onlyOpen, onlyInline).toAgentToolResult()
             }
 
             else -> ToolResult(
