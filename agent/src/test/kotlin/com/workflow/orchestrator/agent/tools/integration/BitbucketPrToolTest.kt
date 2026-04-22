@@ -75,4 +75,29 @@ class BitbucketPrToolTest {
         // Error may be "not configured" (service lookup) or "Unknown action" depending on environment
         assertTrue(result.isError)
     }
+
+    @Test
+    fun `merge_pr strategy description uses valid DC strategy ids`() {
+        // Regression guard for F-MED audit finding: tool description must not advertise
+        // invalid DC strategy ids. See audit details §bitbucket_pr.merge_pr.
+        val source = java.io.File("src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt").readText()
+        val relevant = source.lines()
+            .filter { it.contains("strategy") && it.contains("Merge strategy", ignoreCase = true) }
+            .joinToString("\n")
+        org.junit.jupiter.api.Assertions.assertTrue(
+            relevant.contains("no-ff"), "description should list no-ff but was: $relevant"
+        )
+        org.junit.jupiter.api.Assertions.assertTrue(
+            relevant.contains("squash"), "description should list squash but was: $relevant"
+        )
+        org.junit.jupiter.api.Assertions.assertTrue(
+            relevant.contains("rebase-no-ff"), "description should list rebase-no-ff but was: $relevant"
+        )
+        org.junit.jupiter.api.Assertions.assertFalse(
+            relevant.contains("merge-commit"), "description should not list merge-commit but was: $relevant"
+        )
+        org.junit.jupiter.api.Assertions.assertFalse(
+            relevant.contains("ff-only"), "description should not list ff-only but was: $relevant"
+        )
+    }
 }

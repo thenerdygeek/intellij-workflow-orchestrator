@@ -61,7 +61,7 @@ Common optional: repo_name for multi-repo projects. description for approval dia
             "to_branch"            to ParameterProperty("string", "Target branch (default: master) — for create_pr"),
             "new_title"            to ParameterProperty("string", "New PR title — for update_pr_title"),
             "state"                to ParameterProperty("string", "PR state: OPEN, MERGED, DECLINED (default OPEN) — for get_my_prs, get_reviewing_prs"),
-            "strategy"             to ParameterProperty("string", "Merge strategy: merge-commit, squash, ff-only — for merge_pr"),
+            "strategy"             to ParameterProperty("string", "Merge strategy: no-ff, squash, rebase-no-ff — for merge_pr"),
             "delete_source_branch" to ParameterProperty("string", "Delete source branch after merge: true/false — for merge_pr"),
             "commit_message"       to ParameterProperty("string", "Custom merge commit message — for merge_pr"),
             "repo_name"            to ParameterProperty("string", "Repository name for multi-repo projects — omit for primary"),
