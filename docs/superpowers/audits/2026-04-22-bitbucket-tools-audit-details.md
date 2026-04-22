@@ -61,6 +61,11 @@ HTTP client — `BitbucketBranchClient.kt:1162–1199`:
 
 **Notes:** The implementation is correct against the DC API spec. The only gap is test coverage of the execute() path. If someone passes `text` as a number literal in JSON, `jsonPrimitive.content` will still produce a string representation — no type-safety risk. The blank-text guard (`ToolValidation.validateNotBlank`) prevents empty-string comments reaching the API.
 
+**Test coverage needed:**
+- Happy-path mock returning success with comment id → verify summary contains PR id and comment id
+- 4xx mock returning error → verify tool returns error result, not exception
+- Missing required parameter guard: omit `text` → tool returns missing-param error before any service call
+
 ---
 
 ## bitbucket_review.add_inline_comment
@@ -98,6 +103,7 @@ HTTP client — `BitbucketBranchClient.kt:1577–1623`:
 - Serialized body: `{"text":"...","anchor":{"path":"...","line":N,"lineType":"...","fileType":"TO"}}`
 - `fileType` is hardcoded to `"TO"` (the destination/new-file side) — not caller-configurable
 - `srcPath`, `fromHash`, `toHash`, `diffType` are absent from the DTO
+- Note: a separate response-parsing DTO `BitbucketCommentAnchor` (BitbucketBranchClient.kt:188) carries `srcPath`; the private request DTO `InlineCommentAnchor` (BitbucketBranchClient.kt:344–349) does not — this is the bug.
 
 **Diff:**
 - Path: ✅
@@ -116,9 +122,22 @@ HTTP client — `BitbucketBranchClient.kt:1577–1623`:
 
 **Notes:**
 1. `lineType` is not validated against `{ADDED, REMOVED, CONTEXT}` at the tool layer. Add enum check matching the `status` check pattern already in use on line 142.
-2. `fileType` is hardcoded to `"TO"`. For REMOVED-line comments the correct value is `"FROM"`. Fix: either (a) expose `file_type` as an optional parameter with default `"TO"`, or (b) auto-derive: if `lineType == "REMOVED"` set `fileType = "FROM"` else `"TO"`. Option (b) is safer for LLM callers who may not know the distinction.
-3. `srcPath` should be an optional parameter for renamed-file support. Without it, inline comments on renamed files will fail silently or return a 400.
+2. **Fix (option B preferred — zero API-surface change):** In `BitbucketBranchClient.kt:344–349`, change `val fileType: String = "TO"` to derive from `lineType`:
+   ```kotlin
+   val fileType: String = if (lineType == "REMOVED") "FROM" else "TO"
+   ```
+   No change needed at service or tool layer for option B.
+
+   **Fix (option A — explicit parameter):** Add optional `file_type` param to the tool schema (`BitbucketReviewTool.kt:90–104`), thread through `BitbucketService.addInlineComment` (interface and impl) and into the `InlineCommentAnchor` DTO. Use only if callers need to override the lineType→fileType mapping.
+3. **Fix (`srcPath` for renames):** Add `val srcPath: String? = null` to `InlineCommentAnchor` (BitbucketBranchClient.kt:344–349) and an optional `src_path` tool parameter at `BitbucketReviewTool.kt:90–104`, threaded through the service interface and impl. Without it, inline comments on renamed files will fail silently or return a 400.
 4. No test exercises the HTTP path with a mock service — the lineType/fileType interaction is the most likely source of silent production failures.
+
+**Test coverage needed:**
+- Happy-path mock: `lineType = "ADDED"` → `fileType = "TO"` in serialized body ✅
+- Happy-path mock: `lineType = "REMOVED"` → `fileType = "FROM"` in serialized body ✅ (after fix B)
+- 4xx mock: service returns error; tool returns error result
+- Missing required parameter guard: omit `file_path` → tool returns missing-param error before any service call
+- Invalid `lineType` value (e.g. `"MODIFIED"`) → enum validation error at tool layer (after fix 1)
 
 ---
 
@@ -163,6 +182,12 @@ HTTP client — `BitbucketBranchClient.kt:1629–1669`:
 **Verdict:** UNTESTED
 
 **Notes:** Implementation is correct. No missing-param gaps for the required fields. The 404 error path distinguishes "PR not found" from "comment not found" via a single error message but the API may return 404 for either; that ambiguity is acceptable at the current abstraction level. No further issues found.
+
+**Test coverage needed:**
+- Happy-path mock returning success → verify summary references PR id and parent comment id
+- 4xx mock returning error → verify tool returns error result, not exception
+- Missing required parameter guard: omit `text` → tool returns missing-param error before any service call
+- Non-integer `parent_comment_id` (e.g. `"abc"`) → rejected at parameter layer with parse error, no service call made
 
 ---
 
@@ -215,6 +240,13 @@ HTTP client — `BitbucketBranchClient.kt:1081–1119`:
 
 **Notes:** This is the most correct of the reviewer-management implementations. The GET-first + version + full-PR-PUT pattern is exactly what the DC API requires. No data-loss risk detected. The implementation also correctly maps reviewer user objects through `BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = it.user.name))` to avoid carrying over stale approval status fields into the PUT body.
 
+**Test coverage needed:**
+- Happy-path mock: GET returns PR with no reviewers, PUT succeeds → verify reviewer appears in PUT body
+- 4xx mock returning error on PUT → verify tool returns error result, not exception
+- Missing required parameter guard: omit `username` → tool returns missing-param error before any service call
+- Duplicate-reviewer guard: mock GET returns PR already containing `username` → tool returns descriptive error, no PUT made
+- 409 version-conflict on PUT → verify error is surfaced to caller with appropriate message
+
 ---
 
 ## bitbucket_review.remove_reviewer
@@ -263,12 +295,20 @@ HTTP client: same `updatePullRequest` as `add_reviewer` — `PUT .../pull-reques
 
 **Notes:** Implementation mirrors `add_reviewer` and is equally correct. One edge-case to note: if a reviewer has already submitted a NEEDS_WORK vote and is then removed, the DC API will allow the removal — the vote is discarded. This is the correct API behaviour and our code handles it correctly by simply filtering the reviewer from the list without any pre-check on approval status.
 
+**Test coverage needed:**
+- Happy-path mock: GET returns PR with target reviewer, PUT succeeds → verify reviewer is absent from PUT body
+- 4xx mock returning error on PUT → verify tool returns error result, not exception
+- Missing required parameter guard: omit `username` → tool returns missing-param error before any service call
+- Reviewer-not-found case: mock GET returns PR without `username` in reviewer list → tool returns descriptive error, no PUT made
+- Empty-reviewer-list edge case: mock GET returns PR with exactly one reviewer (the one being removed) → PUT body contains empty `reviewers` array `[]`, not omitted
+
 ---
 
 ## bitbucket_review.set_reviewer_status
 
 **Expected (per API reference):**
-- DC endpoint: `POST /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{id}/participants/{userSlug}` with body `{"status":"APPROVED|UNAPPROVED|NEEDS_WORK","approved":true|false}`
+- DC endpoint: `PUT /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{id}/participants/{userSlug}` with body `{"user":{"name":"<userSlug>"},"status":"APPROVED|UNAPPROVED|NEEDS_WORK","approved":true|false}`
+- Verified via Bitbucket DC v7.21.0 WADL: `https://docs.atlassian.com/bitbucket-server/rest/7.21.0/bitbucket-rest.wadl` — resource lists PUT and DELETE; no POST on this path.
 - Alternatively, the older binary endpoints: `POST .../approve` (approve) and `DELETE .../approve` (unapprove) — but these do not support `NEEDS_WORK`.
 - The participants endpoint is the only one that supports all three states including `NEEDS_WORK`.
 
@@ -290,7 +330,7 @@ HTTP client — `BitbucketBranchClient.kt:1675–1712`:
 
 **Diff:**
 - Endpoint path: ✅ `...participants/{username}` is correct
-- HTTP method: ⚠ code uses `PUT`; the DC API reference specifies `POST` for this endpoint. A PUT on `/participants/{userSlug}` is not a documented DC endpoint variant. This is a potential breakage against strict DC implementations — some versions may accept PUT, others will 405.
+- HTTP method: ✅ code uses `PUT`; verified correct against Bitbucket DC v7.21.0 WADL. The original audit's claim that POST is the documented method was incorrect and has been retracted.
 - Body `status` field: ✅ present
 - `approved` field: ⚠ missing from the body. The DC API participants endpoint expects `{"status":"APPROVED","approved":true}` (or `false` for UNAPPROVED/NEEDS_WORK). Omitting `approved` may cause the server to reject the request or silently ignore the status change depending on the DC version.
 - All three statuses supported in tool: ✅ (APPROVED, NEEDS_WORK, UNAPPROVED — full enum validated at tool layer)
@@ -303,7 +343,22 @@ HTTP client — `BitbucketBranchClient.kt:1675–1712`:
 **Verdict:** FIX
 
 **Notes:**
-1. The HTTP method is `PUT` but the DC REST v1 participants endpoint is documented as `POST`. While some DC versions may tolerate PUT, this should be corrected to `POST` to match the spec.
-2. The `approved` boolean is missing from the body. Fix: compute `approved = (status == "APPROVED")` and include it in `ReviewerStatusRequest`. Without it, the request body is `{"status":"APPROVED"}` which may be silently ignored or rejected.
-3. Despite these two issues, the endpoint path is correct and NEEDS_WORK is supported — which is an improvement over using the binary `approve`/`decline` endpoints.
-4. Implementation that should be: `POST .../participants/{username}` with body `{"status":"APPROVED","approved":true}` (or `false` for UNAPPROVED/NEEDS_WORK). If status is UNAPPROVED: `{"status":"UNAPPROVED","approved":false}`. If status is NEEDS_WORK: `{"status":"NEEDS_WORK","approved":false}`.
+1. HTTP method verified as PUT against Bitbucket DC v7.21.0 WADL (`https://docs.atlassian.com/bitbucket-server/rest/7.21.0/bitbucket-rest.wadl`). The original audit's POST claim was incorrect and has been retracted. No method change is needed in the code.
+2. **Fix (`approved` field):** In `BitbucketBranchClient.kt:361`, change
+   ```kotlin
+   private data class ReviewerStatusRequest(val status: String)
+   ```
+   to
+   ```kotlin
+   private data class ReviewerStatusRequest(val status: String, val approved: Boolean)
+   ```
+   At the call site where the request is constructed (`BitbucketBranchClient.kt:1685` or wherever `ReviewerStatusRequest` is instantiated), pass `approved = (status == "APPROVED")`. This makes the body `{"status":"APPROVED","approved":true}` for APPROVED and `{"status":"NEEDS_WORK","approved":false}` / `{"status":"UNAPPROVED","approved":false}` for the other two states.
+3. The endpoint path is correct and NEEDS_WORK is supported — which is an improvement over using the binary `approve`/`decline` endpoints.
+4. The sole remaining FIX reason is the missing `approved` field in the request body.
+
+**Test coverage needed:**
+- Happy-path mock: `status = "APPROVED"` → body contains `{"status":"APPROVED","approved":true}` (after fix)
+- Happy-path mock: `status = "NEEDS_WORK"` → body contains `{"status":"NEEDS_WORK","approved":false}` (after fix)
+- Happy-path mock: `status = "UNAPPROVED"` → body contains `{"status":"UNAPPROVED","approved":false}` (after fix)
+- 4xx mock returning error → verify tool returns error result, not exception
+- Missing required parameter guard: omit `username` → tool returns missing-param error before any service call
