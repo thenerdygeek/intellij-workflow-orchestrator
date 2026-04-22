@@ -417,7 +417,7 @@ Same shape as Start Work. The existing balloon "Transition ABC-123 to In Progres
 ### Create PR dialog — `CreatePrDialog.kt` / `CreatePrPrefetch.kt`
 
 1. Prefetch calls `orchestrator.getAvailableTransitions(primaryKey)` (reuses existing prefetch plumbing; replaces the `JiraTransitionData` model).
-2. Dialog adds a row: "Transition ticket after PR creation: [None ▼] | [In Review ▼] | ...". Default selection = transition matching `settings.defaultPrCreateStatusName` (default "In Review"). Empty setting disables the row entirely.
+2. Dialog adds a row: "Transition ticket after PR creation: [None ▼] | [In Review ▼] | ...". Default selection = transition matching `settings.defaultPrCreateStatusName` (default "In Review") case-insensitively against `TransitionMeta.toStatus.name`. If no available transition matches, the row defaults to "None". Empty setting disables the row entirely.
 3. PR-create success → if a transition was selected, run the same gating as Start Work (A or B). Dialog pops **after** PR creation — field collection does not block PR creation.
 4. Transition failure → PR remains created; toast "PR created, but transition to In Review failed: <reason>".
 
@@ -492,7 +492,7 @@ ticketTransition.defaultPrCreateStatusName : String = "In Review"
   "Preferred target status name when a PR is created. Empty disables auto-transition on PR create."
 ```
 
-New subsection under *Tools > Workflow Orchestrator > Jira*: **Ticket Transitions** — three fields above.
+New "Ticket Transitions" group on the existing Jira settings page under *Tools > Workflow Orchestrator*. Matches the plugin convention (memory: *settings UI for new config*).
 
 ## Migration
 
