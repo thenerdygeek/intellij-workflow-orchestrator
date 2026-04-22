@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.pullrequest.action
 
+import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.util.TicketKeyExtractor
 import com.workflow.orchestrator.core.workflow.TicketContext
 import com.workflow.orchestrator.core.workflow.TicketTransition
@@ -182,13 +183,32 @@ class CreatePrPrefetchTest {
         assertEquals(CreatePrPrefetch.ERROR_GIT_NOT_DETECTED, failure.message)
     }
 
+    // ── RepoPrefetch helpers ────────────────────────────────────────────────
+
+    private fun repoConfig(name: String, projectKey: String, repoSlug: String, path: String = "/repo/$name"): RepoConfig =
+        RepoConfig().apply {
+            this.name = name
+            bitbucketProjectKey = projectKey
+            bitbucketRepoSlug = repoSlug
+            localVcsRootPath = path
+        }
+
+    private fun repoPrefetch(name: String, branch: String = "feature/WO-1-work", path: String = "/repo/$name"): RepoPrefetch =
+        RepoPrefetch(
+            config = repoConfig(name, "PROJ", name, path),
+            sourceBranch = branch,
+            remoteBranches = listOf("develop", "main"),
+            defaultTarget = "develop"
+        )
+
     // ── PrefetchResult sealed class ─────────────────────────────────────────
 
     @Test
-    fun `Success wraps CreatePrContext correctly`() {
+    fun `Success wraps CreatePrContext with single repo correctly`() {
+        val rp = repoPrefetch("backend")
         val ctx = CreatePrContext(
-            sourceBranch = "feature/WO-1-test",
-            remoteBranches = listOf("develop", "main"),
+            repos = listOf(rp),
+            initialSelectedRepoIndex = 0,
             initialTicketKeys = listOf("WO-1"),
             initialTicketContexts = mapOf("WO-1" to ticket("WO-1", "Test")),
             transitions = listOf(TicketTransition("1", "In Review", "In Review")),
@@ -197,8 +217,79 @@ class CreatePrPrefetchTest {
         )
         val result = PrefetchResult.Success(ctx)
         assertSame(ctx, result.context)
-        assertEquals("feature/WO-1-test", result.context.sourceBranch)
+        assertEquals(1, result.context.repos.size)
+        assertEquals("feature/WO-1-work", result.context.repos[0].sourceBranch)
         assertEquals(listOf("alice", "bob"), result.context.defaultReviewers)
+    }
+
+    @Test
+    fun `Success wraps CreatePrContext with two repos correctly`() {
+        val rp1 = repoPrefetch("backend", "feature/WO-10-back", "/repo/backend")
+        val rp2 = repoPrefetch("frontend", "feature/WO-20-front", "/repo/frontend")
+        val ctx = CreatePrContext(
+            repos = listOf(rp1, rp2),
+            initialSelectedRepoIndex = 1,
+            initialTicketKeys = listOf("WO-20"),
+            initialTicketContexts = emptyMap(),
+            transitions = emptyList(),
+            defaultTitle = "WO-20: Frontend work",
+            defaultReviewers = emptyList()
+        )
+        assertEquals(2, ctx.repos.size)
+        assertEquals(1, ctx.initialSelectedRepoIndex)
+        assertEquals("feature/WO-20-front", ctx.repos[ctx.initialSelectedRepoIndex].sourceBranch)
+    }
+
+    @Test
+    fun `initialSelectedRepoIndex falls back to 0 when editor not in any root`() {
+        // Simulate: editor git root "/repo/other" not in any configured repo root.
+        val repos = listOf(
+            repoPrefetch("backend", path = "/repo/backend"),
+            repoPrefetch("frontend", path = "/repo/frontend")
+        )
+        val editorRoot = "/repo/other"
+        val idx = repos.indexOfFirst { it.config.localVcsRootPath == editorRoot }.takeIf { it >= 0 } ?: 0
+        assertEquals(0, idx)
+    }
+
+    @Test
+    fun `initialSelectedRepoIndex resolves to matching repo when editor is in known root`() {
+        val repos = listOf(
+            repoPrefetch("backend", path = "/repo/backend"),
+            repoPrefetch("frontend", path = "/repo/frontend")
+        )
+        val editorRoot = "/repo/frontend"
+        val idx = repos.indexOfFirst { it.config.localVcsRootPath == editorRoot }.takeIf { it >= 0 } ?: 0
+        assertEquals(1, idx)
+    }
+
+    @Test
+    fun `single repo list has size 1`() {
+        // Verifies the structure expected when only one repo is returned by getRepos()
+        // or autoDetectRepos().
+        val repos = listOf(repoPrefetch("mono"))
+        assertEquals(1, repos.size)
+    }
+
+    @Test
+    fun `partial repo failure leaves remaining repos in success list`() {
+        // Simulates: two repos configured, one fails prefetch (returns null), one succeeds.
+        // The null-filtering logic is tested directly here.
+        val prefetchResults: List<RepoPrefetch?> = listOf(
+            repoPrefetch("backend"),
+            null  // simulates a failed prefetch for the second repo
+        )
+        val filtered = prefetchResults.filterNotNull()
+        assertEquals(1, filtered.size)
+        assertEquals("backend", filtered[0].config.name)
+    }
+
+    @Test
+    fun `all repos fail prefetch results in empty list`() {
+        // Simulates: all repos returning null from prefetchOneRepo.
+        val prefetchResults: List<RepoPrefetch?> = listOf(null, null)
+        val filtered = prefetchResults.filterNotNull()
+        assertTrue(filtered.isEmpty())
     }
 
     @Test

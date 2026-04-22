@@ -379,6 +379,30 @@ class BitbucketBranchClient(
         }
 
         /**
+         * Factory method that constructs a client using the project/slug from a [RepoConfig]
+         * instead of reading the single-value `PluginSettings.state.bitbucket*` fields.
+         *
+         * Auth token and base URL are resolved identically to [fromConfiguredSettings]:
+         * - base URL from [com.workflow.orchestrator.core.settings.ConnectionSettings]
+         * - token from [com.workflow.orchestrator.core.auth.CredentialStore] with [com.workflow.orchestrator.core.model.ServiceType.BITBUCKET]
+         *
+         * Returns null if the base URL is blank (Bitbucket not configured) or if
+         * [config] does not have both [com.workflow.orchestrator.core.settings.RepoConfig.bitbucketProjectKey]
+         * and [com.workflow.orchestrator.core.settings.RepoConfig.bitbucketRepoSlug] set.
+         */
+        fun forRepo(config: com.workflow.orchestrator.core.settings.RepoConfig): BitbucketBranchClient? {
+            if (!config.isConfigured) return null
+            val url = com.workflow.orchestrator.core.settings.ConnectionSettings.getInstance()
+                .state.bitbucketUrl.trimEnd('/')
+            if (url.isBlank()) return null
+            val credentialStore = com.workflow.orchestrator.core.auth.CredentialStore()
+            return BitbucketBranchClient(
+                baseUrl = url,
+                tokenProvider = { credentialStore.getToken(com.workflow.orchestrator.core.model.ServiceType.BITBUCKET) }
+            )
+        }
+
+        /**
          * Extract the Bamboo plan key from a Bitbucket build status.
          *
          * Bitbucket build statuses report the *build* key (e.g. `PROJ-PLAN-42`), but

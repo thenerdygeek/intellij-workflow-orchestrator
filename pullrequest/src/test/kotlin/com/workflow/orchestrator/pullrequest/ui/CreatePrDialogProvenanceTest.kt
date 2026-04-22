@@ -112,4 +112,31 @@ class CreatePrDialogProvenanceTest {
         )
         assertEquals("", text)
     }
+
+    @Test
+    fun `provenance is empty after module change invalidates lastGen`() {
+        // Simulates onModuleChanged() setting lastGen = null.
+        // Even if target and tickets are still set, provenance must be empty.
+        val text = CreatePrDialog.buildProvenanceText(
+            lastGen = null,       // cleared by onModuleChanged()
+            currentTarget = "develop",
+            currentTickets = listOf("ABC-1", "ABC-2")
+        )
+        assertEquals("", text)
+    }
+
+    @Test
+    fun `provenance reflects generation done after module change with new target`() {
+        // After module change and a fresh Generate, lastGen captures the new state.
+        val genAfterModuleSwitch = CreatePrDialog.GenContext(
+            target = "release/2.0",
+            tickets = listOf("ABC-5")
+        )
+        val text = CreatePrDialog.buildProvenanceText(
+            lastGen = genAfterModuleSwitch,
+            currentTarget = "release/2.0",
+            currentTickets = listOf("ABC-5")
+        )
+        assertEquals("Generated against target: release/2.0 · tickets: ABC-5", text)
+    }
 }

@@ -309,15 +309,38 @@ class PrBar(
 
     fun refreshPrs() {
         val bitbucketUrl = settings.connections.bitbucketUrl.orEmpty().trimEnd('/')
-        val projectKey = settings.state.bitbucketProjectKey.orEmpty()
-        val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
-
-        log.info("[Build:PrBar] refreshPrs: url='$bitbucketUrl' project='$projectKey' repo='$repoSlug'")
-        if (bitbucketUrl.isBlank() || projectKey.isBlank() || repoSlug.isBlank()) {
-            log.warn("[Build:PrBar] Bitbucket not configured, hiding PrBar")
+        log.info("[Build:PrBar] refreshPrs: url='$bitbucketUrl'")
+        if (bitbucketUrl.isBlank()) {
+            log.warn("[Build:PrBar] Bitbucket URL not configured, hiding PrBar")
             isVisible = false
             return
         }
+
+        // Resolve repo config from the current editor's git root (or primary).
+        val repoConfig = RepoContextResolver.getInstance(project).resolveCurrentEditorRepoOrPrimary()
+            ?.let { RepoContextResolver.getInstance(project).resolveFromGitRepo(it) }
+        val projectKey = repoConfig?.bitbucketProjectKey.orEmpty()
+        val repoSlug = repoConfig?.bitbucketRepoSlug.orEmpty()
+
+        if (projectKey.isBlank() || repoSlug.isBlank()) {
+            // Fall back to single-value legacy settings for backwards compatibility
+            val legacyKey = settings.state.bitbucketProjectKey.orEmpty()
+            val legacySlug = settings.state.bitbucketRepoSlug.orEmpty()
+            if (legacyKey.isBlank() || legacySlug.isBlank()) {
+                log.warn("[Build:PrBar] No Bitbucket project/repo configured, hiding PrBar")
+                isVisible = false
+                return
+            }
+            log.info("[Build:PrBar] Using legacy single-value settings: project='$legacyKey' repo='$legacySlug'")
+            refreshPrsWithCoords(bitbucketUrl, legacyKey, legacySlug)
+            return
+        }
+
+        log.info("[Build:PrBar] Using RepoContextResolver: project='$projectKey' repo='$repoSlug'")
+        refreshPrsWithCoords(bitbucketUrl, projectKey, repoSlug)
+    }
+
+    private fun refreshPrsWithCoords(bitbucketUrl: String, projectKey: String, repoSlug: String) {
         isVisible = true
 
         val client = BitbucketBranchClient.fromConfiguredSettings() ?: return

@@ -6,6 +6,7 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.core.util.TicketKeyExtractor
 import com.workflow.orchestrator.core.workflow.JiraTicketProvider
@@ -13,17 +14,28 @@ import com.workflow.orchestrator.core.workflow.TicketContext
 import com.workflow.orchestrator.core.workflow.TicketTransition
 import com.workflow.orchestrator.core.bitbucket.PrService
 import com.workflow.orchestrator.pullrequest.service.PrDescriptionGenerator
+import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 
 /**
+ * Per-repo data prefetched before opening [com.workflow.orchestrator.pullrequest.ui.CreatePrDialog].
+ */
+data class RepoPrefetch(
+    val config: RepoConfig,
+    val sourceBranch: String,
+    val remoteBranches: List<String>,
+    val defaultTarget: String
+)
+
+/**
  * Holds all data collected before opening [com.workflow.orchestrator.pullrequest.ui.CreatePrDialog].
  */
 data class CreatePrContext(
-    val sourceBranch: String,
-    val remoteBranches: List<String>,
+    val repos: List<RepoPrefetch>,
+    val initialSelectedRepoIndex: Int,
     val initialTicketKeys: List<String>,
     val initialTicketContexts: Map<String, TicketContext>,
     val transitions: List<TicketTransition>,
@@ -43,12 +55,15 @@ sealed class PrefetchResult {
  * button share the same lookup path.
  *
  * Resolution contract:
- * - Returns [PrefetchResult.Failure] if Bitbucket is not configured or no Git branch is detected.
+ * - Returns [PrefetchResult.Failure] if no repos are configured/detected, or all repo
+ *   prefetches fail.
  * - Does NOT fail on missing Jira provider, getBranches errors (falls back to empty list),
  *   getTransitions errors (empty list), or getTicketContext returning null.
+ * - Single-repo failure → [PrefetchResult.Failure]; one-repo-of-many failure → that repo
+ *   is excluded and the rest succeed.
  *
  * Multi-ticket resolution order:
- * 1. Branch-name regex match → first key
+ * 1. Branch-name regex match → first key (from selected repo's branch)
  * 2. PluginSettings.activeTicketId → second key (only if different from branch key)
  */
 object CreatePrPrefetch {
@@ -60,52 +75,55 @@ object CreatePrPrefetch {
 
     suspend fun run(project: Project): PrefetchResult {
         val settings = PluginSettings.getInstance(project)
+        val resolver = RepoContextResolver.getInstance(project)
 
-        // 1. Verify Bitbucket is configured
-        val client = BitbucketBranchClient.fromConfiguredSettings()
-            ?: return PrefetchResult.Failure(ERROR_BITBUCKET_NOT_CONFIGURED)
+        // 1. Resolve repo list: configured → auto-detected → failure
+        val configuredRepos = settings.getRepos().filter { it.isConfigured }
+        val repos: List<RepoConfig> = if (configuredRepos.isNotEmpty()) {
+            configuredRepos
+        } else {
+            val detected = resolver.autoDetectRepos().filter { it.isConfigured }
+            if (detected.isEmpty()) {
+                return PrefetchResult.Failure(ERROR_GIT_NOT_DETECTED)
+            }
+            detected
+        }
 
-        // 2. Resolve current Git branch (ReadAction — must not block EDT)
-        val currentBranch = ReadAction.compute<String?, Throwable> {
-            RepoContextResolver.getInstance(project).resolveCurrentEditorRepoOrPrimary()
-                ?.currentBranchName
-        } ?: return PrefetchResult.Failure(ERROR_GIT_NOT_DETECTED)
+        // 2. Prefetch each repo in parallel; nulls are silently dropped
+        val repoPrefetches: List<RepoPrefetch> = coroutineScope {
+            repos.map { config ->
+                async(Dispatchers.IO) { prefetchOneRepo(project, config) }
+            }.awaitAll()
+        }.filterNotNull()
 
-        log.info("[PR:Prefetch] currentBranch='$currentBranch'")
+        if (repoPrefetches.isEmpty()) {
+            return PrefetchResult.Failure(ERROR_BITBUCKET_NOT_CONFIGURED)
+        }
 
-        val projectKey = settings.state.bitbucketProjectKey.orEmpty()
-        val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
+        // 3. Resolve initial selected repo index from the current editor's git root
+        val editorGitRoot = ReadAction.compute<String?, Throwable> {
+            resolver.resolveCurrentEditorRepoOrPrimary()?.root?.path
+        }
+        val initialSelectedRepoIndex = if (editorGitRoot != null) {
+            repoPrefetches.indexOfFirst { it.config.localVcsRootPath == editorGitRoot }
+                .takeIf { it >= 0 } ?: 0
+        } else 0
 
-        // 3. Resolve ticket keys
-        val branchKey = TicketKeyExtractor.extractFromBranch(currentBranch)
+        val selectedBranch = repoPrefetches[initialSelectedRepoIndex].sourceBranch
+
+        // 4. Resolve ticket keys from the selected repo's branch
+        val branchKey = TicketKeyExtractor.extractFromBranch(selectedBranch)
         val activeKey = settings.state.activeTicketId?.takeIf { it.isNotBlank() }
         val keys = listOfNotNull(branchKey, activeKey?.takeIf { it != branchKey })
-        log.info("[PR:Prefetch] resolvedKeys=$keys")
+        log.info("[PR:Prefetch] resolvedKeys=$keys selectedBranch='$selectedBranch'")
 
-        // 4. Parallel fetch: remote branches + ticket contexts + transitions + default reviewers
+        // 5. Parallel fetch: Jira contexts + transitions + default reviewers
         return coroutineScope {
-            val remoteBranchesDeferred = async(Dispatchers.IO) {
-                try {
-                    when (val r = client.getBranches(projectKey, repoSlug)) {
-                        is ApiResult.Success -> r.data.map { it.displayId }
-                        is ApiResult.Error -> {
-                            log.warn("[PR:Prefetch] getBranches failed: ${r.message}")
-                            emptyList()
-                        }
-                    }
-                } catch (e: Exception) {
-                    log.warn("[PR:Prefetch] getBranches exception: ${e.message}")
-                    emptyList<String>()
-                }
-            }
-
             val jiraProvider = JiraTicketProvider.getInstance()
 
-            // Ticket contexts — parallel per key
             val contextPairsDeferred = async(Dispatchers.IO) {
                 if (jiraProvider == null || keys.isEmpty()) return@async emptyList<Pair<String, TicketContext?>>()
                 coroutineScope {
-                    // keys fetched in parallel — fan-out bounded by max 5 chips via TicketChipInput
                     keys.map { key ->
                         async(Dispatchers.IO) {
                             val ctx = try { jiraProvider.getTicketContext(key) } catch (e: Exception) {
@@ -118,7 +136,6 @@ object CreatePrPrefetch {
                 }
             }
 
-            // Transitions — from the first (primary) key
             val transitionsDeferred = async(Dispatchers.IO) {
                 val primaryKey = keys.firstOrNull()
                 if (jiraProvider == null || primaryKey.isNullOrBlank()) return@async emptyList<TicketTransition>()
@@ -137,31 +154,27 @@ object CreatePrPrefetch {
                 }
             }
 
-            // Await all
-            val remoteBranches = remoteBranchesDeferred.await()
             val contextPairs = contextPairsDeferred.await()
             val transitions = transitionsDeferred.await()
             val defaultReviewers = defaultReviewersDeferred.await()
 
-            // Build ticket map (exclude keys whose context fetch returned null)
             val initialTicketContexts: Map<String, TicketContext> = contextPairs
                 .filter { (_, ctx) -> ctx != null }
                 .associate { (key, ctx) -> key to ctx!! }
 
-            // Primary context for default title
             val primaryContext = contextPairs.firstOrNull()?.second
 
             val defaultTitle = try {
-                PrDescriptionGenerator.generateTitle(project, primaryContext, currentBranch)
+                PrDescriptionGenerator.generateTitle(project, primaryContext, selectedBranch)
             } catch (e: Exception) {
                 log.warn("[PR:Prefetch] generateTitle failed: ${e.message}")
-                currentBranch.replace("-", " ")
+                selectedBranch.replace("-", " ")
             }
 
             PrefetchResult.Success(
                 CreatePrContext(
-                    sourceBranch = currentBranch,
-                    remoteBranches = remoteBranches,
+                    repos = repoPrefetches,
+                    initialSelectedRepoIndex = initialSelectedRepoIndex,
                     initialTicketKeys = keys,
                     initialTicketContexts = initialTicketContexts,
                     transitions = transitions,
@@ -169,6 +182,71 @@ object CreatePrPrefetch {
                     defaultReviewers = defaultReviewers
                 )
             )
+        }
+    }
+
+    /**
+     * Prefetch data for a single [RepoConfig]. Returns null if the Bitbucket client cannot
+     * be constructed (URL blank) or if the git repo cannot be found — so the caller can
+     * silently skip this repo while still succeeding on others.
+     */
+    private suspend fun prefetchOneRepo(project: Project, config: RepoConfig): RepoPrefetch? {
+        return try {
+            val client = BitbucketBranchClient.forRepo(config) ?: run {
+                log.warn("[PR:Prefetch] No client for repo '${config.displayLabel}'")
+                return null
+            }
+
+            val gitRepo = ReadAction.compute<git4idea.repo.GitRepository?, Throwable> {
+                GitRepositoryManager.getInstance(project).repositories
+                    .find { it.root.path == config.localVcsRootPath }
+            }
+
+            val sourceBranch = ReadAction.compute<String?, Throwable> {
+                gitRepo?.currentBranchName
+            } ?: run {
+                log.warn("[PR:Prefetch] No current branch for repo '${config.displayLabel}'")
+                return null
+            }
+
+            val remoteBranches = try {
+                when (val r = client.getBranches(
+                    config.bitbucketProjectKey.orEmpty(),
+                    config.bitbucketRepoSlug.orEmpty()
+                )) {
+                    is ApiResult.Success -> r.data.map { it.displayId }
+                    is ApiResult.Error -> {
+                        log.warn("[PR:Prefetch] getBranches failed for '${config.displayLabel}': ${r.message}")
+                        emptyList()
+                    }
+                }
+            } catch (e: Exception) {
+                log.warn("[PR:Prefetch] getBranches exception for '${config.displayLabel}': ${e.message}")
+                emptyList()
+            }
+
+            val defaultTarget = if (gitRepo != null) {
+                try {
+                    com.workflow.orchestrator.core.util.DefaultBranchResolver.getInstance(project)
+                        .resolve(gitRepo)
+                } catch (e: Exception) {
+                    config.defaultTargetBranch.orEmpty().ifBlank { "develop" }
+                }
+            } else {
+                config.defaultTargetBranch.orEmpty().ifBlank { "develop" }
+            }
+
+            log.info("[PR:Prefetch] Prefetched repo '${config.displayLabel}': branch='$sourceBranch' remoteBranches=${remoteBranches.size} defaultTarget='$defaultTarget'")
+
+            RepoPrefetch(
+                config = config,
+                sourceBranch = sourceBranch,
+                remoteBranches = remoteBranches,
+                defaultTarget = defaultTarget
+            )
+        } catch (e: Exception) {
+            log.warn("[PR:Prefetch] prefetchOneRepo failed for '${config.displayLabel}': ${e.message}")
+            null
         }
     }
 }
