@@ -563,6 +563,9 @@ class AgentService(private val project: Project) : Disposable {
         safeRegisterCore { TaskListTool { currentTaskStore() } }
         safeRegisterCore { TaskGetTool { currentTaskStore() } }
 
+        // AI Review — local PR-review findings store. Hook-exempt (local-disk only, no Bitbucket calls).
+        safeRegisterCore { AiReviewTool(project) }
+
         // Core PSI — essential navigation tools (guarded by IDE context)
         val hasPsiSupport = ToolRegistrationFilter.shouldRegisterJavaPsiTools(ideContext) ||
             ToolRegistrationFilter.shouldRegisterPythonPsiTools(ideContext)

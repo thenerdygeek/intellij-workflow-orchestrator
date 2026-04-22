@@ -465,7 +465,10 @@ class AgentLoop(
          * internal bookkeeping and should not be observable by external hooks.
          */
         private val HOOK_EXEMPT: Set<String> = setOf(
-            "task_create", "task_update", "task_list", "task_get"
+            "task_create", "task_update", "task_list", "task_get",
+            // ai_review writes only to local disk (no Bitbucket calls) — internal
+            // staging store; should not trigger user approval hooks.
+            "ai_review"
         )
 
         /** Tools that mutate state — blocked when plan mode is active. */
