@@ -112,25 +112,37 @@ class CreatePrDialog(
         foreground = StatusColors.LINK
     }
 
-    // Module selector (only visible for multi-repo).
-    // Long repo labels (e.g. "name (PROJ/very-long-repo-slug)") would otherwise blow out the
-    // combo's preferred width and push the dialog into horizontal scroll. Cap with a
-    // prototype string that reflects a realistic max label length.
+    /** Fixed width shared by all column-1 inputs (module selector, target branch field).
+     *  Prevents the dialog from resizing horizontally when the user picks a module or a
+     *  branch with a long name — every input stays the same width regardless of content. */
+    private val inputColumnWidth = JBUI.scale(320)
+
+    // Module selector (only visible for multi-repo). Fixed width prevents long labels like
+    // "name (PROJ/very-long-repo-slug)" from stretching the dialog horizontally.
     private val moduleCombo: JComboBox<RepoComboItem>? = if (context.repos.size > 1) {
         JComboBox<RepoComboItem>().also { combo ->
             context.repos.forEach { r -> combo.addItem(RepoComboItem(r)) }
             combo.selectedIndex = context.initialSelectedRepoIndex
-            combo.prototypeDisplayValue = RepoComboItem(context.repos[0])
-            combo.maximumSize = Dimension(JBUI.scale(480), combo.preferredSize.height)
+            val height = combo.preferredSize.height
+            combo.preferredSize = Dimension(inputColumnWidth, height)
+            combo.maximumSize = Dimension(inputColumnWidth, height)
+            combo.minimumSize = Dimension(inputColumnWidth, height)
         }
     } else null
 
-    // Target branch — free-text field + a chevron that opens a searchable list popup
-    // (IntelliJ's JBPopupFactory). The field remains manually editable so advanced users
-    // can paste/type a branch name directly. 28 cols keeps the field narrow so long branch
-    // names don't push the dialog into horizontal scroll.
+    // Target branch — read-only display field. Users pick a branch via the chevron (or by
+    // clicking the field itself), which opens a custom popup with a visible filter textbox
+    // at the top and a scrollable branch list below. The field is not editable so users
+    // cannot type an invalid branch name by hand — every value comes from the popup.
+    // Fixed width prevents long branch names from stretching the dialog horizontally.
     private val targetField: ExtendableTextField = ExtendableTextField(28).apply {
         text = currentRepo.defaultTarget
+        isEditable = false
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        val height = preferredSize.height
+        preferredSize = Dimension(inputColumnWidth, height)
+        maximumSize = Dimension(inputColumnWidth, height)
+        minimumSize = Dimension(inputColumnWidth, height)
     }
 
     // Tickets (primary + up to 4 linked)
@@ -234,18 +246,20 @@ class CreatePrDialog(
             (titleField as ExtendableTextField).addExtension(ext)
         }
 
-        // Target branch dropdown chevron — opens a searchable JBPopup list (filterable by
-        // typing, click/Enter to select, Esc to close). IntelliJ's standard pattern; replaces
-        // the previous JPopupMenu-based autocomplete which had several UX problems: the
-        // popup had no filter field, item clicks sometimes failed to propagate when opened
-        // from an ExtendableTextField icon, and the DocumentListener kept re-spawning the
-        // popup while the user was trying to dismiss it.
+        // Target branch dropdown — chevron icon + click-on-field both open a popup with a
+        // visible filter text box at top and the branch list below. The field itself is
+        // read-only, so users can only commit a branch by selecting it from the popup.
         val chevron = com.intellij.icons.AllIcons.General.ArrowDown
         targetField.addExtension(
             ExtendableTextComponent.Extension.create(chevron, chevron, "Show branches") {
                 showBranchChooser()
             }
         )
+        targetField.addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mouseClicked(e: java.awt.event.MouseEvent?) {
+                showBranchChooser()
+            }
+        })
 
         // Pre-fill reviewers: union of settings-configured defaults (username strings) AND the
         // selected repo's Bitbucket-configured default reviewers (full BitbucketUser DTOs with
@@ -361,38 +375,52 @@ class CreatePrDialog(
 
         var nextRow = 0
 
+        // Column 1 uses weightx=0.0 + fill=NONE so every input in the left group stays at its
+        // fixed preferredSize (inputColumnWidth). Without this, GridBagLayout would stretch
+        // the column to fill the dialog width, and long branch / module names would push
+        // the whole dialog into horizontal scroll.
+        val col1Gbc = GridBagConstraints().apply {
+            fill = GridBagConstraints.NONE
+            anchor = GridBagConstraints.WEST
+            insets = JBUI.insets(3, 0)
+        }
+
         if (context.repos.size == 1) {
             val singleRepo = context.repos[0]
             val labelText = buildRepoLabel(singleRepo)
             gbc.gridx = 0; gbc.gridy = nextRow; gbc.weightx = 0.0
             branchPanel.add(JBLabel("Module:").apply { border = JBUI.Borders.emptyRight(8) }, gbc)
-            gbc.gridx = 1; gbc.weightx = 1.0
-            // Truncate visually via tooltip for very long labels so column 1 doesn't grow
-            // past the dialog width. Full label is still available on hover.
+            col1Gbc.gridx = 1; col1Gbc.gridy = nextRow
             branchPanel.add(JBLabel(labelText).apply {
                 toolTipText = labelText
-                maximumSize = Dimension(JBUI.scale(480), preferredSize.height)
-            }, gbc)
+                // Fixed preferred/max size so long labels get clipped instead of growing
+                // the column. Tooltip shows the full label on hover.
+                val h = preferredSize.height
+                preferredSize = Dimension(inputColumnWidth, h)
+                maximumSize = Dimension(inputColumnWidth, h)
+            }, col1Gbc)
             nextRow++
         } else if (moduleCombo != null) {
             gbc.gridx = 0; gbc.gridy = nextRow; gbc.weightx = 0.0
             branchPanel.add(JBLabel("Module:").apply { border = JBUI.Borders.emptyRight(8) }, gbc)
-            gbc.gridx = 1; gbc.weightx = 1.0
-            branchPanel.add(moduleCombo, gbc)
+            col1Gbc.gridx = 1; col1Gbc.gridy = nextRow
+            branchPanel.add(moduleCombo, col1Gbc)
             nextRow++
         }
 
         gbc.gridx = 0; gbc.gridy = nextRow; gbc.weightx = 0.0
         branchPanel.add(JBLabel("Source:").apply { border = JBUI.Borders.emptyRight(8) }, gbc)
-        gbc.gridx = 1; gbc.weightx = 1.0
-        branchPanel.add(sourceBranchLabel, gbc)
+        col1Gbc.gridx = 1; col1Gbc.gridy = nextRow
+        branchPanel.add(sourceBranchLabel.apply {
+            val h = preferredSize.height
+            maximumSize = Dimension(inputColumnWidth, h)
+        }, col1Gbc)
         nextRow++
 
         gbc.gridx = 0; gbc.gridy = nextRow; gbc.weightx = 0.0
         branchPanel.add(JBLabel("Target:").apply { border = JBUI.Borders.emptyRight(8) }, gbc)
-        gbc.gridx = 1; gbc.weightx = 1.0
-        targetField.maximumSize = Dimension(JBUI.scale(480), targetField.preferredSize.height)
-        branchPanel.add(targetField, gbc)
+        col1Gbc.gridx = 1; col1Gbc.gridy = nextRow
+        branchPanel.add(targetField, col1Gbc)
 
         content.add(branchPanel)
         content.add(Box.createVerticalStrut(JBUI.scale(8)))
@@ -542,27 +570,100 @@ class CreatePrDialog(
     // --- Branch search ---
 
     /**
-     * Open a searchable branch-chooser popup for the currently selected module. Uses
-     * `JBPopupFactory.createPopupChooserBuilder` — IntelliJ's standard pattern for
-     * filter-as-you-type list popups. Built-in speed-search filters the list by substring;
-     * click or Enter commits the selected branch into [targetField]; Esc or click-away
-     * closes the popup.
+     * Open a branch-chooser popup for the currently selected module. Custom layout: a
+     * visible filter text box at the top and a scrollable branch list underneath. The
+     * user can only commit a branch by selecting it from the list — manual typing in the
+     * target field is disabled. Typing in the filter box filters the list in real time;
+     * Enter / double-click / single click on an item commits it and closes the popup;
+     * Escape or click-away closes without changing anything.
      */
     private fun showBranchChooser() {
-        val branches = currentRepo.remoteBranches
-        if (branches.isEmpty() || !targetField.isShowing) return
+        val allBranches = currentRepo.remoteBranches
+        if (allBranches.isEmpty() || !targetField.isShowing) return
+
+        val listModel = javax.swing.DefaultListModel<String>().apply {
+            allBranches.forEach { addElement(it) }
+        }
+        val list = com.intellij.ui.components.JBList(listModel).apply {
+            selectionMode = javax.swing.ListSelectionModel.SINGLE_SELECTION
+            visibleRowCount = 12
+            val currentIdx = allBranches.indexOf(targetField.text)
+            if (currentIdx >= 0) selectedIndex = currentIdx
+        }
+        val scroll = com.intellij.ui.components.JBScrollPane(list).apply {
+            border = JBUI.Borders.empty()
+            preferredSize = Dimension(JBUI.scale(320), JBUI.scale(260))
+        }
+
+        val filterField = com.intellij.ui.SearchTextField().apply {
+            textEditor.emptyText.text = "Filter branches"
+            border = JBUI.Borders.empty(4, 4, 2, 4)
+        }
+
+        fun applyFilter(query: String) {
+            val q = query.trim().lowercase()
+            listModel.clear()
+            allBranches.forEach { branch ->
+                if (q.isEmpty() || branch.lowercase().contains(q)) listModel.addElement(branch)
+            }
+            if (listModel.size() > 0) list.selectedIndex = 0
+        }
+
+        filterField.addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(e: DocumentEvent) = applyFilter(filterField.text)
+            override fun removeUpdate(e: DocumentEvent) = applyFilter(filterField.text)
+            override fun changedUpdate(e: DocumentEvent) = applyFilter(filterField.text)
+        })
+
+        val content = JPanel(BorderLayout()).apply {
+            add(filterField, BorderLayout.NORTH)
+            add(scroll, BorderLayout.CENTER)
+            border = JBUI.Borders.empty()
+        }
+
         val popup = com.intellij.openapi.ui.popup.JBPopupFactory.getInstance()
-            .createPopupChooserBuilder(branches)
+            .createComponentPopupBuilder(content, filterField.textEditor)
             .setTitle("Select target branch")
-            .setNamerForFiltering { it }
             .setRequestFocus(true)
+            .setFocusable(true)
             .setMovable(false)
             .setResizable(true)
-            .setSelectedValue(targetField.text, true)
-            .setItemChosenCallback { chosen ->
-                if (chosen != null) targetField.text = chosen
-            }
+            .setCancelOnClickOutside(true)
+            .setMinSize(Dimension(JBUI.scale(320), JBUI.scale(260)))
             .createPopup()
+
+        fun commitSelection() {
+            val chosen = list.selectedValue ?: return
+            targetField.text = chosen
+            popup.closeOk(null)
+        }
+
+        // Enter in the filter field commits the currently-highlighted list item.
+        filterField.textEditor.addKeyListener(object : java.awt.event.KeyAdapter() {
+            override fun keyPressed(e: java.awt.event.KeyEvent) {
+                when (e.keyCode) {
+                    java.awt.event.KeyEvent.VK_ENTER -> { commitSelection(); e.consume() }
+                    java.awt.event.KeyEvent.VK_DOWN -> {
+                        val next = (list.selectedIndex + 1).coerceAtMost(listModel.size() - 1)
+                        if (next >= 0) list.selectedIndex = next
+                        e.consume()
+                    }
+                    java.awt.event.KeyEvent.VK_UP -> {
+                        val prev = (list.selectedIndex - 1).coerceAtLeast(0)
+                        list.selectedIndex = prev
+                        e.consume()
+                    }
+                }
+            }
+        })
+
+        // Click / double-click / Enter on the list commits the selection.
+        list.addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mouseClicked(e: java.awt.event.MouseEvent) {
+                if (e.clickCount >= 1) commitSelection()
+            }
+        })
+
         popup.showUnderneathOf(targetField)
     }
 
@@ -720,11 +821,20 @@ class CreatePrDialog(
         // Capture the generation ID at launch time. Any in-flight write that races a
         // subsequent onModuleChanged() will detect the counter has moved and discard.
         val myId = ++descriptionGenerationId
+        // Capture UI state synchronously on the calling thread — this function is called
+        // from regenerateButton's ActionListener and from init{}, both on EDT.
+        //
+        // BUG FIXED HERE: previously the coroutine opened with `withContext(Dispatchers.EDT)`
+        // to read UI state. But `Dispatchers.EDT` from a background thread dispatches at
+        // `ModalityState.NON_MODAL` by default, which is suspended while this modal dialog
+        // is open. The coroutine hung on that line forever — showDescriptionLoading() was
+        // never called, the LLM was never invoked, and no error surfaced. Reading UI state
+        // synchronously before `scope.launch` avoids the EDT hop entirely.
+        val targetBranch = targetField.text.trim()
+        val tickets = ticketChipInput.allValid()
+        val repoAtGenTime = currentRepo
+        showDescriptionLoading()
         descriptionGenJob = scope.launch {
-            val (targetBranch, tickets, repoAtGenTime) = withContext(Dispatchers.EDT) {
-                Triple(targetField.text.trim(), ticketChipInput.allValid(), currentRepo)
-            }
-            invokeLater { showDescriptionLoading() }
             try {
                 // Materialise the GitRepository for the selected repo so PrDescriptionGenerator
                 // targets the correct git root when running git log / diff.

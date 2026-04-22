@@ -14,7 +14,8 @@ import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPasswordField
 import javax.swing.JTextField
-import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.application.ModalityState
+import com.intellij.openapi.application.invokeLater as platformInvokeLater
 
 class SetupDialog(private val project: Project) : DialogWrapper(project) {
 
@@ -31,6 +32,15 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
         setOKButtonText("Finish Setup")
         setCancelButtonText("Skip")
         init()
+    }
+
+    /** Modality-aware EDT dispatch. Platform `invokeLater` defaults to NON_MODAL from a
+     *  background thread, which is suspended while this modal dialog is open — UI updates
+     *  scheduled that way never fire until the dialog closes. */
+    private fun invokeLater(runnable: Runnable) {
+        val cp = this.contentPane
+        val modality = if (cp != null) ModalityState.stateForComponent(cp) else ModalityState.any()
+        platformInvokeLater(modality) { runnable.run() }
     }
 
     override fun createCenterPanel(): JComponent = panel {

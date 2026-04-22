@@ -38,6 +38,8 @@ import com.intellij.openapi.wm.WindowManager
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.openapi.application.EDT
+import com.intellij.openapi.application.ModalityState
+import com.intellij.openapi.application.asContextElement
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -846,15 +848,26 @@ class SprintDashboardPanel(
                         initialRepoIndex = detectedIndex
                     )
 
-                    // If AI is needed, launch generation in background AFTER dialog is shown
+                    // If AI is needed, launch generation in background AFTER dialog is shown.
+                    //
+                    // Modality-critical: StartWorkDialog is modal. The background coroutine's
+                    // `withContext(Dispatchers.EDT)` would otherwise dispatch at NON_MODAL,
+                    // which the event queue suspends while the modal is open — the AI result
+                    // callbacks (setAiResult / setAiFailed) would sit on the queue forever
+                    // and the "AI generating branch name…" spinner would never resolve.
+                    // Binding the dispatch to the dialog's contentPane modality via
+                    // `ModalityState.asContextElement()` makes the EDT dispatch run at the
+                    // dialog's own modal level.
                     if (needsAi) {
+                        val modality = ModalityState.stateForComponent(dialog.contentPane)
+                        val edtCtx = Dispatchers.EDT + modality.asContextElement()
                         scope.launch {
                             log.info("[Jira:StartWork] Launching AI branch name generation for ${selectedIssue.key}")
                             try {
                                 val generator = BranchNameAiGenerator.getInstance()
                                 if (generator == null) {
                                     log.warn("[Jira:StartWork] No BranchNameAiGenerator registered — AI not available")
-                                    withContext(Dispatchers.EDT) {
+                                    withContext(edtCtx) {
                                         dialog.setAiFailed("AI not available")
                                     }
                                 } else {
@@ -872,19 +885,19 @@ class SprintDashboardPanel(
                                             aiSummary = slug
                                         )
                                         log.info("[Jira:StartWork] AI generated full branch name: '$aiBranchName'")
-                                        withContext(Dispatchers.EDT) {
+                                        withContext(edtCtx) {
                                             dialog.setAiResult(aiBranchName)
                                         }
                                     } else {
                                         log.warn("[Jira:StartWork] AI returned null slug")
-                                        withContext(Dispatchers.EDT) {
+                                        withContext(edtCtx) {
                                             dialog.setAiFailed("AI returned empty response")
                                         }
                                     }
                                 }
                             } catch (e: Exception) {
                                 log.error("[Jira:StartWork] AI branch generation failed with exception", e)
-                                withContext(Dispatchers.EDT) {
+                                withContext(edtCtx) {
                                     dialog.setAiFailed(e.message ?: "Unknown error")
                                 }
                             }

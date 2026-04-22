@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.bamboo.ui
 
-import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.application.ModalityState
+import com.intellij.openapi.application.invokeLater as platformInvokeLater
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.ui.AnimatedIcon
@@ -62,6 +63,15 @@ class ManualStageDialog(
         contentPanel?.add(createCenterPanel())
         contentPanel?.revalidate()
         contentPanel?.repaint()
+    }
+
+    /** Modality-aware EDT dispatch. Platform `invokeLater` defaults to NON_MODAL from a
+     *  background thread, which is suspended while this modal dialog is open — UI updates
+     *  scheduled that way never fire until the dialog closes. */
+    private fun invokeLater(runnable: Runnable) {
+        val cp = this.contentPane
+        val modality = if (cp != null) ModalityState.stateForComponent(cp) else ModalityState.any()
+        platformInvokeLater(modality) { runnable.run() }
     }
 
     override fun createCenterPanel(): JComponent {

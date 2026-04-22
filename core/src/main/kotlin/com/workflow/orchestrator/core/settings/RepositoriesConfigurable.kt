@@ -1,7 +1,8 @@
 package com.workflow.orchestrator.core.settings
 
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.application.ModalityState
+import com.intellij.openapi.application.invokeLater as platformInvokeLater
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.project.Project
@@ -241,10 +242,15 @@ class RepositoriesConfigurable(
             )
             val orchestratorResult = kotlinx.coroutines.runBlocking { orchestrator.detectAll() }
 
-            invokeLater {
+            // Modality-aware: the Settings dialog is modal, so a plain invokeLater from
+            // this pooled thread would schedule at NON_MODAL and be held on the queue
+            // until Settings closes. Anchor to the status label so the callback runs at
+            // the Settings dialog's modal level.
+            val modality = ModalityState.stateForComponent(repoStatusLabel)
+            platformInvokeLater(modality) detect@{
                 if (detected.isEmpty() && !orchestratorResult.anyFilled) {
                     repoStatusLabel.text = "No repositories or project keys detected"
-                    return@invokeLater
+                    return@detect
                 }
                 var added = 0
                 for (repo in detected) {
