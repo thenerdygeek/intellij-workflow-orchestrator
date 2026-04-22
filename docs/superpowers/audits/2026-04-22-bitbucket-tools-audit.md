@@ -136,7 +136,21 @@ No test file exercises any action through a mocked `BitbucketService` — i.e., 
 
 ## Sandbox
 
-(Filled in after live testing, or marked "not available".)
+**Status:** Not performed during this audit execution.
+
+**Reason:** Live HTTP verification against the user's Bitbucket Data Center instance requires the access token, which the plugin stores in IntelliJ PasswordSafe (per `CLAUDE.md` at repo root: *"Jira/Bamboo/Bitbucket/Sonar: `Authorization: Bearer <token>` ... all in PasswordSafe, never XML."*). The audit was executed by subagents that cannot extract credentials from PasswordSafe, and running live mutating writes against a real PR would require explicit user authorization on a disposable test PR.
+
+**Impact on verdicts:** All classifications in this audit are based on static analysis (code inspection + API reference cross-check + WADL verification where needed). BROKEN findings remain **suspected** until live-verified. FIX findings are on stronger footing — most are logical/DTO bugs provable from the code alone. UNTESTED findings are definitively confirmed (the test-coverage matrix counted zero execute() tests across 23 of the 24 audited items).
+
+**Suggested follow-up (user-driven, not in scope for this audit execution):**
+
+1. On a disposable test PR in a dev Bitbucket instance, run `curl` invocations for each read action (`list_comments`, `get_pr_detail`, `get_pr_diff`, etc.) using the user's Bearer token. Record response shapes and compare against the `Found` sections in the per-action details.
+2. On the same test PR, exercise the mutating actions one at a time. Clean up comments afterward.
+3. Specifically verify the two concrete-bug FIX findings:
+   - `set_reviewer_status` body MUST include `approved` boolean — send a request WITHOUT it and observe whether DC rejects, silently ignores, or succeeds.
+   - `add_inline_comment` with `lineType: REMOVED` — observe whether DC places the comment correctly with the code's hardcoded `fileType: TO`, or whether this produces a mis-anchored comment.
+4. Verify pagination exhaustion: on a PR with >50 activities or >100 changed files, confirm the current single-page fetch silently truncates.
+5. Append findings to this Sandbox section as "Live-verified" or "Live-refuted" per row — do NOT re-edit the Verdict column based on live results alone; surface discrepancies in the decision memo instead.
 
 ## Decision
 
