@@ -53,10 +53,10 @@ class BitbucketReviewToolTest {
     }
 
     @Test
-    fun `action enum contains all 9 actions`() {
+    fun `action enum contains all 10 actions`() {
         val actions = tool.parameters.properties["action"]?.enumValues
         assertNotNull(actions)
-        assertEquals(9, actions!!.size)
+        assertEquals(10, actions!!.size)
         assertTrue("add_pr_comment" in actions)
         assertTrue("add_inline_comment" in actions)
         assertTrue("reply_to_comment" in actions)
@@ -66,6 +66,7 @@ class BitbucketReviewToolTest {
         assertTrue("list_comments" in actions)
         assertTrue("get_comment" in actions)
         assertTrue("edit_comment" in actions)
+        assertTrue("delete_comment" in actions)
     }
 
     @Test
@@ -301,5 +302,56 @@ class BitbucketReviewToolTest {
         }, project)
         assertTrue(result.isError)
         assertTrue(result.content.contains("expected_version"))
+    }
+
+    // --- Task 4: delete_comment ---
+
+    @Test
+    fun `delete_comment dispatches to service with correct args`() = runTest {
+        val svc = mockBitbucketService()
+        coEvery { svc.deletePrComment("PROJ", "my-repo", 3, 20L, 1) } returns
+            CoreToolResult(data = Unit, summary = "Comment 20 deleted")
+
+        val result = tool.execute(buildJsonObject {
+            put("action", "delete_comment")
+            put("project_key", "PROJ")
+            put("repo_slug", "my-repo")
+            put("pr_id", "3")
+            put("comment_id", "20")
+            put("expected_version", "1")
+        }, project)
+
+        assertFalse(result.isError)
+        assertTrue(result.content.contains("Comment 20 deleted"))
+    }
+
+    @Test
+    fun `delete_comment missing expected_version returns error`() = runTest {
+        val svc = mockBitbucketService()
+        @Suppress("UNUSED_VARIABLE") val unused = svc
+        val result = tool.execute(buildJsonObject {
+            put("action", "delete_comment")
+            put("project_key", "PROJ")
+            put("repo_slug", "my-repo")
+            put("pr_id", "3")
+            put("comment_id", "20")
+        }, project)
+        assertTrue(result.isError)
+        assertTrue(result.content.contains("expected_version"))
+    }
+
+    @Test
+    fun `delete_comment missing comment_id returns error`() = runTest {
+        val svc = mockBitbucketService()
+        @Suppress("UNUSED_VARIABLE") val unused = svc
+        val result = tool.execute(buildJsonObject {
+            put("action", "delete_comment")
+            put("project_key", "PROJ")
+            put("repo_slug", "my-repo")
+            put("pr_id", "3")
+            put("expected_version", "1")
+        }, project)
+        assertTrue(result.isError)
+        assertTrue(result.content.contains("comment_id"))
     }
 }
