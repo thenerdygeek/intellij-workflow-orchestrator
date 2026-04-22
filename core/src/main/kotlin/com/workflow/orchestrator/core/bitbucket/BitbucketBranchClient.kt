@@ -1794,6 +1794,51 @@ class BitbucketBranchClient(
         }
     }
 
+    /**
+     * Edits an existing comment on a pull request.
+     * PUT /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/comments/{commentId}
+     * Requires the current comment version in the request body; returns 409 if the comment was
+     * modified since the caller last fetched it (optimistic concurrency / stale version).
+     */
+    suspend fun editPrComment(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        commentId: Long,
+        text: String,
+        expectedVersion: Int,
+    ): ApiResult<BitbucketPrCommentResponse> = withContext(Dispatchers.IO) {
+        val payload = json.encodeToString(EditCommentRequest(text = text, version = expectedVersion))
+        val request = Request.Builder()
+            .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/comments/$commentId")
+            .put(payload.toRequestBody("application/json".toMediaType()))
+            .addHeader("Accept", "application/json")
+            .build()
+        runCatching {
+            httpClient.newCall(request).execute().use { response ->
+                when (response.code) {
+                    409 -> ApiResult.Error(
+                        ErrorType.VALIDATION_ERROR,
+                        "STALE_VERSION: comment $commentId was modified by another user; re-fetch and retry"
+                    )
+                    in 200..299 -> {
+                        val body = response.body?.string()
+                            ?: return@use ApiResult.Error(ErrorType.PARSE_ERROR, "empty response body")
+                        ApiResult.Success(json.decodeFromString<BitbucketPrCommentResponse>(body))
+                    }
+                    401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                    else -> ApiResult.Error(
+                        ErrorType.SERVER_ERROR,
+                        "HTTP ${response.code}: ${response.message}"
+                    )
+                }
+            }
+        }.getOrElse { e ->
+            log.error("[Core:Bitbucket] Network error editing comment $commentId on PR #$prId", e)
+            ApiResult.Error(ErrorType.NETWORK_ERROR, "editPrComment failed: ${e.message}", e)
+        }
+    }
+
     // --- Commit, Inline Comment, Reply, Reviewer Status, File Browse Methods ---
 
     /**

@@ -2,6 +2,10 @@ package com.workflow.orchestrator.core.bitbucket
 
 import com.workflow.orchestrator.core.model.ApiResult
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.jupiter.api.AfterEach
@@ -86,5 +90,32 @@ class BitbucketBranchClientCommentsTest {
         ))
         val result = client.getPrComment("P", "R", 1, 999L)
         assertTrue(result is ApiResult.Error)
+    }
+
+    @Test
+    fun `editPrComment sends PUT with text and version`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(
+            """{"id":42,"version":4,"text":"updated","author":{"name":"u","displayName":"U"},"state":"OPEN","severity":"NORMAL"}"""
+        ))
+        val result = client.editPrComment("P", "R", 1, 42, text = "updated", expectedVersion = 3)
+        assertTrue(result is ApiResult.Success)
+
+        val req = server.takeRequest()
+        assertEquals("PUT", req.method)
+        val body = Json.parseToJsonElement(req.body.readUtf8()).jsonObject
+        assertEquals("updated", body["text"]!!.jsonPrimitive.content)
+        assertEquals(3, body["version"]!!.jsonPrimitive.int)
+    }
+
+    @Test
+    fun `editPrComment surfaces 409 as STALE_VERSION error`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(409).setBody(
+            """{"errors":[{"message":"Comment modified since last read"}]}"""
+        ))
+        val result = client.editPrComment("P", "R", 1, 42, text = "updated", expectedVersion = 3)
+        assertTrue(result is ApiResult.Error)
+        val errorResult = result as ApiResult.Error
+        val msg = errorResult.message
+        assertTrue(msg.contains("STALE_VERSION"), "error message was: $msg")
     }
 }
