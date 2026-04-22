@@ -247,3 +247,17 @@ data class BranchQualityReportData(
     val fileReports: List<FileQualityReport>,
     val truncatedFiles: Boolean = false
 )
+
+/**
+ * A file-level component discovered via SonarQube's component_tree API.
+ *
+ * For multi-module Maven/Gradle projects the [key] is *not* predictable from the file path
+ * alone — SonarQube stores it as `projectKey:moduleName:pathWithinModule` (or similar), so
+ * callers that need to query per-file endpoints (source_lines, duplications) must resolve
+ * the key via this model rather than constructing `"$projectKey:$relativePath"`.
+ */
+data class SonarFileComponent(
+    val key: String,
+    val path: String,
+    val name: String
+)

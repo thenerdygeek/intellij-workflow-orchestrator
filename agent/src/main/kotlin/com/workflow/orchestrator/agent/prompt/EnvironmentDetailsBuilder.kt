@@ -24,6 +24,8 @@ object EnvironmentDetailsBuilder {
         activeTicketSummary: String? = null,
         currentBranch: String? = null,
         defaultTargetBranch: String? = null,
+        primaryRepoLabel: String? = null,
+        otherRepoBranches: List<Pair<String, String>> = emptyList(),
     ): String {
         return buildString {
             appendLine("<environment_details>")
@@ -37,7 +39,7 @@ object EnvironmentDetailsBuilder {
             appendCurrentTime()
 
             // 3. VCS State (branch + dirty files)
-            appendVcsState(project, currentBranch, defaultTargetBranch)
+            appendVcsState(project, currentBranch, defaultTargetBranch, primaryRepoLabel, otherRepoBranches)
 
             // 4. Active Editor (file, cursor, selection range)
             appendActiveEditor(project)
@@ -151,13 +153,26 @@ object EnvironmentDetailsBuilder {
     private fun StringBuilder.appendVcsState(
         project: Project,
         currentBranch: String?,
-        defaultTargetBranch: String?
+        defaultTargetBranch: String?,
+        primaryRepoLabel: String?,
+        otherRepoBranches: List<Pair<String, String>>
     ) {
-        // Branch line — shown only when available
+        // Branch line — shown only when available.
+        // Multi-repo projects: label the primary branch with its repo identity and list the
+        // other repos below, so the LLM never confuses modules or picks the wrong branch for
+        // tools like sonar(action=local_analysis, branch=...).
         if (currentBranch != null) {
             appendLine("# Current Branch")
             val target = if (defaultTargetBranch != null) " (target: $defaultTargetBranch)" else ""
-            appendLine("$currentBranch$target")
+            if (otherRepoBranches.isNotEmpty() && primaryRepoLabel != null) {
+                appendLine("$primaryRepoLabel: $currentBranch$target")
+                appendLine("Other repositories in project:")
+                for ((label, branch) in otherRepoBranches) {
+                    appendLine("- $label: $branch")
+                }
+            } else {
+                appendLine("$currentBranch$target")
+            }
             appendLine()
         }
 

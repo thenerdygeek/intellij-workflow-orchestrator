@@ -478,6 +478,16 @@ class AgentLoop(
         /** Subset of write tools that require user approval via the approval gate. */
         val APPROVAL_TOOLS = ApprovalPolicy.APPROVAL_TOOLS
 
+        /**
+         * Tools that stream live output to the UI via [RunCommandTool.streamCallback].
+         * The loop must set [RunCommandTool.currentToolCallId] before invoking these so
+         * their output chunks correlate to the right tool-call bubble in the chat.
+         * TODO: migrate away from the shared ThreadLocal/static state (see RunCommandTool
+         * companion note) — replace with a CoroutineContext element so tools declare
+         * streaming support instead of being enumerated here.
+         */
+        private val STREAMING_TOOLS = setOf("run_command", "sonar")
+
         /** Error types that are transient and safe to retry. */
         private val RETRYABLE_ERRORS = setOf(
             ErrorType.RATE_LIMITED,
@@ -1346,8 +1356,14 @@ class AgentLoop(
                 )
             )
 
-            // Execute tool (with per-tool timeout and CancellationException propagation)
-            if (toolName == "run_command") RunCommandTool.currentToolCallId.set(toolCallId)
+            // Execute tool (with per-tool timeout and CancellationException propagation).
+            // Streaming-capable tools read RunCommandTool.currentToolCallId + streamCallback to
+            // push live output to the webview. Any tool that spawns a long-running external
+            // process (shell commands, sonar-scanner, etc.) should be listed here until a
+            // proper context-element migration replaces the ThreadLocal (see RunCommandTool
+            // companion TODO). Without this, the tool runs fine but the UI shows a silent
+            // spinner for the entire duration.
+            if (toolName in STREAMING_TOOLS) RunCommandTool.currentToolCallId.set(toolCallId)
             val toolResult = try {
                 val timeout = tool.timeoutMs
                 if (timeout == Long.MAX_VALUE) {
@@ -1382,7 +1398,7 @@ class AgentLoop(
                 reportToolError(call, startTime, errorMsg)
                 continue
             } finally {
-                if (toolName == "run_command") RunCommandTool.currentToolCallId.remove()
+                if (toolName in STREAMING_TOOLS) RunCommandTool.currentToolCallId.remove()
             }
 
             val durationMs = System.currentTimeMillis() - startTime

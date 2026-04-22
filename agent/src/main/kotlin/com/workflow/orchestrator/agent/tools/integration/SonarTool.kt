@@ -10,6 +10,7 @@ import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.settings.RepoContextResolver
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -53,7 +54,7 @@ Actions and their parameters:
 - security_hotspots(project_key, branch?) → Security hotspots
 - duplications(component_key, branch?) → Code duplications
 - branch_quality_report(project_key, branch, max_files?) → **Consolidated new-code quality report** — one call gets: new-code quality gate conditions, new-code issues (bugs/smells/vulnerabilities), security hotspots, new-code coverage (line %, branch %, uncovered lines/conditions, duplication density), plus per-file drill-down with exact uncovered line numbers, uncovered branch line numbers, and duplicated line ranges. Default max_files=20. **Use this for new code / branch quality analysis** instead of calling issues+quality_gate+coverage+hotspots separately.
-- local_analysis(files, branch?, timeout?) → **Run SonarQube analysis locally on specific files** using Maven/Gradle Sonar plugin, then return fresh results (issues, hotspots, coverage, duplications) for those files. Use this after refactoring to get immediate Sonar feedback without waiting for the CI pipeline. Requires Maven (pom.xml) or Gradle (build.gradle) and SonarQube connection configured. timeout default 300s.
+- local_analysis(files, branch?, timeout?) → **Run SonarQube analysis locally on specific files** using Maven/Gradle Sonar plugin, then return fresh results (issues, hotspots, coverage, duplications) for those files. Use this after refactoring to get immediate Sonar feedback without waiting for the CI pipeline. Requires Maven (pom.xml) or Gradle (build.gradle) and SonarQube connection configured. timeout default 300s. **branch is auto-derived** from the current Git HEAD when omitted. Protected names (main/master/develop/release/*/hotfix/*/trunk) are automatically redirected to `local-scratch-<name>` so your local run never overwrites the real branch's Sonar dashboard. Pass branch explicitly only when you want to publish under a specific non-protected name.
 
 Common optional: repo_name for multi-repo projects.
 """.trimIndent()
@@ -87,7 +88,7 @@ Common optional: repo_name for multi-repo projects.
             ),
             "branch" to ParameterProperty(
                 type = "string",
-                description = "Optional branch name — for issues, quality_gate, coverage, project_measures, source_lines, issues_paged, security_hotspots, duplications. Use project_context tool to discover current branch."
+                description = "Optional branch name — for issues, quality_gate, coverage, project_measures, source_lines, issues_paged, security_hotspots, duplications. Use project_context tool to discover current branch. For local_analysis: omit to auto-derive from current Git HEAD; protected names (main/master/develop/release/*/hotfix/*/trunk) are auto-redirected to 'local-scratch-<name>'."
             ),
             "from" to ParameterProperty(
                 type = "string",
@@ -242,11 +243,11 @@ Common optional: repo_name for multi-repo projects.
             "local_analysis" -> {
                 val filesParam = params["files"]?.jsonPrimitive?.content
                     ?: return ToolValidation.missingParam("files")
-                val branch = params["branch"]?.jsonPrimitive?.contentOrNull
+                val userBranch = params["branch"]?.jsonPrimitive?.contentOrNull
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
                 val timeoutSeconds = (params["timeout"]?.jsonPrimitive?.content?.toLongOrNull() ?: 300L)
                     .coerceIn(30L, 900L)
-                executeLocalAnalysis(params, project, filesParam, branch, repoName, timeoutSeconds)
+                executeLocalAnalysis(params, project, filesParam, userBranch, repoName, timeoutSeconds)
             }
 
             else -> ToolResult(
@@ -266,10 +267,21 @@ Common optional: repo_name for multi-repo projects.
         params: JsonObject,
         project: Project,
         filesParam: String,
-        branch: String?,
+        userBranch: String?,
         repoName: String?,
         timeoutSeconds: Long
     ): ToolResult {
+        // Resolve the effective branch: user-supplied takes precedence, else auto-derive from
+        // current Git HEAD. Protected names (main/master/develop/release/*/hotfix/*/trunk)
+        // are redirected to a scratch namespace so a local run never pollutes the real branch's
+        // Sonar dashboard. Multi-module: RepoContextResolver picks the current-editor's repo
+        // first, falling back to the primary — correct for both mono-repo-multi-module and
+        // multi-repo IntelliJ projects.
+        val branchResolution = resolveLocalAnalysisBranch(project, userBranch)
+        val branch: String? = when (branchResolution) {
+            is BranchResolution.Use -> branchResolution.branch
+            is BranchResolution.Omit -> null
+        }
         // ── 1. Gather config ───────────────────────────────────────────────
         val settings = PluginSettings.getInstance(project)
         val sonarUrl = settings.connections.sonarUrl.trimEnd('/')
@@ -336,8 +348,17 @@ Common optional: repo_name for multi-repo projects.
         else ProcessBuilder("sh", "-c", command)
         pb.directory(baseDir).redirectErrorStream(true)
 
+        // Streaming pipe: tool-call correlation is set by AgentLoop via STREAMING_TOOLS.
+        // When the ID is null (direct invocation in a test, or missing wiring), heartbeats
+        // and scanner stdout simply drop — the final ToolResult still carries everything.
         val toolCallId = RunCommandTool.currentToolCallId.get()
         val streamCb = RunCommandTool.streamCallback
+        val emit: (String) -> Unit = { line ->
+            if (toolCallId != null) streamCb?.invoke(toolCallId, "$line\n")
+        }
+
+        emit("▶ Running $buildTool sonar scan on ${files.size} file(s) (timeout ${timeoutSeconds}s, branch: ${branch ?: "(project default)"})")
+        emit("  Inclusions: $inclusions")
 
         val process = pb.start()
         val reader = Thread {
@@ -349,7 +370,7 @@ Common optional: repo_name for multi-repo projects.
                     if (ceTaskId == null && line.contains("api/ce/task?id=")) {
                         ceTaskId = line.substringAfter("api/ce/task?id=").substringBefore(" ").trim()
                     }
-                    if (toolCallId != null) streamCb?.invoke(toolCallId, "$line\n")
+                    emit(line)
                     line = br.readLine()
                 }
             }
@@ -357,6 +378,7 @@ Common optional: repo_name for multi-repo projects.
 
         val completed = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
         if (!completed) {
+            emit("✗ Scanner timed out after ${timeoutSeconds}s — killing process")
             process.destroyForcibly()
             reader.join(1000)
             return ToolResult(
@@ -368,6 +390,7 @@ Common optional: repo_name for multi-repo projects.
         val elapsedS = (System.currentTimeMillis() - startTime) / 1000.0
 
         if (process.exitValue() != 0) {
+            emit("✗ Scanner exited with code ${process.exitValue()} after ${String.format("%.1f", elapsedS)}s")
             val tail = outputBuilder.toString().lines().takeLast(30).joinToString("\n")
             return ToolResult(
                 "Sonar analysis FAILED (exit ${process.exitValue()}) after ${String.format("%.1f", elapsedS)}s.\n\n$tail",
@@ -375,38 +398,68 @@ Common optional: repo_name for multi-repo projects.
             )
         }
 
+        emit("✓ Scanner finished in ${String.format("%.1f", elapsedS)}s (exit ${process.exitValue()})")
+
         // ── 5. Wait for CE task to finish processing on server ─────────────
         val sonarService = ServiceLookup.sonar(project) ?: return ServiceLookup.notConfigured("SonarQube")
 
         if (ceTaskId != null) {
+            emit("⏳ Waiting for SonarQube server to process report (CE task: $ceTaskId, polling every ${CE_POLL_INTERVAL_MS / 1000}s, max ${CE_POLL_TIMEOUT_MS / 1000}s)")
             val pollDeadline = System.currentTimeMillis() + CE_POLL_TIMEOUT_MS
             var taskStatus = "PENDING"
             while (taskStatus in setOf("PENDING", "IN_PROGRESS") && System.currentTimeMillis() < pollDeadline) {
                 delay(CE_POLL_INTERVAL_MS)
                 val statusResult = sonarService.getCeTaskStatus(ceTaskId!!)
-                if (!statusResult.isError) taskStatus = statusResult.data ?: "UNKNOWN"
-                else break
+                if (!statusResult.isError) {
+                    val newStatus = statusResult.data ?: "UNKNOWN"
+                    if (newStatus != taskStatus) emit("  CE task $ceTaskId: $newStatus")
+                    taskStatus = newStatus
+                } else {
+                    emit("  CE task poll error: ${statusResult.summary} — continuing with what we have")
+                    break
+                }
             }
             if (taskStatus == "FAILED" || taskStatus == "CANCELED") return ToolResult(
                 "Sonar analysis submitted successfully but server processing $taskStatus (CE task: $ceTaskId).",
                 "CE task $taskStatus", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
             )
+            emit("✓ Server processing complete (status: $taskStatus)")
         } else {
             // Scanner didn't emit a CE task URL (older versions or proxy strips it) — wait briefly
+            emit("⏳ Scanner did not emit a CE task ID; waiting ${CE_FALLBACK_WAIT_MS / 1000}s for report propagation")
             delay(CE_FALLBACK_WAIT_MS)
         }
 
-        // ── 6. Fetch per-file results in parallel ─────────────────────────
+        emit("→ Resolving component keys for ${files.size} file(s) and fetching per-file results...")
+
+        // ── 6. Resolve authoritative component keys for each requested file ─
+        // Multi-module Maven/Gradle projects key source files as `projectKey:moduleName:pathWithinModule`,
+        // which is NOT predictable from the repo-relative path alone. Query component_tree once and
+        // map by path so getSourceLines/getDuplications hit the right components instead of silently
+        // returning empty. Best-effort: if the call fails, fall back to the legacy concatenation so
+        // single-module projects keep working.
+        val componentsResult = sonarService.listFileComponents(projectKey, branch = branch, repoName = repoName)
+        val discoveredComponents = if (!componentsResult.isError) componentsResult.data ?: emptyList() else emptyList()
+        val componentResolutionWarning = if (componentsResult.isError)
+            "Note: could not resolve real component keys (${componentsResult.summary}). Falling back to inferred keys — per-file results may be empty on multi-module projects."
+        else null
+
+        // ── 7. Fetch per-file results in parallel ─────────────────────────
         val sb = StringBuilder()
         sb.appendLine("Local Sonar Analysis Complete")
-        sb.appendLine("Runner: $buildTool | Files: ${files.size} | Duration: ${String.format("%.1f", elapsedS)}s")
+        val branchLabel = branch ?: "(project default)"
+        sb.appendLine("Runner: $buildTool | Files: ${files.size} | Duration: ${String.format("%.1f", elapsedS)}s | Branch: $branchLabel")
+        sb.appendLine(branchResolution.note)
+        if (componentResolutionWarning != null) sb.appendLine(componentResolutionWarning)
         if (ceTaskId != null) sb.appendLine("CE Task: $ceTaskId")
         sb.appendLine()
 
         for (relativePath in relativePaths) {
-            val componentKey = "$projectKey:$relativePath"
+            val resolution = resolveComponentKey(relativePath, discoveredComponents, projectKey)
+            val componentKey = resolution.key
             sb.appendLine("${"═".repeat(60)}")
-            sb.appendLine("$relativePath")
+            sb.appendLine(relativePath)
+            if (resolution.note != null) sb.appendLine("  (${resolution.note})")
             sb.appendLine()
 
             coroutineScope {
@@ -438,10 +491,15 @@ Common optional: repo_name for multi-repo projects.
                     }
                 }
 
-                // Security hotspots for this file
-                val fileHotspots = if (!hotspotsResult.isError)
-                    (hotspotsResult.data ?: emptyList()).filter { it.component.endsWith(relativePath) || it.component.contains(relativePath) }
-                else emptyList()
+                // Security hotspots for this file: prefer exact match on resolved component key
+                // (authoritative, works for multi-module where component keys carry module prefix);
+                // fall back to path-suffix match on the hotspot's component string.
+                val fileHotspots = if (!hotspotsResult.isError) {
+                    val all = hotspotsResult.data ?: emptyList()
+                    val exact = all.filter { it.component == componentKey }
+                    if (exact.isNotEmpty()) exact
+                    else all.filter { it.component.endsWith("/$relativePath") || it.component.endsWith(":$relativePath") }
+                } else emptyList()
                 if (fileHotspots.isNotEmpty()) {
                     sb.appendLine()
                     sb.appendLine("Security Hotspots (${fileHotspots.size}):")
@@ -498,6 +556,145 @@ Common optional: repo_name for multi-repo projects.
         return ToolResult(content, "Local Sonar analysis complete: ${files.size} file(s)", content.length / 4)
     }
 
+    // ══════════════════════════════════════════════════════════════════════
+    // Component-key resolution for local_analysis
+    // ══════════════════════════════════════════════════════════════════════
+
+    internal data class ResolvedComponent(val key: String, val note: String?)
+
+    /**
+     * Map a user-supplied repo-relative path to the authoritative SonarQube component key.
+     *
+     * Multi-module Maven/Gradle projects key files as `projectKey:moduleName:pathWithinModule`
+     * (not `projectKey:repoRelativePath`), so naive concatenation silently returns empty
+     * results from per-file endpoints. Strategy (first hit wins):
+     *
+     *  1. Exact path match on SonarQube's reported `path`.
+     *  2. User path ends in `/component.path` — user passed a repo-rooted path but Sonar
+     *     stored it under a module-shortened path.
+     *  3. Component path ends in `/userPath` — user passed a module-relative path but Sonar
+     *     stored it under a repo-prefixed path. Longest match wins to avoid ambiguity.
+     *  4. Unique basename match — last-resort fallback used only when the filename is
+     *     unique across the whole project, to avoid cross-module collisions.
+     *  5. Legacy `projectKey:relativePath` concatenation (preserves single-module behavior
+     *     when component_tree lookup failed or returned nothing).
+     *
+     * Returns the chosen key plus an optional human-readable note for the tool output when
+     * we had to fall back to a non-authoritative strategy — so the LLM can see the mismatch.
+     */
+    internal fun resolveComponentKey(
+        relativePath: String,
+        components: List<com.workflow.orchestrator.core.model.sonar.SonarFileComponent>,
+        projectKey: String
+    ): ResolvedComponent {
+        if (components.isEmpty()) {
+            return ResolvedComponent("$projectKey:$relativePath", note = null)
+        }
+
+        // 1. Exact match
+        components.firstOrNull { it.path == relativePath }
+            ?.let { return ResolvedComponent(it.key, null) }
+
+        // 2. User path ends with component path
+        components
+            .filter { relativePath.endsWith("/${it.path}") }
+            .maxByOrNull { it.path.length }
+            ?.let { return ResolvedComponent(it.key, "matched by module-relative path '${it.path}'") }
+
+        // 3. Component path ends with user path
+        components
+            .filter { it.path.endsWith("/$relativePath") }
+            .maxByOrNull { it.path.length }
+            ?.let { return ResolvedComponent(it.key, "matched by repo-relative suffix '${it.path}'") }
+
+        // 4. Unique basename
+        val basename = relativePath.substringAfterLast('/')
+        val byName = components.filter { it.name == basename }
+        if (byName.size == 1) {
+            val m = byName[0]
+            return ResolvedComponent(m.key, "matched by unique basename '$basename' at '${m.path}'")
+        }
+        if (byName.size > 1) {
+            return ResolvedComponent(
+                "$projectKey:$relativePath",
+                note = "ambiguous: ${byName.size} files named '$basename' across modules — " +
+                    "pass a more specific path to disambiguate"
+            )
+        }
+
+        // 5. Legacy fallback
+        return ResolvedComponent(
+            "$projectKey:$relativePath",
+            note = "no SonarQube component matches '$relativePath' — per-file results may be empty"
+        )
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Branch resolution for local_analysis
+    // ══════════════════════════════════════════════════════════════════════
+
+    private sealed class BranchResolution {
+        abstract val note: String
+        // Publish under this specific branch (emits -Dsonar.branch.name=<branch>).
+        data class Use(val branch: String, override val note: String) : BranchResolution()
+        // No branch specified and none auto-detectable — omit the flag entirely.
+        // Preserves SonarQube Community Edition compatibility (which rejects the branch flag).
+        data class Omit(override val note: String) : BranchResolution()
+    }
+
+    private fun resolveLocalAnalysisBranch(project: Project, userProvided: String?): BranchResolution {
+        val userBranch = userProvided?.trim()?.takeIf { it.isNotBlank() }
+        val currentGitBranch = runCatching {
+            RepoContextResolver.getInstance(project).resolveCurrentEditorRepoOrPrimary()?.currentBranchName
+        }.getOrNull()?.trim()?.takeIf { it.isNotBlank() }
+
+        val candidate = userBranch ?: currentGitBranch
+
+        return when {
+            candidate == null -> BranchResolution.Omit(
+                "No branch supplied and no Git branch detected — omitting -Dsonar.branch.name (Community Edition safe)."
+            )
+            isProtectedBranch(candidate) -> {
+                val scratch = toScratchBranch(candidate)
+                val source = if (userBranch != null) "Requested" else "Current Git"
+                BranchResolution.Use(
+                    scratch,
+                    "$source branch '$candidate' is a protected name (main/master/develop/release/hotfix/trunk). " +
+                        "Publishing to '$scratch' instead to avoid overwriting $candidate's Sonar dashboard."
+                )
+            }
+            userBranch == null -> BranchResolution.Use(
+                candidate,
+                "Auto-derived branch from current Git HEAD: '$candidate'."
+            )
+            else -> BranchResolution.Use(
+                candidate,
+                "Using supplied branch: '$candidate'."
+            )
+        }
+    }
+
+    private fun isProtectedBranch(name: String): Boolean {
+        val lower = name.lowercase()
+        if (lower in PROTECTED_EXACT) return true
+        return PROTECTED_PREFIXES.any { lower.startsWith(it) }
+    }
+
+    /**
+     * Produce a Sonar-safe scratch branch name from an original branch name.
+     * Replaces any non-alphanumeric/dash/dot/underscore character with '-', collapses
+     * repeats, trims separators, and caps length. Empty result falls back to 'unknown'.
+     */
+    private fun toScratchBranch(original: String): String {
+        val sanitized = original
+            .replace(Regex("[^A-Za-z0-9._-]"), "-")
+            .replace(Regex("-+"), "-")
+            .trim('-', '.')
+            .take(40)
+            .ifBlank { "unknown" }
+        return "local-scratch-$sanitized"
+    }
+
     /** Collapse a sorted list of line numbers into [first, last] pairs for compact display. */
     private fun collapseRanges(lines: List<Int>): List<Pair<Int, Int>> {
         if (lines.isEmpty()) return emptyList()
@@ -517,5 +714,15 @@ Common optional: repo_name for multi-repo projects.
         private const val CE_POLL_TIMEOUT_MS  = 120_000L   // 2 min max wait for CE processing
         private const val CE_FALLBACK_WAIT_MS = 5_000L     // wait when CE task ID not found in output
         private const val MAX_SCANNER_OUTPUT_CHARS = 50_000
+
+        // Branch names that must never be overwritten by a local scan.
+        // Exact match, case-insensitive.
+        private val PROTECTED_EXACT = setOf(
+            "main", "master", "develop", "development", "dev", "trunk", "default"
+        )
+        // Prefix match, case-insensitive. Covers release/*, hotfix/*, etc.
+        private val PROTECTED_PREFIXES = listOf(
+            "release/", "releases/", "hotfix/", "hotfixes/"
+        )
     }
 }

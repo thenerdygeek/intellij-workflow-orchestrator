@@ -11,6 +11,7 @@ import com.workflow.orchestrator.core.model.sonar.SonarProjectData
 import com.workflow.orchestrator.core.model.sonar.SecurityHotspotData
 import com.workflow.orchestrator.core.model.sonar.DuplicationData
 import com.workflow.orchestrator.core.model.sonar.SourceLineData
+import com.workflow.orchestrator.core.model.sonar.SonarFileComponent
 import com.workflow.orchestrator.core.model.sonar.SonarRuleData
 import com.workflow.orchestrator.core.model.sonar.BranchQualityReportData
 
@@ -65,6 +66,16 @@ interface SonarService {
 
     /** Get rule details (name, description, remediation) for a specific rule key. */
     suspend fun getRule(ruleKey: String, repoName: String? = null): ToolResult<SonarRuleData>
+
+    /**
+     * List all file-level components SonarQube knows about for a project (branch-scoped).
+     *
+     * Use to resolve a user-supplied file path to its authoritative SonarQube component key,
+     * which in multi-module Maven/Gradle projects carries a module prefix that cannot be
+     * inferred from the repo-relative path. Capped at SonarQube's component_tree page size
+     * (500 files per response — single page, no auto-paging today).
+     */
+    suspend fun listFileComponents(projectKey: String, branch: String? = null, repoName: String? = null): ToolResult<List<SonarFileComponent>>
 
     /**
      * Consolidated branch quality report for new code.

@@ -24,6 +24,7 @@ import com.workflow.orchestrator.core.model.sonar.IssueSummary
 import com.workflow.orchestrator.core.model.sonar.NewCodeCoverageSummary
 import com.workflow.orchestrator.core.model.sonar.FileQualityReport
 import com.workflow.orchestrator.core.model.sonar.LineRange
+import com.workflow.orchestrator.core.model.sonar.SonarFileComponent
 import com.workflow.orchestrator.core.services.SonarService
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.sonar.api.SonarApiClient
@@ -723,6 +724,45 @@ class SonarServiceImpl(private val project: Project) : SonarService {
                     summary = "Error fetching rule $ruleKey: ${result.message}",
                     isError = true,
                     hint = "Check SonarQube connection and token."
+                )
+            }
+        }
+    }
+
+    override suspend fun listFileComponents(
+        projectKey: String,
+        branch: String?,
+        repoName: String?
+    ): ToolResult<List<SonarFileComponent>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "SonarQube not configured. Cannot list file components.",
+            isError = true,
+            hint = "Configure SonarQube URL and token in Settings > CI/CD."
+        )
+
+        // Cheapest metric — we only care about the component tree itself, not the values.
+        return when (val result = api.getMeasures(projectKey, branch, metricKeys = "ncloc")) {
+            is ApiResult.Success -> {
+                val components = result.data
+                    .filter { it.qualifier == "FIL" }
+                    .mapNotNull { comp ->
+                        val path = comp.path ?: return@mapNotNull null
+                        SonarFileComponent(key = comp.key, path = path, name = comp.name)
+                    }
+                ToolResult.success(
+                    data = components,
+                    summary = "Resolved ${components.size} file component(s) for project '$projectKey'" +
+                        (branch?.let { " on branch '$it'" } ?: "")
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[SonarService] Failed to list file components for $projectKey: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error listing file components for $projectKey: ${result.message}",
+                    isError = true,
+                    hint = "Check SonarQube connection, project key, and branch name."
                 )
             }
         }
