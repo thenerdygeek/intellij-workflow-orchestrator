@@ -1195,6 +1195,8 @@ HTTP client — `core/src/main/kotlin/com/workflow/orchestrator/core/bitbucket/B
        private const val MAX_DIFF_CHARS = 327_680  // ~80K tokens at 4 chars/token
    }
    ```
+   **Rationale for 327_680:** Proposed initial value `MAX_DIFF_CHARS = 327_680` (~80K tokens at 4 chars/token). Agent sessions have ~190K input-token budget per `agent/CLAUDE.md`; a diff budget around 80K leaves room for the system prompt + Jira ticket context + tool definitions. Note: the unrelated `PrDescriptionGenerator.kt:54` uses a much smaller 10K-char cap (`diff.take(10000)`) for a single-LLM-call PR-description flow; that flow has a completely different context budget compared to the full agent workflow. The 327_680 value may be tuned in Phase 4 once real-world diff sizes across the team's repos are measured.
+
    Ideally truncation is at a file boundary (`--- a/`) to avoid cutting mid-hunk. A simple version using `take()` is safe and the truncation summary gives the agent visibility that the diff was cut.
 
 2. **No size issue for current callers** (PR dashboard panel, `get_pr_diff` agent action) as they display or summarise the diff at the UI layer; the risk only materialises when the diff is injected into an LLM prompt. However the fix should land before Phase 4.
@@ -1275,11 +1277,11 @@ HTTP client — `core/src/main/kotlin/com/workflow/orchestrator/core/bitbucket/B
 **Verdict:** FIX
 
 **Notes:**
-1. **Pagination gap.** For PRs touching >100 files, the current code silently returns only the first 100. Fix: implement a pagination loop in `BitbucketBranchClient.getPullRequestChanges` that increments `start` by `nextPageStart` until `isLastPage=true`. Cap total pages at a safe limit (e.g. 10 pages = 1000 files) to guard against degenerate PRs.
+1. **Pagination gap.** For PRs touching >100 files, the current code silently returns only the first 100. Fix: implement a pagination loop in `BitbucketBranchClient.getPullRequestChanges` that increments `start` by `nextPageStart` until `isLastPage=true`. Cap total pages at a safe limit (e.g. 10 pages = 1000 files) to guard against degenerate PRs. Loop is placed in the client because the client strips pagination (returns `.values` only); restructuring the client's return type to expose pagination to the service layer would be a larger change.
 
    **File to change:** `core/src/main/kotlin/com/workflow/orchestrator/core/bitbucket/BitbucketBranchClient.kt` around line 1500.
 
-   Also add `nextPageStart: Int? = null` to `BitbucketPrChangesResponse` to support the loop.
+   Also add `nextPageStart: Int? = null` to `BitbucketPrChangesResponse` to support the loop. Also add `start: Int = 0` to `getPullRequestChanges` signature at `BitbucketBranchClient.kt:1500` (currently the signature has no `start` param — only `projectKey`, `repoSlug`, `prId`) and append `&start=$start` to the URL at line 1509 (currently hardcoded `?limit=100`).
 
 2. **`srcPath` missing.** Add `srcPath: BitbucketPath? = null` to `BitbucketPrChange` (`BitbucketBranchClient.kt:198`). Add `srcPath: String? = null` to `PrChangeData` (`BitbucketModels.kt:118`). Map it in `BitbucketServiceImpl.getPullRequestChanges` (line 543):
    ```kotlin
@@ -1340,7 +1342,7 @@ HTTP client — `core/src/main/kotlin/com/workflow/orchestrator/core/bitbucket/B
       val isLastPage: Boolean = true
   )
   ```
-  `isLastPage` is present in the DTO but **never checked** — same pattern as `getPullRequestChanges`.
+  `isLastPage` is present in the DTO but **never checked**. Both `BitbucketPrActivityResponse` (lines 233–236) and `BitbucketPrChangesResponse` (lines 239–242) lack `nextPageStart` — the fix pattern is identical: add that field to the DTO + thread `start` through the client signature.
 - `BitbucketPrActivity` DTO (`BitbucketBranchClient.kt:168–175`): fields `id`, `action`, `comment`, `commentAnchor`, `user`, `createdDate` — supports COMMENTED correctly. Action-specific extra fields for RESCOPED (`addedReviewers`, `removedReviewers`) are not modelled — silently ignored (no crash, just data loss).
 
 **Diff:**
@@ -1356,9 +1358,11 @@ HTTP client — `core/src/main/kotlin/com/workflow/orchestrator/core/bitbucket/B
 **Verdict:** FIX
 
 **Notes:**
-1. **Pagination gap.** Active PRs with many comment rounds can exceed 50 activities. Fix: add `nextPageStart: Int? = null` to `BitbucketPrActivityResponse`, implement a pagination loop in `BitbucketBranchClient.getPullRequestActivities`. For LLM-injection contexts, cap at a reasonable page limit (e.g. 4 pages = 200 activities) to avoid bloating the prompt.
+1. **Pagination gap.** Active PRs with many comment rounds can exceed 50 activities. Fix: add `nextPageStart: Int? = null` to `BitbucketPrActivityResponse`, implement a pagination loop in `BitbucketBranchClient.getPullRequestActivities`. For LLM-injection contexts, cap at a reasonable page limit (e.g. 4 pages = 200 activities) to avoid bloating the prompt. Loop is placed in the client because the client strips pagination (returns `.values` only); restructuring the client's return type to expose pagination to the service layer would be a larger change.
 
    **File to change:** `core/src/main/kotlin/com/workflow/orchestrator/core/bitbucket/BitbucketBranchClient.kt` around line 1125.
+
+   Also add `start: Int = 0` to `getPullRequestActivities` signature at `BitbucketBranchClient.kt:1125` (currently the signature has `projectKey`, `repoSlug`, `prId` — no `start` param) and append `&start=$start` to the URL at line 1134 (currently hardcoded `?limit=50`).
 
 2. **RESCOPED activity modelling** — not required now, but when Phase 4 builds reviewer-context summaries, `addedReviewers`/`removedReviewers` arrays from RESCOPED activities will be needed. Flag as future work.
 
@@ -1432,9 +1436,11 @@ HTTP client — `core/src/main/kotlin/com/workflow/orchestrator/core/bitbucket/B
 **Verdict:** FIX
 
 **Notes:**
-1. **Pagination gap.** Long-running feature branches often have >50 commits. Fix: implement a pagination loop in `BitbucketServiceImpl.getPullRequestCommits` using `result.data.isLastPage` and `result.data.nextPageStart`. Because the HTTP client already exposes the full `BitbucketCommitListResponse` (not just `values`), the loop can be added entirely in the service layer without modifying the client.
+1. **Pagination gap.** Long-running feature branches often have >50 commits. Fix: implement a pagination loop in `BitbucketServiceImpl.getPullRequestCommits` using `result.data.isLastPage` and `result.data.nextPageStart`. The loop lives in the service layer, but the HTTP client also needs `start: Int = 0` added to `getPullRequestCommits` signature and `&start=$start` appended to the URL — without this the client cannot advance pages. Loop is placed in the service because the client already returns the full response DTO (`BitbucketCommitListResponse`) with pagination fields intact — no client restructuring needed for loop placement, only the `start` parameter addition.
 
    **File to change:** `pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/BitbucketServiceImpl.kt` starting at line 147.
+
+   **Client change also required:** Add `start: Int = 0` to `BitbucketBranchClient.getPullRequestCommits` at `core/src/main/kotlin/com/workflow/orchestrator/core/bitbucket/BitbucketBranchClient.kt:1539–1543` (currently has `limit: Int = 50` but no `start` param) and append `&start=$start` to the URL at line 1549.
 
    Sketch:
    ```kotlin
@@ -1449,7 +1455,6 @@ HTTP client — `core/src/main/kotlin/com/workflow/orchestrator/core/bitbucket/B
        start = page.data.nextPageStart ?: break
    } while (true)
    ```
-   Note: `BitbucketBranchClient.getPullRequestCommits` currently does not accept a `start` parameter — add `start: Int = 0` to its signature and append `&start=$start` to the URL. **File:** `core/src/main/kotlin/com/workflow/orchestrator/core/bitbucket/BitbucketBranchClient.kt:1539–1543`.
 
 2. **`emailAddress` not mapped** — current callers do not need it. If Phase 4 reviewer attribution requires commit author email, add `authorEmail: String?` to `CommitData` and map `c.author?.emailAddress`.
 
