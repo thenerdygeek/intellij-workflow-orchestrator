@@ -224,6 +224,52 @@ class JiraApiClient(
     }
 
     /**
+     * Returns the raw response body string for an arbitrary Jira REST path.
+     * Useful for endpoints that return JSON arrays (not objects) or whose shapes
+     * are traversed manually rather than decoded into a typed DTO.
+     *
+     * @param path   A relative Jira REST path, e.g. `/rest/api/2/user/search?query=jd`.
+     *               The configured [baseUrl] is prepended automatically.
+     * @param statusCode  When non-null, the caller receives the HTTP status code via this
+     *                    single-element int array (index 0). Used by callers that need to
+     *                    distinguish 404 from other errors before calling this method.
+     */
+    suspend fun getRawString(path: String, statusCode: IntArray? = null): ApiResult<String> =
+        withContext(Dispatchers.IO) {
+            try {
+                val url = if (path.startsWith("http://") || path.startsWith("https://")) path
+                          else "$baseUrl$path"
+                val request = Request.Builder().url(url).get().build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    log.debug("[Jira:API] GET $path -> ${it.code}")
+                    statusCode?.set(0, it.code)
+                    when (it.code) {
+                        in 200..299 -> ApiResult.Success(it.body?.string() ?: "")
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Jira token").also { _ ->
+                            log.warn("[Jira:API] Authentication failed (401) at $path")
+                        }
+                        403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Jira permissions").also { _ ->
+                            log.warn("[Jira:API] Forbidden (403) at $path")
+                        }
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Resource not found at $path").also { _ ->
+                            log.warn("[Jira:API] Not found (404) at $path")
+                        }
+                        429 -> ApiResult.Error(ErrorType.RATE_LIMITED, "Jira rate limit exceeded").also { _ ->
+                            log.warn("[Jira:API] Rate limited (429) at $path")
+                        }
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Jira returned ${it.code}").also { _ ->
+                            log.warn("[Jira:API] Server error (${it.code}) at $path")
+                        }
+                    }
+                }
+            } catch (e: IOException) {
+                log.warn("[Jira:API] Network error at $path: ${e.message}")
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Jira: ${e.message}", e)
+            }
+        }
+
+    /**
      * Shared raw-JSON GET helper used by methods that need access to the raw [JsonObject]
      * rather than a deserialized DTO. Uses the same OkHttp client, auth interceptor, retry
      * logic, and response-code mapping as the typed [get] helper, so all cross-cutting
