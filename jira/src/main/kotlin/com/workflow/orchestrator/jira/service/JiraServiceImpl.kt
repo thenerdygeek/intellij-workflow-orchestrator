@@ -15,8 +15,6 @@ import com.workflow.orchestrator.core.model.jira.JiraAttachmentData
 import com.workflow.orchestrator.core.model.jira.JiraLinkedIssueRef
 import com.workflow.orchestrator.core.model.jira.JiraSubtaskRef
 import com.workflow.orchestrator.core.model.jira.JiraTicketData
-import com.workflow.orchestrator.core.model.jira.StatusCategory
-import com.workflow.orchestrator.core.model.jira.StatusRef
 import com.workflow.orchestrator.core.model.jira.TransitionMeta
 import com.workflow.orchestrator.core.model.jira.SprintData
 import com.workflow.orchestrator.core.model.jira.StartWorkResultData
@@ -107,19 +105,7 @@ class JiraServiceImpl(private val project: Project) : JiraService {
                         )
                     }
                     val transitions = when (transitionsResult) {
-                        is ApiResult.Success -> transitionsResult.data.map { t ->
-                            TransitionMeta(
-                                id = t.id,
-                                name = t.name,
-                                toStatus = StatusRef(
-                                    id = "",
-                                    name = t.to.name,
-                                    category = StatusCategory.UNKNOWN
-                                ),
-                                hasScreen = false,
-                                fields = emptyList()
-                            )
-                        }
+                        is ApiResult.Success -> transitionsResult.data
                         else -> emptyList()
                     }
 
@@ -199,19 +185,7 @@ class JiraServiceImpl(private val project: Project) : JiraService {
 
         return when (val result = api.getTransitions(key)) {
             is ApiResult.Success -> {
-                val transitions = result.data.map { t ->
-                    TransitionMeta(
-                        id = t.id,
-                        name = t.name,
-                        toStatus = StatusRef(
-                            id = "",
-                            name = t.to.name,
-                            category = StatusCategory.UNKNOWN
-                        ),
-                        hasScreen = false,
-                        fields = emptyList()
-                    )
-                }
+                val transitions = result.data
                 val listing = transitions.joinToString(", ") { "${it.name} (id=${it.id})" }
                 ToolResult.success(
                     data = transitions,
@@ -661,7 +635,7 @@ class JiraServiceImpl(private val project: Project) : JiraService {
         when (val transResult = api.getTransitions(issueKey)) {
             is ApiResult.Success -> {
                 val inProgressTransition = transResult.data.firstOrNull { t ->
-                    t.to.name.equals("In Progress", ignoreCase = true)
+                    t.toStatus.name.equals("In Progress", ignoreCase = true)
                 }
                 if (inProgressTransition != null) {
                     when (api.transitionIssue(issueKey, inProgressTransition.id)) {

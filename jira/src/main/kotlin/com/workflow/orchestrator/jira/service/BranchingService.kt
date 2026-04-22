@@ -255,7 +255,7 @@ class BranchingService(
 
         val inProgressTransition = transitions.find {
             it.name.equals("In Progress", ignoreCase = true) ||
-            it.to.statusCategory?.key == "indeterminate"
+            it.toStatus.category == com.workflow.orchestrator.core.model.jira.StatusCategory.IN_PROGRESS
         } ?: run {
             log.warn("[Jira:Branch] No 'In Progress' transition available for $issueKey. Available: ${transitions.joinToString { it.name }}")
             return ApiResult.Error(ErrorType.NOT_FOUND, "No 'In Progress' transition available.")

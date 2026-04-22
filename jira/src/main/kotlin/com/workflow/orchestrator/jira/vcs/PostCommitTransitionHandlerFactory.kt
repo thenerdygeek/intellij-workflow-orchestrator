@@ -57,7 +57,7 @@ class PostCommitTransitionHandler(private val project: Project) : CheckinHandler
                             when (transitionsResult) {
                                 is ApiResult.Success -> {
                                     val inProgressTransition = transitionsResult.data.find {
-                                        it.to.name.equals("In Progress", ignoreCase = true)
+                                        it.toStatus.name.equals("In Progress", ignoreCase = true)
                                     }
                                     if (inProgressTransition != null) {
                                         com.intellij.openapi.application.invokeLater {

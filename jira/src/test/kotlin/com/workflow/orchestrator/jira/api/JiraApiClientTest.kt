@@ -112,10 +112,10 @@ class JiraApiClientTest {
     }
 
     @Test
-    fun `getTransitions returns available transitions`() = runTest {
+    fun `getTransitions returns available transitions with expand by default`() = runTest {
         server.enqueue(
             MockResponse().setBody(
-                """{"transitions":[{"id":"21","name":"In Progress","to":{"name":"In Progress"}}]}"""
+                """{"transitions":[{"id":"21","name":"In Progress","to":{"id":"3","name":"In Progress","statusCategory":{"key":"indeterminate"}}}]}"""
             )
         )
 
@@ -126,6 +126,21 @@ class JiraApiClientTest {
         assertEquals(1, transitions.size)
         assertEquals("In Progress", transitions[0].name)
 
+        val recorded = server.takeRequest()
+        assertEquals("/rest/api/2/issue/PROJ-123/transitions?expand=transitions.fields", recorded.path)
+    }
+
+    @Test
+    fun `getTransitions without expand omits query param`() = runTest {
+        server.enqueue(
+            MockResponse().setBody(
+                """{"transitions":[{"id":"21","name":"In Progress","to":{"id":"3","name":"In Progress","statusCategory":{"key":"indeterminate"}}}]}"""
+            )
+        )
+
+        val result = client.getTransitions("PROJ-123", expandFields = false)
+
+        assertTrue(result.isSuccess)
         val recorded = server.takeRequest()
         assertEquals("/rest/api/2/issue/PROJ-123/transitions", recorded.path)
     }

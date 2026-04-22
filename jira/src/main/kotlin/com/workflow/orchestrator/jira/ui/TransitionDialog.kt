@@ -10,9 +10,9 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.model.jira.TransitionField
+import com.workflow.orchestrator.core.model.jira.TransitionMeta
 import com.workflow.orchestrator.core.services.JiraService
-import com.workflow.orchestrator.jira.api.dto.JiraTransition
-import com.workflow.orchestrator.jira.api.dto.JiraTransitionFieldMeta
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.util.Disposer
 import kotlinx.coroutines.*
@@ -28,7 +28,7 @@ import javax.swing.*
 class TransitionDialog(
     private val project: Project,
     private val issueKey: String,
-    private val transition: JiraTransition,
+    private val transition: TransitionMeta,
     private val onTransitioned: () -> Unit
 ) : DialogWrapper(project, true) {
 
@@ -60,7 +60,7 @@ class TransitionDialog(
         panel.preferredSize = java.awt.Dimension(JBUI.scale(420), JBUI.scale(300))
 
         // Required fields
-        val requiredFields = transition.fields?.filter { it.value.required } ?: emptyMap()
+        val requiredFields = transition.fields.filter { it.required }
 
         if (requiredFields.isNotEmpty()) {
             val fieldsPanel = JPanel(GridBagLayout())
@@ -70,12 +70,12 @@ class TransitionDialog(
             }
 
             var row = 0
-            for ((fieldId, meta) in requiredFields) {
+            for (field in requiredFields) {
                 gbc.gridx = 0; gbc.gridy = row; gbc.weightx = 0.0
-                fieldsPanel.add(JBLabel("${meta.name}: *"), gbc)
+                fieldsPanel.add(JBLabel("${field.name}: *"), gbc)
 
                 gbc.gridx = 1; gbc.weightx = 1.0
-                val input = createFieldInput(fieldId, meta)
+                val input = createFieldInput(field)
                 fieldsPanel.add(input, gbc)
                 row++
             }
@@ -94,32 +94,32 @@ class TransitionDialog(
         return panel
     }
 
-    private fun createFieldInput(fieldId: String, meta: JiraTransitionFieldMeta): JComponent {
-        val allowedValues = meta.allowedValues
+    private fun createFieldInput(field: TransitionField): JComponent {
+        val allowedValues = field.allowedValues
 
-        return if (allowedValues != null && allowedValues.isNotEmpty()) {
+        return if (allowedValues.isNotEmpty()) {
             // Dropdown
-            val combo = JComboBox(allowedValues.map { it.name }.toTypedArray())
-            fieldInputs[fieldId] = {
+            val combo = JComboBox(allowedValues.map { it.value }.toTypedArray())
+            fieldInputs[field.id] = {
                 val selectedName = combo.selectedItem as? String
-                allowedValues.find { it.name == selectedName }?.let { mapOf("name" to it.name) }
+                allowedValues.find { it.value == selectedName }?.let { mapOf("name" to it.value) }
             }
             combo
         } else {
             // Text field
             val textField = JBTextField()
-            fieldInputs[fieldId] = { textField.text.takeIf { it.isNotBlank() } }
+            fieldInputs[field.id] = { textField.text.takeIf { it.isNotBlank() } }
             textField
         }
     }
 
     override fun doOKAction() {
         // Validate required fields
-        val requiredFields = transition.fields?.filter { it.value.required } ?: emptyMap()
-        for ((fieldId, meta) in requiredFields) {
-            val value = fieldInputs[fieldId]?.invoke()
+        val requiredFields = transition.fields.filter { it.required }
+        for (field in requiredFields) {
+            val value = fieldInputs[field.id]?.invoke()
             if (value == null) {
-                resultLabel.text = "${meta.name} is required"
+                resultLabel.text = "${field.name} is required"
                 resultLabel.foreground = JBColor.RED
                 return
             }

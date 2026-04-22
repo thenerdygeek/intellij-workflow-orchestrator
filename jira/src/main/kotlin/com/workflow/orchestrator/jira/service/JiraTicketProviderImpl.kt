@@ -168,7 +168,7 @@ class JiraTicketProviderImpl : JiraTicketProvider {
                 TicketTransition(
                     id = t.id,
                     name = t.name,
-                    targetStatus = t.to.name
+                    targetStatus = t.toStatus.name
                 )
             }
             is ApiResult.Error -> {
@@ -198,7 +198,7 @@ class JiraTicketProviderImpl : JiraTicketProvider {
 
         runBackgroundableTask("Loading transitions for $ticketId", project, false) {
             val result = runBlocking(Dispatchers.IO) {
-                client.getTransitions(ticketId, expandFields = true)
+                client.getTransitions(ticketId)
             }
             val transitions = when (result) {
                 is ApiResult.Success -> result.data
@@ -214,7 +214,7 @@ class JiraTicketProviderImpl : JiraTicketProvider {
                     return@invokeLater
                 }
 
-                if (transitions.size == 1 && transitions[0].fields.isNullOrEmpty()) {
+                if (transitions.size == 1 && transitions[0].fields.isEmpty()) {
                     // Single transition, no required fields — execute directly
                     runBackgroundableTask("Transitioning $ticketId", project, false) {
                         runBlocking(Dispatchers.IO) {
@@ -228,7 +228,7 @@ class JiraTicketProviderImpl : JiraTicketProvider {
                     for (transition in transitions) {
                         val item = javax.swing.JMenuItem(transition.name)
                         item.addActionListener {
-                            val hasRequiredFields = transition.fields?.any { it.value.required } == true
+                            val hasRequiredFields = transition.fields.any { it.required }
                             if (hasRequiredFields) {
                                 com.workflow.orchestrator.jira.ui.TransitionDialog(
                                     project, ticketId, transition, onTransitioned

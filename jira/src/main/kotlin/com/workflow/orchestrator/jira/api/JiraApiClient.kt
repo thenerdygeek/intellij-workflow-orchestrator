@@ -5,6 +5,7 @@ import com.workflow.orchestrator.core.http.AuthScheme
 import com.workflow.orchestrator.core.http.RetryInterceptor
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
+import com.workflow.orchestrator.core.model.jira.TransitionMeta
 import com.workflow.orchestrator.jira.api.dto.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -123,14 +124,50 @@ class JiraApiClient(
         ).map { it.issues }
     }
 
+    /** Uses expand=transitions.fields by default to populate TransitionField schema. */
     suspend fun getTransitions(
         issueKey: String,
-        expandFields: Boolean = false
-    ): ApiResult<List<JiraTransition>> {
+        expandFields: Boolean = true
+    ): ApiResult<List<TransitionMeta>> {
         log.debug("[Jira:API] Fetching transitions for $issueKey (expandFields=$expandFields)")
-        val expand = if (expandFields) "?expand=transitions.fields" else ""
-        return get<JiraTransitionList>("/rest/api/2/issue/$issueKey/transitions$expand")
-            .map { it.transitions }
+        val path = if (expandFields) {
+            "/rest/api/2/issue/$issueKey/transitions?expand=transitions.fields"
+        } else {
+            "/rest/api/2/issue/$issueKey/transitions"
+        }
+        return withContext(Dispatchers.IO) {
+            try {
+                val request = Request.Builder().url("$baseUrl$path").get().build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    log.debug("[Jira:API] GET $path -> ${it.code}")
+                    when (it.code) {
+                        in 200..299 -> {
+                            val bodyStr = it.body?.string() ?: ""
+                            ApiResult.Success(JiraTransitionResponseParser(json).parse(bodyStr))
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Jira token").also { _ ->
+                            log.warn("[Jira:API] Authentication failed (401)")
+                        }
+                        403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Jira permissions").also { _ ->
+                            log.warn("[Jira:API] Forbidden (403)")
+                        }
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Resource not found").also { _ ->
+                            log.warn("[Jira:API] Resource not found (404)")
+                        }
+                        429 -> ApiResult.Error(ErrorType.RATE_LIMITED, "Jira rate limit exceeded").also { _ ->
+                            log.warn("[Jira:API] Rate limited (429)")
+                        }
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Jira returned ${it.code}").also { _ ->
+                            log.warn("[Jira:API] Server error (${response.code})")
+                        }
+                    }
+                }
+            } catch (e: IOException) {
+                log.warn("[Jira:API] Network error: ${e.message}")
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Jira: ${e.message}", e)
+            }
+        }
     }
 
     suspend fun postWorklog(issueKey: String, timeSpent: String, comment: String? = null): ApiResult<Unit> {
