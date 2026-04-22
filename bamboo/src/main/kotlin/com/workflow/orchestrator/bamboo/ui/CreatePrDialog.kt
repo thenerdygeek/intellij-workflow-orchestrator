@@ -362,8 +362,14 @@ class CreatePrDialog(
     private fun generateDescription() {
         scope.launch {
             val targetBranch = withContext(Dispatchers.EDT) { targetField.text }
+            // Resolve rich TicketContext on-demand for the generator (Phase 5 will replace
+            // ticketDetails with a multi-ticket input widget and skip this resolution step).
+            val context = ticketDetails?.let {
+                JiraTicketProvider.getInstance()?.getTicketContext(it.key)
+            }
+            val tickets = listOfNotNull(context)
             val description = PrDescriptionGenerator.generate(
-                project, ticketDetails, sourceBranch, targetBranch
+                project, tickets, sourceBranch, targetBranch
             )
             invokeLater {
                 descriptionArea.text = description

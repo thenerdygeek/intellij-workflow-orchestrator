@@ -1776,7 +1776,7 @@ class PrDetailPanel(
                         project = project,
                         diff = truncatedDiff,
                         commitMessages = emptyList(),
-                        tickets = emptyList(), // TODO(Phase 3): replace emptyList() with resolved List<TicketContext> from prefetch
+                        tickets = emptyList(), // View-side AI assist; no Jira ticket binding available at this call site.
                         sourceBranch = pr.fromRef?.displayId ?: "",
                         targetBranch = pr.toRef?.displayId ?: ""
                     )

@@ -4,14 +4,20 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.workflow.orchestrator.core.ai.TextGenerationService
+import com.workflow.orchestrator.core.ai.prompts.PrDescriptionPromptBuilder
 import com.workflow.orchestrator.core.bitbucket.PrService
 import com.workflow.orchestrator.core.settings.RepoContextResolver
-import com.workflow.orchestrator.core.workflow.TicketDetails
+import com.workflow.orchestrator.core.workflow.TicketContext
 import git4idea.commands.Git
 
 /**
  * Generates PR descriptions using AI (with fallback to commit messages).
  * Uses [TextGenerationService] interface from :core for Sourcegraph-backed generation.
+ *
+ * Three-tier cascade:
+ *   1. AI with diff — delegates to [TextGenerationService.generatePrDescription] which uses [PrDescriptionPromptBuilder]
+ *   2. AI without diff — builds prompt via [PrDescriptionPromptBuilder] with a "(diff unavailable)" sentinel
+ *   3. Commit-message fallback — pure markdown from commits + tickets, no AI
  */
 object PrDescriptionGenerator {
 
@@ -20,24 +26,25 @@ object PrDescriptionGenerator {
     private const val MAX_CONTEXT_FILES = 20
 
     /**
-     * Generate a PR description using 3-step prompt chain.
-     * Tries chained approach first, falls back to single prompt, then commit messages.
+     * Generate a PR description using a 3-tier cascade.
+     * Tries AI with diff first, then AI without diff, then commit-message fallback.
+     *
+     * @param tickets Ordered list of [TicketContext]; first element is the primary ticket.
      */
     suspend fun generate(
         project: Project,
-        ticketDetails: TicketDetails?,
+        tickets: List<TicketContext>,
         sourceBranch: String,
         targetBranch: String
     ): String {
         val commitMessages = getCommitMessages(project, sourceBranch, targetBranch)
         val changedFilePaths = getChangedFilePaths(project)
 
-        // Try AI with 3-step chain
         val textGen = TextGenerationService.getInstance()
         if (textGen != null) {
             log.info("[Build:PrDesc] Using AI for PR description generation (chained)")
 
-            // Get the actual diff between branches for the chain
+            // Tier 1: AI with diff
             val diff = getDiffBetweenBranches(project, sourceBranch, targetBranch)
             val truncatedDiff = if (diff != null && diff.length > 10000) {
                 diff.take(10000) + "\n... (diff truncated)"
@@ -46,9 +53,13 @@ object PrDescriptionGenerator {
             if (truncatedDiff != null) {
                 val chainedResult = try {
                     textGen.generatePrDescription(
-                        project, truncatedDiff, commitMessages, changedFilePaths.take(MAX_CONTEXT_FILES),
-                        emptyList(), // TODO(Phase 3): replace emptyList() with resolved List<TicketContext> from prefetch
-                        sourceBranch, targetBranch
+                        project = project,
+                        diff = truncatedDiff,
+                        commitMessages = commitMessages,
+                        contextFilePaths = changedFilePaths.take(MAX_CONTEXT_FILES),
+                        tickets = tickets,
+                        sourceBranch = sourceBranch,
+                        targetBranch = targetBranch
                     )
                 } catch (e: Exception) {
                     log.warn("[Build:PrDesc] Chained generation failed: ${e.message}")
@@ -60,9 +71,15 @@ object PrDescriptionGenerator {
                 }
             }
 
-            // Fallback to single prompt
-            log.info("[Build:PrDesc] Falling back to single prompt")
-            val prompt = buildPrompt(ticketDetails, commitMessages, sourceBranch)
+            // Tier 2: AI without diff — delegate to shared prompt builder to avoid duplicating cap logic
+            log.info("[Build:PrDesc] Falling back to single prompt (no diff)")
+            val prompt = PrDescriptionPromptBuilder.build(
+                diff = "(diff unavailable)",
+                commitMessages = commitMessages,
+                tickets = tickets,
+                sourceBranch = sourceBranch,
+                targetBranch = targetBranch
+            )
             val aiResult = try {
                 textGen.generateText(project, prompt, changedFilePaths.take(MAX_CONTEXT_FILES))
             } catch (e: Exception) {
@@ -75,100 +92,80 @@ object PrDescriptionGenerator {
             }
         }
 
-        // Fallback: commit messages
+        // Tier 3: commit-message fallback (no AI)
         log.info("[Build:PrDesc] Using fallback description (commit messages)")
-        return buildFallbackDescription(ticketDetails, commitMessages, sourceBranch)
+        return buildFallbackDescription(tickets, commitMessages, sourceBranch)
     }
 
     /**
-     * Generate a PR title. Tries AI for a concise title, falls back to pattern.
+     * Generate a PR title. Tries a pattern-based title via [PrService]; AI title generation
+     * is deferred to a later phase.
+     *
+     * @param primary The primary [TicketContext] for the PR, or null if no ticket is linked.
      */
     suspend fun generateTitle(
         project: Project,
-        ticketDetails: TicketDetails?,
+        primary: TicketContext?,
         branchName: String
     ): String {
         val prService = PrService.getInstance(project)
-        val ticketId = ticketDetails?.key ?: ""
-        val summary = ticketDetails?.summary ?: branchName.replace("-", " ")
+        val ticketId = primary?.key ?: ""
+        val summary = primary?.summary ?: branchName.replace("-", " ")
         return prService.buildPrTitle(ticketId, summary, branchName)
     }
 
-    private fun buildPrompt(
-        ticket: TicketDetails?,
+    /**
+     * Tier 3 fallback: markdown description built from ticket list and commit messages.
+     *
+     * Layout:
+     * ```
+     * ## {primary.key}: {primary.summary}
+     * {primary.description truncated to 500 chars — only if non-blank}
+     *
+     * ## Related tickets
+     * - {key}: {summary}
+     * ...
+     *
+     * ## Commits
+     * - {commit}
+     * ...
+     *
+     * **Branch:** {branch}
+     * ```
+     *
+     * Sections are omitted when empty or not applicable.
+     */
+    internal fun buildFallbackDescription(
+        tickets: List<TicketContext>,
         commits: List<String>,
         branch: String
     ): String = buildString {
-        appendLine("Generate a pull request description in markdown for a Spring Boot project.")
-        appendLine()
-        appendLine("Use this structure:")
-        appendLine("## Summary")
-        appendLine("2-3 sentences: what changed and why.")
-        appendLine()
-        appendLine("## Changes")
-        appendLine("Bullet list of specific changes.")
-        appendLine()
-        appendLine("## Affected Modules")
-        appendLine("List affected Maven modules if detectable from file paths.")
-        appendLine()
-        appendLine("## Testing")
-        appendLine("What tests were added/modified. Use &#10004; checkmarks.")
-        appendLine()
-        if (ticket != null) {
-            appendLine("## Jira")
-            appendLine("Link to the ticket.")
-            appendLine()
-        }
-        appendLine("Rules:")
-        appendLine("- Be concise and professional")
-        appendLine("- Focus on business impact, not just implementation details")
-        appendLine("- Highlight breaking changes if any")
-        appendLine("- Use `code formatting` for class/method names")
-        appendLine("- Output ONLY the markdown, no preamble")
-        appendLine()
+        val primary = tickets.firstOrNull()
+        val additional = tickets.drop(1)
 
-        if (ticket != null) {
-            appendLine("Jira ticket: ${ticket.key} — ${ticket.summary}")
-            val desc = ticket.description
+        if (primary != null) {
+            appendLine("## ${primary.key}: ${primary.summary}")
+            val desc = primary.description
             if (!desc.isNullOrBlank()) {
-                appendLine("Ticket description: ${desc.take(1000)}")
+                appendLine()
+                appendLine(desc.take(500))
             }
             appendLine()
         }
 
+        if (additional.isNotEmpty()) {
+            appendLine("## Related tickets")
+            additional.forEach { appendLine("- ${it.key}: ${it.summary}") }
+            appendLine()
+        }
+
         if (commits.isNotEmpty()) {
-            appendLine("Commits on this branch:")
-            commits.take(30).forEach { appendLine("- $it") }
-            appendLine()
-        }
-
-        appendLine("Branch: $branch")
-    }
-
-    private fun buildFallbackDescription(
-        ticket: TicketDetails?,
-        commits: List<String>,
-        branch: String
-    ): String = buildString {
-        if (ticket != null) {
-            appendLine("## ${ticket.key}: ${ticket.summary}")
-            appendLine()
-        }
-
-        appendLine("## Commits")
-        if (commits.isEmpty()) {
-            appendLine("No commits on this branch.")
-        } else {
+            appendLine("## Commits")
             commits.forEach { appendLine("- $it") }
-        }
-        appendLine()
-        appendLine("**Branch:** $branch")
-
-        if (ticket != null) {
             appendLine()
-            appendLine("## Jira")
-            appendLine(ticket.key)
         }
+
+        append("**Branch:** $branch")
     }
 
     private fun resolveTargetRepo(project: Project): git4idea.repo.GitRepository? =

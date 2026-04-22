@@ -295,8 +295,14 @@ class PrBar(
                 jiraProvider?.getAvailableTransitions(ticketId) ?: emptyList()
             } else emptyList()
 
+            // Resolve TicketContext for the default title; CreatePrDialog re-resolves it for
+            // description generation. Phase 6 will consolidate this into a single prefetch.
+            val ticketContext = if (ticketId.isNotBlank()) {
+                jiraProvider?.getTicketContext(ticketId)
+            } else null
+
             val defaultTitle = com.workflow.orchestrator.bamboo.service.PrDescriptionGenerator
-                .generateTitle(project, ticketDetails, currentBranch)
+                .generateTitle(project, ticketContext, currentBranch)
 
             invokeLater {
                 val dialog = CreatePrDialog(
