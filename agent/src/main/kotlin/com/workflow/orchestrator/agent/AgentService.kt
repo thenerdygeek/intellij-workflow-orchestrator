@@ -871,6 +871,10 @@ class AgentService(private val project: Project) : Disposable {
      * internal mutex. Does NOT touch `ui_messages.json` (we want the user-visible chat
      * trail to retain the "provider returned an empty response" note).
      *
+     * No in-memory cleanup: the prior `AgentLoop`'s `ContextManager` is a local in
+     * the loop coroutine and is already out of scope by the time retry fires. The new
+     * loop rebuilds its `ContextManager` from this cleaned disk state.
+     *
      * @return number of empty-assistant entries removed, or 0 if no active session
      */
     suspend fun cleanEmptyArtifactsBeforeRetry(): Int {

@@ -355,7 +355,8 @@ class AgentController(
         // previous work was wrong and pick a different approach).
         dashboard.setCefRetryCallback {
             if (lastTaskText == null) return@setCefRetryCallback
-            controllerScope.launch {
+            // Dispatchers.IO — cleanup performs an atomic disk write via MessageStateHandler.
+            CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
                 runCatching { service.cleanEmptyArtifactsBeforeRetry() }
                     .onFailure { LOG.warn("retry cleanup failed (continuing anyway)", it) }
                 invokeLater { executeTask("continue", "continue", null) }
