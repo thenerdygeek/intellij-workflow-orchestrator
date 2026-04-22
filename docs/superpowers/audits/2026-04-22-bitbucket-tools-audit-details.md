@@ -131,7 +131,7 @@ HTTP client — `BitbucketBranchClient.kt:1577–1623`:
 
    **Fix (option A — explicit parameter):** Add optional `file_type` param to the tool schema (`BitbucketReviewTool.kt:90–104`), thread through `BitbucketService.addInlineComment` (interface and impl) and into the `InlineCommentAnchor` DTO (`BitbucketBranchClient.kt:344–349`). Use only if callers need to override the lineType→fileType mapping.
 3. **Fix (`srcPath` for renames):** Add `val srcPath: String? = null` to `InlineCommentAnchor` (`BitbucketBranchClient.kt:344–349`) and an optional `src_path` tool parameter at `BitbucketReviewTool.kt:90–104`, threaded through the service interface and impl. Without it, inline comments on renamed files will fail silently or return a 400.
-4. No test exercises the HTTP path with a mock service — the lineType/fileType interaction is the most likely source of silent production failures.
+4. No test exercises the HTTP path with a mock service — the lineType/fileType interaction produces incorrect `fileType: TO` for REMOVED-line comments, which either returns 400 or misplaces the comment in production.
 
 **Test coverage needed:**
 - Happy-path mock: `lineType = "ADDED"` → `fileType = "TO"` in serialized body ✅
@@ -1481,7 +1481,7 @@ Column meanings:
 - **Happy path** — test exists that covers the successful case with a mock returning a well-formed response
 - **4xx** — test exists for a client-error response (400/401/403/404)
 - **5xx** — test exists for a server-error response (500/503)
-- **409 (version)** — test exists for DC's stale-version conflict on mutating endpoints; `n/a` for read-only or non-versioned endpoints
+- **409 (version)** — test exists for DC's stale-version 409 conflict on endpoints that take a `version` parameter. Mark `n/a` if the endpoint is either (a) read-only (GET) or (b) a mutating endpoint that does NOT take a version param (e.g., `approve_pr` via `POST .../approve` has no version). Mark `—` only when the endpoint DOES take version and a stale-version test is missing.
 - **Auth** — test exists for auth-header inclusion or auth-failure
 - **Live HTTP** — test uses MockWebServer/WireMock (real HTTP round-trip) rather than pure Kotlin mocks of the client/service
 
@@ -1494,7 +1494,7 @@ Column meanings:
 | `bitbucket_review.reply_to_comment` | — | — | — | n/a | — | — |
 | `bitbucket_review.add_reviewer` | — | — | — | — | — | — |
 | `bitbucket_review.remove_reviewer` | — | — | — | — | — | — |
-| `bitbucket_review.set_reviewer_status` | — | — | — | — | — | — |
+| `bitbucket_review.set_reviewer_status` | — | — | — | n/a | — | — |
 | `bitbucket_pr.create_pr` | ✓ | ✓ | — | ✓ | — | ✓ |
 | `bitbucket_pr.get_pr_detail` | — | — | — | n/a | — | — |
 | `bitbucket_pr.get_pr_commits` | — | — | — | n/a | — | — |
@@ -1502,7 +1502,7 @@ Column meanings:
 | `bitbucket_pr.get_pr_changes` | — | — | — | n/a | — | — |
 | `bitbucket_pr.get_pr_diff` | — | — | — | n/a | — | — |
 | `bitbucket_pr.check_merge_status` | — | — | — | n/a | — | — |
-| `bitbucket_pr.approve_pr` | — | — | — | — | — | — |
+| `bitbucket_pr.approve_pr` | — | — | — | n/a | — | — |
 | `bitbucket_pr.merge_pr` | — | — | — | — | — | — |
 | `bitbucket_pr.decline_pr` | — | — | — | — | — | — |
 | `bitbucket_pr.update_pr_title` | — | — | — | — | — | — |
@@ -1523,7 +1523,7 @@ Column meanings:
 #### Critical gaps (required before Phase 1 foundation merges)
 
 - **No execute() path tested for any of the 24 audited actions** — every `BitbucketReviewTool`, `BitbucketPrTool`, and `BitbucketRepoTool` test is schema-only (tool name, enum membership, required-param list, toToolDefinition shape, missing/unknown action errors). The tool → service → client chain is never exercised in any test. A regression in service wiring or param threading would be invisible until production.
-- **No 409 (stale-version) test for any mutating action at the service or tool layer** — `add_reviewer`, `remove_reviewer`, `set_reviewer_status`, `approve_pr`, `merge_pr`, `decline_pr`, `update_pr_title`, `update_pr_description` all perform PUT/POST with a version field and all handle 409 in the client; none have a test that exercises or verifies that path.
+- **No 409 (stale-version) test for any mutating action at the service or tool layer** — `add_reviewer`, `remove_reviewer`, `merge_pr`, `decline_pr`, `update_pr_title`, `update_pr_description` all perform PUT/POST with a version field and all handle 409 in the client; none have a test that exercises or verifies that path.
 - **No 5xx test for any of the 24 actions** — the 500/503 error path (network failure or server error during any tool call) is completely untested.
 - **Auth-header inclusion untested at the tool or service layer** — `BitbucketApiClientTest.kt` does not assert `Authorization: Bearer test-token` on the recorded request for any test; the three `BitbucketReview/Pr/RepoToolTest` files test no HTTP at all.
 
@@ -1537,6 +1537,7 @@ Column meanings:
 #### Observation gaps (nice-to-have)
 
 - **`set_reviewer_status` missing `approved` field in body untested** — the FIX adds `approved: Boolean` derived from `status`; a body-shape assertion test (`status="APPROVED"` → body contains `"approved":true`) would lock in the fix.
+- **`approve_pr` can return a state-409 (already approved) — no test covers this path.** The endpoint takes no `version` param, but the DC API returns 409 when the caller has already approved the PR or is not a reviewer; this distinct already-approved failure case is unexercised.
 - **`merge_pr` strategy enum mismatch untested** — the tool description lists wrong strategy IDs (`merge-commit`, `ff-only`) vs the DC API (`no-ff`, `rebase-no-ff`); a schema-level assertion on the strategy description string would catch documentation drift.
 - **`create_pr` same-branch guard and blank-title guard untested at tool layer** — the `BitbucketApiClientTest` covers the HTTP client method, not the tool-layer guards (`from_branch == to_branch` → error before service call; `title = "  "` → validateNotBlank fires).
 - **Empty response / empty-list edge cases untested** — `get_pr_commits` with 0 commits, `get_pr_changes` with 0 changes, `get_pr_activities` with 0 activities: all have no test verifying the summary string and that no exception is thrown.
