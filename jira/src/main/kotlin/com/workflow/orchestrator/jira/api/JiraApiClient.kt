@@ -9,7 +9,9 @@ import com.workflow.orchestrator.jira.api.dto.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
@@ -80,6 +82,23 @@ class JiraApiClient(
         return get("/rest/api/2/issue/$key?expand=issuelinks")
     }
 
+    /**
+     * Fetches a Jira issue with the full set of fields needed for PR context generation.
+     * Requests `renderedFields` so that the description is available as rendered HTML
+     * (which is easier to strip to plain text than wiki markup).
+     *
+     * GET /rest/api/2/issue/{key}
+     *   ?fields=summary,description,status,priority,issuetype,assignee,reporter,
+     *           labels,components,fixVersions,comment
+     *   &expand=renderedFields
+     */
+    suspend fun getIssueWithContext(key: String): ApiResult<JiraIssueWithRendered> {
+        val fields = "summary,description,status,priority,issuetype,assignee,reporter," +
+                "labels,components,fixVersions,comment"
+        log.debug("[Jira:API] GET /rest/api/2/issue/$key (context fetch, expand=renderedFields)")
+        return get("/rest/api/2/issue/$key?fields=$fields&expand=renderedFields")
+    }
+
     suspend fun searchIssues(text: String, maxResults: Int = 20, currentUserOnly: Boolean = true): ApiResult<List<JiraIssue>> {
         val escaped = escapeJql(text)
         val looksLikeKey = text.matches(Regex("[A-Z][A-Z0-9]+-\\d+"))
@@ -133,6 +152,56 @@ class JiraApiClient(
             put("body", body)
         }.toString()
         return post("/rest/api/2/issue/$issueKey/comment", payload)
+    }
+
+    /**
+     * Fetches the raw string value of a single custom field for an issue.
+     * Returns the field value as a String if it is a JSON primitive (string),
+     * or the serialized JSON for objects (caller can decide how to present it).
+     * Returns null (wrapped in Success) when the field is absent or null in the response.
+     *
+     * GET /rest/api/2/issue/{key}?fields={fieldId}
+     */
+    suspend fun getCustomFieldValue(issueKey: String, fieldId: String): ApiResult<String?> {
+        log.debug("[Jira:API] GET /rest/api/2/issue/$issueKey?fields=$fieldId (custom field)")
+        return withContext(Dispatchers.IO) {
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/2/issue/$issueKey?fields=$fieldId")
+                    .get()
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val bodyStr = it.body?.string() ?: return@withContext ApiResult.Success(null)
+                            val parsed = json.parseToJsonElement(bodyStr)
+                            val fieldsObj = (parsed as? JsonObject)
+                                ?.get("fields") as? JsonObject
+                            val fieldVal = fieldsObj?.get(fieldId)
+                            val strVal = when {
+                                fieldVal == null || fieldVal is JsonNull -> null
+                                fieldVal is JsonPrimitive -> fieldVal.content
+                                else -> fieldVal.toString()
+                            }
+                            ApiResult.Success(strVal)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Jira token").also {
+                            log.warn("[Jira:API] Authentication failed (401) fetching custom field $fieldId")
+                        }
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Issue $issueKey not found").also {
+                            log.warn("[Jira:API] Issue not found (404): $issueKey")
+                        }
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Jira returned ${it.code}").also { _ ->
+                            log.warn("[Jira:API] Server error (${response.code}) fetching custom field $fieldId")
+                        }
+                    }
+                }
+            } catch (e: java.io.IOException) {
+                log.warn("[Jira:API] Network error fetching custom field $fieldId: ${e.message}")
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Jira: ${e.message}", e)
+            }
+        }
     }
 
     /**

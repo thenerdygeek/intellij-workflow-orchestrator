@@ -243,6 +243,11 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
                         .bindIntText(settings.state::maxDiffLinesForReview)
                         .comment("Maximum diff size for AI-powered pre-review")
                 }
+                row {
+                    checkBox("Enable AI-generated PR titles")
+                        .bindSelected(settings.state::enableAiTitleGeneration)
+                        .comment("Uses AI to generate a richer PR title from ticket context and diff")
+                }
             }
 
             // === 6. Time Tracking (collapsed by default) ===
@@ -293,6 +298,15 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
                             { settings.state.testerFieldId = it }
                         )
                         .comment("e.g., customfield_10051 (leave blank if not used)")
+                }
+                row("Acceptance-criteria field ID:") {
+                    textField()
+                        .bindText(
+                            { connSettings.state.jiraAcceptanceCriteriaFieldId ?: "" },
+                            { connSettings.state.jiraAcceptanceCriteriaFieldId = it.ifBlank { null } }
+                        )
+                        .columns(COLUMNS_LARGE)
+                        .comment("Jira acceptance-criteria custom field ID (e.g. customfield_10001)")
                 }
             }.expanded = false
 

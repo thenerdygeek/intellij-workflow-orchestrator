@@ -1,0 +1,50 @@
+{
+  "id": "10001",
+  "key": "PROJ-123",
+  "self": "https://jira.example.com/rest/api/2/issue/10001",
+  "renderedFields": {
+    "description": "<p>Rendered description from Jira</p>"
+  },
+  "fields": {
+    "summary": "Fix login page redirect",
+    "description": "Raw wiki markup description",
+    "status": {
+      "id": "3",
+      "name": "In Progress",
+      "statusCategory": { "id": 4, "key": "indeterminate", "name": "In Progress" }
+    },
+    "issuetype": { "id": "10001", "name": "Story", "subtask": false },
+    "priority": { "id": "2", "name": "High" },
+    "assignee": { "displayName": "John Doe", "emailAddress": "john@example.com", "name": "jdoe" },
+    "reporter": { "displayName": "Jane Smith", "emailAddress": "jane@example.com", "name": "jsmith" },
+    "labels": ["backend", "auth"],
+    "components": [
+      { "id": "100", "name": "Authentication" },
+      { "id": "101", "name": "API Gateway" }
+    ],
+    "fixVersions": [
+      { "id": "200", "name": "v2.1.0", "released": false }
+    ],
+    "comment": {
+      "startAt": 0,
+      "maxResults": 50,
+      "total": 2,
+      "comments": [
+        {
+          "id": "1001",
+          "author": { "displayName": "Alice Dev", "name": "adev" },
+          "body": "Investigated root cause — session cookie expiry.",
+          "created": "2026-03-05T09:00:00.000+0000",
+          "updated": "2026-03-05T09:00:00.000+0000"
+        },
+        {
+          "id": "1002",
+          "author": { "displayName": "Bob QA", "name": "bqa" },
+          "body": "Reproduced on staging. Ticket confirmed.",
+          "created": "2026-03-06T11:30:00.000+0000",
+          "updated": "2026-03-06T11:30:00.000+0000"
+        }
+      ]
+    }
+  }
+}

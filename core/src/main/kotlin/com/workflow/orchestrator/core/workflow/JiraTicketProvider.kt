@@ -11,6 +11,13 @@ interface JiraTicketProvider {
 
     suspend fun getTicketDetails(ticketId: String): TicketDetails?
 
+    /**
+     * Fetches a rich [TicketContext] for the given ticket key, including status,
+     * priority, comments, components, fix versions, and acceptance criteria.
+     * Returns null if the ticket cannot be fetched (network error, not found, etc.).
+     */
+    suspend fun getTicketContext(key: String): TicketContext?
+
     suspend fun getAvailableTransitions(ticketId: String): List<TicketTransition>
 
     suspend fun transitionTicket(ticketId: String, transitionId: String): Boolean

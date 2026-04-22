@@ -92,6 +92,8 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         // Branching & PRs
         var branchMaxSummaryLength by property(50)
         var prTitleFormat by string("{ticketId}: {summary}")
+        /** When true, PR creation uses AI to generate a richer PR title from ticket + diff context. */
+        var enableAiTitleGeneration by property(true)
         var maxPrTitleLength by property(120)
         var prDefaultReviewers by string("")
 

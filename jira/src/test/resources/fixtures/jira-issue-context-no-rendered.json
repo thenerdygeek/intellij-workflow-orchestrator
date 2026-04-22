@@ -1,0 +1,27 @@
+{
+  "id": "10003",
+  "key": "PROJ-789",
+  "self": "https://jira.example.com/rest/api/2/issue/10003",
+  "fields": {
+    "summary": "Ticket with raw description only",
+    "description": "This is the raw wiki-markup description",
+    "status": {
+      "name": "Open"
+    },
+    "issuetype": { "name": "Bug", "subtask": false },
+    "priority": { "name": "Medium" },
+    "assignee": { "displayName": "Dev User", "name": "devuser" },
+    "reporter": { "displayName": "PM User", "name": "pmuser" },
+    "labels": ["regression"],
+    "components": [],
+    "fixVersions": [
+      { "name": "v1.5.0", "released": true }
+    ],
+    "comment": {
+      "startAt": 0,
+      "maxResults": 50,
+      "total": 0,
+      "comments": []
+    }
+  }
+}

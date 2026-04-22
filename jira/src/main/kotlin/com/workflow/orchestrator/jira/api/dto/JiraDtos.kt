@@ -261,6 +261,51 @@ data class DevStatusPullRequest(
     val lastUpdate: String? = null
 )
 
+// --- Fix Versions ---
+
+@Serializable
+data class JiraFixVersion(
+    val id: String? = null,
+    val name: String,
+    val released: Boolean = false
+)
+
+// --- Issue with Context (renderedFields support) ---
+
+/**
+ * Thin wrapper for a Jira issue response that also carries `renderedFields`.
+ * Used by [com.workflow.orchestrator.jira.api.JiraApiClient.getIssueWithContext]
+ * to prefer the rendered (HTML-free plain-ish) description when available.
+ */
+@Serializable
+data class JiraIssueWithRendered(
+    val id: String,
+    val key: String,
+    val self: String = "",
+    val fields: JiraIssueContextFields,
+    val renderedFields: JiraRenderedFields? = null
+)
+
+@Serializable
+data class JiraIssueContextFields(
+    val summary: String,
+    val status: JiraStatus,
+    val issuetype: JiraIssueType? = null,
+    val priority: JiraPriority? = null,
+    val assignee: JiraUser? = null,
+    val reporter: JiraUser? = null,
+    val description: String? = null,
+    val labels: List<String> = emptyList(),
+    val components: List<JiraComponent> = emptyList(),
+    val fixVersions: List<JiraFixVersion> = emptyList(),
+    val comment: JiraCommentPage? = null
+)
+
+@Serializable
+data class JiraRenderedFields(
+    val description: String? = null
+)
+
 // --- Components, Subtasks, Attachments, Comments ---
 
 @Serializable

@@ -44,6 +44,10 @@
             qualifiedName="com.workflow.orchestrator.sessionHistoryReader"
             interface="com.workflow.orchestrator.core.services.SessionHistoryReader"
             dynamic="true"/>
+        <extensionPoint
+            qualifiedName="com.workflow.orchestrator.createPrLauncher"
+            interface="com.workflow.orchestrator.core.bitbucket.CreatePrLauncher"
+            dynamic="true"/>
     </extensionPoints>
 
     <extensions defaultExtensionNs="com.intellij">
