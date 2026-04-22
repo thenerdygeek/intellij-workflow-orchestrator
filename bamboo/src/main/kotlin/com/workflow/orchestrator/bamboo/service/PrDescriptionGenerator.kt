@@ -149,8 +149,9 @@ object PrDescriptionGenerator {
             if (!desc.isNullOrBlank()) {
                 appendLine()
                 appendLine(desc.take(500))
+            } else {
+                appendLine()
             }
-            appendLine()
         }
 
         if (additional.isNotEmpty()) {

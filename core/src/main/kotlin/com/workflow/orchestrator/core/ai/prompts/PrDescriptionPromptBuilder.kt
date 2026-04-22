@@ -89,11 +89,14 @@ object PrDescriptionPromptBuilder {
         }
 
         // ── Diff ──
-        appendLine()
-        appendLine("DIFF:")
-        appendLine("```diff")
-        appendLine(if (diff.length > DIFF_CAP) diff.take(DIFF_CAP) + "\n... (diff truncated)" else diff) // diff uses a custom suffix, not "..."
-        appendLine("```")
+        val isDiffAvailable = diff.isNotBlank() && diff != "(diff unavailable)"
+        if (isDiffAvailable) {
+            appendLine()
+            appendLine("DIFF:")
+            appendLine("```diff")
+            appendLine(if (diff.length > DIFF_CAP) diff.take(DIFF_CAP) + "\n... (diff truncated)" else diff)
+            appendLine("```")
+        }
     }
 
     private fun buildPrimaryBlock(ticket: TicketContext): String = buildString {

@@ -300,6 +300,31 @@ class PrDescriptionPromptBuilderTest {
         assertTrue(result.contains("diff truncated"), "Should note truncation")
     }
 
+    // ── Diff section conditionality ───────────────────────────────────────────
+
+    @Test
+    fun `diff section omitted when diff is blank`() {
+        val result = PrDescriptionPromptBuilder.build(diff = "", tickets = emptyList())
+        assertFalse(result.contains("DIFF:"), "DIFF header should be omitted when diff is blank")
+        assertFalse(result.contains("```diff"), "diff fence should be omitted when diff is blank")
+    }
+
+    @Test
+    fun `diff section omitted when diff equals sentinel`() {
+        val result = PrDescriptionPromptBuilder.build(diff = "(diff unavailable)", tickets = emptyList())
+        assertFalse(result.contains("DIFF:"), "DIFF header should be omitted when diff is the sentinel")
+        assertFalse(result.contains("```diff"), "diff fence should be omitted when diff is the sentinel")
+        assertFalse(result.contains("(diff unavailable)"), "Sentinel text must not appear in output")
+    }
+
+    @Test
+    fun `diff section included when diff is available`() {
+        val result = PrDescriptionPromptBuilder.build(diff = "diff --git a/Foo.kt b/Foo.kt", tickets = emptyList())
+        assertTrue(result.contains("DIFF:"), "DIFF header should appear when diff is available")
+        assertTrue(result.contains("```diff"), "diff fence should appear when diff is available")
+        assertTrue(result.contains("diff --git a/Foo.kt b/Foo.kt"), "Actual diff content should appear")
+    }
+
     // ── Max 4 additional tickets ───────────────────────────────────────────────
 
     @Test

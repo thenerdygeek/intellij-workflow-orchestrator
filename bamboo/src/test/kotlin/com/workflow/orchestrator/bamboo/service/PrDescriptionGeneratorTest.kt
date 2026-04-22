@@ -174,6 +174,19 @@ class PrDescriptionGeneratorTest {
         assertTrue(result.contains("**Branch:** feature/nocommits"))
     }
 
+    // ── double blank lines ────────────────────────────────────────────────
+
+    @Test
+    fun `fallback description does not emit double blank lines when description is non-blank`() {
+        val result = PrDescriptionGenerator.buildFallbackDescription(
+            tickets = listOf(ticket("PROJ-1", "Some summary", description = "A real description")),
+            commits = listOf("abc1234 Some commit"),
+            branch = "feature/spacing"
+        )
+
+        assertFalse(result.contains("\n\n\n"), "Output must not contain three consecutive newlines (double blank lines)")
+    }
+
     // ── ordering ─────────────────────────────────────────────────────────
 
     @Test

@@ -362,8 +362,10 @@ class CreatePrDialog(
     private fun generateDescription() {
         scope.launch {
             val targetBranch = withContext(Dispatchers.EDT) { targetField.text }
-            // Resolve rich TicketContext on-demand for the generator (Phase 5 will replace
-            // ticketDetails with a multi-ticket input widget and skip this resolution step).
+            // TODO(Phase 5/6): this call (getTicketContext) fires on every dialog open AND on every
+            // Regenerate click, which duplicates the getTicketContext already done during PrBar prefetch.
+            // Phase 5 replaces ticketDetails with a TicketChipInput that caches contexts; Phase 6's
+            // shared prefetch will eliminate the duplicate resolve from PrBar as well.
             val context = ticketDetails?.let {
                 JiraTicketProvider.getInstance()?.getTicketContext(it.key)
             }
