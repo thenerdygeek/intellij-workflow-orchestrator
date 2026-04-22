@@ -1686,6 +1686,80 @@ class BitbucketBranchClient(
         )
     }
 
+    /**
+     * Fetches a single page of comments for a pull request.
+     * GET /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/comments?limit=100&start={start}
+     */
+    private suspend fun fetchCommentsPage(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        start: Int,
+    ): ApiResult<BitbucketPrCommentList> =
+        withContext(Dispatchers.IO) {
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/comments?limit=100&start=$start")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val parsed = json.decodeFromString<BitbucketPrCommentList>(body)
+                            ApiResult.Success(parsed)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "PR #$prId not found in $projectKey/$repoSlug")
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error fetching PR #$prId comments (start=$start)", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Gets comments for a pull request, aggregating across all pages.
+     * GET /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/comments?limit=100&start={start}
+     */
+    suspend fun listPrComments(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        start: Int = 0,
+    ): ApiResult<BitbucketPrCommentList> {
+        log.info("[Core:Bitbucket] Fetching comments for PR #$prId in $projectKey/$repoSlug")
+        val maxPages = 20  // safety cap: ~2000 comments at limit=100
+        val aggregated = mutableListOf<BitbucketPrCommentResponse>()
+        var cursor = start
+        var pages = 0
+        while (pages < maxPages) {
+            when (val page = fetchCommentsPage(projectKey, repoSlug, prId, cursor)) {
+                is ApiResult.Error -> return page
+                is ApiResult.Success -> {
+                    aggregated += page.data.values
+                    if (page.data.isLastPage || page.data.nextPageStart == null) {
+                        log.info("[Core:Bitbucket] Found ${aggregated.size} comments in PR #$prId")
+                        return ApiResult.Success(
+                            BitbucketPrCommentList(values = aggregated, isLastPage = true, nextPageStart = null)
+                        )
+                    }
+                    cursor = page.data.nextPageStart
+                    pages++
+                }
+            }
+        }
+        // Cap hit — return aggregated with isLastPage=false indicating truncation
+        log.warn("[Core:Bitbucket] PR #$prId comments truncated at $maxPages pages (${aggregated.size} comments)")
+        return ApiResult.Success(
+            BitbucketPrCommentList(values = aggregated, isLastPage = false, nextPageStart = cursor)
+        )
+    }
+
     // --- Commit, Inline Comment, Reply, Reviewer Status, File Browse Methods ---
 
     /**
