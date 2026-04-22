@@ -1266,6 +1266,66 @@ graph TD
     </div>
 </details>
 
+<!-- ===== 22. TICKET TRANSITION ORCHESTRATOR ===== -->
+<details id="ticket-transition-orchestrator">
+    <summary><span class="section-num">22.</span> Ticket Transition Orchestrator</summary>
+    <div class="content">
+
+        <h3>Overview</h3>
+        <p>
+            Unified Jira status transition subsystem introduced in the
+            <a href="../../docs/superpowers/specs/2026-04-22-ticket-transition-orchestrator-design.md">Ticket Transition Orchestrator design spec</a>.
+            Replaces five previously independent transition call sites with a single orchestrated path
+            through <code>TicketTransitionServiceImpl</code>.
+        </p>
+
+        <h3>New Core Services</h3>
+        <table>
+            <tr><th>Service</th><th>Module</th><th>Purpose</th></tr>
+            <tr>
+                <td><code>TicketTransitionService</code></td>
+                <td><code>:core</code></td>
+                <td>Orchestrates GET transitions (expand=transitions.fields), required-field preflight, POST, cache invalidation, and <code>TicketTransitioned</code> event emission. 60 s TTL cache per ticket key.</td>
+            </tr>
+            <tr>
+                <td><code>JiraSearchService</code></td>
+                <td><code>:core</code></td>
+                <td>User, label, version, component, and group lookups for transition dialog widgets. Versions and components are cached 5 min per project key.</td>
+            </tr>
+        </table>
+
+        <h3>Dialog &amp; Widget Layer</h3>
+        <p>
+            <code>TicketTransitionDialog</code> (in <code>:jira/ui</code>) renders a dynamic form driven by
+            <code>FieldWidgetFactory</code>, which maps the sealed <code>FieldSchema</code> hierarchy to the
+            appropriate Swing widget. Async search fields use <code>SearchableChooser&lt;T&gt;</code> with
+            300 ms debounce backed by <code>JiraSearchService</code>.
+            <code>TransitionDialogOpener</code> is the bridge interface registered in <code>:core</code> so that
+            callers outside <code>:jira</code> (e.g. the agent tool layer) can open the dialog without a
+            compile-time dependency on <code>:jira/ui</code>.
+        </p>
+
+        <h3>Event &amp; Unified Call Sites</h3>
+        <ul>
+            <li>Event emitted on success: <code>TicketTransitioned(key, fromStatus, toStatus, transitionId)</code></li>
+            <li>5 UI callers now unified: <code>StartWorkDialog</code>, <code>BranchingService</code>, post-commit hook, agent <code>transition_ticket</code> tool, and the sprint dashboard context menu.</li>
+        </ul>
+
+        <div class="mermaid">
+graph LR
+    A[UI callers<br/>5 entry points] --> B[TicketTransitionServiceImpl]
+    B --> C[JiraApiClient<br/>GET transitions]
+    B --> D[JiraApiClient<br/>POST transition]
+    B --> E[EventBus<br/>TicketTransitioned]
+    B --> F[60s cache<br/>per ticket key]
+    E --> G[Cache invalidated]
+    style B fill:#264f78,stroke:#4ec9b0,color:#d4d4d4
+    style E fill:#c47e1a,stroke:#dcdcaa,color:#d4d4d4
+        </div>
+
+    </div>
+</details>
+
 <hr style="border-color: #333; margin-top: 40px;">
 <p style="color: #666; font-size: 12px; text-align: center;">
     Workflow Orchestrator v0.26.0 &mdash; Architecture Documentation

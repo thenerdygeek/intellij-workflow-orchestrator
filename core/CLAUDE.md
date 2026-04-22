@@ -65,3 +65,13 @@ JBColor constants with light/dark variants: SUCCESS (green), ERROR (red), WARNIN
 ## TicketKeyExtractor
 
 `core/util/TicketKeyExtractor.kt` — canonical regex helper for extracting ticket keys. `extractFromBranch(branchName)` returns the first match; `isValidKey(key)` validates exact format. Pattern: `[A-Z][A-Z0-9]+-\d+` (e.g., `AFTER8TE-912`).
+
+## Services
+
+- `TicketTransitionService` — unified Jira transition orchestrator. Always fetches
+  with expand=transitions.fields. Emits TicketTransitioned on success. 60s cache,
+  invalidated on the event.
+- `JiraSearchService` — user/label/version/component/group + autoCompleteUrl lookups
+  used by the transition dialog widgets. Versions/components cached 5 min.
+- `TransitionDialogOpener` — bridge interface so :core callers can open the
+  transition dialog without depending on :jira/ui.

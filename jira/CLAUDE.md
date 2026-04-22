@@ -34,3 +34,22 @@ Key endpoints:
 - `TransitionDialog` — manual status transitions
 - `JiraSearchContributorFactory` — Search Everywhere integration for tickets
 - **UI Overhaul:** SprintPaginationCache (file-based cache at `~/.workflow-orchestrator/`) for sprint pagination state. Cell renderer uses left border accents by status, side-by-side SprintTimeBar, worklog table layout, and PR badge styling in DevStatusSection.
+
+## Transitions
+
+Endpoints:
+- `GET /rest/api/2/issue/{key}/transitions?expand=transitions.fields`
+- `POST /rest/api/2/issue/{key}/transitions`
+
+Search endpoints (via JiraSearchService):
+- `/rest/api/2/user/assignable/search?issueKey=&query=`
+- `/rest/api/2/user/search?query=`
+- `/rest/api/1.0/labels/suggest?query=` (404 => empty list fallback)
+- `/rest/api/2/groups/picker?query=`
+- `/rest/api/2/project/{key}/versions`  (5min cache)
+- `/rest/api/2/project/{key}/components`  (5min cache)
+
+UI: `TicketTransitionDialog` + `FieldWidgetFactory` (sealed FieldSchema → widget)
+    + `SearchableChooser<T>` (debounced async)
+Parser: `JiraTransitionResponseParser` (kotlinx.serialization.json)
+Serializer: `TransitionInputSerializer` (FieldValue → Jira JSON)
