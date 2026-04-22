@@ -1,4 +1,4 @@
-package com.workflow.orchestrator.core.models
+package com.workflow.orchestrator.core.model
 
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.assertEquals

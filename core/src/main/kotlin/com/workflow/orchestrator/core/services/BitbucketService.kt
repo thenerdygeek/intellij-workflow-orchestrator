@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.core.services
 
+import com.workflow.orchestrator.core.model.PrComment
 import com.workflow.orchestrator.core.model.bitbucket.*
 
 /**
@@ -117,4 +118,58 @@ interface BitbucketService {
 
     /** Remove a reviewer from a pull request. */
     suspend fun removeReviewer(prId: Int, username: String, repoName: String? = null): ToolResult<Unit>
+
+    // --- PR comments ---
+
+    /** List all comments on a pull request, optionally filtered to open or inline only. */
+    suspend fun listPrComments(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        onlyOpen: Boolean = false,
+        onlyInline: Boolean = false,
+    ): ToolResult<List<PrComment>>
+
+    /** Get a single comment by ID from a pull request. */
+    suspend fun getPrComment(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        commentId: Long,
+    ): ToolResult<PrComment>
+
+    /** Edit the text of an existing comment (requires the current version for optimistic locking). */
+    suspend fun editPrComment(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        commentId: Long,
+        text: String,
+        expectedVersion: Int,
+    ): ToolResult<PrComment>
+
+    /** Delete a comment from a pull request (requires the current version for optimistic locking). */
+    suspend fun deletePrComment(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        commentId: Long,
+        expectedVersion: Int,
+    ): ToolResult<Unit>
+
+    /** Resolve a comment thread on a pull request (sets state to RESOLVED). */
+    suspend fun resolvePrComment(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        commentId: Long,
+    ): ToolResult<PrComment>
+
+    /** Reopen a resolved comment thread on a pull request (sets state back to OPEN). */
+    suspend fun reopenPrComment(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        commentId: Long,
+    ): ToolResult<PrComment>
 }

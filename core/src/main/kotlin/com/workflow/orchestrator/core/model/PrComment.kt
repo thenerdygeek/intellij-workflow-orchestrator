@@ -1,4 +1,4 @@
-package com.workflow.orchestrator.core.models
+package com.workflow.orchestrator.core.model
 
 data class PrComment(
     val id: String,

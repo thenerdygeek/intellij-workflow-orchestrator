@@ -4,10 +4,19 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
-import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.bitbucket.BitbucketPrCommentResponse
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrReviewerRef
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrUpdateRequest
 import com.workflow.orchestrator.core.bitbucket.BitbucketReviewerUser
+import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.model.PrComment
+import com.workflow.orchestrator.core.model.PrCommentAnchor
+import com.workflow.orchestrator.core.model.PrCommentAuthor
+import com.workflow.orchestrator.core.model.PrCommentFileType
+import com.workflow.orchestrator.core.model.PrCommentLineType
+import com.workflow.orchestrator.core.model.PrCommentPermittedOps
+import com.workflow.orchestrator.core.model.PrCommentSeverity
+import com.workflow.orchestrator.core.model.PrCommentState
 import com.workflow.orchestrator.core.model.bitbucket.*
 import com.workflow.orchestrator.core.services.BitbucketService
 import com.workflow.orchestrator.core.services.ToolResult
@@ -886,6 +895,158 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
         isError = true, hint = "Set Bitbucket project key and repo slug in Settings."
     )
 
+    // --- PR comments ---
+
+    override suspend fun listPrComments(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        onlyOpen: Boolean,
+        onlyInline: Boolean,
+    ): ToolResult<List<PrComment>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(), summary = "Bitbucket not configured. Cannot fetch PR #$prId comments.",
+            isError = true, hint = "Set up Bitbucket connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+        return when (val result = api.listPrComments(projectKey, repoSlug, prId)) {
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to list PR #$prId comments: ${result.message}")
+                ToolResult(data = emptyList(), summary = "listPrComments failed: ${result.message}", isError = true,
+                    hint = "Verify the PR exists and Bitbucket connection is configured.")
+            }
+            is ApiResult.Success -> {
+                var mapped = result.data.values.map { it.toPrComment() }
+                if (onlyOpen) mapped = mapped.filter { it.state == PrCommentState.OPEN }
+                if (onlyInline) mapped = mapped.filter { it.anchor != null }
+                ToolResult.success(mapped, "${mapped.size} PR comment(s) on PR #$prId")
+            }
+        }
+    }
+
+    override suspend fun getPrComment(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        commentId: Long,
+    ): ToolResult<PrComment> {
+        val api = client ?: return ToolResult(
+            data = PrComment(id = "", version = 0, text = "", author = emptyCommentAuthor(),
+                createdDate = 0, updatedDate = 0, state = PrCommentState.OPEN, severity = PrCommentSeverity.NORMAL),
+            summary = "Bitbucket not configured. Cannot fetch comment $commentId on PR #$prId.",
+            isError = true, hint = "Set up Bitbucket connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+        return when (val result = api.getPrComment(projectKey, repoSlug, prId, commentId)) {
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to fetch comment $commentId on PR #$prId: ${result.message}")
+                ToolResult(
+                    data = PrComment(id = "", version = 0, text = "", author = emptyCommentAuthor(),
+                        createdDate = 0, updatedDate = 0, state = PrCommentState.OPEN, severity = PrCommentSeverity.NORMAL),
+                    summary = "getPrComment failed: ${result.message}", isError = true,
+                    hint = "Verify the comment ID and PR exist."
+                )
+            }
+            is ApiResult.Success -> ToolResult.success(result.data.toPrComment(), "Comment ${result.data.id} on PR #$prId")
+        }
+    }
+
+    override suspend fun editPrComment(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        commentId: Long,
+        text: String,
+        expectedVersion: Int,
+    ): ToolResult<PrComment> {
+        val api = client ?: return ToolResult(
+            data = PrComment(id = "", version = 0, text = "", author = emptyCommentAuthor(),
+                createdDate = 0, updatedDate = 0, state = PrCommentState.OPEN, severity = PrCommentSeverity.NORMAL),
+            summary = "Bitbucket not configured. Cannot edit comment $commentId on PR #$prId.",
+            isError = true, hint = "Set up Bitbucket connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+        return when (val result = api.editPrComment(projectKey, repoSlug, prId, commentId, text, expectedVersion)) {
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to edit comment $commentId on PR #$prId: ${result.message}")
+                ToolResult(
+                    data = PrComment(id = "", version = 0, text = "", author = emptyCommentAuthor(),
+                        createdDate = 0, updatedDate = 0, state = PrCommentState.OPEN, severity = PrCommentSeverity.NORMAL),
+                    summary = result.message, isError = true,
+                    hint = "The version may be stale — re-fetch the comment and retry."
+                )
+            }
+            is ApiResult.Success -> ToolResult.success(result.data.toPrComment(), "Comment $commentId updated on PR #$prId")
+        }
+    }
+
+    override suspend fun deletePrComment(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        commentId: Long,
+        expectedVersion: Int,
+    ): ToolResult<Unit> {
+        val api = client ?: return notConfiguredError("Cannot delete comment $commentId on PR #$prId.")
+        return when (val result = api.deletePrComment(projectKey, repoSlug, prId, commentId, expectedVersion)) {
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to delete comment $commentId on PR #$prId: ${result.message}")
+                ToolResult(data = Unit, summary = result.message, isError = true,
+                    hint = "The version may be stale — re-fetch the comment and retry.")
+            }
+            is ApiResult.Success -> ToolResult.success(Unit, "Comment $commentId deleted from PR #$prId")
+        }
+    }
+
+    override suspend fun resolvePrComment(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        commentId: Long,
+    ): ToolResult<PrComment> {
+        val api = client ?: return ToolResult(
+            data = PrComment(id = "", version = 0, text = "", author = emptyCommentAuthor(),
+                createdDate = 0, updatedDate = 0, state = PrCommentState.OPEN, severity = PrCommentSeverity.NORMAL),
+            summary = "Bitbucket not configured. Cannot resolve comment $commentId on PR #$prId.",
+            isError = true, hint = "Set up Bitbucket connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+        return when (val result = api.resolvePrComment(projectKey, repoSlug, prId, commentId)) {
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to resolve comment $commentId on PR #$prId: ${result.message}")
+                ToolResult(
+                    data = PrComment(id = "", version = 0, text = "", author = emptyCommentAuthor(),
+                        createdDate = 0, updatedDate = 0, state = PrCommentState.OPEN, severity = PrCommentSeverity.NORMAL),
+                    summary = result.message, isError = true,
+                    hint = "Verify the comment exists and is in an open state.")
+            }
+            is ApiResult.Success -> ToolResult.success(result.data.toPrComment(), "Comment $commentId resolved on PR #$prId")
+        }
+    }
+
+    override suspend fun reopenPrComment(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        commentId: Long,
+    ): ToolResult<PrComment> {
+        val api = client ?: return ToolResult(
+            data = PrComment(id = "", version = 0, text = "", author = emptyCommentAuthor(),
+                createdDate = 0, updatedDate = 0, state = PrCommentState.OPEN, severity = PrCommentSeverity.NORMAL),
+            summary = "Bitbucket not configured. Cannot reopen comment $commentId on PR #$prId.",
+            isError = true, hint = "Set up Bitbucket connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+        return when (val result = api.reopenPrComment(projectKey, repoSlug, prId, commentId)) {
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] Failed to reopen comment $commentId on PR #$prId: ${result.message}")
+                ToolResult(
+                    data = PrComment(id = "", version = 0, text = "", author = emptyCommentAuthor(),
+                        createdDate = 0, updatedDate = 0, state = PrCommentState.OPEN, severity = PrCommentSeverity.NORMAL),
+                    summary = result.message, isError = true,
+                    hint = "Verify the comment exists and is in a resolved state.")
+            }
+            is ApiResult.Success -> ToolResult.success(result.data.toPrComment(), "Comment $commentId reopened on PR #$prId")
+        }
+    }
+
+    private fun emptyCommentAuthor() = PrCommentAuthor(name = "", displayName = "")
+
     override suspend fun testConnection(): ToolResult<Unit> {
         val api = client ?: return ToolResult(
             data = Unit,
@@ -910,3 +1071,38 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
     }
 
 }
+
+private fun BitbucketPrCommentResponse.toPrComment(): PrComment = PrComment(
+    id = id.toString(),
+    version = version,
+    text = text,
+    author = PrCommentAuthor(
+        name = author.name,
+        displayName = author.displayName,
+        emailAddress = author.emailAddress,
+        avatarUrl = author.avatarUrl,
+    ),
+    createdDate = createdDate,
+    updatedDate = updatedDate,
+    anchor = anchor?.let { a ->
+        PrCommentAnchor(
+            path = a.path,
+            srcPath = a.srcPath,
+            line = a.line,
+            lineType = a.lineType?.let { runCatching { PrCommentLineType.valueOf(it) }.getOrNull() },
+            fileType = a.fileType?.let { runCatching { PrCommentFileType.valueOf(it) }.getOrNull() },
+            fromHash = a.fromHash,
+            toHash = a.toHash,
+        )
+    },
+    state = runCatching { PrCommentState.valueOf(state) }.getOrDefault(PrCommentState.OPEN),
+    severity = runCatching { PrCommentSeverity.valueOf(severity) }.getOrDefault(PrCommentSeverity.NORMAL),
+    replies = comments.map { it.toPrComment() },
+    permittedOperations = permittedOperations?.let {
+        PrCommentPermittedOps(
+            editable = it.editable,
+            deletable = it.deletable,
+            transitionable = it.transitionable,
+        )
+    },
+)
