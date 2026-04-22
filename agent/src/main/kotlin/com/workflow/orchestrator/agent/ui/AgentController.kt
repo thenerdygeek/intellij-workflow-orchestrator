@@ -1819,6 +1819,33 @@ class AgentController(
     }
 
     /**
+     * Narrow public API for starting a new PR review session from outside the :agent module
+     * (e.g. from PrDetailPanel in :pullrequest).
+     *
+     * Resets to a clean session, then submits [initialMessage] as the first user turn.
+     * The [sessionTag] is logged for observability but does not alter agent behavior —
+     * the initial message itself carries all PR context.
+     *
+     * Why a wrapper: AgentController is not a service and cannot be injected across modules.
+     * Callers obtain the controller via AgentControllerRegistry.getInstance(project).controller.
+     * This wrapper hides the two-step reset + execute behind a single call site.
+     *
+     * @param persona  Currently unused at the controller level; persona guidance is embedded
+     *                 in [initialMessage] by PrReviewTaskBuilder. Future polish may wire this
+     *                 to a persona selector in the dashboard.
+     * @param initialMessage  The full prompt built by PrReviewTaskBuilder.
+     * @param sessionTag  Opaque tag logged for tracing (e.g. "pr-review:PROJ/repo/PR-42").
+     */
+    fun startPrReviewSession(persona: String, initialMessage: String, sessionTag: String) {
+        LOG.info("AgentController.startPrReviewSession: tag=$sessionTag persona=$persona")
+        resetForNewChat()
+        executeTask(
+            task = initialMessage,
+            displayText = "Running AI review… (session tag: $sessionTag)",
+        )
+    }
+
+    /**
      * Reset all controller and dashboard state for a fresh session.
      * Does NOT show history — callers decide the next view.
      */
