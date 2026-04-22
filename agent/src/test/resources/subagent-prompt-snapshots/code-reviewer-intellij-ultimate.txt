@@ -144,6 +144,8 @@ For each non-trivial changed file, analyze against the checklist below. Inject c
 [One sentence justification]
 ```
 
+> **When invoked via the plugin's "Run AI review" button for a PR review session:** emit findings via `ai_review.add_finding(pr_id, session_id, severity, message, file?, line_start?, line_end?, anchor_side?, suggestion?)` **instead of** the markdown report format above. Do NOT call `bitbucket_review.add_pr_comment` / `add_inline_comment` / `reply_to_comment` — pushing to Bitbucket is the user's action from the AI Review sub-tab after your session completes. Set `session_id` to the current session id (available in your task context).
+
 Always verify by reading code and running tests — never trust assumptions. Be specific with file:line references.
 
 > **Visualization:** Use `render_artifact` for interactive visuals when findings involve 3+ entities with relationships, flows, or data comparisons. `bridge` is a scope variable (not a prop) with `navigateToFile(path, line)`, Lucide icons, and Recharts.
