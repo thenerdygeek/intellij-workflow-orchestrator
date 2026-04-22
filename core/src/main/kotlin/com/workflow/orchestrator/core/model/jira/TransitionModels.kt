@@ -74,3 +74,19 @@ data class TransitionOutcome(
     val transitionId: String,
     val appliedFields: Map<String, FieldValue>
 )
+
+data class MissingFieldsError(
+    val kind: String = "missing_required_fields",
+    val transitionId: String,
+    val transitionName: String,
+    val fields: List<TransitionField>,
+    val guidance: String
+)
+
+sealed class TransitionError {
+    data class MissingFields(val payload: MissingFieldsError) : TransitionError()
+    data class InvalidTransition(val reason: String) : TransitionError()
+    data class RequiresInteraction(val meta: TransitionMeta) : TransitionError()
+    data class Network(val cause: Throwable) : TransitionError()
+    data class Forbidden(val reason: String) : TransitionError()
+}
