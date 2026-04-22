@@ -436,14 +436,27 @@ def build_cases(remote_image_url: str, remote_keywords: list[str]) -> list[Forma
 class SourcegraphClient:
     def __init__(self, base_url: str, token: str, verify: bool = True, timeout: int = 60):
         self.base_url = base_url.rstrip("/")
+        # Defensive: strip whitespace/newlines that PowerShell/CMD often pick up
+        # when pasting a token. A trailing \r is the most common cause of a
+        # surprise 401 — the gateway rejects "token sgp_xxx\r" as malformed.
+        self.token = (token or "").strip()
+        if self.token != (token or ""):
+            print("WARN: stripped whitespace from --token (PowerShell often "
+                  "appends \\r when pasting). Using cleaned value.", file=sys.stderr)
         self.session = requests.Session()
         self.session.headers.update({
-            "Authorization": f"token {token}",
+            "Authorization": f"token {self.token}",
             "Content-Type": "application/json",
             "Accept": "application/json",
         })
         self.session.verify = verify
         self.timeout = timeout
+
+    def _mask_token(self) -> str:
+        t = self.token
+        if len(t) < 12:
+            return f"<token len={len(t)}>"
+        return f"{t[:6]}...{t[-4:]}  (length={len(t)})"
 
     def list_models(self) -> list[str]:
         r = self.session.get(self.base_url + MODELS_PATH, timeout=30)
@@ -700,6 +713,33 @@ def main() -> int:
     else:
         try:
             all_models = client.list_models()
+        except requests.HTTPError as e:
+            code = e.response.status_code if e.response is not None else "?"
+            print(f"ERROR: failed to list models from {_mask_url(args.url)}{MODELS_PATH}: HTTP {code}",
+                  file=sys.stderr)
+            if code == 401:
+                print(f"       Auth header sent: 'Authorization: token {client._mask_token()}'",
+                      file=sys.stderr)
+                print(f"       URL hit         : {args.url.rstrip('/')}{MODELS_PATH}",
+                      file=sys.stderr)
+                print("       Common causes:", file=sys.stderr)
+                print("         • token expired or revoked (regenerate at /user/settings/tokens)",
+                      file=sys.stderr)
+                print("         • token belongs to a different Sourcegraph instance than --url",
+                      file=sys.stderr)
+                print("         • PowerShell mangled the token — try wrapping in single quotes:",
+                      file=sys.stderr)
+                print("             py -3 vision_lab.py --url '...' --token 'sgp_xxx'",
+                      file=sys.stderr)
+                print("         • shell appended a stray \\r (try piping the token from a file:",
+                      file=sys.stderr)
+                print("             $env:SGTOKEN = (Get-Content token.txt -Raw).Trim();",
+                      file=sys.stderr)
+                print("             py -3 vision_lab.py --url ... --token $env:SGTOKEN)",
+                      file=sys.stderr)
+            if e.response is not None:
+                print(f"       Response body: {e.response.text[:300]}", file=sys.stderr)
+            return 3
         except requests.RequestException as e:
             print(f"ERROR: failed to list models from {_mask_url(args.url)}{MODELS_PATH}: {e}",
                   file=sys.stderr)
