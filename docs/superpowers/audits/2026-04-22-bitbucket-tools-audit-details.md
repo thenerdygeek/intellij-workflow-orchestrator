@@ -1123,3 +1123,339 @@ HTTP client — `BitbucketBranchClient.kt:963–998`:
 - 4xx mock → verify tool returns error result, not exception
 - Invalid state value → enum validation error (after fix)
 - Non-numeric `pr_id`: N/A (this action uses `state`, not `pr_id`)
+
+---
+
+## PR-diff.getPullRequestDiff
+
+**Expected (per API reference):**
+- Endpoint: `GET /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{id}/diff`
+- Auth: `Authorization: Bearer <token>`
+- Accept header: `text/plain` returns unified diff as a plain-text string. `application/json` returns a structured per-file diff object — a completely different response shape.
+- Response body: raw unified diff text (e.g., `--- a/...`, `+++ b/...`, hunk headers `@@`)
+- Reference: https://docs.atlassian.com/bitbucket-server/rest/7.21.0/bitbucket-rest.html#idp222
+
+**Found (in our code):**
+
+Service layer — `pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/BitbucketServiceImpl.kt:555–575`:
+```kotlin
+override suspend fun getPullRequestDiff(prId: Int, repoName: String?): ToolResult<String> {
+    ...
+    return when (val result = api.getPullRequestDiff(projectKey, repoSlug, prId)) {
+        is ApiResult.Success -> {
+            ToolResult.success(result.data, "PR #$prId diff fetched (${result.data.length} chars)")
+        }
+        ...
+    }
+}
+```
+No transformation applied — `result.data` (the raw string from the HTTP layer) is returned verbatim. No size cap.
+
+HTTP client — `core/src/main/kotlin/com/workflow/orchestrator/core/bitbucket/BitbucketBranchClient.kt:1464–1494`:
+- URL: `"$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/diff"` — ✅ exact match
+- Method: `GET` — ✅
+- Accept header: `"text/plain"` (line 1475) — ✅ correct for raw unified diff
+- Response read: `it.body?.string() ?: ""` (line 1481) — reads **entire response body into a single in-memory String** with no size limit. Bitbucket returns this as a streaming body; `OkHttp.ResponseBody.string()` buffers it all into a JVM `String` before returning.
+- 401 / 404 error paths present.
+
+**Diff:**
+- Endpoint path: ✅ exact match
+- HTTP method: ✅ GET
+- Accept header: ✅ `text/plain` — correct
+- Response parsing: ✅ plain text, correct shape
+- Size handling: ❌ **no size cap** — `body?.string()` reads the full body into a single `String`. Large PRs (hundreds of modified files, binary context) can produce megabyte-scale diffs. This will (a) cause `OutOfMemoryError` or GC pressure for very large PRs, and (b) inject an uncapped string directly into an LLM prompt when used by `PrReviewTaskBuilder` (Phase 4+).
+
+**Tests:** none — no test exercises `getPullRequestDiff` through a mocked service or HTTP client. `BitbucketApiClientTest.kt` covers only `createPullRequest` and `getPullRequestsForBranch`. `BitbucketPrToolTest.kt` is schema-only.
+
+**Sandbox check:** not available
+
+**Verdict:** FIX
+
+**Notes:**
+1. **Size cap — required before Phase 4 LLM injection.** The full diff must be capped before it reaches the LLM prompt. Apply in `BitbucketServiceImpl.getPullRequestDiff` (not in the HTTP client, so the client remains general-purpose):
+
+   **File:** `pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/BitbucketServiceImpl.kt:566`
+
+   **Concrete change:**
+   ```kotlin
+   is ApiResult.Success -> {
+       val raw = result.data
+       val capped = raw.take(MAX_DIFF_CHARS)
+       val truncated = capped.length < raw.length
+       val summary = buildString {
+           append("PR #$prId diff fetched (${raw.length} chars)")
+           if (truncated) append(" — truncated to $MAX_DIFF_CHARS chars")
+       }
+       ToolResult.success(capped, summary)
+   }
+   ```
+   Add constant to `BitbucketServiceImpl` companion object:
+   ```kotlin
+   companion object {
+       private const val MAX_DIFF_CHARS = 327_680  // ~80K tokens at 4 chars/token
+   }
+   ```
+   Ideally truncation is at a file boundary (`--- a/`) to avoid cutting mid-hunk. A simple version using `take()` is safe and the truncation summary gives the agent visibility that the diff was cut.
+
+2. **No size issue for current callers** (PR dashboard panel, `get_pr_diff` agent action) as they display or summarise the diff at the UI layer; the risk only materialises when the diff is injected into an LLM prompt. However the fix should land before Phase 4.
+
+**Test coverage needed:**
+- Happy-path mock: small diff → returned verbatim, `isError=false`, summary contains char count
+- Truncation mock: diff longer than `MAX_DIFF_CHARS` → returned string is exactly `MAX_DIFF_CHARS` chars, summary contains "truncated"
+- 401 mock → `isError=true`, message "Invalid Bitbucket token"
+- 404 mock → `isError=true`, message contains "not found"
+- Not-configured guard → `isError=true`, hint references Settings
+
+---
+
+## PR-diff.getPullRequestChanges
+
+**Expected (per API reference):**
+- Endpoint: `GET /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{id}/changes`
+- Paginated: default page size 25; `isLastPage=false` + `nextPageStart` signals more pages.
+- Response per entry: `{path: {toString, name}, type: "ADD"|"MODIFY"|"DELETE"|"RENAME"|"COPY", srcPath: {toString, name}?}` — `srcPath` is present for RENAME and COPY changes.
+- Reference: https://docs.atlassian.com/bitbucket-server/rest/7.21.0/bitbucket-rest.html#idp227
+
+**Found (in our code):**
+
+Service layer — `pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/BitbucketServiceImpl.kt:530–553`:
+```kotlin
+override suspend fun getPullRequestChanges(prId: Int, repoName: String?): ToolResult<List<PrChangeData>> {
+    ...
+    return when (val result = api.getPullRequestChanges(projectKey, repoSlug, prId)) {
+        is ApiResult.Success -> {
+            val changes = result.data.map { c ->
+                PrChangeData(path = c.path.toString, changeType = c.type)
+            }
+            ToolResult.success(changes, "PR #$prId has ${changes.size} changed file(s)")
+        }
+        ...
+    }
+}
+```
+
+HTTP client — `core/src/main/kotlin/com/workflow/orchestrator/core/bitbucket/BitbucketBranchClient.kt:1500–1531`:
+- URL: `"$baseUrl/.../pull-requests/$prId/changes?limit=100"` (line 1509) — hardcoded single-page fetch with limit 100.
+- Response DTO `BitbucketPrChangesResponse` (`BitbucketBranchClient.kt:239–242`):
+  ```kotlin
+  private data class BitbucketPrChangesResponse(
+      val values: List<BitbucketPrChange> = emptyList(),
+      val isLastPage: Boolean = true
+  )
+  ```
+  `isLastPage` is present in the DTO but **never checked** — the code reads `parsed.values` and returns immediately regardless of whether more pages exist (line 1519–1520).
+- `BitbucketPrChange` DTO (`BitbucketBranchClient.kt:198–202`):
+  ```kotlin
+  data class BitbucketPrChange(
+      val path: BitbucketPath,
+      val type: String,
+      val nodeType: String = "FILE"
+  )
+  ```
+  No `srcPath` field — **rename/copy source path is silently dropped**.
+- `PrChangeData` domain model (`core/src/main/kotlin/com/workflow/orchestrator/core/model/bitbucket/BitbucketModels.kt:118–121`):
+  ```kotlin
+  data class PrChangeData(
+      val path: String,
+      val changeType: String
+  )
+  ```
+  Also has no `srcPath` field.
+
+**Diff:**
+- Endpoint path: ✅ exact match
+- `limit=100` vs API default 25: ✅ raises effective page size, but PRs with >100 changed files will still be silently truncated
+- Pagination: ❌ **no pagination loop** — `isLastPage` parsed but never checked; only first page (up to 100 files) returned for PRs with >100 changed files
+- `srcPath` (RENAME/COPY detection): ❌ **missing** — `BitbucketPrChange` DTO and `PrChangeData` domain model both omit `srcPath`; renamed files appear as `DELETE + ADD` instead of `RENAME` with source path
+
+**Tests:** none — `BitbucketApiClientTest.kt` and `BitbucketPrToolTest.kt` contain no test for `getPullRequestChanges` at any layer.
+
+**Sandbox check:** not available
+
+**Verdict:** FIX
+
+**Notes:**
+1. **Pagination gap.** For PRs touching >100 files, the current code silently returns only the first 100. Fix: implement a pagination loop in `BitbucketBranchClient.getPullRequestChanges` that increments `start` by `nextPageStart` until `isLastPage=true`. Cap total pages at a safe limit (e.g. 10 pages = 1000 files) to guard against degenerate PRs.
+
+   **File to change:** `core/src/main/kotlin/com/workflow/orchestrator/core/bitbucket/BitbucketBranchClient.kt` around line 1500.
+
+   Also add `nextPageStart: Int? = null` to `BitbucketPrChangesResponse` to support the loop.
+
+2. **`srcPath` missing.** Add `srcPath: BitbucketPath? = null` to `BitbucketPrChange` (`BitbucketBranchClient.kt:198`). Add `srcPath: String? = null` to `PrChangeData` (`BitbucketModels.kt:118`). Map it in `BitbucketServiceImpl.getPullRequestChanges` (line 543):
+   ```kotlin
+   PrChangeData(path = c.path.toString, changeType = c.type, srcPath = c.srcPath?.toString)
+   ```
+
+**Test coverage needed:**
+- Happy-path mock: PR with 3 changed files (ADD, MODIFY, DELETE) → all 3 returned, `changeType` values match
+- Rename mock: `type=RENAME`, `srcPath` populated → `PrChangeData.srcPath` propagated (after fix)
+- Pagination mock: first page `isLastPage=false`, `nextPageStart=100`; second page `isLastPage=true` → both pages merged (after fix)
+- `limit=100` boundary: response has exactly 100 items with `isLastPage=false` → second request issued (after fix)
+- 401 / 404 mocks → error results
+- Not-configured guard → error with Settings hint
+
+---
+
+## PR-diff.getPullRequestActivities
+
+**Expected (per API reference):**
+- Endpoint: `GET /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{id}/activities`
+- Paginated: default page size 25; `isLastPage=false` + `nextPageStart` signals more pages.
+- Response per entry: polymorphic on `action` field — values include `COMMENTED`, `APPROVED`, `UNAPPROVED`, `NEEDS_WORK`, `MERGED`, `DECLINED`, `REOPENED`, `RESCOPED`, `REVIEWED`. Each action type carries different additional fields (e.g., `comment` for `COMMENTED`, `addedReviewers`/`removedReviewers` for `RESCOPED`).
+- Reference: https://docs.atlassian.com/bitbucket-server/rest/7.21.0/bitbucket-rest.html#idp228
+
+**Found (in our code):**
+
+Service layer — `pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/BitbucketServiceImpl.kt:496–528`:
+```kotlin
+override suspend fun getPullRequestActivities(prId: Int, repoName: String?): ToolResult<List<PrActivityData>> {
+    ...
+    return when (val result = api.getPullRequestActivities(projectKey, repoSlug, prId)) {
+        is ApiResult.Success -> {
+            val activities = result.data.map { a ->
+                PrActivityData(
+                    id = a.id,
+                    action = a.action,
+                    userName = a.user.displayName.ifBlank { a.user.name },
+                    timestamp = a.createdDate,
+                    commentText = a.comment?.text,
+                    commentId = a.comment?.id,
+                    filePath = a.commentAnchor?.path ?: a.comment?.anchor?.path,
+                    lineNumber = a.commentAnchor?.line ?: a.comment?.anchor?.line
+                )
+            }
+            ToolResult.success(activities, "PR #$prId has ${activities.size} activit${if (activities.size == 1) "y" else "ies"}")
+        }
+        ...
+    }
+}
+```
+
+HTTP client — `core/src/main/kotlin/com/workflow/orchestrator/core/bitbucket/BitbucketBranchClient.kt:1125–1156`:
+- URL: `"$baseUrl/.../pull-requests/$prId/activities?limit=50"` (line 1134) — hardcoded single-page fetch with limit 50.
+- Response DTO `BitbucketPrActivityResponse` (`BitbucketBranchClient.kt:233–236`):
+  ```kotlin
+  private data class BitbucketPrActivityResponse(
+      val values: List<BitbucketPrActivity> = emptyList(),
+      val isLastPage: Boolean = true
+  )
+  ```
+  `isLastPage` is present in the DTO but **never checked** — same pattern as `getPullRequestChanges`.
+- `BitbucketPrActivity` DTO (`BitbucketBranchClient.kt:168–175`): fields `id`, `action`, `comment`, `commentAnchor`, `user`, `createdDate` — supports COMMENTED correctly. Action-specific extra fields for RESCOPED (`addedReviewers`, `removedReviewers`) are not modelled — silently ignored (no crash, just data loss).
+
+**Diff:**
+- Endpoint path: ✅ exact match
+- `limit=50`: ✅ raises above default 25, but PRs with >50 activity entries (active code reviews, many rounds) will be silently truncated
+- Pagination: ❌ **no pagination loop** — `isLastPage` parsed but never checked; only first 50 activities returned
+- Action-type discrimination: ⚠ partially correct — `action` string passed through verbatim so consumers can branch on it. Only COMMENTED extra data (`comment`, `commentAnchor`) is captured; RESCOPED participant changes are not modelled but this is acceptable for current use cases (display + LLM context).
+
+**Tests:** none — no test exists for `getPullRequestActivities` at any layer.
+
+**Sandbox check:** not available
+
+**Verdict:** FIX
+
+**Notes:**
+1. **Pagination gap.** Active PRs with many comment rounds can exceed 50 activities. Fix: add `nextPageStart: Int? = null` to `BitbucketPrActivityResponse`, implement a pagination loop in `BitbucketBranchClient.getPullRequestActivities`. For LLM-injection contexts, cap at a reasonable page limit (e.g. 4 pages = 200 activities) to avoid bloating the prompt.
+
+   **File to change:** `core/src/main/kotlin/com/workflow/orchestrator/core/bitbucket/BitbucketBranchClient.kt` around line 1125.
+
+2. **RESCOPED activity modelling** — not required now, but when Phase 4 builds reviewer-context summaries, `addedReviewers`/`removedReviewers` arrays from RESCOPED activities will be needed. Flag as future work.
+
+**Test coverage needed:**
+- Happy-path mock: 3 activities (COMMENTED, APPROVED, MERGED) → all 3 mapped with correct `action` strings
+- COMMENTED with anchor → `filePath` and `lineNumber` populated in `PrActivityData`
+- Pagination mock: first page `isLastPage=false`, `nextPageStart=50`; second page `isLastPage=true` → both merged (after fix)
+- 401 / 404 mocks → error results
+- Not-configured guard → error with Settings hint
+
+---
+
+## PR-diff.getPullRequestCommits
+
+**Expected (per API reference):**
+- Endpoint: `GET /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{id}/commits`
+- Paginated: default page size 25; `isLastPage=false` + `nextPageStart` for more pages.
+- Response per entry: `{id (SHA), displayId (short SHA), message, author: {name, emailAddress}, authorTimestamp, parents[]}`.
+- Reference: https://docs.atlassian.com/bitbucket-server/rest/7.21.0/bitbucket-rest.html#idp226
+
+**Found (in our code):**
+
+Service layer — `pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/BitbucketServiceImpl.kt:135–169`:
+```kotlin
+override suspend fun getPullRequestCommits(prId: Int, repoName: String?): ToolResult<List<CommitData>> {
+    ...
+    return when (val result = api.getPullRequestCommits(projectKey, repoSlug, prId)) {
+        is ApiResult.Success -> {
+            val commits = result.data.values.map { c ->
+                CommitData(
+                    id = c.id,
+                    displayId = c.displayId,
+                    message = c.message,
+                    author = c.author?.name,
+                    timestamp = c.authorTimestamp
+                )
+            }
+            ToolResult.success(data = commits, summary = "PR #$prId has ${commits.size} commit(s)")
+        }
+        ...
+    }
+}
+```
+
+HTTP client — `core/src/main/kotlin/com/workflow/orchestrator/core/bitbucket/BitbucketBranchClient.kt:1539–1571`:
+- URL: `"$baseUrl/.../pull-requests/$prId/commits?limit=$limit"` (line 1549), with `limit: Int = 50` default parameter (line 1543).
+- Response DTO `BitbucketCommitListResponse` (`BitbucketBranchClient.kt:314–320`):
+  ```kotlin
+  data class BitbucketCommitListResponse(
+      val values: List<BitbucketCommit> = emptyList(),
+      val size: Int = 0,
+      val isLastPage: Boolean = true,
+      val start: Int = 0,
+      val nextPageStart: Int? = null
+  )
+  ```
+  All pagination fields fully present. However the client method returns the entire `BitbucketCommitListResponse` (not just `values`), and the service maps only `result.data.values` (line 149) — `isLastPage` and `nextPageStart` are **never checked**. Single-page only.
+- `BitbucketCommit` DTO (`BitbucketBranchClient.kt:323–329`): fields `id`, `displayId`, `message`, `author`, `authorTimestamp`, `parents` — ✅ all fields the service uses are present and mapped.
+
+**Diff:**
+- Endpoint path: ✅ exact match
+- HTTP method: ✅ GET
+- Response field mapping: ✅ `id`, `displayId`, `message`, `author.name`, `authorTimestamp` all correctly mapped to `CommitData`
+- Pagination: ❌ **no pagination loop** — `BitbucketCommitListResponse` has `isLastPage` + `nextPageStart` but the service reads only `result.data.values` and ignores the pagination fields. PRs with >50 commits (common in long-running feature branches) return only the first 50.
+- `emailAddress` field from `author`: not captured in `CommitData` (acceptable — not needed for current callers)
+
+**Tests:** none — no test exercises `getPullRequestCommits` at any layer. `BitbucketApiClientTest.kt` covers only `createPullRequest` and `getPullRequestsForBranch`.
+
+**Sandbox check:** not available
+
+**Verdict:** FIX
+
+**Notes:**
+1. **Pagination gap.** Long-running feature branches often have >50 commits. Fix: implement a pagination loop in `BitbucketServiceImpl.getPullRequestCommits` using `result.data.isLastPage` and `result.data.nextPageStart`. Because the HTTP client already exposes the full `BitbucketCommitListResponse` (not just `values`), the loop can be added entirely in the service layer without modifying the client.
+
+   **File to change:** `pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/BitbucketServiceImpl.kt` starting at line 147.
+
+   Sketch:
+   ```kotlin
+   val allCommits = mutableListOf<CommitData>()
+   var start = 0
+   do {
+       val page = api.getPullRequestCommits(projectKey, repoSlug, prId, start = start)
+       if (page is ApiResult.Error) { /* return error */ }
+       page as ApiResult.Success
+       allCommits += page.data.values.map { c -> CommitData(...) }
+       if (page.data.isLastPage) break
+       start = page.data.nextPageStart ?: break
+   } while (true)
+   ```
+   Note: `BitbucketBranchClient.getPullRequestCommits` currently does not accept a `start` parameter — add `start: Int = 0` to its signature and append `&start=$start` to the URL. **File:** `core/src/main/kotlin/com/workflow/orchestrator/core/bitbucket/BitbucketBranchClient.kt:1539–1543`.
+
+2. **`emailAddress` not mapped** — current callers do not need it. If Phase 4 reviewer attribution requires commit author email, add `authorEmail: String?` to `CommitData` and map `c.author?.emailAddress`.
+
+**Test coverage needed:**
+- Happy-path mock: PR with 3 commits → all 3 returned with correct `id`, `displayId`, `message`, `author`, `timestamp`
+- Pagination mock: first page `isLastPage=false`, `nextPageStart=50`; second page `isLastPage=true` → both pages merged (after fix)
+- Single-commit edge case: `values` has 1 item, `isLastPage=true` → list of 1 returned correctly
+- 401 / 404 mocks → `isError=true`, appropriate messages
+- Not-configured guard (`client == null`) → `isError=true`, hint references Settings

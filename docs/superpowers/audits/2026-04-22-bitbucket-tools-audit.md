@@ -56,10 +56,10 @@ These are service-layer methods (not tool actions). Schema intentionally differs
 
 | Method | Location | Test file | Verdict |
 |---|---|---|---|
-| `getPullRequestDiff` | `core/src/main/kotlin/com/workflow/orchestrator/core/services/BitbucketService.kt:82` / `pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/BitbucketServiceImpl.kt:555` | — | |
-| `getPullRequestChanges` | `core/src/main/kotlin/com/workflow/orchestrator/core/services/BitbucketService.kt:79` / `pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/BitbucketServiceImpl.kt:530` | — | |
-| `getPullRequestActivities` | `core/src/main/kotlin/com/workflow/orchestrator/core/services/BitbucketService.kt:76` / `pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/BitbucketServiceImpl.kt:496` | — | |
-| `getPullRequestCommits` | `core/src/main/kotlin/com/workflow/orchestrator/core/services/BitbucketService.kt:23` / `pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/BitbucketServiceImpl.kt:135` | — | |
+| `getPullRequestDiff` | `core/src/main/kotlin/com/workflow/orchestrator/core/services/BitbucketService.kt:82` / `pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/BitbucketServiceImpl.kt:555` | — | FIX |
+| `getPullRequestChanges` | `core/src/main/kotlin/com/workflow/orchestrator/core/services/BitbucketService.kt:79` / `pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/BitbucketServiceImpl.kt:530` | — | FIX |
+| `getPullRequestActivities` | `core/src/main/kotlin/com/workflow/orchestrator/core/services/BitbucketService.kt:76` / `pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/BitbucketServiceImpl.kt:496` | — | FIX |
+| `getPullRequestCommits` | `core/src/main/kotlin/com/workflow/orchestrator/core/services/BitbucketService.kt:23` / `pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/BitbucketServiceImpl.kt:135` | — | FIX |
 
 ### Action-by-action notes
 
