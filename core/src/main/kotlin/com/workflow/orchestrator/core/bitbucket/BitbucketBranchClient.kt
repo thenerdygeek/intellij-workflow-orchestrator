@@ -346,6 +346,7 @@ private data class InlineCommentAnchor(
     val line: Int,
     val lineType: String,
     val fileType: String,
+    val srcPath: String? = null,
 ) {
     companion object {
         fun deriveFileType(lineType: String): String =
@@ -1586,7 +1587,8 @@ class BitbucketBranchClient(
         filePath: String,
         lineNumber: Int,
         lineType: String,
-        text: String
+        text: String,
+        srcPath: String? = null,
     ): ApiResult<Unit> =
         withContext(Dispatchers.IO) {
             log.info("[Core:Bitbucket] Adding inline comment to PR #$prId at $filePath:$lineNumber ($lineType)")
@@ -1599,6 +1601,7 @@ class BitbucketBranchClient(
                             line = lineNumber,
                             lineType = lineType,
                             fileType = InlineCommentAnchor.deriveFileType(lineType),
+                            srcPath = srcPath,
                         )
                     )
                 ).toRequestBody("application/json".toMediaType())

@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.core.bitbucket
 
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -81,5 +82,38 @@ class BitbucketBranchClientInlineAnchorTest {
         val body = Json.parseToJsonElement(recorded.body.readUtf8()).jsonObject
         val anchor = body["anchor"]!!.jsonObject
         assertEquals("TO", anchor["fileType"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `srcPath is sent when provided for renamed file`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(201).setBody("""{"id":1,"version":0,"text":"c","author":{"name":"u","displayName":"U"},"createdDate":0,"updatedDate":0}"""))
+        client.addInlineComment(
+            projectKey = "P", repoSlug = "R", prId = 1,
+            text = "comment",
+            filePath = "src/new/Foo.kt",
+            lineNumber = 42,
+            lineType = "ADDED",
+            srcPath = "src/old/Foo.kt",
+        )
+        val recorded = server.takeRequest()
+        val body = Json.parseToJsonElement(recorded.body.readUtf8()).jsonObject
+        val anchor = body["anchor"]!!.jsonObject
+        assertEquals("src/old/Foo.kt", anchor["srcPath"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `srcPath is omitted from JSON when null`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(201).setBody("""{"id":1,"version":0,"text":"c","author":{"name":"u","displayName":"U"},"createdDate":0,"updatedDate":0}"""))
+        client.addInlineComment(
+            projectKey = "P", repoSlug = "R", prId = 1,
+            text = "comment",
+            filePath = "src/Foo.kt",
+            lineNumber = 42,
+            lineType = "ADDED",
+        )
+        val recorded = server.takeRequest()
+        val bodyStr = recorded.body.readUtf8()
+        // srcPath must not appear in JSON at all when null (encodeDefaults=false + nullable default)
+        assert(!bodyStr.contains("srcPath")) { "srcPath should be omitted but body was: $bodyStr" }
     }
 }
