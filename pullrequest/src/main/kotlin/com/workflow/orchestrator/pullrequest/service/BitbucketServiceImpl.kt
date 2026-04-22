@@ -144,28 +144,46 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
             hint = "Set Bitbucket project key and repo slug in Settings."
         )
 
-        return when (val result = api.getPullRequestCommits(projectKey, repoSlug, prId)) {
-            is ApiResult.Success -> {
-                val commits = result.data.values.map { c ->
-                    CommitData(
-                        id = c.id,
-                        displayId = c.displayId,
-                        message = c.message,
-                        author = c.author?.name,
-                        timestamp = c.authorTimestamp
+        val maxPages = 20  // safety cap: ~1000 commits at limit=50
+        val aggregated = mutableListOf<CommitData>()
+        var cursor = 0
+        var pages = 0
+        while (pages < maxPages) {
+            when (val page = api.getPullRequestCommits(projectKey, repoSlug, prId, start = cursor)) {
+                is ApiResult.Error -> {
+                    log.warn("[BitbucketService] Failed to fetch commits for PR #$prId: ${page.message}")
+                    return ToolResult(
+                        data = emptyList(),
+                        summary = "Error fetching commits for PR #$prId: ${page.message}",
+                        isError = true,
+                        hint = "Check Bitbucket connection in Settings."
                     )
                 }
-                ToolResult.success(
-                    data = commits,
-                    summary = "PR #$prId has ${commits.size} commit(s)"
-                )
-            }
-            is ApiResult.Error -> {
-                log.warn("[BitbucketService] Failed to fetch commits for PR #$prId: ${result.message}")
-                ToolResult(data = emptyList(), summary = "Error fetching commits for PR #$prId: ${result.message}", isError = true,
-                    hint = "Check Bitbucket connection in Settings.")
+                is ApiResult.Success -> {
+                    aggregated += page.data.values.map { c ->
+                        CommitData(
+                            id = c.id,
+                            displayId = c.displayId,
+                            message = c.message,
+                            author = c.author?.name,
+                            timestamp = c.authorTimestamp
+                        )
+                    }
+                    if (page.data.isLastPage || page.data.nextPageStart == null) {
+                        return ToolResult.success(
+                            data = aggregated,
+                            summary = "PR #$prId has ${aggregated.size} commit(s)"
+                        )
+                    }
+                    cursor = page.data.nextPageStart!!
+                    pages++
+                }
             }
         }
+        return ToolResult.success(
+            data = aggregated,
+            summary = "PR #$prId has ${aggregated.size} commit(s) (truncated at page cap)"
+        )
     }
 
     override suspend fun addInlineComment(prId: Int, filePath: String, line: Int, lineType: String, text: String, repoName: String?): ToolResult<Unit> {

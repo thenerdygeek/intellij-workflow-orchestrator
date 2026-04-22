@@ -1623,13 +1623,14 @@ class BitbucketBranchClient(
         projectKey: String,
         repoSlug: String,
         prId: Int,
-        limit: Int = 50
+        limit: Int = 50,
+        start: Int = 0
     ): ApiResult<BitbucketCommitListResponse> =
         withContext(Dispatchers.IO) {
-            log.info("[Core:Bitbucket] Fetching commits for PR #$prId in $projectKey/$repoSlug")
+            log.info("[Core:Bitbucket] Fetching commits for PR #$prId in $projectKey/$repoSlug (start=$start)")
             try {
                 val request = Request.Builder()
-                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/commits?limit=$limit")
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/commits?limit=$limit&start=$start")
                     .get()
                     .header("Accept", "application/json")
                     .build()
