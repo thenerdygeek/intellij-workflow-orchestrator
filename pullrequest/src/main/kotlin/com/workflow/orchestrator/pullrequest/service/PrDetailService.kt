@@ -68,7 +68,7 @@ class PrDetailService(private val project: Project) {
 
         log.info("[PR:Detail] Fetching activities for PR #$prId")
         return when (val result = client.getPullRequestActivities(projectKey(), repoSlug(), prId)) {
-            is ApiResult.Success -> result.data
+            is ApiResult.Success -> result.data.values
             is ApiResult.Error -> {
                 log.warn("[PR:Detail] Failed to fetch activities for PR #$prId: ${result.message}")
                 emptyList()

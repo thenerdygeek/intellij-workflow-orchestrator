@@ -505,7 +505,7 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
 
         return when (val result = api.getPullRequestActivities(projectKey, repoSlug, prId)) {
             is ApiResult.Success -> {
-                val activities = result.data.map { a ->
+                val activities = result.data.values.map { a ->
                     PrActivityData(
                         id = a.id,
                         action = a.action,

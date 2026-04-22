@@ -79,4 +79,36 @@ class BitbucketBranchClientPaginationTest {
         assertEquals(1, values.size)
         assertEquals("old/Foo.kt", values[0].srcPath?.toString)
     }
+
+    @Test
+    fun `getPullRequestActivities aggregates across pages`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(
+            """{"values":[
+              {"id":1,"action":"COMMENTED","user":{"name":"alice"}},
+              {"id":2,"action":"APPROVED","user":{"name":"bob"}}
+            ],"isLastPage":false,"nextPageStart":2}""".trimIndent()
+        ))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(
+            """{"values":[{"id":3,"action":"MERGED","user":{"name":"charlie"}}],"isLastPage":true}"""
+        ))
+        val result = client.getPullRequestActivities("P", "R", 1)
+        assertTrue(result is ApiResult.Success, "expected Success, got $result")
+        val values = (result as ApiResult.Success).data.values
+        assertEquals(3, values.size)
+
+        val req1 = server.takeRequest()
+        assertTrue(!req1.path!!.contains("start=") || req1.path!!.contains("start=0"))
+        val req2 = server.takeRequest()
+        assertTrue(req2.path!!.contains("start=2"), "page 2 req was ${req2.path}")
+    }
+
+    @Test
+    fun `getPullRequestActivities single page happy path`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(
+            """{"values":[{"id":1,"action":"COMMENTED","user":{"name":"alice"}}],"isLastPage":true}"""
+        ))
+        val result = client.getPullRequestActivities("P", "R", 1)
+        assertTrue(result is ApiResult.Success)
+        assertEquals(1, (result as ApiResult.Success).data.values.size)
+    }
 }

@@ -231,9 +231,10 @@ data class BitbucketPrDetailListResponse(
 )
 
 @Serializable
-private data class BitbucketPrActivityResponse(
+data class BitbucketPrActivityResponse(
     val values: List<BitbucketPrActivity> = emptyList(),
-    val isLastPage: Boolean = true
+    val isLastPage: Boolean = true,
+    val nextPageStart: Int? = null,
 )
 
 @Serializable
@@ -1127,19 +1128,19 @@ class BitbucketBranchClient(
         }
 
     /**
-     * Gets activity (comments, approvals, merges) for a pull request.
-     * GET /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/activities?limit=50
+     * Fetches a single page of PR activities.
+     * GET /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/activities?limit=50&start={start}
      */
-    suspend fun getPullRequestActivities(
+    private suspend fun fetchActivitiesPage(
         projectKey: String,
         repoSlug: String,
-        prId: Int
-    ): ApiResult<List<BitbucketPrActivity>> =
+        prId: Int,
+        start: Int,
+    ): ApiResult<BitbucketPrActivityResponse> =
         withContext(Dispatchers.IO) {
-            log.info("[Core:Bitbucket] Fetching activities for PR #$prId in $projectKey/$repoSlug")
             try {
                 val request = Request.Builder()
-                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/activities?limit=50")
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/activities?limit=50&start=$start")
                     .get()
                     .header("Accept", "application/json")
                     .build()
@@ -1149,8 +1150,7 @@ class BitbucketBranchClient(
                         in 200..299 -> {
                             val body = it.body?.string() ?: ""
                             val parsed = json.decodeFromString<BitbucketPrActivityResponse>(body)
-                            log.info("[Core:Bitbucket] Found ${parsed.values.size} activities for PR #$prId")
-                            ApiResult.Success(parsed.values)
+                            ApiResult.Success(parsed)
                         }
                         401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
                         404 -> ApiResult.Error(ErrorType.NOT_FOUND, "PR #$prId not found in $projectKey/$repoSlug")
@@ -1158,10 +1158,48 @@ class BitbucketBranchClient(
                     }
                 }
             } catch (e: IOException) {
-                log.error("[Core:Bitbucket] Network error fetching PR #$prId activities", e)
+                log.error("[Core:Bitbucket] Network error fetching PR #$prId activities (start=$start)", e)
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
             }
         }
+
+    /**
+     * Gets activity (comments, approvals, merges) for a pull request, aggregating across all pages.
+     * GET /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/activities?limit=50&start={start}
+     */
+    suspend fun getPullRequestActivities(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        start: Int = 0,
+    ): ApiResult<BitbucketPrActivityResponse> {
+        log.info("[Core:Bitbucket] Fetching activities for PR #$prId in $projectKey/$repoSlug")
+        val maxPages = 20  // safety cap: ~1000 activities at limit=50
+        val aggregated = mutableListOf<BitbucketPrActivity>()
+        var cursor = start
+        var pages = 0
+        while (pages < maxPages) {
+            when (val single = fetchActivitiesPage(projectKey, repoSlug, prId, cursor)) {
+                is ApiResult.Error -> return single
+                is ApiResult.Success -> {
+                    aggregated += single.data.values
+                    if (single.data.isLastPage || single.data.nextPageStart == null) {
+                        log.info("[Core:Bitbucket] Found ${aggregated.size} activities in PR #$prId")
+                        return ApiResult.Success(
+                            BitbucketPrActivityResponse(values = aggregated, isLastPage = true, nextPageStart = null)
+                        )
+                    }
+                    cursor = single.data.nextPageStart
+                    pages++
+                }
+            }
+        }
+        // Cap hit — return aggregated with isLastPage=false indicating truncation
+        log.warn("[Core:Bitbucket] PR #$prId activities truncated at $maxPages pages (${aggregated.size} activities)")
+        return ApiResult.Success(
+            BitbucketPrActivityResponse(values = aggregated, isLastPage = false, nextPageStart = cursor)
+        )
+    }
 
     /**
      * Adds a comment to a pull request.
