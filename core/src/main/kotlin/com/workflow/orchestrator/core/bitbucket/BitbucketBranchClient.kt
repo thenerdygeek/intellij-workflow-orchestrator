@@ -197,6 +197,7 @@ data class BitbucketCommentAnchor(
 @Serializable
 data class BitbucketPrChange(
     val path: BitbucketPath,
+    val srcPath: BitbucketPath? = null,
     val type: String,
     val nodeType: String = "FILE"
 )
@@ -236,9 +237,10 @@ private data class BitbucketPrActivityResponse(
 )
 
 @Serializable
-private data class BitbucketPrChangesResponse(
+data class BitbucketPrChangesResponse(
     val values: List<BitbucketPrChange> = emptyList(),
-    val isLastPage: Boolean = true
+    val isLastPage: Boolean = true,
+    val nextPageStart: Int? = null,
 )
 
 @Serializable
@@ -1500,19 +1502,19 @@ class BitbucketBranchClient(
         }
 
     /**
-     * Gets the list of changed files for a pull request.
-     * GET /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/changes?limit=100
+     * Fetches a single page of PR changes.
+     * GET /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/changes?limit=100&start={start}
      */
-    suspend fun getPullRequestChanges(
+    private suspend fun fetchChangesPage(
         projectKey: String,
         repoSlug: String,
-        prId: Int
-    ): ApiResult<List<BitbucketPrChange>> =
+        prId: Int,
+        start: Int,
+    ): ApiResult<BitbucketPrChangesResponse> =
         withContext(Dispatchers.IO) {
-            log.info("[Core:Bitbucket] Fetching changes for PR #$prId in $projectKey/$repoSlug")
             try {
                 val request = Request.Builder()
-                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/changes?limit=100")
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/changes?limit=100&start=$start")
                     .get()
                     .header("Accept", "application/json")
                     .build()
@@ -1522,8 +1524,7 @@ class BitbucketBranchClient(
                         in 200..299 -> {
                             val body = it.body?.string() ?: ""
                             val parsed = json.decodeFromString<BitbucketPrChangesResponse>(body)
-                            log.info("[Core:Bitbucket] Found ${parsed.values.size} changed files in PR #$prId")
-                            ApiResult.Success(parsed.values)
+                            ApiResult.Success(parsed)
                         }
                         401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
                         404 -> ApiResult.Error(ErrorType.NOT_FOUND, "PR #$prId not found in $projectKey/$repoSlug")
@@ -1531,10 +1532,48 @@ class BitbucketBranchClient(
                     }
                 }
             } catch (e: IOException) {
-                log.error("[Core:Bitbucket] Network error fetching PR #$prId changes", e)
+                log.error("[Core:Bitbucket] Network error fetching PR #$prId changes (start=$start)", e)
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
             }
         }
+
+    /**
+     * Gets the list of changed files for a pull request, aggregating across all pages.
+     * GET /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/changes?limit=100&start={start}
+     */
+    suspend fun getPullRequestChanges(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        start: Int = 0,
+    ): ApiResult<BitbucketPrChangesResponse> {
+        log.info("[Core:Bitbucket] Fetching changes for PR #$prId in $projectKey/$repoSlug")
+        val maxPages = 20  // safety cap = 2000 files
+        val aggregated = mutableListOf<BitbucketPrChange>()
+        var cursor = start
+        var pages = 0
+        while (pages < maxPages) {
+            when (val single = fetchChangesPage(projectKey, repoSlug, prId, cursor)) {
+                is ApiResult.Error -> return single
+                is ApiResult.Success -> {
+                    aggregated += single.data.values
+                    if (single.data.isLastPage || single.data.nextPageStart == null) {
+                        log.info("[Core:Bitbucket] Found ${aggregated.size} changed files in PR #$prId")
+                        return ApiResult.Success(
+                            BitbucketPrChangesResponse(values = aggregated, isLastPage = true, nextPageStart = null)
+                        )
+                    }
+                    cursor = single.data.nextPageStart
+                    pages++
+                }
+            }
+        }
+        // Cap hit — return aggregated with isLastPage=false indicating truncation
+        log.warn("[Core:Bitbucket] PR #$prId changes truncated at $maxPages pages (${aggregated.size} files)")
+        return ApiResult.Success(
+            BitbucketPrChangesResponse(values = aggregated, isLastPage = false, nextPageStart = cursor)
+        )
+    }
 
     // --- Commit, Inline Comment, Reply, Reviewer Status, File Browse Methods ---
 

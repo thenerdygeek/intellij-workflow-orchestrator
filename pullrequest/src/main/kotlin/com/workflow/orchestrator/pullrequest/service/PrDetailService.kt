@@ -85,7 +85,7 @@ class PrDetailService(private val project: Project) {
 
         log.info("[PR:Detail] Fetching changes for PR #$prId")
         return when (val result = client.getPullRequestChanges(projectKey(), repoSlug(), prId)) {
-            is ApiResult.Success -> result.data
+            is ApiResult.Success -> result.data.values
             is ApiResult.Error -> {
                 log.warn("[PR:Detail] Failed to fetch changes for PR #$prId: ${result.message}")
                 emptyList()

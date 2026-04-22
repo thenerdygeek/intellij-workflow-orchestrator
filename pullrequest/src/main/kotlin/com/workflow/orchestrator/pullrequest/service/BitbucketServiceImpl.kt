@@ -539,8 +539,8 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
 
         return when (val result = api.getPullRequestChanges(projectKey, repoSlug, prId)) {
             is ApiResult.Success -> {
-                val changes = result.data.map { c ->
-                    PrChangeData(path = c.path.toString, changeType = c.type)
+                val changes = result.data.values.map { c ->
+                    PrChangeData(path = c.path.toString, changeType = c.type, srcPath = c.srcPath?.toString)
                 }
                 ToolResult.success(changes, "PR #$prId has ${changes.size} changed file(s)")
             }

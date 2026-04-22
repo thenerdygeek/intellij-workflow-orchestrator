@@ -117,7 +117,8 @@ data class PrActivityData(
 @Serializable
 data class PrChangeData(
     val path: String,
-    val changeType: String
+    val changeType: String,
+    val srcPath: String? = null,
 )
 
 /**
