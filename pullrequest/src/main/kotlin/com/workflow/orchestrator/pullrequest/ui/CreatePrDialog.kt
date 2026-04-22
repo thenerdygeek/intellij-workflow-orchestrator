@@ -33,12 +33,14 @@ import com.workflow.orchestrator.core.workflow.TicketTransition
 import com.workflow.orchestrator.pullrequest.service.MarkdownToHtml
 import com.workflow.orchestrator.pullrequest.service.PrDescriptionGenerator
 import git4idea.repo.GitRepositoryManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.Component
@@ -482,26 +484,50 @@ class CreatePrDialog(
 
     private fun showDescriptionEmpty() {
         descCardLayout.show(descCardPanel, "empty")
-        regenerateButton.isEnabled = true
+        descriptionArea.text = ""
         provenanceLabel.text = ""
+        lastGen = null
+        regenerateButton.isEnabled = true
     }
 
     private fun generateDescription() {
         descriptionGenJob?.cancel()
-        showDescriptionLoading()
         descriptionGenJob = scope.launch {
             val targetBranch = withContext(Dispatchers.EDT) { targetField.text.trim() }
             val tickets = ticketChipInput.allValid()
-
-            val description = PrDescriptionGenerator.generate(
-                project, tickets, sourceBranch, targetBranch
-            )
-            invokeLater {
-                descriptionArea.text = description
-                regenerateButton.isEnabled = true
-                showDescriptionTab("edit")
-                lastGen = GenContext(targetBranch, tickets.map { it.key })
-                updateProvenanceLabel()
+            invokeLater { showDescriptionLoading() }
+            try {
+                val description = withTimeoutOrNull(120_000) {
+                    PrDescriptionGenerator.generate(project, tickets, sourceBranch, targetBranch)
+                }
+                if (description == null) {
+                    log.warn("[Pr:CreateDialog] generate description timed out")
+                    invokeLater {
+                        showDescriptionEmpty()
+                        regenerateButton.isEnabled = true
+                    }
+                    return@launch
+                }
+                invokeLater {
+                    descriptionArea.text = description
+                    showDescriptionTab("edit")
+                    regenerateButton.isEnabled = true
+                    lastGen = GenContext(targetBranch, tickets.map { it.key })
+                    updateProvenanceLabel()
+                }
+            } catch (e: CancellationException) {
+                invokeLater {
+                    if (descriptionArea.text.isBlank()) showDescriptionEmpty()
+                    else showDescriptionTab("edit")
+                    regenerateButton.isEnabled = true
+                }
+                throw e
+            } catch (e: Exception) {
+                log.warn("[Pr:CreateDialog] generate description failed", e)
+                invokeLater {
+                    showDescriptionEmpty()
+                    regenerateButton.isEnabled = true
+                }
             }
         }
     }
@@ -542,19 +568,26 @@ class CreatePrDialog(
 
         titleGenJob = scope.launch {
             val textGen = TextGenerationService.getInstance()
-            val result: String? = try {
-                textGen?.generatePrTitle(project, primary, emptyList())
-            } catch (e: Exception) {
-                log.warn("[PR:Create] AI title generation failed: ${e.message}")
-                null
-            }
-            invokeLater {
-                restoreTitleField()
-                if (!result.isNullOrBlank()) {
-                    titleField.text = result.trim()
-                } else {
-                    flashTitleError("Could not generate title — try again")
+            try {
+                val result: String? = withTimeoutOrNull(120_000) {
+                    try {
+                        textGen?.generatePrTitle(project, primary, emptyList())
+                    } catch (e: Exception) {
+                        log.warn("[PR:Create] AI title generation failed: ${e.message}")
+                        null
+                    }
                 }
+                invokeLater {
+                    restoreTitleField()
+                    if (!result.isNullOrBlank()) {
+                        titleField.text = result.trim()
+                    } else {
+                        flashTitleError("Could not generate title — try again")
+                    }
+                }
+            } catch (e: CancellationException) {
+                invokeLater { restoreTitleField() }
+                throw e
             }
         }
     }

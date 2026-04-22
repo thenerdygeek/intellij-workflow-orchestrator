@@ -100,4 +100,16 @@ class CreatePrDialogProvenanceTest {
             text
         )
     }
+
+    @Test
+    fun `clear after generation then change target — provenance stays empty`() {
+        // Simulates showDescriptionEmpty() setting lastGen = null after user clears or timeout/error.
+        // Even if the target changes afterwards, buildProvenanceText with null lastGen must return "".
+        val text = CreatePrDialog.buildProvenanceText(
+            lastGen = null,
+            currentTarget = "main",
+            currentTickets = listOf("ABC-1", "ABC-2")
+        )
+        assertEquals("", text)
+    }
 }

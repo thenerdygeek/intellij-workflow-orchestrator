@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.pullrequest.service
 
+import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.changes.ChangeListManager
@@ -174,13 +175,15 @@ object PrDescriptionGenerator {
 
     private fun getCommitMessages(project: Project, source: String, target: String): List<String> {
         return try {
-            val repo = resolveTargetRepo(project) ?: return emptyList()
-            val handler = git4idea.commands.GitLineHandler(project, repo.root, git4idea.commands.GitCommand.LOG)
-            handler.addParameters("--oneline", "$target..$source")
-            val result = Git.getInstance().runCommand(handler)
-            if (result.success()) {
-                result.getOutputOrThrow().lines().filter { it.isNotBlank() }.take(50)
-            } else emptyList()
+            ReadAction.compute<List<String>, Throwable> {
+                val repo = resolveTargetRepo(project) ?: return@compute emptyList()
+                val handler = git4idea.commands.GitLineHandler(project, repo.root, git4idea.commands.GitCommand.LOG)
+                handler.addParameters("--oneline", "$target..$source")
+                val result = Git.getInstance().runCommand(handler)
+                if (result.success()) {
+                    result.getOutputOrThrow().lines().filter { it.isNotBlank() }.take(50)
+                } else emptyList()
+            }
         } catch (e: Exception) {
             log.warn("[Build:PrDesc] Failed to get commit messages: ${e.message}")
             emptyList()
@@ -189,13 +192,15 @@ object PrDescriptionGenerator {
 
     private fun getDiffBetweenBranches(project: Project, source: String, target: String): String? {
         return try {
-            val repo = resolveTargetRepo(project) ?: return null
-            val handler = git4idea.commands.GitLineHandler(project, repo.root, git4idea.commands.GitCommand.DIFF)
-            handler.addParameters("$target...$source", "--no-color")
-            val result = Git.getInstance().runCommand(handler)
-            if (result.success() && result.output.isNotEmpty()) {
-                result.output.joinToString("\n")
-            } else null
+            ReadAction.compute<String?, Throwable> {
+                val repo = resolveTargetRepo(project) ?: return@compute null
+                val handler = git4idea.commands.GitLineHandler(project, repo.root, git4idea.commands.GitCommand.DIFF)
+                handler.addParameters("$target...$source", "--no-color")
+                val result = Git.getInstance().runCommand(handler)
+                if (result.success() && result.output.isNotEmpty()) {
+                    result.output.joinToString("\n")
+                } else null
+            }
         } catch (e: Exception) {
             log.warn("[Build:PrDesc] Failed to get branch diff: ${e.message}")
             null
@@ -204,9 +209,11 @@ object PrDescriptionGenerator {
 
     private fun getChangedFilePaths(project: Project): List<String> {
         return try {
-            ChangeListManager.getInstance(project).allChanges
-                .mapNotNull { it.virtualFile?.path }
-                .take(MAX_CONTEXT_FILES)
+            ReadAction.compute<List<String>, Throwable> {
+                ChangeListManager.getInstance(project).allChanges
+                    .mapNotNull { it.virtualFile?.path }
+                    .take(MAX_CONTEXT_FILES)
+            }
         } catch (e: Exception) {
             log.warn("[Build:PrDesc] Failed to get changed files: ${e.message}")
             emptyList()
