@@ -1,7 +1,5 @@
 package com.workflow.orchestrator.jira.api
 
-import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.workflow.orchestrator.core.model.jira.FieldOption
 import com.workflow.orchestrator.core.model.jira.FieldSchema
 import com.workflow.orchestrator.core.model.jira.SelectSource
@@ -9,68 +7,75 @@ import com.workflow.orchestrator.core.model.jira.StatusCategory
 import com.workflow.orchestrator.core.model.jira.StatusRef
 import com.workflow.orchestrator.core.model.jira.TransitionField
 import com.workflow.orchestrator.core.model.jira.TransitionMeta
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
-class JiraTransitionResponseParser(private val mapper: ObjectMapper) {
+class JiraTransitionResponseParser(private val json: Json = Json { ignoreUnknownKeys = true }) {
 
-    fun parse(json: String): List<TransitionMeta> {
-        val root = mapper.readTree(json)
-        val tr = root.get("transitions") ?: return emptyList()
-        return tr.map { parseTransition(it) }
+    fun parse(raw: String): List<TransitionMeta> {
+        val root = json.parseToJsonElement(raw).jsonObject
+        val arr = root["transitions"]?.jsonArray ?: return emptyList()
+        return arr.map { parseTransition(it.jsonObject) }
     }
 
-    private fun parseTransition(n: JsonNode): TransitionMeta {
-        val to = n.get("to")
+    private fun parseTransition(n: JsonObject): TransitionMeta {
+        val to = n["to"]!!.jsonObject
         val toStatus = StatusRef(
-            id = to.get("id").asText(),
-            name = to.get("name").asText(),
-            category = mapCategory(to.get("statusCategory")?.get("key")?.asText())
+            id = to["id"]!!.jsonPrimitive.content,
+            name = to["name"]!!.jsonPrimitive.content,
+            category = mapCategory(to["statusCategory"]?.jsonObject?.get("key")?.jsonPrimitive?.contentOrNull)
         )
-        val fieldsNode = n.get("fields")
-        val fields = fieldsNode?.fields()?.asSequence()?.map { (id, node) -> parseField(id, node) }?.toList() ?: emptyList()
+        val fieldsObj = n["fields"]?.jsonObject
+        val fields = fieldsObj?.entries?.map { (id, node) -> parseField(id, node.jsonObject) } ?: emptyList()
         return TransitionMeta(
-            id = n.get("id").asText(),
-            name = n.get("name").asText(),
+            id = n["id"]!!.jsonPrimitive.content,
+            name = n["name"]!!.jsonPrimitive.content,
             toStatus = toStatus,
             hasScreen = fields.isNotEmpty(),
             fields = fields
         )
     }
 
-    private fun parseField(id: String, n: JsonNode): TransitionField {
-        val required = n.get("required")?.asBoolean(false) ?: false
-        val name = n.get("name")?.asText(id) ?: id
-        val schemaNode = n.get("schema")
-        val autoCompleteUrl = n.get("autoCompleteUrl")?.asText()
-        val allowed = parseAllowedValues(n.get("allowedValues"))
+    private fun parseField(id: String, n: JsonObject): TransitionField {
+        val required = n["required"]?.jsonPrimitive?.booleanOrNull ?: false
+        val name = n["name"]?.jsonPrimitive?.contentOrNull ?: id
+        val schemaNode = n["schema"]?.jsonObject
+        val autoCompleteUrl = n["autoCompleteUrl"]?.jsonPrimitive?.contentOrNull
+        val allowed = parseAllowedValues(n["allowedValues"])
         val schema = mapSchema(schemaNode, allowed, autoCompleteUrl)
         return TransitionField(
             id = id, name = name, required = required,
-            schema = schema,
-            allowedValues = allowed,
-            autoCompleteUrl = autoCompleteUrl,
-            defaultValue = null
+            schema = schema, allowedValues = allowed,
+            autoCompleteUrl = autoCompleteUrl, defaultValue = null
         )
     }
 
-    private fun parseAllowedValues(n: JsonNode?): List<FieldOption> {
-        if (n == null || !n.isArray) return emptyList()
-        return n.map { v ->
-            val id = v.get("id")?.asText() ?: v.get("value")?.asText() ?: ""
-            val display = v.get("name")?.asText() ?: v.get("value")?.asText() ?: id
-            FieldOption(id = id, value = display, iconUrl = v.get("iconUrl")?.asText())
+    private fun parseAllowedValues(n: JsonElement?): List<FieldOption> {
+        val arr = n?.jsonArray ?: return emptyList()
+        return arr.map { v ->
+            val obj = v.jsonObject
+            val id = obj["id"]?.jsonPrimitive?.contentOrNull ?: obj["value"]?.jsonPrimitive?.contentOrNull ?: ""
+            val display = obj["name"]?.jsonPrimitive?.contentOrNull ?: obj["value"]?.jsonPrimitive?.contentOrNull ?: id
+            FieldOption(id = id, value = display, iconUrl = obj["iconUrl"]?.jsonPrimitive?.contentOrNull)
         }
     }
 
     private fun mapSchema(
-        schema: JsonNode?,
+        schema: JsonObject?,
         allowed: List<FieldOption>,
         autoCompleteUrl: String?
     ): FieldSchema {
         if (schema == null) return FieldSchema.Unknown("missing")
-        val type = schema.get("type")?.asText() ?: return FieldSchema.Unknown("missing")
-        val items = schema.get("items")?.asText()
-        val system = schema.get("system")?.asText()
-        val custom = schema.get("custom")?.asText()
+        val type = schema["type"]?.jsonPrimitive?.contentOrNull ?: return FieldSchema.Unknown("missing")
+        val items = schema["items"]?.jsonPrimitive?.contentOrNull
+        val system = schema["system"]?.jsonPrimitive?.contentOrNull
+        val custom = schema["custom"]?.jsonPrimitive?.contentOrNull
 
         return when (type) {
             "user" -> FieldSchema.User(multi = false)

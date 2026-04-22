@@ -1,6 +1,5 @@
 package com.workflow.orchestrator.jira.api
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.workflow.orchestrator.core.model.jira.FieldSchema
 import com.workflow.orchestrator.core.model.jira.SelectSource
 import com.workflow.orchestrator.core.model.jira.StatusCategory
@@ -10,7 +9,7 @@ import org.junit.jupiter.api.Test
 
 class JiraTransitionResponseParserTest {
 
-    private val parser = JiraTransitionResponseParser(ObjectMapper())
+    private val parser = JiraTransitionResponseParser()
 
     @Test
     fun `parses transition with required user field`() {
