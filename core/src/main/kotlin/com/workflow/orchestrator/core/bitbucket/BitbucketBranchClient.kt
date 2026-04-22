@@ -801,16 +801,35 @@ class BitbucketBranchClient(
 
     /**
      * Searches Bitbucket Server users by filter text.
-     * GET /rest/api/1.0/users?filter={filter}
-     * Used for reviewer autocomplete in PR creation dialog.
+     *
+     * `GET /rest/api/1.0/users?filter={filter}` — Bitbucket's `UserService.findUsersByName`
+     * matches the filter **case-insensitively across `name` (username), `displayName`, and
+     * `emailAddress`**, so typing "jane" finds Jane Citizen by real name. (Source: Atlassian
+     * `UserService` javadoc / DC REST docs.)
+     *
+     * When [projectKey] and [repoSlug] are provided, the request adds
+     * `permission.1=REPO_READ&permission.1.projectKey=P&permission.1.repositorySlug=R` so
+     * the server filters results to users who have effective `REPO_READ` on the target repo
+     * — matching the Bitbucket web UI's reviewer-picker behaviour (and honouring
+     * group-expanded permissions, unlike `/repos/{r}/permissions/users` which is both
+     * admin-gated and direct-grants-only).
      */
-    suspend fun getUsers(filter: String): ApiResult<List<BitbucketUser>> =
+    suspend fun getUsers(
+        filter: String,
+        projectKey: String? = null,
+        repoSlug: String? = null
+    ): ApiResult<List<BitbucketUser>> =
         withContext(Dispatchers.IO) {
-            log.info("[Core:Bitbucket] Searching users: filter='$filter'")
+            log.info("[Core:Bitbucket] Searching users: filter='$filter' repo=$projectKey/$repoSlug")
             try {
                 val encodedFilter = java.net.URLEncoder.encode(filter, "UTF-8")
+                val permissionParams = if (!projectKey.isNullOrBlank() && !repoSlug.isNullOrBlank()) {
+                    "&permission.1=REPO_READ" +
+                        "&permission.1.projectKey=${java.net.URLEncoder.encode(projectKey, "UTF-8")}" +
+                        "&permission.1.repositorySlug=${java.net.URLEncoder.encode(repoSlug, "UTF-8")}"
+                } else ""
                 val request = Request.Builder()
-                    .url("$baseUrl/rest/api/1.0/users?filter=$encodedFilter&limit=10")
+                    .url("$baseUrl/rest/api/1.0/users?filter=$encodedFilter&limit=10$permissionParams")
                     .get()
                     .header("Accept", "application/json")
                     .build()

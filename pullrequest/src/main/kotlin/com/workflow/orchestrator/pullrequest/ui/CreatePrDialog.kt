@@ -191,7 +191,14 @@ class CreatePrDialog(
     private val reviewerChipsPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), JBUI.scale(2)))
     private val reviewerInput = JBTextField(15)
     private val reviewerPopup = JPopupMenu()
+    /** Canonical list of selected reviewers by username — this is what the Bitbucket
+     *  create-PR payload sends. Display names are tracked separately so we can keep the
+     *  API contract while rendering friendly labels. */
     private val selectedReviewers = mutableListOf<String>()
+    /** username → "Display Name" for rendering. Populated from the user-search dropdown and
+     *  from repo-level default reviewers (both return full `BitbucketUser`). Settings-based
+     *  defaults only give us a username, so those chips fall back to the raw username. */
+    private val reviewerDisplayNames = mutableMapOf<String, String>()
     /** username → chip component for chips that came from the current repo's Bitbucket defaults.
      *  Used by [onModuleChanged] to swap repo-level chips without touching manual additions. */
     private val repoDefaultReviewerChips = mutableMapOf<String, JPanel>()
@@ -240,12 +247,20 @@ class CreatePrDialog(
             }
         )
 
-        // Pre-fill reviewers: union of settings-configured defaults AND the selected repo's
-        // Bitbucket-configured default reviewers (from the default-reviewers plugin, fetched
-        // during prefetch). Track which usernames came from the repo-level list so we can
-        // swap them out if the user changes modules without clobbering manually-added chips.
-        val initialReviewers = (context.defaultReviewers + currentRepo.repoDefaultReviewers).distinct()
-        initialReviewers.forEach { addReviewerChip(it, fromRepoDefaults = it in currentRepo.repoDefaultReviewers) }
+        // Pre-fill reviewers: union of settings-configured defaults (username strings) AND the
+        // selected repo's Bitbucket-configured default reviewers (full BitbucketUser DTOs with
+        // displayName). Settings-based chips fall back to username-only rendering; repo-level
+        // chips render with the friendly display name. Track which usernames came from the
+        // repo-level list so [onModuleChanged] can swap them without clobbering manual
+        // additions.
+        val repoDefaultNames = currentRepo.repoDefaultReviewers.map { it.name }.toSet()
+        context.defaultReviewers.forEach { username ->
+            if (username in repoDefaultNames) return@forEach   // deduped below
+            addReviewerChip(username, displayName = null, fromRepoDefaults = false)
+        }
+        currentRepo.repoDefaultReviewers.forEach { user ->
+            addReviewerChip(user.name, displayName = user.displayName.ifBlank { null }, fromRepoDefaults = true)
+        }
 
         // Populate transitions
         if (context.transitions.isNotEmpty() && context.initialTicketKeys.isNotEmpty()) {
@@ -492,11 +507,18 @@ class CreatePrDialog(
         val existingRepoDefaults = repoDefaultReviewerChips.toMap()
         existingRepoDefaults.forEach { (username, chip) ->
             selectedReviewers.remove(username)
+            reviewerDisplayNames.remove(username)
             reviewerChipsPanel.remove(chip)
         }
         repoDefaultReviewerChips.clear()
-        newRepo.repoDefaultReviewers.forEach { username ->
-            if (username !in selectedReviewers) addReviewerChip(username, fromRepoDefaults = true)
+        newRepo.repoDefaultReviewers.forEach { user ->
+            if (user.name !in selectedReviewers) {
+                addReviewerChip(
+                    user.name,
+                    displayName = user.displayName.ifBlank { null },
+                    fromRepoDefaults = true
+                )
+            }
         }
         reviewerChipsPanel.revalidate()
         reviewerChipsPanel.repaint()
@@ -564,7 +586,14 @@ class CreatePrDialog(
                     log.warn("[Pr:CreateDialog] No Bitbucket client for reviewer search (repo='${repoAtSearch.config.displayLabel}')")
                     return@launch
                 }
-            when (val result = client.getUsers(text)) {
+            // Scope the search to users with REPO_READ on the target repo — matches the
+            // Bitbucket web UI behaviour, honours group-expanded permissions, and is
+            // callable by ordinary (non-admin) users. The server-side `filter` parameter
+            // already matches across username + displayName + emailAddress, so typing a
+            // person's real name works out of the box.
+            val projectKey = repoAtSearch.config.bitbucketProjectKey?.takeIf { it.isNotBlank() }
+            val repoSlug = repoAtSearch.config.bitbucketRepoSlug?.takeIf { it.isNotBlank() }
+            when (val result = client.getUsers(text, projectKey, repoSlug)) {
                 is ApiResult.Success -> invokeLater {
                     // Show all matches — already-selected users will simply be filtered from
                     // the dropdown items (they stay selectable only once). If the entire
@@ -593,10 +622,16 @@ class CreatePrDialog(
             return
         }
         users.forEach { user ->
-            val label = "${user.name} — ${user.displayName}"
-            val item = JMenuItem(label)
+            // Primary label = display name (friendly). Secondary = username + email so the
+            // reviewer's identity is unambiguous when multiple people share a display name.
+            val primary = user.displayName.ifBlank { user.name }
+            val secondary = buildString {
+                append(user.name)
+                if (!user.emailAddress.isNullOrBlank()) append(" · ").append(user.emailAddress)
+            }
+            val item = JMenuItem("<html><b>$primary</b> &nbsp;<span style='color:#888'>$secondary</span></html>")
             item.addActionListener {
-                addReviewerChip(user.name)
+                addReviewerChip(user.name, displayName = user.displayName.ifBlank { null })
                 reviewerInput.text = ""
                 reviewerPopup.isVisible = false
             }
@@ -608,13 +643,31 @@ class CreatePrDialog(
         reviewerPopup.show(reviewerInput, 0, reviewerInput.height)
     }
 
-    private fun addReviewerChip(username: String, fromRepoDefaults: Boolean = false) {
+    private fun addReviewerChip(
+        username: String,
+        displayName: String? = null,
+        fromRepoDefaults: Boolean = false
+    ) {
         if (username in selectedReviewers) return
         selectedReviewers.add(username)
+        // Remember the display name for subsequent lookups (e.g. if we ever need to re-render).
+        if (!displayName.isNullOrBlank()) reviewerDisplayNames[username] = displayName
+        // Chip label = display name if known, else username. Tooltip always shows the raw
+        // username so the user can verify the identity that will go to the Bitbucket API.
+        val chipLabel = displayName?.takeIf { it.isNotBlank() } ?: username
+        val chipTooltip = if (!displayName.isNullOrBlank() && displayName != username) {
+            "@$username"
+        } else {
+            username
+        }
         val chip = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
             background = StatusColors.CARD_BG
             border = JBUI.Borders.empty(1, 6)
-            add(JBLabel(username).apply { font = font.deriveFont(11f) })
+            toolTipText = chipTooltip
+            add(JBLabel(chipLabel).apply {
+                font = font.deriveFont(11f)
+                toolTipText = chipTooltip
+            })
             val removeBtn = JBLabel("✕").apply {
                 cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
                 foreground = StatusColors.SECONDARY_TEXT
@@ -622,6 +675,7 @@ class CreatePrDialog(
             removeBtn.addMouseListener(object : java.awt.event.MouseAdapter() {
                 override fun mouseClicked(e: java.awt.event.MouseEvent?) {
                     selectedReviewers.remove(username)
+                    reviewerDisplayNames.remove(username)
                     repoDefaultReviewerChips.remove(username)
                     reviewerChipsPanel.remove(this@apply)
                     reviewerChipsPanel.revalidate()

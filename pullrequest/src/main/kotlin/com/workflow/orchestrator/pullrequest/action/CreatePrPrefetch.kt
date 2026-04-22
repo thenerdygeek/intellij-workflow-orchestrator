@@ -4,6 +4,7 @@ import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
+import com.workflow.orchestrator.core.bitbucket.BitbucketUser
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoConfig
@@ -28,8 +29,12 @@ data class RepoPrefetch(
     val sourceBranch: String,
     val remoteBranches: List<String>,
     val defaultTarget: String,
-    /** Repo-level reviewers fetched from Bitbucket's default-reviewers plugin (usernames). */
-    val repoDefaultReviewers: List<String> = emptyList()
+    /**
+     * Repo-level reviewers fetched from Bitbucket's default-reviewers plugin. Full
+     * `BitbucketUser` (name + displayName + email) so the dialog can render friendly
+     * "Display Name" chips with username-in-tooltip instead of raw usernames.
+     */
+    val repoDefaultReviewers: List<BitbucketUser> = emptyList()
 )
 
 /**
@@ -238,12 +243,12 @@ object CreatePrPrefetch {
                 config.defaultTargetBranch.orEmpty().ifBlank { "develop" }
             }
 
-            val repoDefaultReviewers: List<String> = try {
+            val repoDefaultReviewers: List<BitbucketUser> = try {
                 when (val r = client.getDefaultReviewers(
                     config.bitbucketProjectKey.orEmpty(),
                     config.bitbucketRepoSlug.orEmpty()
                 )) {
-                    is ApiResult.Success -> r.data.map { it.name }
+                    is ApiResult.Success -> r.data
                     is ApiResult.Error -> {
                         log.warn("[PR:Prefetch] getDefaultReviewers failed for '${config.displayLabel}': ${r.message}")
                         emptyList()
