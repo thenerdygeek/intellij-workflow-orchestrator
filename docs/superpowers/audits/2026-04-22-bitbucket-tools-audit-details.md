@@ -90,7 +90,9 @@ Service layer — `BitbucketServiceImpl.kt:171–183`:
 HTTP client — `BitbucketBranchClient.kt:1577–1623`:
 - URL: `"$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/comments"`
 - Method: `POST`
-- Body DTO (`BitbucketBranchClient.kt:338–349`):
+- Body DTOs:
+  - `InlineCommentRequest` (`BitbucketBranchClient.kt:338–341`): `private data class InlineCommentRequest(val text: String, val anchor: InlineCommentAnchor)`
+  - `InlineCommentAnchor` (`BitbucketBranchClient.kt:344–349`):
   ```kotlin
   private data class InlineCommentAnchor(
       val path: String,
@@ -98,12 +100,11 @@ HTTP client — `BitbucketBranchClient.kt:1577–1623`:
       val lineType: String,
       val fileType: String = "TO"   // hardcoded default
   )
-  private data class InlineCommentRequest(val text: String, val anchor: InlineCommentAnchor)
   ```
 - Serialized body: `{"text":"...","anchor":{"path":"...","line":N,"lineType":"...","fileType":"TO"}}`
 - `fileType` is hardcoded to `"TO"` (the destination/new-file side) — not caller-configurable
 - `srcPath`, `fromHash`, `toHash`, `diffType` are absent from the DTO
-- Note: a separate response-parsing DTO `BitbucketCommentAnchor` (BitbucketBranchClient.kt:188) carries `srcPath`; the private request DTO `InlineCommentAnchor` (BitbucketBranchClient.kt:344–349) does not — this is the bug.
+- Note: a separate response-parsing DTO `BitbucketCommentAnchor` (BitbucketBranchClient.kt:188) carries `srcPath`; the private request DTO `InlineCommentAnchor` (BitbucketBranchClient.kt:344–349, the anchor subject of the bug) does not — this is the bug.
 
 **Diff:**
 - Path: ✅
@@ -122,14 +123,14 @@ HTTP client — `BitbucketBranchClient.kt:1577–1623`:
 
 **Notes:**
 1. `lineType` is not validated against `{ADDED, REMOVED, CONTEXT}` at the tool layer. Add enum check matching the `status` check pattern already in use on line 142.
-2. **Fix (option B preferred — zero API-surface change):** In `BitbucketBranchClient.kt:344–349`, change `val fileType: String = "TO"` to derive from `lineType`:
+2. **Fix (option B preferred — zero API-surface change):** In `BitbucketBranchClient.kt:344–349` (`InlineCommentAnchor`), change `val fileType: String = "TO"` to derive from `lineType`:
    ```kotlin
    val fileType: String = if (lineType == "REMOVED") "FROM" else "TO"
    ```
    No change needed at service or tool layer for option B.
 
-   **Fix (option A — explicit parameter):** Add optional `file_type` param to the tool schema (`BitbucketReviewTool.kt:90–104`), thread through `BitbucketService.addInlineComment` (interface and impl) and into the `InlineCommentAnchor` DTO. Use only if callers need to override the lineType→fileType mapping.
-3. **Fix (`srcPath` for renames):** Add `val srcPath: String? = null` to `InlineCommentAnchor` (BitbucketBranchClient.kt:344–349) and an optional `src_path` tool parameter at `BitbucketReviewTool.kt:90–104`, threaded through the service interface and impl. Without it, inline comments on renamed files will fail silently or return a 400.
+   **Fix (option A — explicit parameter):** Add optional `file_type` param to the tool schema (`BitbucketReviewTool.kt:90–104`), thread through `BitbucketService.addInlineComment` (interface and impl) and into the `InlineCommentAnchor` DTO (`BitbucketBranchClient.kt:344–349`). Use only if callers need to override the lineType→fileType mapping.
+3. **Fix (`srcPath` for renames):** Add `val srcPath: String? = null` to `InlineCommentAnchor` (`BitbucketBranchClient.kt:344–349`) and an optional `src_path` tool parameter at `BitbucketReviewTool.kt:90–104`, threaded through the service interface and impl. Without it, inline comments on renamed files will fail silently or return a 400.
 4. No test exercises the HTTP path with a mock service — the lineType/fileType interaction is the most likely source of silent production failures.
 
 **Test coverage needed:**
@@ -332,7 +333,7 @@ HTTP client — `BitbucketBranchClient.kt:1675–1712`:
 - Endpoint path: ✅ `...participants/{username}` is correct
 - HTTP method: ✅ code uses `PUT`; verified correct against Bitbucket DC v7.21.0 WADL. The original audit's claim that POST is the documented method was incorrect and has been retracted.
 - Body `status` field: ✅ present
-- `approved` field: ⚠ missing from the body. The DC API participants endpoint expects `{"status":"APPROVED","approved":true}` (or `false` for UNAPPROVED/NEEDS_WORK). Omitting `approved` may cause the server to reject the request or silently ignore the status change depending on the DC version.
+- `approved` field: ⚠ missing from the body. The DC API participants endpoint example (WADL `https://docs.atlassian.com/bitbucket-server/rest/7.21.0/bitbucket-rest.wadl`, `updateStatus` PUT method) always includes `approved` alongside `status`: `{"user":{"name":"charlie"},"approved":true,"status":"APPROVED"}`. The WADL does not include a formal XSD schema with `minOccurs` constraints, so `approved` is not formally declared required — but setting it explicitly is strongly recommended per DC integration guides and the official WADL example to avoid undefined behavior across DC versions.
 - All three statuses supported in tool: ✅ (APPROVED, NEEDS_WORK, UNAPPROVED — full enum validated at tool layer)
 - 409 conflict handled: ✅
 
@@ -352,9 +353,18 @@ HTTP client — `BitbucketBranchClient.kt:1675–1712`:
    ```kotlin
    private data class ReviewerStatusRequest(val status: String, val approved: Boolean)
    ```
-   At the call site where the request is constructed (`BitbucketBranchClient.kt:1685` or wherever `ReviewerStatusRequest` is instantiated), pass `approved = (status == "APPROVED")`. This makes the body `{"status":"APPROVED","approved":true}` for APPROVED and `{"status":"NEEDS_WORK","approved":false}` / `{"status":"UNAPPROVED","approved":false}` for the other two states.
+   Change line 1685 from:
+   ```kotlin
+       val payload = json.encodeToString(ReviewerStatusRequest(status = status))
+   ```
+   to:
+   ```kotlin
+       val payload = json.encodeToString(ReviewerStatusRequest(status = status, approved = (status == "APPROVED")))
+   ```
+   This makes the body `{"status":"APPROVED","approved":true}` for APPROVED and `{"status":"NEEDS_WORK","approved":false}` / `{"status":"UNAPPROVED","approved":false}` for the other two states.
 3. The endpoint path is correct and NEEDS_WORK is supported — which is an improvement over using the binary `approve`/`decline` endpoints.
-4. The sole remaining FIX reason is the missing `approved` field in the request body.
+4. **WADL evidence for `approved`:** The official Bitbucket DC v7.21.0 WADL (`https://docs.atlassian.com/bitbucket-server/rest/7.21.0/bitbucket-rest.wadl`, `updateStatus` PUT method, `<ns2:representation mediaType="application/json">`) provides the example `{"user":{"name":"charlie"},"approved":true,"status":"APPROVED"}`. The WADL references a `schema.xsd` (via `<ns2:grammars><ns2:include href="schema.xsd"/></ns2:grammars>`) but that file returns 404 — no formal XSD constraints are reachable. The WADL therefore does not formally declare `approved` as required (no `minOccurs="1"` or `use="required"`). Verdict remains FIX because: (a) the WADL example always includes `approved`; (b) omitting it can produce undefined behavior across DC versions; (c) the derivation `approved = (status == "APPROVED")` is zero-risk and takes one line to add.
+5. The sole remaining FIX reason is the missing `approved` field in the request body.
 
 **Test coverage needed:**
 - Happy-path mock: `status = "APPROVED"` → body contains `{"status":"APPROVED","approved":true}` (after fix)
@@ -786,6 +796,7 @@ HTTP client — `BitbucketBranchClient.kt:1205–1240`:
 Tool layer — `BitbucketPrTool.kt:154–161`:
 - Parses `pr_id`, `strategy` (optional string), `delete_source_branch` (parsed via `toBooleanStrictOrNull()`, defaults to `false`), `commit_message` (optional)
 - No enum validation on `strategy`
+- Tool description (BitbucketPrTool.kt:64): `"strategy" to ParameterProperty("string", "Merge strategy: merge-commit, squash, ff-only — for merge_pr")`
 - Calls: `service.mergePullRequest(prId, strategy, deleteSourceBranch, commitMessage, repoName = repoName)`
 
 Service layer — `BitbucketServiceImpl.kt:630–660`:
@@ -1027,15 +1038,27 @@ HTTP client — `BitbucketBranchClient.kt:922–957`:
 **Verdict:** FIX
 
 **Notes:**
-1. **Fix (`username.1` missing):** The service method `getMyPullRequests` needs to resolve the current user's username and pass it as the `username` argument to `api.getMyPullRequests`. Options:
-   - **Option A (preferred):** In `BitbucketServiceImpl.getMyPullRequests`, call `api.getCurrentUser()` (or read from `CredentialStore` / `ConnectionSettings.bitbucketUsername`) before calling `api.getMyPullRequests`, and pass the resolved username. The `BitbucketBranchClient.getMyPullRequests` already accepts `username: String? = null` at line 926.
-   - **Option B:** Add an optional `username` parameter to the tool and service interface, allowing the LLM to provide a username when known. This is less ergonomic but avoids the extra API call.
-   - Option A is simpler for the common case (list my own PRs) and matches the documented requirement in `pullrequest/CLAUDE.md`.
+1. **Fix (`username.1` missing) — verified resolution path:** Two concrete paths exist in the codebase to resolve the current Bitbucket username:
+   - **Path 1 (preferred, zero API call):** Read `ConnectionSettings.getInstance().state.bitbucketUsername` (`ConnectionSettings.kt:27` — `var bitbucketUsername: String = ""`). This field is already persisted by the user when they configure the Bitbucket connection. It is the same class used throughout the codebase for service URLs. Fast, synchronous, no network cost.
+   - **Path 2 (fallback, one API call):** Call `api.getCurrentUsername()` (`BitbucketBranchClient.kt:892–914`). This method calls `GET /plugins/servlet/applinks/whoami` which returns the authenticated user's plain username string. Use this as a fallback when `bitbucketUsername` is blank (user hasn't set it in settings).
+
+   **Concrete change in `BitbucketServiceImpl.kt:418–439`** (`getMyPullRequests`): Before calling `api.getMyPullRequests`, resolve the username:
+   ```kotlin
+   val username = ConnectionSettings.getInstance().state.bitbucketUsername.takeIf { it.isNotBlank() }
+       ?: when (val u = api.getCurrentUsername()) {
+           is ApiResult.Success -> u.data
+           else -> null
+       }
+   return when (val result = api.getMyPullRequests(projectKey, repoSlug, state, username = username)) {
+   ```
+   The `BitbucketBranchClient.getMyPullRequests` already accepts `username: String? = null` at `BitbucketBranchClient.kt:926` and appends `&username.1=$username` to the query string when non-null (`BitbucketBranchClient.kt:933`). No change needed in the client method.
+
 2. **State enum validation (minor):** Add a check in the tool layer against `{"OPEN", "MERGED", "DECLINED", "ALL"}` to fail fast on invalid state values before making an API call.
 
 **Test coverage needed:**
-- Happy-path mock: `username.1` sent alongside `role.1=AUTHOR` → verify only authored PRs returned; summary contains count
-- `username.1` absent: current behaviour → verify what the API returns (may be all repo PRs — this is the bug to validate)
+- Happy-path mock: `ConnectionSettings.bitbucketUsername` is set → `username.1` sent alongside `role.1=AUTHOR` → verify only authored PRs returned; summary contains count
+- Fallback path: `bitbucketUsername` is blank → `getCurrentUsername()` called → result used as username
+- `getCurrentUsername()` fails → `username = null` → tool proceeds with undefined-filter behaviour (warn in Notes)
 - State `"MERGED"` → URL contains `state=MERGED`
 - 4xx mock → verify tool returns error result, not exception
 - Invalid state value (`"INVALID"`) → enum validation error (after fix 2)
@@ -1077,12 +1100,25 @@ HTTP client — `BitbucketBranchClient.kt:963–998`:
 **Verdict:** FIX
 
 **Notes:**
-1. **Fix (`username.1` missing):** Same fix as `get_my_prs` — resolve the current user's Bitbucket username in `BitbucketServiceImpl.getReviewingPullRequests` and pass it to `api.getReviewingPullRequests`. The client method already accepts `username: String? = null` at `BitbucketBranchClient.kt:967`. Use the same Option A approach (resolve from settings/credential store) for consistency with `get_my_prs`.
+1. **Fix (`username.1` missing) — verified resolution path:** Same two paths as `get_my_prs`. Use `ConnectionSettings.getInstance().state.bitbucketUsername` (`ConnectionSettings.kt:27`) first; fall back to `api.getCurrentUsername()` (`BitbucketBranchClient.kt:892–914`) when blank.
+
+   **Concrete change in `BitbucketServiceImpl.kt:441–462`** (`getReviewingPullRequests`): Before calling `api.getReviewingPullRequests`, resolve the username identically to `getMyPullRequests`:
+   ```kotlin
+   val username = ConnectionSettings.getInstance().state.bitbucketUsername.takeIf { it.isNotBlank() }
+       ?: when (val u = api.getCurrentUsername()) {
+           is ApiResult.Success -> u.data
+           else -> null
+       }
+   return when (val result = api.getReviewingPullRequests(projectKey, repoSlug, state, username = username)) {
+   ```
+   The `BitbucketBranchClient.getReviewingPullRequests` already accepts `username: String? = null` at `BitbucketBranchClient.kt:967` and appends `&username.1=$username` to the query string when non-null (`BitbucketBranchClient.kt:974`). No change needed in the client method.
+
 2. **State enum validation:** Same minor fix as `get_my_prs` — validate against `{"OPEN", "MERGED", "DECLINED", "ALL"}`.
-3. Both `get_my_prs` and `get_reviewing_prs` have the same FIX. They should be fixed together in one commit to avoid code duplication in the username-resolution logic.
+3. Both `get_my_prs` and `get_reviewing_prs` have the same FIX. Extract the username-resolution logic into a private helper `resolveCurrentUsername(): String?` in `BitbucketServiceImpl` and call it from both methods to avoid duplication.
 
 **Test coverage needed:**
-- Happy-path mock: `username.1` sent alongside `role.1=REVIEWER` → verify only reviewer PRs returned
+- Happy-path mock: `ConnectionSettings.bitbucketUsername` is set → `username.1` sent alongside `role.1=REVIEWER` → verify only reviewer PRs returned
+- Fallback path: `bitbucketUsername` is blank → `getCurrentUsername()` called → result used as username
 - State `"OPEN"` (default) → URL contains `state=OPEN&role.1=REVIEWER`
 - 4xx mock → verify tool returns error result, not exception
 - Invalid state value → enum validation error (after fix)
