@@ -90,6 +90,8 @@ class MessageStateHandler(
         if (message.content.isEmpty()) return true
         return message.content.all { block ->
             when (block) {
+                // isBlank() covers both `""` (production empty-response path via
+                // AgentLoop.buildApiContentBlocks ifEmpty fallback) and `"   "`.
                 is ContentBlock.Text -> block.text.isBlank()
                 is ContentBlock.ToolUse -> false
                 is ContentBlock.ToolResult -> false

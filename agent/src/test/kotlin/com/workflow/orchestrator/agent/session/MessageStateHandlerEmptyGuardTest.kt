@@ -20,6 +20,12 @@ class MessageStateHandlerEmptyGuardTest {
         ts = 1_000L,
     )
 
+    private fun assistantWithBlankText() = ApiMessage(
+        role = ApiRole.ASSISTANT,
+        content = listOf(ContentBlock.Text(text = "")),
+        ts = 1_000L,
+    )
+
     private fun assistantWithText(text: String) = ApiMessage(
         role = ApiRole.ASSISTANT,
         content = listOf(ContentBlock.Text(text = text)),
@@ -43,6 +49,18 @@ class MessageStateHandlerEmptyGuardTest {
         val handler = newHandler()
         handler.addToApiConversationHistory(userMsg("start"))
         handler.addToApiConversationHistory(emptyAssistant())
+        val saved = handler.getApiConversationHistory()
+        assertEquals(1, saved.size)
+        assertEquals(ApiRole.USER, saved[0].role)
+    }
+
+    @Test
+    fun `addToApiConversationHistory drops assistant with blank-text content (production-path shape)`() = runTest {
+        // AgentLoop.buildApiContentBlocks wraps an empty response as listOf(Text("")),
+        // not as emptyList(). Verify the guard catches the production shape.
+        val handler = newHandler()
+        handler.addToApiConversationHistory(userMsg("start"))
+        handler.addToApiConversationHistory(assistantWithBlankText())
         val saved = handler.getApiConversationHistory()
         assertEquals(1, saved.size)
         assertEquals(ApiRole.USER, saved[0].role)
