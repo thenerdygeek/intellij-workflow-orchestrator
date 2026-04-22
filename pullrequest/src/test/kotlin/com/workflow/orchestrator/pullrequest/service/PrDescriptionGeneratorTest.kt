@@ -1,4 +1,4 @@
-package com.workflow.orchestrator.bamboo.service
+package com.workflow.orchestrator.pullrequest.service
 
 import com.workflow.orchestrator.core.workflow.TicketComment
 import com.workflow.orchestrator.core.workflow.TicketContext

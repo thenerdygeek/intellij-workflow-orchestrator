@@ -1,4 +1,4 @@
-package com.workflow.orchestrator.bamboo.service
+package com.workflow.orchestrator.pullrequest.service
 
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project

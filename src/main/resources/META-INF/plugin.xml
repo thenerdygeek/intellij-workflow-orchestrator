@@ -361,6 +361,7 @@
         <tabProvider implementation="com.workflow.orchestrator.agent.ui.AgentTabProvider"/>
         <tabProvider implementation="com.workflow.orchestrator.core.toolwindow.insights.InsightsTabProvider"/>
         <sessionHistoryReader implementation="com.workflow.orchestrator.agent.insights.AgentSessionHistoryReader"/>
+        <createPrLauncher implementation="com.workflow.orchestrator.pullrequest.action.CreatePrLauncherImpl"/>
     </extensions>
 
     <applicationListeners>
