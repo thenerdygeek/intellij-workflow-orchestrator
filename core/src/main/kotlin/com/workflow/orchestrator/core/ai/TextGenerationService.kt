@@ -2,6 +2,7 @@ package com.workflow.orchestrator.core.ai
 
 import com.intellij.openapi.extensions.ExtensionPointName
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.core.workflow.TicketContext
 
 /**
  * Interface for cross-module AI text generation.
@@ -31,12 +32,20 @@ interface TextGenerationService {
         diff: String,
         commitMessages: List<String>,
         contextFilePaths: List<String> = emptyList(),
-        ticketId: String = "",
-        ticketSummary: String = "",
-        ticketDescription: String = "",
+        tickets: List<TicketContext> = emptyList(),
         sourceBranch: String = "",
         targetBranch: String = ""
     ): String? = null  // Default: not supported, caller falls back
+
+    /**
+     * Generate a concise single-line PR title from ticket context and commit messages.
+     * Default returns null; implementors opt in.
+     */
+    suspend fun generatePrTitle(
+        project: Project,
+        ticket: TicketContext,
+        commitMessages: List<String> = emptyList()
+    ): String? = null
 
     companion object {
         val EP_NAME = ExtensionPointName.create<TextGenerationService>(

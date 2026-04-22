@@ -4,7 +4,9 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
 import com.workflow.orchestrator.core.ai.prompts.PrDescriptionPromptBuilder
+import com.workflow.orchestrator.core.ai.prompts.PrTitlePromptBuilder
 import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.workflow.TicketContext
 import java.io.File
 
 class SourcegraphTextGenerationService : TextGenerationService {
@@ -52,9 +54,7 @@ class SourcegraphTextGenerationService : TextGenerationService {
         diff: String,
         commitMessages: List<String>,
         contextFilePaths: List<String>,
-        ticketId: String,
-        ticketSummary: String,
-        ticketDescription: String,
+        tickets: List<TicketContext>,
         sourceBranch: String,
         targetBranch: String
     ): String? {
@@ -62,8 +62,11 @@ class SourcegraphTextGenerationService : TextGenerationService {
         val brain = LlmBrainFactory.create(project)
 
         val prompt = PrDescriptionPromptBuilder.build(
-            diff, commitMessages, ticketId, ticketSummary,
-            ticketDescription, sourceBranch, targetBranch
+            diff = diff,
+            commitMessages = commitMessages,
+            tickets = tickets,
+            sourceBranch = sourceBranch,
+            targetBranch = targetBranch
         )
         val messages = listOf(ChatMessage(role = "user", content = prompt))
 
@@ -76,6 +79,34 @@ class SourcegraphTextGenerationService : TextGenerationService {
             }
             is ApiResult.Error -> {
                 log.warn("[AI:PrDesc] Failed: ${result.message}")
+                null
+            }
+        }
+    }
+
+    override suspend fun generatePrTitle(
+        project: Project,
+        ticket: TicketContext,
+        commitMessages: List<String>
+    ): String? {
+        if (!LlmBrainFactory.isAvailable()) return null
+        val brain = LlmBrainFactory.create(project)
+
+        val prompt = PrTitlePromptBuilder.build(ticket, commitMessages)
+        val messages = listOf(ChatMessage(role = "user", content = prompt))
+
+        return when (val result = brain.chat(messages, tools = null)) {
+            is ApiResult.Success -> {
+                result.data.choices.firstOrNull()?.message?.content
+                    ?.replace(Regex("^```[a-z]*\\n?"), "")
+                    ?.replace(Regex("\\n?```$"), "")
+                    ?.trim()
+                    ?.lines()
+                    ?.firstOrNull { it.isNotBlank() }
+                    ?.trim()
+            }
+            is ApiResult.Error -> {
+                log.warn("[AI:PrTitle] Failed: ${result.message}")
                 null
             }
         }

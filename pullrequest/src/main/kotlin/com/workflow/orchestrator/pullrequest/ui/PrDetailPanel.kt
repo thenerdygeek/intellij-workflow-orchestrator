@@ -1776,8 +1776,7 @@ class PrDetailPanel(
                         project = project,
                         diff = truncatedDiff,
                         commitMessages = emptyList(),
-                        ticketId = ticketId,
-                        ticketSummary = pr.title,
+                        tickets = emptyList(),
                         sourceBranch = pr.fromRef?.displayId ?: "",
                         targetBranch = pr.toRef?.displayId ?: ""
                     )

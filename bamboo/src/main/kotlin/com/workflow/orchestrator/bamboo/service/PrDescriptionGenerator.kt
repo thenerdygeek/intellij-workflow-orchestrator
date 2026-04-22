@@ -47,8 +47,7 @@ object PrDescriptionGenerator {
                 val chainedResult = try {
                     textGen.generatePrDescription(
                         project, truncatedDiff, commitMessages, changedFilePaths.take(MAX_CONTEXT_FILES),
-                        ticketDetails?.key ?: "", ticketDetails?.summary ?: "",
-                        ticketDetails?.description ?: "", sourceBranch, targetBranch
+                        emptyList(), sourceBranch, targetBranch
                     )
                 } catch (e: Exception) {
                     log.warn("[Build:PrDesc] Chained generation failed: ${e.message}")
