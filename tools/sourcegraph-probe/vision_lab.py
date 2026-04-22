@@ -57,7 +57,8 @@ Common flags (work identically on all platforms):
                                     run only these format cases
     --models "anthropic::2024-10-22::claude-sonnet-4-20250514,openai::2024-02-01::gpt-4o"
                                     probe a specific set of models
-    --discover                      list models from /.api/llm/models and probe them all
+    --all-models                    list every model from /.api/llm/models and probe them
+                                    all (skip the vision-name heuristic filter)
     --no-url-tests                  RECOMMENDED for most on-prem Sourcegraph instances.
                                     Skips the 2 URL-source scenarios (openai_http_url,
                                     anthropic_url_source) which require the gateway to
@@ -765,7 +766,7 @@ def main() -> int:
                 return 3
 
     print(f"Sourcegraph URL : {_mask_url(args.url)}")
-    print(f"Models          : {len(models)} {'(discovered)' if args.discover else ''}")
+    print(f"Models          : {len(models)}  {discovery_note}")
     for m in models:
         print(f"  - {m}")
     print(f"Format cases    : {len(cases)}")
