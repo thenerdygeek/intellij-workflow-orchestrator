@@ -187,6 +187,9 @@ class JiraApiClient(
      * rather than a deserialized DTO. Uses the same OkHttp client, auth interceptor, retry
      * logic, and response-code mapping as the typed [get] helper, so all cross-cutting
      * concerns (TLS, rate-limiting, retries) are inherited automatically.
+     *
+     * @param path A relative Jira REST path, e.g. `/rest/api/2/issue/PROJ-1`. Do **not**
+     *   pass a full URL — the configured [baseUrl] is prepended automatically.
      */
     private suspend fun getRaw(path: String): ApiResult<JsonObject> =
         withContext(Dispatchers.IO) {
@@ -197,6 +200,15 @@ class JiraApiClient(
                     log.debug("[Jira:API] GET $path -> ${it.code}")
                     when (it.code) {
                         in 200..299 -> {
+                            val contentType = it.header("Content-Type") ?: ""
+                            if (contentType.isNotBlank() &&
+                                !contentType.contains("application/json", ignoreCase = true) &&
+                                !contentType.contains("text/json", ignoreCase = true)) {
+                                return@withContext ApiResult.Error(
+                                    ErrorType.PARSE_ERROR,
+                                    "Unexpected response Content-Type: $contentType (expected JSON)"
+                                )
+                            }
                             val bodyStr = it.body?.string() ?: ""
                             val parsed = json.parseToJsonElement(bodyStr)
                             if (parsed is JsonObject) {
