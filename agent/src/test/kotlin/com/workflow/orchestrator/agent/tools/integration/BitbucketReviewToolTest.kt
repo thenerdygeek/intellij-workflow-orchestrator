@@ -53,10 +53,10 @@ class BitbucketReviewToolTest {
     }
 
     @Test
-    fun `action enum contains all 7 actions`() {
+    fun `action enum contains all 8 actions`() {
         val actions = tool.parameters.properties["action"]?.enumValues
         assertNotNull(actions)
-        assertEquals(7, actions!!.size)
+        assertEquals(8, actions!!.size)
         assertTrue("add_pr_comment" in actions)
         assertTrue("add_inline_comment" in actions)
         assertTrue("reply_to_comment" in actions)
@@ -64,6 +64,7 @@ class BitbucketReviewToolTest {
         assertTrue("remove_reviewer" in actions)
         assertTrue("set_reviewer_status" in actions)
         assertTrue("list_comments" in actions)
+        assertTrue("get_comment" in actions)
     }
 
     @Test
@@ -175,5 +176,54 @@ class BitbucketReviewToolTest {
             put("repo_slug", "my-repo")
         }, project)
         assertTrue(result.isError)
+    }
+
+    // --- Task 2: get_comment ---
+
+    @Test
+    fun `get_comment dispatches to service with correct args`() = runTest {
+        val svc = mockBitbucketService()
+        val comment = sampleComment("99", version = 3, text = "looks good")
+        coEvery { svc.getPrComment("PROJ", "my-repo", 7, 99L) } returns
+            CoreToolResult(data = comment, summary = "Comment 99 on PR 7")
+
+        val result = tool.execute(buildJsonObject {
+            put("action", "get_comment")
+            put("project_key", "PROJ")
+            put("repo_slug", "my-repo")
+            put("pr_id", "7")
+            put("comment_id", "99")
+        }, project)
+
+        assertFalse(result.isError)
+        assertTrue(result.content.contains("Comment 99 on PR 7"))
+    }
+
+    @Test
+    fun `get_comment missing comment_id returns error`() = runTest {
+        val svc = mockBitbucketService()
+        @Suppress("UNUSED_VARIABLE") val unused = svc
+        val result = tool.execute(buildJsonObject {
+            put("action", "get_comment")
+            put("project_key", "PROJ")
+            put("repo_slug", "my-repo")
+            put("pr_id", "7")
+        }, project)
+        assertTrue(result.isError)
+        assertTrue(result.content.contains("comment_id"))
+    }
+
+    @Test
+    fun `get_comment missing project_key returns error`() = runTest {
+        val svc = mockBitbucketService()
+        @Suppress("UNUSED_VARIABLE") val unused = svc
+        val result = tool.execute(buildJsonObject {
+            put("action", "get_comment")
+            put("repo_slug", "my-repo")
+            put("pr_id", "7")
+            put("comment_id", "99")
+        }, project)
+        assertTrue(result.isError)
+        assertTrue(result.content.contains("project_key"))
     }
 }
