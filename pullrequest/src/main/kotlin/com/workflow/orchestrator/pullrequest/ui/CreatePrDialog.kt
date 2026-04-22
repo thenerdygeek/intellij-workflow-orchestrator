@@ -253,6 +253,7 @@ class CreatePrDialog(
     override fun dispose() {
         descriptionGenJob?.cancel()
         titleGenJob?.cancel()
+        userSearchJob?.cancel()
         super.dispose()
     }
 
@@ -493,8 +494,9 @@ class CreatePrDialog(
     private fun generateDescription() {
         descriptionGenJob?.cancel()
         descriptionGenJob = scope.launch {
-            val targetBranch = withContext(Dispatchers.EDT) { targetField.text.trim() }
-            val tickets = ticketChipInput.allValid()
+            val (targetBranch, tickets) = withContext(Dispatchers.EDT) {
+                targetField.text.trim() to ticketChipInput.allValid()
+            }
             invokeLater { showDescriptionLoading() }
             try {
                 val description = withTimeoutOrNull(120_000) {
