@@ -28,10 +28,6 @@ dependencies {
     }
 
     implementation(project(":core"))
-    // TEMPORARY — Phase 6 removes this via the CreatePrLauncher EP.
-    // :bamboo currently constructs CreatePrDialog directly from PrBar.openCreatePrDialog().
-    // Phase 6 switches that to CreatePrLauncher.getInstance()?.launch(...) and deletes this line.
-    implementation(project(":pullrequest"))
     compileOnly(libs.kotlinx.coroutines.core)
     compileOnly(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
