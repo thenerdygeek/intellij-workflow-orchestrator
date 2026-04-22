@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.core.services
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 /**
  * Universal result type for service operations.
@@ -27,7 +28,20 @@ data class ToolResult<T>(
     val hint: String? = null,
 
     /** Token estimate for the summary text. */
-    val tokenEstimate: Int = 0
+    val tokenEstimate: Int = 0,
+
+    /**
+     * Optional structured payload for programmatic consumers.
+     * Used by services that need to carry typed error or result details alongside
+     * the human-readable [summary] (e.g. [TransitionError] subtypes in TicketTransitionService).
+     * UI panels and agent tools that only need [summary] can ignore this field.
+     *
+     * @Transient: excluded from kotlinx.serialization because [Any?] has no generic serializer.
+     * The class-level @Serializable is aspirational (noted in the kdoc above); [payload] is
+     * a runtime-only field for programmatic callers.
+     */
+    @Transient
+    val payload: Any? = null
 ) {
     companion object {
         fun <T> success(data: T, summary: String, hint: String? = null): ToolResult<T> =
