@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.pullrequest.action
 
+import com.workflow.orchestrator.core.util.TicketKeyExtractor
 import com.workflow.orchestrator.core.workflow.TicketContext
 import com.workflow.orchestrator.core.workflow.TicketTransition
 import org.junit.jupiter.api.Assertions.*
@@ -31,20 +32,12 @@ class CreatePrPrefetchTest {
 
     // ── Key resolution helpers ──────────────────────────────────────────────
 
-    /** Mirrors the private TICKET_PATTERN used in CreatePrPrefetch. */
-    private val TICKET_PATTERN = Regex("([A-Z][A-Z0-9]+-\\d+)")
-
-    private fun extractTicketIdFromBranch(branchName: String): String? =
-        TICKET_PATTERN.find(branchName)?.groupValues?.get(1)
-
     /**
-     * Simulates the key resolution logic from CreatePrPrefetch.run:
-     *   val branchKey = extractTicketIdFromBranch(currentBranch)
-     *   val activeKey = activeTicketId?.takeIf { it.isNotBlank() }
-     *   val keys = listOfNotNull(branchKey, activeKey.takeIf { it != branchKey })
+     * Simulates the key resolution logic from CreatePrPrefetch.run.
+     * Delegates to TicketKeyExtractor — the same helper used by the implementation.
      */
     private fun resolveKeys(branchName: String, activeTicketId: String?): List<String> {
-        val branchKey = extractTicketIdFromBranch(branchName)
+        val branchKey = TicketKeyExtractor.extractFromBranch(branchName)
         val activeKey = activeTicketId?.takeIf { it.isNotBlank() }
         return listOfNotNull(branchKey, activeKey?.takeIf { it != branchKey })
     }
@@ -60,25 +53,25 @@ class CreatePrPrefetchTest {
 
     @Test
     fun `extracts ticket id from simple branch name`() {
-        assertEquals("WO-123", extractTicketIdFromBranch("feature/WO-123-my-feature"))
+        assertEquals("WO-123", TicketKeyExtractor.extractFromBranch("feature/WO-123-my-feature"))
     }
 
     @Test
     fun `extracts ticket id with multi-char project prefix`() {
-        assertEquals("ABC-99", extractTicketIdFromBranch("ABC-99-bugfix"))
+        assertEquals("ABC-99", TicketKeyExtractor.extractFromBranch("ABC-99-bugfix"))
     }
 
     @Test
     fun `returns null when branch has no ticket pattern`() {
-        assertNull(extractTicketIdFromBranch("main"))
-        assertNull(extractTicketIdFromBranch("feature/no-ticket-here"))
-        assertNull(extractTicketIdFromBranch("release-1.2.3"))
+        assertNull(TicketKeyExtractor.extractFromBranch("main"))
+        assertNull(TicketKeyExtractor.extractFromBranch("feature/no-ticket-here"))
+        assertNull(TicketKeyExtractor.extractFromBranch("release-1.2.3"))
     }
 
     @Test
     fun `extracts first ticket id when branch contains multiple`() {
         // e.g. "WO-10-relates-to-WO-20" — first match wins
-        assertEquals("WO-10", extractTicketIdFromBranch("WO-10-relates-to-WO-20"))
+        assertEquals("WO-10", TicketKeyExtractor.extractFromBranch("WO-10-relates-to-WO-20"))
     }
 
     // ── Key resolution ──────────────────────────────────────────────────────
@@ -179,15 +172,14 @@ class CreatePrPrefetchTest {
 
     @Test
     fun `Bitbucket failure message matches expected string`() {
-        // Validate the literal used for the warning dialog matches spec.
-        val failure = PrefetchResult.Failure("Bitbucket not configured")
-        assertEquals("Bitbucket not configured", failure.message)
+        val failure = PrefetchResult.Failure(CreatePrPrefetch.ERROR_BITBUCKET_NOT_CONFIGURED)
+        assertEquals(CreatePrPrefetch.ERROR_BITBUCKET_NOT_CONFIGURED, failure.message)
     }
 
     @Test
     fun `Git not detected failure message matches expected string`() {
-        val failure = PrefetchResult.Failure("Git repository not detected")
-        assertEquals("Git repository not detected", failure.message)
+        val failure = PrefetchResult.Failure(CreatePrPrefetch.ERROR_GIT_NOT_DETECTED)
+        assertEquals(CreatePrPrefetch.ERROR_GIT_NOT_DETECTED, failure.message)
     }
 
     // ── PrefetchResult sealed class ─────────────────────────────────────────
@@ -211,7 +203,7 @@ class CreatePrPrefetchTest {
 
     @Test
     fun `Failure message is preserved`() {
-        val result = PrefetchResult.Failure("Bitbucket not configured")
-        assertEquals("Bitbucket not configured", result.message)
+        val result = PrefetchResult.Failure(CreatePrPrefetch.ERROR_BITBUCKET_NOT_CONFIGURED)
+        assertEquals(CreatePrPrefetch.ERROR_BITBUCKET_NOT_CONFIGURED, result.message)
     }
 }

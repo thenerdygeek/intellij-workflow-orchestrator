@@ -10,6 +10,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.ui.StatusColors
+import com.workflow.orchestrator.core.util.TicketKeyExtractor
 import com.workflow.orchestrator.core.workflow.JiraTicketProvider
 import com.workflow.orchestrator.core.workflow.TicketContext
 import kotlinx.coroutines.CoroutineScope
@@ -170,7 +171,7 @@ class TicketChipInput(
     fun addKey(key: String) {
         val normalized = key.trim().uppercase()
         if (normalized.isEmpty()) return
-        if (!TICKET_KEY_PATTERN.matches(normalized)) return
+        if (!TicketKeyExtractor.isValidKey(normalized)) return
         if (chips.any { it.key == normalized }) return
         if (chips.size >= MAX_CHIPS) return
 
@@ -195,7 +196,7 @@ class TicketChipInput(
         if (raw.isEmpty()) return false
 
         val normalized = raw.uppercase()
-        if (!TICKET_KEY_PATTERN.matches(normalized)) {
+        if (!TicketKeyExtractor.isValidKey(normalized)) {
             flashInvalid()
             return false
         }
@@ -463,7 +464,7 @@ class TicketChipInput(
             .filter { it.isNotEmpty() }
         tokens.forEach { token ->
             val normalized = token.uppercase()
-            if (!TICKET_KEY_PATTERN.matches(normalized)) return@forEach
+            if (!TicketKeyExtractor.isValidKey(normalized)) return@forEach
             if (chips.any { it.key == normalized }) return@forEach
             if (chips.size >= MAX_CHIPS) return
             chips.add(Chip(normalized, Chip.Status.PENDING))
@@ -516,8 +517,5 @@ class TicketChipInput(
         private const val INPUT_PLACEHOLDER = "Type key and press Enter…"
         private const val MAX_TOOLTIP = "Max 5 tickets — remove one to add another"
         private const val INVALID_FLASH_MS = 800
-
-        // Matches standard Jira-style keys: PROJ-123, AB12-7, etc.
-        private val TICKET_KEY_PATTERN = Regex("[A-Z][A-Z0-9]+-\\d+")
     }
 }

@@ -7,6 +7,7 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoContextResolver
+import com.workflow.orchestrator.core.util.TicketKeyExtractor
 import com.workflow.orchestrator.core.workflow.JiraTicketProvider
 import com.workflow.orchestrator.core.workflow.TicketContext
 import com.workflow.orchestrator.core.workflow.TicketTransition
@@ -14,6 +15,7 @@ import com.workflow.orchestrator.core.bitbucket.PrService
 import com.workflow.orchestrator.pullrequest.service.PrDescriptionGenerator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 
 /**
@@ -51,26 +53,23 @@ sealed class PrefetchResult {
  */
 object CreatePrPrefetch {
 
+    const val ERROR_BITBUCKET_NOT_CONFIGURED = "Bitbucket not configured"
+    const val ERROR_GIT_NOT_DETECTED = "Git repository not detected"
+
     private val log = Logger.getInstance(CreatePrPrefetch::class.java)
-
-    // Inlined from ActiveTicketService.extractTicketIdFromBranch — :pullrequest must not depend on :jira.
-    private val TICKET_PATTERN = Regex("([A-Z][A-Z0-9]+-\\d+)")
-
-    private fun extractTicketIdFromBranch(branchName: String): String? =
-        TICKET_PATTERN.find(branchName)?.groupValues?.get(1)
 
     suspend fun run(project: Project): PrefetchResult {
         val settings = PluginSettings.getInstance(project)
 
         // 1. Verify Bitbucket is configured
         val client = BitbucketBranchClient.fromConfiguredSettings()
-            ?: return PrefetchResult.Failure("Bitbucket not configured")
+            ?: return PrefetchResult.Failure(ERROR_BITBUCKET_NOT_CONFIGURED)
 
         // 2. Resolve current Git branch (ReadAction — must not block EDT)
         val currentBranch = ReadAction.compute<String?, Throwable> {
             RepoContextResolver.getInstance(project).resolveCurrentEditorRepoOrPrimary()
                 ?.currentBranchName
-        } ?: return PrefetchResult.Failure("Git repository not detected")
+        } ?: return PrefetchResult.Failure(ERROR_GIT_NOT_DETECTED)
 
         log.info("[PR:Prefetch] currentBranch='$currentBranch'")
 
@@ -78,7 +77,7 @@ object CreatePrPrefetch {
         val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
 
         // 3. Resolve ticket keys
-        val branchKey = extractTicketIdFromBranch(currentBranch)
+        val branchKey = TicketKeyExtractor.extractFromBranch(currentBranch)
         val activeKey = settings.state.activeTicketId?.takeIf { it.isNotBlank() }
         val keys = listOfNotNull(branchKey, activeKey?.takeIf { it != branchKey })
         log.info("[PR:Prefetch] resolvedKeys=$keys")
@@ -106,6 +105,7 @@ object CreatePrPrefetch {
             val contextPairsDeferred = async(Dispatchers.IO) {
                 if (jiraProvider == null || keys.isEmpty()) return@async emptyList<Pair<String, TicketContext?>>()
                 coroutineScope {
+                    // keys fetched in parallel — fan-out bounded by max 5 chips via TicketChipInput
                     keys.map { key ->
                         async(Dispatchers.IO) {
                             val ctx = try { jiraProvider.getTicketContext(key) } catch (e: Exception) {
@@ -114,7 +114,7 @@ object CreatePrPrefetch {
                             }
                             key to ctx
                         }
-                    }.map { it.await() }
+                    }.awaitAll()
                 }
             }
 
