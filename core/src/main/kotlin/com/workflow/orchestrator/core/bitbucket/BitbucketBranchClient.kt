@@ -345,8 +345,13 @@ private data class InlineCommentAnchor(
     val path: String,
     val line: Int,
     val lineType: String,
-    val fileType: String = "TO"
-)
+    val fileType: String,
+) {
+    companion object {
+        fun deriveFileType(lineType: String): String =
+            if (lineType == "REMOVED") "FROM" else "TO"
+    }
+}
 
 @Serializable
 private data class ReplyCommentRequest(
@@ -1592,7 +1597,8 @@ class BitbucketBranchClient(
                         anchor = InlineCommentAnchor(
                             path = filePath,
                             line = lineNumber,
-                            lineType = lineType
+                            lineType = lineType,
+                            fileType = InlineCommentAnchor.deriveFileType(lineType),
                         )
                     )
                 ).toRequestBody("application/json".toMediaType())
