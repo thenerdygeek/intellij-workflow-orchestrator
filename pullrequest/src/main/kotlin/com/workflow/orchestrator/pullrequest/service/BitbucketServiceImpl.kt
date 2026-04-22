@@ -481,8 +481,12 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
             data = emptyList(), summary = "Bitbucket project/repo not configured.", isError = true,
             hint = "Set Bitbucket project key and repo slug in Settings."
         )
+        val username = resolveCurrentUsername(api) ?: return ToolResult(
+            data = emptyList(), summary = "Cannot resolve Bitbucket username. Set it in Settings or ensure the server is reachable.",
+            isError = true, hint = "Set your Bitbucket username in Settings > Workflow Orchestrator > Connections."
+        )
 
-        return when (val result = api.getReviewingPullRequests(projectKey, repoSlug, state)) {
+        return when (val result = api.getReviewingPullRequests(projectKey, repoSlug, state, username = username)) {
             is ApiResult.Success -> {
                 val prs = result.data.values.map { it.toPullRequestData() }
                 ToolResult.success(prs, "Found ${prs.size} reviewing PR(s) with state '$state'")
