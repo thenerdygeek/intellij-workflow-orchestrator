@@ -357,6 +357,16 @@ class AgentController(
             if (lastTaskText == null) return@setCefRetryCallback
             // Dispatchers.IO — cleanup performs an atomic disk write via MessageStateHandler.
             CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+                // Cancel any in-flight loop BEFORE starting a new executeTask call.
+                // executeTask does not auto-cancel the existing activeTask, so without this
+                // explicit cancel two loops would concurrently write to the same
+                // MessageStateHandler — corrupting both persistence files.
+                // This is safe when the loop is suspended on userInputChannel.receive()
+                // (onLoopAwaitingUserInput path): cancelCurrentTask() propagates
+                // CancellationException through the coroutine, the loop exits cleanly,
+                // and the new executeTask("continue") starts with a clean activeTask slot.
+                runCatching { service.cancelCurrentTask() }
+                    .onFailure { LOG.warn("retry cancel-prior-task failed (continuing anyway)", it) }
                 runCatching { service.cleanEmptyArtifactsBeforeRetry() }
                     .onFailure { LOG.warn("retry cleanup failed (continuing anyway)", it) }
                 invokeLater { executeTask("continue", "continue", null) }
@@ -1597,6 +1607,13 @@ class AgentController(
             dashboard.setSteeringMode(true)
             dashboard.setInputLocked(false)
             dashboard.appendStatus(reason, RichStreamingPanel.StatusType.INFO)
+            // Mirror the post-exit Failed(EMPTY_RESPONSES / NO_TOOLS_USED) surface:
+            // show the Retry button so the user has a one-click affordance identical
+            // to the other stall state. Pressing Retry cancels the suspended
+            // userInputChannel.receive() via the existing retryLastTask path.
+            if (lastTaskText != null) {
+                dashboard.showRetryButton("retry", reason)
+            }
             dashboard.focusInput()
         }
     }
