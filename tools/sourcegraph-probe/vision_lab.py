@@ -21,6 +21,15 @@ The gateway translates some of those shapes for the routed provider and 400s
 the rest. We don't know which until we ask. So this script asks — once per
 (format × model) combination — and prints a PASS/FAIL matrix.
 
+CRUCIAL FINDING (after first probe round failed everywhere):
+The OpenAI-compatible /.api/llm/chat/completions endpoint is TEXT-ONLY by design.
+Per sourcegraph/openapi the public spec's MessageContentPart enum is `[text]`
+only; the Go handler internal/openapi/goapi/model_chat_completions.go has no
+image_url field. Cody clients (web/VSCode/JetBrains) actually send images via
+/.api/completions/stream?api-version=8 with Sourcegraph-specific field names
+(`speaker` not `role`, `maxTokensToSample` not `max_tokens`) and SSE response.
+That transport is now covered by the cody_stream_* scenarios.
+
 WHAT IT DOES
 ------------
 1. Generates two deterministic test images IN PURE PYTHON (no PIL): a 16x16
@@ -128,6 +137,17 @@ except ImportError:
 
 CHAT_PATH = "/.api/llm/chat/completions"
 MODELS_PATH = "/.api/llm/models"
+
+# Cody's actual image-bearing transport. Confirmed via sourcegraph/cody
+# (lib/shared/src/sourcegraph-api/completions/client.ts) and
+# sourcegraph/openapi (SourcegraphInternal spec — `ImagePart` schema lives
+# ONLY here, never on /.api/llm/chat/completions). Uses Sourcegraph-specific
+# field names (`speaker` not `role`, `maxTokensToSample` not `max_tokens`)
+# and returns SSE.
+STREAM_PATH = "/.api/completions/stream"
+# api-version: 8 = current (Sourcegraph 6.2.0+), 2 = minimum supporting image_url
+# (Sourcegraph 5.8.0+). Pre-5.8 instances have no image support at all.
+STREAM_API_VERSIONS = [8, 2]
 
 # ─────────────────────────────────────────────────────────────
 # Defaults
@@ -336,6 +356,102 @@ class FormatCase:
     expected_all: list[str] = field(default_factory=list)  # response must contain all of these
     needs_url: bool = False      # skip when --no-url-tests
     notes: str = ""
+    # When set, replaces the default chat_completions body construction.
+    # Signature: (model, max_tokens) -> full request body dict.
+    # Used by Cody-stream cases that need different field names + endpoint.
+    body_builder: Callable[[str, int], dict] | None = None
+    # Full request path (with any ?query). Defaults to CHAT_PATH.
+    endpoint_path: str = ""
+    # If True, response is SSE; we accumulate deltaText/completion frames.
+    is_sse: bool = False
+
+
+# ─────────────────────────────────────────────────────────────
+# Cody-stream body builders (the actually-working transport)
+# Per sourcegraph/cody completions-converter.ts canonical example.
+# ─────────────────────────────────────────────────────────────
+
+def _cody_stream_body(content: list[dict], model: str, max_tokens: int,
+                      stream: bool = True) -> dict:
+    """Common Cody stream body shape — speaker not role, maxTokensToSample
+    not max_tokens, stream by default. Add topK/topP -1 to match the
+    reference client (Cody sends these explicitly)."""
+    return {
+        "model": model,
+        "messages": [{"speaker": "human", "content": content}],
+        "maxTokensToSample": max_tokens,
+        "temperature": 0,
+        "stream": stream,
+        "topK": -1,
+        "topP": -1,
+    }
+
+
+def cody_stream_text_first_v8(model: str, max_tokens: int) -> dict:
+    """Cody stream, api-version=8, content order: [text, image]."""
+    return _cody_stream_body([
+        {"type": "text", "text": PROMPT_COLOR},
+        {"type": "image_url",
+         "image_url": {"url": f"data:image/png;base64,{RED_PNG_B64}"}},
+    ], model, max_tokens)
+
+
+def cody_stream_image_first_v8(model: str, max_tokens: int) -> dict:
+    """Cody stream, api-version=8, content order: [image, text] — matches
+    the canonical example in completions-converter.ts."""
+    return _cody_stream_body([
+        {"type": "image_url",
+         "image_url": {"url": f"data:image/png;base64,{RED_PNG_B64}"}},
+        {"type": "text", "text": PROMPT_COLOR},
+    ], model, max_tokens)
+
+
+def cody_stream_text_first_v2(model: str, max_tokens: int) -> dict:
+    """Cody stream, api-version=2 (minimum image_url support, Sourcegraph 5.8+)."""
+    return cody_stream_text_first_v8(model, max_tokens)
+
+
+def cody_stream_no_stream_v8(model: str, max_tokens: int) -> dict:
+    """Cody stream endpoint but stream=false — verifies whether the endpoint
+    accepts non-streaming requests (some forks do)."""
+    body = cody_stream_text_first_v8(model, max_tokens)
+    body["stream"] = False
+    return body
+
+
+def parse_cody_sse(resp: requests.Response) -> tuple[str, list[str]]:
+    """Accumulate text from a Sourcegraph completions/stream SSE response.
+    Returns (accumulated_text, raw_event_names_seen)."""
+    accumulated = ""
+    events_seen: list[str] = []
+    last_event = ""
+    for raw in resp.iter_lines(decode_unicode=True):
+        if raw is None:
+            continue
+        if not raw:
+            last_event = ""
+            continue
+        if raw.startswith("event:"):
+            last_event = raw[6:].strip()
+            events_seen.append(last_event)
+            continue
+        if raw.startswith("data:"):
+            data = raw[5:].strip()
+            if not data or data == "[DONE]":
+                continue
+            try:
+                obj = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            # api-version >= 2 sends {"deltaText": "..."} on event: completion.
+            # api-version 1 sends {"completion": "<full>"} (cumulative).
+            if "deltaText" in obj and isinstance(obj["deltaText"], str):
+                accumulated += obj["deltaText"]
+            elif "completion" in obj and isinstance(obj["completion"], str):
+                accumulated = obj["completion"]
+    return accumulated, events_seen
 
 
 def build_cases(remote_image_url: str, remote_keywords: list[str]) -> list[FormatCase]:
@@ -426,6 +542,49 @@ def build_cases(remote_image_url: str, remote_keywords: list[str]) -> list[Forma
             builder=lambda: fmt_gemini_inline_camel(RED_PNG_B64),
             expected_any=RED_KEYWORDS,
         ),
+        # ── Cody-stream cases — what the actual Cody clients use ──────────
+        # These hit /.api/completions/stream (NOT /.api/llm/chat/completions)
+        # with Sourcegraph-specific field names. SSE response.
+        FormatCase(
+            name="cody_stream_v8_image_first",
+            description="Cody canonical: /.api/completions/stream?api-version=8, "
+                        "speaker=human, content=[image_url, text]",
+            builder=lambda: [],  # unused; body_builder takes over
+            body_builder=cody_stream_image_first_v8,
+            endpoint_path=f"{STREAM_PATH}?api-version=8",
+            is_sse=True,
+            expected_any=RED_KEYWORDS,
+            notes="Mirrors completions-converter.ts canonical example exactly.",
+        ),
+        FormatCase(
+            name="cody_stream_v8_text_first",
+            description="Cody stream v8, content=[text, image_url] (reverse order)",
+            builder=lambda: [],
+            body_builder=cody_stream_text_first_v8,
+            endpoint_path=f"{STREAM_PATH}?api-version=8",
+            is_sse=True,
+            expected_any=RED_KEYWORDS,
+        ),
+        FormatCase(
+            name="cody_stream_v2_text_first",
+            description="Cody stream api-version=2 (Sourcegraph 5.8.0+ minimum)",
+            builder=lambda: [],
+            body_builder=cody_stream_text_first_v2,
+            endpoint_path=f"{STREAM_PATH}?api-version=2",
+            is_sse=True,
+            expected_any=RED_KEYWORDS,
+            notes="Fallback for instances older than Sourcegraph 6.2.0.",
+        ),
+        FormatCase(
+            name="cody_stream_v8_no_stream",
+            description="Cody stream endpoint with stream=false (non-SSE response)",
+            builder=lambda: [],
+            body_builder=cody_stream_no_stream_v8,
+            endpoint_path=f"{STREAM_PATH}?api-version=8",
+            is_sse=False,
+            expected_any=RED_KEYWORDS,
+            notes="Some forks accept stream=false on this endpoint; most do not.",
+        ),
     ]
     return cases
 
@@ -467,6 +626,14 @@ class SourcegraphClient:
     def post_chat(self, body: dict) -> requests.Response:
         return self.session.post(self.base_url + CHAT_PATH, json=body,
                                  stream=False, timeout=self.timeout)
+
+    def post(self, path: str, body: dict, stream: bool = False,
+             extra_headers: dict | None = None) -> requests.Response:
+        """Generic POST for non-default endpoints (e.g. /.api/completions/stream)."""
+        headers = dict(extra_headers) if extra_headers else None
+        return self.session.post(self.base_url + path, json=body,
+                                 stream=stream, headers=headers,
+                                 timeout=self.timeout)
 
 
 def _mask_url(url: str) -> str:
@@ -521,17 +688,28 @@ class RunOutcome:
 
 def run_case(client: SourcegraphClient, model: str, case: FormatCase,
              max_tokens: int) -> RunOutcome:
-    body = {
-        "model": model,
-        "max_tokens": max_tokens,
-        "temperature": 0,
-        "messages": [{"role": "user", "content": case.builder()}],
-    }
+    # Build the request body. Cody-stream cases provide their own body_builder
+    # (different field names + endpoint); the rest use the OpenAI-shape default.
+    if case.body_builder is not None:
+        body = case.body_builder(model, max_tokens)
+    else:
+        body = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "temperature": 0,
+            "messages": [{"role": "user", "content": case.builder()}],
+        }
     request_preview = _short(json.dumps(body)[:800], 800)
+
+    path = case.endpoint_path or CHAT_PATH
+    extra_headers = {"Accept": "text/event-stream"} if case.is_sse else None
 
     t0 = time.time()
     try:
-        r = client.post_chat(body)
+        if case.body_builder is not None or case.endpoint_path:
+            r = client.post(path, body, stream=case.is_sse, extra_headers=extra_headers)
+        else:
+            r = client.post_chat(body)
         elapsed_ms = int((time.time() - t0) * 1000)
     except requests.RequestException as e:
         return RunOutcome(
@@ -552,10 +730,55 @@ def run_case(client: SourcegraphClient, model: str, case: FormatCase,
         out.reply_preview = _short(r.text, 400)
         return out
 
+    # SSE path (Cody stream endpoint) — accumulate deltaText/completion frames.
+    if case.is_sse:
+        try:
+            content, events = parse_cody_sse(r)
+        except requests.RequestException as e:
+            out.fail_reason = "SSE_READ_ERROR"
+            out.error = str(e)
+            return out
+        if not content:
+            out.fail_reason = "SSE_EMPTY"
+            out.reply_preview = f"events_seen={events[:10]}"
+            return out
+        out.reply_preview = _short(content, 400)
+        lower = content.lower()
+        if any(p in lower for p in REFUSAL_PHRASES):
+            out.fail_reason = "REFUSED"
+            return out
+        matched_any = any(kw in lower for kw in case.expected_any)
+        matched_all = all(kw in lower for kw in case.expected_all) if case.expected_all else True
+        if matched_any and matched_all:
+            out.verdict = "PASS"
+        else:
+            out.fail_reason = "SAW_NO"
+        return out
+
     data = _decode_json(r)
     if not isinstance(data, dict):
         out.fail_reason = "BAD_JSON"
         out.reply_preview = _short(str(data), 400)
+        return out
+
+    # Non-SSE path. Two response shapes:
+    #   chat_completions: {"choices":[{"message":{"content": ...}}]}
+    #   completions/stream with stream=false: {"completion": "...", "stopReason": "..."}
+    if "completion" in data and "choices" not in data:
+        content = data.get("completion") or ""
+        out.finish_reason = data.get("stopReason")
+        out.usage = data.get("usage")
+        out.reply_preview = _short(content if isinstance(content, str) else str(content), 400)
+        lower = (content if isinstance(content, str) else "").lower()
+        if any(p in lower for p in REFUSAL_PHRASES):
+            out.fail_reason = "REFUSED"
+            return out
+        matched_any = any(kw in lower for kw in case.expected_any)
+        matched_all = all(kw in lower for kw in case.expected_all) if case.expected_all else True
+        if matched_any and matched_all:
+            out.verdict = "PASS"
+        else:
+            out.fail_reason = "SAW_NO"
         return out
 
     choices = data.get("choices") or []
