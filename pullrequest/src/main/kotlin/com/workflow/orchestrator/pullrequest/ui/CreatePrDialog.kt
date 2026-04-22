@@ -2,7 +2,8 @@ package com.workflow.orchestrator.pullrequest.ui
 
 import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.application.EDT
-import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.application.ModalityState
+import com.intellij.openapi.application.invokeLater as platformInvokeLater
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
@@ -111,19 +112,26 @@ class CreatePrDialog(
         foreground = StatusColors.LINK
     }
 
-    // Module selector (only visible for multi-repo)
+    // Module selector (only visible for multi-repo).
+    // Long repo labels (e.g. "name (PROJ/very-long-repo-slug)") would otherwise blow out the
+    // combo's preferred width and push the dialog into horizontal scroll. Cap with a
+    // prototype string that reflects a realistic max label length.
     private val moduleCombo: JComboBox<RepoComboItem>? = if (context.repos.size > 1) {
         JComboBox<RepoComboItem>().also { combo ->
             context.repos.forEach { r -> combo.addItem(RepoComboItem(r)) }
             combo.selectedIndex = context.initialSelectedRepoIndex
+            combo.prototypeDisplayValue = RepoComboItem(context.repos[0])
+            combo.maximumSize = Dimension(JBUI.scale(480), combo.preferredSize.height)
         }
     } else null
 
-    // Target branch — filterable dropdown (type to filter + chevron to open full list).
-    private val targetField: ExtendableTextField = ExtendableTextField(40).apply {
+    // Target branch — free-text field + a chevron that opens a searchable list popup
+    // (IntelliJ's JBPopupFactory). The field remains manually editable so advanced users
+    // can paste/type a branch name directly. 28 cols keeps the field narrow so long branch
+    // names don't push the dialog into horizontal scroll.
+    private val targetField: ExtendableTextField = ExtendableTextField(28).apply {
         text = currentRepo.defaultTarget
     }
-    private val branchPopup = JPopupMenu()
 
     // Tickets (primary + up to 4 linked)
     private val ticketChipInput = TicketChipInput(
@@ -219,19 +227,18 @@ class CreatePrDialog(
             (titleField as ExtendableTextField).addExtension(ext)
         }
 
-        // Target branch dropdown chevron — click opens the full filterable list.
+        // Target branch dropdown chevron — opens a searchable JBPopup list (filterable by
+        // typing, click/Enter to select, Esc to close). IntelliJ's standard pattern; replaces
+        // the previous JPopupMenu-based autocomplete which had several UX problems: the
+        // popup had no filter field, item clicks sometimes failed to propagate when opened
+        // from an ExtendableTextField icon, and the DocumentListener kept re-spawning the
+        // popup while the user was trying to dismiss it.
         val chevron = com.intellij.icons.AllIcons.General.ArrowDown
         targetField.addExtension(
             ExtendableTextComponent.Extension.create(chevron, chevron, "Show branches") {
-                showBranchDropdown(showAll = true)
+                showBranchChooser()
             }
         )
-        // Also open on focus gain so the dropdown is discoverable without needing to type.
-        targetField.addFocusListener(object : java.awt.event.FocusAdapter() {
-            override fun focusGained(e: java.awt.event.FocusEvent) {
-                showBranchDropdown(showAll = false)
-            }
-        })
 
         // Pre-fill reviewers: union of settings-configured defaults AND the selected repo's
         // Bitbucket-configured default reviewers (from the default-reviewers plugin, fetched
@@ -261,11 +268,14 @@ class CreatePrDialog(
             }
         }
 
-        // Wire target branch search + provenance invalidation
+        // Wire provenance invalidation only — target-branch autocomplete-while-typing was
+        // removed along with the old JPopupMenu approach. Users now discover branches via
+        // the chevron dropdown; free text in the field remains valid (git push/PR endpoint
+        // validates it server-side).
         targetField.document.addDocumentListener(object : DocumentListener {
-            override fun insertUpdate(e: DocumentEvent) { filterBranches(); onTargetChanged() }
-            override fun removeUpdate(e: DocumentEvent) { filterBranches(); onTargetChanged() }
-            override fun changedUpdate(e: DocumentEvent) { onTargetChanged() }
+            override fun insertUpdate(e: DocumentEvent) = onTargetChanged()
+            override fun removeUpdate(e: DocumentEvent) = onTargetChanged()
+            override fun changedUpdate(e: DocumentEvent) = onTargetChanged()
         })
 
         // Wire reviewer search
@@ -302,6 +312,25 @@ class CreatePrDialog(
         super.dispose()
     }
 
+    /**
+     * Post a runnable to the EDT at this dialog's modality level.
+     *
+     * Critical: the IntelliJ `invokeLater` default from a background thread resolves to
+     * `ModalityState.NON_MODAL`, which is suspended while any modal dialog is open —
+     * including this dialog. Any background-thread → EDT hop inside a modal coroutine
+     * (LLM title/description generation, user/branch search, etc.) MUST use this helper,
+     * otherwise the runnable is queued but never dispatched and the UI spins forever.
+     *
+     * `stateForComponent(contentPane)` is evaluated lazily so construction-time callers
+     * (before createCenterPanel builds the content pane) also work — we fall back to
+     * `ModalityState.any()` until the pane is realized.
+     */
+    private fun invokeLater(runnable: Runnable) {
+        val cp = this.contentPane
+        val modality = if (cp != null) ModalityState.stateForComponent(cp) else ModalityState.any()
+        platformInvokeLater(modality) { runnable.run() }
+    }
+
     override fun createCenterPanel(): JComponent {
         val panel = JPanel(BorderLayout(0, JBUI.scale(8)))
         panel.preferredSize = Dimension(JBUI.scale(620), JBUI.scale(580))
@@ -323,7 +352,12 @@ class CreatePrDialog(
             gbc.gridx = 0; gbc.gridy = nextRow; gbc.weightx = 0.0
             branchPanel.add(JBLabel("Module:").apply { border = JBUI.Borders.emptyRight(8) }, gbc)
             gbc.gridx = 1; gbc.weightx = 1.0
-            branchPanel.add(JBLabel(labelText), gbc)
+            // Truncate visually via tooltip for very long labels so column 1 doesn't grow
+            // past the dialog width. Full label is still available on hover.
+            branchPanel.add(JBLabel(labelText).apply {
+                toolTipText = labelText
+                maximumSize = Dimension(JBUI.scale(480), preferredSize.height)
+            }, gbc)
             nextRow++
         } else if (moduleCombo != null) {
             gbc.gridx = 0; gbc.gridy = nextRow; gbc.weightx = 0.0
@@ -342,6 +376,7 @@ class CreatePrDialog(
         gbc.gridx = 0; gbc.gridy = nextRow; gbc.weightx = 0.0
         branchPanel.add(JBLabel("Target:").apply { border = JBUI.Borders.emptyRight(8) }, gbc)
         gbc.gridx = 1; gbc.weightx = 1.0
+        targetField.maximumSize = Dimension(JBUI.scale(480), targetField.preferredSize.height)
         branchPanel.add(targetField, gbc)
 
         content.add(branchPanel)
@@ -449,10 +484,9 @@ class CreatePrDialog(
         currentRepo = newRepo
         // Update source label
         sourceBranchLabel.text = newRepo.sourceBranch
-        // Reset target to new repo's default and hide any stale branch popup from the old repo
+        // Reset target to new repo's default. The branch chooser popup is ephemeral
+        // (rebuilt per open from currentRepo.remoteBranches) so no cleanup is needed.
         targetField.text = newRepo.defaultTarget
-        branchPopup.isVisible = false
-        branchPopup.removeAll()
         // Swap repo-level default reviewer chips for the new repo. Manually-added chips
         // (not in repoDefaultReviewerChips) and settings-based chips are preserved.
         val existingRepoDefaults = repoDefaultReviewerChips.toMap()
@@ -485,40 +519,29 @@ class CreatePrDialog(
 
     // --- Branch search ---
 
-    /** Called on every keystroke — filters by current text. Hides when nothing matches. */
-    private fun filterBranches() = showBranchDropdown(showAll = false)
-
     /**
-     * Renders the target-branch dropdown. When [showAll] is true, the filter is bypassed and
-     * the full branch list is displayed (chevron click). Otherwise the list is filtered by
-     * the field's current text (typing / focus). We intentionally show the popup even when
-     * the current text exactly matches a branch — hiding at that point was the reason the
-     * dropdown felt broken on dialog open (default target always matches exactly).
+     * Open a searchable branch-chooser popup for the currently selected module. Uses
+     * `JBPopupFactory.createPopupChooserBuilder` — IntelliJ's standard pattern for
+     * filter-as-you-type list popups. Built-in speed-search filters the list by substring;
+     * click or Enter commits the selected branch into [targetField]; Esc or click-away
+     * closes the popup.
      */
-    private fun showBranchDropdown(showAll: Boolean) {
-        branchPopup.removeAll()
-        val filter = if (showAll) "" else targetField.text.lowercase()
-        val matches = currentRepo.remoteBranches
-            .filter { it.lowercase().contains(filter) }
-            .take(15)
-        if (matches.isEmpty()) {
-            branchPopup.isVisible = false
-            return
-        }
-        matches.forEach { branch ->
-            val item = JMenuItem(branch)
-            item.addActionListener {
-                targetField.text = branch
-                branchPopup.isVisible = false
+    private fun showBranchChooser() {
+        val branches = currentRepo.remoteBranches
+        if (branches.isEmpty() || !targetField.isShowing) return
+        val popup = com.intellij.openapi.ui.popup.JBPopupFactory.getInstance()
+            .createPopupChooserBuilder(branches)
+            .setTitle("Select target branch")
+            .setNamerForFiltering { it }
+            .setRequestFocus(true)
+            .setMovable(false)
+            .setResizable(true)
+            .setSelectedValue(targetField.text, true)
+            .setItemChosenCallback { chosen ->
+                if (chosen != null) targetField.text = chosen
             }
-            branchPopup.add(item)
-        }
-        if (!targetField.isShowing) {
-            branchPopup.isVisible = false
-            return
-        }
-        branchPopup.pack()
-        branchPopup.show(targetField, 0, targetField.height)
+            .createPopup()
+        popup.showUnderneathOf(targetField)
     }
 
     // --- Reviewer autocomplete ---
