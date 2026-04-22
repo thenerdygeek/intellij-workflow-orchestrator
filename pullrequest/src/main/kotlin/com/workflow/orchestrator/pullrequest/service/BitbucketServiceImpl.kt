@@ -11,6 +11,7 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketReviewerUser
 import com.workflow.orchestrator.core.model.bitbucket.*
 import com.workflow.orchestrator.core.services.BitbucketService
 import com.workflow.orchestrator.core.services.ToolResult
+import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
 
 /**
@@ -442,8 +443,12 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
             data = emptyList(), summary = "Bitbucket project/repo not configured.", isError = true,
             hint = "Set Bitbucket project key and repo slug in Settings."
         )
+        val username = resolveCurrentUsername(api) ?: return ToolResult(
+            data = emptyList(), summary = "Cannot resolve Bitbucket username. Set it in Settings or ensure the server is reachable.",
+            isError = true, hint = "Set your Bitbucket username in Settings > Workflow Orchestrator > Connections."
+        )
 
-        return when (val result = api.getMyPullRequests(projectKey, repoSlug, state)) {
+        return when (val result = api.getMyPullRequests(projectKey, repoSlug, state, username = username)) {
             is ApiResult.Success -> {
                 val prs = result.data.values.map { it.toPullRequestData() }
                 ToolResult.success(prs, "Found ${prs.size} authored PR(s) with state '$state'")
@@ -454,6 +459,17 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
                     hint = "Check Bitbucket connection in Settings.")
             }
         }
+    }
+
+    /**
+     * Resolves the current Bitbucket username.
+     * Priority: ConnectionSettings.bitbucketUsername → API whoami endpoint fallback.
+     * Returns null if neither source yields a non-blank username.
+     */
+    private suspend fun resolveCurrentUsername(api: BitbucketBranchClient): String? {
+        val fromSettings = ConnectionSettings.getInstance().state.bitbucketUsername.takeIf { it.isNotBlank() }
+        if (fromSettings != null) return fromSettings
+        return (api.getCurrentUsername() as? ApiResult.Success)?.data?.takeIf { it.isNotBlank() }
     }
 
     override suspend fun getReviewingPullRequests(state: String, repoName: String?): ToolResult<List<PullRequestData>> {
