@@ -33,20 +33,20 @@
 
 | Action | Tool line | Service method | Test file | Verdict |
 |---|---|---|---|---|
-| `create_pr` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:95` | `createPullRequest(title, prDescription, fromBranch, toBranch, repoName)` | `BitbucketPrToolTest.kt` (schema only) | |
-| `get_pr_detail` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:112` | `getPullRequestDetail(prId, repoName)` | `BitbucketPrToolTest.kt` (schema only) | |
-| `get_pr_commits` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:118` | `getPullRequestCommits(prId, repoName)` | `BitbucketPrToolTest.kt` (schema only) | |
-| `get_pr_activities` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:124` | `getPullRequestActivities(prId, repoName)` | `BitbucketPrToolTest.kt` (schema only) | |
-| `get_pr_changes` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:130` | `getPullRequestChanges(prId, repoName)` | `BitbucketPrToolTest.kt` (schema only) | |
-| `get_pr_diff` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:136` | `getPullRequestDiff(prId, repoName)` | `BitbucketPrToolTest.kt` (schema only) | |
-| `check_merge_status` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:142` | `checkMergeStatus(prId, repoName)` | `BitbucketPrToolTest.kt` (schema only) | |
-| `approve_pr` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:148` | `approvePullRequest(prId, repoName)` | `BitbucketPrToolTest.kt` (schema only) | |
-| `merge_pr` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:154` | `mergePullRequest(prId, strategy, deleteSourceBranch, commitMessage, repoName)` | `BitbucketPrToolTest.kt` (schema only) | |
-| `decline_pr` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:163` | `declinePullRequest(prId, repoName)` | `BitbucketPrToolTest.kt` (schema only) | |
-| `update_pr_title` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:169` | `updatePrTitle(prId, newTitle, repoName)` | `BitbucketPrToolTest.kt` (schema only) | |
-| `update_pr_description` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:177` | `updatePrDescription(prId, description, repoName)` | `BitbucketPrToolTest.kt` (schema only) | |
-| `get_my_prs` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:184` | `getMyPullRequests(state, repoName)` | `BitbucketPrToolTest.kt` (schema only) | |
-| `get_reviewing_prs` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:190` | `getReviewingPullRequests(state, repoName)` | `BitbucketPrToolTest.kt` (schema only) | |
+| `create_pr` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:95` | `createPullRequest(title, prDescription, fromBranch, toBranch, repoName)` | `BitbucketPrToolTest.kt` (schema only) | UNTESTED |
+| `get_pr_detail` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:112` | `getPullRequestDetail(prId, repoName)` | `BitbucketPrToolTest.kt` (schema only) | UNTESTED |
+| `get_pr_commits` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:118` | `getPullRequestCommits(prId, repoName)` | `BitbucketPrToolTest.kt` (schema only) | UNTESTED |
+| `get_pr_activities` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:124` | `getPullRequestActivities(prId, repoName)` | `BitbucketPrToolTest.kt` (schema only) | UNTESTED |
+| `get_pr_changes` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:130` | `getPullRequestChanges(prId, repoName)` | `BitbucketPrToolTest.kt` (schema only) | UNTESTED |
+| `get_pr_diff` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:136` | `getPullRequestDiff(prId, repoName)` | `BitbucketPrToolTest.kt` (schema only) | UNTESTED |
+| `check_merge_status` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:142` | `checkMergeStatus(prId, repoName)` | `BitbucketPrToolTest.kt` (schema only) | UNTESTED |
+| `approve_pr` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:148` | `approvePullRequest(prId, repoName)` | `BitbucketPrToolTest.kt` (schema only) | UNTESTED |
+| `merge_pr` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:154` | `mergePullRequest(prId, strategy, deleteSourceBranch, commitMessage, repoName)` | `BitbucketPrToolTest.kt` (schema only) | FIX |
+| `decline_pr` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:163` | `declinePullRequest(prId, repoName)` | `BitbucketPrToolTest.kt` (schema only) | UNTESTED |
+| `update_pr_title` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:169` | `updatePrTitle(prId, newTitle, repoName)` | `BitbucketPrToolTest.kt` (schema only) | UNTESTED |
+| `update_pr_description` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:177` | `updatePrDescription(prId, description, repoName)` | `BitbucketPrToolTest.kt` (schema only) | UNTESTED |
+| `get_my_prs` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:184` | `getMyPullRequests(state, repoName)` | `BitbucketPrToolTest.kt` (schema only) | FIX |
+| `get_reviewing_prs` | `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrTool.kt:190` | `getReviewingPullRequests(state, repoName)` | `BitbucketPrToolTest.kt` (schema only) | FIX |
 
 ### PR-diff related
 
