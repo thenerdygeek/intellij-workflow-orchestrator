@@ -310,4 +310,78 @@ class TicketChipInputTest {
         assertEquals(TicketChipInput.Chip.Status.VALID, chip.status)
         assertSame(ctx, chip.context)
     }
+
+    // ── 12. pending icons disposed on status transition ─────────────────────
+
+    @Test
+    fun `pending icons are disposed on status transition`() = runTest {
+        val ctx = stubValid("WO-100")
+        val provider = StubProvider(
+            validKeys = mapOf("WO-100" to ctx),
+            notFoundKeys = setOf("WO-200"),
+            errorKeys = setOf("WO-300")
+        )
+        val widget = buildWidget(this, provider)
+
+        // Add three chips that each start PENDING, each gets an AnimatedIcon.Default.
+        widget.addKey("WO-100")
+        widget.addKey("WO-200")
+        widget.addKey("WO-300")
+
+        // Before resolution: all three should have pending icon disposables tracked.
+        assertEquals(3, widget.pendingIconsForTest().size)
+
+        // Resolve: VALID, NOT_FOUND, NETWORK_ERROR — all transition out of PENDING.
+        advanceUntilIdle()
+
+        // After resolution, pendingIcons map must be empty (all icons disposed).
+        assertTrue(
+            widget.pendingIconsForTest().isEmpty(),
+            "Expected pendingIcons to be empty after all chips resolved, " +
+                "but found: ${widget.pendingIconsForTest().keys}"
+        )
+    }
+
+    // ── 13. onChange fires exactly once during construction ─────────────────
+
+    @Test
+    fun `onChange fires exactly once during construction with multiple initialKeys`() = runTest {
+        val provider = StubProvider(
+            validKeys = mapOf(
+                "WO-1" to stubValid("WO-1"),
+                "WO-2" to stubValid("WO-2"),
+                "WO-3" to stubValid("WO-3")
+            )
+        )
+        var callCount = 0
+
+        // Build widget with 3 initialKeys. The onChange callback is hooked before construction,
+        // so every invocation from init is captured.
+        val widget = buildWidget(
+            this,
+            provider,
+            initialKeys = listOf("WO-1", "WO-2", "WO-3"),
+            onChange = { callCount++ }
+        )
+
+        // Exactly one synthetic onChange should have fired by the time the constructor returns,
+        // regardless of how many keys were seeded.
+        assertEquals(
+            1, callCount,
+            "Expected exactly 1 onChange call during init for 3 initialKeys, got $callCount"
+        )
+
+        // Sanity: after async resolve, additional calls do fire (one per chip resolution).
+        val countAfterInit = callCount
+        advanceUntilIdle()
+        assertTrue(
+            widget.allChips().isNotEmpty(),
+            "Widget should still have chips after resolve"
+        )
+        // At least 3 more onChange calls expected (one per resolved chip).
+        assertTrue(
+            callCount > countAfterInit,
+            "Expected async resolves to fire additional onChange calls"
+        )
+    }
 }

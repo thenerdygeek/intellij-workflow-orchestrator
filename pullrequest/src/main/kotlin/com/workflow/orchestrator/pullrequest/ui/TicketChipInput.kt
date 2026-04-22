@@ -2,6 +2,7 @@ package com.workflow.orchestrator.pullrequest.ui
 
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.project.Project
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.JBColor
@@ -76,7 +77,7 @@ class TicketChipInput(
      * the resolve runs in-line on the test scope.
      */
     private val ioContext: kotlin.coroutines.CoroutineContext = Dispatchers.IO
-) : JPanel() {
+) : JPanel(), Disposable {
 
     data class Snapshot(
         val chips: List<Chip>,
@@ -95,6 +96,15 @@ class TicketChipInput(
     // ─── State ──────────────────────────────────────────────────────────────────
 
     private val chips = mutableListOf<Chip>()
+
+    /** Tracks live [AnimatedIcon.Default] instances for chips in PENDING state.
+     *  Keyed by ticket key. Entries are removed (and thus eligible for GC) when the
+     *  chip transitions out of PENDING or when the widget is disposed, preventing
+     *  accumulated dead timer-backed icon instances across render cycles. */
+    private val pendingIcons: MutableMap<String, AnimatedIcon.Default> = mutableMapOf()
+
+    /** Guards onChange firing during the init-time addKey loop. */
+    private var initialized = false
 
     // ─── UI components ──────────────────────────────────────────────────────────
 
@@ -125,8 +135,19 @@ class TicketChipInput(
         chipsPanel.add(inputField)
         add(chipsPanel, BorderLayout.CENTER)
 
-        // Pre-seed from constructor args.
+        // Pre-seed from constructor args. onChange is suppressed during this loop
+        // via the `initialized` guard; a single synthetic call fires afterward so
+        // callers receive one stable snapshot rather than per-key intermediate states.
         initialKeys.forEach { addKey(it) }
+        initialized = true
+        fireChange()
+    }
+
+    override fun dispose() {
+        // AnimatedIcon.Default does not implement Disposable in the platform version
+        // this plugin targets; clearing the map releases all references so the
+        // timer-backed instances can be GC'd and their animations stop naturally.
+        pendingIcons.clear()
     }
 
     // ─── Public API ─────────────────────────────────────────────────────────────
@@ -198,6 +219,7 @@ class TicketChipInput(
         val wasPrimary = chips.firstOrNull()?.key == key
         val removed = chips.removeAll { it.key == key }
         if (!removed) return
+        pendingIcons.remove(key) // release reference so the icon can be GC'd
         if (wasPrimary) maybeAutoPromote()
         renderChips()
         fireChange()
@@ -237,10 +259,14 @@ class TicketChipInput(
                 val idx = chips.indexOfFirst { it.key == key }
                 if (idx < 0) return@uiDispatcher // removed while resolving
 
+                // Chip is transitioning out of PENDING — release the animated icon reference.
+                pendingIcons.remove(key)
+
+                val context = result.getOrNull()
                 val newChip = when {
                     result.isFailure -> Chip(key, Chip.Status.NETWORK_ERROR)
-                    result.getOrNull() == null -> Chip(key, Chip.Status.NOT_FOUND)
-                    else -> Chip(key, Chip.Status.VALID, result.getOrNull())
+                    context == null -> Chip(key, Chip.Status.NOT_FOUND)
+                    else -> Chip(key, Chip.Status.VALID, context)
                 }
                 chips[idx] = newChip
 
@@ -279,6 +305,9 @@ class TicketChipInput(
     }
 
     private fun buildChipComponent(chip: Chip, isPrimary: Boolean): JPanel {
+        // Ticket chip intentionally diverges from the reviewer-chip pattern in PrDetailPanel:
+        // uses CARD_BG background + compound border + grey ✕ for richer visual weight (status
+        // icon + bold-for-primary + PRIMARY tag need more affordance than a flat user chip).
         val panel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
             background = StatusColors.CARD_BG
             border = BorderFactory.createCompoundBorder(
@@ -338,26 +367,21 @@ class TicketChipInput(
         return panel
     }
 
+    /** Returns the icon for [chip]'s current status.
+     *  For PENDING, reuses an existing [AnimatedIcon.Default] from [pendingIcons]
+     *  (or creates and stores one) so every render cycle holds the same timer instance
+     *  rather than creating a new one on every [renderChips] call. */
+    private fun statusIconFor(chip: Chip): javax.swing.Icon = when (chip.status) {
+        Chip.Status.PENDING -> pendingIcons.getOrPut(chip.key) { AnimatedIcon.Default() }
+        Chip.Status.VALID -> AllIcons.General.InspectionsOK
+        Chip.Status.NOT_FOUND -> AllIcons.General.Error
+        Chip.Status.NETWORK_ERROR -> AllIcons.General.Warning
+    }
+
     private fun buildStatusLabel(chip: Chip): JBLabel {
         val label = JBLabel()
-        when (chip.status) {
-            Chip.Status.PENDING -> {
-                label.icon = AnimatedIcon.Default()
-                label.text = ""
-            }
-            Chip.Status.VALID -> {
-                label.icon = AllIcons.General.InspectionsOK
-                label.text = ""
-            }
-            Chip.Status.NOT_FOUND -> {
-                label.icon = AllIcons.General.Error
-                label.text = ""
-            }
-            Chip.Status.NETWORK_ERROR -> {
-                label.icon = AllIcons.General.Warning
-                label.text = ""
-            }
-        }
+        label.icon = statusIconFor(chip)
+        label.text = ""
         return label
     }
 
@@ -467,13 +491,15 @@ class TicketChipInput(
 
     // ─── Snapshot / change broadcast ───────────────────────────────────────────
 
+    private fun snapshot(): Snapshot = Snapshot(
+        chips = chips.toList(),
+        validChips = chips.filter { it.status == Chip.Status.VALID },
+        primary = chips.firstOrNull()
+    )
+
     private fun fireChange() {
-        val snapshot = Snapshot(
-            chips = chips.toList(),
-            validChips = chips.filter { it.status == Chip.Status.VALID },
-            primary = chips.firstOrNull()
-        )
-        onChange(snapshot)
+        if (!initialized) return
+        onChange(snapshot())
     }
 
     // Test seams — keep internal visibility so tests in the same module can drive the widget.
@@ -483,6 +509,7 @@ class TicketChipInput(
     internal fun handlePastedTextForTest(text: String) = handlePastedText(text)
     internal fun setAsPrimaryForTest(key: String) = setAsPrimary(key)
     internal fun removeChipForTest(key: String) = removeChip(key)
+    internal fun pendingIconsForTest(): Map<String, AnimatedIcon.Default> = pendingIcons
 
     companion object {
         const val MAX_CHIPS = 5
