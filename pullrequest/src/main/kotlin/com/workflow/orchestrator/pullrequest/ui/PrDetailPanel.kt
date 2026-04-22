@@ -39,6 +39,7 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketReviewerUser
 import com.workflow.orchestrator.core.bitbucket.BitbucketUser
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
+import com.workflow.orchestrator.core.services.BitbucketService
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.workflow.orchestrator.pullrequest.service.PrActionService
 import com.workflow.orchestrator.pullrequest.service.PrDetailService
@@ -243,6 +244,7 @@ class PrDetailPanel(
     private val activityToggle = JToggleButton("Activity")
     private val filesToggle = JToggleButton("Files")
     private val commitsToggle = JToggleButton("Commits")
+    private val commentsToggle = JToggleButton("Comments")
     private val aiReviewToggle = JToggleButton("AI Review")
     private val toggleGroup = ButtonGroup()
 
@@ -255,6 +257,8 @@ class PrDetailPanel(
     private val filesSubPanel = FilesSubPanel()
     private val commitsSubPanel = CommitsSubPanel()
     private val aiReviewSubPanel = AiReviewSubPanel()
+    /** Lazily created / replaced each time a new PR is loaded. */
+    private var commentsTabPanel: CommentsTabPanel? = null
 
     init {
         isOpaque = false
@@ -316,6 +320,7 @@ class PrDetailPanel(
                     prDetail.fromRef, prDetail.toRef)
                 renderReviewers(prDetail)
                 descriptionSubPanel.showDescription(prDetail.description)
+                rebuildCommentsTab(prId)
                 selectToggle(descriptionToggle)
                 (layout as CardLayout).show(this@PrDetailPanel, CARD_DETAIL)
             }
@@ -366,6 +371,7 @@ class PrDetailPanel(
             renderPrHeader(pr.id, pr.title, pr.state, pr.fromRef, pr.toRef)
             renderReviewers(pr)
             descriptionSubPanel.showDescription(pr.description)
+            rebuildCommentsTab(pr.id)
             selectToggle(descriptionToggle)
             (layout as CardLayout).show(this@PrDetailPanel, CARD_DETAIL)
         }
@@ -748,9 +754,35 @@ class PrDetailPanel(
         }
     }
 
+    /**
+     * Creates (or replaces) the Comments tab panel for the given PR.
+     * Must be called on the EDT.
+     */
+    private fun rebuildCommentsTab(prId: Int) {
+        commentsTabPanel?.close()
+        val settings = PluginSettings.getInstance(project).state
+        val projectKey = settings.bitbucketProjectKey.orEmpty()
+        val repoSlug = settings.bitbucketRepoSlug.orEmpty()
+        val bitbucketService = project.getService(BitbucketService::class.java)
+        val newTab = CommentsTabPanel(
+            project = project,
+            service = bitbucketService,
+            projectKey = projectKey,
+            repoSlug = repoSlug,
+            prId = prId,
+        )
+        commentsTabPanel = newTab
+        // Replace or add the comments card
+        val layout = contentCards.layout as CardLayout
+        contentCards.add(newTab, "comments")
+        layout.show(contentCards, "description")   // keep current view unchanged
+    }
+
     override fun dispose() {
         loadJob?.cancel()
         scope.cancel()
+        commentsTabPanel?.close()
+        commentsTabPanel = null
     }
 
     // ---------------------------------------------------------------
@@ -869,11 +901,13 @@ class PrDetailPanel(
         toggleGroup.add(activityToggle)
         toggleGroup.add(filesToggle)
         toggleGroup.add(commitsToggle)
+        toggleGroup.add(commentsToggle)
         toggleGroup.add(aiReviewToggle)
         toggleRow.add(descriptionToggle)
         toggleRow.add(activityToggle)
         toggleRow.add(filesToggle)
         toggleRow.add(commitsToggle)
+        toggleRow.add(commentsToggle)
         toggleRow.add(aiReviewToggle)
         contentPanel.add(toggleRow)
 
@@ -883,6 +917,7 @@ class PrDetailPanel(
         contentCards.add(filesSubPanel, "files")
         contentCards.add(commitsSubPanel, "commits")
         contentCards.add(aiReviewSubPanel, "aiReview")
+        // "comments" card is added lazily when a PR is loaded (see rebuildCommentsTab)
         contentCards.alignmentX = Component.LEFT_ALIGNMENT
         contentPanel.add(contentCards)
 
@@ -893,6 +928,10 @@ class PrDetailPanel(
         commitsToggle.addActionListener {
             (contentCards.layout as CardLayout).show(contentCards, "commits")
             currentPrId?.let { commitsSubPanel.showCommits(it) }
+        }
+        commentsToggle.addActionListener {
+            (contentCards.layout as CardLayout).show(contentCards, "comments")
+            commentsTabPanel?.triggerRefresh()
         }
         aiReviewToggle.addActionListener { (contentCards.layout as CardLayout).show(contentCards, "aiReview") }
 
@@ -1086,6 +1125,7 @@ class PrDetailPanel(
             activityToggle -> "activity"
             filesToggle -> "files"
             commitsToggle -> "commits"
+            commentsToggle -> "comments"
             aiReviewToggle -> "aiReview"
             else -> "description"
         }
