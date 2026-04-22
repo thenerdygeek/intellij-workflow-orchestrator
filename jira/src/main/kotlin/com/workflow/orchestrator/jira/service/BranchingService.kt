@@ -5,6 +5,7 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketBranch
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
+import com.workflow.orchestrator.core.model.jira.TransitionInput
 import com.workflow.orchestrator.jira.api.JiraApiClient
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.intellij.openapi.diagnostic.Logger
@@ -262,6 +263,6 @@ class BranchingService(
         }
 
         log.info("[Jira:Branch] Found transition '${inProgressTransition.name}' (id=${inProgressTransition.id}) for $issueKey")
-        return apiClient.transitionIssue(issueKey, inProgressTransition.id)
+        return apiClient.transitionIssue(issueKey, TransitionInput(inProgressTransition.id, emptyMap(), null))
     }
 }

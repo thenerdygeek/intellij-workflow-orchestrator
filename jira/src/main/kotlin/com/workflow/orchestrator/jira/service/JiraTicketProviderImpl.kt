@@ -12,6 +12,7 @@ import com.workflow.orchestrator.core.workflow.TicketContext
 import com.workflow.orchestrator.core.workflow.TicketDetails
 import com.workflow.orchestrator.core.workflow.TicketTransition
 import com.intellij.openapi.progress.runBackgroundableTask
+import com.workflow.orchestrator.core.model.jira.TransitionInput
 import com.workflow.orchestrator.jira.api.JiraApiClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
@@ -180,7 +181,7 @@ class JiraTicketProviderImpl : JiraTicketProvider {
 
     override suspend fun transitionTicket(ticketId: String, transitionId: String): Boolean {
         val client = createClient() ?: return false
-        return when (val result = client.transitionIssue(ticketId, transitionId)) {
+        return when (val result = client.transitionIssue(ticketId, TransitionInput(transitionId, emptyMap(), null))) {
             is ApiResult.Success -> true
             is ApiResult.Error -> {
                 log.warn("[Jira:TicketProvider] Failed to transition $ticketId: ${result.message}")

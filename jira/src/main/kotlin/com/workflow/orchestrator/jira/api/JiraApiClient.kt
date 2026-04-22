@@ -5,6 +5,7 @@ import com.workflow.orchestrator.core.http.AuthScheme
 import com.workflow.orchestrator.core.http.RetryInterceptor
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
+import com.workflow.orchestrator.core.model.jira.TransitionInput
 import com.workflow.orchestrator.core.model.jira.TransitionMeta
 import com.workflow.orchestrator.jira.api.dto.*
 import kotlinx.coroutines.Dispatchers
@@ -14,6 +15,9 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
@@ -286,56 +290,58 @@ class JiraApiClient(
         return get("/rest/api/2/myself")
     }
 
-    suspend fun transitionIssue(
-        issueKey: String,
-        transitionId: String,
-        fields: Map<String, Any>? = null,
-        comment: String? = null
-    ): ApiResult<Unit> {
-        log.debug("[Jira:API] POST /rest/api/2/issue/$issueKey/transitions (transitionId=$transitionId)")
-        val body = buildTransitionPayload(transitionId, fields, comment)
-        return post("/rest/api/2/issue/$issueKey/transitions", body)
-    }
-
-    private fun buildTransitionPayload(
-        transitionId: String,
-        fields: Map<String, Any>?,
-        comment: String?
-    ): String {
-        val payload = buildJsonObject {
-            putJsonObject("transition") {
-                put("id", transitionId)
-            }
-            if (!fields.isNullOrEmpty()) {
-                putJsonObject("fields") {
-                    for ((key, value) in fields) {
-                        when (value) {
-                            is Map<*, *> -> putJsonObject(key) {
-                                for ((mk, mv) in value) {
-                                    put(mk.toString(), mv.toString())
-                                }
-                            }
-                            else -> putJsonObject(key) {
-                                put("name", value.toString())
-                            }
+    suspend fun transitionIssue(issueKey: String, input: TransitionInput): ApiResult<Unit> {
+        log.debug("[Jira:API] POST /rest/api/2/issue/$issueKey/transitions (transitionId=${input.transitionId})")
+        val bodyString = TransitionInputSerializer().buildBody(input).toString()
+        return withContext(Dispatchers.IO) {
+            try {
+                val body = bodyString.toRequestBody("application/json".toMediaType())
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/2/issue/$issueKey/transitions")
+                    .post(body)
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    log.debug("[Jira:API] POST /rest/api/2/issue/$issueKey/transitions -> ${it.code}")
+                    when (it.code) {
+                        in 200..299 -> ApiResult.Success(Unit)
+                        400 -> {
+                            val raw = it.body?.string().orEmpty()
+                            val msg = parseJiraErrorMessage(raw) ?: "Bad request (400)"
+                            log.warn("[Jira:API] Transition rejected (400) for $issueKey: $msg")
+                            ApiResult.Error(ErrorType.VALIDATION_ERROR, msg)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Jira token").also { _ ->
+                            log.warn("[Jira:API] Authentication failed (401)")
+                        }
+                        403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Jira permissions").also { _ ->
+                            log.warn("[Jira:API] Forbidden (403)")
+                        }
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Issue or transition not found").also { _ ->
+                            log.warn("[Jira:API] Not found (404)")
+                        }
+                        else -> {
+                            val raw = it.body?.string().orEmpty()
+                            val msg = parseJiraErrorMessage(raw) ?: "HTTP ${it.code}"
+                            log.warn("[Jira:API] Server error (${it.code}) for transitionIssue $issueKey: $msg")
+                            ApiResult.Error(ErrorType.SERVER_ERROR, msg)
                         }
                     }
                 }
-            }
-            if (comment != null) {
-                putJsonObject("update") {
-                    putJsonArray("comment") {
-                        add(buildJsonObject {
-                            putJsonObject("add") {
-                                put("body", comment)
-                            }
-                        })
-                    }
-                }
+            } catch (e: IOException) {
+                log.warn("[Jira:API] Network error transitioning $issueKey: ${e.message}")
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Jira: ${e.message}", e)
             }
         }
-        return payload.toString()
     }
+
+    private fun parseJiraErrorMessage(raw: String): String? = try {
+        val obj = Json.parseToJsonElement(raw).jsonObject
+        val messages = mutableListOf<String>()
+        obj["errorMessages"]?.jsonArray?.forEach { messages += it.jsonPrimitive.content }
+        obj["errors"]?.jsonObject?.entries?.forEach { (k, v) -> messages += "$k: ${v.jsonPrimitive.content}" }
+        messages.joinToString("; ").ifBlank { null }
+    } catch (_: Exception) { null }
 
     /**
      * Fetches branches linked to a Jira issue via the dev-status API.

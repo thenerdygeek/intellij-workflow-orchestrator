@@ -9,6 +9,7 @@ import com.intellij.openapi.vcs.checkin.CheckinHandlerFactory
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
+import com.workflow.orchestrator.core.model.jira.TransitionInput
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.jira.api.JiraApiClient
 import kotlinx.coroutines.CoroutineScope
@@ -74,7 +75,7 @@ class PostCommitTransitionHandler(private val project: Project) : CheckinHandler
                                                     CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
                                                         if (project.isDisposed) return@launch
                                                         try {
-                                                            client.transitionIssue(ticketId, inProgressTransition.id)
+                                                            client.transitionIssue(ticketId, TransitionInput(inProgressTransition.id, emptyMap(), null))
                                                             log.info("[Jira:PostCommit] Transitioned $ticketId to In Progress")
                                                         } catch (e: Exception) {
                                                             log.warn("[Jira:PostCommit] Failed to transition $ticketId: ${e.message}")

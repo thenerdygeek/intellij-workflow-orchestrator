@@ -15,6 +15,8 @@ import com.workflow.orchestrator.core.model.jira.JiraAttachmentData
 import com.workflow.orchestrator.core.model.jira.JiraLinkedIssueRef
 import com.workflow.orchestrator.core.model.jira.JiraSubtaskRef
 import com.workflow.orchestrator.core.model.jira.JiraTicketData
+import com.workflow.orchestrator.core.model.jira.FieldValue
+import com.workflow.orchestrator.core.model.jira.TransitionInput
 import com.workflow.orchestrator.core.model.jira.TransitionMeta
 import com.workflow.orchestrator.core.model.jira.SprintData
 import com.workflow.orchestrator.core.model.jira.StartWorkResultData
@@ -217,7 +219,9 @@ class JiraServiceImpl(private val project: Project) : JiraService {
             hint = "Set up Jira connection in Settings."
         )
 
-        return when (val result = api.transitionIssue(key, transitionId, fields = fields, comment = comment)) {
+        val fieldValues = fields?.mapValues { (_, v) -> anyToFieldValue(v) } ?: emptyMap()
+        val input = TransitionInput(transitionId, fieldValues, comment)
+        return when (val result = api.transitionIssue(key, input)) {
             is ApiResult.Success -> {
                 ToolResult.success(
                     data = Unit,
@@ -638,7 +642,7 @@ class JiraServiceImpl(private val project: Project) : JiraService {
                     t.toStatus.name.equals("In Progress", ignoreCase = true)
                 }
                 if (inProgressTransition != null) {
-                    when (api.transitionIssue(issueKey, inProgressTransition.id)) {
+                    when (api.transitionIssue(issueKey, TransitionInput(inProgressTransition.id, emptyMap(), null))) {
                         is ApiResult.Success -> {
                             transitioned = true
                             log.info("[JiraService] Transitioned $issueKey to In Progress")
@@ -856,6 +860,26 @@ class JiraServiceImpl(private val project: Project) : JiraService {
             .distinct()
             .filter { it !in excludeKeys }
             .toList()
+    }
+
+    /**
+     * Converts a loosely-typed field value (as passed by [TransitionDialog] via [JiraService.transition])
+     * into a typed [FieldValue] for [TransitionInput].
+     *
+     * - [Map] → [FieldValue.Text] with the first value (e.g. `{"name":"jdoe"}` → kept as-is via UserRef path
+     *   below by checking for "name" key; otherwise Text of the map's string representation).
+     *   Because [TransitionDialog] only emits string values or maps with a "name" key, this is sufficient.
+     * - Anything else → [FieldValue.Text] of `.toString()`.
+     *
+     * Note: callers that need richer field types should construct [TransitionInput] directly.
+     */
+    private fun anyToFieldValue(v: Any): FieldValue = when (v) {
+        is Map<*, *> -> {
+            val name = v["name"]
+            if (name != null) FieldValue.UserRef(name.toString())
+            else FieldValue.Text(v.toString())
+        }
+        else -> FieldValue.Text(v.toString())
     }
 
     companion object {

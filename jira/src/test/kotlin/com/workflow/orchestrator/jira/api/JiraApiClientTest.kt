@@ -3,6 +3,7 @@ package com.workflow.orchestrator.jira.api
 import com.intellij.testFramework.LoggedErrorProcessorEnabler
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
+import com.workflow.orchestrator.core.model.jira.TransitionInput
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -159,7 +160,7 @@ class JiraApiClientTest {
     fun `transitionIssue sends correct POST body`() = runTest {
         server.enqueue(MockResponse().setResponseCode(204))
 
-        val result = client.transitionIssue("PROJ-123", "21")
+        val result = client.transitionIssue("PROJ-123", TransitionInput("21", emptyMap(), null))
 
         assertTrue(result.isSuccess)
         val recorded = server.takeRequest()
