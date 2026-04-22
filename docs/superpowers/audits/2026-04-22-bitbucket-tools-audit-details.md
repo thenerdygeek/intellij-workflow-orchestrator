@@ -515,7 +515,9 @@ HTTP client — `BitbucketBranchClient.kt:1539–1571`:
 
 **Verdict:** UNTESTED
 
-**Notes:** Implementation is correct. The hardcoded `limit=50` means PRs with more than 50 commits will silently return a truncated list with no indication that results were paged. For typical PRs this is acceptable, but large PRs (e.g. long-running feature branches) could return incomplete data. This is a scope/design choice rather than a broken call.
+**Notes:** DC docs reference: https://docs.atlassian.com/bitbucket-server/rest/7.21.0/bitbucket-rest.html
+
+Implementation is correct. The hardcoded `limit=50` means PRs with more than 50 commits will silently return a truncated list with no indication that results were paged. For typical PRs this is acceptable, but large PRs (e.g. long-running feature branches) could return incomplete data. This is a scope/design choice rather than a broken call.
 
 **Test coverage needed:**
 - Happy-path mock returning list of commits → verify summary contains count and CommitData fields are populated
@@ -563,7 +565,9 @@ HTTP client — `BitbucketBranchClient.kt:1125–1156`:
 
 **Verdict:** UNTESTED
 
-**Notes:** Implementation is correct for the happy path. The dual-source file path resolution (`commentAnchor?.path ?: comment?.anchor?.path`) is a thoughtful handling of the DC API's two places where anchor data can live.
+**Notes:** DC docs reference: https://docs.atlassian.com/bitbucket-server/rest/7.21.0/bitbucket-rest.html
+
+Implementation is correct for the happy path. The dual-source file path resolution (`commentAnchor?.path ?: comment?.anchor?.path`) is a thoughtful handling of the DC API's two places where anchor data can live.
 
 **Test coverage needed:**
 - Happy-path mock with mixed activities (COMMENTED, APPROVED, MERGED) → verify all action types are mapped, comment text extracted
@@ -610,7 +614,9 @@ HTTP client — `BitbucketBranchClient.kt:1500–1531`:
 
 **Verdict:** UNTESTED
 
-**Notes:** Implementation is correct. `limit=100` is a reasonable cap for file-change lists. For PRs with more than 100 changed files the response will be silently truncated — the same design limitation as activities and commits.
+**Notes:** DC docs reference: https://docs.atlassian.com/bitbucket-server/rest/7.21.0/bitbucket-rest.html
+
+Implementation is correct. `limit=100` is a reasonable cap for file-change lists. For PRs with more than 100 changed files the response will be silently truncated — the same design limitation as activities and commits.
 
 **Test coverage needed:**
 - Happy-path mock with ADD/MODIFY/DELETE/RENAME types → verify `PrChangeData.path` and `changeType` are populated for each
@@ -658,7 +664,9 @@ HTTP client — `BitbucketBranchClient.kt:1464–1494`:
 
 **Verdict:** UNTESTED
 
-**Notes:** Implementation is correct. Large diffs will be returned as very long strings — no server-side truncation or chunking is applied at this layer. The `ToolOutputSpiller` in the agent layer handles output that exceeds 30K chars by spilling to disk.
+**Notes:** DC docs reference: https://docs.atlassian.com/bitbucket-server/rest/7.21.0/bitbucket-rest.html
+
+Implementation is correct. Large diffs will be returned as very long strings — no server-side truncation or chunking is applied at this layer. The `ToolOutputSpiller` in the agent layer handles output that exceeds 30K chars by spilling to disk.
 
 **Test coverage needed:**
 - Happy-path mock returning a multi-file diff string → verify the raw string is surfaced in `ToolResult.data`; summary contains char count
@@ -859,7 +867,9 @@ HTTP client — `BitbucketBranchClient.kt:1421–1457`:
 
 **Verdict:** UNTESTED
 
-**Notes:** Implementation is correct. The GET-first pattern for version is consistent with `merge_pr` and required for the DC API's optimistic locking on `decline`. Ref: `BitbucketBranchClient.kt:1416–1418` KDoc confirms `POST .../decline?version={version}`.
+**Notes:** DC docs reference: https://docs.atlassian.com/bitbucket-server/rest/7.21.0/bitbucket-rest.html
+
+Implementation is correct. The GET-first pattern for version is consistent with `merge_pr` and required for the DC API's optimistic locking on `decline`. Ref: `BitbucketBranchClient.kt:1416–1418` KDoc confirms `POST .../decline?version={version}`.
 
 **Test coverage needed:**
 - Happy-path mock: GET version succeeds, POST decline succeeds → verify summary says "PR #N declined"
