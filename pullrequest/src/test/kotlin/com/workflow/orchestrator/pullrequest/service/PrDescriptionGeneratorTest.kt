@@ -10,10 +10,13 @@ import org.junit.jupiter.api.Test
  *
  * The generate() and generateTitle() methods touch IntelliJ platform APIs
  * (ChangeListManager, Git, PrService) so they cannot be tested in a pure unit
- * context without the IDE sandbox.  The internal helpers that carry the
- * business logic — [PrDescriptionGenerator.buildFallbackDescription] — are
- * marked `internal` and tested here directly.  The full cascade is covered
- * by integration / sandbox tests in a later phase.
+ * context without the IDE sandbox. The internal helper [buildFallbackDescription]
+ * carries the Tier-3 logic and is tested here directly.
+ *
+ * Tier-3 shape must mirror the Tier-1/2 LLM prompt structure (see
+ * [com.workflow.orchestrator.core.ai.prompts.PrDescriptionPromptBuilder]) so the
+ * author editing a fallback description sees the same 7-section skeleton the
+ * AI would have produced.
  */
 class PrDescriptionGeneratorTest {
 
@@ -36,177 +39,193 @@ class PrDescriptionGeneratorTest {
         comments = comments
     )
 
-    private fun comment(author: String, created: String, body: String) =
-        TicketComment(author = author, created = created, body = body)
-
-    // ── buildFallbackDescription — empty tickets ─────────────────────────
+    // ── section skeleton ─────────────────────────────────────────────────
 
     @Test
-    fun `fallback with empty tickets shows only commits and branch`() {
+    fun `fallback always emits the seven-section skeleton in order`() {
         val result = PrDescriptionGenerator.buildFallbackDescription(
-            tickets = emptyList(),
-            commits = listOf("abc1234 Add login endpoint", "def5678 Fix null check"),
-            branch = "feature/login"
+            tickets = listOf(ticket("PROJ-1", "Something")),
+            commits = listOf("abc1234 Some commit"),
+            branch = "feature/x"
         )
 
-        assertFalse(result.contains("Related tickets"), "Should not contain related tickets section")
-        // No ticket key header (e.g. "## PROJ-xx:")
-        assertFalse(result.contains(Regex("## [A-Z]+-\\d+")), "Should not contain any ticket-key header")
-        assertTrue(result.contains("Add login endpoint"))
-        assertTrue(result.contains("Fix null check"))
-        assertTrue(result.contains("**Branch:** feature/login"))
+        val idxSummary = result.indexOf("## Summary")
+        val idxContext = result.indexOf("## Context")
+        val idxChanges = result.indexOf("## Changes")
+        val idxTesting = result.indexOf("## Testing")
+        val idxRisks = result.indexOf("## Risks & Rollback")
+        val idxFeedback = result.indexOf("## Feedback Requested")
+        val idxJira = result.indexOf("## Jira")
+        val idxBranch = result.indexOf("**Branch:**")
+
+        assertTrue(idxSummary >= 0, "## Summary missing")
+        assertTrue(idxContext > idxSummary, "## Context must follow ## Summary")
+        assertTrue(idxChanges > idxContext, "## Changes must follow ## Context")
+        assertTrue(idxTesting > idxChanges, "## Testing must follow ## Changes")
+        assertTrue(idxRisks > idxTesting, "## Risks & Rollback must follow ## Testing")
+        assertTrue(idxFeedback > idxRisks, "## Feedback Requested must follow ## Risks & Rollback")
+        assertTrue(idxJira > idxFeedback, "## Jira must follow ## Feedback Requested")
+        assertTrue(idxBranch > idxJira, "**Branch:** must be last")
     }
 
-    @Test
-    fun `fallback with empty tickets and empty commits shows only branch`() {
-        val result = PrDescriptionGenerator.buildFallbackDescription(
-            tickets = emptyList(),
-            commits = emptyList(),
-            branch = "feature/empty"
-        )
-
-        assertFalse(result.contains("Related tickets"))
-        assertFalse(result.contains("## Commits"))
-        assertTrue(result.contains("**Branch:** feature/empty"))
-    }
-
-    // ── buildFallbackDescription — single primary ticket ─────────────────
+    // ── Summary population ──────────────────────────────────────────────
 
     @Test
-    fun `fallback with single primary ticket emits primary header`() {
+    fun `fallback Summary pulls primary ticket key and summary when present`() {
         val result = PrDescriptionGenerator.buildFallbackDescription(
             tickets = listOf(ticket("PROJ-42", "Implement login")),
-            commits = listOf("abc1234 Implement login screen"),
-            branch = "feature/PROJ-42"
+            commits = emptyList(),
+            branch = "feature/login"
         )
-
-        assertTrue(result.contains("## PROJ-42: Implement login"))
-        assertTrue(result.contains("## Commits"))
-        assertTrue(result.contains("- abc1234 Implement login screen"))
-        assertTrue(result.contains("**Branch:** feature/PROJ-42"))
-        assertFalse(result.contains("## Related tickets"))
+        assertTrue(result.contains("PROJ-42: Implement login"), "Primary ticket summary should populate ## Summary")
     }
 
     @Test
-    fun `fallback includes primary description truncated to 500 chars`() {
+    fun `fallback Summary includes primary description truncated to 500 chars`() {
         val longDesc = "A".repeat(600)
         val result = PrDescriptionGenerator.buildFallbackDescription(
             tickets = listOf(ticket("PROJ-1", "Summary", description = longDesc)),
             commits = emptyList(),
             branch = "feature/x"
         )
-
-        // Should contain exactly 500 A-chars, not 600
-        val truncated = "A".repeat(500)
-        assertTrue(result.contains(truncated))
-        assertFalse(result.contains("A".repeat(501)))
+        assertTrue(result.contains("A".repeat(500)), "First 500 chars of description should appear")
+        assertFalse(result.contains("A".repeat(501)), "Description should be capped at 500 chars")
     }
 
     @Test
-    fun `fallback omits description section when description is blank`() {
+    fun `fallback Summary shows placeholder when no primary ticket available`() {
         val result = PrDescriptionGenerator.buildFallbackDescription(
-            tickets = listOf(ticket("PROJ-10", "Summary", description = "   ")),
+            tickets = emptyList(),
+            commits = listOf("abc1234 some work"),
+            branch = "feature/x"
+        )
+        assertTrue(
+            result.contains("AI generation unavailable"),
+            "Summary should show an obvious placeholder when no ticket context exists"
+        )
+    }
+
+    // ── Changes population ──────────────────────────────────────────────
+
+    @Test
+    fun `fallback Changes section uses commits as a starting point when available`() {
+        val result = PrDescriptionGenerator.buildFallbackDescription(
+            tickets = listOf(ticket("PROJ-1", "s")),
+            commits = listOf("abc1234 Add login endpoint", "def5678 Fix null check"),
+            branch = "feature/x"
+        )
+        assertTrue(result.contains("Add login endpoint"), "Commit subjects should appear in Changes")
+        assertTrue(result.contains("Fix null check"))
+        assertTrue(
+            result.contains("Derived from commit messages"),
+            "Author should be told commits are a starting point, not the final form"
+        )
+    }
+
+    @Test
+    fun `fallback Changes shows placeholder when no commits provided`() {
+        val result = PrDescriptionGenerator.buildFallbackDescription(
+            tickets = listOf(ticket("PROJ-1", "s")),
             commits = emptyList(),
             branch = "feature/x"
         )
-
-        // Blank description — only the ticket header and branch should appear
-        assertTrue(result.contains("## PROJ-10: Summary"))
-        assertTrue(result.contains("**Branch:** feature/x"))
-        // The blank description itself should not be rendered as extra whitespace lines
-        assertFalse(result.contains("Description:"))
-    }
-
-    @Test
-    fun `fallback omits description when null`() {
-        val result = PrDescriptionGenerator.buildFallbackDescription(
-            tickets = listOf(ticket("PROJ-11", "Summary", description = null)),
-            commits = emptyList(),
-            branch = "feature/x"
+        // Extract just the Changes section
+        val changesIdx = result.indexOf("## Changes")
+        val testingIdx = result.indexOf("## Testing")
+        val changesSection = result.substring(changesIdx, testingIdx)
+        assertTrue(
+            changesSection.contains("AI generation unavailable"),
+            "Changes section should show placeholder when no commits exist"
         )
-
-        assertTrue(result.contains("## PROJ-11: Summary"))
-        assertFalse(result.contains("Description:"))
     }
 
-    // ── buildFallbackDescription — primary + additional ──────────────────
+    // ── Placeholder sections ─────────────────────────────────────────────
 
     @Test
-    fun `fallback with multiple tickets shows primary header and related section`() {
-        val primary = ticket("PROJ-1", "Primary story")
-        val extra1 = ticket("PROJ-2", "Related task A")
-        val extra2 = ticket("PROJ-3", "Related task B")
-
+    fun `fallback Testing section always carries an obvious placeholder`() {
         val result = PrDescriptionGenerator.buildFallbackDescription(
-            tickets = listOf(primary, extra1, extra2),
-            commits = listOf("commit1"),
+            tickets = listOf(ticket("PROJ-1", "s")),
+            commits = listOf("c"),
+            branch = "b"
+        )
+        val testingIdx = result.indexOf("## Testing")
+        val risksIdx = result.indexOf("## Risks & Rollback")
+        val testingSection = result.substring(testingIdx, risksIdx)
+        assertTrue(testingSection.contains("AI generation unavailable"))
+    }
+
+    @Test
+    fun `fallback Feedback Requested carries a guiding placeholder`() {
+        val result = PrDescriptionGenerator.buildFallbackDescription(
+            tickets = listOf(ticket("PROJ-1", "s")),
+            commits = listOf("c"),
+            branch = "b"
+        )
+        val feedbackIdx = result.indexOf("## Feedback Requested")
+        val jiraIdx = result.indexOf("## Jira")
+        val section = result.substring(
+            feedbackIdx,
+            if (jiraIdx > 0) jiraIdx else result.length
+        )
+        assertTrue(
+            section.contains("most valuable"),
+            "Feedback Requested placeholder should guide the author toward specificity"
+        )
+    }
+
+    // ── Jira listing ─────────────────────────────────────────────────────
+
+    @Test
+    fun `fallback Jira section lists primary plus all related tickets`() {
+        val result = PrDescriptionGenerator.buildFallbackDescription(
+            tickets = listOf(
+                ticket("PROJ-1", "Primary"),
+                ticket("PROJ-2", "Related A"),
+                ticket("PROJ-3", "Related B")
+            ),
+            commits = emptyList(),
             branch = "feature/multi"
         )
-
-        assertTrue(result.contains("## PROJ-1: Primary story"))
-        assertTrue(result.contains("## Related tickets"))
-        assertTrue(result.contains("- PROJ-2: Related task A"))
-        assertTrue(result.contains("- PROJ-3: Related task B"))
-        assertTrue(result.contains("## Commits"))
-        assertTrue(result.contains("**Branch:** feature/multi"))
+        assertTrue(result.contains("- PROJ-1: Primary"))
+        assertTrue(result.contains("- PROJ-2: Related A"))
+        assertTrue(result.contains("- PROJ-3: Related B"))
     }
 
     @Test
-    fun `fallback omits related tickets section when only one ticket`() {
+    fun `fallback omits Jira section entirely when no tickets provided`() {
         val result = PrDescriptionGenerator.buildFallbackDescription(
-            tickets = listOf(ticket("PROJ-1", "Only ticket")),
-            commits = emptyList(),
-            branch = "feature/solo"
+            tickets = emptyList(),
+            commits = listOf("c"),
+            branch = "b"
         )
-
-        assertFalse(result.contains("Related tickets"))
+        assertFalse(result.contains("## Jira"), "## Jira should not appear when no tickets exist")
     }
 
+    // ── Branch line ──────────────────────────────────────────────────────
+
     @Test
-    fun `fallback omits commits section when commits list is empty`() {
+    fun `fallback ends with Branch line`() {
         val result = PrDescriptionGenerator.buildFallbackDescription(
-            tickets = listOf(ticket("PROJ-5", "No commits")),
+            tickets = emptyList(),
             commits = emptyList(),
-            branch = "feature/nocommits"
+            branch = "feature/empty"
         )
-
-        assertFalse(result.contains("## Commits"))
-        assertTrue(result.contains("**Branch:** feature/nocommits"))
+        assertTrue(result.contains("**Branch:** feature/empty"))
+        assertTrue(result.trimEnd().endsWith("**Branch:** feature/empty"), "Branch line should be the final content")
     }
 
-    // ── double blank lines ────────────────────────────────────────────────
+    // ── Spacing sanity check ─────────────────────────────────────────────
 
     @Test
-    fun `fallback description does not emit double blank lines when description is non-blank`() {
+    fun `fallback does not emit triple-blank-line paragraphs`() {
         val result = PrDescriptionGenerator.buildFallbackDescription(
             tickets = listOf(ticket("PROJ-1", "Some summary", description = "A real description")),
             commits = listOf("abc1234 Some commit"),
             branch = "feature/spacing"
         )
-
-        assertFalse(result.contains("\n\n\n"), "Output must not contain three consecutive newlines (double blank lines)")
-    }
-
-    // ── ordering ─────────────────────────────────────────────────────────
-
-    @Test
-    fun `fallback section order is primary - related - commits - branch`() {
-        val result = PrDescriptionGenerator.buildFallbackDescription(
-            tickets = listOf(
-                ticket("A-1", "Primary"),
-                ticket("A-2", "Related")
-            ),
-            commits = listOf("commit-x"),
-            branch = "feature/order"
+        assertFalse(
+            result.contains("\n\n\n"),
+            "Output must not contain three consecutive newlines (double blank lines)"
         )
-
-        val primaryIdx = result.indexOf("## A-1")
-        val relatedIdx = result.indexOf("## Related tickets")
-        val commitsIdx = result.indexOf("## Commits")
-        val branchIdx = result.indexOf("**Branch:**")
-
-        assertTrue(primaryIdx < relatedIdx, "primary before related")
-        assertTrue(relatedIdx < commitsIdx, "related before commits")
-        assertTrue(commitsIdx < branchIdx, "commits before branch")
     }
 }

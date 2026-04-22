@@ -120,24 +120,13 @@ object PrDescriptionGenerator {
 
     /**
      * Tier 3 fallback: markdown description built from ticket list and commit messages.
+     * No LLM involved — renders only the data we already have.
      *
-     * Layout:
-     * ```
-     * ## {primary.key}: {primary.summary}
-     * {primary.description truncated to 500 chars — only if non-blank}
-     *
-     * ## Related tickets
-     * - {key}: {summary}
-     * ...
-     *
-     * ## Commits
-     * - {commit}
-     * ...
-     *
-     * **Branch:** {branch}
-     * ```
-     *
-     * Sections are omitted when empty or not applicable.
+     * Section headings mirror the Tier 1/2 LLM prompt structure (from
+     * [com.workflow.orchestrator.core.ai.prompts.PrDescriptionPromptBuilder]) so users
+     * editing a fallback description see the same shape a successful AI generation
+     * would have produced. Sections the fallback cannot populate from available data
+     * show italic placeholders — obvious to the author, unambiguous to fill in.
      */
     internal fun buildFallbackDescription(
         tickets: List<TicketContext>,
@@ -147,26 +136,56 @@ object PrDescriptionGenerator {
         val primary = tickets.firstOrNull()
         val additional = tickets.drop(1)
 
+        // ## Summary — populate from primary ticket if available, else placeholder.
+        appendLine("## Summary")
         if (primary != null) {
-            appendLine("## ${primary.key}: ${primary.summary}")
+            appendLine("${primary.key}: ${primary.summary}")
             val desc = primary.description
             if (!desc.isNullOrBlank()) {
                 appendLine()
                 appendLine(desc.take(500))
-            } else {
-                appendLine()
             }
+        } else {
+            appendLine("_(AI generation unavailable — please summarize what this PR delivers and why.)_")
         }
+        appendLine()
 
-        if (additional.isNotEmpty()) {
-            appendLine("## Related tickets")
-            additional.forEach { appendLine("- ${it.key}: ${it.summary}") }
-            appendLine()
-        }
+        // ## Context — we don't have enough signal without the LLM; leave a placeholder
+        // so the author knows the shape a full description would have.
+        appendLine("## Context")
+        appendLine("_(AI generation unavailable — please fill in the motivation behind this PR: problem being solved, why this approach, relevant prior work.)_")
+        appendLine()
 
+        // ## Changes — best-effort: commit subjects as a starting point for the author.
+        appendLine("## Changes")
         if (commits.isNotEmpty()) {
-            appendLine("## Commits")
+            appendLine("_(Derived from commit messages — please rewrite as behavior-level bullets:)_")
             commits.forEach { appendLine("- $it") }
+        } else {
+            appendLine("_(AI generation unavailable — please list the behavior-level changes.)_")
+        }
+        appendLine()
+
+        // ## Testing — must be author-supplied.
+        appendLine("## Testing")
+        appendLine("_(AI generation unavailable — please describe scenarios reviewers should verify.)_")
+        appendLine()
+
+        // ## Risks & Rollback — left blank by default; author adds only if applicable.
+        appendLine("## Risks & Rollback")
+        appendLine("_(Omit this section if none of breaking changes / migrations / feature flags / performance / rollback apply.)_")
+        appendLine()
+
+        // ## Feedback Requested — research-backed strongest merge-rate predictor.
+        appendLine("## Feedback Requested")
+        appendLine("_(Please state what kind of feedback would be most valuable — e.g. correctness of retry logic, API naming, security review.)_")
+        appendLine()
+
+        // ## Jira — structured ticket list.
+        if (primary != null || additional.isNotEmpty()) {
+            appendLine("## Jira")
+            if (primary != null) appendLine("- ${primary.key}: ${primary.summary}")
+            additional.forEach { appendLine("- ${it.key}: ${it.summary}") }
             appendLine()
         }
 

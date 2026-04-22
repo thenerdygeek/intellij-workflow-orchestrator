@@ -24,20 +24,51 @@ object PrDescriptionPromptBuilder {
         sourceBranch: String = "",
         targetBranch: String = ""
     ): String = buildString {
+        val isDiffAvailable = diff.isNotBlank() && diff != "(diff unavailable)"
+
         appendLine("Generate a pull request description in markdown. Output ONLY the markdown — no preamble, no wrapping code blocks.")
         appendLine()
 
         // ── Structure ──
-        appendLine("STRUCTURE (follow exactly):")
+        // Seven sections, ordered by reviewer cognitive load: tl;dr → why → what → how →
+        // verification → risk → feedback focus. Derived from consensus across Google eng
+        // practices, Microsoft playbook, SoundCloud, Graphite, and arXiv 2602.14611.
+        appendLine("STRUCTURE (follow exactly, in this order; omit a section only when it would be empty or not applicable):")
         appendLine()
         appendLine("## Summary")
-        appendLine("2-3 sentences: what this PR does and why. Written for someone reading a PR review email.")
+        appendLine("1–2 paragraphs. First sentence is a self-contained tl;dr: what this PR delivers and why, understandable without reading the code. Add a second sentence or short paragraph for the user-visible or developer-visible outcome.")
+        appendLine()
+        appendLine("## Context")
+        appendLine("The background a reviewer needs but would NOT have from the diff alone:")
+        appendLine("- Problem being solved (user pain, incident, regression, new requirement)")
+        appendLine("- Why this approach was chosen over alternatives (if non-obvious)")
+        appendLine("- Relevant prior work, design docs, or tickets")
+        appendLine("- Constraints or deadlines that shaped the scope")
+        appendLine("Skip this section entirely for mechanical/trivial PRs (renames, typo fixes, dependency bumps with no behavior change).")
         appendLine()
         appendLine("## Changes")
-        appendLine("- Bullet per logical change, imperative mood, describes behavioral change not file edit")
+        appendLine("Bullet list of logical, behavior-level deltas in imperative mood. Each bullet describes a capability, contract, or behavior change — NOT a file edit. Group related bullets. Use `backticks` for class/method/config names.")
+        appendLine()
+        appendLine("## Implementation Notes")
+        appendLine("Key design decisions, trade-offs, and alternatives considered. Call out anything non-obvious a reviewer should understand BEFORE reading the diff, or any area that deserves extra scrutiny. This is where you explain the HOW at a design level (not line-by-line). Omit for mechanical PRs.")
         appendLine()
         appendLine("## Testing")
-        appendLine("- [ ] Checkbox items for what reviewers should verify")
+        appendLine("Specific scenarios the reviewer should verify — not generic \"test the feature\". Format as a checklist:")
+        appendLine("- [ ] Concrete scenario 1 (inputs, expected outcome)")
+        appendLine("- [ ] Concrete scenario 2")
+        appendLine("Include what was exercised locally, new test files added, and known gaps.")
+        appendLine()
+        appendLine("## Risks & Rollback")
+        appendLine("Include a line for each that applies:")
+        appendLine("- **Breaking changes:** API/schema/config surface that consumers depend on")
+        appendLine("- **Migrations:** one-way data or schema changes")
+        appendLine("- **Feature flags:** gating and default state")
+        appendLine("- **Performance:** expected latency/throughput impact")
+        appendLine("- **Rollback plan:** how to undo if this misbehaves in production")
+        appendLine("Omit the whole section if none of these apply.")
+        appendLine()
+        appendLine("## Feedback Requested")
+        appendLine("One specific sentence stating what kind of review is most valuable: e.g. \"Correctness of the retry/backoff logic under concurrent failures\", \"API naming and error shape\", \"Security review of the token scope\", \"LGTM unless you spot issues\". (Research: specifying feedback type increases merge rate by 64–72%.)")
         if (tickets.isNotEmpty()) {
             val primary = tickets[0]
             appendLine()
@@ -48,16 +79,32 @@ object PrDescriptionPromptBuilder {
 
         // ── Rules ──
         appendLine("RULES:")
-        appendLine("- Summary understandable without reading the code")
-        appendLine("- Changes bullets: WHAT and WHY, not HOW or file paths")
-        appendLine("- Use `backticks` for class/method/config names")
-        appendLine("- Testing: specific scenarios, not generic 'test the feature'")
-        appendLine("- Be concise — reviewers scan, don't read novels")
-        appendLine("- If breaking changes exist, add ## Breaking Changes section")
-        appendLine("- Omit empty sections")
+        appendLine("- First sentence of Summary must stand alone — a reader should understand the change from that sentence without reading further.")
+        appendLine("- Use imperative mood (\"Add\", \"Remove\", \"Fix\"), not \"This PR adds…\".")
+        appendLine("- `## Changes` = behavior deltas, not file edits or line counts.")
+        appendLine("- `## Implementation Notes` = WHY decisions were made, not WHAT was written.")
+        appendLine("- Use `backticks` for class/method/config/env-var names.")
+        appendLine("- Testing bullets must be specific scenarios, not \"test the feature works\".")
+        appendLine("- Prefer complete sentences over clipped fragments in Summary/Context.")
+        appendLine("- Omit empty sections; do not include placeholder \"N/A\" headings.")
+        appendLine("- For breaking changes, always state the migration path.")
         appendLine()
-        appendLine("AVOID: file paths in Changes, passive voice, 'This PR' phrasing,")
-        appendLine("redundancy between Summary and Changes, wrapping in code blocks")
+        appendLine("AVOID:")
+        appendLine("- Generic descriptions: \"Fix bug\", \"Update dependencies\", \"Phase 1\", \"Misc improvements\" — these tell the reviewer nothing.")
+        appendLine("- File paths in Changes (\"Modified UserService.java, UserController.java\").")
+        appendLine("- \"This PR\" or \"This change\" phrasing — speak in imperative voice.")
+        appendLine("- Restating Summary content inside Changes.")
+        appendLine("- Wrapping the entire response in a code block.")
+        appendLine("- Inventing implementation details not supported by the diff or commits.")
+
+        // ── Tier-2 grounding constraint ──
+        // When the diff is unavailable, the LLM loses its primary source of truth for
+        // Implementation Notes and Changes. Force it to stay conservative instead of
+        // hallucinating design rationale from thin ticket/commit context.
+        if (!isDiffAvailable) {
+            appendLine()
+            appendLine("NOTE: Diff is unavailable. Base `## Changes` and `## Implementation Notes` on commit messages and Jira context only. Write conservative claims grounded in that evidence — do NOT invent design rationale, architectural decisions, or test scenarios the commits don't support. If a section would require guessing, write \"_(to be filled by author)_\" and omit other detail for that section.")
+        }
 
         // ── Jira tickets context ──
         if (tickets.isNotEmpty()) {
@@ -89,7 +136,6 @@ object PrDescriptionPromptBuilder {
         }
 
         // ── Diff ──
-        val isDiffAvailable = diff.isNotBlank() && diff != "(diff unavailable)"
         if (isDiffAvailable) {
             appendLine()
             appendLine("DIFF:")

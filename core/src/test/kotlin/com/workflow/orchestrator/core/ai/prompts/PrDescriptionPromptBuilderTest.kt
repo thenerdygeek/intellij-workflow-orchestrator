@@ -262,11 +262,120 @@ class PrDescriptionPromptBuilderTest {
     @Test
     fun `existing STRUCTURE RULES AVOID DIFF blocks are preserved`() {
         val result = PrDescriptionPromptBuilder.build(diff = "some diff content", tickets = emptyList())
-        assertTrue(result.contains("STRUCTURE (follow exactly):"))
+        assertTrue(result.contains("STRUCTURE (follow exactly"), "STRUCTURE header should be present")
         assertTrue(result.contains("RULES:"))
         assertTrue(result.contains("AVOID:"))
         assertTrue(result.contains("DIFF:"))
         assertTrue(result.contains("some diff content"))
+    }
+
+    // ── New 7-section structure (research-backed) ─────────────────────────────
+
+    @Test
+    fun `prompt emits all seven required sections in the new order`() {
+        val result = PrDescriptionPromptBuilder.build(diff = "d", tickets = emptyList())
+        val idxSummary = result.indexOf("## Summary")
+        val idxContext = result.indexOf("## Context")
+        val idxChanges = result.indexOf("## Changes")
+        val idxImpl = result.indexOf("## Implementation Notes")
+        val idxTesting = result.indexOf("## Testing")
+        val idxRisks = result.indexOf("## Risks & Rollback")
+        val idxFeedback = result.indexOf("## Feedback Requested")
+
+        assertTrue(idxSummary > 0, "## Summary section missing")
+        assertTrue(idxContext > idxSummary, "## Context must follow ## Summary")
+        assertTrue(idxChanges > idxContext, "## Changes must follow ## Context")
+        assertTrue(idxImpl > idxChanges, "## Implementation Notes must follow ## Changes")
+        assertTrue(idxTesting > idxImpl, "## Testing must follow ## Implementation Notes")
+        assertTrue(idxRisks > idxTesting, "## Risks & Rollback must follow ## Testing")
+        assertTrue(idxFeedback > idxRisks, "## Feedback Requested must follow ## Risks & Rollback")
+    }
+
+    @Test
+    fun `summary instruction allows 1-2 paragraphs not 2-3 sentences`() {
+        val result = PrDescriptionPromptBuilder.build(diff = "d", tickets = emptyList())
+        assertTrue(
+            result.contains("1–2 paragraphs") || result.contains("1-2 paragraphs"),
+            "Summary instruction should allow 1-2 paragraphs, not cap at 2-3 sentences"
+        )
+    }
+
+    @Test
+    fun `implementation notes section explicitly allows HOW at design level`() {
+        val result = PrDescriptionPromptBuilder.build(diff = "d", tickets = emptyList())
+        assertTrue(
+            result.contains("HOW at a design level"),
+            "## Implementation Notes should explicitly license conceptual HOW content"
+        )
+    }
+
+    @Test
+    fun `feedback requested section references research-backed merge rate lift`() {
+        val result = PrDescriptionPromptBuilder.build(diff = "d", tickets = emptyList())
+        assertTrue(
+            result.contains("64–72%") || result.contains("64-72%"),
+            "Feedback Requested section should cite the research finding to motivate the LLM"
+        )
+    }
+
+    @Test
+    fun `rules forbid generic descriptions like Fix bug or Update dependencies`() {
+        val result = PrDescriptionPromptBuilder.build(diff = "d", tickets = emptyList())
+        assertTrue(result.contains("Fix bug"), "AVOID list should name 'Fix bug' as a bad example")
+        assertTrue(result.contains("Update dependencies"), "AVOID list should name 'Update dependencies' as a bad example")
+    }
+
+    @Test
+    fun `rules enforce imperative mood first-line stands alone`() {
+        val result = PrDescriptionPromptBuilder.build(diff = "d", tickets = emptyList())
+        assertTrue(
+            result.contains("stand alone") || result.contains("stands alone"),
+            "Rules should require the first Summary sentence to stand alone"
+        )
+        assertTrue(
+            result.contains("imperative mood"),
+            "Rules should require imperative mood"
+        )
+    }
+
+    // ── Tier-2 grounding constraint (no-diff path) ────────────────────────────
+
+    @Test
+    fun `no-diff path adds a grounding constraint that prevents hallucination`() {
+        val result = PrDescriptionPromptBuilder.build(
+            diff = "(diff unavailable)",
+            commitMessages = listOf("feat: add thing"),
+            tickets = emptyList()
+        )
+        assertTrue(
+            result.contains("NOTE: Diff is unavailable"),
+            "Tier-2 prompt must carry the diff-unavailable constraint"
+        )
+        assertTrue(
+            result.contains("do NOT invent"),
+            "Constraint must explicitly forbid invention of design rationale"
+        )
+    }
+
+    @Test
+    fun `diff-available path does NOT include the no-diff constraint`() {
+        val result = PrDescriptionPromptBuilder.build(
+            diff = "diff --git a/Foo.kt",
+            tickets = emptyList()
+        )
+        assertFalse(
+            result.contains("NOTE: Diff is unavailable"),
+            "Tier-1 prompt must not carry the no-diff constraint"
+        )
+    }
+
+    @Test
+    fun `blank diff triggers the no-diff constraint`() {
+        val result = PrDescriptionPromptBuilder.build(diff = "", tickets = emptyList())
+        assertTrue(
+            result.contains("NOTE: Diff is unavailable"),
+            "Blank diff should be treated the same as the sentinel"
+        )
     }
 
     @Test
