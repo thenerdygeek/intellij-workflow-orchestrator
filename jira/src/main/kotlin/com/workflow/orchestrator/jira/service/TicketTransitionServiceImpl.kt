@@ -1,6 +1,8 @@
 package com.workflow.orchestrator.jira.service
 
+import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.TicketTransitioned
 import com.workflow.orchestrator.core.model.ApiResult
@@ -33,7 +35,12 @@ import java.util.concurrent.ConcurrentHashMap
  * Cache invalidation is event-driven: a [TicketTransitioned] event on the shared bus
  * (e.g. emitted by this service itself or by a post-commit hook) removes the cached
  * entry so the next call fetches fresh transitions from the API.
+ *
+ * Registered as a project service in plugin.xml (Task 18).  The platform-invoked
+ * constructor pulls [JiraApiClient] from [JiraServiceImpl] and [EventBus] from the
+ * project service container, keeping the primary constructor intact for unit tests.
  */
+@Service(Service.Level.PROJECT)
 class TicketTransitionServiceImpl(
     private val api: JiraApiClient,
     private val eventBus: EventBus,
@@ -46,6 +53,21 @@ class TicketTransitionServiceImpl(
      */
     parentScope: CoroutineScope? = null
 ) : TicketTransitionService {
+
+    /**
+     * Secondary constructor used by the IntelliJ platform service container.
+     * Resolves [JiraApiClient] through [JiraServiceImpl] and [EventBus] from the
+     * project's service container so that no duplicate HTTP clients are created.
+     */
+    constructor(project: Project) : this(
+        api = JiraServiceImpl.getInstance(project).getApiClient()
+            ?: JiraApiClient(
+                baseUrl = "",
+                tokenProvider = { null }
+            ),
+        eventBus = project.getService(EventBus::class.java),
+        parentScope = null
+    )
 
     private val log = Logger.getInstance(TicketTransitionServiceImpl::class.java)
 

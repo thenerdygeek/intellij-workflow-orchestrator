@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.jira.service
 
+import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
@@ -32,8 +33,9 @@ import java.util.concurrent.ConcurrentHashMap
  * Versions and components are cached per project key with a 5-minute TTL to avoid
  * hammering the server on every keystroke in a picker.
  *
- * Registration in plugin.xml is deferred to task 18.
+ * Registered as a project service in plugin.xml (Task 18).
  */
+@Service(Service.Level.PROJECT)
 class JiraSearchServiceImpl : JiraSearchService {
 
     private val log = Logger.getInstance(JiraSearchServiceImpl::class.java)

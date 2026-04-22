@@ -169,6 +169,14 @@
             serviceImplementation="com.workflow.orchestrator.core.healthcheck.HealthCheckService"/>
         <notificationGroup id="workflow.healthcheck" displayType="BALLOON"/>
 
+        <!-- Jira Transition + Search Services -->
+        <projectService
+            serviceInterface="com.workflow.orchestrator.core.services.jira.TicketTransitionService"
+            serviceImplementation="com.workflow.orchestrator.jira.service.TicketTransitionServiceImpl"/>
+        <projectService
+            serviceInterface="com.workflow.orchestrator.core.services.jira.JiraSearchService"
+            serviceImplementation="com.workflow.orchestrator.jira.service.JiraSearchServiceImpl"/>
+
         <!-- Jira Active Ticket -->
         <projectService
             serviceImplementation="com.workflow.orchestrator.jira.service.ActiveTicketService"/>
