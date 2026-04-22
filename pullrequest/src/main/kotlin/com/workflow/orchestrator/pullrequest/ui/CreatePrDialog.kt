@@ -119,8 +119,8 @@ class CreatePrDialog(
         }
     } else null
 
-    // Target branch
-    private val targetField = JBTextField().apply {
+    // Target branch — filterable dropdown (type to filter + chevron to open full list).
+    private val targetField: ExtendableTextField = ExtendableTextField(40).apply {
         text = currentRepo.defaultTarget
     }
     private val branchPopup = JPopupMenu()
@@ -184,6 +184,9 @@ class CreatePrDialog(
     private val reviewerInput = JBTextField(15)
     private val reviewerPopup = JPopupMenu()
     private val selectedReviewers = mutableListOf<String>()
+    /** username → chip component for chips that came from the current repo's Bitbucket defaults.
+     *  Used by [onModuleChanged] to swap repo-level chips without touching manual additions. */
+    private val repoDefaultReviewerChips = mutableMapOf<String, JPanel>()
     private var userSearchJob: Job? = null
 
     // Transition
@@ -216,8 +219,26 @@ class CreatePrDialog(
             (titleField as ExtendableTextField).addExtension(ext)
         }
 
-        // Pre-fill reviewers
-        context.defaultReviewers.forEach { addReviewerChip(it) }
+        // Target branch dropdown chevron — click opens the full filterable list.
+        val chevron = com.intellij.icons.AllIcons.General.ArrowDown
+        targetField.addExtension(
+            ExtendableTextComponent.Extension.create(chevron, chevron, "Show branches") {
+                showBranchDropdown(showAll = true)
+            }
+        )
+        // Also open on focus gain so the dropdown is discoverable without needing to type.
+        targetField.addFocusListener(object : java.awt.event.FocusAdapter() {
+            override fun focusGained(e: java.awt.event.FocusEvent) {
+                showBranchDropdown(showAll = false)
+            }
+        })
+
+        // Pre-fill reviewers: union of settings-configured defaults AND the selected repo's
+        // Bitbucket-configured default reviewers (from the default-reviewers plugin, fetched
+        // during prefetch). Track which usernames came from the repo-level list so we can
+        // swap them out if the user changes modules without clobbering manually-added chips.
+        val initialReviewers = (context.defaultReviewers + currentRepo.repoDefaultReviewers).distinct()
+        initialReviewers.forEach { addReviewerChip(it, fromRepoDefaults = it in currentRepo.repoDefaultReviewers) }
 
         // Populate transitions
         if (context.transitions.isNotEmpty() && context.initialTicketKeys.isNotEmpty()) {
@@ -428,8 +449,23 @@ class CreatePrDialog(
         currentRepo = newRepo
         // Update source label
         sourceBranchLabel.text = newRepo.sourceBranch
-        // Reset target to new repo's default
+        // Reset target to new repo's default and hide any stale branch popup from the old repo
         targetField.text = newRepo.defaultTarget
+        branchPopup.isVisible = false
+        branchPopup.removeAll()
+        // Swap repo-level default reviewer chips for the new repo. Manually-added chips
+        // (not in repoDefaultReviewerChips) and settings-based chips are preserved.
+        val existingRepoDefaults = repoDefaultReviewerChips.toMap()
+        existingRepoDefaults.forEach { (username, chip) ->
+            selectedReviewers.remove(username)
+            reviewerChipsPanel.remove(chip)
+        }
+        repoDefaultReviewerChips.clear()
+        newRepo.repoDefaultReviewers.forEach { username ->
+            if (username !in selectedReviewers) addReviewerChip(username, fromRepoDefaults = true)
+        }
+        reviewerChipsPanel.revalidate()
+        reviewerChipsPanel.repaint()
         // Invalidate description — increment the generation counter so any in-flight
         // invokeLater writes from the cancelled job can detect they are stale and discard.
         descriptionGenerationId++
@@ -449,11 +485,23 @@ class CreatePrDialog(
 
     // --- Branch search ---
 
-    private fun filterBranches() {
-        val text = targetField.text.lowercase()
+    /** Called on every keystroke — filters by current text. Hides when nothing matches. */
+    private fun filterBranches() = showBranchDropdown(showAll = false)
+
+    /**
+     * Renders the target-branch dropdown. When [showAll] is true, the filter is bypassed and
+     * the full branch list is displayed (chevron click). Otherwise the list is filtered by
+     * the field's current text (typing / focus). We intentionally show the popup even when
+     * the current text exactly matches a branch — hiding at that point was the reason the
+     * dropdown felt broken on dialog open (default target always matches exactly).
+     */
+    private fun showBranchDropdown(showAll: Boolean) {
         branchPopup.removeAll()
-        val matches = currentRepo.remoteBranches.filter { it.lowercase().contains(text) }.take(15)
-        if (matches.isEmpty() || (matches.size == 1 && matches[0] == targetField.text)) {
+        val filter = if (showAll) "" else targetField.text.lowercase()
+        val matches = currentRepo.remoteBranches
+            .filter { it.lowercase().contains(filter) }
+            .take(15)
+        if (matches.isEmpty()) {
             branchPopup.isVisible = false
             return
         }
@@ -465,6 +513,11 @@ class CreatePrDialog(
             }
             branchPopup.add(item)
         }
+        if (!targetField.isShowing) {
+            branchPopup.isVisible = false
+            return
+        }
+        branchPopup.pack()
         branchPopup.show(targetField, 0, targetField.height)
     }
 
@@ -477,13 +530,26 @@ class CreatePrDialog(
             return
         }
         userSearchJob?.cancel()
+        // Use the currently-selected repo's Bitbucket config so multi-repo projects query the
+        // right Bitbucket instance (fromConfiguredSettings() always picks the primary repo).
+        val repoAtSearch = currentRepo
         userSearchJob = scope.launch {
             delay(300)
-            val client = BitbucketBranchClient.fromConfiguredSettings() ?: return@launch
-            val result = client.getUsers(text)
-            invokeLater {
-                if (result is ApiResult.Success) {
+            val client = BitbucketBranchClient.forRepo(repoAtSearch.config)
+                ?: BitbucketBranchClient.fromConfiguredSettings()
+                ?: run {
+                    log.warn("[Pr:CreateDialog] No Bitbucket client for reviewer search (repo='${repoAtSearch.config.displayLabel}')")
+                    return@launch
+                }
+            when (val result = client.getUsers(text)) {
+                is ApiResult.Success -> invokeLater {
+                    // Show all matches — already-selected users will simply be filtered from
+                    // the dropdown items (they stay selectable only once). If the entire
+                    // result is already-selected we still want the popup to hide cleanly.
                     showUserResults(result.data.filter { it.name !in selectedReviewers })
+                }
+                is ApiResult.Error -> {
+                    log.warn("[Pr:CreateDialog] User search failed: ${result.message}")
                 }
             }
         }
@@ -492,6 +558,14 @@ class CreatePrDialog(
     private fun showUserResults(users: List<BitbucketUser>) {
         reviewerPopup.removeAll()
         if (users.isEmpty()) {
+            reviewerPopup.isVisible = false
+            return
+        }
+        // Async guard: if the dialog was closed between the coroutine's invokeLater
+        // submission and EDT dispatch, reviewerInput may no longer be on screen.
+        // JPopupMenu.show() resolves the invoker's screen location and throws
+        // IllegalComponentStateException when the component isn't showing.
+        if (!reviewerInput.isShowing) {
             reviewerPopup.isVisible = false
             return
         }
@@ -505,10 +579,13 @@ class CreatePrDialog(
             }
             reviewerPopup.add(item)
         }
+        // pack() so the popup sizes to the new items — without this, Swing can paint the
+        // popup at the previous (possibly empty) size and the items render invisibly.
+        reviewerPopup.pack()
         reviewerPopup.show(reviewerInput, 0, reviewerInput.height)
     }
 
-    private fun addReviewerChip(username: String) {
+    private fun addReviewerChip(username: String, fromRepoDefaults: Boolean = false) {
         if (username in selectedReviewers) return
         selectedReviewers.add(username)
         val chip = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
@@ -522,6 +599,7 @@ class CreatePrDialog(
             removeBtn.addMouseListener(object : java.awt.event.MouseAdapter() {
                 override fun mouseClicked(e: java.awt.event.MouseEvent?) {
                     selectedReviewers.remove(username)
+                    repoDefaultReviewerChips.remove(username)
                     reviewerChipsPanel.remove(this@apply)
                     reviewerChipsPanel.revalidate()
                     reviewerChipsPanel.repaint()
@@ -529,6 +607,7 @@ class CreatePrDialog(
             })
             add(removeBtn)
         }
+        if (fromRepoDefaults) repoDefaultReviewerChips[username] = chip
         reviewerChipsPanel.remove(reviewerInput)
         reviewerChipsPanel.add(chip)
         reviewerChipsPanel.add(reviewerInput)

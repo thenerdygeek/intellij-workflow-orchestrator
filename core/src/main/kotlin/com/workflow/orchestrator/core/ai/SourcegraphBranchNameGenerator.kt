@@ -31,7 +31,10 @@ class SourcegraphBranchNameGenerator : BranchNameAiGenerator {
         }
 
         val messages = listOf(ChatMessage(role = "user", content = prompt))
-        return when (val result = brain.chat(messages, tools = null)) {
+        // Thinking-capable models require max_tokens > thinking.budget_tokens or Sourcegraph
+        // rejects the request. Use the user-configured ceiling (16K default).
+        val maxTokens = AiSettings.getInstance(project).state.maxOutputTokens
+        return when (val result = brain.chat(messages, tools = null, maxTokens = maxTokens)) {
             is ApiResult.Success -> {
                 val raw = result.data.choices.firstOrNull()?.message?.content?.trim()
                 raw?.removeSurrounding("\"")

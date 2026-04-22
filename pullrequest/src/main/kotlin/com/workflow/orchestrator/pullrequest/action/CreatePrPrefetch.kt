@@ -27,7 +27,9 @@ data class RepoPrefetch(
     val config: RepoConfig,
     val sourceBranch: String,
     val remoteBranches: List<String>,
-    val defaultTarget: String
+    val defaultTarget: String,
+    /** Repo-level reviewers fetched from Bitbucket's default-reviewers plugin (usernames). */
+    val repoDefaultReviewers: List<String> = emptyList()
 )
 
 /**
@@ -236,13 +238,30 @@ object CreatePrPrefetch {
                 config.defaultTargetBranch.orEmpty().ifBlank { "develop" }
             }
 
-            log.info("[PR:Prefetch] Prefetched repo '${config.displayLabel}': branch='$sourceBranch' remoteBranches=${remoteBranches.size} defaultTarget='$defaultTarget'")
+            val repoDefaultReviewers: List<String> = try {
+                when (val r = client.getDefaultReviewers(
+                    config.bitbucketProjectKey.orEmpty(),
+                    config.bitbucketRepoSlug.orEmpty()
+                )) {
+                    is ApiResult.Success -> r.data.map { it.name }
+                    is ApiResult.Error -> {
+                        log.warn("[PR:Prefetch] getDefaultReviewers failed for '${config.displayLabel}': ${r.message}")
+                        emptyList()
+                    }
+                }
+            } catch (e: Exception) {
+                log.warn("[PR:Prefetch] getDefaultReviewers exception for '${config.displayLabel}': ${e.message}")
+                emptyList()
+            }
+
+            log.info("[PR:Prefetch] Prefetched repo '${config.displayLabel}': branch='$sourceBranch' remoteBranches=${remoteBranches.size} defaultTarget='$defaultTarget' repoDefaultReviewers=${repoDefaultReviewers.size}")
 
             RepoPrefetch(
                 config = config,
                 sourceBranch = sourceBranch,
                 remoteBranches = remoteBranches,
-                defaultTarget = defaultTarget
+                defaultTarget = defaultTarget,
+                repoDefaultReviewers = repoDefaultReviewers
             )
         } catch (e: Exception) {
             log.warn("[PR:Prefetch] prefetchOneRepo failed for '${config.displayLabel}': ${e.message}")

@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.pullrequest.ui
 
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.project.Project
@@ -68,10 +69,11 @@ class TicketChipInput(
      */
     private val testProvider: JiraTicketProvider? = null,
     /**
-     * Test seam: UI re-render dispatcher. Defaults to Swing EDT via `invokeLater`.
-     * Tests pass `Runnable::run` to drive the widget synchronously.
+     * Test seam: UI re-render dispatcher. Tests pass `Runnable::run` to drive the widget
+     * synchronously. When null (production default), the class body installs a
+     * modality-aware dispatcher — see the [uiDispatcher] property below.
      */
-    private val uiDispatcher: (Runnable) -> Unit = { invokeLater { it.run() } },
+    uiDispatcher: ((Runnable) -> Unit)? = null,
     /**
      * Test seam: coroutine context for the network fetch. Defaults to
      * [Dispatchers.IO]; tests pass [kotlin.coroutines.EmptyCoroutineContext] so
@@ -92,6 +94,20 @@ class TicketChipInput(
         val context: TicketContext? = null
     ) {
         enum class Status { PENDING, VALID, NOT_FOUND, NETWORK_ERROR }
+    }
+
+    /**
+     * Effective UI dispatcher. When no test override is injected, uses `invokeLater` bound
+     * to **this widget's modality level** — critical because the widget is typically hosted
+     * inside a modal dialog (`CreatePrDialog`), and IntelliJ's `invokeLater` default from a
+     * background thread is `ModalityState.NON_MODAL`. Non-modal runnables are suspended
+     * while any modal dialog is open, which previously made the PENDING → VALID/NOT_FOUND
+     * transition never fire — the chip spinner ran forever. `stateForComponent(this)`
+     * matches whichever modality level the widget is mounted at, so the callback fires
+     * while the modal is up.
+     */
+    private val uiDispatcher: (Runnable) -> Unit = uiDispatcher ?: { runnable ->
+        invokeLater(ModalityState.stateForComponent(this@TicketChipInput)) { runnable.run() }
     }
 
     // ─── State ──────────────────────────────────────────────────────────────────

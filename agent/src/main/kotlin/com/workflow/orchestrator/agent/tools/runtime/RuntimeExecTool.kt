@@ -686,9 +686,14 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
             "INVALID_CONFIGURATION: junit", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
         )
 
-        // checkConfiguration — errors block, warnings pass
+        // checkConfiguration — errors block, warnings pass.
+        // Must run inside a read action: Spring Boot's checkConfiguration() resolves the
+        // main class via JavaPsiFacade.findClass(), which triggers FileBasedIndex.ensureUpToDate()
+        // and asserts read access. We're on a Dispatchers.IO worker here, so wrap in ReadAction.
         try {
-            config.checkConfiguration()
+            ReadAction.compute<Unit, Throwable> {
+                config.checkConfiguration()
+            }
         } catch (e: RuntimeConfigurationError) {
             return ToolResult(
                 "INVALID_CONFIGURATION: ${e.message}",

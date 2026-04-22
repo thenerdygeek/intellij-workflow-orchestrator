@@ -20,6 +20,7 @@ class SourcegraphTextGenerationService : TextGenerationService {
     ): String? {
         if (!LlmBrainFactory.isAvailable()) return null
         val brain = LlmBrainFactory.create(project)
+        val maxTokens = AiSettings.getInstance(project).state.maxOutputTokens
 
         val contextBlock = contextFilePaths.mapNotNull { path ->
             val file = File(path)
@@ -36,7 +37,7 @@ class SourcegraphTextGenerationService : TextGenerationService {
         val fullPrompt = if (contextBlock.isNotBlank()) "$contextBlock\n\n$prompt" else prompt
         val messages = listOf(ChatMessage(role = "user", content = fullPrompt))
 
-        return when (val result = brain.chat(messages, tools = null)) {
+        return when (val result = brain.chat(messages, tools = null, maxTokens = maxTokens)) {
             is ApiResult.Success -> {
                 val text = result.data.choices.firstOrNull()?.message?.content
                 log.info("[AI:TextGen] Generated ${text?.length ?: 0} chars")
@@ -60,6 +61,7 @@ class SourcegraphTextGenerationService : TextGenerationService {
     ): String? {
         if (!LlmBrainFactory.isAvailable()) return null
         val brain = LlmBrainFactory.create(project)
+        val maxTokens = AiSettings.getInstance(project).state.maxOutputTokens
 
         val prompt = PrDescriptionPromptBuilder.build(
             diff = diff,
@@ -70,7 +72,7 @@ class SourcegraphTextGenerationService : TextGenerationService {
         )
         val messages = listOf(ChatMessage(role = "user", content = prompt))
 
-        return when (val result = brain.chat(messages, tools = null)) {
+        return when (val result = brain.chat(messages, tools = null, maxTokens = maxTokens)) {
             is ApiResult.Success -> {
                 result.data.choices.firstOrNull()?.message?.content
                     ?.replace(Regex("^```[a-z]*\\n?"), "")
@@ -91,11 +93,12 @@ class SourcegraphTextGenerationService : TextGenerationService {
     ): String? {
         if (!LlmBrainFactory.isAvailable()) return null
         val brain = LlmBrainFactory.create(project)
+        val maxTokens = AiSettings.getInstance(project).state.maxOutputTokens
 
         val prompt = PrTitlePromptBuilder.build(ticket, commitMessages)
         val messages = listOf(ChatMessage(role = "user", content = prompt))
 
-        return when (val result = brain.chat(messages, tools = null)) {
+        return when (val result = brain.chat(messages, tools = null, maxTokens = maxTokens)) {
             is ApiResult.Success -> {
                 result.data.choices.firstOrNull()?.message?.content
                     ?.replace(Regex("^```[a-z]*\\n?"), "")

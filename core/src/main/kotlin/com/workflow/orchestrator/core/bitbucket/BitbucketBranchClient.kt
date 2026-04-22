@@ -46,6 +46,17 @@ private data class UserListResponse(
     val isLastPage: Boolean = true
 )
 
+/**
+ * One condition in Bitbucket Server's default-reviewers plugin. A repo can have many
+ * (scoped by ref matchers); we only care about the reviewers they prescribe.
+ */
+@Serializable
+private data class DefaultReviewerCondition(
+    val id: Int = 0,
+    val reviewers: List<BitbucketUser> = emptyList(),
+    val requiredApprovals: Int = 0
+)
+
 @Serializable
 private data class ProjectListResponse(
     val values: List<BitbucketProject>,
@@ -739,6 +750,51 @@ class BitbucketBranchClient(
                 }
             } catch (e: IOException) {
                 log.error("[Core:Bitbucket] Network error fetching PRs", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Fetches the repo-level default reviewers configured in Bitbucket Server.
+     *
+     * GET /rest/default-reviewers/1.0/projects/{projectKey}/repos/{repoSlug}/conditions
+     *
+     * Returns the union of reviewers across all conditions (de-duplicated by username).
+     * We intentionally do NOT filter by source/target ref matchers here — the user will
+     * see ALL repo defaults and can remove any they don't want. This avoids a second
+     * "resolve repo id" HTTP call that the `/reviewers` endpoint would require.
+     *
+     * Returns empty list (wrapped in Success) when the default-reviewers plugin is not
+     * installed (404) or no conditions are configured — both are legitimate repo states.
+     */
+    suspend fun getDefaultReviewers(projectKey: String, repoSlug: String): ApiResult<List<BitbucketUser>> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Fetching default-reviewer conditions for $projectKey/$repoSlug")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/default-reviewers/1.0/projects/$projectKey/repos/$repoSlug/conditions")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: "[]"
+                            val conditions = json.decodeFromString<List<DefaultReviewerCondition>>(body)
+                            val unique = conditions.flatMap { c -> c.reviewers }
+                                .distinctBy { u -> u.name }
+                            log.info("[Core:Bitbucket] Default reviewers for $projectKey/$repoSlug: ${unique.size}")
+                            ApiResult.Success(unique)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        // 404 → default-reviewers plugin not installed, treat as "no defaults"
+                        404 -> ApiResult.Success(emptyList())
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error fetching default reviewers", e)
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
             }
         }
