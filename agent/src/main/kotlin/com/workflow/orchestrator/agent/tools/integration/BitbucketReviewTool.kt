@@ -15,9 +15,10 @@ import kotlin.coroutines.coroutineContext
 /**
  * PR review actions — comments, inline comments, replies, reviewer management.
  *
- * 10 actions: add_pr_comment, add_inline_comment, reply_to_comment,
+ * 12 actions: add_pr_comment, add_inline_comment, reply_to_comment,
  * add_reviewer, remove_reviewer, set_reviewer_status,
- * list_comments, get_comment, edit_comment, delete_comment
+ * list_comments, get_comment, edit_comment, delete_comment,
+ * resolve_comment, reopen_comment
  */
 class BitbucketReviewTool : AgentTool {
 
@@ -37,6 +38,8 @@ Actions and their parameters:
 - get_comment(project_key, repo_slug, pr_id, comment_id) → Get a single comment by ID
 - edit_comment(project_key, repo_slug, pr_id, comment_id, text, expected_version) → Edit comment text (uses optimistic locking; surfaces STALE_VERSION error)
 - delete_comment(project_key, repo_slug, pr_id, comment_id, expected_version) → Delete a comment (uses optimistic locking)
+- resolve_comment(project_key, repo_slug, pr_id, comment_id) → Mark a comment thread as resolved
+- reopen_comment(project_key, repo_slug, pr_id, comment_id) → Reopen a resolved comment thread
 
 Common optional: repo_name for multi-repo projects. description for approval dialog on write actions.
 """.trimIndent()
@@ -47,7 +50,8 @@ Common optional: repo_name for multi-repo projects. description for approval dia
                 enumValues = listOf(
                     "add_pr_comment", "add_inline_comment", "reply_to_comment",
                     "add_reviewer", "remove_reviewer", "set_reviewer_status",
-                    "list_comments", "get_comment", "edit_comment", "delete_comment"
+                    "list_comments", "get_comment", "edit_comment", "delete_comment",
+                    "resolve_comment", "reopen_comment"
                 )),
             "pr_id"             to ParameterProperty("string", "Pull request ID (numeric) — required for all actions"),
             "text"              to ParameterProperty("string", "Comment/reply text — for add_pr_comment, add_inline_comment, reply_to_comment"),
@@ -226,6 +230,34 @@ Common optional: repo_name for multi-repo projects. description for approval dia
                     isError = true
                 )
                 service.deletePrComment(projectKey, repoSlug, prId, commentId, expectedVersion).toAgentToolResult()
+            }
+
+            "resolve_comment" -> {
+                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return BitbucketToolUtils.missingParam("project_key")
+                val repoSlug = params["repo_slug"]?.jsonPrimitive?.content ?: return BitbucketToolUtils.missingParam("repo_slug")
+                val prId = BitbucketToolUtils.parsePrId(params) ?: return BitbucketToolUtils.invalidPrId()
+                val commentIdStr = params["comment_id"]?.jsonPrimitive?.content ?: return BitbucketToolUtils.missingParam("comment_id")
+                val commentId = commentIdStr.toLongOrNull() ?: return ToolResult(
+                    "Error: 'comment_id' must be an integer, got '$commentIdStr'",
+                    "Error: invalid comment_id",
+                    ToolResult.ERROR_TOKEN_ESTIMATE,
+                    isError = true
+                )
+                service.resolvePrComment(projectKey, repoSlug, prId, commentId).toAgentToolResult()
+            }
+
+            "reopen_comment" -> {
+                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return BitbucketToolUtils.missingParam("project_key")
+                val repoSlug = params["repo_slug"]?.jsonPrimitive?.content ?: return BitbucketToolUtils.missingParam("repo_slug")
+                val prId = BitbucketToolUtils.parsePrId(params) ?: return BitbucketToolUtils.invalidPrId()
+                val commentIdStr = params["comment_id"]?.jsonPrimitive?.content ?: return BitbucketToolUtils.missingParam("comment_id")
+                val commentId = commentIdStr.toLongOrNull() ?: return ToolResult(
+                    "Error: 'comment_id' must be an integer, got '$commentIdStr'",
+                    "Error: invalid comment_id",
+                    ToolResult.ERROR_TOKEN_ESTIMATE,
+                    isError = true
+                )
+                service.reopenPrComment(projectKey, repoSlug, prId, commentId).toAgentToolResult()
             }
 
             else -> ToolResult(

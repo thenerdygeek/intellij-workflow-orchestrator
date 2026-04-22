@@ -53,10 +53,10 @@ class BitbucketReviewToolTest {
     }
 
     @Test
-    fun `action enum contains all 10 actions`() {
+    fun `action enum contains all 12 actions`() {
         val actions = tool.parameters.properties["action"]?.enumValues
         assertNotNull(actions)
-        assertEquals(10, actions!!.size)
+        assertEquals(12, actions!!.size)
         assertTrue("add_pr_comment" in actions)
         assertTrue("add_inline_comment" in actions)
         assertTrue("reply_to_comment" in actions)
@@ -67,6 +67,8 @@ class BitbucketReviewToolTest {
         assertTrue("get_comment" in actions)
         assertTrue("edit_comment" in actions)
         assertTrue("delete_comment" in actions)
+        assertTrue("resolve_comment" in actions)
+        assertTrue("reopen_comment" in actions)
     }
 
     @Test
@@ -350,6 +352,74 @@ class BitbucketReviewToolTest {
             put("repo_slug", "my-repo")
             put("pr_id", "3")
             put("expected_version", "1")
+        }, project)
+        assertTrue(result.isError)
+        assertTrue(result.content.contains("comment_id"))
+    }
+
+    // --- Task 5: resolve_comment + reopen_comment ---
+
+    @Test
+    fun `resolve_comment dispatches to service with correct args`() = runTest {
+        val svc = mockBitbucketService()
+        val resolved = sampleComment("30", state = PrCommentState.RESOLVED)
+        coEvery { svc.resolvePrComment("PROJ", "my-repo", 8, 30L) } returns
+            CoreToolResult(data = resolved, summary = "Comment 30 resolved")
+
+        val result = tool.execute(buildJsonObject {
+            put("action", "resolve_comment")
+            put("project_key", "PROJ")
+            put("repo_slug", "my-repo")
+            put("pr_id", "8")
+            put("comment_id", "30")
+        }, project)
+
+        assertFalse(result.isError)
+        assertTrue(result.content.contains("Comment 30 resolved"))
+    }
+
+    @Test
+    fun `resolve_comment missing comment_id returns error`() = runTest {
+        val svc = mockBitbucketService()
+        @Suppress("UNUSED_VARIABLE") val unused = svc
+        val result = tool.execute(buildJsonObject {
+            put("action", "resolve_comment")
+            put("project_key", "PROJ")
+            put("repo_slug", "my-repo")
+            put("pr_id", "8")
+        }, project)
+        assertTrue(result.isError)
+        assertTrue(result.content.contains("comment_id"))
+    }
+
+    @Test
+    fun `reopen_comment dispatches to service with correct args`() = runTest {
+        val svc = mockBitbucketService()
+        val reopened = sampleComment("31", state = PrCommentState.OPEN)
+        coEvery { svc.reopenPrComment("PROJ", "my-repo", 8, 31L) } returns
+            CoreToolResult(data = reopened, summary = "Comment 31 reopened")
+
+        val result = tool.execute(buildJsonObject {
+            put("action", "reopen_comment")
+            put("project_key", "PROJ")
+            put("repo_slug", "my-repo")
+            put("pr_id", "8")
+            put("comment_id", "31")
+        }, project)
+
+        assertFalse(result.isError)
+        assertTrue(result.content.contains("Comment 31 reopened"))
+    }
+
+    @Test
+    fun `reopen_comment missing comment_id returns error`() = runTest {
+        val svc = mockBitbucketService()
+        @Suppress("UNUSED_VARIABLE") val unused = svc
+        val result = tool.execute(buildJsonObject {
+            put("action", "reopen_comment")
+            put("project_key", "PROJ")
+            put("repo_slug", "my-repo")
+            put("pr_id", "8")
         }, project)
         assertTrue(result.isError)
         assertTrue(result.content.contains("comment_id"))
