@@ -137,4 +137,30 @@ class BitbucketBranchClientCommentsTest {
         val msg = (result as ApiResult.Error).message
         assertTrue(msg.contains("STALE_VERSION"))
     }
+
+    @Test
+    fun `resolvePrComment sends PUT with state RESOLVED`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(
+            """{"id":42,"version":3,"text":"c","author":{"name":"u","displayName":"U"},"state":"RESOLVED","severity":"NORMAL"}"""
+        ))
+        val result = client.resolvePrComment("P", "R", 1, 42)
+        assertTrue(result is ApiResult.Success)
+        val req = server.takeRequest()
+        assertEquals("PUT", req.method)
+        val body = Json.parseToJsonElement(req.body.readUtf8()).jsonObject
+        assertEquals("RESOLVED", body["state"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `reopenPrComment sends PUT with state OPEN`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(
+            """{"id":42,"version":3,"text":"c","author":{"name":"u","displayName":"U"},"state":"OPEN","severity":"NORMAL"}"""
+        ))
+        val result = client.reopenPrComment("P", "R", 1, 42)
+        assertTrue(result is ApiResult.Success)
+        val req = server.takeRequest()
+        assertEquals("PUT", req.method)
+        val body = Json.parseToJsonElement(req.body.readUtf8()).jsonObject
+        assertEquals("OPEN", body["state"]!!.jsonPrimitive.content)
+    }
 }
