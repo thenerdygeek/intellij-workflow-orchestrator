@@ -1464,3 +1464,79 @@ HTTP client — `core/src/main/kotlin/com/workflow/orchestrator/core/bitbucket/B
 - Single-commit edge case: `values` has 1 item, `isLastPage=true` → list of 1 returned correctly
 - 401 / 404 mocks → `isError=true`, appropriate messages
 - Not-configured guard (`client == null`) → `isError=true`, hint references Settings
+
+---
+
+## Test coverage matrix
+
+This matrix shows which scenarios are covered per audited action/method. Informs Phase 1 test-coverage tasks and the decision memo.
+
+Sources examined:
+- `agent/src/test/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketReviewToolTest.kt` — 7 schema-only tests; no execute() path exercised; no HTTP
+- `agent/src/test/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketPrToolTest.kt` — 7 schema-only tests; no execute() path exercised; no HTTP
+- `agent/src/test/kotlin/com/workflow/orchestrator/agent/tools/integration/BitbucketRepoToolTest.kt` — 7 schema-only tests; no execute() path exercised; no HTTP
+- `core/src/test/kotlin/com/workflow/orchestrator/core/bitbucket/BitbucketApiClientTest.kt` — 4 tests using MockWebServer (live HTTP round-trip): `createPullRequest` happy path, `createPullRequest` 409, `createPullRequest` 403, `getPullRequestsForBranch` happy path
+
+Column meanings:
+- **Happy path** — test exists that covers the successful case with a mock returning a well-formed response
+- **4xx** — test exists for a client-error response (400/401/403/404)
+- **5xx** — test exists for a server-error response (500/503)
+- **409 (version)** — test exists for DC's stale-version conflict on mutating endpoints; `n/a` for read-only or non-versioned endpoints
+- **Auth** — test exists for auth-header inclusion or auth-failure
+- **Live HTTP** — test uses MockWebServer/WireMock (real HTTP round-trip) rather than pure Kotlin mocks of the client/service
+
+`✓` = covered | `—` = not covered | `n/a` = not applicable
+
+| Action/Method | Happy path | 4xx | 5xx | 409 (version) | Auth | Live HTTP |
+|---|---|---|---|---|---|---|
+| `bitbucket_review.add_pr_comment` | — | — | — | n/a | — | — |
+| `bitbucket_review.add_inline_comment` | — | — | — | n/a | — | — |
+| `bitbucket_review.reply_to_comment` | — | — | — | n/a | — | — |
+| `bitbucket_review.add_reviewer` | — | — | — | — | — | — |
+| `bitbucket_review.remove_reviewer` | — | — | — | — | — | — |
+| `bitbucket_review.set_reviewer_status` | — | — | — | — | — | — |
+| `bitbucket_pr.create_pr` | ✓ | ✓ | — | ✓ | — | ✓ |
+| `bitbucket_pr.get_pr_detail` | — | — | — | n/a | — | — |
+| `bitbucket_pr.get_pr_commits` | — | — | — | n/a | — | — |
+| `bitbucket_pr.get_pr_activities` | — | — | — | n/a | — | — |
+| `bitbucket_pr.get_pr_changes` | — | — | — | n/a | — | — |
+| `bitbucket_pr.get_pr_diff` | — | — | — | n/a | — | — |
+| `bitbucket_pr.check_merge_status` | — | — | — | n/a | — | — |
+| `bitbucket_pr.approve_pr` | — | — | — | — | — | — |
+| `bitbucket_pr.merge_pr` | — | — | — | — | — | — |
+| `bitbucket_pr.decline_pr` | — | — | — | — | — | — |
+| `bitbucket_pr.update_pr_title` | — | — | — | — | — | — |
+| `bitbucket_pr.update_pr_description` | — | — | — | — | — | — |
+| `bitbucket_pr.get_my_prs` | — | — | — | n/a | — | — |
+| `bitbucket_pr.get_reviewing_prs` | — | — | — | n/a | — | — |
+| `PR-diff.getPullRequestDiff` | — | — | — | n/a | — | — |
+| `PR-diff.getPullRequestChanges` | — | — | — | n/a | — | — |
+| `PR-diff.getPullRequestActivities` | — | — | — | n/a | — | — |
+| `PR-diff.getPullRequestCommits` | — | — | — | n/a | — | — |
+
+**Notes on `create_pr` row:** `BitbucketApiClientTest.kt` tests the `BitbucketBranchClient.createPullRequest` method directly via MockWebServer. Happy path: fixture JSON response verified (`id=42`, `state=OPEN`, link contains `pull-requests/42`; request method, path, and `refs/heads/` prefix in body all asserted). 409 conflict: response code 409 → `ErrorType.VALIDATION_ERROR` asserted. 403 FORBIDDEN: response code 403 → `ErrorType.FORBIDDEN` asserted — counted in the 4xx column. No 5xx, auth header assertion, or Auth-failure test. The tool-layer execute() path (`BitbucketPrTool → BitbucketService → client`) is still not covered.
+
+**Notes on `getPullRequestsForBranch`:** This method backs no audited action directly but is tested at the HTTP layer (happy path, 1 result, state=OPEN and at=refs/heads/… query params asserted). Counted only against the client-level coverage, not in the matrix above (the matrix tracks the 24 audited actions/methods only).
+
+### Coverage gap summary
+
+#### Critical gaps (required before Phase 1 foundation merges)
+
+- **No execute() path tested for any of the 24 audited actions** — every `BitbucketReviewTool`, `BitbucketPrTool`, and `BitbucketRepoTool` test is schema-only (tool name, enum membership, required-param list, toToolDefinition shape, missing/unknown action errors). The tool → service → client chain is never exercised in any test. A regression in service wiring or param threading would be invisible until production.
+- **No 409 (stale-version) test for any mutating action at the service or tool layer** — `add_reviewer`, `remove_reviewer`, `set_reviewer_status`, `approve_pr`, `merge_pr`, `decline_pr`, `update_pr_title`, `update_pr_description` all perform PUT/POST with a version field and all handle 409 in the client; none have a test that exercises or verifies that path.
+- **No 5xx test for any of the 24 actions** — the 500/503 error path (network failure or server error during any tool call) is completely untested.
+- **Auth-header inclusion untested at the tool or service layer** — `BitbucketApiClientTest.kt` does not assert `Authorization: Bearer test-token` on the recorded request for any test; the three `BitbucketReview/Pr/RepoToolTest` files test no HTTP at all.
+
+#### Important gaps (required before Phase 2 completes)
+
+- **Pagination exhaustion untested for `get_pr_changes`, `get_pr_activities`, `get_pr_commits`** — all three have confirmed pagination gaps (FIX verdict in Task 4); no test exercises multi-page responses at any layer. Without pagination tests, the fix cannot be verified as correct.
+- **`getPullRequestDiff` size-cap behaviour untested** — the FIX in Task 4 adds `MAX_DIFF_CHARS = 327_680` truncation; no test verifies the cap is applied or that the `"truncated"` summary appears for oversized responses.
+- **`get_my_prs` / `get_reviewing_prs` username-resolution untested** — both actions have a FIX verdict requiring `username.1` query param inclusion; no test verifies that `ConnectionSettings.bitbucketUsername` is read and forwarded, or that the `getCurrentUsername()` fallback is invoked when blank.
+- **`add_inline_comment` fileType/lineType interaction untested** — the FIX for `fileType` derivation from `lineType` (`"REMOVED"` → `"FROM"`, otherwise `"TO"`) has no test verifying the correct body shape is sent for each `lineType` value.
+
+#### Observation gaps (nice-to-have)
+
+- **`set_reviewer_status` missing `approved` field in body untested** — the FIX adds `approved: Boolean` derived from `status`; a body-shape assertion test (`status="APPROVED"` → body contains `"approved":true`) would lock in the fix.
+- **`merge_pr` strategy enum mismatch untested** — the tool description lists wrong strategy IDs (`merge-commit`, `ff-only`) vs the DC API (`no-ff`, `rebase-no-ff`); a schema-level assertion on the strategy description string would catch documentation drift.
+- **`create_pr` same-branch guard and blank-title guard untested at tool layer** — the `BitbucketApiClientTest` covers the HTTP client method, not the tool-layer guards (`from_branch == to_branch` → error before service call; `title = "  "` → validateNotBlank fires).
+- **Empty response / empty-list edge cases untested** — `get_pr_commits` with 0 commits, `get_pr_changes` with 0 changes, `get_pr_activities` with 0 activities: all have no test verifying the summary string and that no exception is thrown.
