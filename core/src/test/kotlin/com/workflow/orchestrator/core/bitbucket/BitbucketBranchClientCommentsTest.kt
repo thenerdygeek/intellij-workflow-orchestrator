@@ -118,4 +118,23 @@ class BitbucketBranchClientCommentsTest {
         val msg = errorResult.message
         assertTrue(msg.contains("STALE_VERSION"), "error message was: $msg")
     }
+
+    @Test
+    fun `deletePrComment sends DELETE with version query param`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(204))
+        val result = client.deletePrComment("P", "R", 1, 42, expectedVersion = 3)
+        assertTrue(result is ApiResult.Success)
+        val req = server.takeRequest()
+        assertEquals("DELETE", req.method)
+        assertTrue(req.path!!.contains("version=3"))
+    }
+
+    @Test
+    fun `deletePrComment 409 yields STALE_VERSION error`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(409))
+        val result = client.deletePrComment("P", "R", 1, 42, expectedVersion = 3)
+        assertTrue(result is ApiResult.Error)
+        val msg = (result as ApiResult.Error).message
+        assertTrue(msg.contains("STALE_VERSION"))
+    }
 }

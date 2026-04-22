@@ -2062,4 +2062,87 @@ class BitbucketBranchClient(
             }
         }
 
+    /**
+     * Deletes a comment from a pull request.
+     * DELETE /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/comments/{commentId}?version={expectedVersion}
+     * Returns 409 if the comment was modified since the caller last fetched it (stale version).
+     */
+    suspend fun deletePrComment(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        commentId: Long,
+        expectedVersion: Int,
+    ): ApiResult<Unit> = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/comments/$commentId?version=$expectedVersion")
+            .delete()
+            .build()
+        runCatching {
+            httpClient.newCall(request).execute().use { response ->
+                when (response.code) {
+                    409 -> ApiResult.Error(ErrorType.VALIDATION_ERROR, "STALE_VERSION: comment was modified by another user; re-fetch and retry")
+                    in 200..299 -> ApiResult.Success(Unit)
+                    else -> ApiResult.Error(ErrorType.SERVER_ERROR, "HTTP ${response.code}: ${response.message}")
+                }
+            }
+        }.getOrElse { e ->
+            log.error("[Core:Bitbucket] Network error deleting comment $commentId on PR #$prId", e)
+            ApiResult.Error(ErrorType.NETWORK_ERROR, "deletePrComment failed: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Resolves a comment thread on a pull request (sets state to RESOLVED).
+     * PUT /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/comments/{commentId}
+     */
+    suspend fun resolvePrComment(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        commentId: Long,
+    ): ApiResult<BitbucketPrCommentResponse> = setCommentState(projectKey, repoSlug, prId, commentId, "RESOLVED")
+
+    /**
+     * Reopens a resolved comment thread on a pull request (sets state back to OPEN).
+     * PUT /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/comments/{commentId}
+     */
+    suspend fun reopenPrComment(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        commentId: Long,
+    ): ApiResult<BitbucketPrCommentResponse> = setCommentState(projectKey, repoSlug, prId, commentId, "OPEN")
+
+    private suspend fun setCommentState(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        commentId: Long,
+        state: String,
+    ): ApiResult<BitbucketPrCommentResponse> = withContext(Dispatchers.IO) {
+        val payload = json.encodeToString(ResolveCommentRequest(state = state))
+        val request = Request.Builder()
+            .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/comments/$commentId")
+            .put(payload.toRequestBody("application/json".toMediaType()))
+            .addHeader("Accept", "application/json")
+            .build()
+        runCatching {
+            httpClient.newCall(request).execute().use { response ->
+                when (response.code) {
+                    409 -> ApiResult.Error(ErrorType.VALIDATION_ERROR, "STALE_VERSION: comment was modified by another user; re-fetch and retry")
+                    in 200..299 -> {
+                        val body = response.body?.string()
+                            ?: return@use ApiResult.Error(ErrorType.PARSE_ERROR, "empty response body")
+                        ApiResult.Success(json.decodeFromString<BitbucketPrCommentResponse>(body))
+                    }
+                    else -> ApiResult.Error(ErrorType.SERVER_ERROR, "HTTP ${response.code}: ${response.message}")
+                }
+            }
+        }.getOrElse { e ->
+            log.error("[Core:Bitbucket] Network error setting state='$state' on comment $commentId of PR #$prId", e)
+            ApiResult.Error(ErrorType.NETWORK_ERROR, "setCommentState failed: ${e.message}", e)
+        }
+    }
+
 }
