@@ -157,6 +157,25 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         // ── Insights: weekly digest ───────────────────────────────────────────────
         /** When true, a report is auto-generated every Monday morning at startup. */
         var weeklyDigestEnabled by property(false)
+
+        // ── Ticket Transitions ───────────────────────────────────────────────
+        /**
+         * Skip the transition dialog when the target status has no required fields
+         * and only one valid next-state matches.
+         */
+        var ticketTransitionAutoTransitionSilently by property(false)
+
+        /**
+         * Preferred target status name when Start Work creates a branch.
+         * Leave empty to skip the transition.
+         */
+        var ticketTransitionDefaultStartWorkStatusName by string("In Progress")
+
+        /**
+         * Preferred target status after PR creation.
+         * Leave empty to disable the automatic transition.
+         */
+        var ticketTransitionDefaultPrCreateStatusName by string("In Review")
     }
 
     /**

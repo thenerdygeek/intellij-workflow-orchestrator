@@ -250,7 +250,43 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
                 }
             }
 
-            // === 6. Time Tracking (collapsed by default) ===
+            // === 6. Ticket Transitions ===
+            group("Ticket Transitions") {
+                row {
+                    checkBox("Silently apply transition when only one next state matches")
+                        .bindSelected(settings.state::ticketTransitionAutoTransitionSilently)
+                        .comment(
+                            "Skip the transition dialog when the target status has no required fields " +
+                                "and only one valid next-state matches."
+                        )
+                }
+                row("Start Work target status:") {
+                    textField()
+                        .bindText(
+                            { settings.state.ticketTransitionDefaultStartWorkStatusName ?: "In Progress" },
+                            { settings.state.ticketTransitionDefaultStartWorkStatusName = it }
+                        )
+                        .columns(COLUMNS_LARGE)
+                        .comment(
+                            "Preferred target status name when Start Work creates a branch. " +
+                                "Leave empty to skip."
+                        )
+                }
+                row("PR creation target status:") {
+                    textField()
+                        .bindText(
+                            { settings.state.ticketTransitionDefaultPrCreateStatusName ?: "In Review" },
+                            { settings.state.ticketTransitionDefaultPrCreateStatusName = it }
+                        )
+                        .columns(COLUMNS_LARGE)
+                        .comment(
+                            "Preferred target status after PR creation. " +
+                                "Leave empty to disable."
+                        )
+                }
+            }
+
+            // === 7. Time Tracking (collapsed by default) ===
             collapsibleGroup("Time Tracking") {
                 row("Max hours per worklog:") {
                     textField()
@@ -273,7 +309,7 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
                 }
             }.expanded = false
 
-            // === 7. Jira Custom Fields (collapsed by default) ===
+            // === 8. Jira Custom Fields (collapsed by default) ===
             collapsibleGroup("Jira Custom Fields (Advanced)") {
                 row("Epic link field ID:") {
                     textField()
@@ -310,7 +346,7 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
                 }
             }.expanded = false
 
-            // === 8. Advanced (collapsed by default) ===
+            // === 9. Advanced (collapsed by default) ===
             collapsibleGroup("Advanced") {
                 row("Max branch name length:") {
                     intTextField(range = 10..200)
