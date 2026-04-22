@@ -354,8 +354,11 @@ class AgentController(
         // restarting from scratch (replaying the original task makes the model think its
         // previous work was wrong and pick a different approach).
         dashboard.setCefRetryCallback {
-            if (lastTaskText != null) {
-                executeTask("continue", "continue", null)
+            if (lastTaskText == null) return@setCefRetryCallback
+            controllerScope.launch {
+                runCatching { service.cleanEmptyArtifactsBeforeRetry() }
+                    .onFailure { LOG.warn("retry cleanup failed (continuing anyway)", it) }
+                invokeLater { executeTask("continue", "continue", null) }
             }
         }
 

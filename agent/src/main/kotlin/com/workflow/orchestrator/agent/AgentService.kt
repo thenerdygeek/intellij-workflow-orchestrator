@@ -863,6 +863,26 @@ class AgentService(private val project: Project) : Disposable {
     // ── Task Execution ─────────────────────────────────────────────────────
 
     /**
+     * Strip trailing empty-assistant pollution from the persisted conversation history
+     * of the active session, if any. Called from the UI retry path before the "continue"
+     * task is issued, so the new loop starts from a clean tail.
+     *
+     * Safe to call with no active session — returns 0. Thread-safe via the handler's
+     * internal mutex. Does NOT touch `ui_messages.json` (we want the user-visible chat
+     * trail to retain the "provider returned an empty response" note).
+     *
+     * @return number of empty-assistant entries removed, or 0 if no active session
+     */
+    suspend fun cleanEmptyArtifactsBeforeRetry(): Int {
+        val handler = activeMessageStateHandler ?: return 0
+        val diskRemoved = handler.pruneTrailingEmptyAssistants()
+        if (diskRemoved > 0) {
+            log.info("[AgentService] retry cleanup: $diskRemoved on-disk empty-assistant turn(s) removed")
+        }
+        return diskRemoved
+    }
+
+    /**
      * Execute a task in the agent loop. Returns a Job for cancellation.
      *
      * Checkpoint integration (ported from Cline):
@@ -1748,7 +1768,18 @@ class AgentService(private val project: Project) : Disposable {
 
         // Pop trailing user message if interrupted mid-submission
         val popResult = ResumeHelper.popTrailingUserMessage(savedApiHistory)
-        val activeApiHistory = popResult.trimmedHistory
+        var activeApiHistory = popResult.trimmedHistory
+
+        // Clean trailing empty-assistant pollution left by pre-guard sessions.
+        // Mirror: ContextManager.pruneTrailingEmptyAssistants runs below on restoreMessages.
+        val preCleanSize = activeApiHistory.size
+        activeApiHistory = activeApiHistory.dropLastWhile { msg ->
+            msg.role == ApiRole.ASSISTANT && (msg.content.isEmpty() || msg.content.all { it is ContentBlock.Text && it.text.isBlank() })
+        }
+        val droppedEmpties = preCleanSize - activeApiHistory.size
+        if (droppedEmpties > 0) {
+            log.info("[AgentService] resume cleanup: dropped $droppedEmpties trailing empty-assistant turn(s) from history")
+        }
 
         // Build task resumption preamble
         val lastActivityTs = savedUiMessages.lastOrNull()?.ts ?: System.currentTimeMillis()
@@ -1821,6 +1852,11 @@ class AgentService(private val project: Project) : Disposable {
             val chatMessages = activeApiHistory.map { it.toChatMessage() } +
                 com.workflow.orchestrator.core.ai.dto.ChatMessage(role = "user", content = preamble)
             ctx.restoreMessages(chatMessages)
+
+            // Belt-and-braces: strip anything that slipped through the resume-path filter
+            // (e.g. upstream adapter emits an assistant message that `toChatMessage()` renders
+            // as blank).
+            ctx.pruneTrailingEmptyAssistants()
 
             log.info("[Agent] Resuming session: $sessionId (${savedApiHistory.size} api messages, interrupted $agoText)")
 
