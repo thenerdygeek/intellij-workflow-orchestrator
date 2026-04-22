@@ -678,10 +678,11 @@ def main() -> int:
                     help=f"Public image URL for URL-source tests (default: {DEFAULT_REMOTE_IMAGE_URL}).")
     ap.add_argument("--image-url-keyword", default=",".join(DEFAULT_REMOTE_KEYWORDS),
                     help="Comma-separated keywords expected in the model's reply for the URL image.")
-    # Matches streaming_lab.py:928 (DEFAULT_MAX_TOKENS=2048). Lower values
-    # like 64 break thinking-enabled Claude routes on the gateway, which
-    # pre-allocate a budget_tokens ≥ 1024 and require max_tokens > budget.
-    ap.add_argument("--max-tokens", type=int, default=2048)
+    # 10000 sits comfortably above any thinking budget the gateway might
+    # pre-allocate (which broke smaller defaults with "max_tokens should be
+    # greater than thinking.budget_tokens"). Vision replies are one word —
+    # the budget is just there to satisfy the thinking-model precondition.
+    ap.add_argument("--max-tokens", type=int, default=10000)
     ap.add_argument("--timeout", type=int, default=60)
     ap.add_argument("--no-verify", action="store_true", help="Disable TLS verification.")
     ap.add_argument("--out", default="vision_lab_results.json")
