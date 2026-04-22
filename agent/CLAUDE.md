@@ -521,6 +521,7 @@ Faithful port of Cline's two-file session persistence (message-state.ts + disk.t
 
 **Key classes:**
 - `MessageStateHandler` — owns both in-memory arrays + mutex + save logic
+- **Empty-assistant guard**: `addToApiConversationHistory` drops writes for assistant messages whose content is empty/blank AND whose tool-call list is empty. These turns are provider-error artefacts that, persisted, train the model to mimic the empty pattern on retry. Cleanup for any pollution predating this guard is exposed via `pruneTrailingEmptyAssistants()` and called from the retry/resume flows in `AgentService`.
 - `SessionLock` — `java.nio.channels.FileLock` on `.lock` file
 
 **Streaming persistence:** Every LLM chunk persists with `partial: true`. On stream end, flipped to `partial: false`. On abort: synthetic assistant turn with `[Response interrupted by user]` marker.

@@ -54,8 +54,49 @@ class MessageStateHandler(
     }
 
     suspend fun addToApiConversationHistory(message: ApiMessage) = mutex.withLock {
+        if (isEmptyAssistant(message)) {
+            // Provider-error turns (empty content + no tool use) carry no information
+            // and, persisted, accumulate across retries — training the model to mimic
+            // the empty pattern. Dropped on the write path; paired nudge (if any) is
+            // already in-memory only via ContextManager.
+            return@withLock
+        }
         apiHistory.add(message)
         saveApiHistoryInternal()
+    }
+
+    /**
+     * Strip trailing assistant messages that have neither text content nor tool use.
+     * Mirror of `ContextManager.pruneTrailingEmptyAssistants` for the disk side.
+     * Called by the retry and resume paths in `AgentService` to clean any pollution
+     * that landed before the write-time guard was introduced.
+     *
+     * @return number of empty assistant entries removed
+     */
+    suspend fun pruneTrailingEmptyAssistants(): Int = mutex.withLock {
+        var removed = 0
+        while (apiHistory.isNotEmpty() && isEmptyAssistant(apiHistory.last())) {
+            apiHistory.removeAt(apiHistory.size - 1)
+            removed++
+        }
+        if (removed > 0) {
+            saveApiHistoryInternal()
+        }
+        removed
+    }
+
+    private fun isEmptyAssistant(message: ApiMessage): Boolean {
+        if (message.role != ApiRole.ASSISTANT) return false
+        if (message.content.isEmpty()) return true
+        return message.content.all { block ->
+            when (block) {
+                is ContentBlock.Text -> block.text.isBlank()
+                is ContentBlock.ToolUse -> false
+                is ContentBlock.ToolResult -> false
+                is ContentBlock.Image -> false
+                else -> false
+            }
+        }
     }
 
     suspend fun overwriteApiConversationHistory(messages: List<ApiMessage>) = mutex.withLock {
