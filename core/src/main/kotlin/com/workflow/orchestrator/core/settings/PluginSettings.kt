@@ -101,6 +101,8 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var epicLinkFieldId by string("customfield_10014")
         var reviewerFieldId by string("")
         var testerFieldId by string("")
+        /** Custom field ID for the Jira acceptance-criteria field (e.g. "customfield_10001"). Null = unused. */
+        var jiraAcceptanceCriteriaFieldId by string("")
 
         // AI review
         var maxDiffLinesForReview by property(10000)

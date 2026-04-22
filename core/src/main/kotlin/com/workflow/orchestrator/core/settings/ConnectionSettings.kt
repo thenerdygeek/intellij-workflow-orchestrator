@@ -32,9 +32,7 @@ class ConnectionSettings : PersistentStateComponent<ConnectionSettings.State> {
         // Username alone without password is non-sensitive. Password is in PasswordSafe.
         // Full migration to PasswordSafe deferred to avoid multi-file refactor.
         var nexusUsername: String = "",
-        var ticketKeyRegex: String = "\\b([A-Z][A-Z0-9]+-\\d+)\\b",
-        /** Custom field ID for the Jira acceptance-criteria field (e.g. "customfield_10001"). Null = unused. */
-        var jiraAcceptanceCriteriaFieldId: String? = null
+        var ticketKeyRegex: String = "\\b([A-Z][A-Z0-9]+-\\d+)\\b"
     )
 
     private var myState = State()

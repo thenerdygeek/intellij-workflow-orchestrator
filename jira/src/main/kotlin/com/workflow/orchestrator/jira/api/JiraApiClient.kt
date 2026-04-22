@@ -160,49 +160,73 @@ class JiraApiClient(
      * or the serialized JSON for objects (caller can decide how to present it).
      * Returns null (wrapped in Success) when the field is absent or null in the response.
      *
+     * Delegates to [getRaw] so that any future cross-cutting concerns added there
+     * (retry, rate-limit handling, TLS config) are automatically picked up here.
+     *
      * GET /rest/api/2/issue/{key}?fields={fieldId}
      */
     suspend fun getCustomFieldValue(issueKey: String, fieldId: String): ApiResult<String?> {
         log.debug("[Jira:API] GET /rest/api/2/issue/$issueKey?fields=$fieldId (custom field)")
-        return withContext(Dispatchers.IO) {
-            try {
-                val request = Request.Builder()
-                    .url("$baseUrl/rest/api/2/issue/$issueKey?fields=$fieldId")
-                    .get()
-                    .build()
-                val response = httpClient.newCall(request).execute()
-                response.use {
-                    when (it.code) {
-                        in 200..299 -> {
-                            val bodyStr = it.body?.string() ?: return@withContext ApiResult.Success(null)
-                            val parsed = json.parseToJsonElement(bodyStr)
-                            val fieldsObj = (parsed as? JsonObject)
-                                ?.get("fields") as? JsonObject
-                            val fieldVal = fieldsObj?.get(fieldId)
-                            val strVal = when {
-                                fieldVal == null || fieldVal is JsonNull -> null
-                                fieldVal is JsonPrimitive -> fieldVal.content
-                                else -> fieldVal.toString()
-                            }
-                            ApiResult.Success(strVal)
-                        }
-                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Jira token").also {
-                            log.warn("[Jira:API] Authentication failed (401) fetching custom field $fieldId")
-                        }
-                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Issue $issueKey not found").also {
-                            log.warn("[Jira:API] Issue not found (404): $issueKey")
-                        }
-                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Jira returned ${it.code}").also { _ ->
-                            log.warn("[Jira:API] Server error (${response.code}) fetching custom field $fieldId")
-                        }
-                    }
+        return when (val raw = getRaw("/rest/api/2/issue/$issueKey?fields=$fieldId")) {
+            is ApiResult.Error -> raw
+            is ApiResult.Success -> {
+                val fieldsObj = raw.data["fields"] as? JsonObject
+                val fieldVal = fieldsObj?.get(fieldId)
+                val strVal = when {
+                    fieldVal == null || fieldVal is JsonNull -> null
+                    fieldVal is JsonPrimitive -> fieldVal.content
+                    else -> fieldVal.toString()
                 }
-            } catch (e: java.io.IOException) {
-                log.warn("[Jira:API] Network error fetching custom field $fieldId: ${e.message}")
-                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Jira: ${e.message}", e)
+                ApiResult.Success(strVal)
             }
         }
     }
+
+    /**
+     * Shared raw-JSON GET helper used by methods that need access to the raw [JsonObject]
+     * rather than a deserialized DTO. Uses the same OkHttp client, auth interceptor, retry
+     * logic, and response-code mapping as the typed [get] helper, so all cross-cutting
+     * concerns (TLS, rate-limiting, retries) are inherited automatically.
+     */
+    private suspend fun getRaw(path: String): ApiResult<JsonObject> =
+        withContext(Dispatchers.IO) {
+            try {
+                val request = Request.Builder().url("$baseUrl$path").get().build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    log.debug("[Jira:API] GET $path -> ${it.code}")
+                    when (it.code) {
+                        in 200..299 -> {
+                            val bodyStr = it.body?.string() ?: ""
+                            val parsed = json.parseToJsonElement(bodyStr)
+                            if (parsed is JsonObject) {
+                                ApiResult.Success(parsed)
+                            } else {
+                                ApiResult.Error(ErrorType.PARSE_ERROR, "Expected JSON object at $path")
+                            }
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Jira token").also {
+                            log.warn("[Jira:API] Authentication failed (401) at $path")
+                        }
+                        403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Jira permissions").also {
+                            log.warn("[Jira:API] Forbidden (403) at $path")
+                        }
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Resource not found at $path").also {
+                            log.warn("[Jira:API] Not found (404) at $path")
+                        }
+                        429 -> ApiResult.Error(ErrorType.RATE_LIMITED, "Jira rate limit exceeded").also {
+                            log.warn("[Jira:API] Rate limited (429) at $path")
+                        }
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Jira returned ${it.code}").also { _ ->
+                            log.warn("[Jira:API] Server error (${response.code}) at $path")
+                        }
+                    }
+                }
+            } catch (e: IOException) {
+                log.warn("[Jira:API] Network error at $path: ${e.message}")
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Jira: ${e.message}", e)
+            }
+        }
 
     /**
      * Fetches the current user to validate the connection.

@@ -31,19 +31,21 @@ class JiraTicketProviderImpl : JiraTicketProvider {
     @Suppress("CanBePrivate")
     internal var testClient: JiraApiClient? = null
 
+    /** Cache: pair of (jiraUrl, client) so we never build more than one OkHttpClient per URL. */
+    @Volatile private var cachedClient: Pair<String, JiraApiClient>? = null
+
     private fun createClient(): JiraApiClient? {
         testClient?.let { return it }
-        // Use PluginSettings from the default project or any open project
-        val projects = com.intellij.openapi.project.ProjectManager.getInstance().openProjects
-        val project = projects.firstOrNull() ?: return null
-        val settings = PluginSettings.getInstance(project)
-        val url = settings.connections.jiraUrl.orEmpty().trimEnd('/')
+        val url = ConnectionSettings.getInstance().state.jiraUrl.orEmpty().trimEnd('/')
         if (url.isBlank()) return null
+        cachedClient?.let { (cachedUrl, c) -> if (cachedUrl == url) return c }
         val credentialStore = CredentialStore()
-        return JiraApiClient(
+        val c = JiraApiClient(
             baseUrl = url,
             tokenProvider = { credentialStore.getToken(ServiceType.JIRA) }
         )
+        cachedClient = url to c
+        return c
     }
 
     override suspend fun getTicketDetails(ticketId: String): TicketDetails? {
@@ -74,8 +76,8 @@ class JiraTicketProviderImpl : JiraTicketProvider {
                 val fields = issue.fields
 
                 // Prefer rendered description (strips Jira wiki markup server-side)
-                val description = issue.renderedFields?.description?.ifBlank { null }
-                    ?: fields.description
+                val description = (issue.renderedFields?.description?.ifBlank { null }
+                    ?: fields.description)?.ifBlank { null }
 
                 // Acceptance criteria from configurable custom field (best-effort)
                 val acceptanceCriteria = if (acFieldId != null) {
@@ -114,7 +116,7 @@ class JiraTicketProviderImpl : JiraTicketProvider {
     }
 
     /**
-     * Reads the acceptance-criteria custom field ID from [ConnectionSettings].
+     * Reads the acceptance-criteria custom field ID from [PluginSettings].
      * Returns null if unset or blank.
      *
      * Overrideable in tests via [testAcceptanceCriteriaFieldId].
@@ -126,7 +128,12 @@ class JiraTicketProviderImpl : JiraTicketProvider {
 
     private fun resolveAcceptanceCriteriaFieldId(): String? {
         if (useTestAcceptanceCriteriaFieldId) return testAcceptanceCriteriaFieldId
-        val id = ConnectionSettings.getInstance().state.jiraAcceptanceCriteriaFieldId
+        // TODO: multi-project ambiguity — same as pre-Fix-1 ProjectManager usage.
+        // Fix 3 is a scope/consistency fix (move field to PluginSettings); resolving
+        // which project's settings to read is a separate concern.
+        val project = com.intellij.openapi.project.ProjectManager.getInstance().openProjects.firstOrNull()
+            ?: return null
+        val id = PluginSettings.getInstance(project).state.jiraAcceptanceCriteriaFieldId
         return if (id.isNullOrBlank()) null else id
     }
 

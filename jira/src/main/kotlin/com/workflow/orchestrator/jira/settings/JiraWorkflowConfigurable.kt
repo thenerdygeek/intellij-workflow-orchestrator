@@ -302,8 +302,8 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
                 row("Acceptance-criteria field ID:") {
                     textField()
                         .bindText(
-                            { connSettings.state.jiraAcceptanceCriteriaFieldId ?: "" },
-                            { connSettings.state.jiraAcceptanceCriteriaFieldId = it.ifBlank { null } }
+                            { settings.state.jiraAcceptanceCriteriaFieldId ?: "" },
+                            { settings.state.jiraAcceptanceCriteriaFieldId = it }
                         )
                         .columns(COLUMNS_LARGE)
                         .comment("Jira acceptance-criteria custom field ID (e.g. customfield_10001)")
