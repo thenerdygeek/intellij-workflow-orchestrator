@@ -270,6 +270,11 @@
             serviceImplementation="com.workflow.orchestrator.pullrequest.service.PrDetailService"/>
         <projectService
             serviceImplementation="com.workflow.orchestrator.pullrequest.service.PrActionService"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.pullrequest.service.PrReviewSessionRegistry"/>
+        <projectService
+            serviceInterface="com.workflow.orchestrator.core.prreview.PrReviewFindingsStore"
+            serviceImplementation="com.workflow.orchestrator.core.prreview.PrReviewFindingsStoreImpl"/>
 
         <!-- Pull Request Notification Group -->
         <notificationGroup id="workflow.pr" displayType="BALLOON"/>
