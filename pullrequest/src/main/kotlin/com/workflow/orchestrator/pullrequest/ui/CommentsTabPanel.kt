@@ -11,6 +11,7 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.model.PrComment
 import com.workflow.orchestrator.core.model.PrCommentState
+import com.workflow.orchestrator.core.polling.SmartPoller
 import com.workflow.orchestrator.core.services.BitbucketService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -20,6 +21,8 @@ import kotlinx.coroutines.launch
 import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.FlowLayout
+import java.awt.event.ComponentAdapter
+import java.awt.event.ComponentEvent
 import javax.swing.DefaultListModel
 import javax.swing.JButton
 
@@ -40,6 +43,19 @@ class CommentsTabPanel(
 
     val vm = CommentsViewModel(service, projectKey, repoSlug, prId)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** Auto-refresh poller: 30s base, 1.5× backoff, 5m cap. Starts/stops on tab visibility. */
+    private val poller = SmartPoller(
+        name = "PR#$prId-comments",
+        baseIntervalMs = 30_000L,
+        maxIntervalMs = 300_000L,
+        scope = scope,
+        action = {
+            val sizeBefore = vm.comments.size
+            vm.refresh()
+            vm.comments.size != sizeBefore
+        },
+    )
 
     private val listModel = DefaultListModel<PrComment>()
     private val commentList = JBList(listModel).apply {
@@ -98,6 +114,19 @@ class CommentsTabPanel(
             }
         }
 
+        // Start poller when this tab becomes visible; stop when hidden.
+        addComponentListener(object : ComponentAdapter() {
+            override fun componentShown(e: ComponentEvent) {
+                poller.start()
+                poller.setVisible(true)
+            }
+
+            override fun componentHidden(e: ComponentEvent) {
+                poller.setVisible(false)
+                poller.stop()
+            }
+        })
+
         triggerRefresh()
     }
 
@@ -149,6 +178,7 @@ class CommentsTabPanel(
     }
 
     override fun close() {
+        poller.stop()
         scope.cancel()
     }
 }
