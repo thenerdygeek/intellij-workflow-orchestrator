@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.tools.debug
 
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
@@ -534,7 +535,10 @@ class AgentDebugController internal constructor(
         activeSessionId = null
         for (entry in snapshot) {
             try {
-                entry.session.stop()
+                // XDebugSession.stop() requires EDT. dispose() may run on either EDT
+                // or a background pool depending on parent disposable; invokeAndWait
+                // short-circuits when already on EDT, so it's safe from any thread.
+                ApplicationManager.getApplication().invokeAndWait { entry.session.stop() }
             } catch (_: Exception) {
                 // Session may already be stopped
             }

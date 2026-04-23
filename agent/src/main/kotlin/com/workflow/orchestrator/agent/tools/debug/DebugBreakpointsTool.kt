@@ -13,6 +13,7 @@ import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
@@ -228,7 +229,11 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
         val preCheckFile = LocalFileSystem.getInstance().findFileByPath(absolutePath!!)
         if (preCheckFile != null) {
             val zeroBasedPreCheck = line - 1
-            if (!XDebuggerUtil.getInstance().canPutBreakpointAt(project, preCheckFile, zeroBasedPreCheck)) {
+            // KotlinLineBreakpointType.canPutAt → PsiManager.findFile, which requires a read action.
+            val breakpointable = readAction {
+                XDebuggerUtil.getInstance().canPutBreakpointAt(project, preCheckFile, zeroBasedPreCheck)
+            }
+            if (!breakpointable) {
                 return ToolResult(
                     "Line $line in ${preCheckFile.name} is not breakpointable " +
                         "(comment, blank line, or outside executable code). " +

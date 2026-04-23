@@ -1,11 +1,14 @@
 package com.workflow.orchestrator.agent.tools.debug
 
+import com.intellij.openapi.application.EDT
 import com.intellij.openapi.project.Project
 import com.intellij.xdebugger.XDebugSession
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.platform.DebugState
 import com.workflow.orchestrator.agent.tools.platform.IdeStateProbe
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Shared execution logic for step-over, step-into, and step-out tools.
@@ -51,8 +54,8 @@ internal suspend fun executeStep(
             )
         }
 
-        // Perform the step action
-        action(session)
+        // Perform the step action — XDebugSession step methods require EDT.
+        withContext(Dispatchers.EDT) { action(session) }
 
         // Wait for the step to complete (steps are near-instant)
         val name = session.sessionName

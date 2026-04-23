@@ -282,7 +282,7 @@ All actions accept optional session_id (defaults to active session).
         }
 
         return try {
-            session.resume()
+            withContext(Dispatchers.EDT) { session.resume() }
             val content = "Session resumed. Session: ${session.sessionName}"
             ToolResult(content, "Session resumed", TokenEstimator.estimate(content))
         } catch (e: Exception) {
@@ -301,7 +301,7 @@ All actions accept optional session_id (defaults to active session).
         }
 
         return try {
-            session.pause()
+            withContext(Dispatchers.EDT) { session.pause() }
 
             val name = session.sessionName
             // Try to get a registered ID for waitForPause; fall back to session name
@@ -346,7 +346,7 @@ All actions accept optional session_id (defaults to active session).
                 XDebuggerUtil.getInstance().createPosition(vFile, line - 1)
             } ?: return ToolResult("File not found: $absolutePath", "File not found", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
-            session.runToPosition(position, false)
+            withContext(Dispatchers.EDT) { session.runToPosition(position, false) }
 
             val name = session.sessionName
             // Try to get a registered ID for waitForPause; fall back to session name
@@ -376,7 +376,7 @@ All actions accept optional session_id (defaults to active session).
         }
 
         return try {
-            session.stop()
+            withContext(Dispatchers.EDT) { session.stop() }
             val content = "Debug session stopped. Session: ${session.sessionName}"
             ToolResult(content, "Debug session stopped", TokenEstimator.estimate(content))
         } catch (e: Exception) {
