@@ -248,6 +248,17 @@ class RunCommandTool(
             val env = commandLine.environment
             ProcessEnvironment.applyToEnvironment(env, isWindows, safeEnv)
 
+            // ── Background path ────────────────
+            val isBackground = params["background"]?.jsonPrimitive?.boolean ?: false
+            if (isBackground) {
+                return launchBackgroundAndReturn(
+                    commandLine = commandLine,
+                    command = command,
+                    project = project,
+                )
+            }
+            // ── Foreground path continues below ────────────────
+
             // 9. Spawn process
             val process = commandLine.createProcess()
 
@@ -376,6 +387,96 @@ class RunCommandTool(
     }
 
     // ── Private helpers ──────────────────
+
+    private suspend fun launchBackgroundAndReturn(
+        commandLine: com.intellij.execution.configurations.GeneralCommandLine,
+        command: String,
+        project: com.intellij.openapi.project.Project,
+    ): ToolResult {
+        val sessionId = currentSessionId.get()
+            ?: return ToolResult(
+                "Error: background launch requires sessionId context (not set by AgentLoop).",
+                "Error: missing sessionId",
+                ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true,
+            )
+
+        val process = try {
+            commandLine.createProcess()
+        } catch (e: Exception) {
+            return ToolResult(
+                "Error launching background process: ${e.message}",
+                "Error: background launch failed",
+                ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true,
+            )
+        }
+
+        val bgId = "bg_" + java.util.UUID.randomUUID().toString().replace("-", "").take(8)
+        val managed = ProcessRegistry.register(bgId, process, command)
+
+        // Reader thread — same pattern as foreground run_command
+        val callback = streamCallback
+        Thread {
+            try {
+                process.inputStream.bufferedReader().use { reader ->
+                    val buffer = CharArray(4096)
+                    var n = reader.read(buffer)
+                    while (n != -1) {
+                        val chunk = String(buffer, 0, n)
+                        managed.outputLines.add(chunk)
+                        managed.lastOutputAt.set(System.currentTimeMillis())
+                        callback?.invoke(bgId, chunk)
+                        n = reader.read(buffer)
+                    }
+                }
+            } catch (_: Exception) {
+            } finally {
+                managed.readerDone.countDown()
+            }
+        }.apply {
+            isDaemon = true; name = "RunCommand-BgOutput-$bgId"
+        }.start()
+
+        // Register in BackgroundPool
+        val handle = com.workflow.orchestrator.agent.tools.background.RunCommandBackgroundHandle(
+            bgId = bgId, sessionId = sessionId, managed = managed, label = command.take(120)
+        )
+        try {
+            com.workflow.orchestrator.agent.tools.background.BackgroundPool
+                .getInstance(project).register(sessionId, handle)
+        } catch (e: com.workflow.orchestrator.agent.tools.background.BackgroundPool.MaxConcurrentReached) {
+            process.destroyForcibly()
+            ProcessRegistry.unregister(bgId)
+            return ToolResult(
+                "Error: ${e.message}",
+                "Error: MAX_CONCURRENT_REACHED",
+                ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true,
+            )
+        }
+
+        // 500ms initial-output grace period.
+        delay(500)
+        val initial = managed.outputLines.joinToString("").lines().takeLast(20).joinToString("\n")
+        val preview = if (initial.isBlank()) "(no output yet)" else initial
+
+        val content = buildString {
+            appendLine("Started in background: $bgId (state: RUNNING)")
+            appendLine("Command: $command")
+            appendLine("Initial output (first 500ms):")
+            preview.lines().forEach { appendLine("  $it") }
+            appendLine()
+            appendLine("Use background_process to check status, read output, attach, send stdin, or kill.")
+            appendLine("On completion you will automatically receive a system message.")
+        }
+        return ToolResult(
+            content = content,
+            summary = "Background launched: $bgId",
+            tokenEstimate = TokenEstimator.estimate(content),
+            isError = false,
+        )
+    }
 
     private fun parseEnvParam(params: JsonObject): Map<String, String> {
         val envJson = params["env"] ?: return emptyMap()
