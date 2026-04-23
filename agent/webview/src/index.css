@@ -301,3 +301,15 @@ pre.ascii-art .ascii-row {
   max-width: none;
   min-width: 0;
 }
+
+/* ============================================================
+   FILE LINK — clickable file paths emitted by file-link-scanner
+   ============================================================ */
+.file-link {
+  cursor: pointer;
+  text-decoration: none;
+  color: inherit;
+}
+.file-link:hover {
+  text-decoration: underline dotted;
+}

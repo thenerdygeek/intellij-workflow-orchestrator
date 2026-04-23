@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { initBridge, isJcefEnvironment } from './bridge/jcef-bridge'
+import { initBridge, isJcefEnvironment, kotlinBridge } from './bridge/jcef-bridge'
 import { installMockBridge, simulateTheme } from './bridge/mock-bridge'
 import { useChatStore } from './stores/chatStore'
 import { useThemeStore } from './stores/themeStore'
@@ -69,6 +69,24 @@ function App() {
     }
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Delegated click handler for .file-link elements produced by file-link-scanner.
+  // A single document-level handler covers all scanner output regardless of where
+  // it is rendered in the tree — no per-component wiring required.
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Element | null;
+      if (!target) return;
+      const el = target.closest('.file-link') as HTMLElement | null;
+      if (!el) return;
+      e.preventDefault();
+      const canonical = el.dataset.canonical;
+      const line = Number(el.dataset.line) || 0;
+      if (canonical) kotlinBridge.navigateToFile(canonical, line);
+    };
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
   }, []);
 
   return (
