@@ -8,6 +8,8 @@ import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
+import com.workflow.orchestrator.core.util.ProjectIdentifier
+import java.io.File
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.util.DiffUtil
@@ -50,7 +52,8 @@ class EditFileTool : AgentTool {
             ?: return ToolResult("Error: 'new_string' parameter required", "Error: missing new_string", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         val replaceAll = params["replace_all"]?.jsonPrimitive?.boolean ?: false
 
-        val (path, pathError) = PathValidator.resolveAndValidate(rawPath, project.basePath)
+        val memoryDir = project.basePath?.let { File(ProjectIdentifier.agentDir(it), "memory").absolutePath }
+        val (path, pathError) = PathValidator.resolveAndValidateForWrite(rawPath, project.basePath, memoryDir)
         if (pathError != null) return pathError
         val resolvedPath = path!!
 

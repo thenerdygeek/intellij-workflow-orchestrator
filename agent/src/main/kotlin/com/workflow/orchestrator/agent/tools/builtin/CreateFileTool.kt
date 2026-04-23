@@ -6,6 +6,8 @@ import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
+import com.workflow.orchestrator.core.util.ProjectIdentifier
+import java.io.File
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.util.DiffUtil
@@ -45,7 +47,8 @@ class CreateFileTool : AgentTool {
             ?: return ToolResult("Error: 'content' parameter required", "Error: missing content", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         val overwrite = params["overwrite"]?.jsonPrimitive?.booleanOrNull ?: false
 
-        val (path, pathError) = PathValidator.resolveAndValidate(rawPath, project.basePath)
+        val memoryDir = project.basePath?.let { File(ProjectIdentifier.agentDir(it), "memory").absolutePath }
+        val (path, pathError) = PathValidator.resolveAndValidateForWrite(rawPath, project.basePath, memoryDir)
         if (pathError != null) return pathError
         val resolvedPath = path!!
 

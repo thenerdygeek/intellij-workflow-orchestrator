@@ -112,4 +112,38 @@ class PathValidatorTest {
         assertNotNull(error)
         assertTrue(error!!.isError)
     }
+
+    // ── resolveAndValidateForWrite: project OR specific memory dir ──
+
+    @Test
+    fun `write validator allows paths inside project`(@TempDir project: Path, @TempDir memory: Path) {
+        val inside = project.resolve("src/Foo.kt").toFile().absolutePath
+        val (canon, err) = PathValidator.resolveAndValidateForWrite(inside, project.toString(), memory.toString())
+        assertNotNull(canon)
+        assertNull(err)
+    }
+
+    @Test
+    fun `write validator allows paths inside memory dir`(@TempDir project: Path, @TempDir memory: Path) {
+        val inside = memory.resolve("feedback_x.md").toFile().absolutePath
+        val (canon, err) = PathValidator.resolveAndValidateForWrite(inside, project.toString(), memory.toString())
+        assertNotNull(canon)
+        assertNull(err)
+    }
+
+    @Test
+    fun `write validator rejects paths outside both roots`(@TempDir project: Path, @TempDir memory: Path) {
+        val outside = File(System.getProperty("java.io.tmpdir"), "elsewhere/foo.txt").absolutePath
+        val (canon, err) = PathValidator.resolveAndValidateForWrite(outside, project.toString(), memory.toString())
+        assertNull(canon)
+        assertNotNull(err)
+    }
+
+    @Test
+    fun `write validator rejects traversal attempt`(@TempDir project: Path, @TempDir memory: Path) {
+        val escaped = project.resolve("../../etc/passwd").toString()
+        val (canon, err) = PathValidator.resolveAndValidateForWrite(escaped, project.toString(), memory.toString())
+        assertNull(canon)
+        assertNotNull(err)
+    }
 }
