@@ -13,6 +13,7 @@ declare global {
     _searchMentions?: (data: string) => void;
     _searchTickets?: (query: string) => void;
     _validateTicket?: (ticketKey: string, callbackName: string) => void;
+    _validatePaths?: (pathsJson: string, callbackName: string) => void;
     _cancelTask?: () => void;
     _newChat?: () => void;
     _requestUndo?: () => void;

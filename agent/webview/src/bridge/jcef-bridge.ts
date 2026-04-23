@@ -17,6 +17,13 @@ type StoreAccessors = {
   getSettingsStore: () => any;
 };
 
+export type ValidatedPath = {
+  input: string;
+  canonicalPath: string;
+  line: number;
+  column: number;
+};
+
 let stores: StoreAccessors | null = null;
 
 // Buffer for calls that arrive before stores are initialized (race between
@@ -626,6 +633,43 @@ export const kotlinBridge = {
   },
 
   openInsightsTab(): void { callKotlin('_openInsightsTab'); },
+
+  async validatePaths(paths: string[]): Promise<ValidatedPath[]> {
+    const bridge = (window as any)._validatePaths;
+    if (typeof bridge !== 'function') return [];
+    return new Promise<ValidatedPath[]>((resolve) => {
+      const cbName = `__validatePathsCb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        try { delete (window as any)[cbName]; } catch { /* ignore */ }
+        resolve([]);
+      }, 2000);
+      (window as any)[cbName] = (resultJson: string) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try { delete (window as any)[cbName]; } catch { /* ignore */ }
+        try {
+          const parsed = JSON.parse(resultJson);
+          resolve(Array.isArray(parsed) ? parsed : []);
+        } catch {
+          resolve([]);
+        }
+      };
+      try {
+        bridge(JSON.stringify(paths), cbName);
+      } catch {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          try { delete (window as any)[cbName]; } catch { /* ignore */ }
+          resolve([]);
+        }
+      }
+    });
+  },
 };
 
 // ═══ Editor Tab Popout ═══
