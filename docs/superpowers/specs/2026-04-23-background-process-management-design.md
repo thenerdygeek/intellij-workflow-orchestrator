@@ -254,7 +254,7 @@ When tier 1 returns LOW confidence (`GenericIdle` or a weak-signal `LikelyStdinP
 | `{id, action: output, ...}` | Reads collected output. Obeys spill + grep contract shared with other high-volume tools (`OUTPUT_FILTERABLE_TOOLS`, `ToolOutputSpiller`). |
 | `{id, action: attach, timeout_seconds?}` | Re-enters the blocking monitor loop used by sync `run_command`. Exits on process exit, idle (from `AgentSettings`), or timeout. Returns same result shape as sync `run_command`. **Cap: 600s**, override via param. |
 | `{id, action: send_stdin, input}` | Delegates to handle. If handle reports `UNSUPPORTED_FOR_KIND`, returns error. Password prompt detection still runs (reuses `ShellResolver.isLikelyPasswordPrompt`). |
-| `{id, action: kill}` | Graceful two-phase kill via handle. Consumes pending completion for this bgId (no auto-wake fires after explicit kill). |
+| `{id, action: kill}` | Graceful two-phase kill via handle (SIGTERM → 5s → SIGKILL + PID-tree cleanup). **Only entry point for kill in v1** — the standalone `kill_process` tool is retired in this release. Consumes pending completion for this bgId (no auto-wake fires after explicit kill). |
 
 ### Approval mapping
 
@@ -268,9 +268,22 @@ When tier 1 returns LOW confidence (`GenericIdle` or a weak-signal `LikelyStdinP
 
 The existing `send_stdin` tool currently accepts `process_id`. It will be extended to accept a `bgId` in the same namespace. No new schema field — the `process_id` parameter resolves against both `ProcessRegistry` (the live `Process` record for any running process, including background ones) and `BackgroundPool` (session-scoped handle lookup). One tool, one ID space.
 
-Same rule for `kill_process`: accepts both IDs.
+`send_stdin` is now the only *standalone* tool in the process-management area — `kill_process` is removed in this release (see "Removed tools" below). Kill is exclusively via `background_process(action=kill)`.
 
-Note: post-v1, `run_command` no longer auto-emits `[IDLE]` messages with `process_id` on foreground runs (that behavior is removed). The `process_id` namespace is effectively `bgId`-only in the new flow — the parameter name is kept for backward compatibility with `SendStdinTool`'s own post-stdin IDLE messages, which continue to use `process_id` when *they* go idle after sending input to a background process's stdin.
+Note: post-v1, `run_command` no longer auto-emits `[IDLE]` messages with `process_id` on foreground runs (that behavior is removed). The `process_id` namespace is effectively `bgId`-only in the new flow — the parameter name is kept for backward compatibility with `SendStdinTool`'s own post-stdin IDLE messages, which continue to use `process_id` when *they* go idle after sending input to a background process's stdin. Those IDLE messages' "Options:" guidance is updated to suggest `background_process(action=kill)` instead of the retired `kill_process` tool.
+
+## Removed tools
+
+- **`kill_process` standalone tool** — retired in this release. Kill functionality is consolidated into `background_process(id, action=kill)` so there is exactly one tool (and one schema entry in the LLM's tool list) for destructive process termination. Rationale: with `bgId` being the single canonical ID for any managed process, a separate kill tool became redundant — one primitive, one entry point.
+
+### Migration notes
+
+- `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/builtin/KillProcessTool.kt` — deleted.
+- Removed from `AgentService.registerAllTools()`.
+- `ProcessToolHelpers.buildIdleContent` updated: the "Options:" footer no longer lists `kill_process`; instead lists `background_process(id=..., action=kill)`.
+- System prompt Rules / Capabilities sections: scrub all `kill_process` references, replace with `background_process(action=kill)`.
+- Snapshot tests (`prompt-snapshots/*.txt`) regenerate to reflect the removed tool.
+- Old persisted conversation histories that reference `kill_process` by name are not rewritten. When the LLM re-enters such a session and looks at the transcript, the current tool schema will not include `kill_process`. The LLM will either adapt to `background_process(action=kill)` (expected) or report the tool doesn't exist (acceptable). No automatic migration of historical messages.
 
 ---
 
@@ -507,8 +520,8 @@ To manage background processes, use the `background_process` tool:
 - `background_process(id="bg_xxx")` — status of one process
 - `background_process(id="bg_xxx", action="output", tail_lines=50)` — read output
 - `background_process(id="bg_xxx", action="attach")` — wait for the process to exit (re-enters the normal monitor loop)
-- `background_process(id="bg_xxx", action="send_stdin", input="yes\n")`
-- `background_process(id="bg_xxx", action="kill")`
+- `background_process(id="bg_xxx", action="send_stdin", input="yes\n")` — write to the process's stdin
+- `background_process(id="bg_xxx", action="kill")` — graceful termination; **only kill entry point** (no separate kill_process tool)
 
 Background processes are session-scoped. They are automatically killed when
 the user starts a new chat, switches to a different session, deletes this
@@ -580,8 +593,9 @@ No `runBlocking` in any Swing path. `CancellationException` always re-thrown (st
 - `run_command` gets `background` and `on_idle` params. Legacy auto-IDLE-detach behavior is removed.
 - New `PromptHeuristics` helper (`tools/process/PromptHeuristics.kt`) with tier 1 regex classification. Absorbs the existing `ShellResolver.isLikelyPasswordPrompt` logic.
 - Inline idle-signal emission via stream callback under `on_idle: notify`.
-- New `background_process` meta-tool with 5 actions.
-- `send_stdin` / `kill_process` accept `bgId`.
+- New `background_process` meta-tool with 5 actions (`status`, `output`, `attach`, `send_stdin`, `kill`).
+- `send_stdin` standalone tool accepts `bgId` in the unified namespace.
+- **Retire the standalone `kill_process` tool.** Delete `KillProcessTool.kt`, unregister from `AgentService.registerAllTools()`, update `ProcessToolHelpers.buildIdleContent` to suggest `background_process(action=kill)`, scrub system prompt references. Kill is consolidated into `background_process(action=kill)`.
 - **Top-bar `BackgroundIndicator` React component** + `_loadBackgroundSnapshot` bridge + `WorkflowEvent.BackgroundChanged` event + `background-update` JCEF push. Read-only dropdown; no inline actions in v1.
 - Session-transition kill hooks + confirmation dialog.
 - Persistence (`registry.json`, `pending_completions.json`, spill logs).
@@ -610,6 +624,7 @@ No `runBlocking` in any Swing path. `CancellationException` always re-thrown (st
 | `RunCommandOnIdleWaitTest` | Foreground run with `on_idle: wait` suppresses idle notifications entirely; tool blocks until exit or total timeout. No classification runs. |
 | `NoAutoIdleDetachTest` | Regression lock-in: foreground `run_command` never auto-registers in `BackgroundPool`. The only paths into the pool are `background: true` (and, in v1.1, the user Detach button). |
 | `PromptHeuristicsClassifyTest` | `PromptHeuristics.classify()` returns `LikelyPasswordPrompt` for password patterns (absorbs existing `isLikelyPasswordPrompt` cases), `LikelyStdinPrompt` for prompt-shaped tails and known framework prompts, `GenericIdle` otherwise. |
+| `KillProcessToolRetirementTest` | Registry does not contain a `kill_process` tool. `background_process(action=kill)` remains the sole kill path. `ProcessToolHelpers.buildIdleContent` output does not reference `kill_process`. |
 | `BackgroundProcessListTest` | `background_process()` with no args lists current session's processes. |
 | `BackgroundProcessAttachTest` | Attach re-enters monitor loop, exits on process exit/idle/timeout, returns sync-run-command-shaped result. |
 | `BackgroundCompletionSteeringTest` | Event appearing while loop active → delivered as one system message per event at next iteration boundary. |
