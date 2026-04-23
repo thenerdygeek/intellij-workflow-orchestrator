@@ -2021,7 +2021,45 @@ class AgentService(private val project: Project) : Disposable {
         val agoText = ResumeHelper.formatTimeAgo(lastActivityTs)
         val mode = if (planModeActive.get()) "plan" else "act"
         val cwd = project.basePath ?: ""
-        val preamble = ResumeHelper.buildTaskResumptionPreamble(mode, agoText, cwd, userText)
+        val basePreamble = ResumeHelper.buildTaskResumptionPreamble(mode, agoText, cwd, userText)
+
+        // Task 6.2 — append any background-completion events that landed while the
+        // session was idle. BackgroundPersistence accumulates them under
+        // sessions/{id}/background/pending_completions.json; we splice them into
+        // the preamble so the resumed LLM turn sees them in-context, then consume
+        // them so they're not re-delivered on a subsequent resume.
+        val preamble = run {
+            val persistence = com.workflow.orchestrator.agent.tools.background
+                .BackgroundPersistence(agentDir.toPath())
+            val pending = runCatching { persistence.loadPendingCompletions(sessionId) }
+                .getOrElse { err ->
+                    log.warn("[AgentService] loadPendingCompletions failed for $sessionId: ${err.message}", err)
+                    emptyList()
+                }
+            if (pending.isEmpty()) {
+                basePreamble
+            } else {
+                val body = pending.joinToString("\n\n") { ev ->
+                    "- ${ev.bgId} (${ev.kind}: \"${ev.label.take(80)}\") — " +
+                        "exit ${ev.exitCode}, ${ev.state}, ${ev.runtimeMs}ms\n  " +
+                        ev.tailContent.lines().takeLast(5).joinToString("\n  ")
+                }
+                val completionsPreamble = "\n\n[BACKGROUND COMPLETIONS — delivered on resume]\n" +
+                    "While the session was paused, these background processes completed:\n\n" +
+                    body + "\n"
+                // Consume entries only after we've built the combined preamble — if
+                // the join fails or the caller aborts, we'd prefer to redeliver than
+                // silently lose them. consumeCompletion is best-effort.
+                pending.forEach { ev ->
+                    runCatching { persistence.consumeCompletion(sessionId, ev.bgId) }
+                        .onFailure { err ->
+                            log.warn("[AgentService] consumeCompletion failed for $sessionId/${ev.bgId}: ${err.message}", err)
+                        }
+                }
+                log.info("[AgentService] resume pickup: delivered ${pending.size} persisted background completion(s) for $sessionId")
+                basePreamble + completionsPreamble
+            }
+        }
 
         // Build new user content: preamble + any popped content
         val newUserContent = buildList {
