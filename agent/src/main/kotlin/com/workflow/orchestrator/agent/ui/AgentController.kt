@@ -275,6 +275,13 @@ class AgentController(
         // stays up-to-date as processes are registered, complete, or killed.
         subscribeToBackgroundChanges()
 
+        // Subscribe to background-process completion events so the user sees a
+        // visible status bubble in the chat when a background process finishes.
+        // AgentService already routes completions into the loop's steering queue
+        // (delivering the completion into the LLM context) — this adds the matching
+        // human-visible message in the chat transcript alongside.
+        subscribeToBackgroundCompletions()
+
         // Wire the Phase 6 auto-wake follow-up: when AgentService fires an auto-wake
         // event (e.g. a background process completed and the session is dormant), drive
         // a real session resume through AgentController so all UI callbacks are attached.
@@ -343,16 +350,69 @@ class AgentController(
             LOG.warn("[Background] subscribeToBackgroundChanges: EventBus service not available; background indicator will not update.")
             return
         }
+        LOG.info("[Background] subscribeToBackgroundChanges: subscribing (currentSessionId=$currentSessionId)")
         controllerScope.launch {
             eventBus.events.collect { event ->
                 if (event !is WorkflowEvent.BackgroundChanged) return@collect
-                if (event.sessionId != currentSessionId) return@collect
+                // Capture currentSessionId snapshot once so logging + filter see the same value.
+                val active = currentSessionId
+                if (active == null) {
+                    LOG.info("[Background] dropping BackgroundChanged(session=${event.sessionId}, count=${event.snapshot.size}) — no active session yet")
+                    return@collect
+                }
+                if (event.sessionId != active) {
+                    LOG.info("[Background] dropping BackgroundChanged(session=${event.sessionId}) — active session is $active")
+                    return@collect
+                }
                 val json = backgroundJson.encodeToString(
                     ListSerializer(BackgroundProcessSnapshotDto.serializer()),
                     event.snapshot
                 )
+                LOG.info("[Background] forwarding to webview — session=$active count=${event.snapshot.size} bgIds=${event.snapshot.map { it.bgId }}")
                 invokeLater { dashboard.receiveBackgroundUpdate(json) }
             }
+        }
+    }
+
+    /**
+     * Subscribe to [com.workflow.orchestrator.agent.tools.background.BackgroundPool]
+     * completion events and surface them as visible status bubbles in the chat.
+     *
+     * AgentService separately injects these into the loop's steering queue so the LLM
+     * sees them at the next iteration boundary — that path makes the completion
+     * observable to the model but NOT to the user. This listener closes the UI gap.
+     *
+     * Only completions for the currently-active session produce a bubble.
+     */
+    private fun subscribeToBackgroundCompletions() {
+        val pool = com.workflow.orchestrator.agent.tools.background.BackgroundPool.getInstance(project)
+        pool.addCompletionListener { event ->
+            val active = currentSessionId
+            if (active == null || event.sessionId != active) {
+                LOG.info("[Background] completion for session=${event.sessionId} — not active (active=$active); skipping UI bubble")
+                return@addCompletionListener
+            }
+            val stateLabel = when (event.state) {
+                com.workflow.orchestrator.agent.tools.background.BackgroundState.EXITED ->
+                    if (event.exitCode == 0) "completed" else "exited with code ${event.exitCode}"
+                com.workflow.orchestrator.agent.tools.background.BackgroundState.KILLED -> "was killed"
+                com.workflow.orchestrator.agent.tools.background.BackgroundState.TIMED_OUT -> "timed out"
+                com.workflow.orchestrator.agent.tools.background.BackgroundState.RUNNING -> "finished"
+            }
+            val label = event.label.take(80)
+            val message = "Background ${event.bgId} ($label) $stateLabel · ${event.runtimeMs / 1000}s"
+            val statusType = when (event.state) {
+                com.workflow.orchestrator.agent.tools.background.BackgroundState.EXITED ->
+                    if (event.exitCode == 0) RichStreamingPanel.StatusType.SUCCESS
+                    else RichStreamingPanel.StatusType.WARNING
+                com.workflow.orchestrator.agent.tools.background.BackgroundState.KILLED,
+                com.workflow.orchestrator.agent.tools.background.BackgroundState.TIMED_OUT ->
+                    RichStreamingPanel.StatusType.WARNING
+                com.workflow.orchestrator.agent.tools.background.BackgroundState.RUNNING ->
+                    RichStreamingPanel.StatusType.INFO
+            }
+            LOG.info("[Background] pushing completion bubble — $message")
+            invokeLater { dashboard.appendStatus(message, statusType) }
         }
     }
 

@@ -118,10 +118,16 @@ class BackgroundPool(private val project: Project) : Disposable {
                 runtimeMs = h.runtimeMs(),
             )
         }
+        LOG.info("[BackgroundPool] emitSnapshot session=$sessionId count=${snapshot.size} " +
+            "bgIds=${snapshot.map { it.bgId }}")
         scope.launch {
             runCatching {
-                project.getService(EventBus::class.java)
-                    ?.emit(WorkflowEvent.BackgroundChanged(sessionId, snapshot))
+                val bus = project.getService(EventBus::class.java)
+                if (bus == null) {
+                    LOG.warn("[BackgroundPool] EventBus service is null — event not emitted (session=$sessionId)")
+                } else {
+                    bus.emit(WorkflowEvent.BackgroundChanged(sessionId, snapshot))
+                }
             }.onFailure {
                 LOG.warn("[BackgroundPool] emitSnapshot failed for session $sessionId: ${it.message}", it)
             }
