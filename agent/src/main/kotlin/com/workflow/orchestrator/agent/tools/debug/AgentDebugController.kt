@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.tools.debug
 
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
@@ -558,31 +559,7 @@ class AgentDebugController internal constructor(
      */
     fun removeAgentBreakpoints(debuggerManager: XDebuggerManager) {
         val bpManager = debuggerManager.breakpointManager
-        agentBreakpoints.forEach { bp ->
-            try {
-                @Suppress("UNCHECKED_CAST")
-                bpManager.removeBreakpoint(bp as XLineBreakpoint<Nothing>)
-            } catch (_: Exception) {
-                // Breakpoint may already be removed
-            }
-        }
-        agentBreakpoints.clear()
-        agentGeneralBreakpoints.forEach { bp ->
-            try {
-                @Suppress("UNCHECKED_CAST")
-                bpManager.removeBreakpoint(bp as XBreakpoint<Nothing>)
-            } catch (_: Exception) {
-                // Breakpoint may already be removed
-            }
-        }
-        agentGeneralBreakpoints.clear()
-    }
-
-    override fun dispose() {
-        stopAllSessions()
-        // Actually remove breakpoints from the IDE debugger
-        try {
-            val bpManager = XDebuggerManager.getInstance(project).breakpointManager
+        WriteAction.runAndWait<RuntimeException> {
             agentBreakpoints.forEach { bp ->
                 try {
                     @Suppress("UNCHECKED_CAST")
@@ -597,6 +574,34 @@ class AgentDebugController internal constructor(
                     bpManager.removeBreakpoint(bp as XBreakpoint<Nothing>)
                 } catch (_: Exception) {
                     // Breakpoint may already be removed
+                }
+            }
+        }
+        agentBreakpoints.clear()
+        agentGeneralBreakpoints.clear()
+    }
+
+    override fun dispose() {
+        stopAllSessions()
+        // Actually remove breakpoints from the IDE debugger
+        try {
+            val bpManager = XDebuggerManager.getInstance(project).breakpointManager
+            WriteAction.runAndWait<RuntimeException> {
+                agentBreakpoints.forEach { bp ->
+                    try {
+                        @Suppress("UNCHECKED_CAST")
+                        bpManager.removeBreakpoint(bp as XLineBreakpoint<Nothing>)
+                    } catch (_: Exception) {
+                        // Breakpoint may already be removed
+                    }
+                }
+                agentGeneralBreakpoints.forEach { bp ->
+                    try {
+                        @Suppress("UNCHECKED_CAST")
+                        bpManager.removeBreakpoint(bp as XBreakpoint<Nothing>)
+                    } catch (_: Exception) {
+                        // Breakpoint may already be removed
+                    }
                 }
             }
         } catch (_: Exception) {
