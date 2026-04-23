@@ -58,6 +58,15 @@ object IdeStateProbe {
         val mgr = XDebuggerManager.getInstance(project)
         val all = mgr.debugSessions.toList()
 
+        // Canonical paused check per XDebugSession.java (L51-L69): isSuspended
+        // alone is insufficient because the flag flips before the engine populates
+        // currentStackFrame/suspendContext. All three clauses must hold — matching
+        // what XDebuggerEvaluator, XValueContainer.computeChildren, and
+        // XExecutionStack.computeStackFrames themselves require before accepting
+        // work. Audit finding C1/C5.
+        fun isPaused(s: XDebugSession): Boolean =
+            s.isSuspended && s.currentStackFrame != null && s.suspendContext != null
+
         // sessionId path is handled separately so we can return AmbiguousSession mid-resolution
         // when the string-match fallback finds >1 platform session sharing a display name.
         // Without this, `sessionId == "MyApp"` silently resolves to `all.first()` even when two
@@ -66,7 +75,7 @@ object IdeStateProbe {
             val fromRegistry = registryLookup?.invoke(sessionId)
             if (fromRegistry != null) {
                 // UUID / agent-handle match — authoritative regardless of sessionName collisions.
-                return if (fromRegistry.isSuspended) DebugState.Paused(fromRegistry)
+                return if (isPaused(fromRegistry)) DebugState.Paused(fromRegistry)
                 else DebugState.Running(fromRegistry)
             }
             val byName = all.filter { it.sessionName == sessionId }
@@ -79,20 +88,27 @@ object IdeStateProbe {
                 }
                 1 -> {
                     val unique = byName.single()
-                    return if (unique.isSuspended) DebugState.Paused(unique) else DebugState.Running(unique)
+                    return if (isPaused(unique)) DebugState.Paused(unique) else DebugState.Running(unique)
                 }
                 else -> return DebugState.AmbiguousSession(byName.size, byName.map { it.sessionName })
             }
         }
 
+        // Prefer a uniquely-paused session over currentSession. currentSession
+        // returns the last-focused session, which is often *not* the one at a
+        // breakpoint when multiple sessions are open — the exact cause of the
+        // "session is running but not paused" false negative in the 2026-04-23
+        // audit (finding C1).
+        val pausedSessions = all.filter(::isPaused)
         val target: XDebugSession? = when {
+            pausedSessions.size == 1 -> pausedSessions.single()
             mgr.currentSession != null -> mgr.currentSession
             all.size == 1 -> all.single()
             else -> null
         }
 
         return when {
-            target != null && target.isSuspended -> DebugState.Paused(target)
+            target != null && isPaused(target) -> DebugState.Paused(target)
             target != null -> DebugState.Running(target)
             all.isEmpty() -> DebugState.NoSession
             else -> DebugState.AmbiguousSession(all.size, all.map { it.sessionName })

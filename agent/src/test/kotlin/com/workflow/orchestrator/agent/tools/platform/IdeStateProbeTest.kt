@@ -34,6 +34,8 @@ class IdeStateProbeTest {
         mockk(relaxed = true) {
             every { sessionName } returns name
             every { isSuspended } returns suspended
+            every { currentStackFrame } returns if (suspended) mockk(relaxed = true) else null
+            every { suspendContext } returns if (suspended) mockk(relaxed = true) else null
         }
 
     @Test
@@ -81,8 +83,12 @@ class IdeStateProbeTest {
     }
 
     @Test
-    fun `AmbiguousSession when multiple sessions and no disambiguator`() {
-        val a = fakeSession("Worker A", suspended = true)
+    fun `AmbiguousSession when multiple sessions and no disambiguator and none are paused`() {
+        // With the C1 fix, a uniquely-paused session is resolved unambiguously even
+        // without a sessionId. AmbiguousSession is only returned when no paused session
+        // can be singled out AND currentSession is null AND multiple sessions exist.
+        // Both sessions here are running (not suspended), so ambiguity stands.
+        val a = fakeSession("Worker A", suspended = false)
         val b = fakeSession("Worker B", suspended = false)
         every { mgr.debugSessions } returns arrayOf(a, b)
         every { mgr.currentSession } returns null
@@ -227,4 +233,51 @@ class IdeStateProbeTest {
         )
         assertSame(userSession, (result as DebugState.Paused).session)
     }
+
+    @Test
+    fun `prefers uniquely paused session over last-focused running session when no sessionId`() {
+        val running = fakeSession("foo-service", suspended = false)
+        val paused = fakePausedSession("bar-service")
+        every { mgr.debugSessions } returns arrayOf(running, paused)
+        every { mgr.currentSession } returns running  // user clicked the running one last
+
+        val result = IdeStateProbe.debugState(project)
+        assertTrue(result is DebugState.Paused, "expected Paused, got $result")
+        assertSame(paused, (result as DebugState.Paused).session)
+    }
+
+    @Test
+    fun `falls back to currentSession when multiple sessions are paused`() {
+        val a = fakePausedSession("a")
+        val b = fakePausedSession("b")
+        every { mgr.debugSessions } returns arrayOf(a, b)
+        every { mgr.currentSession } returns b
+
+        val result = IdeStateProbe.debugState(project)
+        assertTrue(result is DebugState.Paused)
+        assertSame(b, (result as DebugState.Paused).session)
+    }
+
+    @Test
+    fun `treats isSuspended=true but currentStackFrame=null as Running (race window)`() {
+        val raceySession = mockk<XDebugSession>(relaxed = true) {
+            every { sessionName } returns "racey"
+            every { isSuspended } returns true
+            every { currentStackFrame } returns null
+            every { suspendContext } returns null
+        }
+        every { mgr.debugSessions } returns arrayOf(raceySession)
+        every { mgr.currentSession } returns raceySession
+
+        val result = IdeStateProbe.debugState(project)
+        assertTrue(result is DebugState.Running, "expected Running during race, got $result")
+    }
+
+    private fun fakePausedSession(name: String): XDebugSession =
+        mockk(relaxed = true) {
+            every { sessionName } returns name
+            every { isSuspended } returns true
+            every { currentStackFrame } returns mockk(relaxed = true)
+            every { suspendContext } returns mockk(relaxed = true)
+        }
 }
