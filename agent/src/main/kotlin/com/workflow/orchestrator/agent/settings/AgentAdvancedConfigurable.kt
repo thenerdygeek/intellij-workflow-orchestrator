@@ -112,6 +112,41 @@ class AgentAdvancedConfigurable(
                     )
                 }
             }
+
+            group("Background processes") {
+                row("Concurrent processes per session:") {
+                    intTextField(1..20)
+                        .bindIntText(agentSettings.state::concurrentBackgroundProcessesPerSession)
+                }
+                row("Output spill threshold (bytes):") {
+                    textField()
+                        .columns(12)
+                        .bindText(
+                            { agentSettings.state.backgroundOutputSpillThresholdBytes.toString() },
+                            { agentSettings.state.backgroundOutputSpillThresholdBytes = it.toLongOrNull() ?: 1_048_576L }
+                        )
+                }
+                row {
+                    checkBox("Auto-wake session on background completion")
+                        .bindSelected(agentSettings.state::autoWakeOnBackgroundCompletion)
+                }
+                row("Max auto-wakes per session:") {
+                    intTextField(1..50)
+                        .bindIntText(agentSettings.state::autoWakeMaxPerSession)
+                }
+                row("Auto-wake cooldown (ms):") {
+                    textField()
+                        .columns(12)
+                        .bindText(
+                            { agentSettings.state.autoWakeCooldownMs.toString() },
+                            { agentSettings.state.autoWakeCooldownMs = it.toLongOrNull() ?: 5_000L }
+                        )
+                }
+                row {
+                    checkBox("Suppress kill-on-session-transition confirmation")
+                        .bindSelected(agentSettings.state::suppressBackgroundKillConfirmation)
+                }
+            }
         }
         dialogPanel = innerPanel
         return innerPanel

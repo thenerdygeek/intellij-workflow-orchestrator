@@ -59,6 +59,18 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
         /** Maximum number of concurrent background processes allowed per session.
          *  Enforced by BackgroundPool.register(). Configurable UI added in Task 1.7. */
         var concurrentBackgroundProcessesPerSession by property(5)
+        /** Byte threshold above which background process output is spilled to disk.
+         *  Defaults to 1 MB. */
+        var backgroundOutputSpillThresholdBytes by property(1_048_576L)
+        /** Automatically wake the session when a background process completes. */
+        var autoWakeOnBackgroundCompletion by property(true)
+        /** Maximum number of auto-wake events allowed per session to prevent spam. */
+        var autoWakeMaxPerSession by property(10)
+        /** Minimum gap (milliseconds) between consecutive auto-wake events. */
+        var autoWakeCooldownMs by property(5_000L)
+        /** When true, skip the confirmation dialog before killing background processes
+         *  on session transition. */
+        var suppressBackgroundKillConfirmation by property(false)
     }
 
     companion object {
