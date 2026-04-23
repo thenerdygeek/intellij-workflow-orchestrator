@@ -7,6 +7,8 @@ import com.intellij.debugger.ui.HotSwapStatusListener
 import com.intellij.debugger.impl.DebuggerSession
 import com.intellij.openapi.project.Project
 import com.intellij.xdebugger.XDebugSession
+import com.intellij.xdebugger.XDebuggerUtil
+import com.intellij.xdebugger.evaluation.EvaluationMode
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.core.ai.TokenEstimator
@@ -445,7 +447,12 @@ session_id defaults to the active/resolved session. If multiple sessions are ope
                     val modifyResult: Result<Unit> = withContext(Dispatchers.EDT) {
                         suspendCancellableCoroutine { cont ->
                             modifier.setValue(
-                                com.intellij.xdebugger.impl.breakpoints.XExpressionImpl.fromText(newValue),
+                                XDebuggerUtil.getInstance().createExpression(
+                                    newValue,
+                                    /* language */ null,
+                                    /* customInfo */ null,
+                                    EvaluationMode.EXPRESSION,
+                                ),
                                 object : com.intellij.xdebugger.frame.XValueModifier.XModificationCallback {
                                     override fun valueModified() {
                                         cont.resume(Result.success(Unit))
