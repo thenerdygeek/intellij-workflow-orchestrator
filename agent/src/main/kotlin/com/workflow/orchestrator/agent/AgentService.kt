@@ -108,8 +108,30 @@ class AgentService(private val project: Project) : Disposable {
     val registry = ToolRegistry()
 
     /** Atomic reference tracking both the loop and job together to avoid race conditions. */
-    private data class ActiveTask(val loop: AgentLoop, val job: Job)
+    private data class ActiveTask(val sessionId: String, val loop: AgentLoop, val job: Job)
     private val activeTask = AtomicReference<ActiveTask?>(null)
+
+    /**
+     * Test-only capture hooks keyed by sessionId — when set, background completion
+     * messages for that session are delivered to the callback instead of being routed
+     * to the live AgentLoop / persistence. See [setSteeringCapturerForTest].
+     *
+     * Declared here (not in a test-only subclass) because the listener path lives inside
+     * [onBackgroundCompletion], which must be exercised end-to-end from the real
+     * [com.workflow.orchestrator.agent.tools.background.BackgroundPool] instance.
+     */
+    private val steeringCapturersForTest = java.util.concurrent.ConcurrentHashMap<String, (String) -> Unit>()
+
+    /**
+     * Install a capture callback for background-completion steering messages
+     * belonging to [sessionId]. Test-only hook — production code should never call it.
+     * When set, the callback receives the formatted system message and the
+     * production routing (activeLoopForSession / persistForLaterResume) is skipped.
+     */
+    @org.jetbrains.annotations.TestOnly
+    fun setSteeringCapturerForTest(sessionId: String, capture: (String) -> Unit) {
+        steeringCapturersForTest[sessionId] = capture
+    }
 
     /** Dedicated structured agent log file — one per project, lives for plugin lifetime. */
     private val fileLogger: AgentFileLogger by lazy {
@@ -274,6 +296,99 @@ class AgentService(private val project: Project) : Disposable {
             log.info("[AgentService] Loaded ${configs.size} dynamic agent config(s): ${configs.keys.toList()}")
         }
         com.intellij.openapi.util.Disposer.register(this, configLoader)
+
+        // Task 5.2 — Silent kill-all of background processes on project close.
+        // Best-effort: any failure is logged, never thrown, so IDE shutdown is not blocked.
+        com.intellij.openapi.project.ProjectManager.getInstance()
+            .addProjectManagerListener(project, object : com.intellij.openapi.project.ProjectManagerListener {
+                override fun projectClosing(closingProject: com.intellij.openapi.project.Project) {
+                    if (closingProject == project) {
+                        runCatching {
+                            com.workflow.orchestrator.agent.tools.background.BackgroundPool
+                                .getInstance(project).killAllForProject()
+                        }.onFailure {
+                            log.warn("[AgentService] killAllForProject failed at shutdown: ${it.message}", it)
+                        }
+                    }
+                }
+            })
+
+        // Task 5.4 — Route BackgroundPool completion events into the active loop's
+        // steering queue so the LLM learns about process exits at the next iteration
+        // boundary. One completion event produces exactly one steering message
+        // (no batching) so the LLM can react to each process exit individually.
+        com.workflow.orchestrator.agent.tools.background.BackgroundPool.getInstance(project)
+            .addCompletionListener { event -> onBackgroundCompletion(event) }
+    }
+
+    /**
+     * Task 5.4 — Handle a [com.workflow.orchestrator.agent.tools.background.BackgroundCompletionEvent]
+     * emitted by [com.workflow.orchestrator.agent.tools.background.BackgroundPool].
+     *
+     * Routing:
+     * 1. If a test capturer is installed for the session, deliver the message there and return.
+     * 2. If there is an active loop whose sessionId matches, enqueue a steering message into it.
+     * 3. Otherwise persist the event so the next session that resumes can surface it
+     *    (Task 6 will wire auto-wake from that store).
+     */
+    private fun onBackgroundCompletion(
+        event: com.workflow.orchestrator.agent.tools.background.BackgroundCompletionEvent
+    ) {
+        val message = buildCompletionSystemMessage(event)
+
+        steeringCapturersForTest[event.sessionId]?.let { capture ->
+            runCatching { capture(message) }.onFailure {
+                log.warn("[AgentService] steering capturer for ${event.sessionId} failed: ${it.message}")
+            }
+            return
+        }
+
+        val loop = activeLoopForSession(event.sessionId)
+        if (loop != null) {
+            loop.enqueueSteeringMessage(message)
+        } else {
+            persistForLaterResume(event)
+        }
+    }
+
+    /**
+     * Build the system message injected as a steering message when a background
+     * process exits. Uses a stable `[BACKGROUND COMPLETION]` prefix so tests and
+     * humans can identify the source. Tail output is bounded to the last 20 lines
+     * — full output lives at [BackgroundCompletionEvent.spillPath] when present.
+     */
+    private fun buildCompletionSystemMessage(
+        event: com.workflow.orchestrator.agent.tools.background.BackgroundCompletionEvent
+    ): String = buildString {
+        appendLine("[BACKGROUND COMPLETION]")
+        appendLine("Process ${event.bgId} (${event.kind}: \"${event.label.take(80)}\")")
+        append("State: ${event.state}, exit code: ${event.exitCode}, ")
+        appendLine("runtime: ${event.runtimeMs}ms")
+        appendLine("Output (tail 20 lines):")
+        event.tailContent.lines().takeLast(20).forEach { appendLine("  $it") }
+        if (event.spillPath != null) appendLine("Full output: ${event.spillPath}")
+    }
+
+    /** Return the active loop if it is running for [sessionId], else null. */
+    private fun activeLoopForSession(sessionId: String): AgentLoop? {
+        val task = activeTask.get() ?: return null
+        return if (task.sessionId == sessionId) task.loop else null
+    }
+
+    /**
+     * Persist the completion for later resumption when no loop is active. Task 6
+     * will read this store at session start and replay queued completions as
+     * steering messages before the first LLM call.
+     */
+    private fun persistForLaterResume(
+        event: com.workflow.orchestrator.agent.tools.background.BackgroundCompletionEvent
+    ) {
+        runCatching {
+            com.workflow.orchestrator.agent.tools.background.BackgroundPersistence(agentDir.toPath())
+                .appendCompletion(event.sessionId, event)
+        }.onFailure {
+            log.warn("[AgentService] BackgroundPersistence append failed for ${event.sessionId}: ${it.message}", it)
+        }
     }
 
     /** Current session's message state handler — non-null while a task is running. */
@@ -1559,7 +1674,7 @@ class AgentService(private val project: Project) : Disposable {
                 )
 
                 // I4: Set activeTask atomically after both loop and job are available
-                activeTask.set(ActiveTask(loop = loop, job = coroutineContext.job))
+                activeTask.set(ActiveTask(sessionId = sid, loop = loop, job = coroutineContext.job))
 
                 val result = loop.run(task)
 

@@ -1211,6 +1211,21 @@ class AgentLoop(
     }
 
     /**
+     * Enqueue a steering message into the loop's steering queue so it gets
+     * injected at the next iteration boundary. No-op if the loop was built
+     * without a steering queue (e.g. sub-agents). Safe to call from any thread —
+     * [ConcurrentLinkedQueue.offer] is thread-safe.
+     *
+     * Used by [com.workflow.orchestrator.agent.AgentService] to route
+     * [com.workflow.orchestrator.agent.tools.background.BackgroundCompletionEvent]
+     * messages into the active loop when a background process exits.
+     */
+    fun enqueueSteeringMessage(text: String) {
+        val id = "auto-${System.nanoTime()}"
+        steeringQueue?.offer(SteeringMessage(id = id, text = text))
+    }
+
+    /**
      * Check if an API error indicates context window overflow.
      *
      * Ported from Cline's multi-provider pattern matching:
