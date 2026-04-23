@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.tools.builtin
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
+import com.workflow.orchestrator.agent.loop.ApprovalResult
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
@@ -54,6 +55,22 @@ class BackgroundProcessTool : AgentTool {
         val pool = BackgroundPool.getInstance(project)
         val id = params["id"]?.jsonPrimitive?.content
         val action = params["action"]?.jsonPrimitive?.content ?: if (id != null) "status" else "list"
+
+        // Gate write actions through the approval machinery. READ actions (list, status,
+        // output) are observational and skip the gate entirely. When AgentLoop wraps this
+        // tool in ApprovalGatedTool the requestApproval call is routed to the UI gate;
+        // in tests (no gate wired) the default implementation returns APPROVED.
+        if (action in WRITE_ACTIONS) {
+            val approval = requestApproval(
+                toolName = "$name.$action",
+                args = params.toString(),
+                riskLevel = if (action == "kill") "medium" else "low",
+                allowSessionApproval = true,
+            )
+            if (approval == ApprovalResult.DENIED) {
+                return toolError("Tool execution denied by user.")
+            }
+        }
 
         return when (action) {
             "list" -> doList(pool, sessionId)
