@@ -1813,8 +1813,49 @@ class AgentController(
         firstFlushSeen.clear()
     }
 
+    /**
+     * Kill background processes owned by [leavingSessionId] before a session transition.
+     *
+     * If [AgentSettings.suppressBackgroundKillConfirmation] is false and there are running
+     * processes, shows a confirmation dialog listing the affected processes.
+     *
+     * @return true if the transition should proceed (no processes, or user confirmed), false
+     *         if the user cancelled.
+     */
+    private fun killBackgroundsOnTransition(
+        leavingSessionId: String,
+        transitionLabel: String
+    ): Boolean {
+        val pool = com.workflow.orchestrator.agent.tools.background.BackgroundPool.getInstance(project)
+        val running = pool.list(leavingSessionId)
+        if (running.isEmpty()) return true
+
+        val settings = AgentSettings.getInstance(project).state
+        if (!settings.suppressBackgroundKillConfirmation) {
+            val message = buildString {
+                appendLine("$transitionLabel will kill ${running.size} running background processes:")
+                running.forEach { h ->
+                    appendLine("  • ${h.bgId} (${h.kind}: \"${h.label.take(80)}\")")
+                }
+                appendLine()
+                appendLine("Continue?")
+            }
+            val choice = com.intellij.openapi.ui.Messages.showYesNoDialog(
+                project,
+                message,
+                "Background Processes",
+                com.intellij.openapi.ui.Messages.getWarningIcon()
+            )
+            if (choice != com.intellij.openapi.ui.Messages.YES) return false
+        }
+        pool.killAll(leavingSessionId)
+        return true
+    }
+
     fun newChat() {
         LOG.info("AgentController.newChat")
+        val leaving = currentSessionId
+        if (leaving != null && !killBackgroundsOnTransition(leaving, "Starting a new chat")) return
         resetForNewChat()
     }
 
@@ -1920,6 +1961,7 @@ class AgentController(
      * Delete a session from disk and refresh the history list.
      */
     fun handleDeleteSession(sessionId: String) {
+        if (!killBackgroundsOnTransition(sessionId, "Deleting this session")) return
         val basePath = project.basePath ?: return
         val baseDir = ProjectIdentifier.agentDir(basePath)
         CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
@@ -1949,6 +1991,8 @@ class AgentController(
      * Resets state without showing history (avoids history→chat flicker).
      */
     fun handleStartNewSession() {
+        val leaving = currentSessionId
+        if (leaving != null && !killBackgroundsOnTransition(leaving, "Starting a new chat")) return
         resetForNewChat()
         dashboard.showChatView()
     }
@@ -2094,6 +2138,11 @@ class AgentController(
      */
     fun showSession(sessionId: String) {
         LOG.info("AgentController.showSession: $sessionId (view-only)")
+
+        val leaving = currentSessionId
+        if (leaving != null && leaving != sessionId) {
+            if (!killBackgroundsOnTransition(leaving, "Switching sessions")) return
+        }
 
         // Cancel any running task first
         if (currentJob?.isActive == true) {
