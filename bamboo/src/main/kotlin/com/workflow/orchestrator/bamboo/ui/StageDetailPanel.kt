@@ -227,6 +227,12 @@ class StageDetailPanel(
             )
         } catch (_: Exception) {}
 
+        // PathLinkResolver-backed filter: turns file-path substrings in log lines
+        // (e.g. "src/main/kotlin/Foo.kt:42: error:") into clickable hyperlinks that
+        // open the file at the given line. Validates via the same security rules used
+        // by the agent webview so only in-project paths are made clickable.
+        console.addMessageFilter(FilePathHyperlinkFilter(project))
+
         consoleView = console
         consolePanel.removeAll()
         consolePanel.add(console.component, BorderLayout.CENTER)
