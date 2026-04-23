@@ -173,6 +173,52 @@ class ContextManager(
     }
 
     /**
+     * Remove ALL `[assistant-text-only, user-nudge]` pairs anywhere in the conversation
+     * where the user content equals [nudgeText] — not just the contiguous trailing ones.
+     *
+     * Rationale: after a chain of empty/text-only responses exits the loop (MAX retries
+     * or max-mistakes), the [assistant-empty, nudge] pair sits interior in context. If
+     * the user then continues and later hits another empty/text-only response, the
+     * trailing-only pruner leaves the interior pair alone — so the context ends up with
+     * two separated `[empty, ERROR]` pairs. Across enough "continue" cycles that pattern
+     * accumulates and primes the model on "empty response with ERROR reply is normal
+     * here." This variant strips every prior occurrence before we add a fresh one.
+     *
+     * Called by the Case B and Case C insertion sites in `AgentLoop` right before
+     * `addUserMessage(nudgeText)`. Case A keeps using [pruneTrailingNudgePairs] because
+     * a successful tool call shouldn't retroactively erase an earlier stall's audit trail
+     * mid-run — it should only clean up the stall it just broke out of.
+     *
+     * Not persisted via `onHistoryOverwrite` — same rationale as [pruneTrailingNudgePairs].
+     *
+     * @return number of pairs removed
+     */
+    fun pruneAllNudgePairs(nudgeText: String): Int {
+        var pairsRemoved = 0
+        var i = 1
+        while (i < messages.size) {
+            val user = messages[i]
+            val prev = messages[i - 1]
+            val isNudge = user.role == "user" && user.content == nudgeText
+            val isTextOnlyAssistant = prev.role == "assistant" && prev.toolCalls.isNullOrEmpty()
+            if (isNudge && isTextOnlyAssistant) {
+                messages.removeAt(i)
+                messages.removeAt(i - 1)
+                pairsRemoved++
+                // Don't advance i — the pair that WAS at index i+1 (if any) is now at
+                // index i-1 after the two removals, and we want to re-check it in case
+                // the assistant-text before it now pairs with a different structure.
+            } else {
+                i++
+            }
+        }
+        if (pairsRemoved > 0) {
+            LOG.info("[Context] Pruned $pairsRemoved total nudge pair(s) (all occurrences) to avoid cross-episode priming")
+        }
+        return pairsRemoved
+    }
+
+    /**
      * Remove contiguous trailing assistant messages that have neither text content nor
      * tool calls. These are "empty" turns produced by provider errors (degenerate
      * zero-temp sampling, truncated upstream stream, etc.) — they carry no information

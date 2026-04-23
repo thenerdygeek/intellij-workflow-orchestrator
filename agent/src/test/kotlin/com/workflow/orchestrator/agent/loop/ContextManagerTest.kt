@@ -1066,4 +1066,86 @@ class ContextManagerTest {
             }
         }
     }
+
+    // ---- Nudge-pair pruning ----
+
+    @Nested
+    inner class NudgePairPruning {
+
+        private val nudge = "[ERROR] You did not use a tool..."
+
+        @Test
+        fun `pruneTrailingNudgePairs removes only the contiguous trailing chain`() {
+            // pruneTrailingNudgePairs preserves the very last message in the list — it's
+            // called AFTER the new assistant turn has been added (see AgentLoop Case A).
+            // So we simulate: interior pair, productive work, trailing pair, then the
+            // freshly-added assistant response at the tail.
+            cm.addUserMessage("task")                                                  // 0
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = ""))      // 1
+            cm.addUserMessage(nudge)                                                   // 2 interior pair — leave alone
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = "",
+                toolCalls = listOf(ToolCall(id = "id1", function = FunctionCall(name = "read_file", arguments = "{}"))))) // 3 real work
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = ""))      // 4
+            cm.addUserMessage(nudge)                                                   // 5 trailing pair — prune
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = "fresh")) // 6 preserved tail
+
+            val removed = cm.pruneTrailingNudgePairs(nudge)
+            assertEquals(1, removed)
+            val msgs = cm.getMessages()
+            // Interior [empty, nudge] pair must still be present.
+            assertTrue(msgs.any { it.content == nudge }, "interior nudge should survive trailing prune")
+        }
+
+        @Test
+        fun `pruneAllNudgePairs removes interior pairs too — the cross-episode case`() {
+            // Reproduces the user's scenario: stall, continue, productive work, stall.
+            cm.addUserMessage("task")
+            // Stall episode 1 — interior [empty, nudge] pair left behind after loop exited.
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = ""))
+            cm.addUserMessage(nudge)
+            // User continues.
+            cm.addUserMessage("continue")
+            // Productive tool call (would normally be followed by tool result).
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = "",
+                toolCalls = listOf(ToolCall(id = "id1", function = FunctionCall(name = "read_file", arguments = "{}")))))
+            cm.addUserMessage("[tool_result] ok")
+            // Stall episode 2 — about to inject a fresh nudge.
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = ""))
+            cm.addUserMessage(nudge)
+
+            val removed = cm.pruneAllNudgePairs(nudge)
+            assertEquals(2, removed, "should have removed both the interior and the trailing pair")
+            val msgs = cm.getMessages()
+            assertTrue(msgs.none { it.content == nudge }, "no nudges should remain anywhere")
+        }
+
+        @Test
+        fun `pruneAllNudgePairs leaves other messages intact`() {
+            cm.addUserMessage("task")
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = ""))
+            cm.addUserMessage(nudge)
+            cm.addUserMessage("unrelated user message")
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = "real text answer"))
+
+            cm.pruneAllNudgePairs(nudge)
+            val msgs = cm.getMessages()
+            assertTrue(msgs.any { it.content == "task" })
+            assertTrue(msgs.any { it.content == "unrelated user message" })
+            assertTrue(msgs.any { it.content == "real text answer" })
+            assertTrue(msgs.none { it.content == nudge })
+        }
+
+        @Test
+        fun `pruneAllNudgePairs does not touch assistant turns that carry tool calls`() {
+            // A [assistant-with-tool-call, user-nudge-like-text] pair should NOT match —
+            // the assistant side of the pair must be text-only.
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = "",
+                toolCalls = listOf(ToolCall(id = "id1", function = FunctionCall(name = "read_file", arguments = "{}")))))
+            cm.addUserMessage(nudge)  // looks like a nudge but the prior assistant is a tool call, not a stall
+
+            val removed = cm.pruneAllNudgePairs(nudge)
+            assertEquals(0, removed)
+            assertEquals(2, cm.getMessages().size)
+        }
+    }
 }
