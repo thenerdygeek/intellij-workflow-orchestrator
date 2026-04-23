@@ -1,7 +1,10 @@
 package com.workflow.orchestrator.agent.tools.runtime
 
+import com.intellij.execution.process.ProcessHandler
+import com.intellij.execution.ui.RunContentDescriptor
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.tools.WorkerType
+import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
@@ -103,5 +106,67 @@ class RuntimeExecToolTest {
         assertTrue(result.isError, "compile_module should route to an error since it's not handled here")
         assertTrue(result.content.contains("java_runtime_exec"), "error should direct LLM to java_runtime_exec")
         assertTrue(result.content.contains("python_runtime_exec"), "error should direct LLM to python_runtime_exec")
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // selectDescriptorByName — regression guard for terminated-shadows-live bug
+    // (user ran a Spring Boot config, stopped it, then re-ran in Debug. get_run_output
+    //  returned the terminated run instead of the live debug session.)
+    // ─────────────────────────────────────────────────────────────────────
+
+    private fun descriptor(name: String, terminated: Boolean): RunContentDescriptor {
+        val handler = mockk<ProcessHandler>()
+        every { handler.isProcessTerminated } returns terminated
+        every { handler.isProcessTerminating } returns false
+        val d = mockk<RunContentDescriptor>()
+        every { d.displayName } returns name
+        every { d.processHandler } returns handler
+        return d
+    }
+
+    @Test
+    fun `selectDescriptorByName prefers live over terminated with same name`() {
+        val terminatedRun = descriptor("MyService", terminated = true)
+        val liveDebug = descriptor("MyService", terminated = false)
+        // Registration order: terminated run came first (user ran it, then debugged).
+        val all = listOf(terminatedRun, liveDebug)
+
+        val selection = tool.selectDescriptorByName(all, "MyService")
+        assertNotNull(selection)
+        assertSame(liveDebug, selection!!.descriptor, "should pick the live descriptor")
+        assertTrue(selection.pickedLive)
+        assertEquals(listOf(terminatedRun), selection.others)
+    }
+
+    @Test
+    fun `selectDescriptorByName falls back to most recent when all terminated`() {
+        val older = descriptor("MyService", terminated = true)
+        val newer = descriptor("MyService", terminated = true)
+        val selection = tool.selectDescriptorByName(listOf(older, newer), "MyService")
+        assertNotNull(selection)
+        assertSame(newer, selection!!.descriptor, "should pick the last (most recent) when none are live")
+        assertFalse(selection.pickedLive)
+    }
+
+    @Test
+    fun `selectDescriptorByName returns null when nothing matches`() {
+        val other = descriptor("OtherService", terminated = false)
+        assertNull(tool.selectDescriptorByName(listOf(other), "MyService"))
+    }
+
+    @Test
+    fun `selectDescriptorByName is case-insensitive and substring-based`() {
+        val match = descriptor("MyServiceApplication", terminated = false)
+        val selection = tool.selectDescriptorByName(listOf(match), "myservice")
+        assertNotNull(selection)
+        assertSame(match, selection!!.descriptor)
+    }
+
+    @Test
+    fun `selectDescriptorByName picks latest live when multiple are live`() {
+        val olderLive = descriptor("MyService", terminated = false)
+        val newerLive = descriptor("MyService", terminated = false)
+        val selection = tool.selectDescriptorByName(listOf(olderLive, newerLive), "MyService")
+        assertSame(newerLive, selection!!.descriptor)
     }
 }

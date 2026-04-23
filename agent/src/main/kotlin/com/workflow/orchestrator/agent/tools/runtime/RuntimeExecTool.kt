@@ -77,7 +77,7 @@ Runtime observation and launch — read console output and structured test resul
 
 Actions and their parameters:
 - get_running_processes() → List active run/debug sessions with status and PID
-- get_run_output(config_name, last_n_lines?, filter?) → Read process console output (last_n_lines default 200, max 1000; filter: regex pattern)
+- get_run_output(config_name, last_n_lines?, filter?) → Read process console output (last_n_lines default 200, max 1000; filter: regex pattern). When multiple sessions share the same config name (e.g. a terminated Run tab and a live Debug session), the live one is selected; the result's Note line lists the other matches. The Launch Mode line shows whether the selected session is Run or Debug.
 - get_test_results(config_name, status_filter?) → Get structured test results (status_filter: FAILED|ERROR|PASSED|SKIPPED)
 - run_config(config_name, mode?, wait_for_ready?, wait_for_pause?, readiness_strategy?, ready_pattern?, ready_timeout_seconds?, wait_for_finish?, timeout_seconds?, tail_lines?, discover_ports?) → Launches fresh. If an instance of the same configuration is already running, it is stopped first (graceful then force). Returns READY with port info or DEBUG with session info.
 - stop_run_config(config_name, graceful_timeout_seconds?, force_on_timeout?) → Stop a running process gracefully (and force-kill if timeout exceeded).
@@ -302,11 +302,9 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
             val contentManager = RunContentManager.getInstance(project)
             val allDescriptors = contentManager.allDescriptors
 
-            val descriptor = allDescriptors.find { desc ->
-                desc.displayName?.contains(configName, ignoreCase = true) == true
-            }
+            val match = selectDescriptorByName(allDescriptors, configName)
 
-            if (descriptor == null) {
+            if (match == null) {
                 val available = allDescriptors.mapNotNull { it.displayName }
                 val availableMsg = if (available.isNotEmpty()) {
                     "\nAvailable sessions: ${available.joinToString(", ")}"
@@ -316,6 +314,7 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
                 return ToolResult("No run session found matching '$configName'.$availableMsg", "Not found", 30, isError = true)
             }
 
+            val descriptor = match.descriptor
             val consoleText = extractConsoleText(descriptor)
 
             if (consoleText == null || consoleText.isBlank()) {
@@ -332,12 +331,15 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
 
             val sb = StringBuilder()
             sb.appendLine("Console Output: ${descriptor.displayName}")
-            val processStatus = when {
-                descriptor.processHandler?.isProcessTerminated == true -> "Terminated"
-                descriptor.processHandler?.isProcessTerminating == true -> "Terminating"
-                else -> "Running"
+            sb.appendLine("Launch Mode: ${describeLaunchMode(descriptor, project)}")
+            sb.appendLine("Status: ${describeProcessStatus(descriptor)}")
+            if (match.others.isNotEmpty()) {
+                val othersDesc = match.others.joinToString(", ") { d ->
+                    "${d.displayName} [${describeLaunchMode(d, project)} / ${describeProcessStatus(d)}]"
+                }
+                sb.appendLine("Note: ${match.others.size + 1} sessions matched '$configName'. " +
+                    "Selected the ${if (match.pickedLive) "live" else "most recent"} one. Other matches: $othersDesc")
             }
-            sb.appendLine("Status: $processStatus")
             if (filterPattern != null) {
                 sb.appendLine("Filter: ${filterPattern.pattern}")
             }
@@ -463,9 +465,7 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
             val allDescriptors = contentManager.allDescriptors
 
             val descriptor = if (configName != null) {
-                allDescriptors.find { desc ->
-                    desc.displayName?.contains(configName, ignoreCase = true) == true
-                }
+                selectDescriptorByName(allDescriptors, configName)?.descriptor
             } else {
                 allDescriptors.firstOrNull { desc -> hasTestResults(desc) }
                     ?: allDescriptors.firstOrNull { desc ->
@@ -1555,6 +1555,69 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
             val portStr = name.substringAfterLast(':')
             val port = portStr.toIntOrNull() ?: continue
             if (port in 1..65535) ports.add(port)
+        }
+    }
+
+    internal data class DescriptorSelection(
+        val descriptor: RunContentDescriptor,
+        val others: List<RunContentDescriptor>,
+        val pickedLive: Boolean,
+    )
+
+    /**
+     * Resolve a run/debug descriptor by name, preferring a live one over a terminated one.
+     *
+     * `RunContentManager.allDescriptors` retains closed tabs (terminated processes stay as
+     * inert descriptors until the user closes the tab). A plain `find` returns the first
+     * match in registration order, which is almost always an older terminated run — not the
+     * live debug session the caller actually wants. This helper:
+     *   1. collects all descriptors whose display name contains [configName] (case-insensitive);
+     *   2. prefers the most recently registered *live* descriptor (not terminated / terminating);
+     *   3. falls back to the most recently registered descriptor if none are live.
+     *
+     * The "others" list in the result lets callers surface disambiguation context to the LLM.
+     */
+    internal fun selectDescriptorByName(
+        allDescriptors: List<RunContentDescriptor>,
+        configName: String,
+    ): DescriptorSelection? {
+        val matches = allDescriptors.filter { desc ->
+            desc.displayName?.contains(configName, ignoreCase = true) == true
+        }
+        if (matches.isEmpty()) return null
+
+        val live = matches.lastOrNull { desc ->
+            desc.processHandler?.let { !it.isProcessTerminated && !it.isProcessTerminating } == true
+        }
+        val chosen = live ?: matches.last()
+        return DescriptorSelection(
+            descriptor = chosen,
+            others = matches.filter { it !== chosen },
+            pickedLive = live != null,
+        )
+    }
+
+    private fun describeProcessStatus(descriptor: RunContentDescriptor): String = when {
+        descriptor.processHandler?.isProcessTerminated == true -> "Terminated"
+        descriptor.processHandler?.isProcessTerminating == true -> "Terminating"
+        else -> "Running"
+    }
+
+    /**
+     * Best-effort detection of whether the descriptor was launched in Debug mode.
+     *
+     * A descriptor doesn't carry its executor directly; instead we check whether any active
+     * `XDebugSession` has the same `RunContentDescriptor` reference. If so, it's Debug;
+     * otherwise it's treated as Run. (Coverage uses the Run executor, so it'll show as "Run".)
+     */
+    private fun describeLaunchMode(descriptor: RunContentDescriptor, project: Project): String {
+        return try {
+            val isDebug = XDebuggerManager.getInstance(project).debugSessions.any { session ->
+                session.runContentDescriptor === descriptor
+            }
+            if (isDebug) "Debug" else "Run"
+        } catch (_: Exception) {
+            "Run"
         }
     }
 
