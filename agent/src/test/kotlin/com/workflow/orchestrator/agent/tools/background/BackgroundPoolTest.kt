@@ -80,6 +80,24 @@ class BackgroundPoolTest {
         assertTrue(exc is BackgroundPool.MaxConcurrentReached,
             "expected MaxConcurrentReached, got: $exc")
     }
+
+    @Test
+    fun `onComplete routes through SessionPool to pool-level listeners`() = runTest {
+        val received = mutableListOf<BackgroundCompletionEvent>()
+        pool.addCompletionListener { received.add(it) }
+
+        val handle = FakeBackgroundHandle("bg_done", "s1")
+        pool.register("s1", handle)
+
+        val event = BackgroundCompletionEvent(
+            bgId = "bg_done", kind = "test", label = "fake", sessionId = "s1",
+            exitCode = 0, state = BackgroundState.EXITED, runtimeMs = 10,
+            tailContent = "", spillPath = null, occurredAt = 100
+        )
+        pool.emitCompletion("s1", event)
+
+        assertEquals(listOf(event), received)
+    }
 }
 
 /** Minimal test double. */

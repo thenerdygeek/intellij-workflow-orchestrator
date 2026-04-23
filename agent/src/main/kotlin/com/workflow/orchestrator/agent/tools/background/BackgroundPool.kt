@@ -59,6 +59,26 @@ class BackgroundPool(private val project: Project) : Disposable {
     override fun dispose() {
         killAllForProject()
     }
+
+    private val completionListeners = java.util.concurrent.CopyOnWriteArrayList<(BackgroundCompletionEvent) -> Unit>()
+
+    fun addCompletionListener(listener: (BackgroundCompletionEvent) -> Unit) {
+        completionListeners.add(listener)
+    }
+
+    fun removeCompletionListener(listener: (BackgroundCompletionEvent) -> Unit) {
+        completionListeners.remove(listener)
+    }
+
+    fun emitCompletion(sessionId: String, event: BackgroundCompletionEvent) {
+        // Remove from session pool first so list() no longer surfaces it.
+        sessionPools[sessionId]?.remove(event.bgId)
+        completionListeners.forEach { listener ->
+            runCatching { listener(event) }.onFailure {
+                LOG.warn("[BackgroundPool] completion listener failed: ${it.message}", it)
+            }
+        }
+    }
 }
 
 class SessionPool(val sessionId: String) {
