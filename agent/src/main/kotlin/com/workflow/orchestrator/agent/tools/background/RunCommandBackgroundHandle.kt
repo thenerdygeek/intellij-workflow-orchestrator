@@ -49,7 +49,7 @@ class RunCommandBackgroundHandle(
         val windowBytes = bytes.copyOfRange(sinceOffset.toInt().coerceAtLeast(0), bytes.size)
         val windowText = String(windowBytes)
         val content = if (tailLines != null) {
-            windowText.lines().takeLast(tailLines).joinToString("\n")
+            windowText.trimEnd('\n', '\r').lines().takeLast(tailLines).joinToString("\n")
         } else windowText
         return OutputChunk(
             content = OutputCollector.stripAnsi(content),

@@ -62,7 +62,12 @@ class BackgroundProcessTool : AgentTool {
                     ?: return toolError("NO_SUCH_ID_IN_SESSION: '$id' not in session '$sessionId'")
                 doStatus(h)
             }
-            else -> toolError("UNSUPPORTED_ACTION: '$action' (supported in this task: list, status)")
+            "output" -> {
+                val h = pool.get(sessionId, id!!)
+                    ?: return toolError("NO_SUCH_ID_IN_SESSION: '$id' not in session '$sessionId'")
+                doOutput(h, params)
+            }
+            else -> toolError("UNSUPPORTED_ACTION: '$action' (supported: list, status, output)")
         }
     }
 
@@ -106,6 +111,28 @@ class BackgroundProcessTool : AgentTool {
             content = content,
             summary = "${h.bgId}: ${h.state()}",
             tokenEstimate = TokenEstimator.estimate(content),
+        )
+    }
+
+    private fun doOutput(h: BackgroundHandle, params: JsonObject): ToolResult {
+        val tailLines = params["tail_lines"]?.jsonPrimitive?.content?.toIntOrNull()
+        val sinceOffset = params["since_offset"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
+        val grepPattern = params["grep_pattern"]?.jsonPrimitive?.content
+
+        val chunk = h.readOutput(sinceOffset = sinceOffset, tailLines = tailLines)
+        var content = chunk.content
+        if (grepPattern != null) {
+            val re = runCatching { Regex(grepPattern) }.getOrNull()
+                ?: return toolError("INVALID_GREP_PATTERN: $grepPattern")
+            content = content.lines().filter { re.containsMatchIn(it) }.joinToString("\n")
+        }
+        val header = "[bgId=${h.bgId}] offset=${chunk.nextOffset}, bytes=${h.outputBytes()}\n"
+        val body = header + content
+        return ToolResult(
+            content = body,
+            summary = "${h.bgId}: ${content.lineSequence().count()} lines",
+            tokenEstimate = TokenEstimator.estimate(body),
+            isError = false,
         )
     }
 

@@ -103,4 +103,62 @@ class BackgroundProcessToolTest {
             BackgroundProcessTool.currentSessionId.remove()
         }
     }
+
+    @Test
+    fun `output action returns tail_lines`() = runBlocking {
+        val proc = ProcessBuilder("sh", "-c", "for i in 1 2 3 4 5; do echo line\$i; done").start()
+        val managed = ProcessRegistry.register("bg_out01", proc, "echo loop")
+        Thread {
+            proc.inputStream.bufferedReader().useLines { lines ->
+                lines.forEach { managed.outputLines.add(it + "\n") }
+            }
+            managed.readerDone.countDown()
+        }.apply { isDaemon = true }.start()
+        proc.waitFor()
+        val h = RunCommandBackgroundHandle("bg_out01", "sess-out", managed, "echo loop")
+        try {
+            every { pool.get("sess-out", "bg_out01") } returns h
+            BackgroundProcessTool.currentSessionId.set("sess-out")
+            val r = BackgroundProcessTool().execute(
+                buildJsonObject {
+                    put("id", "bg_out01"); put("action", "output"); put("tail_lines", 2)
+                }, project
+            )
+            assertTrue(r.content.contains("line4"), "missing line4; got:\n${r.content}")
+            assertTrue(r.content.contains("line5"))
+            assertTrue(!r.content.contains("line1"))
+        } finally {
+            h.kill()
+            BackgroundProcessTool.currentSessionId.remove()
+        }
+    }
+
+    @Test
+    fun `output action filters with grep_pattern`() = runBlocking {
+        val proc = ProcessBuilder("sh", "-c", "echo hello; echo world; echo HELLO again").start()
+        val managed = ProcessRegistry.register("bg_grep01", proc, "grep test")
+        Thread {
+            proc.inputStream.bufferedReader().useLines { lines ->
+                lines.forEach { managed.outputLines.add(it + "\n") }
+            }
+            managed.readerDone.countDown()
+        }.apply { isDaemon = true }.start()
+        proc.waitFor()
+        val h = RunCommandBackgroundHandle("bg_grep01", "sess-grep", managed, "grep test")
+        try {
+            every { pool.get("sess-grep", "bg_grep01") } returns h
+            BackgroundProcessTool.currentSessionId.set("sess-grep")
+            val r = BackgroundProcessTool().execute(
+                buildJsonObject {
+                    put("id", "bg_grep01"); put("action", "output"); put("grep_pattern", "hello")
+                }, project
+            )
+            // grep is case-sensitive by default; only matches "hello" (lowercase).
+            assertTrue(r.content.contains("hello"), "missing hello; got:\n${r.content}")
+            assertTrue(!r.content.contains("world"))
+        } finally {
+            h.kill()
+            BackgroundProcessTool.currentSessionId.remove()
+        }
+    }
 }
