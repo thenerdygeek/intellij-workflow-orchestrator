@@ -34,13 +34,31 @@ interface BackgroundHandle {
      */
     suspend fun attach(timeoutMs: Long): AttachResult
 
-    /** Graceful two-phase kill (SIGTERM → SIGKILL) via the underlying primitive. */
+    /**
+     * Graceful two-phase kill (SIGTERM → wait → SIGKILL) via the underlying primitive.
+     *
+     * Idempotent: safe to call multiple times or on an already-terminated handle.
+     *
+     * @return true if the process was live and the kill was actually sent; false if
+     *         the handle was already in a terminal state when called.
+     */
     fun kill(): Boolean
 
     /**
-     * Register a completion callback. Fired exactly once per handle lifetime, on
-     * EXITED / KILLED / TIMED_OUT. Adding after exit invokes immediately with the
-     * retained terminal state.
+     * Register a completion callback. Fired exactly once per registered callback, on
+     * EXITED / KILLED / TIMED_OUT. Adding after the handle has already terminated
+     * invokes immediately with the retained terminal state.
+     *
+     * Threading: the callback may be invoked from any thread (typically an IO /
+     * process-listener thread). Callers MUST NOT perform EDT operations directly
+     * inside the callback — post to a coroutine scope or use invokeLater if UI
+     * work is needed.
+     *
+     * Exceptions thrown by the callback are caught and logged by the handle; they
+     * do not prevent other registered callbacks from firing.
+     *
+     * Multiple registrations are permitted; each registered callback fires exactly
+     * once.
      */
     fun onComplete(callback: (event: BackgroundCompletionEvent) -> Unit)
 }
@@ -54,6 +72,15 @@ data class OutputChunk(
 
 sealed class AttachResult {
     data class Exited(val exitCode: Int, val output: String) : AttachResult()
+    /**
+     * Process went idle (no output for the configured idle threshold) during attach.
+     *
+     * [reason] carries a short human-readable classification string (e.g.
+     * `LIKELY_STDIN_PROMPT`, `LIKELY_PASSWORD_PROMPT`, `GENERIC_IDLE`). These
+     * values are produced by `PromptHeuristics.IdleClassification` (added in a
+     * later task); keep the classification names stable so downstream tool
+     * output can match on them.
+     */
     data class Idle(val reason: String, val lastOutput: String) : AttachResult()
     data class AttachTimeout(val elapsedMs: Long, val lastOutput: String) : AttachResult()
 }
