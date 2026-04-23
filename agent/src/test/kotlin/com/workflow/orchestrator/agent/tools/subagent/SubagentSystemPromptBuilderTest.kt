@@ -126,7 +126,7 @@ class SubagentSystemPromptBuilderTest {
     }
 
     @Test
-    fun `agentConfig with memory none suppresses memory XML blocks`() {
+    fun `agentConfig with memory none suppresses memory index content`() {
         val config = AgentConfig(
             name = "test",
             description = "test",
@@ -136,7 +136,7 @@ class SubagentSystemPromptBuilderTest {
             systemPrompt = PERSONA_ROLE,
             promptSections = PromptSectionsConfig(memory = "none"),
         )
-        val coreXml = "<core_memory><item key=\"k\">some-core-data</item></core_memory>"
+        val memoryIndexContent = "- [Testing rules](feedback_testing.md) — some-memory-data"
         val prompt = SubagentSystemPromptBuilder.build(
             personaRole = PERSONA_ROLE,
             agentConfig = config,
@@ -145,17 +145,17 @@ class SubagentSystemPromptBuilderTest {
             projectPath = "/tmp/test",
             osName = "Linux",
             shell = "/bin/bash",
-            coreMemoryXml = coreXml,
-            recalledMemoryXml = "<recalled_memory>recalled-data</recalled_memory>",
+            memoryIndex = memoryIndexContent,
+            memoryIndexPath = "/tmp/.workflow-orchestrator/test/agent/memory/MEMORY.md",
             completingYourTaskSection = DUMMY_COMPLETING_SECTION,
         )
         assertFalse(
-            prompt.contains("some-core-data"),
-            "memory: none must suppress coreMemoryXml content"
+            prompt.contains("some-memory-data"),
+            "memory: none must suppress memoryIndex content"
         )
         assertFalse(
-            prompt.contains("recalled-data"),
-            "memory: none must suppress recalledMemoryXml content"
+            prompt.contains("MEMORY.md"),
+            "memory: none must suppress memoryIndexPath header"
         )
     }
 

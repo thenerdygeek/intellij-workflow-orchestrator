@@ -1459,15 +1459,10 @@ class AgentService(private val project: Project) : Disposable {
                 // Build deferred catalog for system prompt injection (grouped by category with descriptions)
                 val deferredCatalog = registry.getDeferredCatalogGroupedWithDescriptions()
 
-                // AUTO-MEMORY: Retrieve relevant archival memories for prompt injection (best-effort)
-                val recalledMemoryXml: String? = if (AgentSettings.getInstance(project).state.autoMemoryEnabled) {
-                    try {
-                        ensureAutoMemory()?.onSessionStart(task)
-                    } catch (e: Exception) {
-                        log.warn("[AgentService] Auto-memory retrieval failed (non-fatal)", e)
-                        null
-                    }
-                } else null
+                // MEMORY INDEX: Load per-project MEMORY.md for injection into Section 10
+                val memoryDirPath = java.io.File(agentDir, "memory").toPath()
+                val memoryIndexContent = com.workflow.orchestrator.agent.memory.MemoryIndex.load(memoryDirPath)
+                val memoryIndexPath = memoryDirPath.resolve("MEMORY.md").toString()
 
                 // Build system prompt — XML tool definitions added dynamically below
                 val systemPromptBuilder = { toolDefsMarkdown: String? ->
@@ -1480,9 +1475,9 @@ class AgentService(private val project: Project) : Disposable {
                         activeSkillContent = ctx.getActiveSkill(),
                         taskProgress = ctx.renderTaskProgressMarkdown(),
                         deferredToolCatalog = deferredCatalog,
-                        coreMemoryXml = coreMemory?.compile(),
                         toolDefinitionsMarkdown = toolDefsMarkdown,
-                        recalledMemoryXml = recalledMemoryXml,
+                        memoryIndex = memoryIndexContent,
+                        memoryIndexPath = memoryIndexPath,
                         ideContext = ideContext,
                         availableShells = allowedShells,
                         availableModels = formatModelsForPrompt(ModelCache.getCached())

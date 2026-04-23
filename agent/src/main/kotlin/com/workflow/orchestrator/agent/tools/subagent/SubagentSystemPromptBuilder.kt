@@ -44,8 +44,8 @@ object SubagentSystemPromptBuilder {
      * @param additionalContext Optional extra context appended to User Instructions.
      * @param availableSkills Optional list of available skill metadata.
      * @param activeSkillContent Optional content of the currently active skill.
-     * @param coreMemoryXml   Optional compiled core memory XML block.
-     * @param recalledMemoryXml Optional auto-retrieved archival memory XML.
+     * @param memoryIndex     Optional contents of `MEMORY.md` (per-project memory index).
+     * @param memoryIndexPath Optional absolute path to `MEMORY.md` for the `Contents of …` header.
      * @param toolDefinitionsMarkdown Optional Cline-style XML tool schemas.
      * @param deferredToolCatalog Optional categorised deferred tool one-liners.
      * @param availableShells Optional shell list (shows "Available Shells: …" instead of
@@ -70,8 +70,8 @@ object SubagentSystemPromptBuilder {
         additionalContext: String? = null,
         availableSkills: List<SkillMetadata>? = null,
         activeSkillContent: String? = null,
-        coreMemoryXml: String? = null,
-        recalledMemoryXml: String? = null,
+        memoryIndex: String? = null,
+        memoryIndexPath: String? = null,
         toolDefinitionsMarkdown: String? = null,
         deferredToolCatalog: Map<String, List<Pair<String, String>>>? = null,
         availableShells: List<String>? = null,
@@ -89,9 +89,11 @@ object SubagentSystemPromptBuilder {
 
         val includeMemory = sections.memory != "none"
 
-        // When memory is opted out, suppress both the gate flag AND the XML data blocks.
-        val effectiveCoreMemoryXml = if (includeMemory) coreMemoryXml else null
-        val effectiveRecalledMemoryXml = if (includeMemory) recalledMemoryXml else null
+        // When memory is opted out, suppress both the gate flag AND the index data.
+        // For inherit/project/user, pass through the same MEMORY.md content — all
+        // non-none modes collapse to the project memory (there is only one memory dir).
+        val effectiveMemoryIndex = if (includeMemory) memoryIndex else null
+        val effectiveMemoryIndexPath = if (includeMemory) memoryIndexPath else null
 
         val base = SystemPrompt.build(
             projectName = projectName,
@@ -102,8 +104,8 @@ object SubagentSystemPromptBuilder {
             additionalContext = additionalContext,
             availableSkills = availableSkills,
             activeSkillContent = activeSkillContent,
-            coreMemoryXml = effectiveCoreMemoryXml,
-            recalledMemoryXml = effectiveRecalledMemoryXml,
+            memoryIndex = effectiveMemoryIndex,
+            memoryIndexPath = effectiveMemoryIndexPath,
             toolDefinitionsMarkdown = toolDefinitionsMarkdown,
             deferredToolCatalog = deferredToolCatalog,
             availableShells = availableShells,

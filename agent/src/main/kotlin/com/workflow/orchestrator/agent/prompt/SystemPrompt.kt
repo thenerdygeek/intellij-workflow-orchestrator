@@ -40,18 +40,25 @@ object SystemPrompt {
         taskProgress: String? = null,
         /** Deferred tools available via tool_search, grouped by category with one-line descriptions. */
         deferredToolCatalog: Map<String, List<Pair<String, String>>>? = null,
-        /** Compiled core memory XML (Letta pattern: always in prompt if non-empty). */
-        coreMemoryXml: String? = null,
         /** Markdown tool definitions for Cline-style XML format (tools defined in prompt). */
         toolDefinitionsMarkdown: String? = null,
-        /** Auto-retrieved archival memory entries relevant to the user's task. */
-        recalledMemoryXml: String? = null,
         /** IDE context for adapting prompt content to the running IDE (null = backward-compatible IntelliJ). */
         ideContext: IdeContext? = null,
         /** When non-null, shows "Available Shells (run_command): bash, cmd" instead of "Default Shell: …". */
         availableShells: List<String>? = null,
         /** Pre-formatted model lines ("`id` (Name) — tags") for the agent tool's model param guidance. */
         availableModels: List<String>? = null,
+        /**
+         * When non-null, the contents of the per-project `MEMORY.md` (already truncated to
+         * 200 lines by `MemoryIndex.load`). Injected in Section 10 as a
+         * `Contents of <path>:` block right after the memory instructions.
+         */
+        memoryIndex: String? = null,
+        /**
+         * When non-null, the absolute path of the `MEMORY.md` file. Only used for the
+         * `Contents of <path>:` header line. Ignored when `memoryIndex` is null.
+         */
+        memoryIndexPath: String? = null,
         // ---- Per-section opt-in flags (all default true = current behavior preserved) ----
         /** When false, skips section 2 (Task Management). */
         includeTaskManagement: Boolean = true,
@@ -68,9 +75,9 @@ object SystemPrompt {
         /** When false, skips section 9 (Objective). */
         includeObjective: Boolean = true,
         /**
-         * Gates section 10 (Memory header + explanation) **AND** the optional `<core_memory>` /
-         * `<recalled_memory>` XML blocks. Set to `false` to suppress all memory-related content
-         * in the prompt.
+         * Gates Section 10 (Memory instructions) AND the optional `Contents of MEMORY.md:`
+         * block. Set to `false` to suppress all memory content — used by sub-agents that
+         * declare `memory: none` in their persona frontmatter.
          */
         includeMemorySection: Boolean = true,
         /** When false, skips section 11 (User Instructions). */
@@ -150,20 +157,13 @@ object SystemPrompt {
             append(memory())
         }
 
-        // 10b. CORE MEMORY DATA (Letta pattern: always in prompt if non-empty)
-        if (includeMemorySection) {
-            coreMemoryXml?.let {
-                append(SECTION_SEP)
-                append(it)
-            }
-        }
-
-        // 10c. RECALLED MEMORY (auto-retrieved archival entries relevant to this task)
-        if (includeMemorySection) {
-            recalledMemoryXml?.let {
-                append(SECTION_SEP)
-                append(it)
-            }
+        // 10b. MEMORY INDEX CONTENT (per-project MEMORY.md, always loaded when present)
+        if (includeMemorySection && memoryIndex != null) {
+            append(SECTION_SEP)
+            append("Contents of ")
+            append(memoryIndexPath ?: "MEMORY.md")
+            append(" (your auto-memory for this project, persists across sessions):\n\n")
+            append(memoryIndex)
         }
 
         // 11. USER INSTRUCTIONS (optional)
@@ -792,24 +792,63 @@ Accomplish the user's task iteratively: analyze, break into steps, execute with 
 
     /**
      * Section 10: Memory
-     * Explains the hybrid memory system (system-managed + manual override tools).
+     * File-based per-project memory mirroring Claude Code's auto-memory system.
+     *
+     * No specialized memory tools — the LLM operates on `MEMORY.md` and individual
+     * memory files using the generic `read_file`, `create_file`, `edit_file` tools.
      */
     private fun memory(): String = """MEMORY
 
-You have a persistent memory system. At task start, the system may inject relevant past memories as <recalled_memory>. Core memory (always-visible facts) is injected as <core_memory>.
+You have a persistent, file-based memory system at `{agentDir}/memory/` (the exact path is supplied below as a "Contents of …" block when `MEMORY.md` exists). This directory persists across sessions for this project only — not across projects.
 
-You do NOT need to call memory tools during normal tasks. Focus on the task.
+Build up the memory system over time so future sessions can quickly understand who the user is, how they prefer to collaborate, which behaviors to repeat or avoid, and the context behind the work.
 
-## Manual memory tools (last resort)
-Only call memory tools if the user literally says "remember this" or "save this as a rule." Do not preemptively save your own observations.
+If the user asks you to remember something, save it immediately. If they ask you to forget something, find and remove the relevant entry.
 
-- core_memory_append / core_memory_replace — user-facing rules and facts.
-- archival_memory_insert — long-term searchable knowledge with 2-4 lowercase hyphen-separated tags.
-- archival_memory_search — keyword search over archival memory.
-- conversation_search — keyword search over past session transcripts.
+## Types of memory
 
-## Using <recalled_memory>
-Treat recalled memories as hints, not ground truth — code moves, files get renamed, decisions get reversed. If a recalled memory contradicts what you see in the current file, trust the file."""
+- **user** — the user's role, goals, responsibilities, and knowledge. Helps tailor future behavior.
+- **feedback** — guidance on how to approach work (corrections AND confirmations). Include *why* so future-you can judge edge cases.
+- **project** — ongoing work, initiatives, incidents that are not derivable from code or git history. Convert relative dates ("Thursday") to absolute ("2026-05-07") when saving.
+- **reference** — pointers to external systems (Linear project IDs, Grafana boards, Slack channels, API endpoints).
+
+## What NOT to save
+
+- Code patterns, file paths, architecture that can be read from the code.
+- Git history, recent changes — `git log` / `git blame` are authoritative.
+- Debugging solutions — the fix is in the code; the commit message has the context.
+- Anything already in CLAUDE.md files.
+- Ephemeral task details, in-progress state, current conversation context.
+
+These exclusions apply even when the user asks you to save. If they ask you to save a PR list or activity summary, ask what was *surprising* or *non-obvious* about it — that is the part worth keeping.
+
+## How to save (two steps)
+
+**Step 1** — write the memory to its own file (e.g. `feedback_testing.md`) using `create_file` with this frontmatter format:
+
+```markdown
+---
+name: {{memory name}}
+description: {{one-line description — used to decide relevance in future conversations, so be specific}}
+type: {{user | feedback | project | reference}}
+---
+
+{{memory content — for feedback/project types, lead with the rule/fact, then **Why:** and **How to apply:** lines}}
+```
+
+**Step 2** — append a one-line pointer to `MEMORY.md` using `edit_file`. `MEMORY.md` is an index, not a memory — each entry is `- [Title](file.md) — one-line hook`, under ~150 characters. `MEMORY.md` is capped at 200 lines (content past line 200 is not injected into the prompt).
+
+## When to access
+
+- When a memory seems relevant, or the user references prior-conversation work, `read_file` the specific memory file.
+- You MUST check memory when the user asks to "check", "recall", or "remember".
+- If the user tells you to ignore memory, do not cite or apply remembered facts.
+- Memories can become stale. Before acting on a memory that names a file, function, or flag — verify the thing still exists (`read_file` / `search_code`). Trust current code over old memory.
+
+## Relationship to other persistence
+
+- Memory is cross-session. For within-session tracking (tasks to complete, plan changes), use the task system (`task_create`/`task_update`) or the plan mode — NOT memory.
+"""
 
     /**
      * Section 11: User Instructions
