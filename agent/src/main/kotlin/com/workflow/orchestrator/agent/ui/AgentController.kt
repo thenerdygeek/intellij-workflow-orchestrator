@@ -46,6 +46,7 @@ import com.workflow.orchestrator.agent.tools.background.BackgroundPool
 import com.workflow.orchestrator.core.events.BackgroundProcessSnapshotDto
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
+import com.workflow.orchestrator.core.util.PathLinkResolver
 import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
@@ -2781,14 +2782,24 @@ class AgentController(
     //  Navigation helpers
     // ═══════════════════════════════════════════════════
 
+    private val pathLinkResolver: PathLinkResolver by lazy { PathLinkResolver(project) }
+
     private fun navigateToFile(path: String, line: Int) {
+        val input = if (line > 0) "$path:$line" else path
+        val resolved = pathLinkResolver.resolveForOpen(input) ?: run {
+            LOG.info("AgentController: rejected navigateToFile target '$path'")
+            return
+        }
         invokeLater {
             try {
-                val vf = com.intellij.openapi.vfs.LocalFileSystem.getInstance().findFileByPath(path) ?: return@invokeLater
-                val descriptor = com.intellij.openapi.fileEditor.OpenFileDescriptor(project, vf, line.coerceAtLeast(0), 0)
+                val vf = com.intellij.openapi.vfs.LocalFileSystem.getInstance()
+                    .findFileByPath(resolved.canonicalPath) ?: return@invokeLater
+                val descriptor = com.intellij.openapi.fileEditor.OpenFileDescriptor(
+                    project, vf, resolved.line, resolved.column
+                )
                 FileEditorManager.getInstance(project).openEditor(descriptor, true)
             } catch (e: Exception) {
-                LOG.warn("AgentController: failed to navigate to $path:$line", e)
+                LOG.warn("AgentController: failed to open ${resolved.canonicalPath}", e)
             }
         }
     }
