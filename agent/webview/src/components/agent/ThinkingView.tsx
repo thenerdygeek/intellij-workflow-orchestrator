@@ -7,6 +7,7 @@ import {
 import { TextShimmer } from '../ui/prompt-kit/text-shimmer';
 import { CopyButton } from '../ui/copy-button';
 import { Brain } from 'lucide-react';
+import { scanAndLinkify } from '../../util/file-link-scanner';
 
 // ── Thinking Timer ──
 
@@ -44,6 +45,7 @@ export function ThinkingView({ content, isStreaming }: ThinkingViewProps) {
   const elapsed = useThinkingTimer(isStreaming);
   const [open, setOpen] = useState(true);
   const hasAutoCollapsed = useRef(false);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!isStreaming && !hasAutoCollapsed.current && content.length > 0) {
@@ -55,6 +57,16 @@ export function ThinkingView({ content, isStreaming }: ThinkingViewProps) {
     }
   }, [isStreaming, content]);
 
+  useEffect(() => {
+    if (!isStreaming) {
+      const node = contentRef.current;
+      if (!node) return;
+      // Defer one frame so the thinking content has committed its final DOM.
+      const raf = requestAnimationFrame(() => { void scanAndLinkify(node); });
+      return () => cancelAnimationFrame(raf);
+    }
+  }, [isStreaming]);
+
   const handleOpenChange = useCallback((v: boolean) => setOpen(v), []);
   const label = formatDuration(elapsed, isStreaming);
 
@@ -65,7 +77,7 @@ export function ThinkingView({ content, isStreaming }: ThinkingViewProps) {
       isStreaming={isStreaming}
       className="group/thinking mb-2"
     >
-      <div role="region" aria-label="Agent reasoning">
+      <div ref={contentRef} role="region" aria-label="Agent reasoning">
         <div className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[12px] transition-colors hover:bg-[var(--hover-overlay)]">
           <ReasoningTrigger
             className="flex flex-1 items-center gap-2"

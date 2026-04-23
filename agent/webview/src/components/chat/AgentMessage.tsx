@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import type { UiMessage, Mention, Question } from '@/bridge/types';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 import {
@@ -8,6 +8,7 @@ import {
 import { CopyButton } from '@/components/ui/copy-button';
 import { cn } from '@/lib/utils';
 import { PlanApprovedBubble } from './PlanApprovedBubble';
+import { scanAndLinkify } from '@/util/file-link-scanner';
 
 // ── Mention chip rendering for user message bubbles ──
 
@@ -131,11 +132,25 @@ export const AgentMessage = memo(function AgentMessage({
   message,
   isStreaming = false,
 }: AgentMessageProps) {
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  const isUser = message.say === 'USER_MESSAGE';
+  const isFinalized = !isStreaming && !isUser;
+
+  useEffect(() => {
+    if (isFinalized) {
+      const node = contentRef.current;
+      if (!node) return;
+      // Defer one frame so the markdown pipeline has committed its final DOM.
+      const raf = requestAnimationFrame(() => { void scanAndLinkify(node); });
+      return () => cancelAnimationFrame(raf);
+    }
+  }, [isFinalized]);
+
   if (message.say === 'PLAN_APPROVED') {
     return <PlanApprovedBubble message={message} />;
   }
 
-  const isUser = message.say === 'USER_MESSAGE';
   const content = message.text ?? '';
 
   return (
@@ -155,6 +170,7 @@ export const AgentMessage = memo(function AgentMessage({
 
       {/* Content bubble */}
       <div
+        ref={contentRef}
         className={cn(
           'relative max-w-[85%] rounded-lg px-4 py-3 whitespace-normal [overflow-wrap:anywhere]',
           isUser

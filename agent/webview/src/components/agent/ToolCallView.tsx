@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import type { ToolCall, ToolCallStatus } from '@/bridge/types';
+import { scanAndLinkify } from '@/util/file-link-scanner';
 import { Tool, type ToolPart } from '@/components/ui/prompt-kit/tool';
 import { Terminal } from '@/components/ui/tool-ui/terminal';
 import { useChatStore } from '@/stores/chatStore';
@@ -204,6 +205,19 @@ export function ToolCallView({ toolCall, isLatest, rolledBack }: ToolCallViewPro
   const streamOutput = useChatStore(s => s.toolOutputStreams[toolCall.id] || '');
   const hasStreamOutput = streamOutput.length > 0;
 
+  const contentRef = useRef<HTMLDivElement>(null);
+  const isFinalized = status === 'COMPLETED' || status === 'ERROR';
+
+  useEffect(() => {
+    if (isFinalized) {
+      const node = contentRef.current;
+      if (!node) return;
+      // Defer one frame so the tool output has committed its final DOM.
+      const raf = requestAnimationFrame(() => { void scanAndLinkify(node); });
+      return () => cancelAnimationFrame(raf);
+    }
+  }, [isFinalized]);
+
   const timeoutSeconds = (() => {
     try {
       const t = JSON.parse(toolCall.args)?.timeout;
@@ -296,6 +310,7 @@ export function ToolCallView({ toolCall, isLatest, rolledBack }: ToolCallViewPro
 
   return (
     <div
+      ref={contentRef}
       className={cn(
         'group relative',
         isRunning && 'ring-1 ring-[var(--accent)] rounded-lg',
