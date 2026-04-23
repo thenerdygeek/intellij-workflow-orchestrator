@@ -37,17 +37,22 @@ class DebugStepTool(private val controller: AgentDebugController) : AgentTool {
     override val description = """
 Debug session navigation — stepping, state, and lifecycle control.
 
-Actions and their parameters:
-- get_state(session_id?) → Current breakpoint, thread, and line info
-- step_over(session_id?) → Step over current line
-- step_into(session_id?) → Step into method call
-- step_out(session_id?) → Step out of current method
-- force_step_into(session_id?) → Step into even library/framework code (bypasses step filters — use to enter Spring proxies, CGLIB, reflection)
-- force_step_over(session_id?) → Step over, ignoring any breakpoints in called methods
-- resume(session_id?) → Resume execution
-- pause(session_id?) → Pause execution
-- run_to_cursor(file, line, session_id?) → Run to specific line
-- stop(session_id?) → Stop debug session
+IMPORTANT: Call get_state first to confirm session exists and whether it is paused.
+Pause-required actions fail loudly when the session is running.
+
+State tags: [SUSPENDED] = session must be paused. [ANY] = runs regardless.
+
+Actions:
+- get_state(session_id?) [ANY] → Current session state (paused/running), breakpoint, thread, line. CALL THIS FIRST.
+- step_over(session_id?) [SUSPENDED] → Step over current line
+- step_into(session_id?) [SUSPENDED] → Step into method call
+- step_out(session_id?) [SUSPENDED] → Step out of current method
+- force_step_into(session_id?) [SUSPENDED] → Step into even library/framework code (bypasses step filters — use to enter Spring proxies, CGLIB, reflection, or Kotlin inlined bodies)
+- force_step_over(session_id?) [SUSPENDED] → Step over, ignoring any breakpoints in called methods
+- run_to_cursor(file, line, session_id?) [SUSPENDED] → Run to specific line (despite the name, requires current suspension)
+- resume(session_id?) [ANY] → Resume execution
+- pause(session_id?) [ANY] → Best-effort pause. May take several seconds or fail if the JVM is in a non-suspendable state (native code, GC). Follow with get_state to confirm.
+- stop(session_id?) [ANY] → Stop debug session
 
 All actions accept optional session_id (defaults to active session).
 """.trimIndent()

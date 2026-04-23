@@ -63,14 +63,17 @@ class DebugBreakpointsTool(private val controller: AgentDebugController) : Agent
     override val description = """
 Breakpoint management — add, remove, list breakpoints, and attach the debugger to a remote JVM.
 
-Actions and their parameters:
-- add_breakpoint(file, line, condition?, log_expression?, temporary?, suspend_policy?, pass_count?) → Add line breakpoint
+Breakpoints are project-scoped and do NOT require a running debug session. attach_to_process
+creates a session. To launch a run configuration in debug mode, use runtime_exec(action=run_config, mode=debug).
+
+Actions:
+- add_breakpoint(file, line, condition?, log_expression?, temporary?, suspend_policy?, pass_count?) → Add line breakpoint. Fails if the line is not breakpointable (comment, blank line, import).
 - method_breakpoint(class_name, method_name, watch_entry?, watch_exit?) → Add method breakpoint
 - exception_breakpoint(exception_class, caught?, uncaught?, condition?) → Break on exception
 - field_watchpoint(class_name, field_name, file?, watch_read?, watch_write?) → Watch field access/modification
 - remove_breakpoint(file, line) → Remove breakpoint at file:line
-- list_breakpoints(file?) → List all breakpoints, optionally filtered by file
-- attach_to_process(port, host?, name?) → Attach debugger to remote JVM
+- list_breakpoints(file?) → List all breakpoints (line, method, exception, field), optionally filtered by file
+- attach_to_process(port, host?, name?) → Attach debugger to remote JVM. Target must be listening on the JDWP port.
 
 All breakpoint actions modify IDE state. attach_to_process creates a debug session.
 To launch a run configuration in debug mode, use runtime_exec(action=run_config, mode=debug).

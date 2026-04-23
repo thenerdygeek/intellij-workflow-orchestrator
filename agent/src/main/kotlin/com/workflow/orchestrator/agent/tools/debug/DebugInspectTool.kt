@@ -42,18 +42,24 @@ class DebugInspectTool(private val controller: AgentDebugController) : AgentTool
     override val description = """
 Debug inspection — evaluate expressions, inspect variables, and advanced operations.
 
-Actions and their parameters:
-- evaluate(expression, session_id?) → Evaluate Java/Kotlin expression in current context
-- get_stack_frames(session_id?, thread_name?, max_frames?) → Get call stack
-- get_variables(session_id?, variable_name?, max_depth?) → Inspect local variables
-- thread_dump(session_id?, max_frames?, include_stacks?, include_daemon?) → Full thread dump
-- memory_view(class_name, session_id?, max_instances?) → Count/inspect live instances
-- set_value(variable_name, new_value, session_id?) → Modify a variable's value at runtime (test hypotheses without restarting)
-- hotswap(session_id?, compile_first?) → Hot-reload changed classes
-- force_return(session_id?, return_value?, return_type?) → Force method to return immediately
-- drop_frame(session_id?, frame_index?) → Rewind execution to frame start
+IMPORTANT: Before calling any action below, run debug_step(action=get_state) first to
+confirm the session is paused and (if multiple sessions are open) get the session_id.
 
-Most actions require a suspended session. session_id defaults to active session.
+State tags: [SUSPENDED] = session must be paused at a breakpoint or after a step.
+            [ANY]       = works on a running or paused session.
+
+Actions:
+- evaluate(expression, session_id?) [SUSPENDED] → Evaluate Java/Kotlin expression in current frame
+- get_stack_frames(session_id?, thread_name?, max_frames?) [SUSPENDED] → Get call stack
+- get_variables(session_id?, variable_name?, max_depth?) [SUSPENDED] → Inspect local variables in current frame
+- set_value(variable_name, new_value, session_id?) [SUSPENDED] → Modify a variable's value at runtime (test hypotheses without restarting)
+- thread_dump(session_id?, max_frames?, include_stacks?, include_daemon?) [ANY] → Full thread dump. Per-thread frames require that thread to be suspended.
+- memory_view(class_name, session_id?, max_instances?) [SUSPENDED, Java/Kotlin only, requires canGetInstanceInfo] → Count/inspect live instances
+- hotswap(session_id?, compile_first?) [ANY, Java/Kotlin only] → Hot-reload changed classes
+- force_return(session_id?, return_value?, return_type?) [SUSPENDED, Java/Kotlin only, requires canForceEarlyReturn] → Force method to return immediately
+- drop_frame(session_id?, frame_index?) [SUSPENDED, Java/Kotlin only, requires canPopFrames] → Rewind execution to frame start. Variable state is NOT reset.
+
+session_id defaults to the active/resolved session. If multiple sessions are open and none is uniquely paused, session_id is required.
 """.trimIndent()
 
     override val parameters = FunctionParameters(
