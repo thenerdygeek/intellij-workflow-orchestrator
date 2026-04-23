@@ -354,6 +354,19 @@ class AgentDashboardPanel(
         cefPanel?.onNavigateToFile = onNavigateToFile
     }
 
+    /** Wire the batch path-validation bridge. Params: (pathsJson, callbackName). */
+    var onValidatePaths: ((String, String) -> Unit)?
+        get() = cefPanel?.onValidatePaths
+        set(value) { cefPanel?.onValidatePaths = value }
+
+    /**
+     * Execute raw JavaScript in the JCEF browser, queueing it until the page is loaded.
+     * Used to push async results (e.g. path validation) back to a named window callback.
+     */
+    fun callJs(code: String) {
+        cefPanel?.callJs(code)
+    }
+
     fun appendJiraCard(cardJson: String) {
         cefPanel?.appendJiraCard(cardJson)
         broadcast(replay = false) { it.appendJiraCard(cardJson) }

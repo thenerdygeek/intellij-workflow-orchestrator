@@ -75,6 +75,7 @@ class AgentCefPanel(
     private var editQuestionQuery: JBCefJSQuery? = null
     private var deactivateSkillQuery: JBCefJSQuery? = null
     private var navigateToFileQuery: JBCefJSQuery? = null
+    private var validatePathsQuery: JBCefJSQuery? = null
     private var cancelTaskQuery: JBCefJSQuery? = null
     private var newChatQuery: JBCefJSQuery? = null
     private var sendMessageQuery: JBCefJSQuery? = null
@@ -171,6 +172,9 @@ class AgentCefPanel(
 
     /** Callback when user clicks a file path link in chat output. */
     var onNavigateToFile: ((String, Int) -> Unit)? = null
+
+    /** Callback when JS requests batch path validation. Params: (pathsJson, callbackName). */
+    var onValidatePaths: ((String, String) -> Unit)? = null
 
     var onCancelTask: (() -> Unit)? = null
     var onRetryLastTask: (() -> Unit)? = null
@@ -368,6 +372,14 @@ class AgentCefPanel(
             onNavigateToFile?.invoke(filePath, line)
             JBCefJSQuery.Response("ok")
         }
+        validatePathsQuery = registerQuery(b) { data ->
+            // data format: "pathsJson|callbackName"
+            val sepIdx = data.lastIndexOf('|')
+            val pathsJson = if (sepIdx > 0) data.substring(0, sepIdx) else "[]"
+            val callbackName = if (sepIdx > 0) data.substring(sepIdx + 1) else ""
+            onValidatePaths?.invoke(pathsJson, callbackName)
+            JBCefJSQuery.Response("ok")
+        }
 
         // Toolbar + input bar bridges
         cancelTaskQuery = registerQuery(b) { _ -> onCancelTask?.invoke(); JBCefJSQuery.Response("ok") }
@@ -563,6 +575,7 @@ class AgentCefPanel(
                     injectBridge("_editQuestion") { editQuestionQuery?.let { q -> js("window._editQuestion = function(qid) { ${q.inject("qid")} }") } }
                     injectBridge("_deactivateSkill") { deactivateSkillQuery?.let { q -> js("window._deactivateSkill = function() { ${q.inject("'dismiss'")} }") } }
                     injectBridge("_navigateToFile") { navigateToFileQuery?.let { q -> js("window._navigateToFile = function(path) { ${q.inject("path")} }") } }
+                    injectBridge("_validatePaths") { validatePathsQuery?.let { q -> js("window._validatePaths = function(pathsJson, cb) { ${q.inject("pathsJson + '|' + cb")} }") } }
                     injectBridge("_cancelTask") { cancelTaskQuery?.let { q -> js("window._cancelTask = function() { ${q.inject("'cancel'")} }") } }
                     injectBridge("_newChat") { newChatQuery?.let { q -> js("window._newChat = function() { ${q.inject("'new'")} }") } }
                     injectBridge("_sendMessage") { sendMessageQuery?.let { q -> js("window._sendMessage = function(text) { ${q.inject("text")} }") } }
@@ -1297,7 +1310,7 @@ class AgentCefPanel(
     // ═══════════════════════════════════════════════════
 
     /** Execute JavaScript in the browser, queuing if page hasn't loaded yet. */
-    private fun callJs(code: String) {
+    internal fun callJs(code: String) {
         bridgeDispatcher?.dispatch(code)
     }
 

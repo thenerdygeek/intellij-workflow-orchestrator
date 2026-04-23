@@ -50,6 +50,7 @@ import com.workflow.orchestrator.core.util.PathLinkResolver
 import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -410,6 +411,7 @@ class AgentController(
             onPromptSubmitted = ::executeTask
         )
         panel.setCefNavigationCallbacks(onNavigateToFile = ::navigateToFile)
+        panel.onValidatePaths = ::handleValidatePaths
         panel.onSendMessage = ::executeTask
     }
 
@@ -2804,6 +2806,25 @@ class AgentController(
         }
     }
 
+    private fun handleValidatePaths(pathsJson: String, callbackName: String) {
+        CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+            val resultJson = try {
+                val paths = Json.decodeFromString<List<String>>(pathsJson)
+                val validated = pathLinkResolver.validate(paths).map {
+                    ValidatedPathJson(it.input, it.canonicalPath, it.line, it.column)
+                }
+                Json.encodeToString(validated)
+            } catch (e: Exception) {
+                LOG.warn("handleValidatePaths: bad payload", e)
+                "[]"
+            }
+            // Push result to the one-shot JS callback (same pattern as validateTicket).
+            val cbJson = Json.encodeToString(callbackName)
+            val resJson = Json.encodeToString(resultJson)
+            invokeLater { dashboard.callJs("(window[$cbJson])($resJson)") }
+        }
+    }
+
     private fun openChatInEditorTab() {
         invokeLater {
             val chatFile = AgentChatVirtualFile(project)
@@ -3116,6 +3137,19 @@ internal fun buildRevisionMessage(commentsJson: String): String {
         appendLine("Please revise the plan and present the updated version using plan_mode_respond.")
     }
 }
+
+/**
+ * JSON-serializable mirror of [com.workflow.orchestrator.core.util.ValidatedPath].
+ * Used by [AgentController.handleValidatePaths] to encode path validation results
+ * for the `_validatePaths` JCEF bridge.
+ */
+@Serializable
+private data class ValidatedPathJson(
+    val input: String,
+    val canonicalPath: String,
+    val line: Int,
+    val column: Int,
+)
 
 /**
  * Count the number of non-blank comments in a v2 revision payload.
