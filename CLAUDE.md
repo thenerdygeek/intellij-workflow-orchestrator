@@ -47,7 +47,7 @@ Jira/Bamboo/Bitbucket/Sonar: `Authorization: Bearer <token>` | Nexus: `Authoriza
 Base: `~/.workflow-orchestrator/{dirName}-{first6OfSHA256}/agent/`
 - `sessions.json` — global index
 - `sessions/{id}/api_conversation_history.json` + `ui_messages.json` + `checkpoints/`
-- `core-memory.json` (injected in system prompt) | `archival/store.json` (5000 cap) | `logs/` (7 days)
+- `memory/MEMORY.md` (index, always injected when present) + `memory/<type>_<topic>.md` files | `logs/` (7 days)
 
 ## Agent Configs & Persistence
 
@@ -59,7 +59,7 @@ Schema filtering removes write tools in plan mode; execution guard in AgentLoop 
 
 ## Agent Memory
 
-Core (`core-memory.json`) → always in `<core_memory>` | Archival (`archival/store.json`) → tag-boosted keyword search | Recall → keyword search across past sessions. `AutoMemoryManager`: session-end Haiku extraction + session-start retrieval. LLM tools: `core_memory_read/append/replace`, `archival_memory_insert/search`, `conversation_search`.
+Per-project file-based memory at `~/.workflow-orchestrator/{proj}/agent/memory/`. `MEMORY.md` (≤200 lines) is always injected into the system prompt. Individual memory files (`<type>_<topic>.md` with YAML frontmatter: `name`, `description`, `type ∈ {user, feedback, project, reference}`) are loaded on demand via `read_file`. No specialized memory tools — the LLM uses `read_file` / `create_file` / `edit_file` directly. See `agent/CLAUDE.md` → "File-Based Memory System".
 
 ## UX
 

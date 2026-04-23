@@ -64,7 +64,7 @@ Built by `SystemPrompt.build()`, called from `AgentService` at task start and wh
 7. **Rules** — IDE tool preference, read-before-edit, environment, communication, code changes, safety, task execution, subagent delegation
 8. **System Info** — OS, IDE, shell, home dir, working directory
 9. **Objective** — iterative task execution instructions, `<thinking>` tag usage
-10. **Memory** — 3-tier memory explanation, manual tool guidelines, recalled memory usage
+10. **Memory** — file-based MEMORY.md explanation + optional injected index content
 11. **User Instructions** (optional) — project name, repo structure, custom instructions
 
 ## Tools (~30 core + ~50 deferred = ~80 total)
@@ -98,12 +98,6 @@ Registered in `AgentService.registerAllTools()`:
 | `diagnostics` | SemanticDiagnosticsTool | IDE error/warning diagnostics |
 | `tool_search` | ToolSearchTool | Search and activate deferred tools |
 | `agent` | SpawnAgentTool | Spawn/resume/send/kill subagents |
-
-**Conditional core** (registered when memory/storage is initialized):
-- `core_memory_read`, `core_memory_append`, `core_memory_replace` — core memory tools
-- `archival_memory_insert`, `archival_memory_search` — archival memory tools
-- `conversation_search` — past session search
-- `save_memory` — legacy markdown memory
 
 ### Deferred Tools (loaded via `tool_search`)
 
@@ -448,7 +442,7 @@ Two-layer enforcement:
 2. **Execution guard** (`AgentLoop.run()`, ~line 955) — Checks `planMode && toolName in WRITE_TOOLS` as a safety net for cached tool calls from before mode switch.
 
 **Blocked in plan mode:** edit_file, create_file, run_command, revert_file, background_process, send_stdin, format_code, optimize_imports, refactor_rename, enable_plan_mode
-**Always available:** read_file, search_code, glob_files, diagnostics, find_definition, find_references, think, agent, tool_search, ask_followup_question, plan_mode_respond, memory tools, etc.
+**Always available:** read_file, search_code, glob_files, diagnostics, find_definition, find_references, think, agent, tool_search, ask_followup_question, plan_mode_respond, etc.
 
 **Transition:** `AgentService.planModeActive.set(false)` → tools restored on next LLM call → dashboard UI updated.
 
@@ -537,56 +531,18 @@ Faithful port of Cline's two-file session persistence (message-state.ts + disk.t
 6. Rebuild ContextManager with `ApiMessage.toChatMessage()` conversion
 7. Continue execution via `initiateTaskLoop(newUserContent)`
 
-## Three-Tier Memory System
+## File-Based Memory System
 
-### Tier 1: Core Memory (always in prompt, 4KB)
-- Location: `~/.workflow-orchestrator/{proj}/agent/core-memory.json`
-- Fixed-size key-value store, injected as `<core_memory>` in system prompt
-- Self-editable by agent via `core_memory_read`, `core_memory_append`, `core_memory_replace` tools
-- Loaded at session start by `CoreMemory.forProject()`
+Per-project, file-backed auto-memory patterned after Claude Code. No specialized tools — the LLM operates on memory files with `read_file`, `create_file`, `edit_file`.
 
-### Tier 2: Archival Memory (searchable, unlimited)
-- Location: `~/.workflow-orchestrator/{proj}/agent/archival/store.json`
-- JSON-backed store with LLM-generated tags for keyword search
-- Insert via `archival_memory_insert`, search via `archival_memory_search`
-- Tag-boosted keyword matching (3x tag boost, sub-millisecond for <5K entries)
-- Cap: 5000 entries, oldest evicted when full
+- **Location:** `~/.workflow-orchestrator/{proj}/agent/memory/`
+- **Index:** `MEMORY.md` — one line per memory (`- [Title](file.md) — hook`). Truncated at 200 lines by `MemoryIndex.load()` before injection.
+- **Individual memories:** `<type>_<topic>.md` with YAML frontmatter (`name`, `description`, `type ∈ {user, feedback, project, reference}`). Loaded on demand via `read_file` when their index entry looks relevant.
+- **Injection:** `AgentService.executeTask()` calls `MemoryIndex.load(memoryDir)` at session start and passes the result through `SystemPrompt.build(memoryIndex = …, memoryIndexPath = …)`. Injected once per session — mid-session edits to `MEMORY.md` are visible only after the LLM re-reads the file.
+- **Sub-agents:** `memory: none` (default) → no injection. `memory: project` → same `memoryIndex` as the orchestrator.
+- **PathValidator:** `resolveAndValidateForWrite()` accepts `{agentDir}/memory/` as an additional allowed root for `edit_file` / `create_file`.
 
-### Tier 3: Conversation Recall (past session search)
-- `conversation_search` tool for keyword search across past session transcripts
-- Read-only — sessions persisted by MessageStateHandler
-
-### Legacy: Markdown Memory
-- Location: `~/.workflow-orchestrator/{proj}/agent/memory/`
-- `save_memory` tool, loaded via `AgentMemoryStore.loadMemories()`
-
-### Memory Tools (7 total)
-| Tool | Tier | Description |
-|------|------|-------------|
-| `core_memory_read` | Core | Read current core memory block |
-| `core_memory_append` | Core | Add/update entry in core memory |
-| `core_memory_replace` | Core | Replace or delete core memory entry |
-| `archival_memory_insert` | Archival | Store long-term knowledge with tags |
-| `archival_memory_search` | Archival | Keyword search over archival store |
-| `conversation_search` | Recall | Search past session transcripts |
-| `save_memory` | Legacy | Save markdown memory file |
-
-### Auto-Memory System (Retrieval-Only)
-
-One automatic trigger — session-start retrieval (keyword extraction + archival search + staleness filter, zero LLM cost). No automatic session-end extraction.
-
-**Key files:**
-- `memory/auto/AutoMemoryManager.kt` — retrieval-only wrapper around `RelevanceRetriever`
-- `memory/auto/RelevanceRetriever.kt` — keyword-based archival search with staleness filter (suppresses entries mentioning missing file paths)
-
-Gated by `AgentSettings.state.autoMemoryEnabled` (default true).
-
-### Memory Management UI
-
-**Settings page:** Tools → Workflow Orchestrator → AI Agent → Memory
-- Toggle retrieval on/off, view/edit core memory blocks, clear memory with confirmation
-
-**TopBar indicator:** Badge showing `◆ {coreKB} | {archivalCount}`. Click opens Settings.
+No keyword search, no tag search, no cross-session conversation recall, no automatic extraction. The LLM decides relevance by scanning the always-injected `MEMORY.md` index and fetching individual memories as needed.
 
 ## Interactive Debugging
 
