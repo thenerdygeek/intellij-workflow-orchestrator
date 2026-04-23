@@ -760,6 +760,15 @@ class AgentDashboardPanel(
         broadcast(replay = false) { it.applyTaskUpdate(taskJson) }
     }
 
+    /**
+     * Push a full background-process snapshot to the webview top-bar indicator.
+     * Calls the `window.__receiveBackgroundUpdate` global registered in jcef-bridge.ts.
+     */
+    fun receiveBackgroundUpdate(snapshotJson: String) {
+        runOnEdt { cefPanel?.receiveBackgroundUpdate(snapshotJson) }
+        broadcast(replay = false) { it.receiveBackgroundUpdate(snapshotJson) }
+    }
+
     fun showResumeBar(sessionId: String) {
         runOnEdt { cefPanel?.showResumeBar(sessionId) }
         broadcast(replay = false) { it.showResumeBar(sessionId) }
@@ -813,6 +822,15 @@ class AgentDashboardPanel(
 
     fun setCefCancelSteeringCallback(onCancel: (String) -> Unit) {
         cefPanel?.onCancelSteering = onCancel
+    }
+
+    /**
+     * Wire the `_loadBackgroundSnapshot` JCEF bridge.
+     * [handler] receives a sessionId string and must return a JSON array
+     * of [com.workflow.orchestrator.core.events.BackgroundProcessSnapshotDto].
+     */
+    fun setCefLoadBackgroundSnapshotCallback(handler: (sessionId: String) -> String) {
+        cefPanel?.onLoadBackgroundSnapshot = handler
     }
 
     private fun runOnEdt(action: () -> Unit) {

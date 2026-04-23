@@ -42,11 +42,14 @@ import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
 import com.workflow.orchestrator.agent.ui.plan.AgentPlanEditor
 import com.workflow.orchestrator.agent.ui.plan.AgentPlanVirtualFile
 import com.workflow.orchestrator.agent.util.JsEscape
+import com.workflow.orchestrator.agent.tools.background.BackgroundPool
+import com.workflow.orchestrator.core.events.BackgroundProcessSnapshotDto
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.decodeFromJsonElement
@@ -265,6 +268,15 @@ class AgentController(
         // it to the webview. Also refresh execution steps so the PlanProgressWidget
         // (which reads chatStore.tasks) stays in sync with authoritative state.
         subscribeToTaskChanges()
+
+        // Subscribe to BackgroundChanged events so the top-bar background indicator
+        // stays up-to-date as processes are registered, complete, or killed.
+        subscribeToBackgroundChanges()
+
+        // Wire the Phase 6 auto-wake follow-up: when AgentService fires an auto-wake
+        // event (e.g. a background process completed and the session is dormant), drive
+        // a real session resume through AgentController so all UI callbacks are attached.
+        wireAutoWakeListener()
     }
 
     /**
@@ -310,6 +322,60 @@ class AgentController(
      * webview's strict TypeScript types are satisfied.
      */
     private val taskEventJson = Json { encodeDefaults = true; ignoreUnknownKeys = true }
+
+    /** Lenient JSON instance shared by background-snapshot serialization. */
+    private val backgroundJson = Json { ignoreUnknownKeys = true }
+
+    /**
+     * Collect [WorkflowEvent.BackgroundChanged] from [EventBus] and forward the snapshot
+     * to the webview top-bar indicator via `window.__receiveBackgroundUpdate`.
+     *
+     * Only events whose [WorkflowEvent.BackgroundChanged.sessionId] matches the current
+     * active session are forwarded — events for other sessions are silently ignored.
+     *
+     * Runs on [controllerScope] (cancelled in [dispose]).
+     */
+    private fun subscribeToBackgroundChanges() {
+        val eventBus = project.getService(EventBus::class.java)
+        if (eventBus == null) {
+            LOG.warn("[Background] subscribeToBackgroundChanges: EventBus service not available; background indicator will not update.")
+            return
+        }
+        controllerScope.launch {
+            eventBus.events.collect { event ->
+                if (event !is WorkflowEvent.BackgroundChanged) return@collect
+                if (event.sessionId != currentSessionId) return@collect
+                val json = backgroundJson.encodeToString(
+                    ListSerializer(BackgroundProcessSnapshotDto.serializer()),
+                    event.snapshot
+                )
+                invokeLater { dashboard.receiveBackgroundUpdate(json) }
+            }
+        }
+    }
+
+    /**
+     * Register the auto-wake listener with [AgentService].
+     *
+     * When a dormant session is auto-woken (e.g. a background process completed and
+     * the agent needs to continue), [AgentService] fires the listener with the target
+     * [sessionId] and an optional [syntheticMessage] to inject as the next user turn.
+     * We route the call through [resumeSession] so all UI callbacks (streaming,
+     * approval gates, checkpoints, stats) are properly wired — identical to a
+     * user-initiated resume.
+     */
+    private fun wireAutoWakeListener() {
+        service.setAutoWakeListener { sessionId, syntheticMessage ->
+            invokeLater {
+                runCatching {
+                    val msg = syntheticMessage.ifBlank { null }
+                    resumeSession(sessionId, msg)
+                }.onFailure {
+                    LOG.warn("[AgentController] auto-wake resume failed for session $sessionId: ${it.message}", it)
+                }
+            }
+        }
+    }
 
     // ═══════════════════════════════════════════════════
     //  Callback wiring — dashboard actions → controller
@@ -675,6 +741,25 @@ class AgentController(
         // buffered and the page took longer than expected (slow machines, heavy IDE startup).
         // If the buffered calls already flushed successfully, this is a harmless idempotent re-push.
         dashboard.setCefPageReadyCallback { pushInitialState() }
+
+        // Wire the _loadBackgroundSnapshot JCEF bridge so the webview can request an
+        // initial snapshot for a given session when it first mounts the top-bar indicator.
+        dashboard.setCefLoadBackgroundSnapshotCallback { sessionId ->
+            val pool = BackgroundPool.getInstance(project)
+            val snapshot = pool.list(sessionId).map { h ->
+                BackgroundProcessSnapshotDto(
+                    bgId = h.bgId,
+                    kind = h.kind,
+                    label = h.label,
+                    state = h.state().name,
+                    startedAt = h.startedAt,
+                    exitCode = h.exitCode(),
+                    outputBytes = h.outputBytes(),
+                    runtimeMs = h.runtimeMs(),
+                )
+            }
+            backgroundJson.encodeToString(ListSerializer(BackgroundProcessSnapshotDto.serializer()), snapshot)
+        }
 
         // Route tool process output to per-tool-call Terminal blocks via toolStreamBatcher.
         // TODO: RunCommandTool.streamCallback is a JVM-static field — if two projects are open
@@ -2963,14 +3048,17 @@ class AgentController(
         pendingApproval?.cancel()
         pendingApproval = null
         pendingApprovalToolName = null
-        // Cancel the long-lived controller scope so the TaskChanged EventBus
-        // subscription stops collecting once the controller is disposed.
+        // Cancel the long-lived controller scope so the TaskChanged / BackgroundChanged
+        // EventBus subscriptions stop collecting once the controller is disposed.
         controllerScope.cancel()
         // Drop the artifact push callback so the registry cannot invoke a
         // stale dashboard reference if a render fires in the window between
         // this dispose and a new controller installing its own callback.
         // Matches the "remove listener on tear-down" pattern used elsewhere.
         ArtifactResultRegistry.getInstance(project).setPushCallback(null)
+        // Clear the auto-wake listener so a stale controller reference is not
+        // held by AgentService after disposal.
+        service.setAutoWakeListener(null)
     }
 }
 

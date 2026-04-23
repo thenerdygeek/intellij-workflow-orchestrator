@@ -120,6 +120,7 @@ class AgentCefPanel(
     private var resumeViewedSessionQuery: JBCefJSQuery? = null
     private var copyToClipboardQuery: JBCefJSQuery? = null
     private var openInsightsTabQuery: JBCefJSQuery? = null
+    private var loadBackgroundSnapshotQuery: JBCefJSQuery? = null
     var mentionSearchProvider: MentionSearchProvider? = null
     var onSendMessageWithMentions: ((String, String) -> Unit)? = null  // (text, mentionsJson)
 
@@ -258,6 +259,13 @@ class AgentCefPanel(
 
     /** Callback when user clicks the cost chip to open the Insights tab. */
     var onOpenInsightsTab: (() -> Unit)? = null
+
+    /**
+     * Callback for the `_loadBackgroundSnapshot` bridge.
+     * Called with the sessionId from JS; should return the serialized JSON array of
+     * [com.workflow.orchestrator.core.events.BackgroundProcessSnapshotDto] for that session.
+     */
+    var onLoadBackgroundSnapshot: ((sessionId: String) -> String)? = null
 
     /**
      * Fired after the page is fully loaded and all bridges are injected.
@@ -506,6 +514,10 @@ class AgentCefPanel(
             onOpenInsightsTab?.invoke()
             JBCefJSQuery.Response("ok")
         }
+        loadBackgroundSnapshotQuery = registerQuery(b) { sessionId ->
+            val json = onLoadBackgroundSnapshot?.invoke(sessionId) ?: "[]"
+            JBCefJSQuery.Response(json)
+        }
 
         // Wait for page load before executing JS
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
@@ -596,6 +608,16 @@ class AgentCefPanel(
                     injectBridge("_resumeViewedSession") { resumeViewedSessionQuery?.let { q -> js("window._resumeViewedSession = function() { ${q.inject("''")} }") } }
                     injectBridge("_copyToClipboard") { copyToClipboardQuery?.let { q -> js("window._copyToClipboard = function(text) { ${q.inject("text")} }") } }
                     injectBridge("_openInsightsTab") { openInsightsTabQuery?.let { q -> js("window._openInsightsTab = function() { ${q.inject("'insights'")} }") } }
+                    injectBridge("_loadBackgroundSnapshot") {
+                        loadBackgroundSnapshotQuery?.let { q ->
+                            js(
+                                "window._loadBackgroundSnapshot = function(sessionId) {" +
+                                    " return new Promise(function(resolve, reject) {" +
+                                    " ${q.inject("sessionId", "function(r) { resolve(JSON.parse(r || '[]')); }", "function(err) { resolve([]); }")}" +
+                                    " }); };"
+                            )
+                        }
+                    }
 
                     if (bridgeFailures > 0) {
                         LOG.error("AgentCefPanel: $bridgeFailures bridge injection(s) FAILED — some JS→Kotlin callbacks may be missing")
@@ -1157,6 +1179,15 @@ class AgentCefPanel(
     fun applyTaskUpdate(taskJson: String) {
         LOG.info("[Tasks] applyTaskUpdate dispatch (${taskJson.length} chars, dispatcher loaded=${bridgeDispatcher?.isLoaded == true}, pending=${bridgeDispatcher?.pendingCallCount ?: -1})")
         callJs("_applyTaskUpdate(${JsEscape.toJsString(taskJson)})")
+    }
+
+    /**
+     * Push a full background-process snapshot to the webview.
+     * Calls `window.__receiveBackgroundUpdate(snapshotJson)` which the top-bar
+     * indicator registers in jcef-bridge.ts.
+     */
+    fun receiveBackgroundUpdate(snapshotJson: String) {
+        callJs("window.__receiveBackgroundUpdate && window.__receiveBackgroundUpdate(${JsEscape.toJsString(snapshotJson)})")
     }
 
     fun loadSessionHistory(historyItemsJson: String) {
