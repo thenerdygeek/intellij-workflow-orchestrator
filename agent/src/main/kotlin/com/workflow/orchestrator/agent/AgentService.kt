@@ -49,10 +49,6 @@ import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolOutputSpiller
 import com.workflow.orchestrator.agent.tools.ToolRegistry
-import com.workflow.orchestrator.agent.memory.ArchivalMemory
-import com.workflow.orchestrator.agent.memory.ConversationRecall
-import com.workflow.orchestrator.agent.memory.CoreMemory
-import com.workflow.orchestrator.agent.memory.auto.AutoMemoryManager
 import com.workflow.orchestrator.agent.observability.AgentFileLogger
 import com.workflow.orchestrator.agent.observability.SessionMetrics
 import com.workflow.orchestrator.agent.tools.builtin.*
@@ -85,8 +81,6 @@ import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -182,11 +176,6 @@ class AgentService(private val project: Project) : Disposable {
         private set
 
     private var debugController: AgentDebugController? = null
-    private var coreMemory: CoreMemory? = null
-    private var archivalMemory: ArchivalMemory? = null
-    private var conversationRecall: ConversationRecall? = null
-    private var autoMemoryManager: AutoMemoryManager? = null
-    private val autoMemoryInitMutex = Mutex()
     private lateinit var agentDir: java.io.File
     private val failedRegistrations = mutableListOf<String>()
 
@@ -295,18 +284,6 @@ class AgentService(private val project: Project) : Disposable {
         val basePath = project.basePath ?: System.getProperty("user.home")
         val agentDir = ProjectIdentifier.agentDir(basePath)
         this.agentDir = agentDir
-
-        // Initialize 3-tier memory system (Letta pattern)
-        val coreMem = CoreMemory.forProject(agentDir)
-        val archivalMemory = ArchivalMemory.forProject(agentDir)
-        val conversationRecall = ConversationRecall.forProject(agentDir)
-        this.coreMemory = coreMem
-        this.archivalMemory = archivalMemory
-        this.conversationRecall = conversationRecall
-
-        // Prune stale archival entries on startup (Codex decay pattern)
-        val pruned = archivalMemory.prune()
-        if (pruned > 0) log.info("[AgentService] Pruned $pruned stale archival memories")
 
         // Initialize hook system (ported from Cline's HookFactory + getAllHooksDirs)
         val hookRunner = HookRunner(workingDir = basePath)
@@ -541,86 +518,6 @@ class AgentService(private val project: Project) : Disposable {
 
     private fun getOrCreateSessionRuntime(sessionId: String): SessionRuntimeState =
         sessionRuntime.computeIfAbsent(sessionId) { SessionRuntimeState() }
-
-    // ── Auto Memory ────────────────────────────────────────────────────────
-
-    /**
-     * Return current memory stats for the TopBar indicator.
-     * Pair of (coreChars, archivalCount). Returns null if memory is not yet initialized.
-     * Best-effort, safe to call from any thread.
-     */
-    fun getMemoryStats(): Pair<Int, Int>? {
-        return try {
-            val core = coreMemory ?: return null
-            val archival = archivalMemory ?: return null
-            core.totalChars() to archival.size()
-        } catch (e: Exception) {
-            log.warn("[AgentService] Failed to read memory stats (non-fatal): ${e.message}")
-            null
-        }
-    }
-
-    /**
-     * Reload core + archival memory from disk. Called by the Memory settings page
-     * after the user saves edits, so the next task sees the latest state instead
-     * of the agent's cached snapshot. Fixes data-loss bug C1.
-     */
-    fun reloadMemoryFromDisk() {
-        try {
-            coreMemory?.reload()
-            archivalMemory?.reload()
-        } catch (e: Exception) {
-            log.warn("[AgentService] Failed to reload memory from disk (non-fatal): ${e.message}")
-        }
-    }
-
-    /**
-     * Lazily initialize AutoMemoryManager on first use. Retrieval-only — no LLM
-     * client needed. Returns null if archival memory is not ready.
-     *
-     * Subsequent calls return the cached instance.
-     */
-    private suspend fun ensureAutoMemory(): AutoMemoryManager? {
-        // Fast path: already cached — no lock needed
-        autoMemoryManager?.let { return it }
-
-        return autoMemoryInitMutex.withLock {
-            // Double-check after acquiring lock — another coroutine may have initialized while we waited
-            autoMemoryManager?.let { return@withLock it }
-
-            val archival = archivalMemory ?: return@withLock null
-
-            try {
-                // Path checker for staleness filtering of recalled archival entries.
-                // If an entry mentions file paths that no longer exist (renamed/moved/deleted),
-                // the retriever will suppress it so we don't inject stale guidance into the prompt.
-                val basePath = project.basePath
-                val pathChecker: (String) -> Boolean = { path ->
-                    try {
-                        if (basePath != null) {
-                            val abs = if (File(path).isAbsolute) File(path) else File(basePath, path)
-                            abs.exists()
-                        } else {
-                            true  // No base path — can't verify, assume fresh
-                        }
-                    } catch (_: Exception) {
-                        true  // On error, don't filter
-                    }
-                }
-
-                val mgr = AutoMemoryManager(
-                    archivalMemory = archival,
-                    pathExists = pathChecker
-                )
-                autoMemoryManager = mgr
-                log.info("[AgentService] AutoMemoryManager initialized (retrieval-only)")
-                mgr
-            } catch (e: Exception) {
-                log.warn("[AgentService] Failed to initialize AutoMemoryManager (non-fatal): ${e.message}")
-                null
-            }
-        }
-    }
 
     // ── Brain ──────────────────────────────────────────────────────────────
 
