@@ -1,5 +1,7 @@
 package com.workflow.orchestrator.core.events
 
+import kotlinx.serialization.Serializable
+
 /**
  * Sealed hierarchy for cross-module events dispatched through [EventBus].
  * Each phase adds its own subclasses. Only bamboo events exist in Phase 1C.
@@ -147,5 +149,30 @@ sealed class WorkflowEvent {
         val unreadCount: Int,
     ) : WorkflowEvent()
 
+    /**
+     * Emitted by :agent [BackgroundPool] when a background process is registered,
+     * completes, or is killed. The [snapshot] is a full point-in-time list of all
+     * active handles for the session so the webview top-bar indicator can re-render
+     * without diff-tracking.
+     */
+    data class BackgroundChanged(
+        val sessionId: String,
+        val snapshot: List<BackgroundProcessSnapshotDto>,
+    ) : WorkflowEvent()
+
     enum class BuildEventStatus { SUCCESS, FAILED }
 }
+
+/** DTO form of a [com.workflow.orchestrator.agent.tools.background.BackgroundHandle].
+ *  Crosses module boundaries without pulling in the handle type. */
+@Serializable
+data class BackgroundProcessSnapshotDto(
+    val bgId: String,
+    val kind: String,
+    val label: String,
+    val state: String,
+    val startedAt: Long,
+    val exitCode: Int?,
+    val outputBytes: Long,
+    val runtimeMs: Long,
+)

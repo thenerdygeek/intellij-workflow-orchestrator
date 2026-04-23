@@ -6,6 +6,9 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.settings.AgentSettings
+import com.workflow.orchestrator.core.events.BackgroundProcessSnapshotDto
+import com.workflow.orchestrator.core.events.EventBus
+import com.workflow.orchestrator.core.events.WorkflowEvent
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -45,6 +48,7 @@ class BackgroundPool(private val project: Project) : Disposable {
         val cap = AgentSettings.getInstance(project).state.concurrentBackgroundProcessesPerSession
         val pool = forSession(sessionId)
         pool.register(handle, cap)
+        emitSnapshot(sessionId)
     }
 
     fun get(sessionId: String, bgId: String): BackgroundHandle? =
@@ -57,6 +61,7 @@ class BackgroundPool(private val project: Project) : Disposable {
 
     fun killAll(sessionId: String) {
         sessionPools.remove(sessionId)?.killAll()
+        emitSnapshot(sessionId)
     }
 
     fun killAllForProject() {
@@ -88,10 +93,40 @@ class BackgroundPool(private val project: Project) : Disposable {
                 LOG.warn("[BackgroundPool] completion listener failed: ${it.message}", it)
             }
         }
+        emitSnapshot(sessionId)
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var supervisorJob: Job? = null
+
+    /**
+     * Build a snapshot of all current handles for [sessionId] and emit a
+     * [WorkflowEvent.BackgroundChanged] on the [EventBus].  Best-effort: if the
+     * EventBus service is unavailable (unit tests without a project container) the
+     * call is silently swallowed.
+     */
+    private fun emitSnapshot(sessionId: String) {
+        val snapshot = list(sessionId).map { h ->
+            BackgroundProcessSnapshotDto(
+                bgId = h.bgId,
+                kind = h.kind,
+                label = h.label,
+                state = h.state().name,
+                startedAt = h.startedAt,
+                exitCode = h.exitCode(),
+                outputBytes = h.outputBytes(),
+                runtimeMs = h.runtimeMs(),
+            )
+        }
+        scope.launch {
+            runCatching {
+                project.getService(EventBus::class.java)
+                    ?.emit(WorkflowEvent.BackgroundChanged(sessionId, snapshot))
+            }.onFailure {
+                LOG.warn("[BackgroundPool] emitSnapshot failed for session $sessionId: ${it.message}", it)
+            }
+        }
+    }
 
     fun startSupervisor(pollIntervalMs: Long = 500) {
         if (supervisorJob?.isActive == true) return
