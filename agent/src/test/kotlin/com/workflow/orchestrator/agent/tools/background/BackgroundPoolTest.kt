@@ -6,7 +6,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.unmockkObject
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -36,7 +36,7 @@ class BackgroundPoolTest {
     }
 
     @Test
-    fun `register and lookup by bgId scoped to session`() = runBlocking {
+    fun `register and lookup by bgId scoped to session`() = runTest {
         val handle = FakeBackgroundHandle(bgId = "bg_test1", sessionId = "s1")
 
         pool.register("s1", handle)
@@ -46,7 +46,7 @@ class BackgroundPoolTest {
     }
 
     @Test
-    fun `list returns only session's handles`() = runBlocking {
+    fun `list returns only session's handles`() = runTest {
         pool.register("s1", FakeBackgroundHandle("bg_a", "s1"))
         pool.register("s1", FakeBackgroundHandle("bg_b", "s1"))
         pool.register("s2", FakeBackgroundHandle("bg_c", "s2"))
@@ -56,7 +56,7 @@ class BackgroundPoolTest {
     }
 
     @Test
-    fun `killAll removes all handles for a session only`() = runBlocking {
+    fun `killAll removes all handles for a session only`() = runTest {
         val ha = FakeBackgroundHandle("bg_a", "s1")
         val hb = FakeBackgroundHandle("bg_b", "s1")
         val hc = FakeBackgroundHandle("bg_c", "s2")
@@ -72,7 +72,7 @@ class BackgroundPoolTest {
     }
 
     @Test
-    fun `concurrent cap enforced per session`() = runBlocking {
+    fun `concurrent cap enforced per session`() = runTest {
         // Default cap is 5 per AgentSettings.
         repeat(5) { i -> pool.register("s1", FakeBackgroundHandle("bg_$i", "s1")) }
         val exc = runCatching { pool.register("s1", FakeBackgroundHandle("bg_over", "s1")) }

@@ -8,6 +8,7 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Project-level registry of background process handles, keyed by sessionId.
@@ -23,6 +24,7 @@ class BackgroundPool(private val project: Project) : Disposable {
 
     companion object {
         private val LOG = Logger.getInstance(BackgroundPool::class.java)
+        internal fun log(): Logger = LOG
         fun getInstance(project: Project): BackgroundPool = project.service()
     }
 
@@ -31,7 +33,7 @@ class BackgroundPool(private val project: Project) : Disposable {
     fun forSession(sessionId: String): SessionPool =
         sessionPools.computeIfAbsent(sessionId) { SessionPool(sessionId) }
 
-    fun register(sessionId: String, handle: BackgroundHandle) {
+    suspend fun register(sessionId: String, handle: BackgroundHandle) {
         val cap = AgentSettings.getInstance(project).state.concurrentBackgroundProcessesPerSession
         val pool = forSession(sessionId)
         pool.register(handle, cap)
@@ -50,7 +52,7 @@ class BackgroundPool(private val project: Project) : Disposable {
     }
 
     fun killAllForProject() {
-        sessionPools.values.forEach { it.killAll() }
+        sessionPools.values.toList().forEach { it.killAll() }
         sessionPools.clear()
     }
 
@@ -63,14 +65,16 @@ class SessionPool(val sessionId: String) {
     private val handles = ConcurrentHashMap<String, BackgroundHandle>()
     val mutex = Mutex()
 
-    fun register(handle: BackgroundHandle, cap: Int) {
-        if (handles.size >= cap) {
-            throw BackgroundPool.MaxConcurrentReached(
-                "Session '$sessionId' already has $cap background processes (cap). " +
-                    "Kill one via background_process(action=kill) before launching another."
-            )
+    suspend fun register(handle: BackgroundHandle, cap: Int) {
+        mutex.withLock {
+            if (handles.size >= cap) {
+                throw BackgroundPool.MaxConcurrentReached(
+                    "Session '$sessionId' already has $cap background processes (cap). " +
+                        "Kill one via background_process(action=kill) before launching another."
+                )
+            }
+            handles[handle.bgId] = handle
         }
-        handles[handle.bgId] = handle
     }
 
     fun get(bgId: String): BackgroundHandle? = handles[bgId]
@@ -79,8 +83,12 @@ class SessionPool(val sessionId: String) {
     fun remove(bgId: String): BackgroundHandle? = handles.remove(bgId)
 
     fun killAll() {
-        handles.values.toList().forEach {
-            runCatching { it.kill() }
+        handles.values.toList().forEach { handle ->
+            runCatching { handle.kill() }.onFailure { e ->
+                BackgroundPool.log().warn(
+                    "[SessionPool:$sessionId] kill failed for bgId=${handle.bgId}: ${e.message}", e
+                )
+            }
         }
         handles.clear()
     }
