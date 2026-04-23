@@ -80,10 +80,6 @@ All actions accept optional session_id (defaults to active session).
                 type = "integer",
                 description = "1-based line number — for run_to_cursor"
             ),
-            "description" to ParameterProperty(
-                type = "string",
-                description = "Brief description of what this action does and why (shown to user in approval dialog)"
-            )
         ),
         required = listOf("action")
     )

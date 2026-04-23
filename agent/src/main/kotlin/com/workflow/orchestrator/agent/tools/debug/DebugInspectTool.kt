@@ -135,10 +135,6 @@ session_id defaults to the active/resolved session. If multiple sessions are ope
                 type = "integer",
                 description = "Frame index to drop to (0=current, 1=caller). Default 0 — for drop_frame"
             ),
-            "description" to ParameterProperty(
-                type = "string",
-                description = "Brief description of what this action does and why (shown to user in approval dialog)"
-            )
         ),
         required = listOf("action")
     )

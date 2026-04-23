@@ -170,10 +170,6 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
                 type = "string",
                 description = "Display name for the debug configuration — for attach_to_process"
             ),
-            "description" to ParameterProperty(
-                type = "string",
-                description = "Brief description of what this action does and why (shown to user in approval dialog)"
-            )
         ),
         required = listOf("action")
     )
