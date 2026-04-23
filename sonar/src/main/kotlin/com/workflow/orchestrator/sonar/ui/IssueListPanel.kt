@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.sonar.ui
 
 import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
@@ -16,6 +17,7 @@ import com.workflow.orchestrator.core.ai.LlmBrainFactory
 import com.workflow.orchestrator.core.model.sonar.SecurityHotspotData
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.ui.TimeFormatter
+import com.workflow.orchestrator.core.util.PathLinkResolver
 import com.workflow.orchestrator.sonar.model.*
 import kotlinx.coroutines.*
 import java.awt.*
@@ -25,6 +27,8 @@ import java.time.Instant
 import javax.swing.*
 
 class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com.intellij.openapi.Disposable {
+
+    private val pathLinkResolver = PathLinkResolver(project)
 
     private val listModel = DefaultListModel<QualityListItem>()
     private val issueList = JBList(listModel).apply {
@@ -286,18 +290,27 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
     }
 
     private fun navigateToIssue(issue: MappedIssue) {
-        val basePath = project.basePath ?: return
-        val vf = LocalFileSystem.getInstance().findFileByPath(java.io.File(basePath, issue.filePath).path) ?: return
-        OpenFileDescriptor(project, vf, issue.startLine - 1, issue.startOffset).navigate(true)
+        // Pass "filePath:line" through PathLinkResolver as the security gate; fall back to plain
+        // filePath if line decoration causes a reject (shouldn't happen for well-formed Sonar paths).
+        val input = if (issue.startLine > 0) "${issue.filePath}:${issue.startLine}" else issue.filePath
+        val validated = pathLinkResolver.resolveForOpen(input) ?: return
+        val vf = LocalFileSystem.getInstance().findFileByPath(validated.canonicalPath) ?: return
+        // Use resolver's 0-based line; preserve SonarQube's per-character startOffset as column.
+        FileEditorManager.getInstance(project).openEditor(
+            OpenFileDescriptor(project, vf, validated.line, issue.startOffset), true
+        )
     }
 
     private fun navigateToHotspot(hotspot: SecurityHotspotData) {
-        val basePath = project.basePath ?: return
-        // Extract file path from component: "project-key:src/main/java/Foo.java" -> "src/main/java/Foo.java"
-        val filePath = hotspot.component.substringAfterLast(':')
-        val vf = LocalFileSystem.getInstance().findFileByPath(java.io.File(basePath, filePath).path) ?: return
-        val line = hotspot.line?.let { it - 1 } ?: 0
-        OpenFileDescriptor(project, vf, line, 0).navigate(true)
+        // Strip Sonar module prefix: "project-key:src/main/java/Foo.java" -> "src/main/java/Foo.java"
+        val rawPath = hotspot.component.substringAfterLast(':')
+        val line = hotspot.line ?: 0
+        val input = if (line > 0) "$rawPath:$line" else rawPath
+        val validated = pathLinkResolver.resolveForOpen(input) ?: return
+        val vf = LocalFileSystem.getInstance().findFileByPath(validated.canonicalPath) ?: return
+        FileEditorManager.getInstance(project).openEditor(
+            OpenFileDescriptor(project, vf, validated.line, validated.column), true
+        )
     }
 
     override fun dispose() {
