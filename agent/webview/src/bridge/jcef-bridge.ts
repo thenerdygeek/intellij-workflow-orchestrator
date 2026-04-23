@@ -728,6 +728,25 @@ export function initBridge(storeAccessors: StoreAccessors): void {
     }
   };
 
+  // Background process push (Phase 7, Task 7.3) — called by Kotlin via EventBus push
+  // when BackgroundProcessPool emits a state change for the current session.
+  window.__receiveBackgroundUpdate = (snapshot: any) => {
+    const parsed = Array.isArray(snapshot) ? snapshot : [];
+    stores?.getChatStore().setBackgroundProcesses(parsed);
+  };
+
+  // Initial hydration: load background processes for the current session on mount.
+  // Guarded so older agent builds that haven't wired _loadBackgroundSnapshot yet
+  // simply leave the indicator empty rather than throwing.
+  if (window._loadBackgroundSnapshot) {
+    // No session ID in the store — Kotlin knows the active session; call with empty
+    // string as the sentinel for "current session". The Kotlin handler ignores the
+    // parameter and returns the pool snapshot for the active session.
+    window._loadBackgroundSnapshot('').then((snap: any) => {
+      stores?.getChatStore().setBackgroundProcesses(snap || []);
+    }).catch(() => { /* pool may not be ready yet — ignore */ });
+  }
+
   // Replay any calls that arrived before stores were ready
   for (const call of pendingCalls) {
     const fn = (bridgeFunctions as Record<string, (...args: any[]) => void>)[call.name]

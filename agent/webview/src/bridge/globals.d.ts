@@ -1,9 +1,13 @@
 import type { Task } from './types';
+import type { BackgroundProcessSnapshot } from '../stores/chatStore';
 
 export {};
 
 declare global {
   interface Window {
+    // Background process bridge (Phase 7, Task 7.3)
+    _loadBackgroundSnapshot?: (sessionId: string) => Promise<BackgroundProcessSnapshot[]>;
+    __receiveBackgroundUpdate?: (snapshot: BackgroundProcessSnapshot[]) => void;
     _sendMessage?: (text: string) => void;
     _sendMessageWithMentions?: (payload: string) => void;
     _searchMentions?: (data: string) => void;

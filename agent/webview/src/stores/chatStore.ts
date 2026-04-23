@@ -45,6 +45,18 @@ function uniqueTs(): number {
   return _lastTs;
 }
 
+// ── Background process snapshot ──
+export interface BackgroundProcessSnapshot {
+  bgId: string;
+  kind: string;
+  label: string;
+  state: 'RUNNING' | 'EXITED' | 'KILLED' | 'TIMED_OUT';
+  startedAt: number;
+  exitCode: number | null;
+  outputBytes: number;
+  runtimeMs: number;
+}
+
 // ── Debug log ──
 export interface DebugLogEntry {
   ts: number;
@@ -173,6 +185,9 @@ interface ChatState {
   // Task state (task system port — Phase 5)
   tasks: Task[];
 
+  // Background processes (Phase 7, Task 7.3)
+  backgroundProcesses: BackgroundProcessSnapshot[];
+
   // Actions
   startSession(task: string, mentions?: Mention[]): void;
   completeSession(info: SessionInfo): void;
@@ -292,6 +307,9 @@ interface ChatState {
 
   // Resume bar
   setResumeSessionId(sessionId: string | null): void;
+
+  // Background processes (Phase 7, Task 7.3)
+  setBackgroundProcesses(snapshot: BackgroundProcessSnapshot[]): void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -354,6 +372,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   historySearch: '',
   resumeSessionId: null,
   tasks: [],
+  backgroundProcesses: [],
 
   // Actions
   startSession(task: string, mentions?: Mention[]) {
@@ -1718,4 +1737,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // Upsert: if the create event was missed (out-of-order delivery), fall through to append
     return { tasks: [...state.tasks, task] };
   }),
+
+  // ── Background Process Actions (Phase 7, Task 7.3) ──
+  setBackgroundProcesses: (snapshot) => set({ backgroundProcesses: snapshot }),
 }));
