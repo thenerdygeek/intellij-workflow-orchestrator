@@ -48,7 +48,7 @@ internal object ProcessToolHelpers {
             appendLine("Options:")
             appendLine("- send_stdin(process_id=\"$processId\", input=\"<your input>\\n\") to provide more input")
             appendLine("- ask_user_input(process_id=\"$processId\", description=\"...\", prompt=\"...\") for user input")
-            appendLine("- kill_process(process_id=\"$processId\") to abort")
+            appendLine("- background_process(id=\"$processId\", action=\"kill\") to abort")
         }
     }
 }

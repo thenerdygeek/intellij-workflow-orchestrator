@@ -722,7 +722,6 @@ class AgentService(private val project: Project) : Disposable {
         // Utilities
         safeRegisterDeferred("Utilities") { ProjectContextTool() }
         safeRegisterDeferred("Utilities") { CurrentTimeTool() }
-        safeRegisterDeferred("Utilities") { KillProcessTool() }
         safeRegisterDeferred("Utilities") { AskUserInputTool() }
 
         // Debug tools (require AgentDebugController)

@@ -83,7 +83,7 @@ class SendStdinTool : AgentTool {
         if (managed.stdinCount.get() >= maxStdinPerProcess) {
             return ToolResult(
                 "Error: Stdin limit ($maxStdinPerProcess) exceeded for process '$processId'. " +
-                    "Kill the process with kill_process and rerun using a non-interactive command instead.",
+                    "Kill the process with background_process(action=kill) and rerun using a non-interactive command instead.",
                 "Error: stdin limit exceeded",
                 ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
