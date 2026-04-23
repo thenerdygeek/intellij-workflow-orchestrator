@@ -235,6 +235,32 @@ class AgentDebugController internal constructor(
     }
 
     /**
+     * Like [getStackFrames] but returns raw [XStackFrame] references (not DTOs).
+     * Used by callers that need to invoke frame methods like `evaluator` or
+     * `sourcePosition` on a non-top frame (e.g., `evaluate` at `frameIndex > 0`).
+     */
+    suspend fun getRawStackFrames(session: XDebugSession, maxFrames: Int = 20): List<XStackFrame> {
+        val stack = session.currentStackFrame?.let {
+            session.suspendContext?.activeExecutionStack
+        } ?: return emptyList()
+
+        return suspendCancellableCoroutine { cont ->
+            val frames = mutableListOf<XStackFrame>()
+            stack.computeStackFrames(0, object : XExecutionStack.XStackFrameContainer {
+                override fun addStackFrames(frameList: List<XStackFrame>, last: Boolean) {
+                    for (f in frameList) {
+                        if (frames.size >= maxFrames) break
+                        frames += f
+                    }
+                    if (last || frames.size >= maxFrames) cont.resume(frames.toList())
+                }
+                override fun errorOccurred(errorMessage: String) { cont.resume(frames.toList()) }
+                override fun isObsolete(): Boolean = false
+            })
+        }
+    }
+
+    /**
      * Gets variables from a stack frame, recursively resolving children up to maxDepth.
      * Caps output at MAX_VARIABLE_CHARS total characters and MAX_CHILDREN_PER_LEVEL children per node.
      */

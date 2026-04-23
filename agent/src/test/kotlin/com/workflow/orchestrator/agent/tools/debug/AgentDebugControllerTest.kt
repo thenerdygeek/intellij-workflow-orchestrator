@@ -8,7 +8,9 @@ import com.intellij.xdebugger.XDebugSessionListener
 import com.intellij.xdebugger.XSourcePosition
 import com.intellij.xdebugger.breakpoints.XLineBreakpoint
 import com.intellij.xdebugger.evaluation.XDebuggerEvaluator
+import com.intellij.xdebugger.frame.XExecutionStack
 import com.intellij.xdebugger.frame.XStackFrame
+import com.intellij.xdebugger.frame.XSuspendContext
 import com.intellij.xdebugger.frame.XValue
 import io.mockk.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -472,6 +474,29 @@ class AgentDebugControllerTest {
             )
         }
         return path.readText()
+    }
+
+    @Test
+    fun `getRawStackFrames returns XStackFrame references up to max`() = runTest {
+        val frame0 = mockk<XStackFrame>(relaxed = true)
+        val frame1 = mockk<XStackFrame>(relaxed = true)
+        val frame2 = mockk<XStackFrame>(relaxed = true)
+        val stack = mockk<XExecutionStack>(relaxed = true)
+        val context = mockk<XSuspendContext>(relaxed = true) {
+            every { activeExecutionStack } returns stack
+        }
+        val session = mockk<XDebugSession>(relaxed = true) {
+            every { currentStackFrame } returns frame0
+            every { suspendContext } returns context
+        }
+        every { stack.computeStackFrames(0, any()) } answers {
+            val container = arg<XExecutionStack.XStackFrameContainer>(1)
+            container.addStackFrames(listOf(frame0, frame1, frame2), true)
+        }
+
+        val frames = controller.getRawStackFrames(session, maxFrames = 2)
+
+        assertEquals(listOf(frame0, frame1), frames)
     }
 
     // --- Helper ---
