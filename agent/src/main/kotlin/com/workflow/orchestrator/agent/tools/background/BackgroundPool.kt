@@ -7,6 +7,14 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -57,7 +65,9 @@ class BackgroundPool(private val project: Project) : Disposable {
     }
 
     override fun dispose() {
+        stopSupervisor()
         killAllForProject()
+        scope.cancel()
     }
 
     private val completionListeners = java.util.concurrent.CopyOnWriteArrayList<(BackgroundCompletionEvent) -> Unit>()
@@ -79,6 +89,52 @@ class BackgroundPool(private val project: Project) : Disposable {
             }
         }
     }
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var supervisorJob: Job? = null
+
+    fun startSupervisor(pollIntervalMs: Long = 500) {
+        if (supervisorJob?.isActive == true) return
+        supervisorJob = scope.launch {
+            while (isActive) {
+                runCatching { tick() }.onFailure {
+                    LOG.warn("[BackgroundPool] supervisor tick failed: ${it.message}", it)
+                }
+                delay(pollIntervalMs)
+            }
+        }
+    }
+
+    fun stopSupervisor() { supervisorJob?.cancel(); supervisorJob = null }
+
+    // Test-only tight polling — stops any running supervisor first so interval takes effect.
+    fun startSupervisorForTest() { stopSupervisor(); startSupervisor(50) }
+    fun stopSupervisorForTest() = stopSupervisor()
+
+    private fun tick() {
+        sessionPools.forEach { (sessionId, sp) ->
+            sp.list().forEach { handle ->
+                if (handle.state() != BackgroundState.RUNNING) {
+                    val ev = BackgroundCompletionEvent(
+                        bgId = handle.bgId,
+                        kind = handle.kind,
+                        label = handle.label,
+                        sessionId = sessionId,
+                        exitCode = handle.exitCode() ?: -1,
+                        state = handle.state(),
+                        runtimeMs = handle.runtimeMs(),
+                        tailContent = handle.readOutput(tailLines = 20).content,
+                        spillPath = null,
+                        occurredAt = System.currentTimeMillis(),
+                    )
+                    emitCompletion(sessionId, ev)
+                    if (handle is RunCommandBackgroundHandle) handle.fireCompletion()
+                }
+            }
+        }
+    }
+
+    init { startSupervisor() }
 }
 
 class SessionPool(val sessionId: String) {

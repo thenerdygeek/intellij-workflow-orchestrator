@@ -6,6 +6,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.unmockkObject
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -98,6 +99,28 @@ class BackgroundPoolTest {
 
         assertEquals(listOf(event), received)
     }
+
+    @Test
+    fun `supervisor fires completion when handle state becomes EXITED`() = runBlocking<Unit> {
+        val received = java.util.concurrent.CopyOnWriteArrayList<BackgroundCompletionEvent>()
+        pool.addCompletionListener { received.add(it) }
+
+        val stubHandle = StateControlledHandle("bg_super", "sX")
+        pool.register("sX", stubHandle)
+
+        pool.startSupervisorForTest()  // test-only helper, tight poll interval
+        stubHandle.markExited(exitCode = 0)
+
+        // Wait up to 2s for supervisor tick.
+        val start = System.currentTimeMillis()
+        while (received.isEmpty() && System.currentTimeMillis() - start < 2000) {
+            kotlinx.coroutines.delay(50)
+        }
+        assertTrue(received.size == 1, "expected exactly one completion, got: $received")
+        assertTrue(received.first().bgId == "bg_super")
+        assertTrue(received.first().state == BackgroundState.EXITED)
+        pool.stopSupervisorForTest()
+    }
 }
 
 /** Minimal test double. */
@@ -117,4 +140,26 @@ private class FakeBackgroundHandle(
     override suspend fun attach(timeoutMs: Long) = AttachResult.AttachTimeout(0, "")
     override fun kill(): Boolean { killed = true; return true }
     override fun onComplete(callback: (event: BackgroundCompletionEvent) -> Unit) {}
+}
+
+private class StateControlledHandle(
+    override val bgId: String,
+    override val sessionId: String,
+    override val kind: String = "run_command",
+    override val label: String = "stub",
+    override val startedAt: Long = System.currentTimeMillis(),
+) : BackgroundHandle {
+    @Volatile private var stateRef = BackgroundState.RUNNING
+    @Volatile private var exitCodeRef: Int? = null
+
+    fun markExited(exitCode: Int) { exitCodeRef = exitCode; stateRef = BackgroundState.EXITED }
+
+    override fun state() = stateRef
+    override fun exitCode(): Int? = exitCodeRef
+    override fun runtimeMs() = 0L
+    override fun outputBytes() = 0L
+    override fun readOutput(sinceOffset: Long, tailLines: Int?) = OutputChunk("", 0, false, null)
+    override suspend fun attach(timeoutMs: Long) = AttachResult.AttachTimeout(0, "")
+    override fun kill() = true
+    override fun onComplete(callback: (BackgroundCompletionEvent) -> Unit) {}
 }
