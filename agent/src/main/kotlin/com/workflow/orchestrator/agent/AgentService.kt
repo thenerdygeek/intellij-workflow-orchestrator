@@ -133,6 +133,34 @@ class AgentService(private val project: Project) : Disposable {
         steeringCapturersForTest[sessionId] = capture
     }
 
+    /**
+     * Task 6.1 — per-session auto-wake guardrail state (enabled toggle, per-session
+     * cap, cooldown). Decision is made against [AgentSettings] from
+     * [onBackgroundCompletion] when the loop is idle. Guardrail logic lives in a
+     * separate helper so it can be unit-tested without instantiating AgentService.
+     */
+    private val autoWakeGuards = com.workflow.orchestrator.agent.tools.background.AutoWakeGuardState()
+
+    /**
+     * Task 6.1 — optional hook the UI layer (AgentController) registers to carry out
+     * the actual auto-wake. The agent service cannot drive the full resume pipeline
+     * on its own because all the interactive callbacks (approval gate, plan, token
+     * updates, etc.) live at the controller layer. When no listener is registered
+     * (e.g. headless tests, pre-controller-init), we fall back to plain persistence.
+     *
+     * Contract: `(sessionId, syntheticUserMessage) -> Unit`. Called on the EDT.
+     */
+    @Volatile
+    private var autoWakeListener: ((String, String) -> Unit)? = null
+
+    /**
+     * Register the auto-wake listener. Call from [AgentController.init] (or equivalent).
+     * Passing `null` clears the hook. Thread-safe: listener is a volatile field.
+     */
+    fun setAutoWakeListener(listener: ((String, String) -> Unit)?) {
+        this.autoWakeListener = listener
+    }
+
     /** Dedicated structured agent log file — one per project, lives for plugin lifetime. */
     private val fileLogger: AgentFileLogger by lazy {
         AgentFileLogger(logDir = ProjectIdentifier.logsDir(project.basePath ?: ""))
@@ -347,8 +375,93 @@ class AgentService(private val project: Project) : Disposable {
         if (loop != null) {
             loop.enqueueSteeringMessage(message)
         } else {
+            // Task 6.1 — loop is idle. Always persist first so the completion
+            // survives even if auto-wake is skipped (disabled / capped / cooled)
+            // or the listener is unavailable — Task 6.2 picks it up on resume.
             persistForLaterResume(event)
+            autoResumeForBackgroundCompletion(event.sessionId, event)
         }
+    }
+
+    /**
+     * Task 6.1 — auto-wake the session for an idle-path background completion,
+     * subject to guardrails:
+     *  - `autoWakeOnBackgroundCompletion` setting toggle (master kill-switch)
+     *  - per-session attempt cap (`autoWakeMaxPerSession`)
+     *  - per-session cooldown window (`autoWakeCooldownMs`)
+     *
+     * If any guardrail rejects the wake, we log and return — the event is already
+     * persisted by the caller so Task 6.2 still delivers it on the next resume.
+     *
+     * If all guards pass and a listener is registered (production path: wired from
+     * [com.workflow.orchestrator.agent.ui.AgentController]), we hand off a synthetic
+     * `[BACKGROUND COMPLETION — AUTO-RESUMED]` user message. If no listener is wired
+     * (tests / shutdown), we no-op — the persisted entry still surfaces on resume.
+     *
+     * TODO: iteration budget guard — Task 6.x refinement. Current ActiveTask doesn't
+     * expose the loop's iteration count cleanly; once AgentLoop publishes a metrics
+     * snapshot, check `iterations >= 180` (of 200) and skip auto-wake accordingly.
+     *
+     * TODO: session-lock hold check — if another resume is already holding the
+     * session lock (cross-instance), abort auto-wake. Presently [resumeSession]
+     * already tryAcquires the lock and bails with a warning, so this is handled
+     * one layer down; revisit if contention becomes a real-world problem.
+     */
+    private fun autoResumeForBackgroundCompletion(
+        sessionId: String,
+        event: com.workflow.orchestrator.agent.tools.background.BackgroundCompletionEvent,
+    ) {
+        val settings = AgentSettings.getInstance(project).state
+        val decision = autoWakeGuards.decide(
+            sessionId = sessionId,
+            enabled = settings.autoWakeOnBackgroundCompletion,
+            cap = settings.autoWakeMaxPerSession,
+            cooldownMs = settings.autoWakeCooldownMs,
+        )
+        if (decision != com.workflow.orchestrator.agent.tools.background.AutoWakeGuardState.Decision.PROCEED) {
+            log.info(
+                "[AutoWake] skipped (${decision.name}); session=$sessionId bg=${event.bgId} " +
+                    "attempts=${autoWakeGuards.attemptCount(sessionId)}"
+            )
+            return
+        }
+
+        val listener = autoWakeListener
+        if (listener == null) {
+            // No UI controller wired — persisted entry will be delivered on the
+            // next manual resume via Task 6.2's resume-path pickup. Expected in
+            // headless tests and during plugin startup before AgentController init.
+            log.info("[AutoWake] no listener registered; deferring to resume pickup; session=$sessionId bg=${event.bgId}")
+            return
+        }
+
+        val synthetic = buildAutoResumeSyntheticMessage(event)
+        com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
+            runCatching { listener.invoke(sessionId, synthetic) }
+                .onFailure { log.warn("[AutoWake] listener failed: ${it.message}", it) }
+        }
+    }
+
+    /**
+     * Build the synthetic `[BACKGROUND COMPLETION — AUTO-RESUMED]` user message
+     * delivered to the session on auto-wake. Format is pinned by
+     * `AutoWakeSyntheticMessageFormatTest` (if introduced) — keep the markers and
+     * section headers stable for downstream LLM parsing.
+     */
+    internal fun buildAutoResumeSyntheticMessage(
+        event: com.workflow.orchestrator.agent.tools.background.BackgroundCompletionEvent,
+    ): String = buildString {
+        appendLine("[BACKGROUND COMPLETION — AUTO-RESUMED]")
+        appendLine("Your previous turn ended, but a background process just completed:")
+        appendLine()
+        appendLine("Process ${event.bgId} (${event.kind}: \"${event.label.take(80)}\")")
+        appendLine("State: ${event.state}, exit code: ${event.exitCode}, runtime: ${event.runtimeMs}ms")
+        appendLine("Output (tail 20 lines):")
+        event.tailContent.lines().takeLast(20).forEach { appendLine("  $it") }
+        if (event.spillPath != null) appendLine("Full output: ${event.spillPath}")
+        appendLine()
+        appendLine("Decide whether this needs action. If it completes the original task or")
+        appendLine("requires no follow-up, call attempt_completion. Otherwise continue working.")
     }
 
     /**
