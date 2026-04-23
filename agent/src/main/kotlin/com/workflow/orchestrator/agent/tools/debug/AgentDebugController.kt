@@ -429,19 +429,28 @@ class AgentDebugController internal constructor(
     }
 
     /**
-     * Evaluates an expression in the context of the given session's current stack frame.
+     * Evaluates an expression in the context of the given session's stack frame at [frameIndex].
+     *
+     * Audit finding C2: previously, any non-zero [frameIndex] silently fell back to
+     * [XDebugSession.currentStackFrame] (frame 0), so "evaluate in caller frame" requests
+     * always evaluated in the wrong scope. Fix: use [getRawStackFrames] to retrieve the
+     * target [XStackFrame], call its [XStackFrame.evaluator], and pass
+     * [XStackFrame.sourcePosition] for correct scope/import resolution.
      */
     suspend fun evaluate(session: XDebugSession, expression: String, frameIndex: Int = 0): EvaluationResult {
-        val frame = if (frameIndex == 0) {
+        val frame: XStackFrame? = if (frameIndex == 0) {
             session.currentStackFrame
         } else {
-            val frames = getStackFrames(session, frameIndex + 1)
+            val frames = getRawStackFrames(session, frameIndex + 1)
             if (frames.size <= frameIndex) {
-                return EvaluationResult(expression, "Frame $frameIndex not available", "error", isError = true)
+                return EvaluationResult(
+                    expression,
+                    "Frame $frameIndex not available (stack has ${frames.size} frames; indices are 0..${frames.size - 1})",
+                    "error",
+                    isError = true,
+                )
             }
-            // For non-zero frame indices, we need the actual XStackFrame reference
-            // but getStackFrames returns FrameInfo DTOs. Use current frame as fallback.
-            session.currentStackFrame
+            frames[frameIndex]
         }
 
         if (frame == null) {
@@ -449,13 +458,11 @@ class AgentDebugController internal constructor(
         }
 
         val evaluator = frame.evaluator
-            ?: return EvaluationResult(expression, "No evaluator available for current frame", "error", isError = true)
+            ?: return EvaluationResult(expression, "No evaluator available for frame at index $frameIndex", "error", isError = true)
 
-        // The evaluate callback gives us an XValue, not a displayable string.
-        // We must resolve its presentation (type + value) via the async computePresentation API.
-        // Phase 5 / Task 4.1 — wrap with awaitCallback so a hung JDI callback
-        // cannot hang the agent loop, and a late callback after timeout cannot
-        // corrupt the consumed continuation via `stopped` AtomicBoolean gate.
+        // Pass frame.sourcePosition so the evaluator sees the right imports and
+        // local scope. Previously we passed null, which worked for simple names
+        // but dropped scope for anything needing imports. Audit finding C2.
         val evalResult: Result<XValue>? = awaitCallback<Result<XValue>>(10_000L) { stopped, resume, _ ->
             evaluator.evaluate(
                 expression,
@@ -470,7 +477,7 @@ class AgentDebugController internal constructor(
                         resume(Result.failure(RuntimeException(errorMessage)))
                     }
                 },
-                null
+                frame.sourcePosition,
             )
         }
 
