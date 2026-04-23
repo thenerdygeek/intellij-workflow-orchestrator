@@ -8,6 +8,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
+import java.io.File
 
 class CoverageToolTest {
     private val project = mockk<Project>(relaxed = true)
@@ -106,6 +107,62 @@ class CoverageToolTest {
         val result = tool.execute(buildJsonObject { put("action", "run_with_coverage") }, project)
         assertTrue(result.isError)
         assertTrue(result.content.contains("test_class"))
+    }
+
+    // Multi-method parsing parity with java_runtime_exec.run_tests. Coverage has no
+    // shell fallback, so validation happens in executeRunWithCoverage before any
+    // run config is built — these tests exercise that front-door path.
+
+    @Test
+    fun `run_with_coverage with method containing only separators returns invalid-value error`() = runTest {
+        val result = tool.execute(
+            buildJsonObject {
+                put("action", "run_with_coverage")
+                put("test_class", "com.example.FooTest")
+                put("method", ", , ,")
+            },
+            project
+        )
+        assertTrue(result.isError, "Separator-only method should fail validation")
+        assertTrue(
+            result.content.contains("only separators") || result.content.contains("Invalid method value"),
+            "Error should explain separator-only issue. Got: ${result.content}"
+        )
+    }
+
+    @Test
+    fun `run_with_coverage with invalid method name returns invalid-name error`() = runTest {
+        val result = tool.execute(
+            buildJsonObject {
+                put("action", "run_with_coverage")
+                put("test_class", "com.example.FooTest")
+                put("method", "testFoo;testBar")  // ';' is not a supported separator
+            },
+            project
+        )
+        assertTrue(result.isError, "Non-identifier method should fail validation")
+        assertTrue(
+            result.content.contains("invalid method name"),
+            "Error should flag invalid identifier. Got: ${result.content}"
+        )
+    }
+
+    @Test
+    fun `run_with_coverage with too many methods returns too-many error`() = runTest {
+        val tooMany = (1..51).joinToString(",") { "test$it" }
+        val result = tool.execute(
+            buildJsonObject {
+                put("action", "run_with_coverage")
+                put("test_class", "com.example.FooTest")
+                put("method", tooMany)
+            },
+            project
+        )
+        assertTrue(result.isError, "51 methods should exceed MAX_METHODS_PER_RUN")
+        assertTrue(
+            result.content.contains("too many methods") || result.content.contains("max 50"),
+            "Error should mention the cap. Got: ${result.content}"
+        )
     }
 
     // ═══════════════════════════════════════════════════
@@ -555,5 +612,91 @@ class CoverageToolTest {
         assertEquals(8, m.totalLines)
         assertEquals(2, m.coveredBranches)
         assertEquals(6, m.totalBranches)
+    }
+
+    // ═══════════════════════════════════════════════════
+    // CoverageOptionsProvider suppression contract.
+    //
+    // The Coverage plugin isn't loaded in unit tests, so we can't exercise the
+    // reflection end-to-end here. Instead we pin the contract at the source level:
+    // every apply must be balanced by a restore in the same function, and the
+    // restore call must live inside a `finally` block so it runs on every exit path
+    // (success / exception / timeout / coroutine cancel).
+    //
+    // Same shape as RunInvocationLeakTest — a source-text canary that catches any
+    // future refactor that accidentally drops the restore.
+    // ═══════════════════════════════════════════════════
+
+    @Test
+    fun `CoverageOptionsProvider reflection suppresses replace-or-append dialog`() {
+        val src = findCoverageToolSource().readText()
+        assertTrue(
+            src.contains("com.intellij.coverage.CoverageOptionsProvider"),
+            "CoverageTool must reference the CoverageOptionsProvider class by FQN"
+        )
+        assertTrue(
+            src.contains("getOptionToReplace"),
+            "CoverageTool must snapshot the prior value so it can be restored"
+        )
+        assertTrue(
+            src.contains("setOptionsToReplace"),
+            "CoverageTool must flip the setting before launch to suppress the dialog"
+        )
+    }
+
+    @Test
+    fun `on_existing_suite parameter is declared on the tool schema`() {
+        val prop = tool.parameters.properties["on_existing_suite"]
+        assertNotNull(prop, "'on_existing_suite' must be a declared parameter")
+        val enums = prop!!.enumValues
+        assertNotNull(enums, "'on_existing_suite' must be an enum")
+        assertEquals(setOf("replace", "append", "ignore", "ask"), enums!!.toSet())
+    }
+
+    @Test
+    fun `apply and restore calls are balanced and restore lives in finally`() {
+        val src = findCoverageToolSource().readText()
+        val applyCalls = Regex("""applyCoverageOptionProviderPolicy\(""").findAll(src).count()
+        val restoreCalls = Regex("""restoreCoverageOptionProviderPolicy\(""").findAll(src).count()
+        // Each helper is both defined (1) and invoked (1) in this file → 2 occurrences each.
+        assertEquals(applyCalls, restoreCalls,
+            "apply and restore call counts must match — every apply needs a paired restore. " +
+                "Got apply=$applyCalls restore=$restoreCalls"
+        )
+        assertTrue(applyCalls >= 2, "expected at least one definition + one invocation of each helper")
+
+        // The restore invocation must be inside a `finally` block — scan for the
+        // canonical shape `} finally {\n ... restoreCoverageOptionProviderPolicy`.
+        val finallyWithRestore = Regex(
+            """\}\s*finally\s*\{[^}]*?restoreCoverageOptionProviderPolicy""",
+            setOf(RegexOption.DOT_MATCHES_ALL)
+        )
+        assertTrue(
+            finallyWithRestore.containsMatchIn(src),
+            "restoreCoverageOptionProviderPolicy must be called from a `} finally { ... }` block " +
+                "so the user's saved CoverageOptionsProvider setting is restored on every exit path " +
+                "(success / exception / timeout / coroutine cancel). If you refactor the launch " +
+                "scaffolding, keep this invariant — otherwise a crash leaves the user's IDE with " +
+                "their coverage dialog preference silently clobbered."
+        )
+    }
+
+    private fun findCoverageToolSource(): File {
+        val candidates = listOf(
+            "agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/runtime/CoverageTool.kt",
+            "src/main/kotlin/com/workflow/orchestrator/agent/tools/runtime/CoverageTool.kt",
+        )
+        val cwd = File(System.getProperty("user.dir"))
+        // Walk up two levels in case the test is run from a sub-working-directory.
+        val roots = sequenceOf(cwd, cwd.parentFile, cwd.parentFile?.parentFile).filterNotNull()
+        for (root in roots) {
+            for (rel in candidates) {
+                val f = File(root, rel)
+                if (f.isFile) return f
+            }
+        }
+        throw AssertionError(
+            "Could not locate CoverageTool.kt on disk relative to user.dir=${cwd.absolutePath}"
+        )
     }
 }

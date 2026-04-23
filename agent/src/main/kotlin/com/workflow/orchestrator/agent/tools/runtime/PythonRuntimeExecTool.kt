@@ -90,7 +90,10 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             ),
             "method" to ParameterProperty(
                 type = "string",
-                description = "Pytest -k pattern (keyword expression, not a Python method name) — for run_tests"
+                description = "Pytest -k pattern (keyword expression, not a Python method name) — for run_tests. " +
+                    "Single method: 'test_foo'. Multiple methods in one launch (pytest -k boolean): " +
+                    "'test_foo or test_bar or test_baz'. Also supports exclusion: 'test_foo and not slow'. " +
+                    "Pytest runs everything matched in a single process and returns an aggregated result."
             ),
             "markers" to ParameterProperty(
                 type = "string",

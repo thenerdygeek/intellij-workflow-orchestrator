@@ -68,6 +68,20 @@ import com.intellij.task.ProjectTaskManager
 internal val GRADLE_TEST_TASK_REGEX: Regex = Regex("""^> Task :(\S*:)*test\b""", RegexOption.MULTILINE)
 
 /**
+ * Upper bound on methods accepted in a single `run_tests` invocation. Beyond this, the
+ * LLM is asked to split — the Maven `-Dtest=Class#a+b+...` command line grows linearly,
+ * and a few dozen failures are the natural human-readable batch anyway.
+ */
+internal const val MAX_METHODS_PER_RUN = 50
+
+/**
+ * Java/Kotlin method identifiers only — rejects `#`, `.`, whitespace, and any
+ * separator the LLM might emit by mistake (e.g. `;`, space-delimited). Ensures a
+ * `methods=["Other#foo"]`-style smuggled class never slips past the regex.
+ */
+internal val METHOD_NAME_REGEX: Regex = Regex("""^[A-Za-z_$][A-Za-z0-9_$]*$""")
+
+/**
  * Java/Kotlin-specific runtime execution — runs JUnit/TestNG tests and compiles modules
  * via IntelliJ's CompilerManager. Registered only when the Java plugin is present
  * (see ToolRegistrationFilter.shouldRegisterJavaBuildTools).
@@ -89,7 +103,7 @@ class JavaRuntimeExecTool : AgentTool {
 Java/Kotlin runtime execution — JUnit/TestNG test running, module compilation, and rerun of failed tests.
 
 Actions and their parameters:
-- run_tests(class_name, method?, timeout?, use_native_runner?) → Run tests for a specific Java/Kotlin class via IntelliJ's JUnit/TestNG runner, with Maven/Gradle shell fallback (timeout default 300s, max 900s). class_name is required and must be fully qualified — use test_finder to discover test classes first.
+- run_tests(class_name, method?, timeout?, use_native_runner?) → Run tests for a specific Java/Kotlin class via IntelliJ's JUnit/TestNG runner, with Maven/Gradle shell fallback (timeout default 300s, max 900s). class_name is required and must be fully qualified — use test_finder to discover test classes first. `method` accepts a single name ('testFoo') or a comma-separated list ('testFoo,testBar,testBaz') to run several methods from the same class in one launch; output is aggregated into a single result.
 - compile_module(module?, check_dependents?) → Compile a Java/Kotlin module via CompilerManager. If `module` is omitted, compiles the entire project. When `module` is given and `check_dependents=true`, also recompiles modules that depend on it (catches downstream ABI breakage after editing an upstream module). Default check_dependents is false.
 - rerun_failed_tests(session_id?) → Re-run only the failed/errored tests from the last test session. Resolves the most-recent test run via RunContentManager (or the session matching session_id if provided). Returns NO_PRIOR_TEST_SESSION if no test session exists, or an informational message if all tests passed.
 
@@ -109,7 +123,10 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             ),
             "method" to ParameterProperty(
                 type = "string",
-                description = "Specific test method name — for run_tests"
+                description = "Test method name(s) — for run_tests. Single: 'testFoo'. " +
+                    "Multiple methods from the same class in one launch: 'testFoo,testBar,testBaz' " +
+                    "(comma-separated, whitespace around commas is trimmed). JUnit 5 and " +
+                    "Maven/Gradle shell support multi-method natively; TestNG auto-falls back to shell."
             ),
             "timeout" to ParameterProperty(
                 type = "integer",
@@ -187,12 +204,60 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                 isError = true
             )
 
-        val method = params["method"]?.jsonPrimitive?.content
+        val methodRaw = params["method"]?.jsonPrimitive?.content
+        // Comma-separated list support: 'testFoo' or 'testFoo,testBar,testBaz'.
+        // Whitespace around commas is trimmed; duplicates collapsed; empty segments dropped.
+        val methods: List<String> = methodRaw
+            ?.split(',')
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?.distinct()
+            ?: emptyList()
+
+        // Reject "contains only separators" (e.g. ","  "  ,  "  " ") distinctly from
+        // the invalid-identifier path below — this particular confusion is the most
+        // likely human-facing failure when debugging an LLM call.
+        if (methodRaw != null && methodRaw.isNotBlank() && methods.isEmpty()) {
+            return ToolResult(
+                content = "Error: 'method' parameter contains only separators/whitespace ('$methodRaw'). " +
+                    "Pass a method name or omit the parameter to run the whole class.",
+                summary = "Invalid method value",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+        }
+
+        if (methods.size > MAX_METHODS_PER_RUN) {
+            return ToolResult(
+                content = "Error: too many methods requested (${methods.size}, max $MAX_METHODS_PER_RUN). " +
+                    "Split into multiple run_tests calls, or omit 'method' to run the whole class.",
+                summary = "Too many methods (${methods.size})",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+        }
+
+        methods.firstOrNull { !it.matches(METHOD_NAME_REGEX) }?.let { bad ->
+            return ToolResult(
+                content = "Error: invalid method name '$bad'. Expected a Java identifier " +
+                    "(letters/digits/underscore/\$, starting with a non-digit) — no spaces, no '#', " +
+                    "no '.', no ';'. To target a nested class method, set class_name to the " +
+                    "fully-qualified nested class (e.g. com.example.Outer\$Inner) and pass the bare method.",
+                summary = "Invalid method name '$bad'",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+        }
+
         val timeoutSeconds = (params["timeout"]?.jsonPrimitive?.intOrNull?.toLong() ?: RUN_TESTS_DEFAULT_TIMEOUT)
             .coerceIn(1, RUN_TESTS_MAX_TIMEOUT)
         val useNativeRunner = params["use_native_runner"]?.jsonPrimitive?.booleanOrNull ?: true
 
-        val testTarget = if (method != null) "$className#$method" else className
+        val testTarget = when (methods.size) {
+            0 -> className
+            1 -> "$className#${methods.first()}"
+            else -> "$className#${methods.joinToString(",")}"
+        }
 
         // Resolve the module once and share it with both the native runner (for config
         // wiring) and the shell fallback (for multi-module Gradle/Maven subproject path).
@@ -239,6 +304,9 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                 }
                 val simpleClass = className.substringAfterLast('.')
                 add("$detectedTestCount test methods detected in $simpleClass")
+                if (methods.size >= 2) {
+                    add("requested: ${methods.size} methods (${methods.joinToString(",")})")
+                }
             }
             val line = "Running tests in module: ${module.name} (${parts.joinToString(", ")})"
             if (validatorWarning != null) "[WARNING] $validatorWarning\n$line" else line
@@ -255,10 +323,20 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             )
         }
 
-        if (useNativeRunner) {
+        // Multi-method on TestNG or an unknown framework: the native JUnit 5 PATTERNS
+        // trick (used below) is unavailable, and TestNG's METHOD_NAME is single-valued.
+        // Route through the shell fallback, which does support comma/`+`-joined methods
+        // on every build tool. We prepend a breadcrumb so the LLM sees why it happened.
+        val framework = if (methods.size >= 2 && useNativeRunner) detectTestFramework(project, className) else null
+        val forceShellForMultiMethod = framework != null && framework != "JUnit"
+        val multiMethodShellWarning = if (forceShellForMultiMethod) {
+            "[INFO] Multi-method native run is JUnit-5-only; '$framework' detected → routing through Maven/Gradle shell fallback, which supports multi-method natively."
+        } else null
+
+        if (useNativeRunner && !forceShellForMultiMethod) {
             val reasonOut = StringBuilder()
             try {
-                val result = executeWithNativeRunner(project, className, method, testTarget, timeoutSeconds, reasonOut)
+                val result = executeWithNativeRunner(project, className, methods, testTarget, timeoutSeconds, reasonOut)
                 if (result != null) return prependBreadcrumb(result)
                 // Explicit native opt-in but setup failed — do NOT silently use `mvn test`.
                 // Previously this path silently fell through to executeWithShell, which is
@@ -283,21 +361,26 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                 // pass `null` for the authoritative path so executeWithShell falls back to
                 // filesystem derivation — the validator's Ok was only authoritative for a
                 // happy-path launch. Defensive choice; can be relaxed later.
-                val shellResult = executeWithShell(project, testTarget, timeoutSeconds, module, null)
+                val shellResult = executeWithShell(project, className, methods, timeoutSeconds, module, null)
                 val warning = "[WARNING] Native test runner threw ${e.javaClass.simpleName}: ${e.message}, used shell fallback.\n\n"
                 return prependBreadcrumb(shellResult.copy(content = warning + shellResult.content))
             }
         }
 
-        return prependBreadcrumb(executeWithShell(project, testTarget, timeoutSeconds, module, authoritativeBuildPath))
+        val shellResult = executeWithShell(project, className, methods, timeoutSeconds, module, authoritativeBuildPath)
+        val finalResult = if (multiMethodShellWarning != null && !shellResult.isError) {
+            val newContent = multiMethodShellWarning + "\n\n" + shellResult.content
+            shellResult.copy(content = newContent, tokenEstimate = shellResult.tokenEstimate + TokenEstimator.estimate(multiMethodShellWarning))
+        } else shellResult
+        return prependBreadcrumb(finalResult)
     }
 
     private suspend fun executeWithNativeRunner(
-        project: Project, className: String, method: String?,
+        project: Project, className: String, methods: List<String>,
         testTarget: String, timeoutSeconds: Long,
         reasonOut: StringBuilder
     ): ToolResult? {
-        val launchSpec = createJUnitRunSettings(project, className, method, reasonOut) ?: return null
+        val launchSpec = createJUnitRunSettings(project, className, methods, reasonOut) ?: return null
         val settings = launchSpec.settings
         val testModule = launchSpec.module
 
@@ -680,7 +763,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
     }
 
     private fun createJUnitRunSettings(
-        project: Project, className: String, method: String?,
+        project: Project, className: String, methods: List<String>,
         reasonOut: StringBuilder
     ): JUnitLaunchSpec? {
         // reasonOut is appended (single reason) on every return-null branch so the
@@ -705,11 +788,24 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
 
             val factory = testConfigType.configurationFactories.firstOrNull()
                 ?: return fail("$configTypeId ConfigurationType has no configuration factories")
-            val configName = "${className.substringAfterLast('.')}${if (method != null) ".$method" else ""}"
+            val simpleClass = className.substringAfterLast('.')
+            val configName = when (methods.size) {
+                0 -> simpleClass
+                1 -> "$simpleClass.${methods.first()}"
+                else -> "$simpleClass.${methods.first()}+${methods.size - 1}more"
+            }
             val settings = runManager.createConfiguration(configName, factory)
 
             val config = settings.configuration
             val isTestNG = testFramework == "TestNG"
+
+            // TestNG has no PATTERNS field equivalent and METHOD_NAME is single-valued,
+            // so multi-method on TestNG must go through the shell path. The dispatcher in
+            // executeRunTests already routes this case around the native runner entirely;
+            // this guard is defense-in-depth in case a caller bypasses that check.
+            if (isTestNG && methods.size >= 2) {
+                return fail("multi-method native run is not supported for TestNG; pass use_native_runner=false")
+            }
 
             try {
                 val dataMethodName = if (isTestNG) "getPersistantData" else "getPersistentData"
@@ -719,10 +815,15 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                     val testObjectField = data.javaClass.getField("TEST_OBJECT")
                     val mainClassField = data.javaClass.getField("MAIN_CLASS_NAME")
 
-                    val testType = if (method != null) {
-                        if (isTestNG) "METHOD" else "method"
-                    } else {
-                        if (isTestNG) "CLASS" else "class"
+                    // Three cases, mirroring rerun_failed_tests's multi-class PATTERNS trick
+                    // (line ~1330) but applied to methods within a single class:
+                    //   0 methods → class mode
+                    //   1 method  → method mode (today's METHOD_NAME path)
+                    //   2+ methods → JUnit 5 pattern mode with PATTERNS entry "Class,m1|m2|m3"
+                    val testType = when {
+                        methods.isEmpty() -> if (isTestNG) "CLASS" else "class"
+                        methods.size == 1 -> if (isTestNG) "METHOD" else "method"
+                        else -> "pattern"  // JUnit 5 only — TestNG guarded above
                     }
                     testObjectField.set(data, testType)
                     mainClassField.set(data, className)
@@ -733,9 +834,31 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                         packageField.set(data, packageName)
                     } catch (_: Exception) { }
 
-                    if (method != null) {
-                        val methodField = data.javaClass.getField("METHOD_NAME")
-                        methodField.set(data, method)
+                    when {
+                        methods.size == 1 -> {
+                            val methodField = data.javaClass.getField("METHOD_NAME")
+                            methodField.set(data, methods.first())
+                        }
+                        methods.size >= 2 -> {
+                            // JUnit 5 PATTERNS format: one entry per class-scoped selector,
+                            // written as "fully.qualified.Class,method1|method2|method3".
+                            // See com.intellij.execution.junit.JUnitConfiguration$Data.PATTERNS.
+                            try {
+                                val patternsField = data.javaClass.getField("PATTERNS")
+                                @Suppress("UNCHECKED_CAST")
+                                val patterns = patternsField.get(data) as? java.util.LinkedHashSet<String>
+                                    ?: java.util.LinkedHashSet()
+                                patterns.clear()
+                                patterns.add("$className,${methods.joinToString("|")}")
+                                patternsField.set(data, patterns)
+                            } catch (e: Exception) {
+                                return fail(
+                                    "multi-method native run requires JUnit 5 PATTERNS field " +
+                                        "(${e.javaClass.simpleName}: ${e.message}); pass use_native_runner=false " +
+                                        "to route through Maven/Gradle shell, which supports multi-method on JUnit 4 too"
+                                )
+                            }
+                        }
                     }
                 } else {
                     return fail("$configTypeId config exposes neither getPersistentData nor getPersistantData (unexpected plugin version)")
@@ -828,11 +951,18 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
 
     private suspend fun executeWithShell(
         project: Project,
-        testTarget: String,
+        className: String,
+        methods: List<String>,
         timeoutSeconds: Long,
         module: com.intellij.openapi.module.Module? = null,
         authoritativeBuildPath: String? = null
     ): ToolResult {
+        // Display-only target string used in error messages and breadcrumbs.
+        val testTarget = when (methods.size) {
+            0 -> className
+            1 -> "$className#${methods.first()}"
+            else -> "$className#${methods.joinToString(",")}"
+        }
         val basePath = project.basePath
             ?: return ToolResult("Error: no project base path available", "Error: no project", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
@@ -889,8 +1019,15 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
 
         val command = when {
             hasMaven -> {
-                val className = testTarget.substringBefore('#')
-                val methodPart = if ('#' in testTarget) "#${testTarget.substringAfter('#')}" else ""
+                // Surefire native multi-method syntax: `-Dtest=ClassName#method1+method2+method3`.
+                // The `+` separator is Surefire-specific (NOT comma — comma separates
+                // distinct classes). Single-method stays `-Dtest=Class#m`; whole-class
+                // stays `-Dtest=Class`.
+                val methodPart = when (methods.size) {
+                    0 -> ""
+                    1 -> "#${methods.first()}"
+                    else -> "#${methods.joinToString("+")}"
+                }
                 if (effectiveMavenDir != null && effectiveMavenDir != baseDir) {
                     // Run only the submodule to avoid rebuilding unrelated modules
                     "mvn test -Dtest=${className}${methodPart} -Dsurefire.useFile=false -q --also-make"
@@ -900,13 +1037,15 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             }
             hasGradle -> {
                 val gradleWrapper = if (File(baseDir, "gradlew").exists()) "./gradlew" else "gradle"
-                val gradleTarget = testTarget.replace('#', '.')
-                if (effectiveGradlePath != null) {
-                    // Multi-module: run only the subproject that owns the test class
-                    "$gradleWrapper ${effectiveGradlePath}:test --tests '$gradleTarget' --no-daemon -q"
-                } else {
-                    "$gradleWrapper test --tests '$gradleTarget' --no-daemon -q"
+                // Gradle multi-method: repeat the `--tests` flag once per selector.
+                // Each selector is 'ClassName.methodName' (Gradle uses `.` not `#`).
+                // Whole-class: one flag with no method suffix.
+                val testsFlags = when (methods.size) {
+                    0 -> "--tests '$className'"
+                    else -> methods.joinToString(" ") { "--tests '$className.$it'" }
                 }
+                val taskPrefix = if (effectiveGradlePath != null) "${effectiveGradlePath}:test" else "test"
+                "$gradleWrapper $taskPrefix $testsFlags --no-daemon -q"
             }
             else -> return ToolResult(
                 "No Maven (pom.xml) or Gradle (build.gradle) build file found in project root.",

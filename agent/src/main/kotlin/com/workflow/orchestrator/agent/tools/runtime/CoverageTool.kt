@@ -83,7 +83,10 @@ Actions and their parameters:
             ),
             "method" to ParameterProperty(
                 type = "string",
-                description = "Specific test method name — for run_with_coverage"
+                description = "Test method name(s) — for run_with_coverage. Single: 'testFoo'. " +
+                    "Multiple methods from the same class in one coverage run: 'testFoo,testBar,testBaz' " +
+                    "(comma-separated, whitespace around commas trimmed). Requires JUnit 5 — TestNG multi-method " +
+                    "returns a hard error (coverage aggregates only within one run; splitting would lose the merged snapshot)."
             ),
             "timeout" to ParameterProperty(
                 type = "integer",
@@ -92,6 +95,16 @@ Actions and their parameters:
             "file_path" to ParameterProperty(
                 type = "string",
                 description = "File path (e.g. 'src/main/java/com/example/ServiceImpl.java') or fully qualified class name (e.g. 'com.example.ServiceImpl') — for get_file_coverage"
+            ),
+            "on_existing_suite" to ParameterProperty(
+                type = "string",
+                enumValues = listOf("replace", "append", "ignore", "ask"),
+                description = "What to do when a previous coverage suite is already active — for run_with_coverage. " +
+                    "'replace' (default): silently swap in the new run's data — fresh measurement. " +
+                    "'append' / 'add' / 'merge': merge into existing suite — use for incremental coverage across many classes. " +
+                    "'ignore': silently discard the new run's data. " +
+                    "'ask': surface IntelliJ's native merge dialog (will block the agent until the user clicks). " +
+                    "Default 'replace' prevents the merge dialog from freezing the agent loop."
             )
         ),
         required = listOf("action")
@@ -145,16 +158,61 @@ Actions and their parameters:
                 isError = true
             )
 
-        val method = params["method"]?.jsonPrimitive?.contentOrNull
+        val methodRaw = params["method"]?.jsonPrimitive?.contentOrNull
+        // Same comma-split as java_runtime_exec: single name stays a single-entry list,
+        // comma-separated values become a multi-method list, empty/separator-only fails.
+        val methods: List<String> = methodRaw
+            ?.split(',')
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?.distinct()
+            ?: emptyList()
+
+        if (methodRaw != null && methodRaw.isNotBlank() && methods.isEmpty()) {
+            return ToolResult(
+                content = "Error: 'method' parameter contains only separators/whitespace ('$methodRaw'). " +
+                    "Pass a method name or omit the parameter to run the whole class.",
+                summary = "Invalid method value",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+        }
+
+        if (methods.size > MAX_METHODS_PER_RUN) {
+            return ToolResult(
+                content = "Error: too many methods requested (${methods.size}, max $MAX_METHODS_PER_RUN). " +
+                    "Split into multiple run_with_coverage calls, or omit 'method' to cover the whole class.",
+                summary = "Too many methods (${methods.size})",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+        }
+
+        methods.firstOrNull { !it.matches(METHOD_NAME_REGEX) }?.let { bad ->
+            return ToolResult(
+                content = "Error: invalid method name '$bad'. Expected a Java identifier " +
+                    "(letters/digits/underscore/\$, starting with a non-digit) — no spaces, no '#', " +
+                    "no '.', no ';'.",
+                summary = "Invalid method name '$bad'",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+        }
+
         val timeoutSeconds = (params["timeout"]?.jsonPrimitive?.intOrNull?.toLong() ?: DEFAULT_TIMEOUT)
             .coerceIn(1, MAX_TIMEOUT)
 
-        val testTarget = if (method != null) "$testClass#$method" else testClass
+        val testTarget = when (methods.size) {
+            0 -> testClass
+            1 -> "$testClass#${methods.first()}"
+            else -> "$testClass#${methods.joinToString(",")}"
+        }
 
-        val settings = createJUnitRunSettings(project, testClass, method)
+        val settings = createJUnitRunSettings(project, testClass, methods)
             ?: return ToolResult(
                 "Error: Could not create run configuration for '$testTarget'. " +
-                    "Ensure the class exists and JUnit plugin is available.",
+                    "Ensure the class exists and JUnit plugin is available. " +
+                    (if (methods.size >= 2) "Multi-method coverage requires JUnit 5; TestNG is not supported." else ""),
                 "Error: config creation failed",
                 ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
@@ -169,6 +227,26 @@ Actions and their parameters:
                 isError = true
             )
 
+        // Suppress IntelliJ's "replace-or-append coverage suite" dialog before launch.
+        // IntelliJ reads CoverageOptionsProvider.getOptionToReplace() inside
+        // coverageGathered() to decide between silent apply and popping the dialog.
+        // Default ASK_ON_NEW_SUITE (=3) blocks the agent loop waiting for user input;
+        // we temporarily flip it to the caller's requested policy (default REPLACE_SUITE=0)
+        // and restore the user's saved value in the `finally` below.
+        //
+        // on_existing_suite param: "replace" (default) | "append" | "ignore" | "ask"
+        //   - "ask" → don't touch the user setting; accepts that the dialog will appear.
+        //   - unknown string → safer default = REPLACE_SUITE, not ASK, so an LLM typo
+        //     doesn't re-introduce the freeze.
+        val suitePolicyInt: Int? = when (params["on_existing_suite"]?.jsonPrimitive?.contentOrNull?.lowercase()) {
+            null, "replace" -> 0             // REPLACE_SUITE
+            "append", "add", "merge" -> 1    // ADD_SUITE
+            "ignore" -> 2                    // IGNORE_SUITE
+            "ask" -> null                    // leave user setting alone — dialog WILL appear
+            else -> 0                        // unknown → replace (safer default than ask)
+        }
+        val priorSuiteOption: SuitePolicyPrior? = applyCoverageOptionProviderPolicy(project, suitePolicyInt)
+
         // Phase 3 / Task 2.5: route all listener/connection/descriptor tracking through
         // a single RunInvocation, mirroring the Task 2.3+2.4 refactor in JavaRuntimeExecTool.
         // The try/finally block below disposes the invocation on every exit path (success /
@@ -182,6 +260,9 @@ Actions and their parameters:
         //   - auto-cleans the 2-arg process listener attached via attachProcessListener,
         //   - disposes the CoverageSuiteListener (folded into invocation.onDispose),
         //   - cancels any poll scope launched inside processTerminated.
+        //
+        // The same finally also restores the user's CoverageOptionsProvider setting so
+        // their next manual coverage run prompts as before.
         val invocation = project.service<AgentService>().newRunInvocation(
             "run-with-coverage-${System.currentTimeMillis()}"
         )
@@ -392,8 +473,61 @@ Actions and their parameters:
                 isError = result.testIsError,
             )
         } finally {
+            // Restore the user's CoverageOptionsProvider setting BEFORE disposing the
+            // invocation, so the restore always runs even if the Disposer.dispose call
+            // throws (defensive — Disposer rarely throws, but the ordering is free).
+            restoreCoverageOptionProviderPolicy(project, priorSuiteOption)
             Disposer.dispose(invocation)
         }
+    }
+
+    /**
+     * Snapshot of the user's prior CoverageOptionsProvider.getOptionToReplace() value,
+     * used to restore the setting after an agent-initiated coverage run so the user's
+     * next manual coverage run prompts (or auto-replaces) exactly as before.
+     */
+    private data class SuitePolicyPrior(val priorValue: Int)
+
+    /**
+     * Flip [CoverageOptionsProvider.setOptionsToReplace] to [policy] so IntelliJ's
+     * `coverageGathered()` applies the merge decision silently instead of showing the
+     * "replace or append" dialog that freezes the agent loop. Returns a snapshot of the
+     * prior value for later restoration, or null when:
+     *   - policy is null (caller requested "ask" — do not touch the user setting)
+     *   - the Coverage plugin isn't loaded (Class.forName throws)
+     *   - the reflection API signature has shifted in a newer IDE
+     *
+     * Tolerant of every failure mode: if we can't set the option, we can't suppress the
+     * dialog, but the rest of the coverage run still works (just blocks on user click).
+     */
+    private fun applyCoverageOptionProviderPolicy(project: Project, policy: Int?): SuitePolicyPrior? {
+        if (policy == null) return null
+        return try {
+            val clazz = Class.forName("com.intellij.coverage.CoverageOptionsProvider")
+            val provider = clazz.getMethod("getInstance", Project::class.java).invoke(null, project)
+                ?: return null
+            val prior = clazz.getMethod("getOptionToReplace").invoke(provider) as Int
+            clazz.getMethod("setOptionsToReplace", Int::class.javaPrimitiveType)
+                .invoke(provider, policy)
+            SuitePolicyPrior(prior)
+        } catch (_: Throwable) { null }
+    }
+
+    /**
+     * Restore the user's prior CoverageOptionsProvider.getOptionToReplace() value.
+     * No-op when [prior] is null (either the caller opted into "ask" mode or the
+     * apply step failed — nothing to restore). Silent on reflection failure; the
+     * user can reset manually via Settings > Build > Coverage if this ever drifts.
+     */
+    private fun restoreCoverageOptionProviderPolicy(project: Project, prior: SuitePolicyPrior?) {
+        if (prior == null) return
+        try {
+            val clazz = Class.forName("com.intellij.coverage.CoverageOptionsProvider")
+            val provider = clazz.getMethod("getInstance", Project::class.java).invoke(null, project)
+                ?: return
+            clazz.getMethod("setOptionsToReplace", Int::class.javaPrimitiveType)
+                .invoke(provider, prior.priorValue)
+        } catch (_: Throwable) { /* best-effort — user can reset in Settings > Build > Coverage */ }
     }
 
     /**
@@ -874,7 +1008,7 @@ Actions and their parameters:
     // ══════════════════════════════════════════════════════════════════════
 
     private fun createJUnitRunSettings(
-        project: Project, className: String, method: String?
+        project: Project, className: String, methods: List<String>
     ): com.intellij.execution.RunnerAndConfigurationSettings? {
         return try {
             val runManager = RunManager.getInstance(project)
@@ -884,24 +1018,53 @@ Actions and their parameters:
                 type.id == configTypeId || type.displayName == configTypeId
             } ?: return null
             val factory = testConfigType.configurationFactories.firstOrNull() ?: return null
+            val isTestNG = testFramework == "TestNG"
 
-            val configName = "[Coverage] ${className.substringAfterLast('.')}${if (method != null) ".$method" else ""}"
+            // Coverage has no shell fallback: multi-method on TestNG is a hard null.
+            // Splitting into N runs defeats the point of run_with_coverage because each
+            // run would emit its own snapshot that we can't merge back.
+            if (isTestNG && methods.size >= 2) return null
+
+            val simpleClass = className.substringAfterLast('.')
+            val configName = when (methods.size) {
+                0 -> "[Coverage] $simpleClass"
+                1 -> "[Coverage] $simpleClass.${methods.first()}"
+                else -> "[Coverage] $simpleClass.${methods.first()}+${methods.size - 1}more"
+            }
             val settings = runManager.createConfiguration(configName, factory)
             val config = settings.configuration
-            val isTestNG = testFramework == "TestNG"
 
             try {
                 val dataMethodName = if (isTestNG) "getPersistantData" else "getPersistentData"
                 val data = config.javaClass.methods.find { it.name == dataMethodName }?.invoke(config)
                     ?: return null
-                data.javaClass.getField("TEST_OBJECT").set(data,
-                    if (method != null) if (isTestNG) "METHOD" else "method"
-                    else if (isTestNG) "CLASS" else "class")
+                // Three-way switch mirroring JavaRuntimeExecTool:
+                //   0 methods → class mode
+                //   1 method  → method mode
+                //   2+ methods → JUnit 5 pattern mode (TestNG guarded above)
+                val testType = when {
+                    methods.isEmpty() -> if (isTestNG) "CLASS" else "class"
+                    methods.size == 1 -> if (isTestNG) "METHOD" else "method"
+                    else -> "pattern"
+                }
+                data.javaClass.getField("TEST_OBJECT").set(data, testType)
                 data.javaClass.getField("MAIN_CLASS_NAME").set(data, className)
                 ReflectionUtils.tryReflective {
                     data.javaClass.getField("PACKAGE_NAME").set(data, className.substringBeforeLast('.', ""))
                 }
-                if (method != null) data.javaClass.getField("METHOD_NAME").set(data, method)
+                when {
+                    methods.size == 1 -> data.javaClass.getField("METHOD_NAME").set(data, methods.first())
+                    methods.size >= 2 -> {
+                        // JUnit 5 PATTERNS format: "fully.qualified.Class,method1|method2|method3"
+                        val patternsField = data.javaClass.getField("PATTERNS")
+                        @Suppress("UNCHECKED_CAST")
+                        val patterns = patternsField.get(data) as? java.util.LinkedHashSet<String>
+                            ?: java.util.LinkedHashSet()
+                        patterns.clear()
+                        patterns.add("$className,${methods.joinToString("|")}")
+                        patternsField.set(data, patterns)
+                    }
+                }
             } catch (_: Exception) { return null }
 
             val testModule = findModuleForClass(project, className) ?: return null

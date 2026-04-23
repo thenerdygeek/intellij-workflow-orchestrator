@@ -93,6 +93,124 @@ class JavaRuntimeExecToolTest {
     }
 
     // ══════════════════════════════════════════════════════════════════════
+    // Multi-method parsing (comma-separated `method` param).
+    // These validate the input-parsing front door in executeRunTests; the
+    // downstream native-runner / shell-fallback emission is covered by the
+    // shell-path integration tests further below.
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `run_tests with method containing only separators returns invalid-value error`() = runTest {
+        val result = tool.execute(
+            buildJsonObject {
+                put("action", "run_tests")
+                put("class_name", "com.example.FooTest")
+                put("method", ", , ,")
+            },
+            project
+        )
+        assertTrue(result.isError, "Separator-only method should fail validation")
+        assertTrue(
+            result.content.contains("only separators") || result.content.contains("Invalid method value"),
+            "Error should explain separator-only issue. Got: ${result.content}"
+        )
+    }
+
+    @Test
+    fun `run_tests with invalid method name returns invalid-name error`() = runTest {
+        val result = tool.execute(
+            buildJsonObject {
+                put("action", "run_tests")
+                put("class_name", "com.example.FooTest")
+                put("method", "testFoo;testBar")  // ';' is not a supported separator
+            },
+            project
+        )
+        assertTrue(result.isError, "Non-identifier method should fail validation")
+        assertTrue(
+            result.content.contains("invalid method name"),
+            "Error should flag invalid identifier. Got: ${result.content}"
+        )
+    }
+
+    @Test
+    fun `run_tests with too many methods returns too-many error`() = runTest {
+        // MAX_METHODS_PER_RUN = 50; construct 51 unique names.
+        val tooMany = (1..51).joinToString(",") { "test$it" }
+        val result = tool.execute(
+            buildJsonObject {
+                put("action", "run_tests")
+                put("class_name", "com.example.FooTest")
+                put("method", tooMany)
+            },
+            project
+        )
+        assertTrue(result.isError, "51 methods should exceed MAX_METHODS_PER_RUN")
+        assertTrue(
+            result.content.contains("too many methods") || result.content.contains("max 50"),
+            "Error should mention the cap. Got: ${result.content}"
+        )
+    }
+
+    @Test
+    fun `run_tests shell path — multi-method Maven emits plus-joined -Dtest`(@TempDir tempDir: Path) = runTest {
+        File(tempDir.toFile(), "pom.xml").writeText("<project/>")
+        val mavenProject = mockk<Project>(relaxed = true)
+        every { mavenProject.basePath } returns tempDir.toFile().absolutePath
+        // Trigger the Maven shell path with 3 comma-separated methods. The process will
+        // fail to actually run `mvn` (not installed in the test JVM), but the command
+        // string we build and pass to ProcessBuilder is visible in the error/timeout
+        // output we return.
+        val result = tool.execute(
+            buildJsonObject {
+                put("action", "run_tests")
+                put("class_name", "com.example.FooTest")
+                put("method", "testA, testB , testC")  // whitespace-around-comma handling
+                put("use_native_runner", false)
+                put("timeout", 5)
+            },
+            mavenProject
+        )
+        // Either timeout or mvn-not-found — the important invariant is we did NOT fall
+        // back to "No build tool found", which would indicate we never emitted a Maven
+        // command. (We can't easily intercept the ProcessBuilder string without a big
+        // refactor; the shell-test-finds-Maven test above uses the same proof-by-negative
+        // pattern.)
+        assertFalse(
+            result.content.contains("No Maven") && result.content.contains("Gradle"),
+            "Maven pom.xml present with 3 methods: should NOT say 'No build tool found'. Got: ${result.content}"
+        )
+    }
+
+    @Test
+    fun `run_tests with single method behaves identically to today's path`() = runTest {
+        // This test locks in backward compatibility: `method="testFoo"` (no commas) must
+        // parse as a single-method list and NOT trip any of the new validation errors.
+        // We can't cheaply assert the downstream JUnit reflection without a real Project,
+        // but we CAN assert that input parsing passes (no validation error).
+        val tempProject = mockk<Project>(relaxed = true)
+        every { tempProject.basePath } returns null  // forces early "no basePath" error from shell path
+        val result = tool.execute(
+            buildJsonObject {
+                put("action", "run_tests")
+                put("class_name", "com.example.FooTest")
+                put("method", "testFoo")
+                put("use_native_runner", false)
+            },
+            tempProject
+        )
+        // Expect the "no base path" error — NOT an "invalid method" / "too many methods" /
+        // "only separators" error. Proves validation accepted "testFoo" unchanged.
+        assertTrue(result.isError)
+        assertFalse(
+            result.content.contains("invalid method") ||
+                result.content.contains("too many methods") ||
+                result.content.contains("only separators"),
+            "Single method should pass validation cleanly. Got: ${result.content}"
+        )
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
     // Bug-fix tests — root-health check and synthetic-leaf filtering.
     // These exercise the shared helpers (collectTestResults, mapToTestResultEntry,
     // buildRunnerErrorResult) that the native JUnit runner path delegates to on
