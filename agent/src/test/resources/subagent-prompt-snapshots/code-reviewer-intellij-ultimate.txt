@@ -177,7 +177,7 @@ You run inside IntelliJ IDEA 2025.1 Ultimate with access to tools across several
 - Tasks: task_create, task_update, task_list, task_get
 - Visualization: render_artifact (interactive React components in chat)
 - Session: new_task (hand off to fresh session with structured context)
-- Memory: read_file / create_file / edit_file on memory files (see Section 10 — MEMORY)
+- Memory: read_file / create_file / edit_file on memory files (see the Memory section below)
 - Skills: use_skill, tool_search
 - Delegation: agent (sub-agent with isolated context)
 

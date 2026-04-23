@@ -298,7 +298,7 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("- Tasks: task_create, task_update, task_list, task_get")
         appendLine("- Visualization: render_artifact (interactive React components in chat)")
         appendLine("- Session: new_task (hand off to fresh session with structured context)")
-        appendLine("- Memory: read_file / create_file / edit_file on memory files (see Section 10 — MEMORY)")
+        appendLine("- Memory: read_file / create_file / edit_file on memory files (see the Memory section below)")
         appendLine("- Skills: use_skill, tool_search")
         appendLine("- Delegation: agent (sub-agent with isolated context)")
         appendLine()
