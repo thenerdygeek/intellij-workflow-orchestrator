@@ -35,7 +35,7 @@ class RunCommandTool(
     allowedShells: List<String> = listOf("bash", "cmd", "powershell")
 ) : AgentTool {
     override val name = "run_command"
-    override val description = "Execute a CLI command on the system. Use this when you need to perform system operations or run specific commands to accomplish any step in the user's task. You must tailor your command to the user's system and provide a clear explanation of what the command does via the description parameter. For command chaining, use the appropriate chaining syntax for the shell (e.g., '&&' for bash). Prefer to execute complex CLI commands over creating executable scripts, as they are more flexible and easier to run. Commands will be executed in the project directory by default. You MUST specify the shell type matching the available shells listed in your environment. If the process goes idle (no output for the idle timeout period), returns [IDLE] with the process ID — use send_stdin, ask_user_input, or kill_process to interact with it. Dangerous commands are blocked by the safety analyzer."
+    override val description = "Execute a CLI command on the system. Use this when you need to perform system operations or run specific commands to accomplish any step in the user's task. You must tailor your command to the user's system and provide a clear explanation of what the command does via the description parameter. For command chaining, use the appropriate chaining syntax for the shell (e.g., '&&' for bash). Prefer to execute complex CLI commands over creating executable scripts, as they are more flexible and easier to run. Commands will be executed in the project directory by default. You MUST specify the shell type matching the available shells listed in your environment. If the process goes idle (no output for the idle timeout period), an inline classification note is emitted and the tool keeps waiting (on_idle=notify, default) — or idle detection is skipped entirely (on_idle=wait). Dangerous commands are blocked by the safety analyzer."
     override val parameters: FunctionParameters = buildShellParameters(allowedShells)
     override val allowedWorkers = setOf(WorkerType.CODER)
     override val timeoutMs: Long get() = AgentTool.LONG_TOOL_TIMEOUT_MS
@@ -116,7 +116,7 @@ class RunCommandTool(
                 ),
                 "idle_timeout" to ParameterProperty(
                     type = "integer",
-                    description = "Idle detection threshold in seconds. Default: 15 (60 for build commands). Process returns [IDLE] if no output for this many seconds."
+                    description = "Idle detection threshold in seconds. Default: 15 (60 for build commands). When on_idle=notify (default), an inline classification note is emitted after this many seconds of no output."
                 ),
                 "env" to ParameterProperty(
                     type = "object",
@@ -365,11 +365,23 @@ class RunCommandTool(
                     return buildTimeoutResult(managed, timeoutSeconds)
                 }
 
-                // Priority 3: idle detection (only after first output)
+                // Priority 3: idle classification per on_idle policy
+                val onIdle = params["on_idle"]?.jsonPrimitive?.content?.lowercase() ?: "notify"
                 val lastOutput = managed.lastOutputAt.get()
-                if (lastOutput > 0 && now - lastOutput >= idleThresholdMs) {
-                    managed.idleSignaledAt.set(now)
-                    return buildIdleResult(managed, idleThresholdMs / 1000)
+                // Use lastOutputAt if there has been output, otherwise fall back to startedAt so
+                // processes that produce zero output (e.g. `sleep N`) still fire idle notes.
+                val idleReferenceTime = if (lastOutput > 0) lastOutput else managed.startedAt
+                if (onIdle != "wait" && now - idleReferenceTime >= idleThresholdMs) {
+                    // Reset timer so we only fire once per idle stretch.
+                    managed.lastOutputAt.set(now)
+                    val tail = managed.outputLines.toList().joinToString("")
+                        .let { com.workflow.orchestrator.agent.tools.process.OutputCollector.stripAnsi(it) }
+                        .lines().takeLast(40).joinToString("\n")
+                    val classification = com.workflow.orchestrator.agent.tools.process
+                        .PromptHeuristics.classify(tail)
+                    val note = buildIdleNote(classification, idleThresholdMs / 1000)
+                    activeStreamCallback?.invoke(toolCallId, note)
+                    // NOTE: on_idle=notify keeps the loop going — do NOT return here.
                 }
             }
             @Suppress("UNREACHABLE_CODE")
@@ -563,37 +575,18 @@ class RunCommandTool(
         )
     }
 
-    private fun buildIdleResult(managed: ManagedProcess, idleSeconds: Long): ToolResult {
-        val processId = managed.toolCallId
-        val command = managed.command
-        val lastLines = OutputCollector.stripAnsi(lastOutputLines(managed, 10))
-        val indentedLines = lastLines.lines().joinToString("\n") { "  $it" }
-
-        val passwordWarning = if (ShellResolver.isLikelyPasswordPrompt(lastLines)) {
-            "\nWARNING: Last output appears to be a password/credential prompt. Use ask_user_input, not send_stdin.\n"
-        } else {
-            ""
+    private fun buildIdleNote(
+        classification: com.workflow.orchestrator.agent.tools.process.IdleClassification,
+        idleSeconds: Long,
+    ): String {
+        val label = when (classification) {
+            is com.workflow.orchestrator.agent.tools.process.IdleClassification.LikelyPasswordPrompt ->
+                "LIKELY_PASSWORD_PROMPT: \"${classification.promptText}\" (use ask_user_input)"
+            is com.workflow.orchestrator.agent.tools.process.IdleClassification.LikelyStdinPrompt ->
+                "LIKELY_STDIN_PROMPT: \"${classification.promptText}\""
+            com.workflow.orchestrator.agent.tools.process.IdleClassification.GenericIdle ->
+                "GENERIC_IDLE (cause unknown — may be waiting for stdin, slow, or stuck)"
         }
-
-        val content = buildString {
-            appendLine("[IDLE] Process idle for ${idleSeconds}s — no output since last line.")
-            appendLine("Process still running (ID: $processId, command: $command).")
-            appendLine()
-            appendLine("Last output:")
-            appendLine(indentedLines)
-            append(passwordWarning)
-            appendLine()
-            appendLine("Options:")
-            appendLine("- send_stdin(process_id=\"$processId\", input=\"<your input>\\n\") to provide input")
-            appendLine("- ask_user_input(process_id=\"$processId\", description=\"...\", prompt=\"...\") for user input")
-            appendLine("- kill_process(process_id=\"$processId\") to abort")
-        }
-
-        return ToolResult(
-            content = content,
-            summary = "Process idle — waiting for input (ID: $processId)",
-            tokenEstimate = TokenEstimator.estimate(content),
-            isError = false
-        )
+        return "⏳ Process idle for ${idleSeconds}s — $label (source: regex). Still waiting.\n"
     }
 }

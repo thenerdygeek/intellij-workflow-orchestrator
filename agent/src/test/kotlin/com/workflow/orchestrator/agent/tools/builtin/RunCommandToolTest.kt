@@ -299,20 +299,34 @@ class RunCommandToolTest {
     }
 
     @Test
-    fun `execute returns IDLE for process waiting on stdin`() = runTest {
-        val tool = RunCommandTool()
+    fun `on_idle notify emits stream note and does not return IDLE`() = runTest {
+        val streamedChunks = mutableListOf<String>()
+        RunCommandTool.streamCallback = { _, chunk -> streamedChunks.add(chunk) }
+        RunCommandTool.currentToolCallId.set("tc-stdin-idle")
+
+        val tool = RunCommandTool(allowedShells = listOf("bash"))
         val params = buildJsonObject {
             put("command", "sh -c \"echo 'Enter name:' && read line\"")
-            put("description", "Test idle detection")
+            put("description", "Test idle detection — on_idle=notify")
             put("idle_timeout", 2)
+            put("on_idle", "notify")
+            put("timeout", 5)   // short total timeout so test finishes quickly
         }
 
         val result = tool.execute(params, project)
 
-        assertTrue(result.content.contains("[IDLE]"), "Expected [IDLE] in output, got: ${result.content}")
-        assertTrue(result.content.contains("Enter name:"), "Expected prompt text in output, got: ${result.content}")
-        assertTrue(result.content.contains("send_stdin"), "Expected send_stdin instructions, got: ${result.content}")
-        assertFalse(result.isError)
+        // Old behavior: tool returned [IDLE]. New behavior: tool returns TIMEOUT (process still running).
+        assertFalse(result.content.contains("[IDLE]"),
+            "Tool must NOT return [IDLE] with on_idle=notify; got: ${result.content}")
+        // The tool either timed out or the process completed — not an idle-return.
+        assertTrue(result.content.contains("[TIMEOUT]") || result.content.contains("Exit code"),
+            "Expected timeout or exit result, got: ${result.content}")
+        // Idle note must have been emitted inline via stream callback.
+        assertTrue(streamedChunks.any { it.contains("idle", ignoreCase = true) || it.contains("GENERIC_IDLE") || it.contains("STDIN") },
+            "Expected inline idle note in stream; got: $streamedChunks")
+
+        RunCommandTool.streamCallback = null
+        RunCommandTool.currentToolCallId.remove()
     }
 
     @Test
