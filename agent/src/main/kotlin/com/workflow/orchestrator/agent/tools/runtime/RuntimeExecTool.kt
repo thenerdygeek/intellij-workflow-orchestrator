@@ -854,7 +854,11 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
                         } catch (_: Exception) {}
                     }
 
-                    if (waitForReady && mode == "run") {
+                    // Attach readiness listener for both Run and Debug modes. The listener is
+                    // a plain ProcessAdapter and works identically on either handler. Gating it on
+                    // mode=="run" caused debug launches to return "DEBUG session active" immediately
+                    // after the debugger attached (pre-main), before the service was actually up.
+                    if (waitForReady) {
                         val readinessListener = object : ProcessAdapter() {
                             override fun onTextAvailable(event: ProcessEvent, outputType: com.intellij.openapi.util.Key<*>) {
                                 if (readinessAchieved.get()) return
@@ -923,6 +927,174 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
                 return ToolResult(msg, "Launch failed", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
             }
 
+            // Service-readiness wait, shared between Run and Debug modes. Returns null on success
+            // (readiness achieved; httpProbeSignal populated if an HTTP probe hit), or a ToolResult
+            // on failure (validation error, exited-before-ready, or timeout).
+            suspend fun awaitServiceReadiness(httpProbeSignal: AtomicReference<String?>): ToolResult? {
+                val isSpring = configTypeId.contains("SpringBoot", ignoreCase = true) ||
+                    configTypeId.contains("spring", ignoreCase = true) ||
+                    SpringBootConfigParser.isSpringBootConfig(settings)
+
+                // Validate http_probe without Spring config or explicit ready_url
+                if (readinessStrategy == "http_probe" && !isSpring && readyUrl == null) {
+                    return ToolResult(
+                        "READINESS_DETECTION_FAILED: http_probe requires a Spring Boot config or an explicit ready_url parameter.",
+                        "READINESS_DETECTION_FAILED", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
+                    )
+                }
+
+                // Determine effective strategy
+                val useHttpProbe = readyUrl != null ||
+                    readinessStrategy == "http_probe" ||
+                    (readinessStrategy == "auto" && isSpring)
+
+                val readyResult: Boolean?
+
+                if (useHttpProbe) {
+                    // Resolve probe URL.
+                    // If the user supplied a ready_url, use it verbatim — the user owns correctness.
+                    // Otherwise, we MUST have an OS-discovered port before probing: static config
+                    // parsing is intentionally skipped because run configurations override the port
+                    // via VM options, env vars, active profiles, programmatic setDefaultProperties,
+                    // cloud config, or random-port mode (server.port=0) that static parsing cannot see.
+                    val probeUrl = if (readyUrl != null) {
+                        readyUrl
+                    } else {
+                        // Wait briefly for the process to start binding, then attempt OS port discovery.
+                        // We poll up to HTTP_PROBE_GRACE_MS (5 s) before giving up.
+                        val pid = processHandlerRef.get()?.let { extractPid(it) }
+                        var osPort: Int? = null
+                        if (pid != null) {
+                            val probeStartMs = System.currentTimeMillis()
+                            while (osPort == null && (System.currentTimeMillis() - probeStartMs) < HTTP_PROBE_GRACE_MS) {
+                                coroutineContext.ensureActive()
+                                val discovered = discoverListeningPorts(pid)
+                                if (discovered.isNotEmpty()) {
+                                    osPort = discovered.min()
+                                    discoveredPorts.addAll(discovered)
+                                } else {
+                                    delay(OS_PROBE_POLL_MS)
+                                }
+                            }
+                        }
+                        if (osPort == null) {
+                            // No port observed via OS commands — skip HTTP probe and fall through
+                            // to log-pattern + idle-stdout strategies. Per "no info > wrong info"
+                            // principle, we do NOT fall back to static config parsing.
+                            null
+                        } else {
+                            val paths = SpringBootConfigParser.parseActuatorPaths(settings, project)
+                            "http://localhost:$osPort${paths.actuatorBasePath}${paths.healthPath}"
+                        }
+                    }
+
+                    if (probeUrl != null) {
+                        // Race HTTP probe against log-pattern (first wins).
+                        readyResult = withTimeoutOrNull(readyTimeoutSec * 1000L) {
+                            coroutineScope {
+                                val httpJob = async {
+                                    val probe = HttpReadinessProbe()
+                                    val result = probe.poll(
+                                        url = probeUrl,
+                                        timeoutMs = readyTimeoutSec * 1000L,
+                                        gracePeriodMs = HTTP_PROBE_GRACE_MS,
+                                    )
+                                    result is HttpReadinessProbe.ProbeResult.Success
+                                }
+                                val logJob = async {
+                                    while (!readinessAchieved.get() && !processStartFailed.get()) {
+                                        coroutineContext.ensureActive()
+                                        delay(LOG_PATTERN_POLL_MS)
+                                    }
+                                    readinessAchieved.get()
+                                }
+
+                                var result = false
+                                while (!httpJob.isCompleted && !logJob.isCompleted && !processStartFailed.get()) {
+                                    coroutineContext.ensureActive()
+                                    delay(READY_RACE_POLL_MS)
+                                }
+                                if (httpJob.isCompleted && httpJob.await()) {
+                                    httpProbeSignal.set("HTTP probe 200 OK: $probeUrl")
+                                    result = true
+                                } else if (logJob.isCompleted && logJob.await()) {
+                                    result = true
+                                } else if (!processStartFailed.get()) {
+                                    val httpOk = httpJob.await()
+                                    val logOk = logJob.await()
+                                    result = httpOk || logOk
+                                    if (httpOk) httpProbeSignal.set("HTTP probe 200 OK: $probeUrl")
+                                }
+                                httpJob.cancel()
+                                logJob.cancel()
+                                result
+                            }
+                        }
+                    } else {
+                        readyResult = withTimeoutOrNull(readyTimeoutSec * 1000L) {
+                            while (!readinessAchieved.get() && !processStartFailed.get()) {
+                                coroutineContext.ensureActive()
+                                delay(LOG_PATTERN_POLL_MS)
+                            }
+                            readinessAchieved.get()
+                        }
+                    }
+                } else {
+                    readyResult = withTimeoutOrNull(readyTimeoutSec * 1000L) {
+                        when {
+                            readinessStrategy == "process_started" -> true
+                            readinessStrategy == "explicit_pattern" || readinessStrategy == "log_pattern" || isSpring -> {
+                                while (!readinessAchieved.get() && !processStartFailed.get()) {
+                                    coroutineContext.ensureActive()
+                                    delay(LOG_PATTERN_POLL_MS)
+                                }
+                                readinessAchieved.get()
+                            }
+                            else -> {
+                                var lastLogLength = logBuffer.length
+                                delay(IDLE_STDOUT_INITIAL_WAIT_MS)
+                                while (true) {
+                                    coroutineContext.ensureActive()
+                                    if (processStartFailed.get()) return@withTimeoutOrNull false
+                                    val currentLength = logBuffer.length
+                                    if (currentLength == lastLogLength) break
+                                    lastLogLength = currentLength
+                                    delay(IDLE_STDOUT_POLL_MS)
+                                }
+                                !processStartFailed.get()
+                            }
+                        }
+                    }
+                }
+
+                if (processStartFailed.get()) {
+                    val msg = processStartFailedMsg.get() ?: "EXITED_BEFORE_READY"
+                    return ToolResult(msg, "Process failed before ready", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+                }
+
+                if (readyResult != true) {
+                    val lastLines = logBuffer.toString().lines()
+                        .takeLast(tailLines)
+                        .joinToString("\n")
+                    return ToolResult(
+                        "TIMEOUT_WAITING_FOR_READY: Application '${config.name}' did not reach ready state within " +
+                            "${readyTimeoutSec}s.\nLast output:\n$lastLines",
+                        "TIMEOUT_WAITING_FOR_READY", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
+                    )
+                }
+
+                // Port discovery: lsof/ss/netstat after readiness
+                if (discoverPorts) {
+                    val pid = processHandlerRef.get()?.let { extractPid(it) }
+                    if (pid != null) {
+                        val osPorts = discoverListeningPorts(pid)
+                        discoveredPorts.addAll(osPorts)
+                    }
+                }
+
+                return null
+            }
+
             // Debug mode path: wait for XDebugSession
             if (mode == "debug") {
                 val debugSessionName = AtomicReference<String?>(null)
@@ -971,6 +1143,16 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
                     )
                 }
 
+                // Debug-session attach only confirms the JVM booted with the debug agent, not that
+                // the application is serving traffic. Run the same readiness pipeline used by Run
+                // mode (HTTP probe / Spring log banner / idle stdout) so the tool returns when the
+                // service is actually up.
+                val debugHttpProbeSignal = AtomicReference<String?>(null)
+                if (waitForReady) {
+                    val readinessError = awaitServiceReadiness(debugHttpProbeSignal)
+                    if (readinessError != null) return readinessError
+                }
+
                 // S5 fix: replace poll-on-isPaused with XDebugSessionListener.sessionPaused()
                 // via DebugInvocation.attachListener (2-arg addSessionListener form — auto-removes
                 // via Disposer). This matches the pattern used by AgentDebugController.registerSession.
@@ -1017,10 +1199,17 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
                 sb.appendLine("Config: ${config.name}")
                 sb.appendLine("Session: ${debugSessionName.get() ?: "unknown"}")
                 debugPid.get()?.let { sb.appendLine("PID: $it") }
+                if (discoveredPorts.isNotEmpty()) {
+                    sb.appendLine("Listening ports: ${discoveredPorts.toSortedSet()}")
+                }
+                val debugReadySignal = debugHttpProbeSignal.get() ?: readySignal.get()
+                debugReadySignal?.let { sb.appendLine("Ready signal: $it") }
                 if (waitForPause) {
                     val paused = debugPausedAt.get()
                     if (paused != null) sb.appendLine("paused_at: $paused")
                     else sb.appendLine("Status: running (no breakpoint hit within ${readyTimeoutSec}s)")
+                } else if (waitForReady) {
+                    sb.appendLine("Status: DEBUG session active — service READY")
                 } else {
                     sb.appendLine("Status: DEBUG session active")
                 }
@@ -1036,176 +1225,9 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
 
             // Run mode: wait_for_ready path
             if (waitForReady) {
-                val isSpring = configTypeId.contains("SpringBoot", ignoreCase = true) ||
-                    configTypeId.contains("spring", ignoreCase = true) ||
-                    SpringBootConfigParser.isSpringBootConfig(settings)
-
-                // Validate http_probe without Spring config or explicit ready_url
-                if (readinessStrategy == "http_probe" && !isSpring && readyUrl == null) {
-                    return ToolResult(
-                        "READINESS_DETECTION_FAILED: http_probe requires a Spring Boot config or an explicit ready_url parameter.",
-                        "READINESS_DETECTION_FAILED", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
-                    )
-                }
-
-                // Determine effective strategy
-                val useHttpProbe = readyUrl != null ||
-                    readinessStrategy == "http_probe" ||
-                    (readinessStrategy == "auto" && isSpring)
-
-                val readyResult: Boolean?
                 val httpProbeSignal = AtomicReference<String?>(null)
-
-                if (useHttpProbe) {
-                    // Resolve probe URL.
-                    // If the user supplied a ready_url, use it verbatim — the user owns correctness.
-                    // Otherwise, we MUST have an OS-discovered port before probing: static config
-                    // parsing is intentionally skipped because run configurations override the port
-                    // via VM options, env vars, active profiles, programmatic setDefaultProperties,
-                    // cloud config, or random-port mode (server.port=0) that static parsing cannot see.
-                    val probeUrl = if (readyUrl != null) {
-                        readyUrl
-                    } else {
-                        // Wait briefly for the process to start binding, then attempt OS port discovery.
-                        // We poll up to HTTP_PROBE_GRACE_MS (5 s) before giving up.
-                        val pid = processHandlerRef.get()?.let { extractPid(it) }
-                        var osPort: Int? = null
-                        if (pid != null) {
-                            val probeStartMs = System.currentTimeMillis()
-                            while (osPort == null && (System.currentTimeMillis() - probeStartMs) < HTTP_PROBE_GRACE_MS) {
-                                coroutineContext.ensureActive()
-                                val discovered = discoverListeningPorts(pid)
-                                if (discovered.isNotEmpty()) {
-                                    osPort = discovered.min()
-                                    discoveredPorts.addAll(discovered)
-                                } else {
-                                    delay(OS_PROBE_POLL_MS)
-                                }
-                            }
-                        }
-                        if (osPort == null) {
-                            // No port observed via OS commands — skip HTTP probe and fall through
-                            // to log-pattern + idle-stdout strategies. Per "no info > wrong info"
-                            // principle, we do NOT fall back to static config parsing.
-                            null
-                        } else {
-                            val paths = SpringBootConfigParser.parseActuatorPaths(settings, project)
-                            "http://localhost:$osPort${paths.actuatorBasePath}${paths.healthPath}"
-                        }
-                    }
-
-                    if (probeUrl != null) {
-                        // Race HTTP probe against log-pattern (first wins).
-                        readyResult = withTimeoutOrNull(readyTimeoutSec * 1000L) {
-                            coroutineScope {
-                                val httpJob = async {
-                                    // Port already discovered above; grace period is minimal (probe won't
-                                    // hit connection-refused since we found the port binding via lsof/ss).
-                                    val probe = HttpReadinessProbe()
-                                    val result = probe.poll(
-                                        url = probeUrl,
-                                        timeoutMs = readyTimeoutSec * 1000L,
-                                        gracePeriodMs = HTTP_PROBE_GRACE_MS,
-                                    )
-                                    result is HttpReadinessProbe.ProbeResult.Success
-                                }
-                                val logJob = async {
-                                    // Background log-pattern fallback
-                                    while (!readinessAchieved.get() && !processStartFailed.get()) {
-                                        coroutineContext.ensureActive()
-                                        delay(LOG_PATTERN_POLL_MS)
-                                    }
-                                    readinessAchieved.get()
-                                }
-
-                                // First wins
-                                var result = false
-                                while (!httpJob.isCompleted && !logJob.isCompleted && !processStartFailed.get()) {
-                                    coroutineContext.ensureActive()
-                                    delay(READY_RACE_POLL_MS)
-                                }
-                                if (httpJob.isCompleted && httpJob.await()) {
-                                    httpProbeSignal.set("HTTP probe 200 OK: $probeUrl")
-                                    // Port already in discoveredPorts from OS discovery above
-                                    result = true
-                                } else if (logJob.isCompleted && logJob.await()) {
-                                    result = true
-                                } else if (!processStartFailed.get()) {
-                                    // Neither completed — wait for both
-                                    val httpOk = httpJob.await()
-                                    val logOk = logJob.await()
-                                    result = httpOk || logOk
-                                    if (httpOk) httpProbeSignal.set("HTTP probe 200 OK: $probeUrl")
-                                }
-                                httpJob.cancel()
-                                logJob.cancel()
-                                result
-                            }
-                        }
-                    } else {
-                        // No OS-discovered port yet — skip HTTP probe, fall back to log-pattern only.
-                        // Per "no info > wrong info", we do NOT guess a port from static config parsing.
-                        readyResult = withTimeoutOrNull(readyTimeoutSec * 1000L) {
-                            while (!readinessAchieved.get() && !processStartFailed.get()) {
-                                coroutineContext.ensureActive()
-                                delay(LOG_PATTERN_POLL_MS)
-                            }
-                            readinessAchieved.get()
-                        }
-                    }
-                } else {
-                    readyResult = withTimeoutOrNull(readyTimeoutSec * 1000L) {
-                        when {
-                            readinessStrategy == "process_started" -> true
-                            readinessStrategy == "explicit_pattern" || readinessStrategy == "log_pattern" || isSpring -> {
-                                while (!readinessAchieved.get() && !processStartFailed.get()) {
-                                    coroutineContext.ensureActive()
-                                    delay(LOG_PATTERN_POLL_MS)
-                                }
-                                readinessAchieved.get()
-                            }
-                            else -> {
-                                // idle_stdout or auto for non-Spring: wait for stdout to go idle
-                                var lastLogLength = logBuffer.length
-                                delay(IDLE_STDOUT_INITIAL_WAIT_MS)
-                                while (true) {
-                                    coroutineContext.ensureActive()
-                                    if (processStartFailed.get()) return@withTimeoutOrNull false
-                                    val currentLength = logBuffer.length
-                                    if (currentLength == lastLogLength) break
-                                    lastLogLength = currentLength
-                                    delay(IDLE_STDOUT_POLL_MS)
-                                }
-                                !processStartFailed.get()
-                            }
-                        }
-                    }
-                }
-
-                if (processStartFailed.get()) {
-                    val msg = processStartFailedMsg.get() ?: "EXITED_BEFORE_READY"
-                    return ToolResult(msg, "Process failed before ready", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
-                }
-
-                if (readyResult != true) {
-                    val lastLines = logBuffer.toString().lines()
-                        .takeLast(tailLines)
-                        .joinToString("\n")
-                    return ToolResult(
-                        "TIMEOUT_WAITING_FOR_READY: Application '${config.name}' did not reach ready state within " +
-                            "${readyTimeoutSec}s.\nLast output:\n$lastLines",
-                        "TIMEOUT_WAITING_FOR_READY", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
-                    )
-                }
-
-                // Port discovery: lsof/ss/netstat after readiness
-                if (discoverPorts) {
-                    val pid = processHandlerRef.get()?.let { extractPid(it) }
-                    if (pid != null) {
-                        val osPorts = discoverListeningPorts(pid)
-                        discoveredPorts.addAll(osPorts)
-                    }
-                }
+                val readinessError = awaitServiceReadiness(httpProbeSignal)
+                if (readinessError != null) return readinessError
 
                 // Detach: null refs so dispose() doesn't kill the process
                 invocation.descriptorRef.set(null)
