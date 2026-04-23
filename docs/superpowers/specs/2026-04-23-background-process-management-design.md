@@ -276,14 +276,110 @@ Note: post-v1, `run_command` no longer auto-emits `[IDLE]` messages with `proces
 
 - **`kill_process` standalone tool** — retired in this release. Kill functionality is consolidated into `background_process(id, action=kill)` so there is exactly one tool (and one schema entry in the LLM's tool list) for destructive process termination. Rationale: with `bgId` being the single canonical ID for any managed process, a separate kill tool became redundant — one primitive, one entry point.
 
-### Migration notes
+### Full removal sweep (concrete task list)
 
-- `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/builtin/KillProcessTool.kt` — deleted.
-- Removed from `AgentService.registerAllTools()`.
-- `ProcessToolHelpers.buildIdleContent` updated: the "Options:" footer no longer lists `kill_process`; instead lists `background_process(id=..., action=kill)`.
-- System prompt Rules / Capabilities sections: scrub all `kill_process` references, replace with `background_process(action=kill)`.
-- Snapshot tests (`prompt-snapshots/*.txt`) regenerate to reflect the removed tool.
-- Old persisted conversation histories that reference `kill_process` by name are not rewritten. When the LLM re-enters such a session and looks at the transcript, the current tool schema will not include `kill_process`. The LLM will either adapt to `background_process(action=kill)` (expected) or report the tool doesn't exist (acceptable). No automatic migration of historical messages.
+Every `kill_process` / `KillProcessTool` reference currently in the repo, grouped by file type. All must be addressed in the implementation commit — leaving any reference behind means the LLM sees conflicting guidance or the build breaks on snapshot diffs.
+
+**Production source (`agent/src/main/kotlin/.../`):**
+
+| File | Change |
+|---|---|
+| `tools/builtin/KillProcessTool.kt` | **Delete entire file.** |
+| `AgentService.kt` (line ~723) | Remove `safeRegisterDeferred("Utilities") { KillProcessTool() }`. (`kill_process` is currently a deferred tool — see "Tool registration tier" below for the core-vs-deferred treatment of the new tools.) |
+| `tools/builtin/ProcessToolHelpers.kt` (line ~51) | `buildIdleContent` "Options:" footer: replace `kill_process(process_id="$processId")` with `background_process(id="$processId", action="kill")`. |
+| `tools/builtin/RunCommandTool.kt` (line ~38) | Tool description text: remove the phrase "use send_stdin, ask_user_input, or kill_process to interact with it" (also rewrite for the new `background: true` / `on_idle` behavior described elsewhere in this spec). |
+| `tools/builtin/RunCommandTool.kt` (line ~471) | Idle-result footer `appendLine("- kill_process(process_id=...)` is removed — the whole `buildIdleResult` branch is being replaced by `on_idle: notify/wait` anyway (no more auto-IDLE from `run_command`). |
+| `tools/builtin/SendStdinTool.kt` (line ~86) | Rate-limit error message: replace "Kill the process with kill_process and rerun…" with "Kill the process with `background_process(action=kill)` and rerun…" |
+| `prompt/SystemPrompt.kt` (line ~259) | Plan mode write-tools list: remove `kill_process`. |
+| `prompt/SystemPrompt.kt` (line ~377) | Capabilities hint text: replace "use kill_process to terminate" with "use `background_process(action=kill)` to terminate". |
+| `prompt/SystemPrompt.kt` (line ~424) | Tool hints table "Stop a running configuration gracefully" row: replace trailing `kill_process or run_command` with `background_process(action=kill) or run_command`. |
+| `loop/AgentLoop.kt` (line ~477) | `WRITE_TOOLS` set: remove `"kill_process"`. (Kill is still a write op; it's now exercised via `background_process`, so the set-membership moves accordingly if a meta-tool action-level check is needed, otherwise the `background_process` tool itself is added to `WRITE_TOOLS` via the approval-gate wiring.) |
+
+**Resources — persona configs (`agent/src/main/resources/agents/`):**
+
+| File | Change |
+|---|---|
+| `devops-engineer.md` | Remove `kill_process` from `deferred-tools:` list; add `send_stdin` only if the persona needs it (it already lists `send_stdin`, so nothing to add — just remove `kill_process`). Add `background_process` to the persona's tool allowlist (since it's a new core tool, it's implicitly available; persona YAMLs only list deferred tools they want access to, so no line is needed unless we want to restrict). Verify by regeneration. |
+| `general-purpose.md` | Same pattern: remove `kill_process` from `deferred-tools:`. Keep `send_stdin` — and note its promotion from deferred to core means this line becomes redundant (see "Tool registration tier" below); remove `send_stdin` from the deferred-tools list once it's core. |
+| `performance-engineer.md` | Same: remove `kill_process`; remove `send_stdin` once promoted to core. |
+
+**Tests (`agent/src/test/kotlin/.../`):**
+
+| File | Change |
+|---|---|
+| `tools/builtin/KillProcessToolTest.kt` | **Delete entire file.** |
+| `tools/builtin/SpawnAgentToolTest.kt` (lines ~83, ~1177) | Tool set assertions: remove `"kill_process"` from the expected sets; add `"background_process"` where appropriate. |
+| `tools/subagent/ParallelSubagentIntegrationTest.kt` (line ~76) | Same: remove `"kill_process"`, add `"background_process"`. |
+| `loop/AgentServiceToolFilterTest.kt` (line ~204) | WRITE_TOOLS filter expectations: remove `"kill_process"`, add `"background_process"` (if action-level approval happens at the tool level) or adjust per the implementation's approval-gate wiring. |
+| `loop/AgentLoopTest.kt` (line ~441) | Same as above. |
+
+**Snapshot files — `agent/src/test/resources/prompt-snapshots/`:** regenerate all 7 snapshots. The affected content per snapshot file:
+- Line ~60 — plan mode blocked-tools list (remove `kill_process`).
+- Line ~127–135 — capabilities hint paragraph ("use kill_process to terminate" → "use `background_process(action=kill)` to terminate").
+- Line ~152–162 — tool hints table "Stop a running configuration gracefully" row.
+
+Files: `null-context.txt`, `intellij-ultimate.txt`, `intellij-community.txt`, `pycharm-professional.txt`, `pycharm-community.txt`, `webstorm.txt`, `intellij-ultimate-mixed.txt`.
+
+**Snapshot files — `agent/src/test/resources/subagent-prompt-snapshots/`:** regenerate all 5 snapshots (same two line regions per file).
+
+Files: `code-reviewer-intellij-ultimate.txt`, `spring-boot-engineer-intellij-ultimate.txt`, `python-engineer-pycharm-professional.txt`, `test-automator-null-context.txt`, `architect-reviewer-intellij-community.txt`.
+
+Regeneration command (per `agent/CLAUDE.md`):
+
+```bash
+./gradlew :agent:test --tests "*SNAPSHOT*generate all golden*"
+./gradlew :agent:test --tests "*SubagentSystemPromptSnapshotTest*generate all golden*"
+./gradlew :agent:test --tests "*SNAPSHOT*"   # verify all pass
+```
+
+**Docs (`agent/CLAUDE.md`):**
+
+| Line | Change |
+|---|---|
+| ~115 (Utilities deferred tools table row) | Remove `kill_process`; remove `send_stdin` from Utilities row (promoted to core — moved into the Core Tools table above); add `background_process` to the Core Tools table. |
+| ~400 (`WRITE_TOOLS` list in "Tool Execution" section) | Remove `kill_process`; add `background_process`. |
+| ~448 ("Blocked in plan mode" list) | Same: remove `kill_process`, add `background_process`. |
+
+The Core Tools table at line ~85 needs two new rows: `background_process` and `send_stdin` (with the latter's entry removed from the Utilities deferred row).
+
+### Persisted conversation histories
+
+Old persisted conversation histories that reference `kill_process` by name are not rewritten. When the LLM re-enters such a session and looks at the transcript, the current tool schema will not include `kill_process`. The LLM will either adapt to `background_process(action=kill)` (expected) or report the tool doesn't exist (acceptable). No automatic migration of historical messages.
+
+## Tool registration tier
+
+**The background management tools go into the core tier, not deferred.** Rationale: when an auto-wake resumes a session with a `[BACKGROUND COMPLETION — AUTO-RESUMED]` synthetic message, the LLM must be able to manage the completed (or still-running) background immediately — inspecting output, attaching, killing, sending stdin — without a `tool_search` round-trip to discover the tools first. Deferred tools require the LLM to notice they exist, query for them, and wait for activation; that's an unacceptable extra iteration on a time-sensitive completion event.
+
+### Tier assignments
+
+| Tool | Today | v1 | Registration call |
+|---|---|---|---|
+| `background_process` | — (new) | **Core** | `registerCore { BackgroundProcessTool(...) }` in `AgentService.registerAllTools()`, near the existing core tool registrations (alongside `run_command`, `send_stdin`). |
+| `send_stdin` | Deferred (Utilities) | **Core (promoted)** | Move from `safeRegisterDeferred("Utilities") { SendStdinTool() }` to `registerCore { SendStdinTool() }`. |
+| `kill_process` | Deferred (Utilities) | **Removed entirely** | Deleted (see "Removed tools" above). |
+| `ask_user_input` | Deferred (Utilities) | Deferred (unchanged) | Remains in `safeRegisterDeferred("Utilities")`. Not tied to the background workflow — may still be needed for credential prompts but unrelated to `bgId` lifecycle. |
+
+### Visibility in the system prompt
+
+Core tools are listed in the Capabilities section of the system prompt. After this change:
+- `background_process` appears alongside `run_command` in the "Shell + process management" tool block.
+- `send_stdin` moves from the deferred-tools catalog (section 6b) into the core capabilities section.
+- The Utilities deferred category retains only `ask_user_input` + `project_context` + `current_time` (`kill_process` and `send_stdin` have both left).
+
+### Approval gate wiring
+
+`background_process` is a write tool **when the action is `kill`, `send_stdin`, or `attach`** and a read tool when the action is `status`, `output`, or the no-args list. We already handle per-action approval for other meta-tools; the pattern extends:
+- `AgentLoop.WRITE_TOOLS` gains `"background_process"` — the approval gate is triggered for the tool name, and the per-action check happens inside `background_process.execute()` against the new table:
+
+```kotlin
+private val WRITE_ACTIONS = setOf("kill", "send_stdin", "attach")
+// read actions (status, output, no-args list) skip approval even though
+// the tool name is in WRITE_TOOLS
+```
+
+This mirrors how `debug_breakpoints` / `debug_step` / `debug_inspect` already split read vs. write at the action level.
+
+`send_stdin` standalone tool remains in `WRITE_TOOLS` (unchanged — it's always a write op).
 
 ---
 
@@ -593,9 +689,10 @@ No `runBlocking` in any Swing path. `CancellationException` always re-thrown (st
 - `run_command` gets `background` and `on_idle` params. Legacy auto-IDLE-detach behavior is removed.
 - New `PromptHeuristics` helper (`tools/process/PromptHeuristics.kt`) with tier 1 regex classification. Absorbs the existing `ShellResolver.isLikelyPasswordPrompt` logic.
 - Inline idle-signal emission via stream callback under `on_idle: notify`.
-- New `background_process` meta-tool with 5 actions (`status`, `output`, `attach`, `send_stdin`, `kill`).
-- `send_stdin` standalone tool accepts `bgId` in the unified namespace.
-- **Retire the standalone `kill_process` tool.** Delete `KillProcessTool.kt`, unregister from `AgentService.registerAllTools()`, update `ProcessToolHelpers.buildIdleContent` to suggest `background_process(action=kill)`, scrub system prompt references. Kill is consolidated into `background_process(action=kill)`.
+- New `background_process` meta-tool with 5 actions (`status`, `output`, `attach`, `send_stdin`, `kill`), registered as a **core tool** (always sent to LLM). See "Tool registration tier" below.
+- `send_stdin` **promoted from deferred to core** (post-v1 it is only used on background processes, and auto-waked sessions need it available without a `tool_search` round-trip).
+- **Retire the standalone `kill_process` tool entirely** — not hidden, not deprecated, deleted. See "Removed tools > Full removal sweep (concrete task list)" for the exhaustive inventory of files that need edits (production source, persona YAMLs, 12 snapshot files, 5 test files, CLAUDE.md docs). Kill functionality is consolidated into `background_process(action=kill)`.
+- Update `AgentLoop.WRITE_TOOLS` set: remove `"kill_process"`, add `"background_process"` (with per-action read/write split inside `BackgroundProcessTool.execute()` so read actions skip the approval gate — same pattern as `debug_breakpoints` / `debug_step` / `debug_inspect`).
 - **Top-bar `BackgroundIndicator` React component** + `_loadBackgroundSnapshot` bridge + `WorkflowEvent.BackgroundChanged` event + `background-update` JCEF push. Read-only dropdown; no inline actions in v1.
 - Session-transition kill hooks + confirmation dialog.
 - Persistence (`registry.json`, `pending_completions.json`, spill logs).
@@ -624,7 +721,9 @@ No `runBlocking` in any Swing path. `CancellationException` always re-thrown (st
 | `RunCommandOnIdleWaitTest` | Foreground run with `on_idle: wait` suppresses idle notifications entirely; tool blocks until exit or total timeout. No classification runs. |
 | `NoAutoIdleDetachTest` | Regression lock-in: foreground `run_command` never auto-registers in `BackgroundPool`. The only paths into the pool are `background: true` (and, in v1.1, the user Detach button). |
 | `PromptHeuristicsClassifyTest` | `PromptHeuristics.classify()` returns `LikelyPasswordPrompt` for password patterns (absorbs existing `isLikelyPasswordPrompt` cases), `LikelyStdinPrompt` for prompt-shaped tails and known framework prompts, `GenericIdle` otherwise. |
-| `KillProcessToolRetirementTest` | Registry does not contain a `kill_process` tool. `background_process(action=kill)` remains the sole kill path. `ProcessToolHelpers.buildIdleContent` output does not reference `kill_process`. |
+| `KillProcessToolRetirementTest` | Registry does not contain a `kill_process` tool. `background_process(action=kill)` remains the sole kill path. `ProcessToolHelpers.buildIdleContent` output does not reference `kill_process`. The string "kill_process" appears nowhere in `SystemPrompt.kt`, `RunCommandTool.kt`, `SendStdinTool.kt`, `ProcessToolHelpers.kt`, `AgentLoop.kt`, or any persona YAML under `agent/src/main/resources/agents/`. |
+| `BackgroundProcessCoreTierTest` | `ToolRegistry.coreTools` contains `"background_process"` and `"send_stdin"`. `ToolRegistry.deferredTools` does NOT contain either. `AgentService.registerAllTools()` invokes `registerCore { BackgroundProcessTool(...) }` and `registerCore { SendStdinTool() }` (not the deferred variants). |
+| `BackgroundProcessPerActionApprovalTest` | Read actions (`status`, `output`, no-args list) on `background_process` do not trigger the approval gate. Write actions (`kill`, `send_stdin`, `attach`) do. Matches the `debug_breakpoints`-style per-action split. |
 | `BackgroundProcessListTest` | `background_process()` with no args lists current session's processes. |
 | `BackgroundProcessAttachTest` | Attach re-enters monitor loop, exits on process exit/idle/timeout, returns sync-run-command-shaped result. |
 | `BackgroundCompletionSteeringTest` | Event appearing while loop active → delivered as one system message per event at next iteration boundary. |
