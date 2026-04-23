@@ -77,19 +77,21 @@ BackgroundHandle  (new interface)
   │
   ├─ fun state(): BackgroundState              // RUNNING | EXITED | KILLED | TIMED_OUT
   ├─ fun exitCode(): Int?
+  ├─ fun runtimeMs(): Long
+  ├─ fun outputBytes(): Long
   ├─ fun readOutput(sinceOffset: Long = 0, tailLines: Int? = null): OutputChunk
   ├─ fun sendStdin(input: String): Boolean     // optional; default throws UNSUPPORTED_FOR_KIND
-  ├─ fun attach(timeoutMs: Long): AttachResult // re-enters the monitor loop pattern
-  ├─ fun kill(): Boolean                       // graceful two-phase kill
-  └─ fun onComplete(callback: (exitCode: Int, tail: String) -> Unit)
+  ├─ suspend fun attach(timeoutMs: Long): AttachResult // re-enters the monitor loop pattern
+  ├─ fun kill(): Boolean                       // graceful two-phase kill (idempotent)
+  └─ fun onComplete(callback: (event: BackgroundCompletionEvent) -> Unit)
 
 BackgroundCapable  (new marker interface — tools implement this)
   │
-  └─ fun launchBackground(
+  └─ suspend fun launchBackground(
          sessionId: String,
          params: JsonObject,
          project: Project,
-     ): BackgroundHandle
+     ): String?   // returns the bgId, or null on pre-spawn rejection
 
   // v1 implementer: RunCommandTool
   // Future implementers: SpringTool, JavaRuntimeExecTool, BambooTool, etc.
