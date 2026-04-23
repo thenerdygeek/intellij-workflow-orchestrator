@@ -117,6 +117,15 @@ class RunCommandTool(
                 "separate_stderr" to ParameterProperty(
                     type = "boolean",
                     description = "When true, capture stderr separately and append as [STDERR] section. Default: false (stderr merged with stdout)."
+                ),
+                "background" to ParameterProperty(
+                    type = "boolean",
+                    description = "When true, the command starts in the background and returns immediately with a bgId. Use background_process to monitor, read output, attach, send stdin, or kill. When false (default), the command runs synchronously."
+                ),
+                "on_idle" to ParameterProperty(
+                    type = "string",
+                    description = "Foreground-only (ignored when background=true). What to do when the process produces no output for idle_timeout seconds. 'notify' (default) emits an inline idle signal with classification and keeps waiting. 'wait' ignores idle entirely and blocks until exit or total timeout.",
+                    enumValues = listOf("wait", "notify")
                 )
             )
 
