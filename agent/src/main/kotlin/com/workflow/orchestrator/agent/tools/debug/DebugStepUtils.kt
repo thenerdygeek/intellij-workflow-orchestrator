@@ -93,10 +93,19 @@ internal suspend fun executeStep(
 
 /**
  * Formats variable info into a readable string with indentation for nested children.
+ * Truncation-sentinel entries (v.truncated == true) are rendered as "… <value>"
+ * so the LLM can see the list is partial without the usual "name: type = value" layout.
  */
 internal fun formatVariables(vars: List<VariableInfo>, indent: String = "  "): String {
-    return vars.joinToString("\n") { v ->
+    val sb = StringBuilder()
+    for (v in vars) {
+        if (v.truncated) {
+            sb.append(indent).append("… ").append(v.value).append('\n')
+            continue
+        }
         val children = if (v.children.isNotEmpty()) "\n" + formatVariables(v.children, "$indent  ") else ""
-        "${indent}${v.name}: ${v.type} = ${v.value}$children"
+        sb.append("${indent}${v.name}: ${v.type} = ${v.value}$children\n")
     }
+    // Remove the trailing newline to preserve the original contract (joinToString has no trailing \n)
+    return sb.trimEnd('\n').toString()
 }

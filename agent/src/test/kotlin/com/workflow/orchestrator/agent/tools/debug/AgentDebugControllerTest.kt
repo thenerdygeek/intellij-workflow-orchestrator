@@ -8,10 +8,12 @@ import com.intellij.xdebugger.XDebugSessionListener
 import com.intellij.xdebugger.XSourcePosition
 import com.intellij.xdebugger.breakpoints.XLineBreakpoint
 import com.intellij.xdebugger.evaluation.XDebuggerEvaluator
+import com.intellij.xdebugger.frame.XCompositeNode
 import com.intellij.xdebugger.frame.XExecutionStack
 import com.intellij.xdebugger.frame.XStackFrame
 import com.intellij.xdebugger.frame.XSuspendContext
 import com.intellij.xdebugger.frame.XValue
+import com.intellij.xdebugger.frame.XValueChildrenList
 import com.intellij.xdebugger.frame.XValueNode
 import com.intellij.xdebugger.frame.XValuePlace
 import io.mockk.*
@@ -588,6 +590,38 @@ class AgentDebugControllerTest {
         job.join()
 
         assertEquals(emitted, result)
+    }
+
+    @Test
+    fun `getVariables appends truncation marker when tooManyChildren fires`() = runTest {
+        val child1 = mockk<XValue>(relaxed = true)
+        every { child1.computePresentation(any(), any()) } answers {
+            arg<XValueNode>(0).setPresentation(null, "Int", "1", false)
+        }
+
+        val frame = mockk<XStackFrame>(relaxed = true)
+        val childrenList = mockk<XValueChildrenList>(relaxed = true)
+        every { childrenList.size() } returns 1
+        every { childrenList.getName(0) } returns "first"
+        every { childrenList.getValue(0) } returns child1
+
+        every { frame.computeChildren(any()) } answers {
+            val node = arg<XCompositeNode>(0)
+            node.addChildren(childrenList, false)       // first 100-ish were sent
+            node.tooManyChildren(42)                    // 42 more available
+        }
+
+        val vars = controller.getVariables(frame, maxDepth = 1)
+
+        assertEquals(2, vars.size, "expected [first, <truncated>]: $vars")
+        assertEquals("first", vars[0].name)
+        assertFalse(vars[0].truncated)
+        assertEquals("<truncated>", vars[1].name)
+        assertTrue(vars[1].truncated)
+        assertTrue(
+            vars[1].value.contains("42"),
+            "marker value should mention remaining count: ${vars[1].value}",
+        )
     }
 
     // --- Helper ---

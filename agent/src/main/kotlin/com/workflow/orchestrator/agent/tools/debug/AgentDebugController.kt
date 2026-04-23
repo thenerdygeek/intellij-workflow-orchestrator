@@ -360,6 +360,19 @@ class AgentDebugController internal constructor(
 
                 override fun tooManyChildren(remaining: Int) {
                     if (stopped.get()) return
+                    // C4: surface truncation as a visible sentinel so the LLM knows
+                    // the list is partial (XCompositeNode caps at 100). Without this,
+                    // a HashMap with 500 entries silently returns 100 and the LLM
+                    // draws wrong conclusions about completeness.
+                    names += "<truncated>"
+                    result += TruncatedSentinelXValue(remaining)
+                    resume(names.zip(result))
+                }
+
+                override fun tooManyChildren(remaining: Int, childrenAdder: Runnable) {
+                    if (stopped.get()) return
+                    names += "<truncated>"
+                    result += TruncatedSentinelXValue(remaining)
                     resume(names.zip(result))
                 }
 
@@ -389,6 +402,15 @@ class AgentDebugController internal constructor(
         if (children == null) return emptyList()
 
         return children.map { (name, value) ->
+            if (value is TruncatedSentinelXValue) {
+                return@map VariableInfo(
+                    name = "<truncated>",
+                    type = "truncated",
+                    value = "…and ${value.remaining} more child${if (value.remaining == 1) "" else "ren"} (use variable_name to expand a specific one)",
+                    children = emptyList(),
+                    truncated = true,
+                )
+            }
             val presentation = resolvePresentation(value)
             charCounter[0] += name.length + presentation.first.length + presentation.second.length
 
@@ -679,7 +701,8 @@ data class VariableInfo(
     val name: String,
     val type: String,
     val value: String,
-    val children: List<VariableInfo> = emptyList()
+    val children: List<VariableInfo> = emptyList(),
+    val truncated: Boolean = false,
 )
 
 data class EvaluationResult(
@@ -688,3 +711,15 @@ data class EvaluationResult(
     val type: String,
     val isError: Boolean = false
 )
+
+/**
+ * Sentinel XValue appended by [AgentDebugController.computeChildren] when the
+ * platform fires [XCompositeNode.tooManyChildren]. Allows the formatter to
+ * surface a visible "…and N more" marker so the LLM knows the variable list
+ * is partial (C4 fix).
+ */
+private class TruncatedSentinelXValue(val remaining: Int) : XValue() {
+    override fun computePresentation(node: XValueNode, place: XValuePlace) {
+        node.setPresentation(null, "truncated", "…and $remaining more", false)
+    }
+}
