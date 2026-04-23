@@ -13,7 +13,6 @@ import { BackgroundIndicator } from './BackgroundIndicator';
  */
 export const TopBar = memo(function TopBar() {
   const tokenBudget = useChatStore(s => s.tokenBudget);
-  const memoryStats = useChatStore(s => s.memoryStats);
   const busy = useChatStore(s => s.busy);
   const debugVisible = useChatStore(s => s.debugLogVisible);
   const debugEntries = useChatStore(s => s.debugLogEntries);
@@ -113,24 +112,6 @@ export const TopBar = memo(function TopBar() {
           <span className="text-[10px]" style={{ color: 'var(--fg-muted, #6b7280)' }}>
             Agent
           </span>
-        )}
-
-        {/* Memory stats indicator — click to open Memory sub-page */}
-        {memoryStats && (memoryStats.coreChars > 0 || memoryStats.archivalCount > 0) && (
-          <button
-            onClick={() => kotlinBridge.openMemorySettings()}
-            className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs opacity-50 hover:opacity-90 transition-opacity"
-            style={{
-              color: 'var(--fg-secondary, #9ca3af)',
-              border: '1px solid var(--border, #333)',
-            }}
-            title={`Agent memory: ${memoryStats.coreChars} chars core, ${memoryStats.archivalCount} archival entries. Click to manage.`}
-          >
-            <span style={{ fontSize: '10px' }}>◆</span>
-            <span>{memoryStats.coreChars >= 1000 ? `${(memoryStats.coreChars / 1000).toFixed(1)}K` : memoryStats.coreChars}</span>
-            <span style={{ opacity: 0.4 }}>|</span>
-            <span>{memoryStats.archivalCount}</span>
-          </button>
         )}
 
         {/* Waiting for approval indicator */}

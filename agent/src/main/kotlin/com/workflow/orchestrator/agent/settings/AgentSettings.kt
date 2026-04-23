@@ -40,9 +40,6 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
         var cmdEnabled by property(false)
         /** Use Haiku to generate contextual humorous working indicator messages. */
         var smartWorkingIndicator by property(true)
-        /** Enable auto-memory: retrieve relevant archival memories at session start
-         *  and extract insights into core + archival memory at session end. */
-        var autoMemoryEnabled by property(true)
         /**
          * Strategy when network errors exhaust retries:
          * - "none": fail immediately (default)

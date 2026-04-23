@@ -144,7 +144,6 @@ interface ChatState {
   skillBanner: string | null;
   skillsList: Skill[];
   tokenBudget: { used: number; max: number };
-  memoryStats: { coreChars: number; archivalCount: number } | null;
   mentionResults: MentionSearchResult[];
   pendingApproval: PendingApproval | null;
   pendingProcessInput: PendingProcessInput | null;
@@ -236,7 +235,6 @@ interface ChatState {
    */
   setModelFallbackState(isFallback: boolean, reason: string | null): void;
   updateTokenBudget(used: number, max: number): void;
-  updateMemoryStats(coreChars: number, archivalCount: number): void;
   updateSkillsList(skills: Skill[]): void;
   showSkillBanner(name: string): void;
   hideSkillBanner(): void;
@@ -348,7 +346,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   skillBanner: null,
   skillsList: [],
   tokenBudget: { used: 0, max: 0 },
-  memoryStats: null,
   mentionResults: [],
   pendingApproval: null,
   pendingProcessInput: null,
@@ -920,10 +917,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   updateTokenBudget(used: number, max: number) {
     set({ tokenBudget: { used, max } });
-  },
-
-  updateMemoryStats(coreChars: number, archivalCount: number) {
-    set({ memoryStats: { coreChars, archivalCount } });
   },
 
   updateSkillsList(skills: Skill[]) {

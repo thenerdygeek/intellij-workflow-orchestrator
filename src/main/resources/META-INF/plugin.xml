@@ -320,12 +320,6 @@
             id="workflow.orchestrator.agent.advanced"
             displayName="Advanced"
             nonDefaultProject="true"/>
-        <projectConfigurable
-            parentId="workflow.orchestrator.agent"
-            instance="com.workflow.orchestrator.agent.settings.AgentMemoryConfigurable"
-            id="workflow.orchestrator.agent.memory"
-            displayName="Memory"
-            nonDefaultProject="true"/>
         <postStartupActivity
             implementation="com.workflow.orchestrator.agent.listeners.AgentStartupActivity"/>
         <postStartupActivity

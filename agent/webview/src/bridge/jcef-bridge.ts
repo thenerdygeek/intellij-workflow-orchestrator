@@ -212,9 +212,6 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   updateTokenBudget(used: number, max: number) {
     stores?.getChatStore().updateTokenBudget(used, max);
   },
-  updateMemoryStats(coreChars: number, archivalCount: number) {
-    stores?.getChatStore().updateMemoryStats(coreChars, archivalCount);
-  },
   setModelName(name: string) {
     stores?.getChatStore().setModelName(name);
   },
@@ -566,7 +563,6 @@ export const kotlinBridge = {
   activateSkill(name: string): void { callKotlin('_activateSkill', name); },
   requestFocusIde(): void { callKotlin('_requestFocusIde'); },
   openSettings(): void { callKotlin('_openSettings'); },
-  openMemorySettings(): void { callKotlin('_openMemorySettings'); },
   openToolsPanel(): void { callKotlin('_openToolsPanel'); },
   viewInEditor(): void { callKotlin('_viewInEditor'); },
   killToolCall(toolCallId: string): void { callKotlin('_killToolCall', toolCallId); },
