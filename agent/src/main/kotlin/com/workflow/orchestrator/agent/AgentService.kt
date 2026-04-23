@@ -66,7 +66,6 @@ import com.workflow.orchestrator.agent.tools.framework.*
 import com.workflow.orchestrator.agent.tools.framework.endpoints.EndpointsTool
 import com.workflow.orchestrator.agent.tools.ide.*
 import com.workflow.orchestrator.agent.tools.integration.*
-import com.workflow.orchestrator.agent.tools.memory.*
 import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
 import com.workflow.orchestrator.agent.tools.process.ShellResolver
 import com.workflow.orchestrator.agent.tools.subagent.AgentConfigLoader
@@ -960,23 +959,6 @@ class AgentService(private val project: Project) : Disposable {
             registerDebugTools()
         } else {
             log.info("Skipping debug tools — neither Java nor Python plugin available")
-        }
-
-        // ── Memory tools (always available — 3-tier Letta pattern) ───────
-        coreMemory?.let { cm ->
-            safeRegisterCore { CoreMemoryReadTool(cm) }
-            safeRegisterCore { CoreMemoryAppendTool(cm) }
-            safeRegisterCore { CoreMemoryReplaceTool(cm) }
-        }
-        archivalMemory?.let { am ->
-            safeRegisterCore { ArchivalMemoryInsertTool(am) }
-            safeRegisterCore { ArchivalMemorySearchTool(am) }
-        }
-        conversationRecall?.let { cr ->
-            safeRegisterCore { ConversationSearchTool(cr) }
-        }
-        if (::agentDir.isInitialized) {
-            safeRegisterCore { SaveMemoryTool(agentDir) }
         }
 
         // ── Conditional integration tools ────────────────────────────────
