@@ -23,4 +23,29 @@ class BackgroundModelsTest {
         val back = Json.decodeFromString(BackgroundCompletionEvent.serializer(), json)
         assertEquals(event, back)
     }
+
+    @Test
+    fun `BackgroundProcessSnapshot round-trips with null and non-null exitCode`() {
+        val running = BackgroundProcessSnapshot(
+            bgId = "bg_r",
+            kind = "run_command",
+            label = "sleep 60",
+            state = BackgroundState.RUNNING,
+            startedAt = 1_700_000_000_000,
+            exitCode = null,
+            outputBytes = 0,
+            runtimeMs = 5000,
+        )
+        val exited = running.copy(
+            state = BackgroundState.EXITED,
+            exitCode = 137,
+            outputBytes = 4096,
+            runtimeMs = 12_345,
+        )
+        listOf(running, exited).forEach { original ->
+            val json = Json.encodeToString(BackgroundProcessSnapshot.serializer(), original)
+            val back = Json.decodeFromString(BackgroundProcessSnapshot.serializer(), json)
+            assertEquals(original, back)
+        }
+    }
 }

@@ -1,13 +1,14 @@
 package com.workflow.orchestrator.agent.tools.background
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
 enum class BackgroundState {
-    RUNNING,
-    EXITED,
-    KILLED,
-    TIMED_OUT
+    @SerialName("running")   RUNNING,
+    @SerialName("exited")    EXITED,
+    @SerialName("killed")    KILLED,
+    @SerialName("timed_out") TIMED_OUT,
 }
 
 @Serializable
