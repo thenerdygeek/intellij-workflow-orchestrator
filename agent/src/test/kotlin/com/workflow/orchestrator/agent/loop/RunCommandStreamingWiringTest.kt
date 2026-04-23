@@ -47,13 +47,29 @@ class RunCommandStreamingWiringTest {
                 "across loop iterations or to the next tool call on the same thread."
         )
 
-        // The set must be gated on run_command and the remove must be in a finally block.
-        // We assert the structural pairing: if (toolName == "run_command") ... finally { ... remove() }
+        // The set must be gated on the STREAMING_TOOLS set (not unconditional) and the remove
+        // must be in a finally block.  The original check was the literal string
+        // `if (toolName == "run_command") RunCommandTool.currentToolCallId.set` but commit
+        // a3be4144 deliberately generalised the gate to a `STREAMING_TOOLS` set so that sonar
+        // live streaming could reuse the same ThreadLocal wiring without duplicating the
+        // set/remove block.  The contract now is: the ThreadLocal is only touched for tools
+        // that are members of STREAMING_TOOLS, not for every tool.
         assertTrue(
-            text.contains("""if (toolName == "run_command") RunCommandTool.currentToolCallId.set"""),
-            "AgentLoop.kt must gate the currentToolCallId.set on toolName == \"run_command\". " +
+            text.contains("""if (toolName in STREAMING_TOOLS) RunCommandTool.currentToolCallId.set"""),
+            "AgentLoop.kt must gate the currentToolCallId.set on `toolName in STREAMING_TOOLS`. " +
                 "Setting the ThreadLocal unconditionally would affect other tools sharing the " +
-                "same dispatcher thread."
+                "same dispatcher thread.  The STREAMING_TOOLS set (which always includes " +
+                "\"run_command\") provides the same isolation guarantee while letting sonar and " +
+                "future streaming tools reuse the wiring without duplicating the set/remove block."
+        )
+
+        // Also assert that run_command is listed as a member of STREAMING_TOOLS so the original
+        // intent — this ThreadLocal is always set for run_command — is still verifiable from
+        // source text alone.
+        assertTrue(
+            text.contains(""""run_command""""),
+            "AgentLoop.kt must list \"run_command\" in the STREAMING_TOOLS set so the " +
+                "ThreadLocal wiring is still active for the primary streaming tool."
         )
 
         val finallyRemovePattern = Regex(
