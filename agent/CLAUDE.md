@@ -130,8 +130,8 @@ These tools consolidate multiple operations behind an `action` enum:
 | **runtime_config** | 4 | get_run_configurations, create/modify/delete_run_config |
 | **coverage** | 2 | run_with_coverage, get_file_coverage. `run_with_coverage` unified through `interpretTestRoot`; failed coverage runs propagate `isError=true`. |
 | **debug_breakpoints** | 7 | add_breakpoint, method_breakpoint, exception_breakpoint, field_watchpoint, remove_breakpoint, list_breakpoints, attach_to_process |
-| **debug_step** | 8 | get_state, step_over, step_into, step_out, resume, pause, run_to_cursor, stop |
-| **debug_inspect** | 8 | evaluate, get_stack_frames, get_variables, thread_dump, memory_view, hotswap, force_return, drop_frame |
+| **debug_step** | 10 | get_state, step_over, step_into, step_out, force_step_into, force_step_over, resume, pause, run_to_cursor, stop |
+| **debug_inspect** | 9 | evaluate, get_stack_frames, get_variables, set_value, thread_dump, memory_view, hotswap, force_return, drop_frame |
 | **spring** | 15 | context, endpoints, bean_graph, config, version_info, profiles, etc. |
 | **build** | 11 | maven_dependencies, gradle_tasks, project_modules, module_dependency_graph, etc. |
 | **project_structure** | 14 | resolve_file, module_detail, topology, list_sdks, list_libraries, list_facets, refresh_external_project, add_source_root, set_module_dependency, remove_module_dependency, set_module_sdk, set_language_level, add_content_root, remove_content_root |
