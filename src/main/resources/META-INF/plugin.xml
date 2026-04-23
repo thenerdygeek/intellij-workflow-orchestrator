@@ -289,6 +289,8 @@
         <projectService
             serviceImplementation="com.workflow.orchestrator.agent.settings.AgentSettings"/>
         <projectService
+            serviceImplementation="com.workflow.orchestrator.agent.tools.background.BackgroundPool"/>
+        <projectService
             serviceImplementation="com.workflow.orchestrator.agent.ui.AgentControllerRegistry"/>
         <projectService
             serviceImplementation="com.workflow.orchestrator.agent.AgentService"/>

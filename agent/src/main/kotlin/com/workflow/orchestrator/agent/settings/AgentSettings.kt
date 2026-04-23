@@ -56,6 +56,9 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
          * - "stream_interrupt": execute each tool as soon as it appears (Cline-style, responsive)
          */
         var toolExecutionMode by string("accumulate")
+        /** Maximum number of concurrent background processes allowed per session.
+         *  Enforced by BackgroundPool.register(). Configurable UI added in Task 1.7. */
+        var concurrentBackgroundProcessesPerSession by property(5)
     }
 
     companion object {
