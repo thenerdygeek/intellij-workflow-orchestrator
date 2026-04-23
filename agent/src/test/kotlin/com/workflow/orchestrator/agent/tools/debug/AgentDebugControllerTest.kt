@@ -17,6 +17,9 @@ import com.intellij.xdebugger.frame.XValuePlace
 import io.mockk.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -127,7 +130,22 @@ class AgentDebugControllerTest {
 
     @Test
     fun `waitForPause returns immediately when already suspended`() = runTest {
-        val session = createMockSession(isSuspended = true)
+        // Updated for C5 fix: all three canonical paused clauses must be non-null
+        // (isSuspended && currentStackFrame != null && suspendContext != null) for
+        // the short-circuit path to fire. createMockSession only stubs isSuspended,
+        // so build the session inline with all three clauses satisfied.
+        val position = mockk<XSourcePosition> {
+            every { file } returns mockk { every { path } returns "/path/to/File.kt" }
+            every { line } returns 10
+        }
+        val frame = mockk<XStackFrame>(relaxed = true)
+        val suspendCtx = mockk<XSuspendContext>(relaxed = true)
+        val session = mockk<XDebugSession>(relaxed = true) {
+            every { isSuspended } returns true
+            every { currentStackFrame } returns frame
+            every { suspendContext } returns suspendCtx
+            every { currentPosition } returns position
+        }
         val id = controller.registerSession(session)
 
         val event = controller.waitForPause(id, timeoutMs = 1000)
@@ -545,6 +563,31 @@ class AgentDebugControllerTest {
         assertFalse(result.isError)
         verify(exactly = 0) { currentEvaluator.evaluate(any<String>(), any(), any()) }
         verify(exactly = 1) { callerEvaluator.evaluate(any<String>(), any(), any()) }
+    }
+
+    @Test
+    fun `waitForPause falls through to flow when isSuspended but currentStackFrame is null (race)`() = runTest {
+        val session = mockk<XDebugSession>(relaxed = true) {
+            every { isSuspended } returns true
+            every { currentStackFrame } returns null
+            every { suspendContext } returns null
+        }
+        val invocation = mockk<DebugInvocation>(relaxed = true)
+        val flow = MutableSharedFlow<DebugPauseEvent>(replay = 1)
+        every { invocation.pauseFlow } returns flow
+        controller.sessionInvocations["race-id"] =
+            AgentDebugController.SessionEntry(session, invocation)
+
+        val emitted = DebugPauseEvent("race-id", "Foo.kt", 10, "breakpoint")
+        val job = launch {
+            delay(50)
+            flow.tryEmit(emitted)
+        }
+
+        val result = controller.waitForPause("race-id", timeoutMs = 1000)
+        job.join()
+
+        assertEquals(emitted, result)
     }
 
     // --- Helper ---

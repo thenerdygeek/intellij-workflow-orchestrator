@@ -178,7 +178,15 @@ class AgentDebugController internal constructor(
         val session = entry.session
         val flow = entry.invocation.pauseFlow
         return withTimeoutOrNull(timeoutMs) {
-            if (session.isSuspended) {
+            // Canonical paused check: isSuspended alone is insufficient because
+            // the flag flips before the engine has populated currentStackFrame /
+            // suspendContext. If any clause is false, fall through to the
+            // pauseFlow — the session listener will emit a full event once state
+            // is ready. Audit finding C5.
+            if (session.isSuspended
+                && session.currentStackFrame != null
+                && session.suspendContext != null
+            ) {
                 val pos = session.currentPosition
                 return@withTimeoutOrNull DebugPauseEvent(
                     sessionId = sessionId,
