@@ -31,6 +31,7 @@ import com.workflow.orchestrator.core.ai.dto.ChatMessage
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
 import com.workflow.orchestrator.core.model.ModelPricingRegistry
+import com.workflow.orchestrator.core.util.StringUtils
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -968,7 +969,26 @@ class AgentLoop(
             }
 
             val choice = response.choices.firstOrNull() ?: continue
-            val assistantMessage = choice.message
+            val rawAssistantMessage = choice.message
+
+            // Normalise zero-width / format-character echoes to empty string before
+            // any classification or persistence. The LLM occasionally mirrors the
+            // U+200B placeholder we inject in `SourcegraphChatClient.sanitizeMessages`
+            // (Phase 3 Case 2) back as a "response" with no tool calls. Treated
+            // naively, that single zero-width char passes `!isBlank()` and the loop
+            // falls into Case B (text-only) — firing the "[ERROR] You did not use a
+            // tool" nudge. Persist the polluted turn alongside the nudge a few times
+            // and the model starts mimicking the empty-then-error pattern. Stripping
+            // the invisible chars here turns the response into a normal Case C empty
+            // and keeps the polluted turn out of context entirely.
+            val assistantMessage = if (
+                StringUtils.isEffectivelyBlank(rawAssistantMessage.content)
+                && rawAssistantMessage.toolCalls.isNullOrEmpty()
+            ) {
+                rawAssistantMessage.copy(content = "")
+            } else {
+                rawAssistantMessage
+            }
 
             // Stage 3.5: Handle truncated response (finish_reason: length)
             if (choice.finishReason == "length") {
@@ -1022,7 +1042,10 @@ class AgentLoop(
             ))
 
             val hasToolCalls = !assistantMessage.toolCalls.isNullOrEmpty()
-            val hasContent = !assistantMessage.content.isNullOrBlank()
+            // Use isEffectivelyBlank — see normalisation block above. A response that
+            // is only zero-width / format characters (LLM echoing our own U+200B
+            // placeholder) must dispatch as Case C (empty), not Case B (text-only).
+            val hasContent = !StringUtils.isEffectivelyBlank(assistantMessage.content)
 
             when {
                 // Case A: Tool calls present — execute them

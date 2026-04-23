@@ -266,9 +266,14 @@ class SourcegraphChatClient(
         }
 
         // Phase 3: handle empty/null content (Anthropic rejects "message content cannot be empty")
-        // Case 1: Messages with no content AND no tool calls → drop entirely
+        // Case 1: Messages with no content AND no tool calls → drop entirely.
+        // `isEffectivelyBlank` (not `isNullOrBlank`) also catches U+200B-only echoes —
+        // the LLM occasionally mirrors the placeholder we inject in Case 2 below back as
+        // its own "response". If we don't drop those, they reach the next prompt and
+        // train the model to mimic the empty pattern further. See StringUtils.
         merged.removeAll { msg ->
-            msg.content.isNullOrBlank() && msg.toolCalls.isNullOrEmpty()
+            com.workflow.orchestrator.core.util.StringUtils.isEffectivelyBlank(msg.content)
+                && msg.toolCalls.isNullOrEmpty()
         }
         // Case 2: Assistant messages with tool calls but null/empty content → set placeholder
         // (LLM often returns content=null when making tool calls — this is normal)

@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.session
 
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
+import com.workflow.orchestrator.core.util.StringUtils
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
@@ -90,9 +91,9 @@ class MessageStateHandler(
         if (message.content.isEmpty()) return true
         return message.content.all { block ->
             when (block) {
-                // isBlank() covers both `""` (production empty-response path via
-                // AgentLoop.buildApiContentBlocks ifEmpty fallback) and `"   "`.
-                is ContentBlock.Text -> block.text.isBlank()
+                // isEffectivelyBlank covers `""`, `"   "`, AND U+200B-only echoes
+                // (the LLM mirroring our own placeholder back). See StringUtils.
+                is ContentBlock.Text -> StringUtils.isEffectivelyBlank(block.text)
                 is ContentBlock.ToolUse -> false
                 is ContentBlock.ToolResult -> false
                 is ContentBlock.Image -> false

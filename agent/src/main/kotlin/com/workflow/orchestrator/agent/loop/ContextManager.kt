@@ -196,8 +196,9 @@ class ContextManager(
         var removed = 0
         while (messages.isNotEmpty()) {
             val tail = messages.last()
+            // isEffectivelyBlank also catches U+200B-only echoes — see StringUtils.
             val isEmptyAssistant = tail.role == "assistant"
-                && tail.content.isNullOrBlank()
+                && com.workflow.orchestrator.core.util.StringUtils.isEffectivelyBlank(tail.content)
                 && tail.toolCalls.isNullOrEmpty()
             if (!isEmptyAssistant) break
             messages.removeAt(messages.size - 1)
