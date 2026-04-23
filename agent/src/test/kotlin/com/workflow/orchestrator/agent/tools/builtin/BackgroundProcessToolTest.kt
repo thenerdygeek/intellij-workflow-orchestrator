@@ -161,4 +161,78 @@ class BackgroundProcessToolTest {
             BackgroundProcessTool.currentSessionId.remove()
         }
     }
+
+    @Test
+    fun `attach returns Exited when process finishes within timeout`() = runBlocking {
+        val proc = ProcessBuilder("sh", "-c", "sleep 60").start()
+        val managed = ProcessRegistry.register("bg_att01", proc, "sleep 60")
+        val h = RunCommandBackgroundHandle("bg_att01", "sess-att", managed, "sleep 60")
+        try {
+            // Kill the underlying process after 500ms from a separate thread.
+            Thread {
+                Thread.sleep(500); proc.destroyForcibly()
+            }.apply { isDaemon = true }.start()
+
+            every { pool.get("sess-att", "bg_att01") } returns h
+            BackgroundProcessTool.currentSessionId.set("sess-att")
+            val r = BackgroundProcessTool().execute(
+                buildJsonObject { put("id", "bg_att01"); put("action", "attach"); put("timeout_seconds", 5) },
+                project
+            )
+            assertTrue(r.content.contains("Exit code") || r.content.contains("exited"),
+                "expected Exit code; got:\n${r.content}")
+        } finally {
+            BackgroundProcessTool.currentSessionId.remove()
+        }
+    }
+
+    @Test
+    fun `kill stops the process`() = runBlocking {
+        val proc = ProcessBuilder("sh", "-c", "sleep 60").start()
+        val managed = ProcessRegistry.register("bg_kil01", proc, "sleep 60")
+        val h = RunCommandBackgroundHandle("bg_kil01", "sess-kill", managed, "sleep 60")
+        try {
+            every { pool.get("sess-kill", "bg_kil01") } returns h
+            BackgroundProcessTool.currentSessionId.set("sess-kill")
+            val r = BackgroundProcessTool().execute(
+                buildJsonObject { put("id", "bg_kil01"); put("action", "kill") }, project
+            )
+            assertTrue(r.content.contains("Killed", ignoreCase = true),
+                "expected 'Killed' in output; got:\n${r.content}")
+            // Wait briefly for kill to take effect.
+            proc.waitFor(6, java.util.concurrent.TimeUnit.SECONDS)
+            assertTrue(!proc.isAlive, "process should be dead after kill")
+        } finally {
+            BackgroundProcessTool.currentSessionId.remove()
+        }
+    }
+
+    @Test
+    fun `send_stdin writes input to process stdin`() = runBlocking {
+        // Launch a process that reads one line and echoes it.
+        val proc = ProcessBuilder("sh", "-c", "read LINE; echo got:\$LINE").start()
+        val managed = ProcessRegistry.register("bg_sin01", proc, "read-echo")
+        Thread {
+            proc.inputStream.bufferedReader().useLines { lines ->
+                lines.forEach { managed.outputLines.add(it + "\n") }
+            }
+            managed.readerDone.countDown()
+        }.apply { isDaemon = true }.start()
+        val h = RunCommandBackgroundHandle("bg_sin01", "sess-sin", managed, "read-echo")
+        try {
+            every { pool.get("sess-sin", "bg_sin01") } returns h
+            BackgroundProcessTool.currentSessionId.set("sess-sin")
+            val r = BackgroundProcessTool().execute(
+                buildJsonObject {
+                    put("id", "bg_sin01"); put("action", "send_stdin"); put("input", "hello\n")
+                }, project
+            )
+            assertTrue(!r.isError, "stdin write failed: ${r.content}")
+            proc.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
+            assertTrue(managed.outputLines.joinToString("").contains("got:hello"),
+                "expected echoed input; got:\n${managed.outputLines.joinToString("")}")
+        } finally {
+            BackgroundProcessTool.currentSessionId.remove()
+        }
+    }
 }

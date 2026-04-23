@@ -67,7 +67,22 @@ class BackgroundProcessTool : AgentTool {
                     ?: return toolError("NO_SUCH_ID_IN_SESSION: '$id' not in session '$sessionId'")
                 doOutput(h, params)
             }
-            else -> toolError("UNSUPPORTED_ACTION: '$action' (supported: list, status, output)")
+            "attach" -> {
+                val h = pool.get(sessionId, id!!)
+                    ?: return toolError("NO_SUCH_ID_IN_SESSION: '$id' not in session '$sessionId'")
+                doAttach(h, params)
+            }
+            "send_stdin" -> {
+                val h = pool.get(sessionId, id!!)
+                    ?: return toolError("NO_SUCH_ID_IN_SESSION: '$id' not in session '$sessionId'")
+                doSendStdin(h, params)
+            }
+            "kill" -> {
+                val h = pool.get(sessionId, id!!)
+                    ?: return toolError("NO_SUCH_ID_IN_SESSION: '$id' not in session '$sessionId'")
+                doKill(pool, sessionId, h)
+            }
+            else -> toolError("UNSUPPORTED_ACTION: '$action' — expected one of: status, output, attach, send_stdin, kill")
         }
     }
 
@@ -133,6 +148,58 @@ class BackgroundProcessTool : AgentTool {
             summary = "${h.bgId}: ${content.lineSequence().count()} lines",
             tokenEstimate = TokenEstimator.estimate(body),
             isError = false,
+        )
+    }
+
+    private suspend fun doAttach(h: BackgroundHandle, params: JsonObject): ToolResult {
+        val seconds = (params["timeout_seconds"]?.jsonPrimitive?.content?.toLongOrNull() ?: 600L)
+            .coerceIn(1, 600)
+        val result = h.attach(seconds * 1000)
+        val content = when (result) {
+            is com.workflow.orchestrator.agent.tools.background.AttachResult.Exited ->
+                "Exit code: ${result.exitCode}\n${result.output}"
+            is com.workflow.orchestrator.agent.tools.background.AttachResult.Idle ->
+                "[IDLE] ${result.reason}\n${result.lastOutput}"
+            is com.workflow.orchestrator.agent.tools.background.AttachResult.AttachTimeout ->
+                "[ATTACH_TIMEOUT] ${h.bgId} still RUNNING after ${seconds}s.\n" +
+                    "Last output:\n${result.lastOutput}"
+        }
+        return ToolResult(
+            content = content,
+            summary = "attach ${h.bgId}",
+            tokenEstimate = TokenEstimator.estimate(content),
+            isError = result is com.workflow.orchestrator.agent.tools.background.AttachResult.AttachTimeout,
+        )
+    }
+
+    private fun doSendStdin(h: BackgroundHandle, params: JsonObject): ToolResult {
+        val input = params["input"]?.jsonPrimitive?.content
+            ?: return toolError("MISSING_INPUT: send_stdin requires 'input'")
+        val written = runCatching { h.sendStdin(input) }.getOrElse { e ->
+            if (e is UnsupportedOperationException) return toolError("UNSUPPORTED_FOR_KIND: ${h.kind} does not accept stdin")
+            return toolError("SEND_STDIN_FAILED: ${e.message}")
+        }
+        if (!written) return toolError("SEND_STDIN_FAILED: process may have exited")
+        val content = "Wrote ${input.length} chars to ${h.bgId} stdin."
+        return ToolResult(
+            content = content,
+            summary = "stdin→${h.bgId}",
+            tokenEstimate = TokenEstimator.estimate(content),
+            isError = false,
+        )
+    }
+
+    private fun doKill(pool: BackgroundPool, sessionId: String, h: BackgroundHandle): ToolResult {
+        val ok = h.kill()
+        if (ok) {
+            pool.forSession(sessionId).remove(h.bgId)
+        }
+        val content = if (ok) "Killed ${h.bgId}" else "Kill failed for ${h.bgId}"
+        return ToolResult(
+            content = content,
+            summary = content,
+            tokenEstimate = TokenEstimator.estimate(content),
+            isError = !ok,
         )
     }
 
