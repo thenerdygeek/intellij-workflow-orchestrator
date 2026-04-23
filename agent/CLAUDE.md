@@ -82,6 +82,8 @@ Registered in `AgentService.registerAllTools()`:
 | `glob_files` | GlobFilesTool | Glob-pattern file discovery |
 | `run_command` | RunCommandTool | Shell command execution (ShellResolver + DefaultCommandFilter + OutputCollector + ProcessEnvironment) |
 | `revert_file` | RevertFileTool | Single-file revert |
+| `background_process` | BackgroundProcessTool | Manage background processes (list/status/output/attach/send_stdin/kill) |
+| `send_stdin` | SendStdinTool | Send input to a running process's stdin (accepts bgId) |
 | `attempt_completion` | AttemptCompletionTool | Explicit task completion signal (orchestrator only) |
 | `task_report` | TaskReportTool | Sub-agent completion: structured findings report for parent LLM (sub-agents only, auto-injected) |
 | `think` | ThinkTool | No-op reasoning scratchpad |
@@ -112,7 +114,7 @@ Registered in `AgentService.registerAllTools()`:
 | VCS | changelist_shelve |
 | Build & Run | build, spring, django, fastapi, flask, runtime_exec, java_runtime_exec (Java only), python_runtime_exec (Python only), runtime_config, coverage |
 | Database | db_list_profiles, db_list_databases, db_query, db_schema, db_stats, db_explain |
-| Utilities | project_context, current_time, kill_process, send_stdin, ask_user_input |
+| Utilities | project_context, current_time, ask_user_input |
 | Debug | debug_step, debug_inspect, debug_breakpoints |
 | Integration (conditional) | jira, bamboo_builds, bamboo_plans, sonar, bitbucket_pr, bitbucket_repo, bitbucket_review |
 
@@ -397,7 +399,7 @@ try {
 
 - **Read-only tools**: Execute in parallel via `coroutineScope { async { ... } }` (read_file, search_code, diagnostics, etc.)
 - **Write tools**: Execute sequentially (edit_file, run_command, etc.)
-- **Write tools set** (`WRITE_TOOLS` in `AgentLoop`): edit_file, create_file, run_command, revert_file, kill_process, send_stdin, format_code, optimize_imports, refactor_rename
+- **Write tools set** (`WRITE_TOOLS` in `AgentLoop`): edit_file, create_file, run_command, revert_file, background_process, send_stdin, format_code, optimize_imports, refactor_rename
 - **Approval tools** (`APPROVAL_TOOLS`): edit_file, create_file, run_command, revert_file — require user approval unless already allowed for session
 - **Per-tool timeouts**: `withTimeoutOrNull` wraps every execution — default 120s, `run_command` 600s, `agent` (SpawnAgentTool) unlimited. Timeout returns an error ToolResult; the LLM can retry or adjust.
 - **RunCommandTool component architecture**:
@@ -445,7 +447,7 @@ Two-layer enforcement:
 1. **Schema filtering** (`AgentService` tool definition provider, ~line 834) — Removes write tools and `enable_plan_mode` from tool definitions before each LLM call. The LLM never sees blocked tools. In act mode, removes `plan_mode_respond`.
 2. **Execution guard** (`AgentLoop.run()`, ~line 955) — Checks `planMode && toolName in WRITE_TOOLS` as a safety net for cached tool calls from before mode switch.
 
-**Blocked in plan mode:** edit_file, create_file, run_command, revert_file, kill_process, send_stdin, format_code, optimize_imports, refactor_rename, enable_plan_mode
+**Blocked in plan mode:** edit_file, create_file, run_command, revert_file, background_process, send_stdin, format_code, optimize_imports, refactor_rename, enable_plan_mode
 **Always available:** read_file, search_code, glob_files, diagnostics, find_definition, find_references, think, agent, tool_search, ask_followup_question, plan_mode_respond, memory tools, etc.
 
 **Transition:** `AgentService.planModeActive.set(false)` → tools restored on next LLM call → dashboard UI updated.
