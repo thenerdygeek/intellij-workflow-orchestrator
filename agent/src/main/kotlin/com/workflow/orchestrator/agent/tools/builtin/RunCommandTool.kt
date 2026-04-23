@@ -67,6 +67,14 @@ class RunCommandTool(
          */
         var currentToolCallId: ThreadLocal<String?> = ThreadLocal.withInitial { null }
 
+        /**
+         * Set by AgentLoop before tool execution. Used to scope background processes
+         * to the owning session (background: true registers into BackgroundPool[sessionId]).
+         * ThreadLocal<String?>; value is null when not running inside a session-scoped
+         * tool call (e.g. most test harnesses).
+         */
+        var currentSessionId: ThreadLocal<String?> = ThreadLocal.withInitial { null }
+
         // streamCallback and currentToolCallId are still read by RuntimeExecTool
         // and SonarTool. Remove once those tools are migrated to explicit parameters.
 

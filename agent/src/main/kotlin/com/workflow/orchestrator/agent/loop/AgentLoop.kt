@@ -1367,6 +1367,7 @@ class AgentLoop(
             // companion TODO). Without this, the tool runs fine but the UI shows a silent
             // spinner for the entire duration.
             if (toolName in STREAMING_TOOLS) RunCommandTool.currentToolCallId.set(toolCallId)
+            if (toolName in STREAMING_TOOLS) RunCommandTool.currentSessionId.set(sessionId)
             val toolResult = try {
                 val timeout = tool.timeoutMs
                 if (timeout == Long.MAX_VALUE) {
@@ -1402,6 +1403,7 @@ class AgentLoop(
                 continue
             } finally {
                 if (toolName in STREAMING_TOOLS) RunCommandTool.currentToolCallId.remove()
+                if (toolName in STREAMING_TOOLS) RunCommandTool.currentSessionId.remove()
             }
 
             val durationMs = System.currentTimeMillis() - startTime
