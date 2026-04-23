@@ -148,7 +148,7 @@ class SystemPromptIdeContextTest {
         assertTrue(prompt.contains("===="), "Prompt must contain section separators (====)")
         assertTrue(prompt.contains("IntelliJ"), "Prompt must reference IntelliJ (current hardcoded IDE)")
         assertTrue(prompt.length > 3000, "Prompt length ${prompt.length} must be > 3000")
-        assertTrue(prompt.length < 36000, "Prompt length ${prompt.length} must be < 36000")
+        assertTrue(prompt.length < 40000, "Prompt length ${prompt.length} must be < 40000")
 
         // Key sections
         assertTrue(prompt.contains("CAPABILITIES"), "Prompt must contain CAPABILITIES section")
@@ -525,13 +525,13 @@ class SystemPromptIdeContextTest {
         data class VariantSize(val name: String, val context: IdeContext?, val minChars: Int, val maxChars: Int)
 
         val variants = listOf(
-            VariantSize("null", null, 5000, 36000),
-            VariantSize("IntelliJ Ultimate", intellijUltimate(), 5000, 36000),
-            VariantSize("IntelliJ Community", intellijCommunity(), 5000, 36000),
-            VariantSize("PyCharm Professional", pycharmProfessional(), 5000, 36000),
-            VariantSize("PyCharm Community", pycharmCommunity(), 5000, 36000),
-            VariantSize("WebStorm", webstorm(), 4000, 33000),
-            VariantSize("Mixed", intellijUltimateMixed(), 6000, 38000),
+            VariantSize("null", null, 5000, 40000),
+            VariantSize("IntelliJ Ultimate", intellijUltimate(), 5000, 40000),
+            VariantSize("IntelliJ Community", intellijCommunity(), 5000, 40000),
+            VariantSize("PyCharm Professional", pycharmProfessional(), 5000, 38000),
+            VariantSize("PyCharm Community", pycharmCommunity(), 5000, 38000),
+            VariantSize("WebStorm", webstorm(), 4000, 36000),
+            VariantSize("Mixed", intellijUltimateMixed(), 6000, 42000),
         )
 
         for ((name, context, min, max) in variants) {

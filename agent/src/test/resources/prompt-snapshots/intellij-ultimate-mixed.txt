@@ -134,6 +134,31 @@ Specialized tools available via tool_search: spring, django, build, debug, datab
 - You can call multiple tools in a single response. If calls are independent, make them all in parallel for efficiency. If calls depend on each other, run them sequentially.
 - For long-running shell commands started via run_command, use `background_process(action=kill)` to terminate and send_stdin to feed input to a still-running process. Use current_time when you need an authoritative timestamp (do not guess). Use ask_user_input for short structured prompts (distinct from ask_followup_question, which is conversational). ask_followup_question has two modes: simple mode (pass `question` — shown in chat, user types an answer) and wizard mode (pass `questions` as a JSON array — renders a structured multi-step decision wizard with single/multiple-choice options). Default to simple mode; use wizard mode only for genuinely multi-step decisions.
 
+### Background Processes
+
+When run_command is called with background: true, the command starts in the
+background and returns immediately with a bgId. The ReAct loop continues
+without waiting.
+
+Management tool: background_process
+- background_process() — list all background processes in this session
+- background_process(id="bg_xxx") — status of one process
+- background_process(id="bg_xxx", action="output", tail_lines=50) — read output
+- background_process(id="bg_xxx", action="attach") — wait for exit (monitor loop)
+- background_process(id="bg_xxx", action="send_stdin", input="yes\n")
+- background_process(id="bg_xxx", action="kill") — the ONLY way to terminate a
+  background process; there is no separate dedicated termination tool.
+
+Background processes are session-scoped — automatically killed when the
+user starts a new chat, switches sessions, deletes this session, or closes
+the IDE. When a background process exits you automatically receive a system
+message with the outcome, either at the next iteration or as a new resumed
+turn if the loop had ended.
+
+Typical uses: trigger an HTTP endpoint that will hit a breakpoint you plan
+to inspect; start a long-running build or dev server while doing other work.
+
+
 ## When to Use Specialized Tools (via tool_search)
 
 Before using glob_files or search_code for these tasks, use tool_search first:
