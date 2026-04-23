@@ -221,6 +221,25 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
         val (absolutePath, pathError) = PathValidator.resolveAndValidate(filePath, project.basePath)
         if (pathError != null) return pathError
 
+        // C7: pre-flight check — resolve file and verify the target line is actually
+        // breakpointable before entering the write action. Without this, a breakpoint on
+        // a comment/blank/import line is silently created as a disabled "unresolvable"
+        // entry — the gutter stays empty and the user can't tell why it never hits.
+        val preCheckFile = LocalFileSystem.getInstance().findFileByPath(absolutePath!!)
+        if (preCheckFile != null) {
+            val zeroBasedPreCheck = line - 1
+            if (!XDebuggerUtil.getInstance().canPutBreakpointAt(project, preCheckFile, zeroBasedPreCheck)) {
+                return ToolResult(
+                    "Line $line in ${preCheckFile.name} is not breakpointable " +
+                        "(comment, blank line, or outside executable code). " +
+                        "Pick a line with a statement or expression.",
+                    "Line not breakpointable",
+                    ToolResult.ERROR_TOKEN_ESTIMATE,
+                    isError = true,
+                )
+            }
+        }
+
         return try {
             withContext(Dispatchers.EDT) {
                 WriteAction.compute<ToolResult, Exception> {
@@ -307,6 +326,15 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
                     ToolResult(content, "Breakpoint at $fileName:$line", TokenEstimator.estimate(content))
                 }
             }
+        } catch (e: BreakpointNotAllowedException) {
+            // Thrown from addLineBreakpointSafe when the platform rejects the line.
+            // Caught before the generic handler so the LLM gets a structured message.
+            ToolResult(
+                e.message ?: "Line not breakpointable",
+                "Line not breakpointable",
+                ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true,
+            )
         } catch (e: Exception) {
             ToolResult("Error adding breakpoint: ${e.message}", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
@@ -980,4 +1008,15 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
     } catch (_: NoClassDefFoundError) {
         null
     }
+
+    /**
+     * Thrown when the LLM requests a breakpoint on a line that the IDE platform
+     * cannot break on (comment, blank line, import, or other non-executable code).
+     *
+     * Propagates out of [addLineBreakpointSafe] through the WriteAction boundary
+     * and is caught in [executeAddBreakpoint] before the generic Exception handler
+     * so the user sees a structured, actionable error instead of the platform's
+     * silent disabled-breakpoint behaviour.
+     */
+    private class BreakpointNotAllowedException(message: String) : RuntimeException(message)
 }

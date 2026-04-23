@@ -2,7 +2,10 @@ package com.workflow.orchestrator.agent.tools.debug
 
 import com.intellij.debugger.ui.breakpoints.JavaExceptionBreakpointType
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.xdebugger.XDebuggerManager
+import com.intellij.xdebugger.XDebuggerUtil
 import com.intellij.xdebugger.breakpoints.SuspendPolicy
 import com.intellij.xdebugger.breakpoints.XBreakpoint
 import com.intellij.xdebugger.breakpoints.XBreakpointManager
@@ -422,6 +425,48 @@ class DebugBreakpointsToolTest {
         assertTrue(
             result.content.contains("No breakpoints"),
             "Expected 'No breakpoints' in content; got: ${result.content}"
+        )
+    }
+
+    // ── Task 11 — C7: canPutBreakpointAt pre-check ──────────────────────────
+
+    @Test
+    fun `add_breakpoint on non-breakpointable line returns 'line not breakpointable' error`() = runTest {
+        // Arrange: project.basePath returns a real-looking root so PathValidator passes.
+        every { project.basePath } returns "/tmp/testproject"
+
+        // Stub LocalFileSystem so findFileByPath returns a mock VirtualFile.
+        val vFile = mockk<VirtualFile>(relaxed = true)
+        every { vFile.name } returns "Foo.kt"
+
+        val localFileSystem = mockk<LocalFileSystem>(relaxed = true)
+        every { localFileSystem.findFileByPath(any<String>()) } returns vFile
+
+        mockkStatic(LocalFileSystem::class)
+        every { LocalFileSystem.getInstance() } returns localFileSystem
+
+        // Stub XDebuggerUtil so canPutBreakpointAt returns false for the target line.
+        val util = mockk<XDebuggerUtil>(relaxed = true)
+        every { util.canPutBreakpointAt(any(), any(), any()) } returns false
+
+        mockkStatic(XDebuggerUtil::class)
+        every { XDebuggerUtil.getInstance() } returns util
+
+        // Act: attempt add_breakpoint on a comment/blank line (line 10, 1-based).
+        val result = tool.execute(
+            buildJsonObject {
+                put("action", "add_breakpoint")
+                put("file", "/tmp/testproject/src/Foo.kt")
+                put("line", 10)
+            },
+            project,
+        )
+
+        // Assert: must be an error containing "not breakpointable".
+        assertTrue(result.isError, "Expected isError=true but got false; content: ${result.content}")
+        assertTrue(
+            result.content.contains("not breakpointable", ignoreCase = true),
+            "Expected 'not breakpointable' in message but got: ${result.content}",
         )
     }
 }
