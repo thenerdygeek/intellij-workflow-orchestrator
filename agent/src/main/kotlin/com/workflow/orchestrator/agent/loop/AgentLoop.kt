@@ -18,6 +18,7 @@ import com.workflow.orchestrator.agent.security.CommandSafetyAnalyzer
 import com.workflow.orchestrator.agent.security.CommandRisk
 import com.workflow.orchestrator.agent.session.*
 import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.builtin.BackgroundProcessTool
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
 import com.workflow.orchestrator.agent.tools.ToolOutputConfig
 import com.workflow.orchestrator.agent.tools.ToolOutputSpiller
@@ -476,7 +477,8 @@ class AgentLoop(
         val WRITE_TOOLS = setOf(
             "edit_file", "create_file", "run_command", "revert_file",
             "kill_process", "send_stdin", "format_code", "optimize_imports",
-            "refactor_rename"
+            "refactor_rename",
+            "background_process",
         )
 
         /** Subset of write tools that require user approval via the approval gate. */
@@ -1139,11 +1141,14 @@ class AgentLoop(
                         return makeFailed("Agent failed to use tools after $maxConsecutiveMistakes attempts.", iteration, FailureReason.NO_TOOLS_USED)
                     } else {
                         // Below max — inject nudge and continue (Cline: noToolsUsed message).
-                        // Collapse any earlier trailing nudge chain first so we never have
-                        // more than one "[ERROR] You did not use a tool..." at the tail of
-                        // context. Repeated identical nudges can prime the LLM to mimic the
-                        // error-response pattern instead of breaking out of it.
-                        contextManager.pruneTrailingNudgePairs(TEXT_ONLY_NUDGE)
+                        // Strip ALL prior nudge pairs (not just trailing) so interior pairs
+                        // from an earlier stall episode — kept in memory across a "Continue"
+                        // within the same session — don't compound with the fresh nudge and
+                        // prime the model on "[empty/text-only, ERROR]" as a recurring
+                        // pattern. Case A keeps the trailing-only variant since it runs
+                        // after every successful tool call and shouldn't retroactively
+                        // erase every earlier stall mid-run.
+                        contextManager.pruneAllNudgePairs(TEXT_ONLY_NUDGE)
                         contextManager.addUserMessage(TEXT_ONLY_NUDGE)
                     }
                 }
@@ -1171,9 +1176,11 @@ class AgentLoop(
                             FailureReason.EMPTY_RESPONSES
                         )
                     }
-                    // Same rationale as TEXT_ONLY_NUDGE: collapse any trailing chain first
-                    // so identical empty-response errors don't stack in context.
-                    contextManager.pruneTrailingNudgePairs(EMPTY_RESPONSE_ERROR)
+                    // Strip ALL prior empty-response nudge pairs — see matching comment
+                    // under Case B above for rationale. Protects against cross-episode
+                    // accumulation when a "Continue" lands between two empty-response
+                    // stalls within the same in-memory session.
+                    contextManager.pruneAllNudgePairs(EMPTY_RESPONSE_ERROR)
                     contextManager.addUserMessage(EMPTY_RESPONSE_ERROR)
                 }
             }
@@ -1389,6 +1396,7 @@ class AgentLoop(
             // proper context-element migration replaces the ThreadLocal (see RunCommandTool
             // companion TODO). Without this, the tool runs fine but the UI shows a silent
             // spinner for the entire duration.
+            BackgroundProcessTool.currentSessionId.set(sessionId)
             if (toolName in STREAMING_TOOLS) RunCommandTool.currentToolCallId.set(toolCallId)
             if (toolName in STREAMING_TOOLS) RunCommandTool.currentSessionId.set(sessionId)
             val toolResult = try {
@@ -1425,6 +1433,7 @@ class AgentLoop(
                 reportToolError(call, startTime, errorMsg)
                 continue
             } finally {
+                BackgroundProcessTool.currentSessionId.remove()
                 if (toolName in STREAMING_TOOLS) RunCommandTool.currentToolCallId.remove()
                 if (toolName in STREAMING_TOOLS) RunCommandTool.currentSessionId.remove()
             }

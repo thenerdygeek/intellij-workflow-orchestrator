@@ -202,7 +202,7 @@ class AgentServiceToolFilterTest {
         val expectedWriteTools = setOf(
             "edit_file", "create_file", "run_command", "revert_file",
             "kill_process", "send_stdin", "format_code", "optimize_imports",
-            "refactor_rename"
+            "refactor_rename", "background_process"
         )
         assertEquals(
             expectedWriteTools,

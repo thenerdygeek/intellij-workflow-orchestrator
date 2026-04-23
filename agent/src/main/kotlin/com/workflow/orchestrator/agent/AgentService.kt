@@ -544,6 +544,8 @@ class AgentService(private val project: Project) : Disposable {
         safeRegisterCore { SearchCodeTool() }
         safeRegisterCore { GlobFilesTool() }
         safeRegisterCore { RunCommandTool(allowedShells) }
+        safeRegisterCore { SendStdinTool() }
+        safeRegisterCore { BackgroundProcessTool() }
         safeRegisterCore { RevertFileTool() }
         safeRegisterCore { AttemptCompletionTool() }
         safeRegisterCore { TaskReportTool() }
@@ -721,7 +723,6 @@ class AgentService(private val project: Project) : Disposable {
         safeRegisterDeferred("Utilities") { ProjectContextTool() }
         safeRegisterDeferred("Utilities") { CurrentTimeTool() }
         safeRegisterDeferred("Utilities") { KillProcessTool() }
-        safeRegisterDeferred("Utilities") { SendStdinTool() }
         safeRegisterDeferred("Utilities") { AskUserInputTool() }
 
         // Debug tools (require AgentDebugController)
