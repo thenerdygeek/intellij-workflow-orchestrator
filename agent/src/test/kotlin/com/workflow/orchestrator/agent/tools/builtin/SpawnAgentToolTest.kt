@@ -80,7 +80,7 @@ class SpawnAgentToolTest {
         // Builtin write tools
         for (name in listOf(
             "edit_file", "create_file", "run_command", "revert_file",
-            "kill_process", "send_stdin"
+            "background_process", "send_stdin"
         )) reg.register(stubTool(name))
 
         // PSI tools
@@ -1174,7 +1174,7 @@ class SpawnAgentToolTest {
                 assertNotNull(capturedToolNames, "Brain should have received tool definitions")
                 // Verify no write tools present
                 for (writeTool in listOf("edit_file", "create_file", "run_command", "revert_file",
-                    "kill_process", "send_stdin", "format_code", "optimize_imports", "refactor_rename")) {
+                    "background_process", "send_stdin", "format_code", "optimize_imports", "refactor_rename")) {
                     assertFalse(writeTool in capturedToolNames!!, "Should NOT have write tool: $writeTool")
                 }
             } finally {

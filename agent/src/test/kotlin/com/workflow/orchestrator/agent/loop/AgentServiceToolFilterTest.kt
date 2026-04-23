@@ -201,7 +201,7 @@ class AgentServiceToolFilterTest {
     fun `AgentLoop WRITE_TOOLS contains all expected write tool names`() {
         val expectedWriteTools = setOf(
             "edit_file", "create_file", "run_command", "revert_file",
-            "kill_process", "send_stdin", "format_code", "optimize_imports",
+            "send_stdin", "format_code", "optimize_imports",
             "refactor_rename", "background_process"
         )
         assertEquals(

@@ -73,7 +73,7 @@ class ParallelSubagentIntegrationTest {
         // Builtin write tools
         for (name in listOf(
             "edit_file", "create_file", "run_command", "revert_file",
-            "kill_process", "send_stdin"
+            "background_process", "send_stdin"
         )) reg.register(stubTool(name))
 
         // PSI tools

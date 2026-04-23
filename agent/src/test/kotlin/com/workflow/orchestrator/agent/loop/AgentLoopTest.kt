@@ -438,7 +438,7 @@ class AgentLoopTest {
         fun `all write tool names are blocked in plan mode`() = runTest {
             val expectedWriteTools = setOf(
                 "edit_file", "create_file", "run_command", "revert_file",
-                "kill_process", "send_stdin", "format_code", "optimize_imports",
+                "send_stdin", "format_code", "optimize_imports",
                 "refactor_rename", "background_process"
             )
             assertEquals(expectedWriteTools, AgentLoop.WRITE_TOOLS, "WRITE_TOOLS set should contain all write tools")

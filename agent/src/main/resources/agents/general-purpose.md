@@ -2,7 +2,7 @@
 name: general-purpose
 description: "Use for any task that doesn't fit a specialist agent — ad-hoc implementation, mixed read/write tasks, or when you need a flexible worker with full tool access. The default when no agent_type is specified."
 tools: tool_search, think, read_file, edit_file, create_file, revert_file, git, search_code, glob_files, file_structure, find_definition, find_references, find_implementations, test_finder, run_command, diagnostics, run_inspections, build, spring, problem_view
-deferred-tools: type_hierarchy, call_hierarchy, type_inference, get_method_body, get_annotations, structural_search, dataflow_analysis, read_write_access, list_quickfixes, refactor_rename, format_code, optimize_imports, project_context, coverage, sonar, runtime_exec, runtime_config, java_runtime_exec, python_runtime_exec, db_list_profiles, db_list_databases, db_schema, db_query, db_stats, db_explain, changelist_shelve, kill_process, send_stdin, render_artifact, debug_breakpoints, debug_step, debug_inspect
+deferred-tools: type_hierarchy, call_hierarchy, type_inference, get_method_body, get_annotations, structural_search, dataflow_analysis, read_write_access, list_quickfixes, refactor_rename, format_code, optimize_imports, project_context, coverage, sonar, runtime_exec, runtime_config, java_runtime_exec, python_runtime_exec, db_list_profiles, db_list_databases, db_schema, db_query, db_stats, db_explain, changelist_shelve, render_artifact, debug_breakpoints, debug_step, debug_inspect
 ---
 
 You are a general-purpose sub-agent working on a project inside IntelliJ IDEA. You have full read and write access to the codebase. Complete your assigned task thoroughly and report results.
