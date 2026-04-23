@@ -2,12 +2,12 @@
 name: brainstorm
 description: Turn ideas into fully formed designs through structured collaborative dialogue before any code is written. Use when the user wants to build something new, add a feature, design architecture, or plan a significant change — this includes any request like "brainstorm", "design", "how should I", "let's plan", "I want to add", "I want to build", "new feature", "architecture for", or "approach for". You should also use this proactively before any non-trivial implementation, because understanding what to build prevents wasted work and rework. For example, if the user says "Add a caching layer" or "Build a notification system" or "How should we structure the API?", load this skill first before writing any code. Do not skip this for features, components, or architectural changes even if you think you already know the answer. This skill walks you through a structured exploration workflow that captures requirements, surfaces constraints, evaluates alternatives, and produces a clear design decision before implementation begins.
 user-invocable: true
-preferred-tools: [think, ask_followup_question, enable_plan_mode, plan_mode_respond, core_memory_append, archival_memory_insert, read_file, search_code, find_definition, find_references, file_structure, agent]
+preferred-tools: [think, ask_followup_question, enable_plan_mode, plan_mode_respond, read_file, create_file, edit_file, search_code, find_definition, find_references, file_structure, agent]
 ---
 
 # Brainstorming — Ideas Into Designs
 
-Turn vague ideas into concrete, implementable designs through structured dialogue. This skill uses existing tools — `ask_followup_question` for structured choices (wizard mode), `think` for reasoning, `agent` for codebase research, `enable_plan_mode` + `plan_mode_respond` for the final plan output, `core_memory_append`/`archival_memory_insert` for cross-session persistence.
+Turn vague ideas into concrete, implementable designs through structured dialogue. This skill uses existing tools — `ask_followup_question` for structured choices (wizard mode), `think` for reasoning, `agent` for codebase research, `enable_plan_mode` + `plan_mode_respond` for the final plan output, `create_file`/`edit_file` on memory files for cross-session persistence.
 
 ## Why This Matters
 
@@ -25,7 +25,7 @@ User's idea
   → Present design section by section
   → User approves or revises
   → Switch to plan mode and present implementation plan (enable_plan_mode → plan_mode_respond)
-  → Save key decisions to memory (use core_memory_append or archival_memory_insert)
+  → Save key decisions to memory (use create_file / edit_file on memory files — see Section 10: MEMORY)
 ```
 
 ## Step 1: Understand the Context
@@ -174,7 +174,7 @@ After the user approves the plan, the session switches back to act mode for impl
 
 ## Step 7: Save Key Decisions
 
-After the brainstorming session, use `archival_memory_insert` to persist:
+After the brainstorming session, write a memory file to persist key decisions across sessions. Use `create_file` to write a new memory at `{agentDir}/memory/project_<topic>.md` (YAML frontmatter: `name`, `description`, `type: project`), then append an index entry to `{agentDir}/memory/MEMORY.md` with `edit_file`. Record:
 - The chosen approach and why alternatives were rejected
 - Key constraints or requirements that emerged
 - Architecture decisions that should inform future work

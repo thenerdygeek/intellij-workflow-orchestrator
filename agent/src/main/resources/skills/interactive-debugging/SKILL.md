@@ -260,4 +260,4 @@ debug_breakpoints(action="add_breakpoint", file="UserController.kt", line=20, co
 | Advanced | `debug_inspect(action="force_return/drop_frame")` | Alter execution flow |
 | Cleanup | `debug_step(action="stop")`, `debug_breakpoints(action="remove_breakpoint")` | Always clean up |
 
-After resolving the issue, use `archival_memory_insert` to record the debugging approach and root cause for future reference.
+After resolving the issue, write a memory file (`create_file` on `{agentDir}/memory/project_debugging.md`, then `edit_file` to append an index entry in `MEMORY.md`) to record the debugging approach and root cause for future reference.

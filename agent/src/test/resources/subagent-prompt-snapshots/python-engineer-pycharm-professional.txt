@@ -44,7 +44,7 @@ You run inside PyCharm 2025.1 Professional with access to tools across several c
 - Tasks: task_create, task_update, task_list, task_get
 - Visualization: render_artifact (interactive React components in chat)
 - Session: new_task (hand off to fresh session with structured context)
-- Memory: core_memory_read/append/replace, archival_memory_insert/search, conversation_search, save_memory
+- Memory: read_file / create_file / edit_file on memory files (see Section 10 — MEMORY)
 - Skills: use_skill, tool_search
 - Delegation: agent (sub-agent with isolated context)
 

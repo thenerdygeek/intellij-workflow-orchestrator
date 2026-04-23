@@ -74,7 +74,7 @@ The agent has tools across 11 categories:
 - **Bamboo:** bamboo_builds (actions: build_status, get_build, trigger_build, get_build_log, get_test_results, etc.), bamboo_plans
 - **SonarQube:** sonar (actions: issues, quality_gate, coverage, search_projects, analysis_tasks, etc.)
 - **Bitbucket:** bitbucket_pr (actions: create_pr, get_pr_diff, get_pr_changes, get_pr_commits, etc.), bitbucket_review, bitbucket_repo
-- **Memory:** core_memory_append, core_memory_replace, core_memory_read, archival_memory_insert, archival_memory_search, save_memory, conversation_search
+- **Memory:** read_file, create_file, edit_file (on memory files in `{agentDir}/memory/`)
 - **Planning & Communication:** enable_plan_mode, plan_mode_respond, ask_followup_question, attempt_completion, use_skill
 - **Database:** db_schema, db_query, db_list_profiles
 
@@ -117,17 +117,15 @@ After saving, inform the user:
 - "You can invoke it with `/{name}` or the agent will auto-trigger it when relevant."
 - "To edit, modify the SKILL.md file directly."
 
-### Step 5: Use archival_memory_insert to Remember
+### Step 5: Save to Memory
 
-Call `archival_memory_insert` to note what skills exist:
+Write a memory entry so future sessions know this skill exists. Use `create_file` to write `{agentDir}/memory/project_skills.md` (or append to it with `edit_file` if it already exists), then add an index entry to `{agentDir}/memory/MEMORY.md` with `edit_file`:
+
 ```
-archival_memory_insert(
-  content="Created skill '{name}' at {path}. Purpose: {description}. Tools: {preferred-tools}.",
-  tags="skills-created"
-)
+- [Skills created](project_skills.md) — list of custom skills and their locations
 ```
 
-This helps the agent remember available skills across sessions.
+Inside `project_skills.md`, record: skill name, file path, purpose, and preferred tools. This helps the agent remember available skills across sessions.
 
 ## Example Skills
 

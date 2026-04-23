@@ -225,7 +225,7 @@ you genuinely need to observe runtime state.
    **Discuss with the user before attempting more fixes.**
 
 6. **Record the Fix**
-   After resolving a complex bug, use `archival_memory_insert` to record the root cause and fix approach for future sessions.
+   After resolving a complex bug, write a memory file (`create_file` on `{agentDir}/memory/project_debugging.md`, then `edit_file` to append an index entry in `MEMORY.md`) to record the root cause and fix approach for future sessions.
 
 ## Project-Type Diagnostic Flows
 
