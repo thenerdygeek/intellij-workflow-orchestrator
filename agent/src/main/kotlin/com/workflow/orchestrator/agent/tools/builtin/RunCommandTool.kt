@@ -442,7 +442,8 @@ class RunCommandTool(
                         n = reader.read(buffer)
                     }
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                LOG.warn("RunCommand background reader for $bgId terminated abnormally: ${e.message}", e)
             } finally {
                 managed.readerDone.countDown()
             }
