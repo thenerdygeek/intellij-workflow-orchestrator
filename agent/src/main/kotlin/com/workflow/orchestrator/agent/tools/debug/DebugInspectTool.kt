@@ -225,7 +225,11 @@ Most actions require a suspended session. session_id defaults to active session.
     )
 
     private fun notSuspendedError() = ToolResult(
-        "Debug session is running but not paused. This action requires the debugger to be suspended (at a breakpoint or after a step). Set a breakpoint and let execution reach it, or call debug_step.pause first.",
+        "No suspended session resolved. Common causes: " +
+            "(1) multiple sessions are open and the one you targeted is running — " +
+            "pass session_id explicitly, since `currentSession` resolves to the last-focused session (not necessarily the paused one); " +
+            "(2) the program isn't at a breakpoint yet — set one and let execution reach it, or call debug_step(action=pause). " +
+            "Run debug_step(action=get_state) first to list sessions and their paused/running state.",
         "Not suspended",
         ToolResult.ERROR_TOKEN_ESTIMATE,
         isError = true,

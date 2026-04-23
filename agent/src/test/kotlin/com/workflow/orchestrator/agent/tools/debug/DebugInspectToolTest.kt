@@ -1,8 +1,13 @@
 package com.workflow.orchestrator.agent.tools.debug
 
 import com.intellij.openapi.project.Project
+import com.intellij.xdebugger.XDebugSession
+import com.intellij.xdebugger.XDebuggerManager
 import com.workflow.orchestrator.agent.tools.WorkerType
+import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkStatic
+import io.mockk.unmockkStatic
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -69,5 +74,34 @@ class DebugInspectToolTest {
         val result = tool.execute(buildJsonObject { put("action", "nonexistent") }, project)
         assertTrue(result.isError)
         assertTrue(result.content.contains("Unknown action"))
+    }
+
+    @Test
+    fun `get_variables on running session returns message mentioning session_id and get_state`() = runTest {
+        // Arrange: a running (not paused) session is the only one
+        val runningSession = mockk<XDebugSession>(relaxed = true) {
+            every { isSuspended } returns false
+            every { currentStackFrame } returns null
+            every { suspendContext } returns null
+        }
+        mockkStatic(XDebuggerManager::class)
+        val mgr = mockk<XDebuggerManager>(relaxed = true)
+        every { XDebuggerManager.getInstance(project) } returns mgr
+        every { mgr.debugSessions } returns arrayOf(runningSession)
+        every { mgr.currentSession } returns runningSession
+
+        // Act
+        val result = tool.execute(buildJsonObject { put("action", "get_variables") }, project)
+
+        // Assert
+        assertTrue(result.isError)
+        val content = result.content
+        assertTrue(content.contains("session_id"), "expected 'session_id' in message: $content")
+        assertTrue(content.contains("get_state"), "expected 'get_state' hint in message: $content")
+        // Also confirm it still communicates the suspension requirement
+        assertTrue(content.contains("paused", ignoreCase = true) || content.contains("suspend", ignoreCase = true),
+            "expected message to still mention paused/suspended requirement: $content")
+
+        unmockkStatic(XDebuggerManager::class)
     }
 }
