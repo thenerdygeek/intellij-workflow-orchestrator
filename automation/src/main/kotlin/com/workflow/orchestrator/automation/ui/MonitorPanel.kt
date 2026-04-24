@@ -7,6 +7,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBLabel
 import com.workflow.orchestrator.core.ui.ClipboardUtil
 import com.workflow.orchestrator.core.ui.StatusColors
+import com.workflow.orchestrator.core.ui.TimeFormatter
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.services.BambooService
@@ -130,9 +131,6 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
         return false
     }
 
-    private fun formatDuration(durationSeconds: Long): String =
-        if (durationSeconds > 0) "${durationSeconds / 60}m ${durationSeconds % 60}s" else ""
-
     private suspend fun pollAllRuns() {
         val bambooService = project.getService(BambooService::class.java) ?: return
 
@@ -148,7 +146,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
                         StageInfo(
                             name = stage.name,
                             state = stage.state,
-                            duration = formatDuration(stage.durationSeconds)
+                            duration = TimeFormatter.formatDurationSeconds(stage.durationSeconds, zero = "")
                         )
                     }
 
@@ -157,7 +155,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
                         buildNumber = buildData.buildNumber,
                         status = buildData.state,
                         stages = stages,
-                        duration = formatDuration(buildData.durationSeconds),
+                        duration = TimeFormatter.formatDurationSeconds(buildData.durationSeconds, zero = ""),
                         bambooUrl = "$bambooUrl/browse/${entry.resultKey}"
                     )
 
