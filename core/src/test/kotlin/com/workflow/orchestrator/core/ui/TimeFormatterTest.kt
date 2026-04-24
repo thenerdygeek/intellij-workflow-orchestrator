@@ -92,4 +92,72 @@ class TimeFormatterTest {
         assertEquals("3h ago", TimeFormatter.relative(now - 3 * 60 * 60_000L))
         assertEquals("2d ago", TimeFormatter.relative(now - 2 * 24 * 60 * 60_000L))
     }
+
+    @Test
+    fun `relativeFromIso handles Jira plus-zero-zero-zero-zero offset`() {
+        // Feed a far-past date so we land in the fallback branch and can assert
+        // deterministic output regardless of clock.
+        val iso = "2020-01-15T10:30:00+0000"
+        assertEquals("2020-01-15", TimeFormatter.relativeFromIso(iso))
+    }
+
+    @Test
+    fun `relativeFromIso fallback date-only past the threshold`() {
+        val iso = "2020-01-15T10:30:00Z"
+        assertEquals("2020-01-15", TimeFormatter.relativeFromIso(iso))
+    }
+
+    @Test
+    fun `relativeFromIso fallback absolute when fallbackDateOnly false`() {
+        // Far past date and fallbackDateOnly=false → should include HH:mm
+        // Use the core ABSOLUTE pattern ('yyyy-MM-dd HH:mm' in system TZ).
+        val result = TimeFormatter.relativeFromIso(
+            "2020-01-15T10:30:00Z",
+            fallbackDateOnly = false,
+        )
+        // Must start with "2020-01-15 " (date part), and contain a colon (HH:mm)
+        org.junit.jupiter.api.Assertions.assertTrue(
+            result.startsWith("2020-01-15 ") && result.contains(":"),
+            "expected timestamp form, got: $result",
+        )
+    }
+
+    @Test
+    fun `relativeFromIso unparseable input falls back to first 10 chars`() {
+        assertEquals("not-a-date", TimeFormatter.relativeFromIso("not-a-date"))
+    }
+
+    @Test
+    fun `relativeFromIso recent minute`() {
+        // Build an ISO for ~2 minutes ago to hit the minutes branch deterministically.
+        val twoMinutesAgo = java.time.Instant.now().minusSeconds(120)
+        val iso = twoMinutesAgo.toString()
+        assertEquals("2m ago", TimeFormatter.relativeFromIso(iso))
+    }
+
+    @Test
+    fun `relativeFromIso recent hour`() {
+        val twoHoursAgo = java.time.Instant.now().minusSeconds(2 * 3600)
+        val iso = twoHoursAgo.toString()
+        assertEquals("2h ago", TimeFormatter.relativeFromIso(iso))
+    }
+
+    @Test
+    fun `relativeFromIso day-scale within threshold`() {
+        val fiveDaysAgo = java.time.Instant.now().minusSeconds(5L * 24 * 3600)
+        val iso = fiveDaysAgo.toString()
+        assertEquals("5d ago", TimeFormatter.relativeFromIso(iso))
+    }
+
+    @Test
+    fun `relativeFromIso respects custom maxDaysAsRelative`() {
+        // 10 days old, but caller caps relative at 7 days → should fall back.
+        val tenDaysAgo = java.time.Instant.now().minusSeconds(10L * 24 * 3600)
+        val iso = tenDaysAgo.toString()
+        val result = TimeFormatter.relativeFromIso(iso, maxDaysAsRelative = 7)
+        org.junit.jupiter.api.Assertions.assertFalse(
+            result.endsWith("d ago"),
+            "expected absolute fallback past caller cap, got: $result",
+        )
+    }
 }

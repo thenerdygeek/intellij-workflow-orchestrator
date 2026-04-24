@@ -71,6 +71,33 @@ object TimeFormatter {
      * Used for SonarQube technical debt, issue effort estimates.
      */
     /**
+     * Formats an ISO-8601 timestamp as a relative age suitable for Jira-style
+     * comment lists. Tolerates the Jira `+0000` offset form (converts to `Z` before
+     * parsing). Thresholds: <60m → "Xm ago"; <24h → "Xh ago"; <[maxDaysAsRelative]
+     * days → "Xd ago". Beyond that threshold, returns the date portion of the
+     * input (`isoDate.take(10)`) when [fallbackDateOnly] is true, else an absolute
+     * "yyyy-MM-dd HH:mm" timestamp. Parse failures also fall back to `isoDate.take(10)`.
+     */
+    fun relativeFromIso(
+        isoDate: String,
+        maxDaysAsRelative: Int = 30,
+        fallbackDateOnly: Boolean = true,
+    ): String {
+        return try {
+            val instant = Instant.parse(isoDate.replace("+0000", "Z"))
+            val duration = java.time.Duration.between(instant, Instant.now())
+            when {
+                duration.toMinutes() < 60 -> "${duration.toMinutes()}m ago"
+                duration.toHours() < 24 -> "${duration.toHours()}h ago"
+                duration.toDays() < maxDaysAsRelative -> "${duration.toDays()}d ago"
+                else -> if (fallbackDateOnly) isoDate.take(10) else ABSOLUTE.format(instant)
+            }
+        } catch (_: Exception) {
+            isoDate.take(10)
+        }
+    }
+
+    /**
      * Formats a file's modification age in compact form: "5s ago", "2m ago",
      * "3h ago", "1d ago". Used for build-lockfile freshness hints
      * (poetry.lock / uv.lock / etc.). Returns negative strings for
