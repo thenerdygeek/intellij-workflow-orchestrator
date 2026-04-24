@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.core.ui
 
+import java.io.File
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -69,6 +70,29 @@ object TimeFormatter {
      * Uses 8-hour work days. Minutes are omitted once days are present.
      * Used for SonarQube technical debt, issue effort estimates.
      */
+    /**
+     * Formats a file's modification age in compact form: "5s ago", "2m ago",
+     * "3h ago", "1d ago". Used for build-lockfile freshness hints
+     * (poetry.lock / uv.lock / etc.). Returns negative strings for
+     * future-dated files (no guard — caller's responsibility if that matters).
+     */
+    fun formatFileAge(file: File): String = formatFileAge(file.lastModified())
+
+    /**
+     * Formats age relative to `System.currentTimeMillis()` in compact form.
+     * See [formatFileAge] above for usage context.
+     */
+    fun formatFileAge(lastModifiedMillis: Long): String {
+        val ageMs = System.currentTimeMillis() - lastModifiedMillis
+        val ageSec = ageMs / 1000
+        return when {
+            ageSec < 60 -> "${ageSec}s ago"
+            ageSec < 3600 -> "${ageSec / 60}m ago"
+            ageSec < 86400 -> "${ageSec / 3600}h ago"
+            else -> "${ageSec / 86400}d ago"
+        }
+    }
+
     fun formatEffortMinutes(totalMinutes: Int): String {
         if (totalMinutes <= 0) return "0min"
         val days = totalMinutes / (8 * 60) // 8h work day
