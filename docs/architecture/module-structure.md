@@ -104,6 +104,26 @@ The plugin defines 5 custom extension points in `:core` for modular tab and feat
 
 All extension points are declared in `:core`'s `plugin.xml` and implemented by feature modules in their respective `plugin-*.xml` configuration files.
 
+## Extension-Point Glue Folders
+
+Several IntelliJ extension-point integrations live in folders that are neither `api/`, `service/`, `ui/`, nor `listeners/`:
+
+| Folder | Purpose |
+|---|---|
+| `vcs/` | VCS checkin handler factories (pre/post-commit hooks) |
+| `search/` | Search-everywhere contributors |
+| `tasks/` | IntelliJ Tasks plugin integration (task repository) |
+| `run/` | Run-configuration state and before-run providers |
+| `settings/` | `SearchableConfigurable` settings pages |
+
+**Rule:** These glue folders must delegate all HTTP and business logic to the module's `service/` layer. They must not instantiate `ApiClient` classes, create `OkHttpClient` instances, or call `runBlocking` in Swing callbacks.
+
+**Phase 2 enforcement (2026-04-24):** The Phase 2 audit (`docs/architecture/phase2-violations-audit.md`) found and fixed violations in `:jira` (`vcs/`, `search/`, `tasks/`, `settings/`), `:bamboo` (`run/`), and `:automation` (`run/`). After Phase 2:
+
+- All Jira HTTP goes through `HttpClientFactory.clientFor(ServiceType.JIRA)` (shared pool, retry, auth interceptor).
+- All Nexus HTTP goes through `HttpClientFactory.clientFor(ServiceType.NEXUS)`.
+- Phase 3 caching installs a cache interceptor at `HttpClientFactory`, which then covers all call sites without further changes.
+
 ## Cross-Module Communication
 
 ```mermaid

@@ -567,6 +567,9 @@ flowchart TD
     style HCF fill:#264f78,stroke:#569cd6,color:#d4d4d4
     style SP fill:#264f78,stroke:#569cd6,color:#d4d4d4
         </div>
+
+        <h3>Extension-Point Glue Folders</h3>
+        <p>Folders <code>vcs/</code>, <code>search/</code>, <code>tasks/</code>, <code>run/</code>, and <code>settings/</code> are IntelliJ extension-point integrations. They must delegate all HTTP and business logic to the module&rsquo;s <code>service/</code> layer &mdash; no direct <code>ApiClient</code> construction, no raw OkHttp, no <code>runBlocking</code> in Swing. The Phase 2 audit (2026-04-24) enforced this across <code>:jira</code>, <code>:bamboo</code>, and <code>:automation</code>. After Phase 2, all Jira HTTP goes through <code>HttpClientFactory.clientFor(ServiceType.JIRA)</code> and all Nexus HTTP through <code>ServiceType.NEXUS</code>, enabling Phase 3 caching to install at a single interceptor point.</p>
     </div>
 </details>
 
