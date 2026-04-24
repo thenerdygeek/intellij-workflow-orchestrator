@@ -7,18 +7,14 @@ import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.workflow.orchestrator.core.services.SessionHistoryReader
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.util.ProjectIdentifier
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.temporal.WeekFields
 import java.util.Locale
 
 class WeeklyDigestStartupActivity : ProjectActivity {
-
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     override suspend fun execute(project: Project) {
         val settings = PluginSettings.getInstance(project)
@@ -29,11 +25,11 @@ class WeeklyDigestStartupActivity : ProjectActivity {
 
         if (reportExistsForThisWeek(project, today)) return
 
-        scope.launch {
-            runCatching {
+        runCatching {
+            withContext(Dispatchers.IO) {
                 val reader = ExtensionPointName
                     .create<SessionHistoryReader>("com.workflow.orchestrator.sessionHistoryReader")
-                    .extensionList.firstOrNull() ?: return@launch
+                    .extensionList.firstOrNull() ?: return@withContext
 
                 val basePath = project.basePath ?: ""
                 val agentDir = ProjectIdentifier.agentDir(basePath)
