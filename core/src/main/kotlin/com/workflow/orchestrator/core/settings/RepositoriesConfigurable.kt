@@ -111,6 +111,10 @@ class RepositoriesConfigurable(
             pluginSettings.state.repos.add(copy)
         }
 
+        // Invalidate RepoContextResolver's memoized resolution — VCS and editor
+        // listeners don't fire on settings edits, so hand-bump the cache tracker here.
+        RepoContextResolver.getInstance(project).invalidateCache()
+
         log.info("[Settings:Repositories] Saved ${editedRepos.size} repos, primary='${(editedRepos.find { it.isPrimary } ?: editedRepos.firstOrNull())?.displayLabel}'")
     }
 

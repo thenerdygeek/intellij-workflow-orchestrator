@@ -1,13 +1,57 @@
 package com.workflow.orchestrator.core.settings
 
+import com.intellij.dvcs.repo.VcsRepositoryManager
+import com.intellij.dvcs.repo.VcsRepositoryMappingListener
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.fileEditor.FileEditorManagerEvent
+import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.SimpleModificationTracker
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.psi.util.CachedValue
+import com.intellij.psi.util.CachedValueProvider
+import com.intellij.psi.util.CachedValuesManager
 import git4idea.repo.GitRepository
 import git4idea.repo.GitRepositoryManager
 
 @Service(Service.Level.PROJECT)
-class RepoContextResolver(private val project: Project) {
+class RepoContextResolver(private val project: Project) : Disposable {
+
+    /**
+     * Bumped when any input to [resolveCurrentEditorRepoOrPrimary] may have changed:
+     * active editor file, VCS repository mapping, or plugin repos config (via
+     * [invalidateCache]). The [currentRepoCache] re-runs its provider only when this
+     * tracker's count differs from the stored value — in the steady state, repeated
+     * calls with unchanged inputs cost one `AtomicLong.get()` each instead of an
+     * O(n) repo + settings scan.
+     */
+    private val cacheTracker = SimpleModificationTracker()
+
+    init {
+        val bus = project.messageBus.connect(this)
+        bus.subscribe(
+            VcsRepositoryManager.VCS_REPOSITORY_MAPPING_UPDATED,
+            VcsRepositoryMappingListener { cacheTracker.incModificationCount() }
+        )
+        bus.subscribe(
+            FileEditorManagerListener.FILE_EDITOR_MANAGER,
+            object : FileEditorManagerListener {
+                override fun selectionChanged(event: FileEditorManagerEvent) {
+                    cacheTracker.incModificationCount()
+                }
+            }
+        )
+    }
+
+    /**
+     * Hand-bumps the cache tracker. Called from [RepositoriesConfigurable] after the
+     * user edits the repos list in Settings — VCS mapping listener and editor listener
+     * don't fire on that, so it's the one invalidation source we can't auto-wire.
+     */
+    fun invalidateCache() {
+        cacheTracker.incModificationCount()
+    }
 
     fun resolveFromFile(file: VirtualFile): RepoConfig? {
         // Use cached repositories list instead of getRepositoryForFile() which triggers
@@ -59,8 +103,22 @@ class RepoContextResolver(private val project: Project) {
      *
      * This centralises the "editor repo or primary, materialised as GitRepository"
      * pattern that was previously duplicated in bamboo / sonar / pullrequest / jira.
+     *
+     * Result is memoised via [CachedValuesManager] keyed on [cacheTracker]; callers
+     * invoking this in a tight loop (panel refreshes, poller ticks) get O(1) reads
+     * as long as the editor selection, VCS mapping, and repos config are stable.
      */
-    fun resolveCurrentEditorRepoOrPrimary(): GitRepository? {
+    fun resolveCurrentEditorRepoOrPrimary(): GitRepository? = currentRepoCache.value
+
+    private val currentRepoCache: CachedValue<GitRepository?> =
+        CachedValuesManager.getManager(project).createCachedValue({
+            CachedValueProvider.Result.create(
+                doResolveCurrentEditorRepoOrPrimary(),
+                cacheTracker
+            )
+        }, false)
+
+    private fun doResolveCurrentEditorRepoOrPrimary(): GitRepository? {
         val repoConfig = resolveFromCurrentEditor() ?: getPrimary()
         return materialize(repoConfig)
     }
@@ -100,6 +158,11 @@ class RepoContextResolver(private val project: Project) {
         val pattern = Regex(".*/([^/]+)/([^/]+?)(?:\\.git)?$")
         val match = pattern.find(url) ?: return null
         return Pair(match.groupValues[1], match.groupValues[2])
+    }
+
+    override fun dispose() {
+        // MessageBusConnection was parented on this service (see init); platform
+        // disposes it automatically when the project closes. Nothing to do here.
     }
 
     companion object {
