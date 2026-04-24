@@ -6,6 +6,7 @@ import com.intellij.ui.components.JBPanel
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.prreview.FindingSeverity
 import com.workflow.orchestrator.core.prreview.PrReviewFinding
+import com.workflow.orchestrator.core.util.HtmlEscape
 import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.FlowLayout
@@ -38,7 +39,7 @@ class FindingRowRenderer : ListCellRenderer<PrReviewFinding> {
             if (value.pushed) add(JBLabel("✓ pushed").apply { foreground = JBColor.GREEN })
             if (value.discarded) add(JBLabel("✗ discarded").apply { foreground = JBColor.GRAY })
         }
-        val body = JBLabel("<html>${value.message.take(600).htmlEscape()}</html>").apply {
+        val body = JBLabel("<html>${HtmlEscape.escapeHtml(value.message.take(600)).replace("\n", "<br>")}</html>").apply {
             verticalAlignment = JBLabel.TOP
         }
         root.add(header, BorderLayout.NORTH)
@@ -46,6 +47,4 @@ class FindingRowRenderer : ListCellRenderer<PrReviewFinding> {
         return root
     }
 
-    private fun String.htmlEscape(): String =
-        replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
 }

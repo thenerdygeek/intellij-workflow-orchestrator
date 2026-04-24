@@ -6,6 +6,7 @@ import com.intellij.ui.components.JBPanel
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.model.PrComment
 import com.workflow.orchestrator.core.model.PrCommentState
+import com.workflow.orchestrator.core.util.HtmlEscape
 import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.FlowLayout
@@ -66,7 +67,7 @@ class CommentRowRenderer : ListCellRenderer<PrComment> {
             }
         }
 
-        val bodyText = value.text.take(500).htmlEscape()
+        val bodyText = HtmlEscape.escapeHtml(value.text.take(500)).replace("\n", "<br>")
         val body = JBLabel("<html>$bodyText</html>").apply {
             verticalAlignment = JBLabel.TOP
         }
@@ -76,9 +77,4 @@ class CommentRowRenderer : ListCellRenderer<PrComment> {
         return root
     }
 
-    private fun String.htmlEscape(): String =
-        replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace("\n", "<br>")
 }
