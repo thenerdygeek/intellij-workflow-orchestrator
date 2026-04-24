@@ -68,7 +68,7 @@ class AgentAdvancedConfigurable(
                             { agentSettings.state.toolExecutionMode = it ?: "accumulate" }
                         )
                         .comment("accumulate: execute all tools after response completes (default). " +
-                            "stream_interrupt: execute each tool as soon as it appears (Cline-style).")
+                            "stream_interrupt: execute each tool as soon as it appears.")
                 }
             }
 
