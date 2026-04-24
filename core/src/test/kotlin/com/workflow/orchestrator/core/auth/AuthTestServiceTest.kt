@@ -1,6 +1,5 @@
 package com.workflow.orchestrator.core.auth
 
-import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.MockResponse

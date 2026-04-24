@@ -24,7 +24,6 @@ import com.intellij.vcs.commit.CommitWorkflowUi
 import com.intellij.openapi.command.CommandProcessor
 import com.workflow.orchestrator.core.psi.PsiContextEnricher
 import com.workflow.orchestrator.core.ai.LlmBrainFactory
-import com.workflow.orchestrator.core.ai.dto.ChatMessage
 import com.workflow.orchestrator.core.ai.prompts.CommitMessagePromptBuilder
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.settings.PluginSettings

@@ -1,7 +1,6 @@
 package com.workflow.orchestrator.core.insights
 
 import com.intellij.ide.BrowserUtil
-import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.extensions.ExtensionPointName

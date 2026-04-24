@@ -9,7 +9,6 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
-import com.workflow.orchestrator.agent.tools.truncateOutput
 import org.w3c.dom.Element
 import org.w3c.dom.Node
 import java.io.File

@@ -1,7 +1,6 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
 import com.workflow.orchestrator.agent.tools.WorkerType
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.*

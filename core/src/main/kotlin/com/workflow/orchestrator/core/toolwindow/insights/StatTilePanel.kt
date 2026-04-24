@@ -9,7 +9,6 @@ import javax.swing.JPanel
 import javax.swing.SwingConstants
 import javax.swing.border.CompoundBorder
 import javax.swing.border.LineBorder
-import javax.swing.border.MatteBorder
 
 internal class StatTilePanel(label: String) : JPanel(BorderLayout(0, 4)) {
 

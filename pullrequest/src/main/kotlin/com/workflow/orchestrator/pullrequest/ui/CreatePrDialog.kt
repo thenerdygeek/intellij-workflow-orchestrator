@@ -2,7 +2,6 @@ package com.workflow.orchestrator.pullrequest.ui
 
 import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.invokeLater as platformInvokeLater
 import com.intellij.openapi.components.service

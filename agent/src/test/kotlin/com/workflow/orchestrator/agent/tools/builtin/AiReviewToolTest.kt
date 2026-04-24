@@ -1,7 +1,6 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
 import com.intellij.openapi.project.Project
-import com.workflow.orchestrator.core.prreview.AnchorSide
 import com.workflow.orchestrator.core.prreview.FindingSeverity
 import com.workflow.orchestrator.core.prreview.PrReviewFinding
 import com.workflow.orchestrator.core.prreview.PrReviewFindingsStore

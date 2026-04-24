@@ -7,7 +7,6 @@ import java.awt.GridBagLayout
 import java.awt.Insets
 import java.time.DayOfWeek
 import java.time.LocalDate
-import java.time.LocalTime
 import java.time.ZoneId
 import java.time.temporal.TemporalAdjusters
 import javax.swing.JCheckBox

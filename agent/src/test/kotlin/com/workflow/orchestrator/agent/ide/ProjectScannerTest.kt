@@ -6,7 +6,6 @@ import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import kotlin.io.path.createFile
 import kotlin.io.path.writeText
-import kotlin.io.path.createDirectories
 
 class ProjectScannerTest {
 

@@ -13,7 +13,6 @@ import com.workflow.orchestrator.agent.tools.process.OutputCollector
 import com.workflow.orchestrator.agent.tools.process.ProcessEnvironment
 import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
 import com.workflow.orchestrator.agent.tools.process.ShellResolver
-import com.workflow.orchestrator.agent.tools.process.ShellType
 import com.workflow.orchestrator.agent.tools.process.ShellUnavailableException
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
