@@ -4,10 +4,9 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.ai.LlmBrainFactory
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
 import com.workflow.orchestrator.core.model.ApiResult
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -49,33 +48,34 @@ class InsightsNarrativeService {
         val call1Json = if (call1Result.isNotBlank()) call1Result else "{}"
 
         // ── Calls 2/3/4: parallel under a supervisor scope ───────────────────────
+        // Real `supervisorScope { }` suspending builder: children are structured
+        // and cancel automatically if the caller cancels generate(...) mid-flight.
+        // Same fault-isolation as before (one async failure does not cancel siblings).
         brain.temperature = 0.3
-        val supervisorScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val (call2, call3, call4) = supervisorScope {
+            onProgress("Generating narrative…")
+            val narrative2Deferred = async(Dispatchers.IO) {
+                withTimeoutOrNull(30_000L) {
+                    runLlmCall(brain, buildNarrativePrompt(mechanicalJson, call1Json))
+                } ?: ""
+            }
 
-        onProgress("Generating narrative…")
-        val narrative2Deferred = supervisorScope.async {
-            withTimeoutOrNull(30_000L) {
-                runLlmCall(brain, buildNarrativePrompt(mechanicalJson, call1Json))
-            } ?: ""
+            onProgress("Analysing wins and friction…")
+            val narrative3Deferred = async(Dispatchers.IO) {
+                withTimeoutOrNull(30_000L) {
+                    runLlmCall(brain, buildWinsFrictionPrompt(mechanicalJson, topDigestsJson, call1Json))
+                } ?: ""
+            }
+
+            onProgress("Generating suggestions…")
+            val narrative4Deferred = async(Dispatchers.IO) {
+                withTimeoutOrNull(30_000L) {
+                    runLlmCall(brain, buildSuggestionsPrompt(mechanicalJson, call1Json))
+                } ?: ""
+            }
+
+            Triple(narrative2Deferred.await(), narrative3Deferred.await(), narrative4Deferred.await())
         }
-
-        onProgress("Analysing wins and friction…")
-        val narrative3Deferred = supervisorScope.async {
-            withTimeoutOrNull(30_000L) {
-                runLlmCall(brain, buildWinsFrictionPrompt(mechanicalJson, topDigestsJson, call1Json))
-            } ?: ""
-        }
-
-        onProgress("Generating suggestions…")
-        val narrative4Deferred = supervisorScope.async {
-            withTimeoutOrNull(30_000L) {
-                runLlmCall(brain, buildSuggestionsPrompt(mechanicalJson, call1Json))
-            } ?: ""
-        }
-
-        val call2 = narrative2Deferred.await()
-        val call3 = narrative3Deferred.await()
-        val call4 = narrative4Deferred.await()
 
         onProgress("Assembling report…")
 
