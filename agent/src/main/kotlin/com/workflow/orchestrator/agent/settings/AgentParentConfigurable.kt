@@ -55,7 +55,6 @@ class AgentParentConfigurable(
     private var sourcegraphChatModel = settings.state.sourcegraphChatModel ?: ""
     private var maxInputTokens = settings.state.maxInputTokens
     private var maxOutputTokens = settings.state.maxOutputTokens
-    private var approvalRequiredForEdits = settings.state.approvalRequiredForEdits
     private var networkErrorStrategy = settings.state.networkErrorStrategy ?: "none"
 
     // Model dropdown state
@@ -140,11 +139,6 @@ class AgentParentConfigurable(
             }.enabledIf(agentEnabledCell.selected)
 
             group("Behavior") {
-                row {
-                    checkBox("Require approval for file edits")
-                        .bindSelected(::approvalRequiredForEdits)
-                        .comment("Shows a confirmation dialog before the agent modifies files")
-                }
                 row {
                     label("On network error retry exhaustion:")
                     comboBox(listOf("Do nothing", "Switch to cheaper model", "Compact context and retry"))
@@ -338,7 +332,6 @@ class AgentParentConfigurable(
         settings.state.sourcegraphChatModel = sourcegraphChatModel
         settings.state.maxInputTokens = maxInputTokens
         settings.state.maxOutputTokens = maxOutputTokens
-        settings.state.approvalRequiredForEdits = approvalRequiredForEdits
         settings.state.networkErrorStrategy = networkErrorStrategy
     }
 
@@ -347,7 +340,6 @@ class AgentParentConfigurable(
         sourcegraphChatModel = settings.state.sourcegraphChatModel ?: ""
         maxInputTokens = settings.state.maxInputTokens
         maxOutputTokens = settings.state.maxOutputTokens
-        approvalRequiredForEdits = settings.state.approvalRequiredForEdits
         networkErrorStrategy = settings.state.networkErrorStrategy ?: "none"
         dialogPanel?.reset()
 

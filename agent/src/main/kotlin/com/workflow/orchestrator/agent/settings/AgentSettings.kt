@@ -22,7 +22,6 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
         var maxInputTokens by property(190000)
         /** Max output tokens per LLM response. Limit varies per model — no hardcoded cap. */
         var maxOutputTokens by property(64000)
-        var approvalRequiredForEdits by property(true)
         var showDebugLog by property(false)
         /** Idle threshold (seconds) for `run_command`. After this many seconds without
          *  output, the process is reported as [IDLE] so the LLM can interact with it. */
