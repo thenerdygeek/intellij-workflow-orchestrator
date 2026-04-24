@@ -153,13 +153,22 @@ class AutomationPanel(
             // Load baseline tags
             val tags = tagBuilderService.loadBaseline(planKey)
 
-            // Auto-replace current repo's docker tag
-            val dockerTagKey = settings.state.dockerTagKey.orEmpty()
+            // Auto-replace current repo's docker tag. Resolve the editor's repo FIRST and read
+            // its dockerTagKey — reading the scalar default instead produced a "resolve the
+            // right repo then ignore it" mismatch on multi-module setups where each module
+            // has its own docker image. (serviceCiPlanKey remains scalar-only for now —
+            // RepoConfig doesn't carry a per-repo CI plan key yet.)
+            val resolver = com.workflow.orchestrator.core.settings.RepoContextResolver.getInstance(project)
+            val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
+            val dockerTagKey = repoConfig?.dockerTagKey?.takeIf { it.isNotBlank() }
+                ?: settings.state.dockerTagKey.orEmpty()
+            val serviceCiPlanKey = settings.state.serviceCiPlanKey.orEmpty()
+            log.info("[Automation:UI] Resolved repo='${repoConfig?.displayLabel ?: "<null>"}' dockerTagKey='$dockerTagKey' serviceCiPlanKey='$serviceCiPlanKey'")
             val updatedTags = if (dockerTagKey.isNotBlank()) {
-                // Get current branch via RepoContextResolver + reflection to avoid git4idea dependency
+                // Get current branch via the already-resolved repoConfig.localVcsRootPath,
+                // falling back to the first git repo. Reflection keeps this module free of
+                // a compile-time git4idea dependency.
                 val branch = try {
-                    val resolver = com.workflow.orchestrator.core.settings.RepoContextResolver.getInstance(project)
-                    val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
                     val gitRepoManager = Class.forName("git4idea.repo.GitRepositoryManager")
                     val getInstance = gitRepoManager.getMethod("getInstance", Project::class.java)
                     val manager = getInstance.invoke(null, project)
@@ -174,7 +183,6 @@ class AutomationPanel(
                     val repo = targetRepo ?: repos.firstOrNull()
                     repo?.javaClass?.getMethod("getCurrentBranchName")?.invoke(repo) as? String ?: ""
                 } catch (_: Exception) { "" }
-                val serviceCiPlanKey = settings.state.serviceCiPlanKey.orEmpty()
 
                 val featureTag = if (serviceCiPlanKey.isNotBlank() && branch.isNotBlank()) {
                     tagBuilderService.extractDockerTagFromBuildLog(serviceCiPlanKey, branch)

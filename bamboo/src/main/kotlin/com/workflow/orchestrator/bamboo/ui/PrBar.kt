@@ -421,9 +421,11 @@ class PrBar(
     private fun resolveCurrentBranch(): String? = getGitRepo()?.currentBranchName
 
     /**
-     * LATENT BUG: uses legacy single-value bitbucketProjectKey/repoSlug settings. Wrong target
-     * for multi-repo projects. TODO: replace with CreatePrLauncher delegation (Phase 10).
-     * Path reachable via formExpanded + setPrs(empty) — see buildFormPanel.
+     * Submit the inline PR form. Resolves projectKey/repoSlug from the editor-context
+     * git root (matching the pattern in [refreshPrs]), falling back to the scalar
+     * bitbucketProjectKey/bitbucketRepoSlug settings only for single-repo projects
+     * that haven't been migrated. Previously always read the scalar defaults — a latent
+     * multi-repo bug flagged in the source.
      */
     private fun onSubmitPr() {
         val title = titleField.text.orEmpty().trim()
@@ -433,8 +435,19 @@ class PrBar(
             return
         }
 
-        val projectKey = settings.state.bitbucketProjectKey.orEmpty()
-        val repoSlug = settings.state.bitbucketRepoSlug.orEmpty()
+        val resolver = RepoContextResolver.getInstance(project)
+        val resolvedRepoConfig = resolver.resolveCurrentEditorRepoOrPrimary()
+            ?.let { resolver.resolveFromGitRepo(it) }
+        val projectKey = resolvedRepoConfig?.bitbucketProjectKey?.takeIf { it.isNotBlank() }
+            ?: settings.state.bitbucketProjectKey.orEmpty()
+        val repoSlug = resolvedRepoConfig?.bitbucketRepoSlug?.takeIf { it.isNotBlank() }
+            ?: settings.state.bitbucketRepoSlug.orEmpty()
+        if (projectKey.isBlank() || repoSlug.isBlank()) {
+            formResultLabel.text = "Bitbucket project/repo not configured"
+            formResultLabel.foreground = JBColor.RED
+            return
+        }
+        log.info("[Build:PrBar] onSubmitPr: project='$projectKey' repo='$repoSlug' (via ${if (resolvedRepoConfig != null) "resolver" else "scalar fallback"})")
         submitButton.isEnabled = false
         regenerateButton.isEnabled = false
         formResultLabel.text = "Creating PR..."

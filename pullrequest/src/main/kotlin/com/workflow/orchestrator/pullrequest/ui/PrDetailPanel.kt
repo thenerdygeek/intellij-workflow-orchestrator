@@ -783,9 +783,21 @@ class PrDetailPanel(
      */
     private fun rebuildAiReviewTab(prId: Int, prDetail: BitbucketPrDetail) {
         aiReviewTabPanel?.close()
-        val settings = PluginSettings.getInstance(project).state
-        val projectKey = settings.bitbucketProjectKey.orEmpty()
-        val repoSlug = settings.bitbucketRepoSlug.orEmpty()
+        // Use the PR's OWN coordinates (threaded in from PrDashboardPanel via showPr/showPrDetail)
+        // so the review tab talks to the correct repo's Bitbucket. The name-based RepoConfig
+        // lookup is a secondary fallback for cases where showPrDetail was called without an
+        // explicit projectKey (direct callers, older paths). The scalar default is the last
+        // resort for single-repo projects.
+        val pluginSettings = PluginSettings.getInstance(project)
+        val byName = currentPr?.repoName?.takeIf { it.isNotBlank() }?.let { name ->
+            pluginSettings.getRepos().find { it.displayLabel == name }
+        }
+        val projectKey = currentPrProjectKey
+            ?: byName?.bitbucketProjectKey
+            ?: pluginSettings.state.bitbucketProjectKey.orEmpty()
+        val repoSlug = currentPrRepoSlug
+            ?: byName?.bitbucketRepoSlug
+            ?: pluginSettings.state.bitbucketRepoSlug.orEmpty()
         val newPanel = AiReviewTabPanel(
             project = project,
             projectKey = projectKey,
@@ -890,9 +902,17 @@ class PrDetailPanel(
      */
     private fun rebuildCommentsTab(prId: Int) {
         commentsTabPanel?.close()
-        val settings = PluginSettings.getInstance(project).state
-        val projectKey = settings.bitbucketProjectKey.orEmpty()
-        val repoSlug = settings.bitbucketRepoSlug.orEmpty()
+        // Same per-PR coordinate resolution as [rebuildAiReviewTab] — see that method's note.
+        val pluginSettings = PluginSettings.getInstance(project)
+        val byName = currentPr?.repoName?.takeIf { it.isNotBlank() }?.let { name ->
+            pluginSettings.getRepos().find { it.displayLabel == name }
+        }
+        val projectKey = currentPrProjectKey
+            ?: byName?.bitbucketProjectKey
+            ?: pluginSettings.state.bitbucketProjectKey.orEmpty()
+        val repoSlug = currentPrRepoSlug
+            ?: byName?.bitbucketRepoSlug
+            ?: pluginSettings.state.bitbucketRepoSlug.orEmpty()
         val bitbucketService = project.getService(BitbucketService::class.java)
         val newTab = CommentsTabPanel(
             project = project,

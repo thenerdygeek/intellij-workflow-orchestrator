@@ -174,8 +174,10 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             checkDivergence(latestCommit)
         }
 
-        // Try auto-detect Bamboo branch plan key from build statuses
-        val configuredPlanKey = settings.state.bambooPlanKey.orEmpty()
+        // Try auto-detect Bamboo branch plan key from build statuses. Fallback order:
+        // selected repo's plan key → scalar default (handled by currentPlanKey; activePlanKey
+        // is reset before calling this method so it falls through to the selected-repo branch).
+        val configuredPlanKey = currentPlanKey()
 
         if (latestCommit.isNotBlank()) {
             val detectedKey = detectPlanKeyFromBuildStatus(latestCommit)
@@ -590,12 +592,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     }
 
     private fun startMonitoring() {
-        // Use selected repo's plan key if multi-repo selector is active
-        val selectedRepoPlanKey = if (repoSelector != null && allRepos.isNotEmpty()) {
-            val idx = repoSelector.selectedIndex.takeIf { it >= 0 } ?: 0
-            allRepos.getOrNull(idx)?.bambooPlanKey.orEmpty()
-        } else ""
-        val planKey = activePlanKey.ifBlank { selectedRepoPlanKey.ifBlank { settings.state.bambooPlanKey.orEmpty() } }
+        val planKey = currentPlanKey()
         if (planKey.isBlank()) {
             // Don't show error — PR detection will auto-detect the plan key
             headerLabel.text = "Waiting for PR detection to find Bamboo plan..."
@@ -623,9 +620,29 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
     private fun getCurrentBranch(): String? = getGitRepo()?.currentBranchName
 
+    /**
+     * Resolve the plan key to use for an action, preferring in order:
+     *  1. [activePlanKey] — auto-detected or last-picked from PR context (most specific)
+     *  2. the repo currently picked in [repoSelector] — honors the user's dropdown choice
+     *     on multi-repo projects so actions match the displayed repo's plan
+     *  3. scalar `settings.state.bambooPlanKey` — last-resort default for single-repo setups
+     *
+     * Every action handler (Refresh, Rerun, Trigger Build, Trigger Manual Stage, history)
+     * must route through this helper — reading the scalar directly was the root cause of
+     * actions hitting the wrong module's plan when the user had a non-default repo selected.
+     */
+    private fun currentPlanKey(): String {
+        if (activePlanKey.isNotBlank()) return activePlanKey
+        val selected = if (repoSelector != null && allRepos.isNotEmpty()) {
+            val idx = repoSelector.selectedIndex.takeIf { it >= 0 } ?: 0
+            allRepos.getOrNull(idx)?.bambooPlanKey
+        } else null
+        return selected?.takeIf { it.isNotBlank() } ?: settings.state.bambooPlanKey.orEmpty()
+    }
+
     /** Load build history for the current plan key */
     private fun loadBuildHistory() {
-        val planKey = activePlanKey.ifBlank { settings.state.bambooPlanKey.orEmpty() }
+        val planKey = currentPlanKey()
         if (planKey.isBlank()) return
 
         scope.launch {
@@ -711,7 +728,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
         group.add(object : AnAction("Refresh", "Force poll build status now", AllIcons.Actions.Refresh) {
             override fun actionPerformed(e: AnActionEvent) {
-                val planKey = activePlanKey.ifBlank { settings.state.bambooPlanKey.orEmpty() }
+                val planKey = currentPlanKey()
                 if (planKey.isBlank()) {
                     // Try to re-detect from PR
                     prBar.refreshPrs()
@@ -842,12 +859,12 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
         group.add(object : AnAction("Trigger Build", "Trigger a new build with custom variables", AllIcons.Actions.Execute) {
             override fun actionPerformed(e: AnActionEvent) {
-                val planKey = activePlanKey.ifBlank { settings.state.bambooPlanKey.orEmpty() }
+                val planKey = currentPlanKey()
                 if (planKey.isBlank()) return
                 openTriggerDialog(planKey)
             }
             override fun update(e: AnActionEvent) {
-                e.presentation.isEnabled = activePlanKey.isNotBlank() || !settings.state.bambooPlanKey.isNullOrBlank()
+                e.presentation.isEnabled = currentPlanKey().isNotBlank()
             }
             override fun getActionUpdateThread() = ActionUpdateThread.BGT
         })
@@ -999,7 +1016,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     }
 
     private fun triggerManualStage(stageName: String) {
-        val planKey = settings.state.bambooPlanKey.orEmpty()
+        val planKey = currentPlanKey()
         ManualStageDialog(project, planKey, stageName, scope).show()
     }
 
