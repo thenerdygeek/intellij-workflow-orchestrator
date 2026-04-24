@@ -91,40 +91,12 @@ class AgentAdvancedConfigurable(
                             { pluginSettings.state.epicLinkFieldId = it }
                         )
                 }
-                row("Reviewer field ID:") {
-                    textField()
-                        .bindText(
-                            { pluginSettings.state.reviewerFieldId ?: "" },
-                            { pluginSettings.state.reviewerFieldId = it }
-                        )
-                }
-                row("Tester field ID:") {
-                    textField()
-                        .bindText(
-                            { pluginSettings.state.testerFieldId ?: "" },
-                            { pluginSettings.state.testerFieldId = it }
-                        )
-                }
-                row {
-                    comment(
-                        "Used by AI pre-review and other Jira integration features that need to " +
-                            "read/write custom fields."
-                    )
-                }
             }
 
             group("Background processes") {
                 row("Concurrent processes per session:") {
                     intTextField(1..20)
                         .bindIntText(agentSettings.state::concurrentBackgroundProcessesPerSession)
-                }
-                row("Output spill threshold (bytes):") {
-                    textField()
-                        .columns(12)
-                        .bindText(
-                            { agentSettings.state.backgroundOutputSpillThresholdBytes.toString() },
-                            { agentSettings.state.backgroundOutputSpillThresholdBytes = it.toLongOrNull() ?: 1_048_576L }
-                        )
                 }
                 row {
                     checkBox("Auto-wake session on background completion")

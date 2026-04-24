@@ -319,22 +319,6 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
                         )
                         .comment("e.g., customfield_10014")
                 }
-                row("Reviewer field ID:") {
-                    textField()
-                        .bindText(
-                            { settings.state.reviewerFieldId ?: "" },
-                            { settings.state.reviewerFieldId = it }
-                        )
-                        .comment("e.g., customfield_10050 (leave blank if not used)")
-                }
-                row("Tester field ID:") {
-                    textField()
-                        .bindText(
-                            { settings.state.testerFieldId ?: "" },
-                            { settings.state.testerFieldId = it }
-                        )
-                        .comment("e.g., customfield_10051 (leave blank if not used)")
-                }
                 row("Acceptance-criteria field ID:") {
                     textField()
                         .bindText(

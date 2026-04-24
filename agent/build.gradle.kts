@@ -35,7 +35,6 @@ dependencies {
 
     implementation(project(":core"))
     compileOnly(libs.kotlinx.coroutines.core)
-    compileOnly(libs.kotlinx.coroutines.jdk8)
     compileOnly(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
 

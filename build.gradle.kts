@@ -66,7 +66,6 @@ dependencies {
     // -- External libraries --
     compileOnly(libs.kotlinx.coroutines.core)
     compileOnly(libs.kotlinx.serialization.json)
-    implementation(libs.okhttp)
     implementation(libs.sqlite.jdbc) {
         exclude(group = "org.slf4j")
     }
