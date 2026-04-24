@@ -6,17 +6,14 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vcs.BranchChangeListener
 import com.intellij.openapi.wm.WindowManager
-import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
-import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoContextResolver
-import com.workflow.orchestrator.jira.api.JiraApiClient
-import git4idea.repo.GitRepositoryManager
 import com.workflow.orchestrator.jira.service.ActiveTicketService
+import com.workflow.orchestrator.jira.service.JiraServiceImpl
 import com.workflow.orchestrator.jira.ui.TicketDetectionPopup
+import git4idea.repo.GitRepositoryManager
 import com.intellij.openapi.application.invokeLater
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -28,20 +25,6 @@ class BranchChangeTicketDetector(private val project: Project) : BranchChangeLis
 
     private val log = Logger.getInstance(BranchChangeTicketDetector::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val credentialStore = CredentialStore()
-    @Volatile private var cachedClient: JiraApiClient? = null
-    @Volatile private var cachedJiraUrl: String? = null
-
-    private fun getOrCreateClient(jiraUrl: String): JiraApiClient {
-        if (jiraUrl != cachedJiraUrl || cachedClient == null) {
-            cachedJiraUrl = jiraUrl
-            cachedClient = JiraApiClient(
-                baseUrl = jiraUrl.trimEnd('/'),
-                tokenProvider = { credentialStore.getToken(ServiceType.JIRA) }
-            )
-        }
-        return cachedClient!!
-    }
 
     init {
         Disposer.register(project, this)
@@ -72,8 +55,6 @@ class BranchChangeTicketDetector(private val project: Project) : BranchChangeLis
         log.info("[Jira:Branch] Detected ticket $ticketId from branch '$branchName'")
 
         val settings = PluginSettings.getInstance(project)
-        val jiraUrl = settings.connections.jiraUrl
-        if (jiraUrl.isNullOrBlank()) return
 
         // Skip if the detected ticket is already the active ticket
         val currentActiveTicket = settings.state.activeTicketId
@@ -84,14 +65,12 @@ class BranchChangeTicketDetector(private val project: Project) : BranchChangeLis
 
         // Fetch ticket details from Jira in background, then show confirmation popup
         scope.launch {
-            val apiClient = getOrCreateClient(jiraUrl)
-
-            val result = apiClient.getIssue(ticketId)
-            if (result is ApiResult.Success) {
+            val result = JiraServiceImpl.getInstance(project).getTicket(ticketId)
+            if (!result.isError) {
                 val issue = result.data
-                val summary = issue.fields.summary
-                val sprintName = issue.fields.sprint?.name
-                val assigneeName = issue.fields.assignee?.displayName
+                val summary = issue.summary
+                val sprintName = issue.sprintName
+                val assigneeName = issue.assignee
 
                 // Check if this branch was previously dismissed
                 if (branchName in dismissedBranches) {
@@ -144,7 +123,7 @@ class BranchChangeTicketDetector(private val project: Project) : BranchChangeLis
                     ).show(frame)
                 }
             } else {
-                log.warn("[Jira:Branch] Failed to fetch issue $ticketId from Jira")
+                log.warn("[Jira:Branch] Failed to fetch issue $ticketId: ${result.summary}")
             }
         }
     }
