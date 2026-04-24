@@ -223,6 +223,8 @@
             serviceImplementation="com.workflow.orchestrator.automation.service.ConflictDetectorService"/>
         <projectService
             serviceImplementation="com.workflow.orchestrator.automation.service.TagHistoryService"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.automation.service.TagValidationService"/>
 
         <!-- App-level (cross-project) -->
         <applicationService

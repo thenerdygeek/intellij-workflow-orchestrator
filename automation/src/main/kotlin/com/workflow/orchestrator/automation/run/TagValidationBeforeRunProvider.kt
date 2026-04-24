@@ -7,15 +7,12 @@ import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.util.Key
 import com.intellij.icons.AllIcons
-import com.workflow.orchestrator.core.auth.CredentialStore
+import com.workflow.orchestrator.automation.service.TagValidationService
 import com.workflow.orchestrator.core.model.DockerTagsProvider
 import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import okhttp3.Credentials
-import okhttp3.Request
-import java.util.concurrent.TimeUnit
 import javax.swing.Icon
 
 class TagValidationBeforeRunTask : com.intellij.execution.BeforeRunTask<TagValidationBeforeRunTask>(
@@ -63,38 +60,16 @@ class TagValidationBeforeRunProvider : BeforeRunTaskProvider<TagValidationBefore
         val tags = TagValidationLogic.parseDockerTags(dockerTagsJson)
         if (tags.isEmpty()) return true
 
-        val credentialStore = CredentialStore()
-        val nexusUsername = settings.connections.nexusUsername.orEmpty()
-        val nexusPassword = credentialStore.getNexusPassword() ?: ""
+        val validationService = TagValidationService.getInstance(project)
+        val result = validationService.validateTags(registryUrl, tags)
 
-        val httpClient = com.workflow.orchestrator.core.http.HttpClientFactory.sharedPool.newBuilder()
-            .connectTimeout(5, TimeUnit.SECONDS)
-            .readTimeout(10, TimeUnit.SECONDS)
-            .build()
-
-        val missingTags = mutableListOf<String>()
-
-        for ((service, tag) in tags) {
-            val url = TagValidationLogic.buildManifestUrl(registryUrl, service, tag)
-            val request = Request.Builder()
-                .url(url)
-                .head()
-                .addHeader("Authorization", Credentials.basic(nexusUsername, nexusPassword))
-                .build()
-
-            try {
-                val response = httpClient.newCall(request).execute()
-                response.use {
-                    if (it.code == 404) missingTags.add("$service:$tag")
-                }
-            } catch (e: Exception) {
-                log.warn("[Automation:TagValidation] Error checking $service:$tag: ${e.message}")
-                missingTags.add("$service:$tag (connection error)")
-            }
+        if (result.isError) {
+            log.warn("[Automation:TagValidation] ${result.summary}")
+            return false
         }
 
-        if (missingTags.isNotEmpty()) {
-            log.warn("[Automation:TagValidation] Missing tags: $missingTags")
+        if (!result.data.allPresent) {
+            log.warn("[Automation:TagValidation] Missing tags: ${result.data.missingTags}")
             return false
         }
         return true
