@@ -1,0 +1,892 @@
+#!/usr/bin/env python3
+"""
+Sourcegraph Capabilities Lab
+============================
+Standalone probe of the four /.api/* internal endpoints documented in
+`openapi.SourcegraphInternal.Latest.yaml` plus a few cross-facade questions
+that decide the IntelliJ plugin's HYBRID-vs-SWITCH-vs-FALLBACK routing
+strategy.
+
+WHY THIS EXISTS
+---------------
+After confirming /.api/completions/stream is the only image-capable endpoint
+on this Sourcegraph instance (vision_lab.py: 24/24 PASS), we now need to
+decide whether to MIGRATE all agent traffic to it, KEEP a hybrid (text+tools
+on /.api/llm/chat/completions, images on /stream), or use one as a FALLBACK
+for the other.
+
+The deciding question is whether /.api/completions/stream accepts the
+undocumented `tools` field that the agent's ReAct loop depends on. The
+internal OpenAPI spec documents NO tool-use schema; the public spec doesn't
+either, but `tools` "works" on /.api/llm/chat/completions as an undocumented
+courtesy. We probe both surfaces and compare.
+
+WHAT IT DOES
+------------
+Eight probes, each one HTTP call (some non-streaming, some SSE):
+
+  P1  GET  /.api/client-config                        — capability discovery
+  P2  GET  /.api/modelconfig/supported-models.json    — per-model tier/contextWindow/clientSideConfig
+  P3  POST /.api/completions/stream  + FilePart with content  — baseline file attachment
+  P4  POST /.api/completions/stream  + FilePart URI-only      — does Sourcegraph fetch via gitserver?
+  P5  POST /.api/completions/stream  + RepoPart                — repo-as-context attachment
+  P6  POST /.api/completions/stream  + tools field             — does the stream facade accept tools?
+  P7  POST /.api/completions/stream  + image + tools           — the ambiguous routing case
+  P8  POST /.api/llm/chat/completions + tools field            — regression check on the public facade
+
+USAGE
+-----
+    pip install requests
+    python3 capabilities_lab.py --url https://sg.example.com --token sgp_xxx
+
+    # Windows (CMD):
+    py -3 capabilities_lab.py --url ... --token ... > caps_output.txt 2>&1
+
+    # Limit to one probe (use --list to see all names):
+    python3 capabilities_lab.py --url ... --token ... --only client_config
+
+OUTPUT
+------
+  - Per-probe outcome on stdout (PASS/FAIL/INFO + key fields surfaced)
+  - capabilities_lab_results.json — full request/response previews
+  - For P1/P2 (informational), the full JSON response is saved as a sidecar
+    file so you can inspect ClientConfig + ModelCatalog in detail.
+
+INTERPRETING THE OUTPUT
+-----------------------
+  P6 PASS  → /.api/completions/stream accepts `tools`. You can route
+             image+tools turns to it. Hybrid simplifies.
+  P6 SAW_NO → tools field accepted but model never produced tool calls
+              (silently dropped). Image+tools is broken on the stream endpoint.
+  P6 HTTP_400 → tools field rejected outright. Image+tools requires
+                the two-step workaround (vision-summarize then chat-with-tools).
+
+  P7 confirms whichever P6 answer was given (full image+tools combined call).
+
+  P3/P4 distinguish "FilePart works only with content embedded" (no token
+  savings vs current pattern) from "FilePart with URI fetches server-side"
+  (huge token savings).
+
+  P5 PASS → repo-as-context is real; you can collapse the current
+             /.api/cody/context + /.api/llm/chat/completions two-call pattern
+             to one call.
+"""
+
+from __future__ import annotations
+
+import argparse
+import io
+import json
+import sys
+import time
+from dataclasses import dataclass, field, asdict
+from pathlib import Path
+from typing import Any, Callable
+
+# UTF-8 stdout on Windows.
+try:
+    if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+except AttributeError:
+    pass
+try:
+    if sys.stderr.encoding and sys.stderr.encoding.lower() not in ("utf-8", "utf8"):
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+except AttributeError:
+    pass
+
+try:
+    import requests
+except ImportError:
+    print("ERROR: 'requests' not installed. Run: pip install requests")
+    sys.exit(1)
+
+
+# Endpoints
+PUBLIC_CHAT_PATH = "/.api/llm/chat/completions"
+INTERNAL_STREAM_PATH = "/.api/completions/stream"
+INTERNAL_CODE_PATH = "/.api/completions/code"
+CLIENT_CONFIG_PATH = "/.api/client-config"
+MODELCONFIG_PATH = "/.api/modelconfig/supported-models.json"
+PUBLIC_MODELS_PATH = "/.api/llm/models"
+
+DEFAULT_API_VERSION = 8
+
+# Default model — picked at runtime from /.api/modelconfig/supported-models.json
+# preferring a vision-capable Anthropic model (matches what vision_lab uses).
+DEFAULT_MODEL_HINT_ORDER = [
+    "claude-sonnet-4-5", "claude-opus-4-5", "claude-haiku-4-5",
+    "claude-3-7-sonnet", "claude-3-5-sonnet",
+]
+
+
+# ─────────────────────────────────────────────────────────────
+# A trivial test image (16x16 solid red PNG) — pure stdlib, identical
+# bytes to the one generated by vision_lab.py so probes are comparable.
+# ─────────────────────────────────────────────────────────────
+
+import base64, struct, zlib
+
+def _png_chunk(typ: bytes, data: bytes) -> bytes:
+    chunk = typ + data
+    crc = zlib.crc32(chunk) & 0xFFFFFFFF
+    return struct.pack(">I", len(data)) + chunk + struct.pack(">I", crc)
+
+def _make_red_png(size: int = 16) -> bytes:
+    ihdr = _png_chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0))
+    raw = b""
+    pixel_row = bytes((220, 20, 20)) * size
+    for _ in range(size):
+        raw += b"\x00" + pixel_row
+    return b"\x89PNG\r\n\x1a\n" + ihdr + _png_chunk(b"IDAT", zlib.compress(raw, 9)) + _png_chunk(b"IEND", b"")
+
+RED_PNG_B64 = base64.b64encode(_make_red_png()).decode("ascii")
+
+
+# ─────────────────────────────────────────────────────────────
+# Sample test file (FilePart probe with content embedded)
+# Deliberately distinctive so the model can echo a unique token back —
+# the "shibboleth" approach: ask for `XYZZY_TOKEN_42` which won't appear
+# in any reasonable hallucinated file.
+# ─────────────────────────────────────────────────────────────
+
+SAMPLE_FILE_CONTENT = (
+    "// AUTO-GENERATED PROBE FILE\n"
+    "package com.workflow.orchestrator.probe;\n"
+    "\n"
+    "public class ProbeMarker {\n"
+    "    // Unique shibboleth token that should appear in the model's reply\n"
+    "    // ONLY if it actually saw the attached file content:\n"
+    "    public static final String MAGIC = \"XYZZY_TOKEN_42\";\n"
+    "}\n"
+)
+SHIBBOLETH = "XYZZY_TOKEN_42"
+
+# A public Sourcegraph-indexed repo that any default Sourcegraph instance
+# should be able to resolve via its zoekt index. Override with --probe-repo.
+DEFAULT_PROBE_REPO = "github.com/sourcegraph/cody"
+DEFAULT_PROBE_REPO_KEYWORD = "cody"
+
+# A real file URI in that repo — used for FilePart URI-only (no content) probe
+# to test whether Sourcegraph fetches the body via gitserver.
+DEFAULT_PROBE_FILE_URI = (
+    "https://sourcegraph.com/github.com/sourcegraph/cody/-/blob/lib/shared/src/sourcegraph-api/completions/types.ts"
+)
+# Tokens we'd expect to see if the model genuinely got that file's content.
+# `types.ts` defines the Message + ImageContentPart types — those names should
+# appear in any honest description of the file.
+DEFAULT_PROBE_FILE_KEYWORDS = ["message", "imagecontentpart", "speaker", "completion"]
+
+
+# ─────────────────────────────────────────────────────────────
+# A toy tool definition. If the model emits a tool call, we know the
+# `tools` field was honored. We use a deliberately silly tool so the
+# model has every reason to call it (asking for the answer requires it).
+# ─────────────────────────────────────────────────────────────
+
+PROBE_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_secret_number",
+            "description": "Returns the secret number that the user is asking about. "
+                           "You MUST call this tool to get the answer; you cannot guess.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reason": {"type": "string",
+                               "description": "Why you need the secret number"}
+                },
+                "required": ["reason"],
+            },
+        },
+    }
+]
+TOOL_FORCING_PROMPT = (
+    "I need to know THE secret number. You don't know it — you must use the "
+    "get_secret_number tool to retrieve it. Call the tool now."
+)
+
+
+# ─────────────────────────────────────────────────────────────
+# HTTP client (same auth shape as the other probes)
+# ─────────────────────────────────────────────────────────────
+
+class SourcegraphClient:
+    def __init__(self, base_url: str, token: str, verify: bool = True, timeout: int = 60):
+        self.base_url = base_url.rstrip("/")
+        self.token = (token or "").strip()
+        self.session = requests.Session()
+        self.session.headers.update({
+            "Authorization": f"token {self.token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        })
+        self.session.verify = verify
+        self.timeout = timeout
+
+    def get(self, path: str) -> requests.Response:
+        return self.session.get(self.base_url + path, timeout=self.timeout)
+
+    def post(self, path: str, body: dict, stream: bool = False,
+             extra_headers: dict | None = None) -> requests.Response:
+        return self.session.post(self.base_url + path, json=body, stream=stream,
+                                 headers=extra_headers, timeout=self.timeout)
+
+
+# ─────────────────────────────────────────────────────────────
+# SSE parser — same semantics as vision_lab.parse_cody_sse, plus
+# accumulates ANY field on the data payload (for tool_calls in v8/v3).
+# ─────────────────────────────────────────────────────────────
+
+def parse_cody_sse_full(resp: requests.Response) -> dict:
+    """Returns {text, events, last_payload, all_payloads, raw_lines_count}."""
+    text = ""
+    events: list[str] = []
+    last_payload: dict = {}
+    all_payloads: list[dict] = []
+    raw_lines = 0
+    for raw in resp.iter_lines(decode_unicode=True):
+        if raw is None:
+            continue
+        raw_lines += 1
+        if not raw:
+            continue
+        if raw.startswith("event:"):
+            events.append(raw[6:].strip())
+            continue
+        if raw.startswith("data:"):
+            data = raw[5:].strip()
+            if not data or data == "[DONE]":
+                continue
+            try:
+                obj = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            all_payloads.append(obj)
+            last_payload = obj
+            if isinstance(obj.get("deltaText"), str):
+                text += obj["deltaText"]
+            elif isinstance(obj.get("completion"), str):
+                text = obj["completion"]
+    return {
+        "text": text,
+        "events": events,
+        "last_payload": last_payload,
+        "all_payloads_count": len(all_payloads),
+        "raw_lines_count": raw_lines,
+    }
+
+
+# ─────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────
+
+def _mask_url(url: str) -> str:
+    if not url: return "<no-url>"
+    try:
+        from urllib.parse import urlparse, urlunparse
+        p = urlparse(url)
+        host = p.hostname or ""
+        parts = host.split(".")
+        masked = ["***"] * max(len(parts) - 1, 1) + ([parts[-1]] if len(parts) > 1 else [])
+        masked_host = ".".join(masked) + (f":{p.port}" if p.port else "")
+        return urlunparse((p.scheme, masked_host, p.path, p.params, "", ""))
+    except Exception:
+        return "***"
+
+
+def _short(text: str, n: int = 400) -> str:
+    text = (text or "").strip()
+    return text if len(text) <= n else text[:n] + "…"
+
+
+def _decode_json(resp: requests.Response) -> Any:
+    try: return resp.json()
+    except Exception: return {"raw": resp.text[:1000]}
+
+
+def pick_default_model(client: SourcegraphClient) -> str | None:
+    """Pick a vision-capable Claude from the catalog (matches vision_lab default)."""
+    try:
+        r = client.get(PUBLIC_MODELS_PATH)
+        models = [m["id"] for m in r.json().get("data", [])]
+    except Exception:
+        return None
+    for hint in DEFAULT_MODEL_HINT_ORDER:
+        for m in models:
+            if hint in m and "thinking" not in m:  # avoid thinking models — they're slower
+                return m
+    return models[0] if models else None
+
+
+# ─────────────────────────────────────────────────────────────
+# Probe outcome record
+# ─────────────────────────────────────────────────────────────
+
+@dataclass
+class ProbeOutcome:
+    name: str
+    description: str
+    verdict: str = "FAIL"          # PASS | FAIL | INFO | SKIPPED
+    fail_reason: str = ""
+    status: int = 0
+    elapsed_ms: int = 0
+    request_preview: str = ""
+    reply_preview: str = ""
+    notes: list[str] = field(default_factory=list)
+    sidecar_path: str = ""         # path to JSON dump for INFO probes
+
+
+# ─────────────────────────────────────────────────────────────
+# Probes — one function per
+# ─────────────────────────────────────────────────────────────
+
+def probe_client_config(client: SourcegraphClient, out_dir: Path) -> ProbeOutcome:
+    o = ProbeOutcome(name="client_config",
+                     description=f"GET {CLIENT_CONFIG_PATH}")
+    t0 = time.time()
+    try:
+        r = client.get(CLIENT_CONFIG_PATH)
+    except requests.RequestException as e:
+        o.elapsed_ms = int((time.time() - t0) * 1000)
+        o.fail_reason = "ERROR"
+        o.notes.append(str(e))
+        return o
+    o.elapsed_ms = int((time.time() - t0) * 1000)
+    o.status = r.status_code
+    if r.status_code != 200:
+        o.fail_reason = f"HTTP_{r.status_code}"
+        o.reply_preview = _short(r.text)
+        return o
+    data = _decode_json(r)
+    if not isinstance(data, dict):
+        o.fail_reason = "BAD_JSON"
+        return o
+    sidecar = out_dir / "client_config.json"
+    sidecar.write_text(json.dumps(data, indent=2))
+    o.sidecar_path = str(sidecar)
+    o.verdict = "INFO"
+    # Surface the most actionable fields right in the report.
+    surface_keys = ["codyEnabled", "chatEnabled", "autoCompleteEnabled",
+                    "modelsAPIEnabled", "smartContextWindowEnabled",
+                    "latestSupportedCompletionsStreamAPIVersion"]
+    for k in surface_keys:
+        if k in data:
+            o.notes.append(f"{k}={data[k]}")
+    if "visionEnabled" in data:
+        o.notes.append(f"visionEnabled={data['visionEnabled']}  ⚠ NOT IN SPEC")
+    o.reply_preview = _short(json.dumps(data), 600)
+    return o
+
+
+def probe_model_catalog(client: SourcegraphClient, out_dir: Path) -> ProbeOutcome:
+    o = ProbeOutcome(name="model_catalog",
+                     description=f"GET {MODELCONFIG_PATH}")
+    t0 = time.time()
+    try:
+        r = client.get(MODELCONFIG_PATH)
+    except requests.RequestException as e:
+        o.elapsed_ms = int((time.time() - t0) * 1000)
+        o.fail_reason = "ERROR"
+        o.notes.append(str(e))
+        return o
+    o.elapsed_ms = int((time.time() - t0) * 1000)
+    o.status = r.status_code
+    if r.status_code != 200:
+        o.fail_reason = f"HTTP_{r.status_code}"
+        o.reply_preview = _short(r.text)
+        return o
+    data = _decode_json(r)
+    if not isinstance(data, dict):
+        o.fail_reason = "BAD_JSON"
+        return o
+    sidecar = out_dir / "model_catalog.json"
+    sidecar.write_text(json.dumps(data, indent=2))
+    o.sidecar_path = str(sidecar)
+    o.verdict = "INFO"
+    models = data.get("models") or []
+    o.notes.append(f"schemaVersion={data.get('schemaVersion')!r}  revision={data.get('revision')!r}")
+    o.notes.append(f"providers={len(data.get('providers') or [])}  models={len(models)}")
+    defaults = data.get("defaultModels") or {}
+    if defaults:
+        o.notes.append(f"defaultModels={defaults}")
+    # Surface vision-capable + show contextWindow for the first 5 models
+    surfaced = 0
+    for m in models:
+        if surfaced >= 5: break
+        ctx = m.get("contextWindow") or {}
+        caps = m.get("capabilities") or []
+        tier = m.get("tier", "?")
+        status = m.get("status", "?")
+        csc = m.get("clientSideConfig") or {}
+        csc_keys = sorted([k for k, v in csc.items() if v]) if csc else []
+        o.notes.append(
+            f"{m.get('modelRef','?'):<55s}  tier={tier:<10s}  status={status:<11s}  "
+            f"in={ctx.get('maxInputTokens','?')}  out={ctx.get('maxOutputTokens','?')}  "
+            f"caps={caps}  csc={csc_keys[:3]}"
+        )
+        surfaced += 1
+    if len(models) > 5:
+        o.notes.append(f"  ... and {len(models) - 5} more (full catalog in sidecar)")
+    return o
+
+
+def _stream_call(client: SourcegraphClient, body: dict,
+                 api_version: int = DEFAULT_API_VERSION) -> tuple[int, dict]:
+    """POST to /.api/completions/stream and parse the SSE response.
+    Returns (status_code, parsed_dict_or_error_text)."""
+    path = f"{INTERNAL_STREAM_PATH}?api-version={api_version}"
+    r = client.post(path, body, stream=True,
+                    extra_headers={"Accept": "text/event-stream"})
+    if r.status_code != 200:
+        return r.status_code, {"error_text": _short(r.text, 600)}
+    return 200, parse_cody_sse_full(r)
+
+
+def probe_filepart_with_content(client: SourcegraphClient, model: str) -> ProbeOutcome:
+    """Send FilePart with `content` embedded; ask the model to echo the shibboleth."""
+    o = ProbeOutcome(
+        name="filepart_with_content",
+        description="FilePart {uri,language_id,content} embedded — does the model see file body?",
+    )
+    body = {
+        "model": model,
+        "messages": [{"speaker": "human", "content": [
+            {"type": "file",
+             "file": {"uri": "file:///probe/ProbeMarker.java",
+                      "language_id": "java",
+                      "content": SAMPLE_FILE_CONTENT}},
+            {"type": "text",
+             "text": ("I just attached a Java file. Reply with EXACTLY the value "
+                      "of the MAGIC constant defined in it, nothing else.")},
+        ]}],
+        "maxTokensToSample": 100, "temperature": 0, "stream": True,
+        "topK": -1, "topP": -1,
+    }
+    o.request_preview = _short(json.dumps(body), 500)
+    t0 = time.time()
+    try:
+        status, parsed = _stream_call(client, body)
+    except requests.RequestException as e:
+        o.elapsed_ms = int((time.time() - t0) * 1000)
+        o.fail_reason = "ERROR"
+        o.notes.append(str(e))
+        return o
+    o.elapsed_ms = int((time.time() - t0) * 1000)
+    o.status = status
+    if status != 200:
+        o.fail_reason = f"HTTP_{status}"
+        o.reply_preview = _short(parsed.get("error_text", ""), 400)
+        return o
+    text = parsed["text"]
+    o.reply_preview = _short(text, 200)
+    if SHIBBOLETH in text:
+        o.verdict = "PASS"
+        o.notes.append(f"shibboleth '{SHIBBOLETH}' found → model saw file content")
+    else:
+        o.fail_reason = "SAW_NO"
+        o.notes.append(f"shibboleth '{SHIBBOLETH}' NOT in reply — file content not surfaced")
+    return o
+
+
+def probe_filepart_uri_only(client: SourcegraphClient, model: str,
+                            file_uri: str, expected_keywords: list[str]) -> ProbeOutcome:
+    """Send FilePart with URI but NO content. Does Sourcegraph fetch the body?"""
+    o = ProbeOutcome(
+        name="filepart_uri_only",
+        description="FilePart {uri} only, NO content — does Sourcegraph fetch via gitserver?",
+    )
+    body = {
+        "model": model,
+        "messages": [{"speaker": "human", "content": [
+            {"type": "file",
+             "file": {"uri": file_uri,
+                      "language_id": "typescript"}},
+            {"type": "text",
+             "text": ("I attached a file by URI only. Briefly describe what's in it. "
+                      "If you can't see the content, say 'no content visible'.")},
+        ]}],
+        "maxTokensToSample": 300, "temperature": 0, "stream": True,
+        "topK": -1, "topP": -1,
+    }
+    o.request_preview = _short(json.dumps(body), 500)
+    t0 = time.time()
+    try:
+        status, parsed = _stream_call(client, body)
+    except requests.RequestException as e:
+        o.elapsed_ms = int((time.time() - t0) * 1000)
+        o.fail_reason = "ERROR"
+        o.notes.append(str(e))
+        return o
+    o.elapsed_ms = int((time.time() - t0) * 1000)
+    o.status = status
+    if status != 200:
+        o.fail_reason = f"HTTP_{status}"
+        o.reply_preview = _short(parsed.get("error_text", ""), 400)
+        o.notes.append("→ FilePart with URI-only is REJECTED by gateway")
+        return o
+    text = parsed["text"]
+    o.reply_preview = _short(text, 300)
+    lower = text.lower()
+    if "no content visible" in lower or "can't see" in lower or "cannot see" in lower or "no content" in lower:
+        o.fail_reason = "SAW_NO"
+        o.notes.append("Model said it can't see content → server does NOT auto-fetch from URI")
+        return o
+    if any(kw.lower() in lower for kw in expected_keywords):
+        o.verdict = "PASS"
+        o.notes.append(f"Reply mentions {[k for k in expected_keywords if k.lower() in lower]} → server FETCHED the file")
+    else:
+        o.fail_reason = "SAW_NO"
+        o.notes.append(f"None of expected_keywords {expected_keywords} in reply → unclear whether server fetched")
+    return o
+
+
+def probe_repopart(client: SourcegraphClient, model: str,
+                   repo_name: str, repo_keyword: str) -> ProbeOutcome:
+    """Send RepoPart and ask a question only answerable with repo context."""
+    o = ProbeOutcome(
+        name="repopart",
+        description=f"RepoPart {{name={repo_name!r}}} — does model get repo context?",
+    )
+    body = {
+        "model": model,
+        "messages": [{"speaker": "human", "content": [
+            {"type": "repo",
+             "repo": {"name": repo_name,
+                      "filePatterns": [r"README.*", r".*\.md$"]}},
+            {"type": "text",
+             "text": ("I attached a repo. In one sentence, what is this repository "
+                      "primarily about? If you have no info on it, say 'no repo context'.")},
+        ]}],
+        "maxTokensToSample": 200, "temperature": 0, "stream": True,
+        "topK": -1, "topP": -1,
+    }
+    o.request_preview = _short(json.dumps(body), 500)
+    t0 = time.time()
+    try:
+        status, parsed = _stream_call(client, body)
+    except requests.RequestException as e:
+        o.elapsed_ms = int((time.time() - t0) * 1000)
+        o.fail_reason = "ERROR"
+        o.notes.append(str(e))
+        return o
+    o.elapsed_ms = int((time.time() - t0) * 1000)
+    o.status = status
+    if status != 200:
+        o.fail_reason = f"HTTP_{status}"
+        o.reply_preview = _short(parsed.get("error_text", ""), 400)
+        o.notes.append("→ RepoPart is REJECTED by gateway")
+        return o
+    text = parsed["text"]
+    o.reply_preview = _short(text, 300)
+    lower = text.lower()
+    if "no repo context" in lower:
+        o.fail_reason = "SAW_NO"
+        o.notes.append("Model said no repo context → RepoPart accepted but no chunks injected")
+        return o
+    if repo_keyword.lower() in lower:
+        o.verdict = "PASS"
+        o.notes.append(f"Reply mentions {repo_keyword!r} → repo context injected")
+    else:
+        o.fail_reason = "SAW_NO"
+        o.notes.append(f"{repo_keyword!r} not in reply — unclear whether retrieval happened")
+    return o
+
+
+def probe_tools_on_stream(client: SourcegraphClient, model: str) -> ProbeOutcome:
+    """Send the `tools` field on /.api/completions/stream and check whether the
+    model emits a tool call (or whether the gateway 400s the field outright)."""
+    o = ProbeOutcome(
+        name="tools_on_stream",
+        description="POST /.api/completions/stream with `tools` field — accepted? rejected? silently dropped?",
+    )
+    body = {
+        "model": model,
+        "messages": [{"speaker": "human", "content": TOOL_FORCING_PROMPT}],
+        "maxTokensToSample": 500, "temperature": 0, "stream": True,
+        "topK": -1, "topP": -1,
+        "tools": PROBE_TOOLS,
+    }
+    o.request_preview = _short(json.dumps(body), 600)
+    t0 = time.time()
+    try:
+        status, parsed = _stream_call(client, body)
+    except requests.RequestException as e:
+        o.elapsed_ms = int((time.time() - t0) * 1000)
+        o.fail_reason = "ERROR"
+        o.notes.append(str(e))
+        return o
+    o.elapsed_ms = int((time.time() - t0) * 1000)
+    o.status = status
+    if status != 200:
+        o.fail_reason = f"HTTP_{status}"
+        o.reply_preview = _short(parsed.get("error_text", ""), 400)
+        o.notes.append("→ /.api/completions/stream REJECTS the `tools` field outright")
+        return o
+    text = parsed["text"]
+    last = parsed["last_payload"]
+    o.reply_preview = _short(text, 300)
+    # Look for tool calls in any payload field. Possible shapes:
+    #   {"toolCalls": [...]}, {"tool_calls": [...]}, content blocks with type=tool_use
+    saw_tool_call = False
+    for p in [last] + ([] if not last else []):
+        if not isinstance(p, dict): continue
+        if p.get("toolCalls") or p.get("tool_calls"):
+            saw_tool_call = True; break
+    if "get_secret_number" in text or "tool_use" in text.lower() or '"name"' in text:
+        saw_tool_call = True
+    if saw_tool_call:
+        o.verdict = "PASS"
+        o.notes.append("Model emitted a tool call → /stream HONORS `tools` field")
+    else:
+        o.fail_reason = "SAW_NO"
+        o.notes.append("Gateway accepted request but model did NOT emit a tool call → "
+                       "`tools` field SILENTLY DROPPED by /stream")
+    return o
+
+
+def probe_image_plus_tools(client: SourcegraphClient, model: str) -> ProbeOutcome:
+    """The ambiguous case — image attachment AND tools in the same turn."""
+    o = ProbeOutcome(
+        name="image_plus_tools",
+        description="POST /.api/completions/stream with image + tools combined",
+    )
+    body = {
+        "model": model,
+        "messages": [{"speaker": "human", "content": [
+            {"type": "image_url",
+             "image_url": {"url": f"data:image/png;base64,{RED_PNG_B64}"}},
+            {"type": "text",
+             "text": "I attached an image. Use the get_secret_number tool to fetch the secret. "
+                     "Call the tool now."},
+        ]}],
+        "maxTokensToSample": 500, "temperature": 0, "stream": True,
+        "topK": -1, "topP": -1,
+        "tools": PROBE_TOOLS,
+    }
+    o.request_preview = _short(json.dumps(body), 600)
+    t0 = time.time()
+    try:
+        status, parsed = _stream_call(client, body)
+    except requests.RequestException as e:
+        o.elapsed_ms = int((time.time() - t0) * 1000)
+        o.fail_reason = "ERROR"
+        o.notes.append(str(e))
+        return o
+    o.elapsed_ms = int((time.time() - t0) * 1000)
+    o.status = status
+    if status != 200:
+        o.fail_reason = f"HTTP_{status}"
+        o.reply_preview = _short(parsed.get("error_text", ""), 400)
+        return o
+    text = parsed["text"]
+    o.reply_preview = _short(text, 300)
+    saw_tool_call = ("get_secret_number" in text or
+                     "tool_use" in text.lower() or
+                     bool(parsed["last_payload"].get("toolCalls") or
+                          parsed["last_payload"].get("tool_calls")))
+    if saw_tool_call:
+        o.verdict = "PASS"
+        o.notes.append("Tool call emitted with image present → image+tools is viable on /stream")
+    else:
+        o.fail_reason = "SAW_NO"
+        o.notes.append("No tool call emitted — agent's image+tools path needs a workaround")
+    return o
+
+
+def probe_tools_on_public(client: SourcegraphClient, model: str) -> ProbeOutcome:
+    """Regression check: confirm tool calling still works on the public facade."""
+    o = ProbeOutcome(
+        name="tools_on_public_chat_completions",
+        description=f"POST {PUBLIC_CHAT_PATH} with `tools` field (regression check)",
+    )
+    body = {
+        "model": model,
+        "max_tokens": 500, "temperature": 0,
+        "messages": [{"role": "user", "content": TOOL_FORCING_PROMPT}],
+        "tools": PROBE_TOOLS,
+    }
+    o.request_preview = _short(json.dumps(body), 600)
+    t0 = time.time()
+    try:
+        r = client.post(PUBLIC_CHAT_PATH, body, stream=False)
+    except requests.RequestException as e:
+        o.elapsed_ms = int((time.time() - t0) * 1000)
+        o.fail_reason = "ERROR"
+        o.notes.append(str(e))
+        return o
+    o.elapsed_ms = int((time.time() - t0) * 1000)
+    o.status = r.status_code
+    if r.status_code != 200:
+        o.fail_reason = f"HTTP_{r.status_code}"
+        o.reply_preview = _short(r.text, 400)
+        return o
+    data = _decode_json(r)
+    msg = ((data.get("choices") or [{}])[0].get("message") or {})
+    text = msg.get("content") or ""
+    if isinstance(text, list):
+        text = " ".join(p.get("text", "") for p in text if isinstance(p, dict))
+    tool_calls = msg.get("tool_calls") or []
+    o.reply_preview = _short(text, 200) if text else f"tool_calls={len(tool_calls)}"
+    if tool_calls:
+        o.verdict = "PASS"
+        o.notes.append(f"Got {len(tool_calls)} tool_call(s) → public facade tools path WORKS")
+    else:
+        o.fail_reason = "SAW_NO"
+        o.notes.append("No tool_calls in response — tools support REGRESSED on public facade!")
+    return o
+
+
+# ─────────────────────────────────────────────────────────────
+# Pretty printer
+# ─────────────────────────────────────────────────────────────
+
+def print_outcome(o: ProbeOutcome) -> None:
+    sym = {"PASS": "✅", "INFO": "ℹ️ ", "SKIPPED": "⏭ ", "FAIL": "❌"}.get(o.verdict, "❌")
+    extra = f"  [{o.fail_reason}]" if o.verdict == "FAIL" and o.fail_reason else ""
+    print(f"{sym} {o.name:<35s}  status={o.status}  {o.elapsed_ms}ms{extra}")
+    if o.description:
+        print(f"     {o.description}")
+    for n in o.notes:
+        print(f"       · {n}")
+    if o.reply_preview and o.verdict != "INFO":
+        print(f"     reply: {o.reply_preview}")
+    if o.sidecar_path:
+        print(f"     full JSON saved to: {o.sidecar_path}")
+    print()
+
+
+# ─────────────────────────────────────────────────────────────
+# Main
+# ─────────────────────────────────────────────────────────────
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="Probe Sourcegraph internal-spec capabilities to drive routing decisions.",
+    )
+    ap.add_argument("--url", required=True)
+    ap.add_argument("--token", required=True)
+    ap.add_argument("--model", default="",
+                    help="Model id to use for chat probes. Auto-picked from /.api/llm/models if omitted.")
+    ap.add_argument("--probe-repo", default=DEFAULT_PROBE_REPO,
+                    help=f"Repo name to attach via RepoPart (default: {DEFAULT_PROBE_REPO}).")
+    ap.add_argument("--probe-repo-keyword", default=DEFAULT_PROBE_REPO_KEYWORD,
+                    help="Keyword expected in reply for RepoPart probe (default: cody).")
+    ap.add_argument("--probe-file-uri", default=DEFAULT_PROBE_FILE_URI,
+                    help="File URI for FilePart-URI-only probe.")
+    ap.add_argument("--probe-file-keywords", default=",".join(DEFAULT_PROBE_FILE_KEYWORDS),
+                    help="Comma-separated keywords expected if URI was fetched.")
+    ap.add_argument("--only", default="",
+                    help="Run only these probe names (comma-separated; --list to see all).")
+    ap.add_argument("--list", action="store_true")
+    ap.add_argument("--no-verify", action="store_true")
+    ap.add_argument("--timeout", type=int, default=60)
+    ap.add_argument("--out-dir", default="capabilities_lab_out",
+                    help="Directory for sidecar JSON dumps + final results.")
+    args = ap.parse_args()
+
+    all_probe_names = [
+        "client_config", "model_catalog",
+        "filepart_with_content", "filepart_uri_only", "repopart",
+        "tools_on_stream", "image_plus_tools", "tools_on_public_chat_completions",
+    ]
+    if args.list:
+        for n in all_probe_names:
+            print(f"  {n}")
+        return 0
+
+    wanted = (set(n.strip() for n in args.only.split(",") if n.strip())
+              if args.only else set(all_probe_names))
+    unknown = wanted - set(all_probe_names)
+    if unknown:
+        print(f"ERROR: unknown probe names: {sorted(unknown)}", file=sys.stderr)
+        return 2
+
+    client = SourcegraphClient(args.url, args.token,
+                               verify=not args.no_verify, timeout=args.timeout)
+
+    # Pick a model if needed (chat probes 3-7 + 8 need one).
+    model = args.model
+    if not model and (wanted - {"client_config", "model_catalog"}):
+        model = pick_default_model(client)
+        if not model:
+            print("ERROR: failed to discover a model from /.api/llm/models. Pass --model.",
+                  file=sys.stderr)
+            return 3
+
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(exist_ok=True)
+
+    print(f"Sourcegraph URL : {_mask_url(args.url)}")
+    print(f"Chat-probe model: {model or '<n/a>'}")
+    print(f"Probes to run   : {sorted(wanted)}")
+    print(f"Output dir      : {out_dir.resolve()}")
+    print()
+
+    file_keywords = [k.strip() for k in args.probe_file_keywords.split(",") if k.strip()]
+
+    outcomes: list[ProbeOutcome] = []
+    for name in all_probe_names:
+        if name not in wanted:
+            continue
+        if name == "client_config":
+            outcomes.append(probe_client_config(client, out_dir))
+        elif name == "model_catalog":
+            outcomes.append(probe_model_catalog(client, out_dir))
+        elif name == "filepart_with_content":
+            outcomes.append(probe_filepart_with_content(client, model))
+        elif name == "filepart_uri_only":
+            outcomes.append(probe_filepart_uri_only(client, model,
+                                                    args.probe_file_uri, file_keywords))
+        elif name == "repopart":
+            outcomes.append(probe_repopart(client, model, args.probe_repo,
+                                            args.probe_repo_keyword))
+        elif name == "tools_on_stream":
+            outcomes.append(probe_tools_on_stream(client, model))
+        elif name == "image_plus_tools":
+            outcomes.append(probe_image_plus_tools(client, model))
+        elif name == "tools_on_public_chat_completions":
+            outcomes.append(probe_tools_on_public(client, model))
+        print_outcome(outcomes[-1])
+
+    # Summary verdict — actionable routing recommendation
+    print("=" * 80)
+    print("ROUTING RECOMMENDATION")
+    print("=" * 80)
+    by = {o.name: o for o in outcomes}
+    public_tools_ok = by.get("tools_on_public_chat_completions", ProbeOutcome("","")).verdict == "PASS"
+    stream_tools_ok = by.get("tools_on_stream", ProbeOutcome("","")).verdict == "PASS"
+    img_tools_ok = by.get("image_plus_tools", ProbeOutcome("","")).verdict == "PASS"
+
+    if public_tools_ok and stream_tools_ok and img_tools_ok:
+        print("→ Stream endpoint accepts BOTH tools and images. SAFE TO MIGRATE all chat")
+        print("  traffic to /.api/completions/stream. Hybrid no longer needed.")
+    elif public_tools_ok and not stream_tools_ok:
+        print("→ Tools work ONLY on /.api/llm/chat/completions; images work ONLY on /stream.")
+        print("  KEEP HYBRID ROUTING:")
+        print("    image attachment present → /.api/completions/stream")
+        print("    text/tools turns          → /.api/llm/chat/completions  (current path)")
+        print("  For 'image + tools in same turn', use the two-step workaround:")
+        print("    1. Send image alone to /stream → get textual description")
+        print("    2. Inject description as text into next /chat/completions tools turn")
+    elif not public_tools_ok:
+        print("→ ⚠ tools field REGRESSED on public facade. Investigate before any routing change.")
+        print("  Agent ReAct loop may already be broken.")
+    else:
+        print("→ Mixed signals; review per-probe notes above.")
+
+    out_path = out_dir / "capabilities_lab_results.json"
+    out_path.write_text(json.dumps({
+        "url": _mask_url(args.url),
+        "model": model,
+        "outcomes": [asdict(o) for o in outcomes],
+    }, indent=2))
+    print(f"\nWrote {out_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
