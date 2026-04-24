@@ -47,10 +47,7 @@ class AgentPlanEditor(
 
     init {
         approveQuery.addHandler { _ ->
-            try {
-                onApprove?.invoke()
-            } catch (_: Exception) {
-            }
+            onApprove?.invoke()
             null
         }
 
@@ -65,10 +62,8 @@ class AgentPlanEditor(
         }
 
         commentCountQuery.addHandler { countStr ->
-            try {
-                val count = countStr.toIntOrNull() ?: 0
-                onCommentCountChanged?.invoke(count)
-            } catch (_: Exception) {}
+            val count = countStr.toIntOrNull() ?: 0
+            onCommentCountChanged?.invoke(count)
             null
         }
 

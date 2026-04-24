@@ -40,8 +40,6 @@ class TicketKeyCache {
         } catch (e: java.util.regex.PatternSyntaxException) {
             log.warn("[Jira:KeyCache] Invalid ticket key regex, falling back to default: ${e.message}")
             DEFAULT_REGEX
-        } catch (_: Exception) {
-            DEFAULT_REGEX
         }
         return try {
             regex.findAll(text).map { match ->
