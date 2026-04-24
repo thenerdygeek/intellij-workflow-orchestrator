@@ -9,6 +9,7 @@ import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
 import com.intellij.ui.JBColor
 import com.intellij.ui.JBSplitter
 import com.intellij.ui.SearchTextField
@@ -173,6 +174,12 @@ class SprintDashboardPanel(
     init {
         background = JBColor.PanelBackground
         isOpaque = true
+
+        // Cascade dispose to TicketDetailPanel so its lazyScope cancels when this
+        // panel (and the tool window) are disposed. C1's factory cascade ensures
+        // SprintDashboardPanel.dispose() runs; this registration ensures the
+        // child panel's dispose() runs from the same Disposer pass.
+        Disposer.register(this, detailPanel)
 
         // Restore persisted sort preference
         val initSettings = PluginSettings.getInstance(project)

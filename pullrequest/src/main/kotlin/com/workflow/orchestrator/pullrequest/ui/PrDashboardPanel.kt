@@ -6,6 +6,7 @@ import com.intellij.openapi.actionSystem.*
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.JBColor
 import com.intellij.ui.JBSplitter
@@ -101,6 +102,13 @@ class PrDashboardPanel(
     init {
         background = JBColor.PanelBackground
         isOpaque = true
+
+        // Cascade dispose to PrDetailPanel — its dispose() cancels the load job,
+        // its scope, and closes commentsTabPanel/aiReviewTabPanel (AutoCloseable).
+        // C1's factory cascade ensures this panel's dispose() runs; this
+        // registration mirrors the Quality/Automation pattern instead of the
+        // ad-hoc detailPanel.dispose() call inside dispose().
+        Disposer.register(this, detailPanel)
 
         setupLayout()
         setupRepoFilter()
@@ -640,7 +648,7 @@ class PrDashboardPanel(
 
     override fun dispose() {
         autoSelectTimer?.stop()
-        detailPanel.dispose()
+        // detailPanel disposed via Disposer.register(this, detailPanel) in init.
         scope.cancel()
     }
 
