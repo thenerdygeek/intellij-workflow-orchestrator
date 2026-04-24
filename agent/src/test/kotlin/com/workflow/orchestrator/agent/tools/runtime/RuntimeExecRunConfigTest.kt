@@ -654,9 +654,6 @@ class RuntimeExecRunConfigTest {
 
     // ═══════════════════════════════════════════════════════════════════════
     // Scenario 12 — Before-run compile fails → BEFORE_RUN_FAILED
-    // Fix 5: @Disabled because CompilerTopics.COMPILATION_STATUS injection
-    //        requires Phase 2 wiring (MessageBus subscription to CompilerTopics).
-    //        Will re-enable after implementation.
     // ═══════════════════════════════════════════════════════════════════════
 
     @Test
@@ -1014,7 +1011,6 @@ class RuntimeExecRunConfigTest {
     // ═══════════════════════════════════════════════════════════════════════
     // Scenario 18 — Two concurrent launches → each result references correct config / PID
     // (ExecutionEnvironment reference equality as correlation key — Section 5)
-    // Fix 8: documented as sequential (not truly parallel) — see @Disabled note below.
     // ═══════════════════════════════════════════════════════════════════════
 
     @Test
