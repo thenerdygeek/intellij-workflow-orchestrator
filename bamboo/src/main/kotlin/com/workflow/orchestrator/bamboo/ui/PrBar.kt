@@ -20,6 +20,7 @@ import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import com.workflow.orchestrator.core.util.HtmlEscape
@@ -46,6 +47,16 @@ import javax.swing.*
 class PrBar(
     private val project: Project,
     private val scope: CoroutineScope,
+    /**
+     * Supplies the Build tab's active [RepoConfig] — the single source of truth for
+     * "which repo should I fetch PRs from". Replaces the old [RepoContextResolver]-based
+     * resolution that silently snapped back to the editor's primary repo on Refresh,
+     * causing the "module dropdown shows my-common-lib but PR + jobs show my-service"
+     * inconsistency documented in v0.83.24. When the provider returns null (not yet
+     * initialized), `refreshPrs` falls back to [RepoContextResolver] — old behavior
+     * preserved for startup before the dashboard has finished constructing.
+     */
+    private val repoConfigProvider: () -> RepoConfig? = { null },
     private val onPrSelected: (branchName: String) -> Unit
 ) : JPanel(BorderLayout()) {
 
@@ -319,9 +330,15 @@ class PrBar(
             return
         }
 
-        // Resolve repo config from the current editor's git root (or primary).
-        val repoConfig = RepoContextResolver.getInstance(project).resolveCurrentEditorRepoOrPrimary()
-            ?.let { RepoContextResolver.getInstance(project).resolveFromGitRepo(it) }
+        // Prefer the Build tab's active RepoConfig (the single source of truth threaded
+        // in via repoConfigProvider). Fall back to RepoContextResolver only when the
+        // provider returns null — startup before the dashboard has wired itself, or
+        // direct PrBar instantiation in tests.
+        val repoConfig = repoConfigProvider() ?: run {
+            log.info("[Build:PrBar] repoConfigProvider returned null — falling back to editor-context resolver")
+            RepoContextResolver.getInstance(project).resolveCurrentEditorRepoOrPrimary()
+                ?.let { RepoContextResolver.getInstance(project).resolveFromGitRepo(it) }
+        }
         val projectKey = repoConfig?.bitbucketProjectKey.orEmpty()
         val repoSlug = repoConfig?.bitbucketRepoSlug.orEmpty()
 
@@ -415,8 +432,17 @@ class PrBar(
         else -> StatusColors.htmlColor(StatusColors.INFO)
     }
 
-    private fun getGitRepo(): git4idea.repo.GitRepository? =
-        RepoContextResolver.getInstance(project).resolveCurrentEditorRepoOrPrimary()
+    private fun getGitRepo(): git4idea.repo.GitRepository? {
+        // Resolve via the Build tab's active RepoConfig first so we get the branch
+        // of the repo the user is looking at — not the editor-context repo. Falls
+        // back to resolver when no active repo is set (early startup, tests).
+        val activeRoot = repoConfigProvider()?.localVcsRootPath
+        if (activeRoot != null) {
+            val repos = git4idea.repo.GitRepositoryManager.getInstance(project).repositories
+            repos.find { it.root.path == activeRoot }?.let { return it }
+        }
+        return RepoContextResolver.getInstance(project).resolveCurrentEditorRepoOrPrimary()
+    }
 
     private fun resolveCurrentBranch(): String? = getGitRepo()?.currentBranchName
 
@@ -435,9 +461,11 @@ class PrBar(
             return
         }
 
+        // Prefer the Build tab's active RepoConfig (set by the repoSelector / PrSelected
+        // events), then RepoContextResolver for editor-context, then scalar settings.
         val resolver = RepoContextResolver.getInstance(project)
-        val resolvedRepoConfig = resolver.resolveCurrentEditorRepoOrPrimary()
-            ?.let { resolver.resolveFromGitRepo(it) }
+        val resolvedRepoConfig = repoConfigProvider()
+            ?: resolver.resolveCurrentEditorRepoOrPrimary()?.let { resolver.resolveFromGitRepo(it) }
         val projectKey = resolvedRepoConfig?.bitbucketProjectKey?.takeIf { it.isNotBlank() }
             ?: settings.state.bitbucketProjectKey.orEmpty()
         val repoSlug = resolvedRepoConfig?.bitbucketRepoSlug?.takeIf { it.isNotBlank() }
@@ -447,7 +475,7 @@ class PrBar(
             formResultLabel.foreground = JBColor.RED
             return
         }
-        log.info("[Build:PrBar] onSubmitPr: project='$projectKey' repo='$repoSlug' (via ${if (resolvedRepoConfig != null) "resolver" else "scalar fallback"})")
+        log.info("[Build:PrBar] onSubmitPr: project='$projectKey' repo='$repoSlug' (via ${if (resolvedRepoConfig != null) "provider/resolver" else "scalar fallback"})")
         submitButton.isEnabled = false
         regenerateButton.isEnabled = false
         formResultLabel.text = "Creating PR..."
