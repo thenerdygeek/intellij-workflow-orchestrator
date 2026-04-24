@@ -3,10 +3,7 @@ package com.workflow.orchestrator.jira.service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.auth.CredentialStore
-import com.workflow.orchestrator.core.http.AuthInterceptor
-import com.workflow.orchestrator.core.http.AuthScheme
 import com.workflow.orchestrator.core.http.HttpClientFactory
-import com.workflow.orchestrator.core.http.RetryInterceptor
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.jira.api.dto.JiraAttachment
 import com.workflow.orchestrator.jira.model.AttachmentDownloadResult
@@ -22,7 +19,6 @@ import okhttp3.Request
 import java.awt.image.BufferedImage
 import java.io.File
 import java.util.Collections
-import java.util.concurrent.TimeUnit
 import javax.imageio.ImageIO
 
 class AttachmentDownloadService(private val project: Project) {
@@ -39,15 +35,7 @@ class AttachmentDownloadService(private val project: Project) {
     )
 
     private val httpClient: OkHttpClient by lazy {
-        HttpClientFactory.sharedPool.newBuilder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .addInterceptor(AuthInterceptor(
-                { credentialStore.getToken(ServiceType.JIRA) },
-                AuthScheme.BEARER
-            ))
-            .addInterceptor(RetryInterceptor())
-            .build()
+        HttpClientFactory({ credentialStore.getToken(it) }).clientFor(ServiceType.JIRA)
     }
 
     /**
