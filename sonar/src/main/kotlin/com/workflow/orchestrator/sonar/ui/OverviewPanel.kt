@@ -196,8 +196,8 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
             .take(5)
             .forEach { issue ->
                 val color = severityColor(issue.severity)
-                val label = JBLabel("<html><font color='${htmlColor(color)}'>\u25CF</font> " +
-                    "${issue.type} <font color='${htmlColor(color)}'>${issue.severity}</font> " +
+                val label = JBLabel("<html><font color='${StatusColors.htmlColor(color)}'>\u25CF</font> " +
+                    "${issue.type} <font color='${StatusColors.htmlColor(color)}'>${issue.severity}</font> " +
                     "${issue.message} — ${java.io.File(issue.filePath).name}:${issue.startLine}</html>")
                 label.font = FONT_PLAIN_11
                 label.border = JBUI.Borders.emptyBottom(2)
@@ -224,8 +224,8 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
             healthDetailsPanel.add(debtLabel)
 
             val ratingsLabel = JBLabel("<html>" +
-                "Reliability: <font color='${htmlColor(ratingColor(health.reliabilityRating))}'>${health.reliabilityRating.ifEmpty { "—" }}</font> " +
-                "Security: <font color='${htmlColor(ratingColor(health.securityRating))}'>${health.securityRating.ifEmpty { "—" }}</font>" +
+                "Reliability: <font color='${StatusColors.htmlColor(ratingColor(health.reliabilityRating))}'>${health.reliabilityRating.ifEmpty { "—" }}</font> " +
+                "Security: <font color='${StatusColors.htmlColor(ratingColor(health.securityRating))}'>${health.securityRating.ifEmpty { "—" }}</font>" +
                 "</html>")
             ratingsLabel.font = FONT_PLAIN_10
             healthDetailsPanel.add(ratingsLabel)
@@ -296,10 +296,6 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
         IssueSeverity.MAJOR -> StatusColors.WARNING
         IssueSeverity.MINOR -> StatusColors.WARNING
         IssueSeverity.INFO -> StatusColors.INFO
-    }
-
-    private fun htmlColor(c: Color): String {
-        return if (c is JBColor) StatusColors.htmlColor(c) else String.format("#%02x%02x%02x", c.red, c.green, c.blue)
     }
 
     /**

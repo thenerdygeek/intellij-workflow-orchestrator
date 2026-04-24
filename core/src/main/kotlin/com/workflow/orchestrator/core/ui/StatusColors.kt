@@ -42,9 +42,11 @@ object StatusColors {
     /**
      * Returns the current theme's resolved hex color string for use in HTML.
      * Must be called at render time — never cache the result across theme changes.
+     *
+     * Accepts any `Color`; a `JBColor` resolves through its theme-aware channels
+     * automatically (JBColor.red/green/blue are already theme-resolved).
      */
-    fun htmlColor(color: JBColor): String {
-        val c = color as Color
-        return String.format("#%02x%02x%02x", c.red, c.green, c.blue)
+    fun htmlColor(color: Color): String {
+        return String.format("#%02x%02x%02x", color.red, color.green, color.blue)
     }
 }
