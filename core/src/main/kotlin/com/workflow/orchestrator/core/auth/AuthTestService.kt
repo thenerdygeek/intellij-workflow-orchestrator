@@ -108,8 +108,7 @@ class AuthTestService {
 
                 return when {
                     llmEnabled == null -> {
-                        // Couldn't determine — old Sourcegraph version, just report auth success
-                        ApiResult.Success("Authenticated as $username (LLM API status: unknown — Sourcegraph may be < 5.5.0)")
+                        ApiResult.Success("Authenticated as $username (LLM API status: unknown)")
                     }
                     llmEnabled -> {
                         ApiResult.Success("Authenticated as $username — LLM API is enabled")
@@ -139,13 +138,11 @@ class AuthTestService {
     }
 
     /**
-     * Checks if the LLM API (Cody feature) is enabled on the Sourcegraph instance.
-     * Returns true/false, or null if the check couldn't be performed (old Sourcegraph version).
-     * Note: The Sourcegraph API field is still named "codyEnabled" / "isCodyEnabled".
+     * Checks if the LLM API is enabled on the Sourcegraph instance via `/.api/client-config`.
+     * Returns true/false, or null if the check couldn't be performed.
      */
     private fun checkLlmEnabled(baseUrl: String, token: String): Boolean? {
         return try {
-            // Try /.api/client-config first (Sourcegraph >= 5.5.0)
             val configRequest = Request.Builder()
                 .url("$baseUrl/.api/client-config")
                 .header("Authorization", "token $token")
@@ -154,37 +151,12 @@ class AuthTestService {
 
             val configResponse = testClient.newCall(configRequest).execute()
             configResponse.use {
-                if (it.code == 404) {
-                    // Old Sourcegraph version — try GraphQL fallback
-                    return checkLlmEnabledViaGraphQL(baseUrl, token)
-                }
                 val body = it.body?.string() ?: ""
                 val codyEnabled = Regex(""""codyEnabled"\s*:\s*(true|false)""").find(body)
                 codyEnabled?.groupValues?.get(1)?.toBoolean()
             }
         } catch (e: Exception) {
             log.debug("[Core:Auth] Could not check LLM enabled status: ${e.message}")
-            null
-        }
-    }
-
-    private fun checkLlmEnabledViaGraphQL(baseUrl: String, token: String): Boolean? {
-        return try {
-            val query = """{"query":"query { site { isCodyEnabled } }"}"""
-            val request = Request.Builder()
-                .url("$baseUrl/.api/graphql")
-                .header("Authorization", "token $token")
-                .header("Content-Type", "application/json")
-                .post(query.toRequestBody("application/json".toMediaTypeOrNull()))
-                .build()
-            val response = testClient.newCall(request).execute()
-            response.use {
-                val body = it.body?.string() ?: ""
-                val match = Regex(""""isCodyEnabled"\s*:\s*(true|false)""").find(body)
-                match?.groupValues?.get(1)?.toBoolean()
-            }
-        } catch (e: Exception) {
-            log.debug("[Core:Auth] GraphQL LLM enabled check failed: ${e.message}")
             null
         }
     }

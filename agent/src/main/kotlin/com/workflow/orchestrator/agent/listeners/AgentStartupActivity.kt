@@ -4,7 +4,6 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
 import com.workflow.orchestrator.agent.session.MessageStateHandler
-import com.workflow.orchestrator.agent.session.SessionMigrator
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.workflow.orchestrator.core.util.ProjectIdentifier
@@ -38,13 +37,6 @@ class AgentStartupActivity : ProjectActivity {
         try {
             val basePath = project.basePath ?: return
             val baseDir = ProjectIdentifier.agentDir(basePath)
-
-            // Migrate old JSONL sessions to new two-file format before loading index
-            try {
-                SessionMigrator.migrate(baseDir)
-            } catch (e: Exception) {
-                LOG.warn("AgentStartupActivity: session migration failed", e)
-            }
 
             val history = MessageStateHandler.loadGlobalIndex(baseDir)
 

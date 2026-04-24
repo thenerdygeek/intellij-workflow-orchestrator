@@ -37,7 +37,7 @@ class CompletionDataTest {
 
     @Test
     fun `null optional fields encoded according to project JSON convention`() {
-        // The module uses encodeDefaults = true (MessageStateHandler, SessionMigrator, etc.),
+        // The module uses encodeDefaults = true (MessageStateHandler, etc.),
         // so null optional fields ARE included in the output as explicit null values.
         val data = CompletionData(kind = CompletionKind.DONE, result = "done")
         val encoded = json.encodeToString(data)
