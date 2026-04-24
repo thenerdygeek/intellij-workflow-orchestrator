@@ -2710,7 +2710,9 @@ class AgentController(
         val channel = userInputChannel
         if (loopWaitingForInput && channel != null && currentJob?.isActive == true) {
             loopWaitingForInput = false
-            runBlocking { channel.send(revisionMessage) }
+            controllerScope.launch(Dispatchers.EDT + CoroutineName("AgentController.revisePlan.send")) {
+                channel.send(revisionMessage)
+            }
         } else if (currentJob?.isActive == true) {
             // Loop is running but not waiting — queue as steering
             val steeringId = "steer-revise-${System.currentTimeMillis()}"
