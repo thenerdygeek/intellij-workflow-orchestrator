@@ -147,33 +147,90 @@ class CachingInterceptorTest {
     }
 
     @Test
-    fun `stale entry behaves as miss (refetch) in pre-4c mode`() {
-        server.enqueue(MockResponse().setBody("""{"v":1}""").setHeader("Content-Type", "application/json"))
-        server.enqueue(MockResponse().setBody("""{"v":2}""").setHeader("Content-Type", "application/json"))
-
-        // First call: cache with TTL=60s (board policy is 300s actually; use search which is 10s for faster test)
-        // Actually we need a way to force staleness. Let's poke the cache manually:
+    fun `stale entry, new bytes differ - HIT_STALE_DIFFER`() {
         val req = Request.Builder().url(server.url("/rest/agile/1.0/board")).header("Authorization", "Bearer t").get().build()
 
-        // Prime with a stale entry
+        // Prime with a stale entry whose sha256 will NOT match the upcoming response.
+        val staleBody = """{"stale":true}""".toByteArray()
         HttpResponseCache.put(
             CacheKey.of(req),
             HttpResponseCache.Entry(
-                bodyBytes = """{"stale":true}""".toByteArray(),
-                sha256 = ByteArray(32),
+                bodyBytes = staleBody,
+                sha256 = java.security.MessageDigest.getInstance("SHA-256").digest(staleBody),
                 contentType = "application/json",
                 statusCode = 200,
                 tag = "jira",
-                storedAtMillis = System.currentTimeMillis() - 10 * 60 * 1000L, // 10 min ago, TTL=300s ⇒ stale
+                storedAtMillis = System.currentTimeMillis() - 10 * 60 * 1000L,
                 ttlSeconds = 300L
             )
         )
+        server.enqueue(MockResponse().setBody("""{"v":1}""").setHeader("Content-Type", "application/json"))
 
         val body = jiraClient.newCall(req).execute().use { it.body!!.string() }
-        assertEquals("""{"v":1}""", body, "stale entry should be refetched, returning network body")
-        assertEquals(1, server.requestCount)
-        assertEquals(1L, HttpCacheMetrics.getStats("jira").miss)
-        assertEquals(0L, HttpCacheMetrics.getStats("jira").hitFresh)
+        assertEquals("""{"v":1}""", body)
+        val stats = HttpCacheMetrics.getStats("jira")
+        assertEquals(1L, stats.hitStaleDiffer)
+        assertEquals(0L, stats.hitStaleMatch)
+        assertEquals(0L, stats.miss, "stale-but-present should not be a MISS — cached entry exists")
+    }
+
+    @Test
+    fun `stale entry, new bytes identical - HIT_STALE_MATCH`() {
+        val req = Request.Builder().url(server.url("/rest/agile/1.0/board")).header("Authorization", "Bearer t").get().build()
+        val identicalBody = """{"v":1}"""
+
+        HttpResponseCache.put(
+            CacheKey.of(req),
+            HttpResponseCache.Entry(
+                bodyBytes = identicalBody.toByteArray(),
+                sha256 = java.security.MessageDigest.getInstance("SHA-256").digest(identicalBody.toByteArray()),
+                contentType = "application/json",
+                statusCode = 200,
+                tag = "jira",
+                storedAtMillis = System.currentTimeMillis() - 10 * 60 * 1000L,
+                ttlSeconds = 300L
+            )
+        )
+        server.enqueue(MockResponse().setBody(identicalBody).setHeader("Content-Type", "application/json"))
+
+        val body = jiraClient.newCall(req).execute().use { it.body!!.string() }
+        assertEquals(identicalBody, body)
+        val stats = HttpCacheMetrics.getStats("jira")
+        assertEquals(1L, stats.hitStaleMatch)
+        assertEquals(0L, stats.hitStaleDiffer)
+        assertEquals(0L, stats.miss)
+    }
+
+    @Test
+    fun `stale-match refreshes the storedAt timestamp so next call is HIT_FRESH`() {
+        val req = Request.Builder().url(server.url("/rest/agile/1.0/board")).header("Authorization", "Bearer t").get().build()
+        val bodyStr = """{"v":1}"""
+
+        // Prime stale
+        HttpResponseCache.put(
+            CacheKey.of(req),
+            HttpResponseCache.Entry(
+                bodyBytes = bodyStr.toByteArray(),
+                sha256 = java.security.MessageDigest.getInstance("SHA-256").digest(bodyStr.toByteArray()),
+                contentType = "application/json",
+                statusCode = 200,
+                tag = "jira",
+                storedAtMillis = System.currentTimeMillis() - 10 * 60 * 1000L,
+                ttlSeconds = 300L
+            )
+        )
+        server.enqueue(MockResponse().setBody(bodyStr).setHeader("Content-Type", "application/json"))
+
+        // First call triggers HIT_STALE_MATCH and refreshes timestamp
+        jiraClient.newCall(req).execute().close()
+
+        // Second call should now be HIT_FRESH (no network enqueue needed)
+        jiraClient.newCall(req).execute().close()
+
+        assertEquals(1, server.requestCount, "second call must not hit the network")
+        val stats = HttpCacheMetrics.getStats("jira")
+        assertEquals(1L, stats.hitStaleMatch)
+        assertEquals(1L, stats.hitFresh)
     }
 
     @Test
