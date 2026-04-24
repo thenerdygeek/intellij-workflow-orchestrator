@@ -3,7 +3,6 @@ package com.workflow.orchestrator.core.http
 import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.Response
-import java.io.IOException
 
 class HttpMetricsInterceptor : Interceptor {
 
@@ -14,9 +13,6 @@ class HttpMetricsInterceptor : Interceptor {
         val response: Response
         try {
             response = chain.proceed(request)
-        } catch (e: IOException) {
-            HttpMetricsRegistry.record(tag, -1, System.currentTimeMillis() - startMs, true)
-            throw e
         } catch (e: Exception) {
             HttpMetricsRegistry.record(tag, -1, System.currentTimeMillis() - startMs, true)
             throw e
