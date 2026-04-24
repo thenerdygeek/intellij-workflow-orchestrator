@@ -2755,15 +2755,17 @@ class AgentController(
     /** User clicked Dismiss on the plan card. */
     private fun dismissPlan() {
         LOG.info("AgentController.dismissPlan — user-initiated plan dismissal")
-        // Rewrite history synchronously (JCEF thread, not EDT) so the mutation inside
-        // MessageStateHandler's mutex completes before performPlanDiscard sends the
-        // steering/channel message — eliminates the race where the LLM could see the
-        // old plan_mode_respond result on the very next turn.
-        runBlocking(Dispatchers.IO) {
-            service.activeMessageStateHandler
-                ?.rewriteMostRecentToolResult("plan_mode_respond", "[Plan discarded — do not reference]")
+        // Sequence the history rewrite and the plan-discard dispatch inside one coroutine so
+        // the rewrite lands before performPlanDiscard's channel.send fires. JBCefJSQuery
+        // handlers run on EDT, so the previous synchronous blocking call froze EDT — the
+        // earlier comment claiming "JCEF thread, not EDT" was wrong.
+        controllerScope.launch(Dispatchers.EDT + CoroutineName("AgentController.dismissPlan")) {
+            withContext(Dispatchers.IO) {
+                service.activeMessageStateHandler
+                    ?.rewriteMostRecentToolResult("plan_mode_respond", "[Plan discarded — do not reference]")
+            }
+            performPlanDiscard(userInitiated = true)
         }
-        performPlanDiscard(userInitiated = true)
     }
 
     /** Called when LLM uses the discard_plan tool. */
