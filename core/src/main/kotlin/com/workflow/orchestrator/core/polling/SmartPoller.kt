@@ -106,7 +106,10 @@ class SmartPoller(
             val frame = IdeFocusManager.getGlobalInstance().lastFocusedFrame
             frame != null
         } catch (_: Exception) {
-            true
+            // Conservative default: when focus state is indeterminate (IDE shutting
+            // down or not yet fully initialized), treat as unfocused so polling
+            // slows to its visibility-gated interval rather than accelerating.
+            false
         }
     }
 }
