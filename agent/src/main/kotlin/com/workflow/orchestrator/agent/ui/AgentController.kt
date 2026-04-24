@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.ui
 
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileEditor.FileEditorManager
@@ -1200,6 +1201,23 @@ class AgentController(
 
         LOG.info("AgentController.executeTask: ${task.take(80)}")
 
+        // Phase 4 Prong A: the body was previously executed inline on the JCEF bridge
+        // callback thread (EDT), with `runBlocking` around `hookManager.dispatch` and
+        // `channel.send`. Both calls froze EDT for the duration of the hook or until
+        // the loop consumed the channel message. Launching on `controllerScope` with
+        // `Dispatchers.EDT` preserves the "UI mutations run on EDT" invariant while
+        // letting the suspend calls park the coroutine instead of the event thread.
+        controllerScope.launch(Dispatchers.EDT + CoroutineName("AgentController.executeTask")) {
+            executeTaskInternal(task, displayText, displayMentionsJson, uiMessageOverride)
+        }
+    }
+
+    private suspend fun executeTaskInternal(
+        task: String,
+        displayText: String?,
+        displayMentionsJson: String?,
+        uiMessageOverride: UiMessage?,
+    ) {
         // The text shown in the UI — clean text without mention XML
         val uiText = displayText ?: task
 
@@ -1213,16 +1231,14 @@ class AgentController(
         // Cline: "Executes when the user submits a prompt to Cline."
         val hookManager = service.hookManager
         if (hookManager.hasHooks(HookType.USER_PROMPT_SUBMIT)) {
-            val hookResult = runBlocking {
-                hookManager.dispatch(
-                    HookEvent(
-                        type = HookType.USER_PROMPT_SUBMIT,
-                        data = mapOf(
-                            "message" to task
-                        )
+            val hookResult = hookManager.dispatch(
+                HookEvent(
+                    type = HookType.USER_PROMPT_SUBMIT,
+                    data = mapOf(
+                        "message" to task
                     )
                 )
-            }
+            )
             if (hookResult is HookResult.Cancel) {
                 LOG.info("AgentController: USER_PROMPT_SUBMIT hook cancelled: ${hookResult.reason}")
                 return
@@ -1254,7 +1270,7 @@ class AgentController(
             if (uiMessageOverride != null) {
                 pendingUiMessageOverride.set(uiMessageOverride)
             }
-            runBlocking { channel.send(task) }
+            channel.send(task)
             return
         }
 
