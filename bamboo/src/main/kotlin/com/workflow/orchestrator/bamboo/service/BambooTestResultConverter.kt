@@ -3,6 +3,7 @@ package com.workflow.orchestrator.bamboo.service
 import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.bamboo.api.dto.BambooTestCaseDto
 import com.workflow.orchestrator.bamboo.api.dto.BambooTestResultsDto
+import com.workflow.orchestrator.core.maven.TeamCityMessageConverter
 import com.workflow.orchestrator.core.model.bamboo.TestResultsData
 
 /**
@@ -39,10 +40,10 @@ object BambooTestResultConverter {
 
         for ((className, tests) in grouped) {
             val suiteLocationHint = "java:suite://${className}"
-            messages.add("##teamcity[testSuiteStarted name='${escape(className)}' locationHint='${suiteLocationHint}']")
+            messages.add("##teamcity[testSuiteStarted name='${TeamCityMessageConverter.escapeValue(className)}' locationHint='${suiteLocationHint}']")
 
             for (test in tests) {
-                val testName = escape(test.methodName)
+                val testName = TeamCityMessageConverter.escapeValue(test.methodName)
                 val durationMs = if (test.duration > 0) test.duration else test.durationInSeconds * 1000
                 val testLocationHint = "java:test://${test.className}/${test.methodName}"
 
@@ -52,8 +53,8 @@ object BambooTestResultConverter {
                     "failed" -> {
                         val errorKey = "${test.className}.${test.methodName}"
                         val errorInfo = errorDetails[errorKey]
-                        val errorMessage = escape(errorInfo?.message ?: "Test failed on Bamboo build")
-                        val errorTrace = errorInfo?.stackTrace?.let { escape(it) } ?: ""
+                        val errorMessage = TeamCityMessageConverter.escapeValue(errorInfo?.message ?: "Test failed on Bamboo build")
+                        val errorTrace = errorInfo?.stackTrace?.let { TeamCityMessageConverter.escapeValue(it) } ?: ""
 
                         if (errorTrace.isNotBlank()) {
                             messages.add("##teamcity[testFailed name='${testName}' message='${errorMessage}' details='${errorTrace}']")
@@ -63,7 +64,7 @@ object BambooTestResultConverter {
 
                         // Also print the stack trace as test output (shows in the console tab)
                         if (errorInfo != null) {
-                            messages.add("##teamcity[testStdOut name='${testName}' out='${escape(errorInfo.fullOutput)}']")
+                            messages.add("##teamcity[testStdOut name='${testName}' out='${TeamCityMessageConverter.escapeValue(errorInfo.fullOutput)}']")
                         }
                     }
                     "skipped" -> {
@@ -74,7 +75,7 @@ object BambooTestResultConverter {
                 messages.add("##teamcity[testFinished name='${testName}' duration='${durationMs}']")
             }
 
-            messages.add("##teamcity[testSuiteFinished name='${escape(className)}']")
+            messages.add("##teamcity[testSuiteFinished name='${TeamCityMessageConverter.escapeValue(className)}']")
         }
 
         return messages
@@ -178,16 +179,6 @@ object BambooTestResultConverter {
         }
 
         return null
-    }
-
-    private fun escape(text: String): String {
-        return text
-            .replace("|", "||")
-            .replace("'", "|'")
-            .replace("\n", "|n")
-            .replace("\r", "|r")
-            .replace("[", "|[")
-            .replace("]", "|]")
     }
 
     data class TestErrorInfo(

@@ -40,6 +40,24 @@ class TeamCityMessageConverterTest {
     }
 
     @Test
+    fun `escapeValue round-trips all six specials exactly`() {
+        assertEquals(
+            "pipes || and brackets |[x|] |'quoted|' line|nreturn|r",
+            TeamCityMessageConverter.escapeValue("pipes | and brackets [x] 'quoted' line\nreturn\r")
+        )
+    }
+
+    @Test
+    fun `escapeValue empty input returned unchanged`() {
+        assertEquals("", TeamCityMessageConverter.escapeValue(""))
+    }
+
+    @Test
+    fun `escapeValue plain ascii without specials returned unchanged`() {
+        assertEquals("hello world", TeamCityMessageConverter.escapeValue("hello world"))
+    }
+
+    @Test
     fun `converts skipped test`() {
         val messages = TeamCityMessageConverter.convert(mapOf(
             "com.example.FooTest" to listOf(
