@@ -2742,7 +2742,9 @@ class AgentController(
             val channel = userInputChannel
             if (loopWaitingForInput && channel != null && currentJob?.isActive == true) {
                 loopWaitingForInput = false
-                runBlocking { channel.send(marker) }
+                controllerScope.launch(Dispatchers.EDT + CoroutineName("AgentController.performPlanDiscard.send")) {
+                    channel.send(marker)
+                }
             } else if (currentJob?.isActive == true) {
                 val steeringId = "steer-dismiss-${System.currentTimeMillis()}"
                 steeringQueue.offer(SteeringMessage(id = steeringId, text = marker))
