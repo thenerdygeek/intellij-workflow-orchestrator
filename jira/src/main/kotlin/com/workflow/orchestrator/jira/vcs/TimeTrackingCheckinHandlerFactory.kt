@@ -9,11 +9,8 @@ import com.intellij.openapi.vcs.checkin.CheckinHandlerFactory
 import com.intellij.openapi.vcs.ui.RefreshableOnComponent
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.util.ui.JBUI
-import com.workflow.orchestrator.core.auth.CredentialStore
-import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
-import com.workflow.orchestrator.jira.api.JiraApiClient
+import com.workflow.orchestrator.jira.service.JiraServiceImpl
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -37,7 +34,6 @@ class TimeTrackingCheckinHandlerFactory : CheckinHandlerFactory() {
 class TimeTrackingCheckinHandler(private val project: Project) : CheckinHandler() {
 
     private val log = Logger.getInstance(TimeTrackingCheckinHandler::class.java)
-    private val credentialStore = CredentialStore()
 
     private var logTimeCheckbox: JBCheckBox? = null
     private var minutesSpinner: JSpinner? = null
@@ -103,21 +99,18 @@ class TimeTrackingCheckinHandler(private val project: Project) : CheckinHandler(
         val ticketId = settings.state.activeTicketId
         if (ticketId.isNullOrBlank()) return
 
-        val baseUrl = settings.connections.jiraUrl.orEmpty().trimEnd('/')
-        if (baseUrl.isBlank()) return
-
         val timeSpent = TimeTrackingLogic.toJiraTimeSpent(minutes)
 
         // Fire-and-forget: post-commit time logging must not block the commit flow.
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             if (project.isDisposed) return@launch
             try {
-                val client = JiraApiClient(baseUrl) { credentialStore.getToken(ServiceType.JIRA) }
-                when (val result = client.postWorklog(ticketId, timeSpent)) {
-                    is ApiResult.Success ->
-                        log.info("[Jira:TimeTracking] Logged $timeSpent to $ticketId")
-                    is ApiResult.Error ->
-                        log.warn("[Jira:TimeTracking] Failed to log time to $ticketId: ${result.message}")
+                val jiraService = JiraServiceImpl.getInstance(project)
+                val result = jiraService.logWork(ticketId, timeSpent, comment = null)
+                if (result.isError) {
+                    log.warn("[Jira:TimeTracking] Failed to log time to $ticketId: ${result.summary}")
+                } else {
+                    log.info("[Jira:TimeTracking] Logged $timeSpent to $ticketId")
                 }
             } catch (e: Exception) {
                 log.warn("[Jira:TimeTracking] Error logging time to $ticketId: ${e.message}")

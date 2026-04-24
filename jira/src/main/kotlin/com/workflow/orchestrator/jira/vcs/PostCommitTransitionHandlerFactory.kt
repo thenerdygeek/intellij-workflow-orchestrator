@@ -7,12 +7,9 @@ import com.intellij.openapi.vcs.CheckinProjectPanel
 import com.intellij.openapi.vcs.changes.CommitContext
 import com.intellij.openapi.vcs.checkin.CheckinHandler
 import com.intellij.openapi.vcs.checkin.CheckinHandlerFactory
-import com.workflow.orchestrator.core.auth.CredentialStore
-import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.services.jira.TransitionDialogOpener
 import com.workflow.orchestrator.core.settings.PluginSettings
-import com.workflow.orchestrator.jira.api.JiraApiClient
+import com.workflow.orchestrator.jira.service.JiraServiceImpl
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -33,7 +30,6 @@ class PostCommitTransitionHandlerFactory : CheckinHandlerFactory() {
 class PostCommitTransitionHandler(private val project: Project) : CheckinHandler() {
 
     private val log = Logger.getInstance(PostCommitTransitionHandler::class.java)
-    private val credentialStore = CredentialStore()
 
     override fun checkinSuccessful() {
         val settings = PluginSettings.getInstance(project)
@@ -42,41 +38,36 @@ class PostCommitTransitionHandler(private val project: Project) : CheckinHandler
         val ticketId = settings.state.activeTicketId
         if (ticketId.isNullOrBlank()) return
 
-        val baseUrl = settings.connections.jiraUrl.orEmpty().trimEnd('/')
-        if (baseUrl.isBlank()) return
-
         // Fire-and-forget: post-commit transition check must not block the commit flow.
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             if (project.isDisposed) return@launch
             try {
-                val client = JiraApiClient(baseUrl) { credentialStore.getToken(ServiceType.JIRA) }
-
-                val issueResult = client.getIssue(ticketId)
-                when (issueResult) {
-                    is ApiResult.Success -> {
-                        val currentStatus = issueResult.data.fields.status.name
-                        if (PostCommitTransitionLogic.shouldSuggestTransition(currentStatus)) {
-                            com.intellij.openapi.application.invokeLater {
-                                val notification = com.intellij.notification.NotificationGroupManager.getInstance()
-                                    .getNotificationGroup("workflow.automation")
-                                    .createNotification(
-                                        "Transition $ticketId?",
-                                        "$ticketId is still '$currentStatus'. Open transition dialog?",
-                                        com.intellij.notification.NotificationType.INFORMATION
-                                    )
-                                notification.addAction(object : com.intellij.notification.NotificationAction("Open transition dialog\u2026") {
-                                    override fun actionPerformed(e: com.intellij.openapi.actionSystem.AnActionEvent, notification: com.intellij.notification.Notification) {
-                                        notification.expire()
-                                        if (!project.isDisposed) {
-                                            project.service<TransitionDialogOpener>().open(project, ticketId, transitionId = null)
-                                        }
+                val jiraService = JiraServiceImpl.getInstance(project)
+                val issueResult = jiraService.getTicket(ticketId)
+                if (issueResult.isError) {
+                    log.debug("[Jira:PostCommit] Could not fetch $ticketId: ${issueResult.summary}")
+                } else {
+                    val currentStatus = issueResult.data.status
+                    if (PostCommitTransitionLogic.shouldSuggestTransition(currentStatus)) {
+                        com.intellij.openapi.application.invokeLater {
+                            val notification = com.intellij.notification.NotificationGroupManager.getInstance()
+                                .getNotificationGroup("workflow.automation")
+                                .createNotification(
+                                    "Transition $ticketId?",
+                                    "$ticketId is still '$currentStatus'. Open transition dialog?",
+                                    com.intellij.notification.NotificationType.INFORMATION
+                                )
+                            notification.addAction(object : com.intellij.notification.NotificationAction("Open transition dialog\u2026") {
+                                override fun actionPerformed(e: com.intellij.openapi.actionSystem.AnActionEvent, notification: com.intellij.notification.Notification) {
+                                    notification.expire()
+                                    if (!project.isDisposed) {
+                                        project.service<TransitionDialogOpener>().open(project, ticketId, transitionId = null)
                                     }
-                                })
-                                notification.notify(project)
-                            }
+                                }
+                            })
+                            notification.notify(project)
                         }
                     }
-                    is ApiResult.Error -> log.debug("[Jira:PostCommit] Could not fetch $ticketId: ${issueResult.message}")
                 }
             } catch (e: Exception) {
                 log.debug("[Jira:PostCommit] Error checking ticket status: ${e.message}")
