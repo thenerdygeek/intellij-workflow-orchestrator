@@ -6,6 +6,10 @@ import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.workflow.orchestrator.jira.api.dto.JiraIssueSearchResult
 import com.workflow.orchestrator.jira.api.escapeJql
 import com.intellij.openapi.diagnostic.Logger
+import com.workflow.orchestrator.core.http.AuthInterceptor
+import com.workflow.orchestrator.core.http.AuthScheme
+import com.workflow.orchestrator.core.http.HttpClientFactory
+import com.workflow.orchestrator.core.http.RetryInterceptor
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -15,16 +19,33 @@ import java.util.concurrent.TimeUnit
  * IntelliJ Tasks integration for Jira Server.
  *
  * Extends [BaseRepositoryImpl] to appear in Tools > Tasks > Open Task.
- * Uses OkHttp directly (not the coroutine-based JiraApiClient)
- * because the Tasks framework invokes these methods on its own background threads.
+ * Uses OkHttp directly (not the coroutine-based JiraApiClient) because the Tasks
+ * framework invokes these methods on its own background threads, and there is no
+ * project reference available for JiraServiceImpl.getInstance(project).
+ *
+ * The HTTP client is built from [HttpClientFactory.sharedPool] so that it shares the
+ * plugin-wide connection pool. Auth is supplied by [AuthInterceptor] (reading
+ * [BaseRepositoryImpl.password] lazily so it always reflects the current configured
+ * token) and retries are handled by [RetryInterceptor] — identical to every other
+ * Jira client in the plugin.
  */
 class JiraTaskRepository : BaseRepositoryImpl {
 
     private val log = Logger.getInstance(JiraTaskRepository::class.java)
-    private val httpClient: OkHttpClient = com.workflow.orchestrator.core.http.HttpClientFactory.sharedPool.newBuilder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .build()
+
+    /**
+     * Per-instance client built from the shared pool.
+     * [AuthInterceptor] reads [password] lazily so it always picks up the currently
+     * configured PAT without requiring the client to be rebuilt on settings changes.
+     */
+    private val httpClient: OkHttpClient by lazy {
+        HttpClientFactory.sharedPool.newBuilder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .addInterceptor(AuthInterceptor({ password }, AuthScheme.BEARER))
+            .addInterceptor(RetryInterceptor())
+            .build()
+    }
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -43,7 +64,6 @@ class JiraTaskRepository : BaseRepositoryImpl {
         val path = "$baseUrl/rest/api/2/issue/$id"
         val request = Request.Builder()
             .url(path)
-            .header("Authorization", "Bearer $password")
             .get()
             .build()
 
@@ -76,7 +96,6 @@ class JiraTaskRepository : BaseRepositoryImpl {
 
         val request = Request.Builder()
             .url(requestUrl)
-            .header("Authorization", "Bearer $password")
             .get()
             .build()
 
@@ -103,7 +122,6 @@ class JiraTaskRepository : BaseRepositoryImpl {
                 val baseUrl = url?.trimEnd('/') ?: throw Exception("URL not configured")
                 val request = Request.Builder()
                     .url("$baseUrl/rest/api/2/myself")
-                    .header("Authorization", "Bearer $password")
                     .get()
                     .build()
 
