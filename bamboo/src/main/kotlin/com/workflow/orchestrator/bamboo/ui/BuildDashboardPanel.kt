@@ -518,9 +518,20 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             val context = eventBus.prContextMap[repoName]
 
             if (context != null) {
-                loadBuildsForContext(repoName, context.fromBranch, context.bambooPlanKey)
-                // Update PrBar info strip
-                prBar.showPrInfo(context.prId, context.fromBranch, context.toBranch)
+                // Re-emit PrSelected so Quality + SonarDataService also refresh for this
+                // repo. Our own onPrSelectedEvent subscriber does the Build-tab UI work,
+                // so there's no local loadBuildsForContext call here \u2014 the roundtrip
+                // through the event bus is the single source of truth.
+                scope.launch {
+                    eventBus.emit(WorkflowEvent.PrSelected(
+                        prId = context.prId,
+                        fromBranch = context.fromBranch,
+                        toBranch = context.toBranch,
+                        repoName = context.repoName,
+                        bambooPlanKey = context.bambooPlanKey,
+                        sonarProjectKey = context.sonarProjectKey,
+                    ))
+                }
             } else {
                 showHint("No PR selected for $repoName \u2014 select one in the PR tab")
                 prBar.showNoPr()
