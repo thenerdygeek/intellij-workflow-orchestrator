@@ -1883,28 +1883,10 @@ class PrDetailPanel(
         }
 
         private fun markdownToHtml(md: String): String {
-            val html = md
-                .replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-                .replace(Regex("^### (.+)$", RegexOption.MULTILINE), "<h4>$1</h4>")
-                .replace(Regex("^## (.+)$", RegexOption.MULTILINE), "<h3>$1</h3>")
-                .replace(Regex("^# (.+)$", RegexOption.MULTILINE), "<h2>$1</h2>")
-                .replace(Regex("\\*\\*(.+?)\\*\\*"), "<b>$1</b>")
-                .replace(Regex("\\*(.+?)\\*"), "<i>$1</i>")
-                .replace(Regex("`(.+?)`"), "<code>$1</code>")
-                .replace(Regex("((?:^- .+\n?)+)", RegexOption.MULTILINE)) { match ->
-                    "<ul>" + match.value.replace(Regex("^- (.+)$", RegexOption.MULTILINE), "<li>$1</li>") + "</ul>"
-                }
-                .replace(Regex("\\[(.+?)\\]\\((.+?)\\)")) { match ->
-                    val text = match.groupValues[1]
-                    val url = MarkdownToHtml.sanitizeHref(match.groupValues[2])
-                    "<a href='$url'>$text</a>"
-                }
-                .replace("\n\n", "<br><br>")
-
             val textColor = StatusColors.htmlColor(SECONDARY_TEXT)
-            return "<html><body style='font-family: sans-serif; color: $textColor;'>$html</body></html>"
+            return "<html><body style='font-family: sans-serif; color: $textColor;'>" +
+                MarkdownToHtml.convertFragment(md) +
+                "</body></html>"
         }
 
         private fun saveDescription() {
