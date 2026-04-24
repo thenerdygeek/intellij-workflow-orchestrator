@@ -5,33 +5,21 @@ import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBScrollPane
-import com.intellij.ui.components.JBTextArea
-import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrResponse
 import com.workflow.orchestrator.core.bitbucket.CreatePrLauncher
-import com.workflow.orchestrator.core.bitbucket.PrService
-import com.workflow.orchestrator.core.events.EventBus
-import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.settings.RepoContextResolver
-import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import com.workflow.orchestrator.core.util.HtmlEscape
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.awt.BorderLayout
 import java.awt.FlowLayout
-import java.awt.GridBagConstraints
-import java.awt.GridBagLayout
 import javax.swing.*
 
 /**
@@ -69,20 +57,10 @@ class PrBar(
     private var selectedPr: BitbucketPrResponse? = null
 
     fun getSelectedPr(): BitbucketPrResponse? = selectedPr
-    private var formExpanded = false
 
     // --- No PR state components ---
     private val noPrPanel = JPanel(BorderLayout())
     private val createButton = JButton("Create PR")
-
-    // --- Create form components ---
-    private val formPanel = JPanel(BorderLayout())
-    private val titleField = JBTextField()
-    private val descriptionArea = JBTextArea(4, 40).apply { lineWrap = true; wrapStyleWord = true }
-    private val submitButton = JButton("Create PR")
-    private val regenerateButton = JButton("Regenerate Description")
-    private val cancelButton = JButton("✕ Cancel").apply { isBorderPainted = false }
-    private val formResultLabel = JBLabel("")
 
     // --- Single PR state components ---
     private val singlePrPanel = JPanel(BorderLayout())
@@ -109,7 +87,6 @@ class PrBar(
 
     init {
         buildNoPrPanel()
-        buildFormPanel()
         buildSinglePrPanel()
         buildMultiPrPanel()
 
@@ -144,68 +121,6 @@ class PrBar(
         noPrPanel.add(right, BorderLayout.EAST)
 
         createButton.addActionListener { openCreatePrDialog() }
-    }
-
-    private fun buildFormPanel() {
-        formPanel.background = BLUE_BG
-        formPanel.border = JBUI.Borders.customLine(BLUE_BORDER, 0, 0, 1, 0)
-
-        val inner = JPanel(BorderLayout(0, JBUI.scale(6))).apply {
-            isOpaque = false
-            border = JBUI.Borders.empty(8, 12)
-        }
-
-        // Header
-        val header = JPanel(BorderLayout()).apply {
-            isOpaque = false
-            add(JBLabel("Create Pull Request", AllIcons.Vcs.Branch, JBLabel.LEFT).apply { font = font.deriveFont(font.style or java.awt.Font.BOLD) }, BorderLayout.WEST)
-            add(cancelButton, BorderLayout.EAST)
-        }
-
-        // Fields
-        val fields = JPanel(GridBagLayout()).apply { isOpaque = false }
-        val gbc = GridBagConstraints().apply { fill = GridBagConstraints.HORIZONTAL; insets = JBUI.insets(2, 0) }
-
-        gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0.0
-        fields.add(JBLabel("Target:"), gbc)
-        gbc.gridx = 1; gbc.weightx = 1.0
-        val targetLabel = JBLabel("develop")
-        scope.launch {
-            val repo = com.intellij.openapi.application.ReadAction.compute<git4idea.repo.GitRepository?, Throwable> { getGitRepo() }
-            val target = repo?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
-            invokeLater { targetLabel.text = target }
-        }
-        fields.add(targetLabel, gbc)
-
-        gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0.0
-        fields.add(JBLabel("Title:"), gbc)
-        gbc.gridx = 1; gbc.weightx = 1.0
-        fields.add(titleField, gbc)
-
-        // Buttons
-        val buttons = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
-            isOpaque = false
-            add(submitButton)
-            add(regenerateButton)
-            add(formResultLabel)
-        }
-
-        inner.add(header, BorderLayout.NORTH)
-        val center = JPanel(BorderLayout(0, JBUI.scale(4))).apply {
-            isOpaque = false
-            add(fields, BorderLayout.NORTH)
-            add(JBScrollPane(descriptionArea).apply { preferredSize = java.awt.Dimension(0, JBUI.scale(70)) }, BorderLayout.CENTER)
-            add(buttons, BorderLayout.SOUTH)
-        }
-        inner.add(center, BorderLayout.CENTER)
-        formPanel.add(inner, BorderLayout.CENTER)
-
-        cancelButton.addActionListener { showPanel(noPrPanel) }
-        // TODO (Phase 10): submitButton wires to onSubmitPr() which uses legacy single-value
-        // bitbucketProjectKey/repoSlug settings — wrong target for multi-repo projects.
-        // Replace with CreatePrLauncher delegation. See onSubmitPr() KDoc below.
-        submitButton.addActionListener { onSubmitPr() }
-        regenerateButton.addActionListener { onRegenerateDescription() }
     }
 
     private fun buildSinglePrPanel() {
@@ -396,11 +311,10 @@ class PrBar(
         when {
             prs.isEmpty() -> {
                 selectedPr = null
-                if (formExpanded) showPanel(formPanel) else showPanel(noPrPanel)
+                showPanel(noPrPanel)
             }
             prs.size == 1 -> {
                 selectedPr = prs[0]
-                formExpanded = false
                 updateSinglePrInfo(prs[0])
                 showPanel(singlePrPanel)
                 val branchName = prs[0].fromRef?.displayId ?: ""
@@ -408,7 +322,6 @@ class PrBar(
                 onPrSelected(branchName)
             }
             else -> {
-                formExpanded = false
                 prDropdown.removeAllItems()
                 prs.forEach { prDropdown.addItem(PrComboItem(it)) }
                 selectedPr = prs[0]
@@ -445,118 +358,6 @@ class PrBar(
     }
 
     private fun resolveCurrentBranch(): String? = getGitRepo()?.currentBranchName
-
-    /**
-     * Submit the inline PR form. Resolves projectKey/repoSlug from the editor-context
-     * git root (matching the pattern in [refreshPrs]), falling back to the scalar
-     * bitbucketProjectKey/bitbucketRepoSlug settings only for single-repo projects
-     * that haven't been migrated. Previously always read the scalar defaults — a latent
-     * multi-repo bug flagged in the source.
-     */
-    private fun onSubmitPr() {
-        val title = titleField.text.orEmpty().trim()
-        if (title.isBlank()) {
-            formResultLabel.text = "Title cannot be empty"
-            formResultLabel.foreground = JBColor.RED
-            return
-        }
-
-        // Prefer the Build tab's active RepoConfig (set by the repoSelector / PrSelected
-        // events), then RepoContextResolver for editor-context, then scalar settings.
-        val resolver = RepoContextResolver.getInstance(project)
-        val resolvedRepoConfig = repoConfigProvider()
-            ?: resolver.resolveCurrentEditorRepoOrPrimary()?.let { resolver.resolveFromGitRepo(it) }
-        val projectKey = resolvedRepoConfig?.bitbucketProjectKey?.takeIf { it.isNotBlank() }
-            ?: settings.state.bitbucketProjectKey.orEmpty()
-        val repoSlug = resolvedRepoConfig?.bitbucketRepoSlug?.takeIf { it.isNotBlank() }
-            ?: settings.state.bitbucketRepoSlug.orEmpty()
-        if (projectKey.isBlank() || repoSlug.isBlank()) {
-            formResultLabel.text = "Bitbucket project/repo not configured"
-            formResultLabel.foreground = JBColor.RED
-            return
-        }
-        log.info("[Build:PrBar] onSubmitPr: project='$projectKey' repo='$repoSlug' (via ${if (resolvedRepoConfig != null) "provider/resolver" else "scalar fallback"})")
-        submitButton.isEnabled = false
-        regenerateButton.isEnabled = false
-        formResultLabel.text = "Creating PR..."
-        formResultLabel.foreground = JBColor.foreground()
-
-        val prService = PrService.getInstance(project)
-        val reviewers = prService.buildDefaultReviewers()
-
-        scope.launch {
-            val fromBranch = com.intellij.openapi.application.ReadAction.compute<String?, Throwable> { resolveCurrentBranch() } ?: ""
-            val toRepo = com.intellij.openapi.application.ReadAction.compute<git4idea.repo.GitRepository?, Throwable> { getGitRepo() }
-            val toBranch = toRepo?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
-            val client = BitbucketBranchClient.fromConfiguredSettings()
-            if (client == null) {
-                invokeLater {
-                    submitButton.isEnabled = true
-                    regenerateButton.isEnabled = true
-                    formResultLabel.text = "Bitbucket not configured"
-                    formResultLabel.foreground = JBColor.RED
-                }
-                return@launch
-            }
-            val result = client.createPullRequest(
-                projectKey, repoSlug, title, descriptionArea.text.orEmpty(),
-                fromBranch, toBranch, reviewers
-            )
-            invokeLater {
-                submitButton.isEnabled = true
-                regenerateButton.isEnabled = true
-                when (result) {
-                    is ApiResult.Success -> {
-                        val prUrl = result.data.links.self.firstOrNull()?.href ?: ""
-                        log.info("[Build:PrBar] PR #${result.data.id} created: $prUrl")
-                        formExpanded = false
-
-                        val ticketId = settings.state.activeTicketId.orEmpty()
-                        scope.launch {
-                            project.getService(EventBus::class.java)
-                                .emit(WorkflowEvent.PullRequestCreated(prUrl, result.data.id, ticketId))
-                        }
-
-                        // Refresh to show the new PR
-                        refreshPrs()
-                    }
-                    is ApiResult.Error -> {
-                        formResultLabel.text = result.message
-                        formResultLabel.foreground = JBColor.RED
-                    }
-                }
-            }
-        }
-    }
-
-    private fun onRegenerateDescription() {
-        val ticketId = settings.state.activeTicketId.orEmpty()
-        val ticketSummary = settings.state.activeTicketSummary.orEmpty()
-        val prService = PrService.getInstance(project)
-
-        regenerateButton.isEnabled = false
-        formResultLabel.text = "Generating..."
-
-        scope.launch {
-            val branch = com.intellij.openapi.application.ReadAction.compute<_, Throwable> { resolveCurrentBranch() } ?: ""
-            val changedFiles = withContext(Dispatchers.IO) {
-                try {
-                    val changes = com.intellij.openapi.vcs.changes.ChangeListManager.getInstance(project).allChanges
-                    changes.mapNotNull { it.virtualFile }
-                } catch (_: Exception) { emptyList() }
-            }
-
-            val description = prService.buildEnrichedDescription(
-                ticketId.ifBlank { "" }, ticketSummary.ifBlank { branch }, branch, changedFiles
-            )
-
-            invokeLater {
-                descriptionArea.text = description
-                regenerateButton.isEnabled = true
-                formResultLabel.text = ""
-            }
-        }
-    }
 }
 
 /** ComboBox item wrapper to show PR info in the dropdown. */
