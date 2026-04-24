@@ -68,6 +68,23 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     // Auto-detected plan key (not saved to settings — it's branch-specific)
     @Volatile
     private var activePlanKey: String = ""
+
+    /**
+     * The Build tab's single source of truth for "which repo am I looking at".
+     *
+     * Every subsystem that previously re-resolved repo coordinates independently
+     * (PrBar.refreshPrs, getGitRepo, currentPlanKey, the Refresh toolbar action,
+     * the Quality-tab cascade) now reads from this one field. Pre-fix, each
+     * subsystem resolved via `RepoContextResolver` / scalar defaults and they
+     * silently disagreed — the dropdown showed my-common-lib but Refresh would
+     * snap PrBar to my-service and jobs to my-service's plan (documented in
+     * idea.log at 15:29:54 during v0.83.23 investigation).
+     *
+     * Mutated by: initial load, [onPrSelectedEvent], [repoSelector] listener.
+     * Read by: everything downstream.
+     */
+    @Volatile
+    private var activeRepoConfig: RepoConfig? = null
     private val monitorService = BuildMonitorService.getInstance(project)
 
     private val stageListPanel = StageListPanel()
@@ -153,30 +170,41 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     @Volatile
     private var latestBuildNumber: Int? = null
 
-    private val prBar = PrBar(project, scope) { branchName ->
-        log.info("[Build:Dashboard] onPrSelected called with branch='$branchName'")
-        if (branchName.isNotBlank()) {
-            // Auto-detect Bamboo plan + check divergence
-            scope.launch {
-                autoDetectAndMonitor(branchName)
+    private val prBar = PrBar(
+        project = project,
+        scope = scope,
+        repoConfigProvider = { activeRepoConfig },
+        onPrSelected = { branchName ->
+            log.info("[Build:Dashboard] onPrSelected called with branch='$branchName'")
+            if (branchName.isNotBlank()) {
+                // Auto-detect Bamboo plan + check divergence
+                scope.launch {
+                    autoDetectAndMonitor(branchName)
+                }
+            } else {
+                log.warn("[Build:Dashboard] Branch name is blank — fromRef may not be in API response")
             }
-        } else {
-            log.warn("[Build:Dashboard] Branch name is blank — fromRef may not be in API response")
         }
-    }
+    )
 
     private suspend fun autoDetectAndMonitor(branchName: String) {
         val selectedPr = prBar.getSelectedPr()
         val latestCommit = selectedPr?.fromRef?.latestCommit.orEmpty()
+
+        // Reset activePlanKey so the "configuredPlanKey" fallback below reads the
+        // active repo's bambooPlanKey, not a stale auto-detected key from the
+        // previous repo. Without this reset, manually switching repos (or selecting
+        // a PR whose commit has no build statuses) would keep using the previous
+        // plan even though the active repo has changed.
+        activePlanKey = ""
 
         // Check divergence
         if (latestCommit.isNotBlank()) {
             checkDivergence(latestCommit)
         }
 
-        // Try auto-detect Bamboo branch plan key from build statuses. Fallback order:
-        // selected repo's plan key → scalar default (handled by currentPlanKey; activePlanKey
-        // is reset before calling this method so it falls through to the selected-repo branch).
+        // Try auto-detect Bamboo branch plan key from build statuses. Fallback order
+        // (via currentPlanKey): activeRepoConfig.bambooPlanKey → scalar default.
         val configuredPlanKey = currentPlanKey()
 
         if (latestCommit.isNotBlank()) {
@@ -326,6 +354,21 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
     init {
         border = JBUI.Borders.empty()
+
+        // Initialize activeRepoConfig BEFORE any subsystem reads it. Prefer the
+        // editor-context repo (if it's in allRepos), else the primary. Single-repo
+        // projects use allRepos.first() or settings.getPrimaryRepo() as a fallback.
+        activeRepoConfig = run {
+            val resolver = RepoContextResolver.getInstance(project)
+            val fromEditor = try { resolver.resolveFromCurrentEditor() } catch (_: Exception) { null }
+            val candidate = fromEditor ?: resolver.getPrimary()
+            when {
+                candidate != null && allRepos.any { it.displayLabel == candidate.displayLabel } -> candidate
+                allRepos.isNotEmpty() -> allRepos.firstOrNull { it.isPrimary } ?: allRepos.first()
+                else -> settings.getPrimaryRepo()
+            }
+        }
+        log.info("[Build:Dashboard] Initial activeRepoConfig='${activeRepoConfig?.displayLabel}'")
 
         // Toolbar
         val toolbar = createToolbar()
@@ -513,6 +556,15 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             val selectedRepo = allRepos[selectedIndex]
             val repoName = selectedRepo.displayLabel
 
+            // Mutate the single source of truth FIRST — PrBar.refreshPrs, getGitRepo,
+            // currentPlanKey all read from activeRepoConfig, so we want them to see
+            // the new repo immediately. Also reset activePlanKey so currentPlanKey()
+            // falls through to the new repo's bambooPlanKey (otherwise the previously
+            // auto-detected plan would still win).
+            activeRepoConfig = selectedRepo
+            activePlanKey = ""
+            log.info("[Build:Dashboard] repoSelector changed -> activeRepoConfig='$repoName' (reset activePlanKey)")
+
             // Look up PrContext for this repo
             val eventBus = project.getService(EventBus::class.java)
             val context = eventBus.prContextMap[repoName]
@@ -533,8 +585,13 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                     ))
                 }
             } else {
+                // No PR cached for this repo yet \u2014 ask PrBar to look for PRs on the
+                // current branch of the NEW repo (refreshPrs now reads activeRepoConfig,
+                // so it fetches for the selected module, not the primary/editor repo).
+                // If a PR is found, PrBar's single-PR path will fire onPrSelected and
+                // auto-detect the plan. If nothing is found, the hint stays visible.
                 showHint("No PR selected for $repoName \u2014 select one in the PR tab")
-                prBar.showNoPr()
+                prBar.refreshPrs()
             }
         }
 
@@ -574,16 +631,30 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     }
 
     private fun onPrSelectedEvent(event: WorkflowEvent.PrSelected) {
-        if (repoSelector == null || allRepos.isEmpty()) return
+        // Accept single-repo projects too: if there's no selector, we still need to
+        // update activeRepoConfig + load builds. Only bail when the event targets a
+        // repo we don't know about.
+        val matchedRepo = allRepos.firstOrNull { it.displayLabel == event.repoName }
+        if (matchedRepo == null && allRepos.isNotEmpty()) {
+            log.warn("[Build:Dashboard] PrSelected for unknown repoName='${event.repoName}' — ignoring")
+            return
+        }
 
-        // Find the repo in the selector matching the event's repoName
-        val repoIndex = allRepos.indexOfFirst { it.displayLabel == event.repoName }
-        if (repoIndex < 0) return
+        // Mutate the single source of truth FIRST so any downstream action (including
+        // listeners reacting to the combo change) reads the new active repo.
+        activeRepoConfig = matchedRepo ?: activeRepoConfig
+        log.info("[Build:Dashboard] onPrSelectedEvent: activeRepoConfig='${matchedRepo?.displayLabel}' planKey='${event.bambooPlanKey}'")
 
-        // Switch repo selector (suppress listener to avoid double-fire)
-        suppressRepoSelectorListener = true
-        repoSelector.selectedIndex = repoIndex
-        suppressRepoSelectorListener = false
+        // Switch repo selector to match (suppress listener — we've already mutated the
+        // state and we're about to load builds synchronously below).
+        if (repoSelector != null && matchedRepo != null) {
+            val repoIndex = allRepos.indexOf(matchedRepo)
+            if (repoIndex >= 0) {
+                suppressRepoSelectorListener = true
+                repoSelector.selectedIndex = repoIndex
+                suppressRepoSelectorListener = false
+            }
+        }
 
         // Update PrBar and load builds for this PR
         prBar.showPrInfo(event.prId, event.fromBranch, event.toBranch)
@@ -664,29 +735,38 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         }
     }
 
-    private fun getGitRepo(): git4idea.repo.GitRepository? =
-        RepoContextResolver.getInstance(project).resolvePrimaryGitRepo()
+    /**
+     * Resolve the Git repository backing the Build tab's active repo. Prefers
+     * [activeRepoConfig]'s `localVcsRootPath` so branch lookups and divergence
+     * checks target the repo shown in the dropdown — NOT the editor's repo.
+     * Falls back to the primary when nothing's selected yet (startup).
+     */
+    private fun getGitRepo(): git4idea.repo.GitRepository? {
+        val activeRoot = activeRepoConfig?.localVcsRootPath
+        if (activeRoot != null) {
+            val repos = GitRepositoryManager.getInstance(project).repositories
+            repos.find { it.root.path == activeRoot }?.let { return it }
+        }
+        return RepoContextResolver.getInstance(project).resolvePrimaryGitRepo()
+    }
 
     private fun getCurrentBranch(): String? = getGitRepo()?.currentBranchName
 
     /**
-     * Resolve the plan key to use for an action, preferring in order:
-     *  1. [activePlanKey] — auto-detected or last-picked from PR context (most specific)
-     *  2. the repo currently picked in [repoSelector] — honors the user's dropdown choice
-     *     on multi-repo projects so actions match the displayed repo's plan
+     * Resolve the plan key for an action, preferring in order:
+     *  1. [activePlanKey] — auto-detected from build-statuses or last-picked from PR context
+     *  2. [activeRepoConfig]'s `bambooPlanKey` — the single source of truth for the
+     *     Build tab's active repo (set by initial load, [onPrSelectedEvent], and the
+     *     [repoSelector] listener)
      *  3. scalar `settings.state.bambooPlanKey` — last-resort default for single-repo setups
      *
      * Every action handler (Refresh, Rerun, Trigger Build, Trigger Manual Stage, history)
-     * must route through this helper — reading the scalar directly was the root cause of
-     * actions hitting the wrong module's plan when the user had a non-default repo selected.
+     * must route through this helper.
      */
     private fun currentPlanKey(): String {
         if (activePlanKey.isNotBlank()) return activePlanKey
-        val selected = if (repoSelector != null && allRepos.isNotEmpty()) {
-            val idx = repoSelector.selectedIndex.takeIf { it >= 0 } ?: 0
-            allRepos.getOrNull(idx)?.bambooPlanKey
-        } else null
-        return selected?.takeIf { it.isNotBlank() } ?: settings.state.bambooPlanKey.orEmpty()
+        val fromActive = activeRepoConfig?.bambooPlanKey
+        return fromActive?.takeIf { it.isNotBlank() } ?: settings.state.bambooPlanKey.orEmpty()
     }
 
     /** Load build history for the current plan key */
