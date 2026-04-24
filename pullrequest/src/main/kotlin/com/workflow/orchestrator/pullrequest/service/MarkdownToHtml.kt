@@ -8,10 +8,26 @@ import com.workflow.orchestrator.core.util.HtmlEscape
  */
 object MarkdownToHtml {
 
-    fun convert(markdown: String): String {
+    private const val DEFAULT_BODY_STYLE =
+        "font-family: sans-serif; font-size: 12px; line-height: 1.6; padding: 8px;"
+
+    /**
+     * Full-document variant: wraps the converted body in `<html><body>…</body></html>`.
+     */
+    fun convert(markdown: String): String =
+        "<html><body style='$DEFAULT_BODY_STYLE'>${renderBody(markdown)}</body></html>"
+
+    /**
+     * Fragment variant: same block/inline conversion as [convert], but returns only the
+     * body contents (no `<html>/<body>` wrapper). For callers that provide their own
+     * surrounding document — e.g. PR description panels that wrap the output with their
+     * own body style via Swing HTML rendering.
+     */
+    fun convertFragment(markdown: String): String = renderBody(markdown)
+
+    private fun renderBody(markdown: String): String {
         val lines = markdown.lines()
         val html = StringBuilder()
-        html.append("<html><body style='font-family: sans-serif; font-size: 12px; line-height: 1.6; padding: 8px;'>")
 
         var inCodeBlock = false
         var inList = false
@@ -75,15 +91,16 @@ object MarkdownToHtml {
 
         if (inList) html.append("</ul>")
         if (inCodeBlock) html.append("</code></pre>")
-        html.append("</body></html>")
 
         return html.toString()
     }
 
     private fun inlineFormat(text: String): String {
         var result = HtmlEscape.escapeHtml(text)
-        // Bold
+        // Bold (run before italic so `**x**` is consumed first and leaves no residual `*`)
         result = result.replace(Regex("\\*\\*(.+?)\\*\\*"), "<b>$1</b>")
+        // Italic (single-asterisk pairs; bold has already been replaced above)
+        result = result.replace(Regex("\\*(.+?)\\*"), "<i>$1</i>")
         // Inline code
         result = result.replace(Regex("`([^`]+)`"), "<code style='background:#f0f0f0; padding:1px 4px; border-radius:2px;'>$1</code>")
         // Links
