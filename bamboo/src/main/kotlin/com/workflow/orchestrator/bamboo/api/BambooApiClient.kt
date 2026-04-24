@@ -1,11 +1,10 @@
 package com.workflow.orchestrator.bamboo.api
 
 import com.workflow.orchestrator.bamboo.api.dto.*
-import com.workflow.orchestrator.core.http.AuthInterceptor
-import com.workflow.orchestrator.core.http.AuthScheme
-import com.workflow.orchestrator.core.http.RetryInterceptor
+import com.workflow.orchestrator.core.http.HttpClientFactory
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
+import com.workflow.orchestrator.core.model.ServiceType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -19,7 +18,6 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import com.intellij.openapi.diagnostic.Logger
 import java.io.IOException
 import java.net.URLEncoder
-import java.util.concurrent.TimeUnit
 
 class BambooApiClient(
     private val baseUrl: String,
@@ -31,12 +29,11 @@ class BambooApiClient(
     private val json = Json { ignoreUnknownKeys = true }
 
     private val httpClient: OkHttpClient by lazy {
-        com.workflow.orchestrator.core.http.HttpClientFactory.sharedPool.newBuilder()
-            .connectTimeout(connectTimeoutSeconds, TimeUnit.SECONDS)
-            .readTimeout(readTimeoutSeconds, TimeUnit.SECONDS)
-            .addInterceptor(AuthInterceptor(tokenProvider, AuthScheme.BEARER))
-            .addInterceptor(RetryInterceptor())
-            .build()
+        HttpClientFactory(
+            tokenProvider = { _ -> tokenProvider() },
+            connectTimeoutSeconds = connectTimeoutSeconds,
+            readTimeoutSeconds = readTimeoutSeconds
+        ).clientFor(ServiceType.BAMBOO)
     }
 
     suspend fun getPlans(): ApiResult<List<BambooPlanDto>> {
@@ -301,9 +298,11 @@ class BambooApiClient(
     suspend fun downloadArtifact(artifactUrl: String, targetFile: java.io.File): Boolean =
         withContext(Dispatchers.IO) {
             try {
-                // Only use authenticated client for same-origin URLs to prevent token leakage
+                // Only use authenticated client for same-origin URLs to prevent token leakage.
+                // Cross-origin artifact URLs intentionally use the raw shared pool (no auth headers,
+                // no caching interceptors) — this is a security boundary, not an oversight.
                 val isInternal = artifactUrl.startsWith(baseUrl)
-                val client = if (isInternal) httpClient else com.workflow.orchestrator.core.http.HttpClientFactory.sharedPool
+                val client = if (isInternal) httpClient else HttpClientFactory.sharedPool
                 val request = Request.Builder().url(artifactUrl).get().build()
                 val response = client.newCall(request).execute()
                 response.use {
