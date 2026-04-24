@@ -6,14 +6,11 @@ import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.workflow.orchestrator.jira.api.dto.JiraIssueSearchResult
 import com.workflow.orchestrator.jira.api.escapeJql
 import com.intellij.openapi.diagnostic.Logger
-import com.workflow.orchestrator.core.http.AuthInterceptor
-import com.workflow.orchestrator.core.http.AuthScheme
 import com.workflow.orchestrator.core.http.HttpClientFactory
-import com.workflow.orchestrator.core.http.RetryInterceptor
+import com.workflow.orchestrator.core.model.ServiceType
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.util.concurrent.TimeUnit
 
 /**
  * IntelliJ Tasks integration for Jira Server.
@@ -23,28 +20,18 @@ import java.util.concurrent.TimeUnit
  * framework invokes these methods on its own background threads, and there is no
  * project reference available for JiraServiceImpl.getInstance(project).
  *
- * The HTTP client is built from [HttpClientFactory.sharedPool] so that it shares the
- * plugin-wide connection pool. Auth is supplied by [AuthInterceptor] (reading
- * [BaseRepositoryImpl.password] lazily so it always reflects the current configured
- * token) and retries are handled by [RetryInterceptor] — identical to every other
- * Jira client in the plugin.
+ * The HTTP client is built via [HttpClientFactory.clientFor] so that it shares the
+ * plugin-wide connection pool and the full interceptor stack (auth, retry, metrics,
+ * sensitive-endpoint protection). Auth reads [BaseRepositoryImpl.password] lazily
+ * so it always reflects the current configured token.
  */
 class JiraTaskRepository : BaseRepositoryImpl {
 
     private val log = Logger.getInstance(JiraTaskRepository::class.java)
 
-    /**
-     * Per-instance client built from the shared pool.
-     * [AuthInterceptor] reads [password] lazily so it always picks up the currently
-     * configured PAT without requiring the client to be rebuilt on settings changes.
-     */
     private val httpClient: OkHttpClient by lazy {
-        HttpClientFactory.sharedPool.newBuilder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .addInterceptor(AuthInterceptor({ password }, AuthScheme.BEARER))
-            .addInterceptor(RetryInterceptor())
-            .build()
+        HttpClientFactory(tokenProvider = { _ -> password })
+            .clientFor(ServiceType.JIRA)
     }
 
     private val json = Json { ignoreUnknownKeys = true }

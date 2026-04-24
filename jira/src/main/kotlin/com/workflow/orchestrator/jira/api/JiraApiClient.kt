@@ -1,10 +1,9 @@
 package com.workflow.orchestrator.jira.api
 
-import com.workflow.orchestrator.core.http.AuthInterceptor
-import com.workflow.orchestrator.core.http.AuthScheme
-import com.workflow.orchestrator.core.http.RetryInterceptor
+import com.workflow.orchestrator.core.http.HttpClientFactory
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
+import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.model.jira.TransitionInput
 import com.workflow.orchestrator.core.model.jira.TransitionMeta
 import com.workflow.orchestrator.jira.api.dto.*
@@ -28,7 +27,6 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import com.intellij.openapi.diagnostic.Logger
 import java.io.IOException
 import java.net.URLEncoder
-import java.util.concurrent.TimeUnit
 
 class JiraApiClient(
     private val baseUrl: String,
@@ -38,12 +36,8 @@ class JiraApiClient(
     private val json = Json { ignoreUnknownKeys = true }
 
     private val httpClient: OkHttpClient by lazy {
-        com.workflow.orchestrator.core.http.HttpClientFactory.sharedPool.newBuilder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .addInterceptor(AuthInterceptor(tokenProvider, AuthScheme.BEARER))
-            .addInterceptor(RetryInterceptor())
-            .build()
+        HttpClientFactory(tokenProvider = { _ -> tokenProvider() })
+            .clientFor(ServiceType.JIRA)
     }
 
     suspend fun getBoards(boardType: String = "", nameFilter: String = ""): ApiResult<List<JiraBoard>> {
