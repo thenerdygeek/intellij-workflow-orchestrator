@@ -89,33 +89,43 @@ class BranchingService(
     /**
      * Uses an existing branch: fetch from remote, checkout locally,
      * and transition the Jira ticket via the orchestrator.
+     *
+     * [localVcsRootPath], when non-null, pins the local checkout to that Git root —
+     * used by the Start Work dialog to honor the user's repo dropdown selection
+     * regardless of which repo the current editor is in. Falling back to editor
+     * context was the root cause of the false "branch already exists" notification
+     * when the selected repo and editor repo disagreed.
      */
     suspend fun useExistingBranch(
         issue: JiraIssue,
-        branchName: String
+        branchName: String,
+        localVcsRootPath: String? = null
     ): ApiResult<String> {
-        log.info("[Jira:Branch] Using existing branch '$branchName' for ${issue.key}")
+        log.info("[Jira:Branch] Using existing branch '$branchName' for ${issue.key} (pinned root: ${localVcsRootPath ?: "<editor-context>"})")
 
         try {
-            val resolver = RepoContextResolver.getInstance(project)
-            // Get editor file on EDT, resolve repo config off-EDT
-            val editorFile = withContext(Dispatchers.EDT) {
-                com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project).selectedEditor?.file
-            }
-            val repoConfig = com.intellij.openapi.application.ReadAction.compute<com.workflow.orchestrator.core.settings.RepoConfig?, Throwable> {
-                if (editorFile != null) resolver.resolveFromFile(editorFile) else resolver.getPrimary()
-            }
             val repositories = com.intellij.openapi.application.ReadAction.compute<List<git4idea.repo.GitRepository>, Throwable> {
                 GitRepositoryManager.getInstance(project).repositories
             }
             if (repositories.isEmpty()) {
                 return ApiResult.Error(ErrorType.NOT_FOUND, "No Git repository found in this project.")
             }
-            val repo = if (repoConfig?.localVcsRootPath != null) {
-                repositories.find { it.root.path == repoConfig.localVcsRootPath }
-            } else {
-                repositories.firstOrNull()
-            } ?: repositories.firstOrNull()!!
+            // Prefer the explicitly-pinned local VCS root (from Start Work dropdown).
+            // Only fall back to editor-context resolution when no pin was provided.
+            val repo: git4idea.repo.GitRepository = repositories.find { it.root.path == localVcsRootPath }
+                ?: run {
+                    val resolver = RepoContextResolver.getInstance(project)
+                    val editorFile = withContext(Dispatchers.EDT) {
+                        com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project).selectedEditor?.file
+                    }
+                    val repoConfig = com.intellij.openapi.application.ReadAction.compute<com.workflow.orchestrator.core.settings.RepoConfig?, Throwable> {
+                        if (editorFile != null) resolver.resolveFromFile(editorFile) else resolver.getPrimary()
+                    }
+                    if (repoConfig?.localVcsRootPath != null) {
+                        repositories.find { it.root.path == repoConfig.localVcsRootPath }
+                    } else null
+                }
+                ?: repositories.first()
             val git = Git.getInstance()
 
             // Fetch to update remote tracking refs (safe, doesn't touch local branches)
@@ -168,6 +178,10 @@ class BranchingService(
     /**
      * Creates a branch on Bitbucket, fetches it locally, checks it out,
      * and transitions the Jira ticket via the orchestrator.
+     *
+     * [localVcsRootPath], when non-null, pins the local checkout to that Git root —
+     * used by the Start Work dialog to honor the user's repo dropdown selection
+     * regardless of which repo the current editor is in.
      */
     suspend fun startWork(
         issue: JiraIssue,
@@ -175,9 +189,10 @@ class BranchingService(
         sourceBranch: String,
         branchClient: BitbucketBranchClient,
         projectKey: String,
-        repoSlug: String
+        repoSlug: String,
+        localVcsRootPath: String? = null
     ): ApiResult<String> {
-        log.info("[Jira:Branch] Creating remote branch '$branchName' from '$sourceBranch' for ${issue.key}")
+        log.info("[Jira:Branch] Creating remote branch '$branchName' from '$sourceBranch' for ${issue.key} in $projectKey/$repoSlug (pinned root: ${localVcsRootPath ?: "<editor-context>"})")
 
         // 1. Create branch on Bitbucket
         val createResult = branchClient.createBranch(projectKey, repoSlug, branchName, sourceBranch)
@@ -193,25 +208,29 @@ class BranchingService(
 
         // 2. Fetch and checkout locally
         try {
-            // Fetch from remote to get the new branch
-            val resolver = RepoContextResolver.getInstance(project)
-            val editorFile2 = withContext(Dispatchers.EDT) {
-                com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project).selectedEditor?.file
-            }
-            val repoConfig = com.intellij.openapi.application.ReadAction.compute<com.workflow.orchestrator.core.settings.RepoConfig?, Throwable> {
-                if (editorFile2 != null) resolver.resolveFromFile(editorFile2) else resolver.getPrimary()
-            }
             val repositories = com.intellij.openapi.application.ReadAction.compute<List<git4idea.repo.GitRepository>, Throwable> {
                 GitRepositoryManager.getInstance(project).repositories
             }
             if (repositories.isEmpty()) {
                 return ApiResult.Error(ErrorType.NOT_FOUND, "No Git repository found in this project.")
             }
-            val repo = if (repoConfig?.localVcsRootPath != null) {
-                repositories.find { it.root.path == repoConfig.localVcsRootPath }
-            } else {
-                repositories.firstOrNull()
-            } ?: repositories.firstOrNull()!!
+            // Prefer the explicitly-pinned local VCS root (from Start Work dropdown).
+            // Falling back to editor context was the root cause of local checkout landing
+            // in the wrong repo when the user picked a non-default module in the dialog.
+            val repo: git4idea.repo.GitRepository = repositories.find { it.root.path == localVcsRootPath }
+                ?: run {
+                    val resolver = RepoContextResolver.getInstance(project)
+                    val editorFile2 = withContext(Dispatchers.EDT) {
+                        com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project).selectedEditor?.file
+                    }
+                    val repoConfig = com.intellij.openapi.application.ReadAction.compute<com.workflow.orchestrator.core.settings.RepoConfig?, Throwable> {
+                        if (editorFile2 != null) resolver.resolveFromFile(editorFile2) else resolver.getPrimary()
+                    }
+                    if (repoConfig?.localVcsRootPath != null) {
+                        repositories.find { it.root.path == repoConfig.localVcsRootPath }
+                    } else null
+                }
+                ?: repositories.first()
             val git = Git.getInstance()
             val fetchResult = git.fetch(repo, repo.remotes.first(), emptyList())
             if (!fetchResult.success()) {

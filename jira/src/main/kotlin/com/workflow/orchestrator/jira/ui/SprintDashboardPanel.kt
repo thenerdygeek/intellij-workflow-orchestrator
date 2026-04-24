@@ -833,20 +833,63 @@ class SprintDashboardPanel(
                 withContext(Dispatchers.EDT) {
                     setLoading(false, "")
 
+                    // Dialog reference holder — the onRepoChanged callback needs to call back
+                    // into the dialog, but the dialog instance is created below. Use a holder
+                    // so the lambda captures by reference.
+                    val dialogRef = arrayOfNulls<StartWorkDialog>(1)
+
                     // Show dialog on EDT
                     val dialog = StartWorkDialog(
                         project = project,
                         ticketKey = selectedIssue.key,
                         defaultBranchName = staticBranchName,
-                        remoteBranches = branches,
-                        defaultSourceBranch = defaultSource,
+                        initialRemoteBranches = branches,
+                        initialDefaultSourceBranch = defaultSource,
                         repoDisplay = repoDisplay,
                         needsAiGeneration = needsAi,
                         fallbackBranchName = fallbackBranchName,
-                        existingBranches = linkedBranches,
+                        initialExistingBranches = linkedBranches,
                         repos = allRepos,
-                        initialRepoIndex = detectedIndex
+                        initialRepoIndex = detectedIndex,
+                        onRepoChanged = { newIdx ->
+                            val d = dialogRef[0] ?: return@StartWorkDialog
+                            val newRepo = allRepos.getOrNull(newIdx) ?: return@StartWorkDialog
+                            val newProjectKey = newRepo.bitbucketProjectKey.orEmpty()
+                            val newRepoSlug = newRepo.bitbucketRepoSlug.orEmpty()
+                            if (newProjectKey.isBlank() || newRepoSlug.isBlank()) return@StartWorkDialog
+                            // Bind the dialog's modality so the EDT hand-off below runs while
+                            // the modal is open (same reason documented on the AI gen branch).
+                            val modality = ModalityState.stateForComponent(d.contentPane)
+                            val edtCtx = Dispatchers.EDT + modality.asContextElement()
+                            d.setBranchesLoading(true)
+                            scope.launch {
+                                val fetched = branchingService.fetchRemoteBranches(branchClient, newProjectKey, newRepoSlug)
+                                val newBranches = when (fetched) {
+                                    is ApiResult.Success -> fetched.data
+                                    is ApiResult.Error -> {
+                                        log.warn("[Jira:StartWork] Refresh failed for ${newRepo.displayLabel}: ${fetched.message}")
+                                        emptyList()
+                                    }
+                                }
+                                val newLinked = if (newBranches.isNotEmpty()) {
+                                    branchingService.fetchLinkedBranches(selectedIssue, newBranches)
+                                } else emptyList()
+                                // Resolve the new repo's default source branch off-EDT — needs
+                                // the matching GitRepository for DefaultBranchResolver.
+                                val newGitRepo = com.intellij.openapi.application.ReadAction.compute<git4idea.repo.GitRepository?, Throwable> {
+                                    GitRepositoryManager.getInstance(project).repositories
+                                        .find { it.root.path == newRepo.localVcsRootPath }
+                                }
+                                val newDefaultSource = newGitRepo
+                                    ?.let { DefaultBranchResolver.getInstance(project).resolve(it) }
+                                    ?: defaultSource
+                                withContext(edtCtx) {
+                                    d.applyNewRepoData(newBranches, newLinked, newDefaultSource)
+                                }
+                            }
+                        }
                     )
+                    dialogRef[0] = dialog
 
                     // If AI is needed, launch generation in background AFTER dialog is shown.
                     //
@@ -923,7 +966,8 @@ class SprintDashboardPanel(
                         scope.launch {
                             val result = branchingService.useExistingBranch(
                                 issue = selectedIssue,
-                                branchName = dialogResult.branchName
+                                branchName = dialogResult.branchName,
+                                localVcsRootPath = selectedRepo.localVcsRootPath
                             )
                             withContext(Dispatchers.EDT) {
                                 when (result) {
@@ -950,7 +994,8 @@ class SprintDashboardPanel(
                                 sourceBranch = dialogResult.sourceBranch,
                                 branchClient = finalBranchClient,
                                 projectKey = finalProjectKey,
-                                repoSlug = finalRepoSlug
+                                repoSlug = finalRepoSlug,
+                                localVcsRootPath = selectedRepo.localVcsRootPath
                             )
                             withContext(Dispatchers.EDT) {
                                 when (result) {

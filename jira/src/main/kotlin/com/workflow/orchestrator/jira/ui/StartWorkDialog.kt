@@ -16,6 +16,7 @@ import com.workflow.orchestrator.core.ui.StatusColors
 import java.awt.BorderLayout
 import java.awt.FlowLayout
 import javax.swing.*
+import javax.swing.DefaultComboBoxModel
 
 data class StartWorkResult(
     val sourceBranch: String,
@@ -37,31 +38,49 @@ class StartWorkDialog(
     private val project: Project,
     private val ticketKey: String,
     private val defaultBranchName: String,
-    private val remoteBranches: List<BitbucketBranch>,
-    private val defaultSourceBranch: String,
+    initialRemoteBranches: List<BitbucketBranch>,
+    initialDefaultSourceBranch: String,
     private val repoDisplay: String,
     private val needsAiGeneration: Boolean,
     private val fallbackBranchName: String,
-    private val existingBranches: List<String> = emptyList(),
+    initialExistingBranches: List<String> = emptyList(),
     private val repos: List<RepoConfig> = emptyList(),
-    private val initialRepoIndex: Int = 0
+    private val initialRepoIndex: Int = 0,
+    /**
+     * Fired when the user picks a different repo from the dropdown. Caller is expected to
+     * refetch remote branches + linked branches for the new repo on a background thread,
+     * then call [applyNewRepoData] on the EDT. When null (single-repo projects or tests),
+     * the combo is still shown but no refetch is triggered.
+     */
+    private val onRepoChanged: ((Int) -> Unit)? = null
 ) : DialogWrapper(project, true) {
 
     private val log = Logger.getInstance(StartWorkDialog::class.java)
-    private val isDualMode = existingBranches.isNotEmpty()
+    // Always build the dual-mode panel when we might show existing branches for ANY repo,
+    // so switching repos can toggle the "Use existing" section without re-creating the dialog.
+    private val isDualMode = initialExistingBranches.isNotEmpty() || (repos.size > 1 && onRepoChanged != null)
     private val showRepoSelector = repos.size > 1
     private var selectedRepoIdx = initialRepoIndex
+
+    // Mutable state \u2014 updated by [applyNewRepoData] when the user switches repo.
+    private var remoteBranches: List<BitbucketBranch> = initialRemoteBranches
+    private var existingBranches: List<String> = initialExistingBranches
+    private var defaultSourceBranch: String = initialDefaultSourceBranch
+    private var ignoreComboEvents = false
 
     // Dual-mode components
     private var useExistingRadio: JRadioButton? = null
     private var createNewRadio: JRadioButton? = null
     private var existingBranchCombo: JComboBox<String>? = null
     private var existingBranchLabel: JBLabel? = null
+    private var noExistingBranchesLabel: JBLabel? = null
     private var createPanel: JPanel? = null
+    private var repoLoadingLabel: JBLabel? = null
 
     // Create-mode components
-    private var selectedSourceBranch: String = defaultSourceBranch
+    private var selectedSourceBranch: String = initialDefaultSourceBranch
     private val branchNameField = JBTextField(40)
+    private var sourceBranchCombo: JComboBox<String>? = null
     private val loadingPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0))
     private val loadingLabel = JBLabel("AI generating branch name\u2026")
     private val loadingIcon = JBLabel(AnimatedIcon.Default())
@@ -88,9 +107,17 @@ class StartWorkDialog(
             }
         } else {
             log.info("[Jira:StartWork] Dialog opened in dual-mode with ${existingBranches.size} existing branches for $ticketKey")
-            // Default: use existing selected, create fields disabled
             branchNameField.text = defaultBranchName
-            updateCreatePanelEnabled(false)
+            if (existingBranches.isEmpty()) {
+                // Dual-mode layout is built (so repo switching can enable it later) but no
+                // branches exist yet — force create-new mode until [applyNewRepoData] fills it.
+                createNewRadio?.isSelected = true
+                useExistingRadio?.isEnabled = false
+                updateCreatePanelEnabled(true)
+                if (needsAiGeneration) setAiLoading(true)
+            } else {
+                updateCreatePanelEnabled(false)
+            }
         }
     }
 
@@ -125,17 +152,31 @@ class StartWorkDialog(
             val repoCombo = ComboBox(repos.map { it.displayLabel }.toTypedArray()).apply {
                 selectedIndex = initialRepoIndex.coerceIn(0, repos.size - 1)
                 addActionListener {
-                    selectedRepoIdx = selectedIndex
+                    if (ignoreComboEvents) return@addActionListener
+                    val newIdx = selectedIndex
+                    if (newIdx == selectedRepoIdx) return@addActionListener
+                    selectedRepoIdx = newIdx
+                    log.info("[Jira:StartWork] Repo changed to index $newIdx (${repos.getOrNull(newIdx)?.displayLabel}) — refetching branches")
+                    onRepoChanged?.invoke(newIdx)
                 }
             }
             repoRow.add(repoCombo)
-            val hint = JBLabel("Branches listed are from the initially-detected repo").apply {
+            repoLoadingLabel = JBLabel("").apply {
                 foreground = StatusColors.SECONDARY_TEXT
                 font = font.deriveFont(font.size2D - 1f)
+                icon = null
+                isVisible = false
             }
+            repoRow.add(repoLoadingLabel)
             mainPanel.add(repoRow)
-            mainPanel.add(Box.createVerticalStrut(JBUI.scale(2)))
-            mainPanel.add(hint)
+            if (onRepoChanged == null) {
+                val hint = JBLabel("Branches listed are from the initially-detected repo").apply {
+                    foreground = StatusColors.SECONDARY_TEXT
+                    font = font.deriveFont(font.size2D - 1f)
+                }
+                mainPanel.add(Box.createVerticalStrut(JBUI.scale(2)))
+                mainPanel.add(hint)
+            }
         } else {
             repoRow.add(JBLabel(repoDisplay).apply {
                 foreground = StatusColors.LINK
@@ -164,19 +205,22 @@ class StartWorkDialog(
         mainPanel.add(useExistingRadio)
         mainPanel.add(Box.createVerticalStrut(JBUI.scale(4)))
 
-        // Existing branch selector (indented)
+        // Existing branch selector (indented). Always build both the combo and the
+        // "no linked branches" label — [applyNewRepoData] swaps visibility when the
+        // user switches repo.
         val existingRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
             border = JBUI.Borders.emptyLeft(JBUI.scale(24))
         }
-        if (existingBranches.size == 1) {
-            existingBranchLabel = JBLabel(existingBranches.first()).apply {
-                foreground = StatusColors.LINK
-            }
-            existingRow.add(existingBranchLabel)
-        } else {
-            existingBranchCombo = JComboBox(existingBranches.toTypedArray())
-            existingRow.add(existingBranchCombo)
+        existingBranchCombo = JComboBox(existingBranches.toTypedArray()).apply {
+            isVisible = existingBranches.isNotEmpty()
         }
+        existingRow.add(existingBranchCombo)
+        noExistingBranchesLabel = JBLabel("No linked branches for this repo").apply {
+            foreground = StatusColors.SECONDARY_TEXT
+            font = font.deriveFont(font.size2D - 1f)
+            isVisible = existingBranches.isEmpty()
+        }
+        existingRow.add(noExistingBranchesLabel)
         mainPanel.add(existingRow)
         mainPanel.add(Box.createVerticalStrut(JBUI.scale(12)))
 
@@ -222,13 +266,14 @@ class StartWorkDialog(
         val sourceRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0))
         sourceRow.add(JBLabel("Source branch:"))
         val branchNames = remoteBranches.map { it.displayId }
-        val comboBox = JComboBox(branchNames.toTypedArray()).apply {
+        sourceBranchCombo = JComboBox(branchNames.toTypedArray()).apply {
             selectedItem = defaultSourceBranch
             addActionListener {
+                if (ignoreComboEvents) return@addActionListener
                 selectedSourceBranch = selectedItem as? String ?: defaultSourceBranch
             }
         }
-        sourceRow.add(comboBox)
+        sourceRow.add(sourceBranchCombo)
         panel.add(sourceRow)
         panel.add(Box.createVerticalStrut(JBUI.scale(4)))
 
@@ -288,6 +333,9 @@ class StartWorkDialog(
 
     override fun doValidate(): ValidationInfo? {
         if (isDualMode && useExistingRadio?.isSelected == true) {
+            if (existingBranches.isEmpty()) {
+                return ValidationInfo("No linked branches for this repo — pick Create new branch instead")
+            }
             // Using existing — no validation needed beyond having a selection
             return null
         }
@@ -361,6 +409,81 @@ class StartWorkDialog(
         errorLabel.text = "AI branch generation failed: $errorMessage. Using fallback name."
         errorLabel.isVisible = true
         isOKActionEnabled = true
+    }
+
+    /**
+     * Toggle the "refreshing branches for new repo" state. OK button is disabled + the
+     * source-branch and existing-branch combos are disabled while loading, so the user
+     * can't click OK against stale-for-the-new-repo data.
+     */
+    fun setBranchesLoading(loading: Boolean) {
+        log.info("[Jira:StartWork] setBranchesLoading($loading)")
+        repoLoadingLabel?.apply {
+            text = if (loading) "Refreshing branches…" else ""
+            isVisible = loading
+        }
+        sourceBranchCombo?.isEnabled = !loading
+        existingBranchCombo?.isEnabled = !loading
+        useExistingRadio?.isEnabled = !loading && existingBranches.isNotEmpty()
+        createNewRadio?.isEnabled = !loading
+        isOKActionEnabled = !loading
+    }
+
+    /**
+     * Swap the dialog's branch data for a newly-picked repo. Called by the caller after a
+     * successful background refetch. Rebuilds the source-branch combo items, replaces the
+     * linked-branch list, and toggles the "Use existing branch" radio based on whether any
+     * linked branches exist for the new repo.
+     *
+     * Everything but the ticket-level state (branch name, AI result) is replaced — the
+     * branch name stays so the user's edits aren't lost when they hop between repos.
+     */
+    fun applyNewRepoData(
+        newRemoteBranches: List<BitbucketBranch>,
+        newExistingBranches: List<String>,
+        newDefaultSourceBranch: String
+    ) {
+        log.info(
+            "[Jira:StartWork] applyNewRepoData: ${newRemoteBranches.size} remote branches, " +
+                "${newExistingBranches.size} linked branches, defaultSource='$newDefaultSourceBranch'"
+        )
+        remoteBranches = newRemoteBranches
+        existingBranches = newExistingBranches
+        defaultSourceBranch = newDefaultSourceBranch
+        selectedSourceBranch = newDefaultSourceBranch
+
+        // Rebuild combos while suppressing their actionListeners so we don't overwrite
+        // selectedSourceBranch/selectedRepoIdx mid-rebuild.
+        ignoreComboEvents = true
+        try {
+            sourceBranchCombo?.let { combo ->
+                combo.model = DefaultComboBoxModel(newRemoteBranches.map { it.displayId }.toTypedArray())
+                combo.selectedItem = newDefaultSourceBranch
+            }
+            existingBranchCombo?.let { combo ->
+                combo.model = DefaultComboBoxModel(newExistingBranches.toTypedArray())
+                combo.isVisible = newExistingBranches.isNotEmpty()
+                if (newExistingBranches.isNotEmpty()) combo.selectedIndex = 0
+            }
+            noExistingBranchesLabel?.isVisible = newExistingBranches.isEmpty()
+        } finally {
+            ignoreComboEvents = false
+        }
+
+        if (isDualMode) {
+            if (newExistingBranches.isEmpty()) {
+                // No linked branches on the new repo — force create-new mode.
+                useExistingRadio?.isEnabled = false
+                createNewRadio?.isSelected = true
+                updateCreatePanelEnabled(true)
+            } else {
+                useExistingRadio?.isEnabled = true
+                // Preserve the user's current radio choice; if they had "use existing" selected
+                // before switching, it re-populates with the new repo's branches.
+            }
+        }
+
+        setBranchesLoading(false)
     }
 
     private fun checkUncommittedChanges(): Boolean {
