@@ -37,6 +37,8 @@ dependencies {
     compileOnly(libs.kotlinx.coroutines.core)
     compileOnly(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
+    // Caffeine — in-memory cache store for Phase 3 HTTP response caching (Prong A).
+    implementation(libs.caffeine)
 
     // Test
     testImplementation(libs.junit5.api)

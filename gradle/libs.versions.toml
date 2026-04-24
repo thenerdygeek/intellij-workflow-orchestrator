@@ -10,6 +10,9 @@ intelliJPlatform = "2.12.0"
 # ---- Networking ----
 okhttp = "4.12.0"
 
+# ---- Caching ----
+caffeine = "3.2.3"
+
 # ---- Database ----
 sqlite = "3.45.3.0"
 postgresql = "42.7.3"
@@ -41,6 +44,9 @@ kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 okhttp-logging = { group = "com.squareup.okhttp3", name = "logging-interceptor", version.ref = "okhttp" }
 okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver", version.ref = "okhttp" }
+
+# Caching
+caffeine = { group = "com.github.ben-manes.caffeine", name = "caffeine", version.ref = "caffeine" }
 
 # Database
 sqlite-jdbc = { group = "org.xerial", name = "sqlite-jdbc", version.ref = "sqlite" }
