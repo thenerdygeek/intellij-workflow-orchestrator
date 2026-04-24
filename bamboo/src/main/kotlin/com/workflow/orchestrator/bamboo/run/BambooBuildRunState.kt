@@ -9,11 +9,7 @@ import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.execution.runners.ProgramRunner
 import com.intellij.execution.configurations.RunProfileState
 import com.intellij.openapi.diagnostic.Logger
-import com.workflow.orchestrator.bamboo.api.BambooApiClient
-import com.workflow.orchestrator.core.auth.CredentialStore
-import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.core.model.ServiceType
-import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.bamboo.service.BambooServiceImpl
 import com.intellij.openapi.util.Disposer
 import kotlinx.coroutines.*
 import java.io.OutputStream
@@ -57,14 +53,7 @@ class BambooBuildProcessHandler(
 
     private suspend fun runBuild() {
         val project = environment.project
-        val settings = PluginSettings.getInstance(project)
-        val bambooUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/')
-
-        if (bambooUrl.isBlank()) {
-            printOutput("ERROR: Bamboo URL is not configured. Go to Settings > Tools > Workflow Orchestrator.\n")
-            destroyProcess()
-            return
-        }
+        val bambooService = BambooServiceImpl.getInstance(project)
 
         val planKey = configuration.getPlanKey()
         if (planKey.isBlank()) {
@@ -93,63 +82,54 @@ class BambooBuildProcessHandler(
         }
         printOutput("\n")
 
-        val credentialStore = CredentialStore()
-        val timeouts = com.workflow.orchestrator.core.http.HttpClientFactory.timeoutsFromSettings(environment.project)
-        val client = BambooApiClient(
-            baseUrl = bambooUrl,
-            tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) },
-            connectTimeoutSeconds = timeouts.connectSeconds,
-            readTimeoutSeconds = timeouts.readSeconds
-        )
-
         printOutput("Triggering build...\n")
 
-        when (val triggerResult = client.triggerBuild(planKey, effectiveVariables)) {
-            is ApiResult.Success -> {
-                val resultKey = triggerResult.data.buildResultKey
-                val buildNumber = triggerResult.data.buildNumber
-                printOutput("Build triggered successfully. Result key: $resultKey (build #$buildNumber)\n\n")
-                pollBuildStatus(client, resultKey)
-            }
-            is ApiResult.Error -> {
-                printOutput("ERROR: Failed to trigger build: ${triggerResult.message}\n")
-                destroyProcess()
-            }
+        val triggerResult = bambooService.triggerBuild(planKey, effectiveVariables)
+        if (triggerResult.isError) {
+            printOutput("ERROR: Failed to trigger build: ${triggerResult.summary}\n")
+            destroyProcess()
+            return
         }
+
+        val resultKey = triggerResult.data.buildKey
+        val buildNumber = triggerResult.data.buildNumber
+        printOutput("Build triggered successfully. Result key: $resultKey (build #$buildNumber)\n\n")
+        pollBuildStatus(bambooService, resultKey)
     }
 
-    private suspend fun pollBuildStatus(client: BambooApiClient, resultKey: String) {
+    private suspend fun pollBuildStatus(bambooService: BambooServiceImpl, resultKey: String) {
         printOutput("Polling build status every 15 seconds...\n\n")
 
         while (isProcessTerminating.not() && isProcessTerminated.not()) {
-            when (val result = client.getBuildResult(resultKey)) {
-                is ApiResult.Success -> {
-                    val dto = result.data
-                    val state = dto.state
-                    val lifecycle = dto.lifeCycleState
+            val result = bambooService.getBuild(resultKey)
+            if (result.isError) {
+                printOutput("WARNING: Failed to get build status: ${result.summary}\n")
+            } else {
+                val data = result.data
+                val state = data.state
 
-                    printOutput("[${java.time.LocalTime.now()}] Status: $lifecycle | Result: $state\n")
+                printOutput("[${java.time.LocalTime.now()}] State: $state\n")
 
-                    // Print stage info
-                    for (stage in dto.stages.stage) {
-                        printOutput("  Stage '${stage.name}': ${stage.lifeCycleState} (${stage.state})\n")
-                    }
-
-                    if (lifecycle == "Finished") {
-                        printOutput("\n=== Build Finished ===\n")
-                        printOutput("Final result: $state\n")
-                        printOutput("Duration: ${dto.buildDurationInSeconds}s\n")
-                        destroyProcess()
-                        return
-                    }
+                // Print stage info
+                for (stage in data.stages) {
+                    printOutput("  Stage '${stage.name}': ${stage.state}\n")
                 }
-                is ApiResult.Error -> {
-                    printOutput("WARNING: Failed to get build status: ${result.message}\n")
+
+                if (state in TERMINAL_STATES) {
+                    printOutput("\n=== Build Finished ===\n")
+                    printOutput("Final result: $state\n")
+                    printOutput("Duration: ${data.durationSeconds}s\n")
+                    destroyProcess()
+                    return
                 }
             }
 
             delay(15_000)
         }
+    }
+
+    companion object {
+        private val TERMINAL_STATES = setOf("Successful", "Failed", "Unknown", "Finished")
     }
 
     private fun printOutput(text: String) {
