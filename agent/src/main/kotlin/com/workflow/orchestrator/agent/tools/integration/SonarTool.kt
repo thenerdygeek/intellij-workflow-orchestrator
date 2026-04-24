@@ -310,11 +310,12 @@ Common optional: repo_name for multi-repo projects.
             "Cannot determine project base path.", "No basePath", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
         )
         val files = filesParam.split(",").map { it.trim() }.filter { it.isNotBlank() }
+        // Repo-root-relative paths are kept for Sonar API lookups (listFileComponents, getIssues,
+        // getSourceLines) which always key components by project-root-relative paths.
         val relativePaths = files.map { f ->
             val norm = f.replace("\\", "/")
             if (norm.startsWith(basePath.replace("\\", "/"))) norm.removePrefix(basePath.replace("\\", "/")).trimStart('/') else norm
         }
-        val inclusions = relativePaths.joinToString(",")
 
         // ── 3. Detect build tool ───────────────────────────────────────────
         val baseDir = File(basePath)
@@ -325,16 +326,27 @@ Common optional: repo_name for multi-repo projects.
             "No build tool", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
         )
 
+        // ── 3b. Multi-module scoping ───────────────────────────────────────
+        // For Maven aggregator projects where the parent pom is local-only (not in Sonar),
+        // running `mvn sonar:sonar` from the parent produces a reactor where child modules
+        // SKIP and the parent FAILS (because its projectKey doesn't exist in Sonar). Scope
+        // the run to the child module(s) that actually own the selected files.
+        val mavenScope: MavenScope? = if (hasMaven) resolveMavenScope(project, basePath, files) else null
+        val workingDir = mavenScope?.workingDir ?: baseDir
+        // Sonar inclusions must be relative to the scanner's working directory.
+        val scannerInclusions = (mavenScope?.relativePathsFromWorkingDir ?: relativePaths).joinToString(",")
+
         val buildTool = if (hasMaven) "Maven" else "Gradle"
         val branchFlag = branch?.let { " -Dsonar.branch.name=$it" } ?: ""
+        val projectsFlag = mavenScope?.projectsFlag?.let { " -pl $it -am" } ?: ""
         // sonar.token is the current standard (SonarQube 10+); sonar.login still accepted on older versions
         val command = when {
             // TODO(backlog): Use IntelliJ's MavenRunner/ExternalSystemUtil instead of ProcessBuilder
             //   so that Settings > Build Tools > Maven/Gradle (custom home, JVM args, settings.xml) are respected.
-            hasMaven -> "mvn sonar:sonar -Dsonar.host.url=$sonarUrl -Dsonar.token=$token -Dsonar.inclusions=$inclusions$branchFlag"
+            hasMaven -> "mvn sonar:sonar$projectsFlag -Dsonar.host.url=$sonarUrl -Dsonar.token=$token -Dsonar.inclusions=$scannerInclusions$branchFlag"
             else -> {
                 val gradle = if (File(baseDir, "gradlew").exists()) "./gradlew" else "gradle"
-                "$gradle sonar -Dsonar.host.url=$sonarUrl -Dsonar.token=$token -Dsonar.inclusions=$inclusions$branchFlag"
+                "$gradle sonar -Dsonar.host.url=$sonarUrl -Dsonar.token=$token -Dsonar.inclusions=$scannerInclusions$branchFlag"
             }
         }
 
@@ -346,7 +358,7 @@ Common optional: repo_name for multi-repo projects.
         val isWindows = System.getProperty("os.name").lowercase().contains("win")
         val pb = if (isWindows) ProcessBuilder("cmd.exe", "/c", command)
         else ProcessBuilder("sh", "-c", command)
-        pb.directory(baseDir).redirectErrorStream(true)
+        pb.directory(workingDir).redirectErrorStream(true)
 
         // Streaming pipe: tool-call correlation is set by AgentLoop via STREAMING_TOOLS.
         // When the ID is null (direct invocation in a test, or missing wiring), heartbeats
@@ -358,7 +370,17 @@ Common optional: repo_name for multi-repo projects.
         }
 
         emit("▶ Running $buildTool sonar scan on ${files.size} file(s) (timeout ${timeoutSeconds}s, branch: ${branch ?: "(project default)"})")
-        emit("  Inclusions: $inclusions")
+        if (mavenScope != null && mavenScope.moduleNames.isNotEmpty()) {
+            when {
+                mavenScope.projectsFlag != null ->
+                    emit("  Scope: modules [${mavenScope.moduleNames.joinToString(", ")}] via -pl -am (reactor root=${baseDir.name})")
+                workingDir != baseDir ->
+                    emit("  Scope: module '${mavenScope.moduleNames.first()}' (running from ${workingDir.path.removePrefix("$basePath/")})")
+                else ->
+                    emit("  Scope: reactor root (${baseDir.name})")
+            }
+        }
+        emit("  Inclusions: $scannerInclusions")
 
         val process = pb.start()
         val reader = Thread {
@@ -382,7 +404,7 @@ Common optional: repo_name for multi-repo projects.
             process.destroyForcibly()
             reader.join(1000)
             return ToolResult(
-                "[TIMEOUT] Sonar analysis timed out after ${timeoutSeconds}s for files: $inclusions",
+                "[TIMEOUT] Sonar analysis timed out after ${timeoutSeconds}s for files: $scannerInclusions",
                 "Analysis timeout", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
             )
         }
@@ -434,15 +456,39 @@ Common optional: repo_name for multi-repo projects.
 
         // ── 6. Resolve authoritative component keys for each requested file ─
         // Multi-module Maven/Gradle projects key source files as `projectKey:moduleName:pathWithinModule`,
-        // which is NOT predictable from the repo-relative path alone. Query component_tree once and
-        // map by path so getSourceLines/getDuplications hit the right components instead of silently
-        // returning empty. Best-effort: if the call fails, fall back to the legacy concatenation so
-        // single-module projects keep working.
-        val componentsResult = sonarService.listFileComponents(projectKey, branch = branch, repoName = repoName)
-        val discoveredComponents = if (!componentsResult.isError) componentsResult.data ?: emptyList() else emptyList()
-        val componentResolutionWarning = if (componentsResult.isError)
-            "Note: could not resolve real component keys (${componentsResult.summary}). Falling back to inferred keys — per-file results may be empty on multi-module projects."
-        else null
+        // which is NOT predictable from the repo-relative path alone. Query component_tree per unique
+        // projectKey (child modules can each have their OWN sonar.projectKey) and merge so
+        // getSourceLines/getDuplications hit the right components instead of silently returning empty.
+        //
+        // Per-file projectKey resolution:
+        //  - Prefer the owning Maven module's sonar.projectKey (from MavenProject properties,
+        //    fallback groupId:artifactId).
+        //  - Fall back to the user-supplied `project_key` param (or settings) for any file we
+        //    couldn't map to a module.
+        val perFileProjectKeyMap: Map<String, String> = mavenScope?.perFileProjectKey ?: emptyMap()
+        val resolvedProjectKeyFor: (String) -> String = { relPath ->
+            perFileProjectKeyMap[relPath] ?: projectKey
+        }
+        val uniqueProjectKeys: Set<String> = (relativePaths.map(resolvedProjectKeyFor)).toSet()
+        if (uniqueProjectKeys.size > 1) {
+            emit("  Per-file Sonar projectKeys: ${uniqueProjectKeys.joinToString(", ")}")
+        }
+
+        // Fetch component lists per unique projectKey in parallel, merge into a single list.
+        val componentFetches = coroutineScope {
+            uniqueProjectKeys.map { pk ->
+                async { pk to sonarService.listFileComponents(pk, branch = branch, repoName = repoName) }
+            }.map { it.await() }
+        }
+        val discoveredComponents = componentFetches.flatMap { (_, result) ->
+            if (!result.isError) result.data ?: emptyList() else emptyList()
+        }
+        val failedComponentFetches = componentFetches.filter { (_, result) -> result.isError }
+        val componentResolutionWarning = if (failedComponentFetches.isNotEmpty()) {
+            "Note: could not resolve component keys for ${failedComponentFetches.size} projectKey(s) " +
+                "(${failedComponentFetches.joinToString { (pk, r) -> "$pk: ${r.summary}" }}). " +
+                "Falling back to inferred keys — per-file results may be empty."
+        } else null
 
         // ── 7. Fetch per-file results in parallel ─────────────────────────
         val sb = StringBuilder()
@@ -450,22 +496,27 @@ Common optional: repo_name for multi-repo projects.
         val branchLabel = branch ?: "(project default)"
         sb.appendLine("Runner: $buildTool | Files: ${files.size} | Duration: ${String.format("%.1f", elapsedS)}s | Branch: $branchLabel")
         sb.appendLine(branchResolution.note)
+        if (uniqueProjectKeys.size > 1) {
+            sb.appendLine("ProjectKeys (per module): ${uniqueProjectKeys.joinToString(", ")}")
+        }
         if (componentResolutionWarning != null) sb.appendLine(componentResolutionWarning)
         if (ceTaskId != null) sb.appendLine("CE Task: $ceTaskId")
         sb.appendLine()
 
         for (relativePath in relativePaths) {
-            val resolution = resolveComponentKey(relativePath, discoveredComponents, projectKey)
+            val fileProjectKey = resolvedProjectKeyFor(relativePath)
+            val resolution = resolveComponentKey(relativePath, discoveredComponents, fileProjectKey)
             val componentKey = resolution.key
             sb.appendLine("${"═".repeat(60)}")
             sb.appendLine(relativePath)
+            if (uniqueProjectKeys.size > 1) sb.appendLine("  (projectKey: $fileProjectKey)")
             if (resolution.note != null) sb.appendLine("  (${resolution.note})")
             sb.appendLine()
 
             coroutineScope {
-                val issuesD   = async { sonarService.getIssues(projectKey, filePath = relativePath, branch = branch, repoName = repoName) }
+                val issuesD   = async { sonarService.getIssues(fileProjectKey, filePath = relativePath, branch = branch, repoName = repoName) }
                 val sourceD   = async { sonarService.getSourceLines(componentKey, branch = branch, repoName = repoName) }
-                val hotspotsD = async { sonarService.getSecurityHotspots(projectKey, branch = branch, repoName = repoName) }
+                val hotspotsD = async { sonarService.getSecurityHotspots(fileProjectKey, branch = branch, repoName = repoName) }
                 val dupsD     = async { sonarService.getDuplications(componentKey, branch = branch, repoName = repoName) }
 
                 val issuesResult   = issuesD.await()
@@ -554,6 +605,148 @@ Common optional: repo_name for multi-repo projects.
 
         val content = sb.toString().trimEnd()
         return ToolResult(content, "Local Sonar analysis complete: ${files.size} file(s)", content.length / 4)
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Maven multi-module scoping for local_analysis
+    // ══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Scope decision for a Maven sonar:sonar run.
+     *
+     *  - [workingDir]: directory the scanner process is spawned in. When all files belong to
+     *    a single child module this is the module's directory (so `mvn sonar:sonar` runs only
+     *    that module's POM and never touches the aggregator parent).
+     *  - [relativePathsFromWorkingDir]: the input files expressed relative to [workingDir],
+     *    used to build `-Dsonar.inclusions=` for the scanner.
+     *  - [moduleNames]: artifactId(s) of the owning Maven module(s) — for logging/emit lines.
+     *  - [projectsFlag]: value for `-pl` when the run must stay at the reactor root (files span
+     *    multiple modules). Null when [workingDir] is already a single module dir.
+     *  - [perFileProjectKey]: `repoRelativePath → sonar.projectKey` map. One entry per requested
+     *    file, keyed by the repo-root-relative path used for API lookups. Empty when detection
+     *    failed or Maven plugin isn't imported. Consumer falls back to the user-supplied
+     *    `project_key` param for any file missing from the map.
+     */
+    internal data class MavenScope(
+        val workingDir: File,
+        val relativePathsFromWorkingDir: List<String>,
+        val moduleNames: List<String>,
+        val projectsFlag: String?,
+        val perFileProjectKey: Map<String, String> = emptyMap()
+    )
+
+    /**
+     * Decide where to spawn `mvn sonar:sonar` for multi-module Maven projects.
+     *
+     * The bug this avoids: when the IntelliJ project is opened at an aggregator pom that is
+     * local-only (not in Sonar/Bitbucket), running `mvn sonar:sonar` from the project base
+     * produces a reactor where every child module is SKIPPED and the parent FAILS (its
+     * projectKey doesn't exist in Sonar). Scoping the scanner to the child module that owns
+     * the file(s) side-steps the parent entirely.
+     *
+     * Strategy:
+     *   1. Resolve each input file (absolute or repo-root-relative) to a VirtualFile.
+     *   2. Detect owning modules via [MavenModuleDetector] (Maven API → nearest-pom fallback).
+     *   3. If all files belong to one module AND we can locate its directory via the Maven
+     *      projects manager, run the scanner from that directory — no `-pl` needed.
+     *   4. If files span multiple modules, run from the reactor root with `-pl mod1,mod2 -am`
+     *      so Maven builds only the named modules plus their dependencies.
+     *   5. If detection fails entirely, return null — caller falls back to reactor-root
+     *      behavior (preserves pre-fix behavior for single-module projects).
+     */
+    internal fun resolveMavenScope(
+        project: Project,
+        basePath: String,
+        files: List<String>
+    ): MavenScope? {
+        val baseDir = File(basePath)
+        val baseNorm = basePath.replace("\\", "/")
+        val absolutePaths = files.map { f ->
+            val norm = f.replace("\\", "/")
+            if (norm.startsWith("/") || Regex("^[A-Za-z]:/").containsMatchIn(norm)) norm
+            else "$baseNorm/${norm.trimStart('/')}"
+        }
+
+        val vfs = com.intellij.openapi.vfs.LocalFileSystem.getInstance()
+        val vFiles = absolutePaths.mapNotNull { vfs.findFileByPath(it) }
+        if (vFiles.isEmpty()) return null
+
+        val mavenManager: org.jetbrains.idea.maven.project.MavenProjectsManager? = try {
+            org.jetbrains.idea.maven.project.MavenProjectsManager.getInstance(project)
+                .takeIf { it.isMavenizedProject }
+        } catch (_: Exception) { null }
+
+        // Maven projects API is the authoritative source for module → directory mapping.
+        // If the plugin isn't imported yet, bail — the caller falls back to reactor-root
+        // behavior (pre-fix default) rather than risk a wrong guess.
+        if (mavenManager == null) return null
+        val mavenProjects: List<org.jetbrains.idea.maven.project.MavenProject> = mavenManager.projects
+        if (mavenProjects.isEmpty()) return null
+
+        // Pair each input file with its owning MavenProject so we can later look up
+        // that module's own sonar.projectKey (for the post-scan API calls).
+        val vFileToOwner: List<Pair<com.intellij.openapi.vfs.VirtualFile, org.jetbrains.idea.maven.project.MavenProject>> = vFiles.mapNotNull { vf ->
+            val owner = mavenProjects
+                .filter { com.intellij.openapi.vfs.VfsUtilCore.isAncestor(it.directoryFile, vf, false) }
+                .maxByOrNull { it.directoryFile.path.length }
+            if (owner != null) vf to owner else null
+        }
+        if (vFileToOwner.isEmpty()) return null
+        val perFileOwner: List<org.jetbrains.idea.maven.project.MavenProject> = vFileToOwner.map { it.second }
+        val distinctOwners = perFileOwner.distinctBy { it.directoryFile.path }
+        val owningDirs: List<File> = distinctOwners.map { File(it.directoryFile.path) }
+        val moduleNames: List<String> = distinctOwners.mapNotNull { it.mavenId.artifactId }
+
+        // Build `repoRelativePath → sonar.projectKey` for every input file. Each module's
+        // sonar.projectKey comes from its effective Maven properties (which already merge
+        // parent POM properties). Sonar-maven-plugin's documented fallback when the property
+        // is unset is `groupId:artifactId`, so we mirror that.
+        val perFileProjectKey: Map<String, String> = vFileToOwner.mapNotNull { (vf, owner) ->
+            val absPath = vf.path
+            val repoRel = when {
+                absPath.startsWith("$baseNorm/") -> absPath.removePrefix("$baseNorm/")
+                absPath == baseNorm -> "."
+                else -> return@mapNotNull null
+            }
+            val key = owner.properties.getProperty("sonar.projectKey")
+                ?: owner.mavenId.let { id ->
+                    val g = id.groupId
+                    val a = id.artifactId
+                    if (!g.isNullOrBlank() && !a.isNullOrBlank()) "$g:$a" else null
+                }
+                ?: return@mapNotNull null
+            repoRel to key
+        }.toMap()
+
+        return when {
+            owningDirs.size == 1 && owningDirs.first().path != baseDir.path -> {
+                // Single child module — cd into it, drop the reactor entirely.
+                val moduleDir = owningDirs.first()
+                val modNorm = moduleDir.path.replace("\\", "/")
+                val relFromModule = absolutePaths.map { abs ->
+                    if (abs.startsWith("$modNorm/")) abs.removePrefix("$modNorm/")
+                    else if (abs == modNorm) "."
+                    else abs
+                }
+                MavenScope(moduleDir, relFromModule, moduleNames, projectsFlag = null, perFileProjectKey = perFileProjectKey)
+            }
+            owningDirs.size == 1 -> {
+                // File is in the reactor root itself (single-module project, or aggregator
+                // that IS also a code module). Preserve prior behavior: run from baseDir.
+                val relFromBase = absolutePaths.map { abs ->
+                    if (abs.startsWith("$baseNorm/")) abs.removePrefix("$baseNorm/") else abs
+                }
+                MavenScope(baseDir, relFromBase, moduleNames, projectsFlag = null, perFileProjectKey = perFileProjectKey)
+            }
+            else -> {
+                // Files span multiple modules — stay at reactor root, use -pl to narrow.
+                // `-am` pulls in inter-module dependencies so compile order is correct.
+                val relFromBase = absolutePaths.map { abs ->
+                    if (abs.startsWith("$baseNorm/")) abs.removePrefix("$baseNorm/") else abs
+                }
+                MavenScope(baseDir, relFromBase, moduleNames, projectsFlag = moduleNames.joinToString(","), perFileProjectKey = perFileProjectKey)
+            }
+        }
     }
 
     // ══════════════════════════════════════════════════════════════════════

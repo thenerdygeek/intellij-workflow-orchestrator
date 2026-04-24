@@ -198,21 +198,30 @@ class GenerateCommitMessageAction : AnAction(
                 (change.afterRevision ?: change.beforeRevision)?.file?.path
             }
 
+            log.info(
+                "[AI:CommitMsg] Scoped: ${scopedChanges.size}/${selectedChanges.size} changes under repoRoot='$repoRoot' " +
+                    "(first: ${selectedAbsPaths.firstOrNull() ?: "<none>"})"
+            )
+
+            // Bail BEFORE getGitDiff if nothing is in scope — otherwise getGitDiff would run
+            // unfiltered and silently return whatever global diff exists, producing a commit
+            // message for files the user did NOT check.
+            if (scopedChanges.isEmpty()) {
+                val firstOriginal = selectedChanges.firstNotNullOfOrNull {
+                    (it.afterRevision ?: it.beforeRevision)?.file?.path
+                }
+                log.warn(
+                    "[AI:CommitMsg] All ${selectedChanges.size} checked file(s) are outside repoRoot='$repoRoot' " +
+                        "(first checked: $firstOriginal) — aborting"
+                )
+                return null
+            }
+
             // Phase 1 — git diff
             withPhase(indicator, renderer, "Fetching git diff...") {}
             val diff = getGitDiff(project, targetRepo, selectedAbsPaths)
             if (diff.isNullOrBlank()) {
-                log.warn("[AI:CommitMsg] No diff found")
-                return null
-            }
-
-            // Build a short summary of changed files for the analysis step.
-            // scopedChanges is always non-empty here — the empty guard in actionPerformed
-            // ensures we never reach generateMessage with an empty selection.
-            // If all checked files belong to a different repo root, scopedChanges may end up
-            // empty after repo-scoping; in that case we bail rather than silently widening.
-            if (scopedChanges.isEmpty()) {
-                log.warn("[AI:CommitMsg] All checked files are outside repo root '$repoRoot' — aborting")
+                log.warn("[AI:CommitMsg] No diff found for ${selectedAbsPaths.size} path(s) in repoRoot='$repoRoot'")
                 return null
             }
             val filesSummary = try {
@@ -461,14 +470,24 @@ class GenerateCommitMessageAction : AnAction(
         val root = repo.root
         val rootPath = root.path
 
-        // Convert absolute paths to repo-relative for the pathspec. Paths outside
-        // the repo root are dropped silently.
+        // Convert absolute paths to repo-relative for the pathspec.
         val relativePaths = selectedPaths.mapNotNull { abs ->
             when {
                 abs == rootPath -> null
                 abs.startsWith("$rootPath/") -> abs.removePrefix("$rootPath/")
                 else -> null
             }
+        }
+
+        // Refuse to run unfiltered when the caller asked for specific paths but none
+        // could be made repo-relative — previously this fell through to an unfiltered
+        // `git diff` and silently returned the wrong diff.
+        if (selectedPaths.isNotEmpty() && relativePaths.isEmpty()) {
+            log.warn(
+                "[AI:CommitMsg] ${selectedPaths.size} selected path(s) could not be made relative to " +
+                    "rootPath='$rootPath' (first: '${selectedPaths.first()}') — refusing to run unfiltered diff"
+            )
+            return null
         }
 
         fun applyPathspec(handler: GitLineHandler) {
@@ -488,7 +507,7 @@ class GenerateCommitMessageAction : AnAction(
             return stagedResult.output.joinToString("\n")
         }
 
-        // Fall back to unstaged changes
+        // Fall back to unstaged changes (for tracked-but-unstaged files)
         val unstagedHandler = GitLineHandler(project, root, GitCommand.DIFF).apply {
             addParameters("--no-color")
             applyPathspec(this)
@@ -498,7 +517,50 @@ class GenerateCommitMessageAction : AnAction(
             return unstagedResult.output.joinToString("\n")
         }
 
+        // Both tracked-diff commands returned empty. This typically means the checked
+        // file is an untracked (unversioned) file — IntelliJ shows those as checkable
+        // Change rows in the commit dialog, but `git diff` and `git diff --cached` can't
+        // see them. Fall through to `git diff --no-index /dev/null <file>` which produces
+        // a diff comparing the file to an empty blob.
+        if (relativePaths.isNotEmpty()) {
+            val untrackedDiff = diffUntrackedFiles(project, root, relativePaths)
+            if (!untrackedDiff.isNullOrBlank()) return untrackedDiff
+        }
+
+        log.warn(
+            "[AI:CommitMsg] Empty git diff (staged exit=${stagedResult.exitCode} " +
+                "stderr='${stagedResult.errorOutputAsJoinedString.take(200)}'; " +
+                "unstaged exit=${unstagedResult.exitCode} " +
+                "stderr='${unstagedResult.errorOutputAsJoinedString.take(200)}') " +
+                "for paths=${relativePaths.take(3)}"
+        )
         return null
+    }
+
+    /**
+     * Fall-back diff for files that IntelliJ lists as checked Change rows but git cannot
+     * see via `git diff`/`git diff --cached` — most commonly newly-created unversioned
+     * files. Runs `git diff --no-index --no-color -- /dev/null <relPath>` per file and
+     * concatenates the results. `--no-index` exits with status 1 when files differ,
+     * which git4idea reports as non-success; we accept any output regardless of status.
+     */
+    private fun diffUntrackedFiles(
+        project: Project,
+        root: com.intellij.openapi.vfs.VirtualFile,
+        relativePaths: List<String>
+    ): String? {
+        val nullDevice = if (System.getProperty("os.name").lowercase().contains("windows")) "NUL" else "/dev/null"
+        val parts = relativePaths.mapNotNull { rel ->
+            val handler = GitLineHandler(project, root, GitCommand.DIFF).apply {
+                addParameters("--no-index", "--no-color")
+                endOptions()
+                addParameters(nullDevice, rel)
+            }
+            val result = Git.getInstance().runCommand(handler)
+            // `git diff --no-index` exits 1 when files differ — that's success for us.
+            result.output.takeIf { it.isNotEmpty() }?.joinToString("\n")
+        }
+        return parts.takeIf { it.isNotEmpty() }?.joinToString("\n")
     }
 
     /**

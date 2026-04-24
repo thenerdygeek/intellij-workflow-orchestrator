@@ -28,6 +28,7 @@ dependencies {
             "com.intellij.spring.boot",
             "com.intellij.spring.messaging",
             "org.jetbrains.kotlin",
+            "org.jetbrains.idea.maven",
             "com.intellij.modules.microservices",
         ))
     }
