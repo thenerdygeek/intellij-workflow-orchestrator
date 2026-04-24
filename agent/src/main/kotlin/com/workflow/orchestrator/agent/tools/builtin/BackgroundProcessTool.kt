@@ -10,6 +10,7 @@ import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.background.BackgroundHandle
 import com.workflow.orchestrator.agent.tools.background.BackgroundPool
 import com.workflow.orchestrator.core.ai.TokenEstimator
+import com.workflow.orchestrator.core.util.StringUtils
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -114,7 +115,7 @@ class BackgroundProcessTool : AgentTool {
         }
         val rows = handles.joinToString("\n") { h ->
             val exit = h.exitCode()?.toString() ?: "—"
-            "${h.bgId}  ${h.kind}  ${truncate(h.label, 60)}  ${h.state()}  " +
+            "${h.bgId}  ${h.kind}  ${StringUtils.truncate(h.label, 60)}  ${h.state()}  " +
                 "${formatRuntime(h.runtimeMs())}  out=${h.outputBytes()}B  exit=$exit"
         }
         val content = "Background processes (${handles.size}):\n$rows"
@@ -220,7 +221,6 @@ class BackgroundProcessTool : AgentTool {
         )
     }
 
-    private fun truncate(s: String, max: Int) = if (s.length > max) s.take(max - 1) + "…" else s
     private fun formatRuntime(ms: Long): String {
         val s = ms / 1000
         return if (s < 60) "${s}s" else "${s / 60}m ${s % 60}s"
