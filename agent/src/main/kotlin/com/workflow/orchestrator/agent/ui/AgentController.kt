@@ -485,7 +485,7 @@ class AgentController(
         dashboard.setCefRetryCallback {
             if (lastTaskText == null) return@setCefRetryCallback
             // Dispatchers.IO — cleanup performs an atomic disk write via MessageStateHandler.
-            CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+            controllerScope.launch(Dispatchers.IO) {
                 // Cancel any in-flight loop BEFORE starting a new executeTask call.
                 // executeTask does not auto-cancel the existing activeTask, so without this
                 // explicit cancel two loops would concurrently write to the same
@@ -937,8 +937,7 @@ class AgentController(
         if (connections.state.sourcegraphUrl.isBlank()) return
 
         val credentialStore = com.workflow.orchestrator.core.auth.CredentialStore()
-        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-        scope.launch {
+        controllerScope.launch(Dispatchers.IO) {
             try {
                 val client = com.workflow.orchestrator.core.ai.SourcegraphChatClient(
                     baseUrl = connections.state.sourcegraphUrl.trimEnd('/'),
@@ -1066,7 +1065,7 @@ class AgentController(
 
         // Assign to currentJob so dispose/newChat can cancel if needed.
         // Safe: we verified no active job above.
-        currentJob = CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+        currentJob = controllerScope.launch(Dispatchers.IO) {
             try {
                 val result = service.compactContext(cm)
                 if (result == null) {
@@ -1153,8 +1152,7 @@ class AgentController(
 
         // Resolve mention context on IO thread (may hit Jira API, read files),
         // then execute on EDT.
-        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-        scope.launch {
+        controllerScope.launch(Dispatchers.IO) {
             val context = try {
                 mentionContextBuilder.buildContext(mentions)
             } catch (e: Exception) {
@@ -2090,7 +2088,7 @@ class AgentController(
     fun showHistory() {
         val basePath = project.basePath ?: return
         val baseDir = ProjectIdentifier.agentDir(basePath)
-        CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+        controllerScope.launch(Dispatchers.IO) {
             val items = MessageStateHandler.loadGlobalIndex(baseDir)
             val json = historyJson.encodeToString(items)
             invokeLater { dashboard.loadSessionHistory(json) }
@@ -2104,7 +2102,7 @@ class AgentController(
         if (!killBackgroundsOnTransition(sessionId, "Deleting this session")) return
         val basePath = project.basePath ?: return
         val baseDir = ProjectIdentifier.agentDir(basePath)
-        CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+        controllerScope.launch(Dispatchers.IO) {
             MessageStateHandler.deleteSession(baseDir, sessionId)
             val items = MessageStateHandler.loadGlobalIndex(baseDir)
             val json = historyJson.encodeToString(items)
@@ -2118,7 +2116,7 @@ class AgentController(
     fun handleToggleFavorite(sessionId: String) {
         val basePath = project.basePath ?: return
         val baseDir = ProjectIdentifier.agentDir(basePath)
-        CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+        controllerScope.launch(Dispatchers.IO) {
             MessageStateHandler.toggleFavorite(baseDir, sessionId)
             val items = MessageStateHandler.loadGlobalIndex(baseDir)
             val json = historyJson.encodeToString(items)
@@ -2144,7 +2142,7 @@ class AgentController(
     fun handleBulkDeleteSessions(sessionIdsJson: String) {
         val basePath = project.basePath ?: return
         val baseDir = ProjectIdentifier.agentDir(basePath)
-        CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+        controllerScope.launch(Dispatchers.IO) {
             try {
                 val ids = historyJson.decodeFromString<List<String>>(sessionIdsJson)
                 for (id in ids) {
@@ -2165,7 +2163,7 @@ class AgentController(
     fun handleExportSession(sessionId: String) {
         val basePath = project.basePath ?: return
         val baseDir = ProjectIdentifier.agentDir(basePath)
-        CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+        controllerScope.launch(Dispatchers.IO) {
             val markdown = formatSessionAsMarkdown(baseDir, sessionId)
             if (markdown != null) {
                 com.workflow.orchestrator.core.ui.ClipboardUtil.copyToClipboard(markdown)
@@ -2182,7 +2180,7 @@ class AgentController(
     fun handleExportAllSessions() {
         val basePath = project.basePath ?: return
         val baseDir = ProjectIdentifier.agentDir(basePath)
-        CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+        controllerScope.launch(Dispatchers.IO) {
             val items = MessageStateHandler.loadGlobalIndex(baseDir)
             if (items.isEmpty()) return@launch
             val parts = items.mapNotNull { item ->
@@ -2851,7 +2849,7 @@ class AgentController(
     }
 
     private fun handleValidatePaths(pathsJson: String, callbackName: String) {
-        CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+        controllerScope.launch(Dispatchers.IO) {
             val resultJson = try {
                 val paths = Json.decodeFromString<List<String>>(pathsJson)
                 val validated = pathLinkResolver.validate(paths).map {
@@ -2933,8 +2931,7 @@ class AgentController(
         }
 
         LOG.info("AgentController: starting Haiku phrase timer (30s interval)")
-        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-        phraseTimerJob = scope.launch {
+        phraseTimerJob = controllerScope.launch(Dispatchers.IO) {
             delay(30_000)
             while (isActive) {
                 try {
@@ -2995,8 +2992,7 @@ class AgentController(
         val userMessage = lastTaskText ?: return
         if (assistantResponse.isBlank()) return
 
-        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-        scope.launch {
+        controllerScope.launch(Dispatchers.IO) {
             try {
                 val newTitle = HaikuPhraseGenerator.evaluateTitleFromCompletion(
                     currentTitle = currentTitle,
