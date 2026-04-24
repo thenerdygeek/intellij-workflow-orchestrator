@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.tools.framework.build
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.core.ai.TokenEstimator
+import com.workflow.orchestrator.core.ui.TimeFormatter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
@@ -116,10 +117,10 @@ internal suspend fun executeUvLockStatus(params: JsonObject, project: Project): 
             val content = buildString {
                 appendLine("uv lock status:")
                 appendLine()
-                appendLine("  pyproject.toml: present (modified ${formatUvFileAge(pyprojectFile)})")
+                appendLine("  pyproject.toml: present (modified ${TimeFormatter.formatFileAge(pyprojectFile)})")
 
                 if (lockFile.isFile) {
-                    appendLine("  uv.lock:        present (modified ${formatUvFileAge(lockFile)})")
+                    appendLine("  uv.lock:        present (modified ${TimeFormatter.formatFileAge(lockFile)})")
 
                     if (lockFile.lastModified() < pyprojectFile.lastModified()) {
                         appendLine()
@@ -248,16 +249,6 @@ private fun parseUvLockStats(lockFile: File): UvLockStats {
     return UvLockStats(packageCount, requiresPython)
 }
 
-private fun formatUvFileAge(file: File): String {
-    val ageMs = System.currentTimeMillis() - file.lastModified()
-    val ageSec = ageMs / 1000
-    return when {
-        ageSec < 60 -> "${ageSec}s ago"
-        ageSec < 3600 -> "${ageSec / 60}m ago"
-        ageSec < 86400 -> "${ageSec / 3600}h ago"
-        else -> "${ageSec / 86400}d ago"
-    }
-}
 
 private fun uvNotFoundError(): ToolResult = ToolResult(
     "uv is not available. Ensure uv is installed and on PATH (https://github.com/astral-sh/uv).",

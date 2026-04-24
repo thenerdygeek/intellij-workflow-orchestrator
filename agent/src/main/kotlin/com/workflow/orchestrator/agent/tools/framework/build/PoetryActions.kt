@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.tools.framework.build
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.core.ai.TokenEstimator
+import com.workflow.orchestrator.core.ui.TimeFormatter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
@@ -155,10 +156,10 @@ internal suspend fun executePoetryLockStatus(params: JsonObject, project: Projec
             val content = buildString {
                 appendLine("Poetry lock status:")
                 appendLine()
-                appendLine("  pyproject.toml: present (modified ${formatFileAge(pyprojectFile)})")
+                appendLine("  pyproject.toml: present (modified ${TimeFormatter.formatFileAge(pyprojectFile)})")
 
                 if (lockFile.isFile) {
-                    appendLine("  poetry.lock:    present (modified ${formatFileAge(lockFile)})")
+                    appendLine("  poetry.lock:    present (modified ${TimeFormatter.formatFileAge(lockFile)})")
 
                     // Check if lock is older than pyproject.toml
                     if (lockFile.lastModified() < pyprojectFile.lastModified()) {
@@ -370,16 +371,6 @@ private fun parsePoetryScripts(pyprojectFile: File): Map<String, String> {
     return scripts
 }
 
-private fun formatFileAge(file: File): String {
-    val ageMs = System.currentTimeMillis() - file.lastModified()
-    val ageSec = ageMs / 1000
-    return when {
-        ageSec < 60 -> "${ageSec}s ago"
-        ageSec < 3600 -> "${ageSec / 60}m ago"
-        ageSec < 86400 -> "${ageSec / 3600}h ago"
-        else -> "${ageSec / 86400}d ago"
-    }
-}
 
 private fun poetryNotFoundError(project: Project): ToolResult {
     val basePath = project.basePath
