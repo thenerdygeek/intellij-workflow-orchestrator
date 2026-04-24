@@ -51,6 +51,7 @@ class HttpClientFactory(
             }
             baseClient.newBuilder()
                 .addInterceptor(CachingInterceptor(service))
+                .addInterceptor(MutationInvalidationInterceptor(service))
                 .addInterceptor(HttpMetricsInterceptor())
                 .addInterceptor(AuthInterceptor({ tokenProvider(service) }, scheme))
                 .build()
