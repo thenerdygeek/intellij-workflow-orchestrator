@@ -158,17 +158,3 @@ class CascadingSelectWidget(override val field: TransitionField) : FieldWidget {
     }
 }
 
-// ── Factory helper ────────────────────────────────────────────────────────────
-
-/**
- * Convenience factory.  Returns the appropriate option-widget for [field].
- * Delegates to [SingleSelectWidget], [MultiSelectWidget], or [CascadingSelectWidget]
- * based on the field schema.
- */
-fun optionWidgetFor(field: TransitionField): FieldWidget {
-    return when (field.schema) {
-        is com.workflow.orchestrator.core.model.jira.FieldSchema.MultiSelect -> MultiSelectWidget(field)
-        is com.workflow.orchestrator.core.model.jira.FieldSchema.CascadingSelect -> CascadingSelectWidget(field)
-        else -> SingleSelectWidget(field)
-    }
-}

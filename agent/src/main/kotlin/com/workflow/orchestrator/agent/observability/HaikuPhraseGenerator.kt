@@ -56,24 +56,6 @@ EXAMPLES OF THE EXACT TONE:
 - "Code review at 4:58pm on a Friday. Bold..."
 - "The intern's code works. The architect's doesn't. Classic..." """
 
-    // ── Title generation prompts ──────────────────────────────────────
-
-    private const val TITLE_SYSTEM_PROMPT = """You generate short, descriptive titles for coding conversations. No preamble, no quotes, no explanation — just the title text.
-
-RULES:
-- Under 50 characters
-- Descriptive and scannable — a developer should know what this conversation is about at a glance
-- Use the format: "Verb + specific thing" (e.g. "Fix auth token expiry in LoginService")
-- Be specific: "Add retry logic to API client" not "Work on code"
-- No punctuation at the end
-- No quotes around the title"""
-
-    private const val TITLE_CHECK_SYSTEM_PROMPT = """You decide whether a conversation's title still fits after a new message. Respond with ONLY one of:
-- KEEP — if the new message is still about the same topic
-- A new title (under 50 chars) — if the scope has clearly shifted
-
-Be conservative: minor follow-ups, refinements, or related questions are NOT a scope change. Only generate a new title when the user has moved to a genuinely different task."""
-
     private const val TITLE_EVAL_SYSTEM_PROMPT = """You evaluate whether a conversation title still fits after a task completed.
 
 You see three things:
@@ -191,72 +173,6 @@ Format for new titles:
             if (cleaned.isBlank()) null else cleaned
         } catch (e: Exception) {
             LOG.info("[HaikuPhrase] Exception: ${e.message}")
-            null
-        }
-    }
-
-    // ── Conversation title generation ───────────────────────────────
-
-    /**
-     * Generate a concise, descriptive title for a conversation from the user's first message.
-     *
-     * @param task the user's message
-     * @return a title under 50 chars, or null if generation fails
-     */
-    suspend fun generateTitle(task: String): String? {
-        return try {
-            val brain = createBrain("HaikuTitle") ?: return null
-
-            val result = brain.chat(
-                messages = listOf(
-                    ChatMessage(role = "system", content = TITLE_SYSTEM_PROMPT),
-                    ChatMessage(role = "user", content = "Generate a title for this task: ${task.take(200)}")
-                ),
-                maxTokens = 40
-            )
-
-            val text = extractText(result, "HaikuTitle") ?: return null
-            val cleaned = text.removeSurrounding("\"").removeSurrounding("'").take(50)
-            LOG.info("[HaikuTitle] Generated: $cleaned")
-            if (cleaned.isBlank()) null else cleaned
-        } catch (e: Exception) {
-            LOG.info("[HaikuTitle] Exception: ${e.message}")
-            null
-        }
-    }
-
-    /**
-     * Check if a new message has shifted the conversation scope enough to warrant a new title.
-     *
-     * @param currentTitle the current conversation title
-     * @param newMessage the new user message
-     * @return a new title if scope changed, null if the current title still fits
-     */
-    suspend fun checkTitleUpdate(currentTitle: String, newMessage: String): String? {
-        return try {
-            val brain = createBrain("HaikuTitleCheck") ?: return null
-
-            val result = brain.chat(
-                messages = listOf(
-                    ChatMessage(role = "system", content = TITLE_CHECK_SYSTEM_PROMPT),
-                    ChatMessage(role = "user", content = "Current title: \"$currentTitle\"\nNew message: \"${newMessage.take(200)}\"")
-                ),
-                maxTokens = 40
-            )
-
-            val text = extractText(result, "HaikuTitleCheck") ?: return null
-            val cleaned = text.removeSurrounding("\"").removeSurrounding("'").trim()
-
-            if (cleaned.equals("KEEP", ignoreCase = true) || cleaned.startsWith("KEEP")) {
-                LOG.info("[HaikuTitleCheck] Scope unchanged, keeping: $currentTitle")
-                null
-            } else {
-                val newTitle = cleaned.take(50)
-                LOG.info("[HaikuTitleCheck] Scope changed: '$currentTitle' → '$newTitle'")
-                newTitle
-            }
-        } catch (e: Exception) {
-            LOG.info("[HaikuTitleCheck] Exception: ${e.message}")
             null
         }
     }

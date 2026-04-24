@@ -16,14 +16,6 @@ data class RequestLog(
 
 class AdminState {
     val requestLog = ArrayDeque<RequestLog>(50)
-
-    fun logRequest(method: String, path: String, responseCode: Int) {
-        if (path.startsWith("/__admin")) return
-        synchronized(requestLog) {
-            if (requestLog.size >= 50) requestLog.removeFirst()
-            requestLog.addLast(RequestLog(method, path, System.currentTimeMillis(), responseCode))
-        }
-    }
 }
 
 fun Route.adminRoutes(

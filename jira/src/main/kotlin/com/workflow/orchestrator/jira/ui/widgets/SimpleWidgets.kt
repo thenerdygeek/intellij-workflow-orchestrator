@@ -9,7 +9,6 @@ import java.util.Date
 import javax.swing.JComponent
 import javax.swing.JSpinner
 import javax.swing.SpinnerDateModel
-import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
 
 // ── TextFieldWidget ───────────────────────────────────────────────────────────
@@ -182,13 +181,3 @@ class DateTimePickerWidget(override val field: TransitionField) : FieldWidget {
     }
 }
 
-// ── DocumentListener helpers ──────────────────────────────────────────────────
-
-/**
- * Convenience [DocumentListener] that invokes [onChange] for all three event types.
- */
-internal fun simpleDocumentListener(onChange: (DocumentEvent) -> Unit) = object : DocumentListener {
-    override fun insertUpdate(e: DocumentEvent) = onChange(e)
-    override fun removeUpdate(e: DocumentEvent) = onChange(e)
-    override fun changedUpdate(e: DocumentEvent) = onChange(e)
-}
