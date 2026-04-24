@@ -219,16 +219,26 @@ class PrDashboardPanel(
                 ?: currentReviewingPrs.find { it.id == prId }
                 ?: currentAllRepoPrs.find { it.id == prId }
             if (prDetail != null) {
-                detailPanel.showPrDetail(prDetail)
+                // Resolve the PR's own repo coordinates from its repoName badge — critical
+                // for Open-in-Browser and other per-PR actions that would otherwise fall
+                // back to the project-default repo and open the wrong module's PR URL.
+                val pluginSettings = PluginSettings.getInstance(project)
+                val prRepoConfig = prDetail.repoName.takeIf { it.isNotBlank() }?.let { name ->
+                    pluginSettings.getRepos().find { it.displayLabel == name }
+                }
+                detailPanel.showPrDetail(
+                    prDetail,
+                    projectKey = prRepoConfig?.bitbucketProjectKey,
+                    repoSlug = prRepoConfig?.bitbucketRepoSlug
+                )
                 // Emit PrSelected event so other tabs (Build, Quality) can update context
                 val fromBranch = prDetail.fromRef?.displayId ?: ""
                 val toBranch = prDetail.toRef?.displayId ?: ""
                 val repoName = prDetail.repoName ?: ""
                 if (fromBranch.isNotBlank()) {
-                    val pluginSettings = PluginSettings.getInstance(project)
                     // Resolve RepoConfig; fall back to scalar settings for single-repo projects
-                    val repoConfig = pluginSettings.getRepos()
-                        .find { it.displayLabel == repoName }
+                    val repoConfig = prRepoConfig
+                        ?: pluginSettings.getRepos().find { it.displayLabel == repoName }
                     val bambooPlanKey = repoConfig?.bambooPlanKey?.takeIf { it.isNotBlank() }
                         ?: pluginSettings.state.bambooPlanKey?.takeIf { it.isNotBlank() }
                     val sonarProjectKey = repoConfig?.sonarProjectKey?.takeIf { it.isNotBlank() }

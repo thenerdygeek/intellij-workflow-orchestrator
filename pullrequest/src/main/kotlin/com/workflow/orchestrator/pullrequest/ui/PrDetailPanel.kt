@@ -86,6 +86,14 @@ class PrDetailPanel(
     private var loadJob: Job? = null
     private var createRepoConfig: RepoConfig? = null
 
+    // Per-PR repo coordinates. These are the OWNER of the currently-shown PR — distinct from
+    // the project-default PluginSettings.bitbucketProjectKey/Slug because in multi-repo setups
+    // the selected PR can belong to any of the configured repos. Used by Open-in-Browser (and
+    // any other action that needs to hit the correct repo's Bitbucket URL space) so the URL
+    // matches the repo badge shown in the list, not the default module.
+    private var currentPrProjectKey: String? = null
+    private var currentPrRepoSlug: String? = null
+
     // Card names
     private companion object {
         const val CARD_EMPTY = "empty"
@@ -297,13 +305,17 @@ class PrDetailPanel(
     fun showEmpty() {
         currentPrId = null
         currentPr = null
+        currentPrProjectKey = null
+        currentPrRepoSlug = null
         (layout as CardLayout).show(this, CARD_EMPTY)
     }
 
-    fun showPr(prId: Int) {
+    fun showPr(prId: Int, projectKey: String? = null, repoSlug: String? = null) {
         if (prId == currentPrId) return
         currentPrId = prId
         currentPr = null
+        currentPrProjectKey = projectKey
+        currentPrRepoSlug = repoSlug
         loadJob?.cancel()
 
         (layout as CardLayout).show(this, CARD_LOADING)
@@ -370,9 +382,11 @@ class PrDetailPanel(
     /**
      * Show a PR directly from a BitbucketPrDetail object (avoids re-fetch).
      */
-    fun showPrDetail(pr: BitbucketPrDetail) {
+    fun showPrDetail(pr: BitbucketPrDetail, projectKey: String? = null, repoSlug: String? = null) {
         currentPrId = pr.id
         currentPr = pr
+        currentPrProjectKey = projectKey
+        currentPrRepoSlug = repoSlug
         loadJob?.cancel()
 
         invokeLater {
@@ -1227,11 +1241,24 @@ class PrDetailPanel(
             val prId = currentPrId ?: return@addActionListener
             val connSettings = ConnectionSettings.getInstance().state
             val bitbucketUrl = connSettings.bitbucketUrl.trimEnd('/')
-            val settings = PluginSettings.getInstance(project).state
-            val projectKey = settings.bitbucketProjectKey.orEmpty()
-            val repoSlug = settings.bitbucketRepoSlug.orEmpty()
+            // Prefer the PR's OWN repo coordinates (from the list-selection → detail hand-off).
+            // Fall back to resolving via repoName against configured repos, then to the scalar
+            // default settings for single-repo projects.
+            val pluginSettings = PluginSettings.getInstance(project)
+            val repoConfigByName = currentPr?.repoName?.takeIf { it.isNotBlank() }?.let { name ->
+                pluginSettings.getRepos().find { it.displayLabel == name }
+            }
+            val projectKey = currentPrProjectKey
+                ?: repoConfigByName?.bitbucketProjectKey
+                ?: pluginSettings.state.bitbucketProjectKey.orEmpty()
+            val repoSlug = currentPrRepoSlug
+                ?: repoConfigByName?.bitbucketRepoSlug
+                ?: pluginSettings.state.bitbucketRepoSlug.orEmpty()
             if (bitbucketUrl.isNotBlank() && projectKey.isNotBlank() && repoSlug.isNotBlank()) {
+                log.info("[PR:Detail] Open in Browser: pr=$prId repo=$projectKey/$repoSlug (pr.repoName='${currentPr?.repoName}')")
                 BrowserUtil.browse("$bitbucketUrl/projects/$projectKey/repos/$repoSlug/pull-requests/$prId")
+            } else {
+                log.warn("[PR:Detail] Open in Browser skipped — missing coordinates: url='$bitbucketUrl' project='$projectKey' repo='$repoSlug'")
             }
         }
     }
