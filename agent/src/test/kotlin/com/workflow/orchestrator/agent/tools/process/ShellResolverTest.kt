@@ -142,28 +142,6 @@ class ShellResolverTest {
     }
 
     // ──────────────────────────────────────────────
-    // stripAnsi()
-    // ──────────────────────────────────────────────
-
-    @Test
-    fun `stripAnsi removes escape codes`() {
-        val input = "\u001B[31mError\u001B[0m: something failed"
-        val result = ShellResolver.stripAnsi(input)
-        assertEquals("Error: something failed", result)
-    }
-
-    @Test
-    fun `stripAnsi handles text without escape codes`() {
-        val input = "Normal text"
-        assertEquals("Normal text", ShellResolver.stripAnsi(input))
-    }
-
-    @Test
-    fun `stripAnsi handles multiple escape sequences`() {
-        val input = "\u001B[1m\u001B[32mBold green\u001B[0m and \u001B[34mblue\u001B[0m"
-        assertEquals("Bold green and blue", ShellResolver.stripAnsi(input))
-    }
-
     // ──────────────────────────────────────────────
     // isLikelyPasswordPrompt()
     // ──────────────────────────────────────────────

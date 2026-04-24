@@ -27,8 +27,6 @@ class ShellUnavailableException(message: String) : RuntimeException(message)
  */
 object ShellResolver {
 
-    private val ANSI_REGEX = Regex("\u001B\\[[;\\d]*[A-Za-z]")
-
     private val BUILD_COMMAND_PREFIXES = listOf(
         "gradle", "./gradlew", "gradlew", "mvn", "./mvnw", "mvnw",
         "npm", "yarn", "pnpm", "docker build", "cargo build", "go build",
@@ -156,11 +154,6 @@ object ShellResolver {
         val words = trimmed.lowercase().split("\\s+".toRegex())
         return BUILD_COMMAND_KEYWORDS.any { keyword -> words.any { it == keyword } }
     }
-
-    /**
-     * Strip ANSI escape codes from text.
-     */
-    fun stripAnsi(text: String): String = text.replace(ANSI_REGEX, "")
 
     /**
      * Detect password/credential prompts in the last 300 chars of output.
