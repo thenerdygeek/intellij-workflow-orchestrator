@@ -424,48 +424,78 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             }
         )
 
-        // Observe state changes — only rebuild stage list if build number changes
-        var lastDisplayedBuildNumber: Int? = null
+        // Observe state changes — rebuild stage list when (planKey, buildNumber) changes.
+        //
+        // Keying on buildNumber alone was a bug: if repo_1's latest build is #42 and the user
+        // switches to repo_2 whose latest is also #42, the stage list would NOT rebuild — the
+        // user saw repo_1's stages under repo_2's header, and clicking any stage loaded the
+        // wrong plan's log. We now compare `"$planKey-$buildNumber"` so any plan change
+        // forces a rebuild regardless of the build number collision.
+        //
+        // Null-state handling: switchBranch nullifies `_stateFlow.value` while the new poll
+        // is in flight. Previously the collector did nothing on null, so stale stages from
+        // the PREVIOUS plan lingered on screen — even worse, the user could click one and
+        // load the OLD plan's log while the header showed the new plan. Null now clears the
+        // stage list and log pane so there's never a mismatch between header and content.
+        var lastDisplayedBuildKey: String? = null
         scope.launch {
             monitorService.stateFlow.collect { state ->
                 invokeLater {
-                    if (state != null) {
-                        loadingIcon.isVisible = false
-                        hintLabel.isVisible = false
-                        splitter.isVisible = true
-                        latestBuildNumber = state.buildNumber
-
-                        // Only update header/stages if not viewing a historical build
+                    if (state == null) {
+                        // Plan/branch switch in progress — clear stale content so the user
+                        // can't click through to the wrong plan's logs.
+                        lastDisplayedBuildKey = null
                         if (!viewingHistoricalBuild) {
-                            headerLabel.text = "Plan: ${state.planKey} / ${state.branch}  #${state.buildNumber}"
-                            statusLabel.text = "${state.overallStatus} — ${TimeFormatter.formatDurationMillis(state.stages.sumOf { it.durationMs ?: 0 })}"
-
-                            // Only rebuild stage list if build number changed (avoids resetting selection + re-fetching log)
-                            if (state.buildNumber != lastDisplayedBuildNumber) {
-                                lastDisplayedBuildNumber = state.buildNumber
-                                stageListPanel.updateStages(state.stages)
-
-                                // Load build history lazily after current build is displayed
-                                loadBuildHistory()
-                            }
+                            stageListPanel.updateStages(emptyList())
+                            stageDetailPanel.showEmpty()
                         }
+                        return@invokeLater
+                    }
 
-                        // Show/hide newer build banner
-                        val newer = state.newerBuild
-                        if (newer != null) {
-                            val statusText = when (newer.status) {
-                                BuildStatus.IN_PROGRESS -> "running"
-                                BuildStatus.PENDING -> "queued"
-                                else -> newer.status.name.lowercase()
+                    loadingIcon.isVisible = false
+                    hintLabel.isVisible = false
+                    splitter.isVisible = true
+                    latestBuildNumber = state.buildNumber
+
+                    // Only update header/stages if not viewing a historical build
+                    if (!viewingHistoricalBuild) {
+                        headerLabel.text = "Plan: ${state.planKey} / ${state.branch}  #${state.buildNumber}"
+                        statusLabel.text = "${state.overallStatus} — ${TimeFormatter.formatDurationMillis(state.stages.sumOf { it.durationMs ?: 0 })}"
+
+                        val buildKey = "${state.planKey}-${state.buildNumber}"
+                        // Rebuild when plan OR build number changes (plan change is the common
+                        // case when switching repos; number change is the normal polling path).
+                        if (buildKey != lastDisplayedBuildKey) {
+                            val prevKey = lastDisplayedBuildKey
+                            lastDisplayedBuildKey = buildKey
+                            stageListPanel.updateStages(state.stages)
+                            // Wipe the log pane too: if the user had a stage selected from the
+                            // previous plan, its cached log view stays visible until a new
+                            // stage is clicked otherwise.
+                            if (prevKey != null && prevKey.substringBeforeLast("-") != state.planKey) {
+                                stageDetailPanel.showEmpty()
                             }
-                            val label = newerBuildBanner.components
-                                .filterIsInstance<com.intellij.ui.components.JBLabel>()
-                                .firstOrNull()
-                            label?.text = "Build #${newer.buildNumber} is $statusText — will update automatically when complete"
-                            newerBuildBanner.isVisible = true
-                        } else {
-                            newerBuildBanner.isVisible = false
+
+                            // Load build history lazily after current build is displayed
+                            loadBuildHistory()
                         }
+                    }
+
+                    // Show/hide newer build banner
+                    val newer = state.newerBuild
+                    if (newer != null) {
+                        val statusText = when (newer.status) {
+                            BuildStatus.IN_PROGRESS -> "running"
+                            BuildStatus.PENDING -> "queued"
+                            else -> newer.status.name.lowercase()
+                        }
+                        val label = newerBuildBanner.components
+                            .filterIsInstance<com.intellij.ui.components.JBLabel>()
+                            .firstOrNull()
+                        label?.text = "Build #${newer.buildNumber} is $statusText — will update automatically when complete"
+                        newerBuildBanner.isVisible = true
+                    } else {
+                        newerBuildBanner.isVisible = false
                     }
                 }
             }
@@ -575,6 +605,14 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         historyListModel.clear()
         historyPanel.isVisible = false
         headerLabel.text = "Plan: $bambooPlanKey / $branch"
+        // Clear stale UI immediately — the monitor nullifies stateFlow inside switchBranch,
+        // but we can't rely on the collector alone: there's a window between the user's
+        // click here and the collector firing on EDT where they could still click a stage
+        // from the previous plan. Clear synchronously here so stale stages are never
+        // clickable during the switch.
+        stageListPanel.updateStages(emptyList())
+        stageDetailPanel.showEmpty()
+        statusLabel.text = ""
         monitorService.switchBranch(bambooPlanKey, branch, interval)
     }
 
