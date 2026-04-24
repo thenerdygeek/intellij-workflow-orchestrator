@@ -3,27 +3,27 @@ package com.workflow.orchestrator.jira.settings
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.SearchableConfigurable
-import com.intellij.openapi.progress.runBackgroundableTask
 import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.dsl.builder.*
-import com.workflow.orchestrator.core.auth.CredentialStore
-import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.core.model.ServiceType
+import com.workflow.orchestrator.core.model.jira.JiraBoardSummary
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.ConnectionStatusBanner
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.workflow.WorkflowIntent
-import com.workflow.orchestrator.jira.api.JiraApiClient
-import com.workflow.orchestrator.jira.api.dto.JiraBoard
+import com.workflow.orchestrator.jira.service.JiraServiceImpl
 import com.workflow.orchestrator.jira.workflow.TransitionMapping
 import com.workflow.orchestrator.jira.workflow.TransitionMappingStore
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import javax.swing.JComponent
 import javax.swing.JLabel
 
-/** Wrapper for JiraBoard to customize toString for the combo box. */
-private data class JiraWorkflowBoardItem(val board: JiraBoard) {
+/** Wrapper for JiraBoardSummary to customize toString for the combo box. */
+private data class JiraWorkflowBoardItem(val board: JiraBoardSummary) {
     override fun toString(): String = "${board.name} (${board.type}, ID: ${board.id})"
 }
 
@@ -47,6 +47,7 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
 
     private val log = Logger.getInstance(JiraWorkflowConfigurable::class.java)
     private val intentFields = mutableMapOf<WorkflowIntent, String>()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     // Board selection state
     private var selectedBoardId: Int = 0
@@ -89,10 +90,10 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
 
         // Pre-populate with current saved board
         if (selectedBoardId > 0) {
-            val placeholder = JiraBoard(
-                selectedBoardId,
-                selectedBoardName.ifBlank { "Board $selectedBoardId" },
-                selectedBoardType.ifBlank { "scrum" }
+            val placeholder = JiraBoardSummary(
+                id = selectedBoardId.toLong(),
+                name = selectedBoardName.ifBlank { "Board $selectedBoardId" },
+                type = selectedBoardType.ifBlank { "scrum" }
             )
             boardComboBox.addItem(JiraWorkflowBoardItem(placeholder))
             boardComboBox.selectedIndex = 0
@@ -101,7 +102,7 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
 
         boardComboBox.addActionListener {
             val selected = boardComboBox.selectedItem as? JiraWorkflowBoardItem ?: return@addActionListener
-            selectedBoardId = selected.board.id
+            selectedBoardId = selected.board.id.toInt()
             selectedBoardType = selected.board.type
             selectedBoardName = selected.board.name
         }
@@ -130,45 +131,29 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
                         }
                         .comment("e.g. <code>MyTeam</code> or <code>Sprint Board</code> (leave blank for all)")
                     button("Search Boards") {
-                        val jiraUrl = settings.connections.jiraUrl
-                        if (jiraUrl.isNullOrBlank()) {
-                            boardStatusLabel.text = "Configure Jira URL in Connections first"
-                            return@button
-                        }
                         val searchText = boardSearchField.text.trim()
-
                         boardStatusLabel.text = "Searching boards..."
-                        val credentialStore = CredentialStore()
-                        val apiClient = JiraApiClient(
-                            baseUrl = jiraUrl.trimEnd('/'),
-                            tokenProvider = { credentialStore.getToken(ServiceType.JIRA) }
-                        )
-                        runBackgroundableTask("Searching Jira Boards", project, false) {
-                            val result = runBlocking {
-                                apiClient.getBoards(nameFilter = searchText)
-                            }
+                        scope.launch {
+                            val result = JiraServiceImpl.getInstance(project).searchBoards(searchText)
                             invokeLater {
-                                when (result) {
-                                    is ApiResult.Success -> {
-                                        val boards = result.data
-                                        log.info("[JiraWorkflow:Settings] Search '${searchText}' returned ${boards.size} boards")
-                                        boardComboBox.removeAllItems()
-                                        if (boards.isEmpty()) {
-                                            boardStatusLabel.text = if (searchText.isNotBlank()) {
-                                                "No boards matching '$searchText'. Try a different search or leave blank."
-                                            } else {
-                                                "No boards returned from Jira. Check your permissions."
-                                            }
+                                if (result.isError) {
+                                    boardStatusLabel.text = "Error: ${result.summary}"
+                                } else {
+                                    val boards = result.data
+                                    log.info("[JiraWorkflow:Settings] Search '$searchText' returned ${boards.size} boards")
+                                    boardComboBox.removeAllItems()
+                                    if (boards.isEmpty()) {
+                                        boardStatusLabel.text = if (searchText.isNotBlank()) {
+                                            "No boards matching '$searchText'. Try a different search or leave blank."
                                         } else {
-                                            for (board in boards) {
-                                                boardComboBox.addItem(JiraWorkflowBoardItem(board))
-                                            }
-                                            boardComboBox.selectedIndex = 0
-                                            boardStatusLabel.text = "${boards.size} board(s) found"
+                                            "No boards returned from Jira. Check your permissions."
                                         }
-                                    }
-                                    is ApiResult.Error -> {
-                                        boardStatusLabel.text = "Error: ${result.message}"
+                                    } else {
+                                        for (board in boards) {
+                                            boardComboBox.addItem(JiraWorkflowBoardItem(board))
+                                        }
+                                        boardComboBox.selectedIndex = 0
+                                        boardStatusLabel.text = "${boards.size} board(s) found"
                                     }
                                 }
                             }
@@ -447,6 +432,7 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
     }
 
     override fun disposeUIResources() {
+        scope.cancel()
         dialogPanel = null
         boardSearchFieldRef = null
         ticketKeyRegexField = null
