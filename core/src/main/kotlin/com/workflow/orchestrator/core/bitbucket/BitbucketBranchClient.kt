@@ -1,11 +1,10 @@
 package com.workflow.orchestrator.core.bitbucket
 
 import com.intellij.openapi.diagnostic.Logger
-import com.workflow.orchestrator.core.http.AuthInterceptor
-import com.workflow.orchestrator.core.http.AuthScheme
-import com.workflow.orchestrator.core.http.RetryInterceptor
+import com.workflow.orchestrator.core.http.HttpClientFactory
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
+import com.workflow.orchestrator.core.model.ServiceType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -16,7 +15,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
-import java.util.concurrent.TimeUnit
 
 @Serializable
 data class BitbucketProject(
@@ -534,12 +532,8 @@ class BitbucketBranchClient(
     private val json = Json { ignoreUnknownKeys = true }
 
     private val httpClient: OkHttpClient by lazy {
-        com.workflow.orchestrator.core.http.HttpClientFactory.sharedPool.newBuilder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .addInterceptor(AuthInterceptor(tokenProvider, AuthScheme.BEARER))
-            .addInterceptor(RetryInterceptor())
-            .build()
+        HttpClientFactory(tokenProvider = { _ -> tokenProvider() })
+            .clientFor(ServiceType.BITBUCKET)
     }
 
     /**
