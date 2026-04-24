@@ -44,6 +44,7 @@ import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.wm.ToolWindowManager
 import com.workflow.orchestrator.core.ai.AgentChatRedirect
+import com.workflow.orchestrator.pullrequest.service.MarkdownToHtml
 import com.workflow.orchestrator.pullrequest.service.PrActionService
 import com.workflow.orchestrator.pullrequest.service.PrDetailService
 import com.workflow.orchestrator.pullrequest.service.PrListService
@@ -1897,18 +1898,13 @@ class PrDetailPanel(
                 }
                 .replace(Regex("\\[(.+?)\\]\\((.+?)\\)")) { match ->
                     val text = match.groupValues[1]
-                    val url = sanitizeHref(match.groupValues[2])
+                    val url = MarkdownToHtml.sanitizeHref(match.groupValues[2])
                     "<a href='$url'>$text</a>"
                 }
                 .replace("\n\n", "<br><br>")
 
             val textColor = StatusColors.htmlColor(SECONDARY_TEXT)
             return "<html><body style='font-family: sans-serif; color: $textColor;'>$html</body></html>"
-        }
-
-        private fun sanitizeHref(url: String): String {
-            val trimmed = url.trim().lowercase()
-            return if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) url else "#"
         }
 
         private fun saveDescription() {

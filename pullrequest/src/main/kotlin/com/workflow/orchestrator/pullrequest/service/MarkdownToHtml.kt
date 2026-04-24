@@ -97,7 +97,12 @@ object MarkdownToHtml {
         return result
     }
 
-    private fun sanitizeHref(url: String): String {
+    /**
+     * Returns [url] unchanged when it starts with http:// or https:// (case-insensitive),
+     * otherwise returns "#". Shared safety helper for rendered Bitbucket links — prevents
+     * `javascript:`, `file://`, `data:`, and other non-web schemes from surviving the render.
+     */
+    internal fun sanitizeHref(url: String): String {
         val trimmed = url.trim().lowercase()
         return if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) url else "#"
     }
