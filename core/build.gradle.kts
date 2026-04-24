@@ -38,7 +38,6 @@ dependencies {
     compileOnly(libs.kotlinx.coroutines.jdk8)
     compileOnly(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
-    implementation(libs.sqlite.jdbc)
 
     // Test
     testImplementation(libs.junit5.api)

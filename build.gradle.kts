@@ -67,14 +67,11 @@ dependencies {
     compileOnly(libs.kotlinx.coroutines.core)
     compileOnly(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
-    implementation(libs.okhttp.logging)
     implementation(libs.sqlite.jdbc) {
         exclude(group = "org.slf4j")
     }
 
     // -- Test --
-    testImplementation(libs.junit)
-    testImplementation(libs.opentest4j)
 }
 
 // ---- IntelliJ Platform Configuration ----

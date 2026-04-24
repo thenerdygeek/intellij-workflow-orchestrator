@@ -124,28 +124,14 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var repos by list<RepoConfig>()
 
         // ── Raw API trace (diagnostic feature) ──────────────────────────────
-        // Controls verbatim LLM traffic capture. These fields are read at startup by
-        // RawApiTraceConfig to prime the singleton state. A settings UI page may be
-        // added in a later phase — for now these can be toggled programmatically or
-        // via the registry XML if needed.
-
-        /** Master enable switch — when false, no trace files are written. */
-        var rawApiTraceEnabled by property(false)
+        // Controls verbatim LLM traffic capture. RawApiTraceConfig is the runtime
+        // singleton; mode and retention are surfaced here for diagnostic bundle reporting.
 
         /** Trace mode: "OFF", "ALWAYS_ON", or "BURST". */
         var rawApiTraceMode by string("OFF")
 
         /** How many days to keep dated raw-api trace directories on disk. */
         var rawApiTraceRetentionDays by property(3)
-
-        /** Maximum size of each captured request/response body in megabytes. */
-        var rawApiTraceMaxBodyMb by property(10)
-
-        /**
-         * When true, request bodies are passed through CredentialRedactor before writing.
-         * Off by default — prompts ARE the diagnostic data.
-         */
-        var rawTraceRedactPromptSecrets by property(false)
 
         // ── Telemetry & Logs settings ─────────────────────────────────────────────
         var logLevel by string("INFO")

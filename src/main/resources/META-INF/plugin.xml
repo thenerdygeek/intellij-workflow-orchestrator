@@ -134,8 +134,6 @@
         <projectService
             serviceImplementation="com.workflow.orchestrator.core.settings.RepoContextResolver"/>
         <projectService
-            serviceImplementation="com.workflow.orchestrator.core.offline.ConnectivityMonitor"/>
-        <projectService
             serviceImplementation="com.workflow.orchestrator.core.notifications.WorkflowNotificationService"/>
         <projectService
             serviceImplementation="com.workflow.orchestrator.core.onboarding.OnboardingService"/>
@@ -231,8 +229,6 @@
             serviceImplementation="com.workflow.orchestrator.core.settings.ConnectionSettings"/>
         <applicationService
             serviceImplementation="com.workflow.orchestrator.automation.service.AutomationSettingsService"/>
-        <applicationService
-            serviceImplementation="com.workflow.orchestrator.agent.service.GlobalSessionIndex"/>
 
         <!-- Status Bar -->
         <statusBarWidgetFactory id="WorkflowAutomationStatusBar"
@@ -325,7 +321,7 @@
         <postStartupActivity
             implementation="com.workflow.orchestrator.core.insights.WeeklyDigestStartupActivity"/>
         <projectService
-            serviceImplementation="com.workflow.orchestrator.agent.database.DatabaseSettings"/>
+            serviceImplementation="com.workflow.orchestrator.agent.tools.database.DatabaseSettings"/>
         <fileEditorProvider
             implementation="com.workflow.orchestrator.agent.ui.plan.AgentPlanEditorProvider"/>
         <fileEditorProvider

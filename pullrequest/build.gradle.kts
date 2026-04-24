@@ -30,7 +30,6 @@ dependencies {
     implementation(project(":core"))
     compileOnly(libs.kotlinx.coroutines.core)
     compileOnly(libs.kotlinx.serialization.json)
-    implementation(libs.okhttp)
 
     testImplementation(libs.junit5.api)
     testRuntimeOnly(libs.junit5.engine)
