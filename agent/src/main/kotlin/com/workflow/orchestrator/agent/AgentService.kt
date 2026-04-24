@@ -1338,8 +1338,16 @@ class AgentService(private val project: Project) : Disposable {
                 // Build deferred catalog for system prompt injection (grouped by category with descriptions)
                 val deferredCatalog = registry.getDeferredCatalogGroupedWithDescriptions()
 
-                // MEMORY INDEX: Load per-project MEMORY.md for injection into Section 10
+                // MEMORY INDEX: Load per-project MEMORY.md for injection into Section 10.
+                // Ensure the memory directory exists so the LLM's first create_file into it
+                // (and edit_file against a not-yet-created MEMORY.md) cannot NoSuchFileException.
                 val memoryDirPath = java.io.File(agentDir, "memory").toPath()
+                try {
+                    java.nio.file.Files.createDirectories(memoryDirPath)
+                } catch (_: Exception) {
+                    // Non-fatal: if we cannot create the dir (permission, read-only FS),
+                    // memory just stays unavailable for the session.
+                }
                 val memoryIndexContent = com.workflow.orchestrator.agent.memory.MemoryIndex.load(memoryDirPath)
                 val memoryIndexPath = memoryDirPath.resolve("MEMORY.md").toString()
 
