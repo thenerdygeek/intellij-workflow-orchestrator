@@ -4,6 +4,7 @@ import com.workflow.orchestrator.core.model.jira.AttachmentContentData
 import com.workflow.orchestrator.core.model.jira.BoardData
 import com.workflow.orchestrator.core.model.jira.DevStatusBranchData
 import com.workflow.orchestrator.core.model.jira.DevStatusPrData
+import com.workflow.orchestrator.core.model.jira.JiraBoardSummary
 import com.workflow.orchestrator.core.model.jira.JiraCommentData
 import com.workflow.orchestrator.core.model.jira.JiraTicketData
 import com.workflow.orchestrator.core.model.jira.TransitionMeta
@@ -74,4 +75,7 @@ interface JiraService {
 
     /** Search tickets by JQL query. Used for # ticket mention autocomplete. */
     suspend fun searchTickets(jql: String, maxResults: Int = 8): ToolResult<List<JiraTicketData>>
+
+    /** Search boards by name fragment. Calls GET /rest/agile/1.0/board?name=<query>. */
+    suspend fun searchBoards(query: String): ToolResult<List<JiraBoardSummary>>
 }

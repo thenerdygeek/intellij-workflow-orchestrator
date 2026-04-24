@@ -9,6 +9,7 @@ import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.model.jira.AttachmentContentData
 import com.workflow.orchestrator.core.model.jira.BoardData
 import com.workflow.orchestrator.core.model.jira.DevStatusBranchData
+import com.workflow.orchestrator.core.model.jira.JiraBoardSummary
 import com.workflow.orchestrator.core.model.jira.DevStatusPrData
 import com.workflow.orchestrator.core.model.jira.JiraCommentData
 import com.workflow.orchestrator.core.model.jira.JiraAttachmentData
@@ -808,6 +809,36 @@ class JiraServiceImpl(private val project: Project) : JiraService {
      * This avoids duplicate client construction and ensures consistent auth handling.
      */
     fun getApiClient(): JiraApiClient? = client
+
+    override suspend fun searchBoards(query: String): ToolResult<List<JiraBoardSummary>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Jira not configured. Cannot search boards.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        return when (val result = api.getBoards(nameFilter = query)) {
+            is ApiResult.Success -> {
+                val boards = result.data.map { b ->
+                    JiraBoardSummary(id = b.id.toLong(), name = b.name, type = b.type)
+                }
+                ToolResult.success(
+                    data = boards,
+                    summary = "Found ${boards.size} board(s) matching \"$query\""
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Failed to search boards for \"$query\": ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error searching boards for \"$query\": ${result.message}",
+                    isError = true,
+                    hint = "Check Jira connection in Settings."
+                )
+            }
+        }
+    }
 
     override suspend fun searchTickets(jql: String, maxResults: Int): ToolResult<List<JiraTicketData>> {
         val api = client ?: return ToolResult(
