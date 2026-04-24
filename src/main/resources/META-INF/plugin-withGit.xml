@@ -4,6 +4,10 @@
 -->
 <idea-plugin>
     <extensions defaultExtensionNs="com.intellij">
+        <!-- Eagerly wire TicketDetectionPresenter so its EventBus subscription
+             is active when BranchChangeTicketDetector emits events. -->
+        <postStartupActivity
+            implementation="com.workflow.orchestrator.jira.listeners.TicketDetectionStartupActivity"/>
     </extensions>
 
     <projectListeners>

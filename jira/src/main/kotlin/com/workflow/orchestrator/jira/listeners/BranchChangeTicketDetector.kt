@@ -5,22 +5,33 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vcs.BranchChangeListener
-import com.intellij.openapi.wm.WindowManager
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.jira.service.ActiveTicketService
+import com.workflow.orchestrator.jira.service.DismissedBranchStore
 import com.workflow.orchestrator.jira.service.JiraServiceImpl
-import com.workflow.orchestrator.jira.ui.TicketDetectionPopup
 import git4idea.repo.GitRepositoryManager
-import com.intellij.openapi.application.invokeLater
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
+/**
+ * Listens for git branch changes and, when a Jira ticket ID can be parsed
+ * from the new branch, resolves ticket details via [JiraServiceImpl] and
+ * emits an [EventBus] event:
+ *
+ * - [WorkflowEvent.TicketDetected] — "banner-only" path, fired when the user
+ *   has already dismissed this branch (consumed by the Sprint tab banner).
+ * - [WorkflowEvent.TicketDetectedInteractive] — "please show popup" path,
+ *   fired on first detection for a branch. Consumed by
+ *   `TicketDetectionPresenter`, which owns all Swing interaction.
+ *
+ * This listener holds no state and touches no UI.
+ */
 class BranchChangeTicketDetector(private val project: Project) : BranchChangeListener, Disposable {
 
     private val log = Logger.getInstance(BranchChangeTicketDetector::class.java)
@@ -63,67 +74,42 @@ class BranchChangeTicketDetector(private val project: Project) : BranchChangeLis
             return
         }
 
-        // Fetch ticket details from Jira in background, then show confirmation popup
+        // Fetch ticket details from Jira in background, then dispatch via EventBus.
         scope.launch {
             val result = JiraServiceImpl.getInstance(project).getTicket(ticketId)
-            if (!result.isError) {
-                val issue = result.data
-                val summary = issue.summary
-                val sprintName = issue.sprintName
-                val assigneeName = issue.assignee
+            if (result.isError) {
+                log.warn("[Jira:Branch] Failed to fetch issue $ticketId: ${result.summary}")
+                return@launch
+            }
+            val issue = result.data
+            val summary = issue.summary
+            val sprintName = issue.sprintName
+            val assigneeName = issue.assignee
 
-                // Check if this branch was previously dismissed
-                if (branchName in dismissedBranches) {
-                    log.info("[Jira:Branch] Branch '$branchName' was previously dismissed, showing banner only")
-                    // Emit event for Sprint tab banner
-                    val eventBus = project.getService(EventBus::class.java)
-                    eventBus.emit(
-                        WorkflowEvent.TicketDetected(
-                            ticketKey = ticketId,
-                            ticketSummary = summary,
-                            sprint = sprintName,
-                            assignee = assigneeName,
-                            branchName = branchName
-                        )
-                    )
-                    return@launch
-                }
+            val eventBus = project.getService(EventBus::class.java)
+            val dismissedStore = DismissedBranchStore.getInstance(project)
 
-                invokeLater {
-                    val frame = WindowManager.getInstance().getFrame(project) ?: return@invokeLater
-
-                    TicketDetectionPopup(
+            if (dismissedStore.isDismissed(branchName)) {
+                log.info("[Jira:Branch] Branch '$branchName' was previously dismissed, showing banner only")
+                eventBus.emit(
+                    WorkflowEvent.TicketDetected(
                         ticketKey = ticketId,
-                        summary = summary,
+                        ticketSummary = summary,
                         sprint = sprintName,
                         assignee = assigneeName,
-                        onAccept = {
-                            settings.state.activeTicketId = ticketId
-                            settings.state.activeTicketSummary = summary
-                            ActiveTicketService.getInstance(project).setActiveTicket(ticketId, summary)
-                            log.info("[Jira:Branch] User accepted ticket $ticketId as active")
-                        },
-                        onDismiss = {
-                            dismissedBranches.add(branchName)
-                            log.info("[Jira:Branch] User dismissed detection for branch '$branchName'")
-                            // Emit event for Sprint tab banner
-                            scope.launch {
-                                val eventBus = project.getService(EventBus::class.java)
-                                eventBus.emit(
-                                    WorkflowEvent.TicketDetected(
-                                        ticketKey = ticketId,
-                                        ticketSummary = summary,
-                                        sprint = sprintName,
-                                        assignee = assigneeName,
-                                        branchName = branchName
-                                    )
-                                )
-                            }
-                        }
-                    ).show(frame)
-                }
+                        branchName = branchName
+                    )
+                )
             } else {
-                log.warn("[Jira:Branch] Failed to fetch issue $ticketId: ${result.summary}")
+                eventBus.emit(
+                    WorkflowEvent.TicketDetectedInteractive(
+                        ticketKey = ticketId,
+                        ticketSummary = summary,
+                        sprint = sprintName,
+                        assignee = assigneeName,
+                        branchName = branchName
+                    )
+                )
             }
         }
     }
@@ -131,10 +117,5 @@ class BranchChangeTicketDetector(private val project: Project) : BranchChangeLis
     override fun dispose() {
         scope.cancel()
         log.info("[Jira:Branch] BranchChangeTicketDetector disposed")
-    }
-
-    companion object {
-        /** Branches the user has dismissed detection for (resets on IDE restart). */
-        val dismissedBranches: MutableSet<String> = java.util.Collections.synchronizedSet(mutableSetOf())
     }
 }

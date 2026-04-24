@@ -100,6 +100,23 @@ sealed class WorkflowEvent {
         val branchName: String? = null
     ) : WorkflowEvent()
 
+    /**
+     * Emitted by :jira when a ticket is detected from a fresh branch change and
+     * the user has not yet dismissed this branch. Signals the UI layer
+     * (`TicketDetectionPresenter`) to show the interactive confirmation popup.
+     *
+     * Distinct from [TicketDetected], which is fired only on the banner-only
+     * path (already-dismissed branches + post-dismiss callbacks). Keeping
+     * these two signals separate preserves existing emission semantics.
+     */
+    data class TicketDetectedInteractive(
+        val ticketKey: String,
+        val ticketSummary: String,
+        val sprint: String?,
+        val assignee: String?,
+        val branchName: String
+    ) : WorkflowEvent()
+
     /** Emitted when the git branch changes (via BranchChangeListener). */
     data class BranchChanged(
         val branchName: String,

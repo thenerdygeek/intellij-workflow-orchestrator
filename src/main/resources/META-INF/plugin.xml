@@ -185,6 +185,10 @@
             serviceImplementation="com.workflow.orchestrator.jira.service.TicketKeyCache"/>
         <projectService
             serviceImplementation="com.workflow.orchestrator.jira.service.IssueDetailCache"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.jira.service.DismissedBranchStore"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.jira.ui.TicketDetectionPresenter"/>
 
         <!-- Bamboo Services -->
         <projectService

@@ -27,11 +27,11 @@ import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import git4idea.repo.GitRepositoryManager
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.workflow.orchestrator.jira.api.dto.JiraSprint
-import com.workflow.orchestrator.jira.listeners.BranchChangeTicketDetector
 import com.workflow.orchestrator.jira.service.toJiraTicketData
 import com.workflow.orchestrator.jira.service.ActiveTicketService
 import com.workflow.orchestrator.jira.service.BranchNameValidator
 import com.workflow.orchestrator.jira.service.BranchingService
+import com.workflow.orchestrator.jira.service.DismissedBranchStore
 import com.workflow.orchestrator.jira.service.SprintService
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.wm.WindowManager
@@ -229,7 +229,7 @@ class SprintDashboardPanel(
                         ActiveTicketService.getInstance(project).setActiveTicket(key, summary)
                         detectionBanner.isVisible = false
                         // Remove this branch from dismissed so it won't re-trigger banner
-                        lastDetectedBranchName?.let { BranchChangeTicketDetector.dismissedBranches.remove(it) }
+                        lastDetectedBranchName?.let { DismissedBranchStore.getInstance(project).remove(it) }
                         revalidate()
                     },
                     onDismiss = {
