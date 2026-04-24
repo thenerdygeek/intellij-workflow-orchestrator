@@ -15,6 +15,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.ui.StatusColors
+import com.workflow.orchestrator.core.ui.TimeFormatter
 import com.workflow.orchestrator.core.util.HtmlEscape
 import com.workflow.orchestrator.core.util.StringUtils
 import com.workflow.orchestrator.jira.api.dto.JiraAttachment
@@ -631,7 +632,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         }
 
         val authorName = comment.author
-        val timeAgo = formatRelativeTime(comment.created)
+        val timeAgo = TimeFormatter.relativeFromIso(comment.created)
 
         val headerRow = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
             isOpaque = false
@@ -669,21 +670,6 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         currentDevStatusSection?.dispose()
         currentDevStatusSection = null
         quickCommentPanel.dispose()
-    }
-
-    private fun formatRelativeTime(isoDate: String): String {
-        return try {
-            val created = java.time.Instant.parse(isoDate.replace("+0000", "Z"))
-            val duration = java.time.Duration.between(created, java.time.Instant.now())
-            when {
-                duration.toMinutes() < 60 -> "${duration.toMinutes()}m ago"
-                duration.toHours() < 24 -> "${duration.toHours()}h ago"
-                duration.toDays() < 30 -> "${duration.toDays()}d ago"
-                else -> isoDate.take(10)
-            }
-        } catch (_: Exception) {
-            isoDate.take(10)
-        }
     }
 
     // ---------------------------------------------------------------
