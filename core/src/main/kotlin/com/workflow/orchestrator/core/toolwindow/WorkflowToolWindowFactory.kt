@@ -2,6 +2,7 @@ package com.workflow.orchestrator.core.toolwindow
 
 import com.intellij.icons.AllIcons
 import com.intellij.ide.BrowserUtil
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.*
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.components.service
@@ -343,6 +344,13 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
             }
             val content = ContentFactory.getInstance().createContent(panel, tab.title, false)
             content.isCloseable = false
+            // Cascade Content.dispose() -> panel.dispose() so panel-owned CoroutineScopes/
+            // subscribers are released when the tool window (or the whole project) closes.
+            // The placeholder isn't Disposable, so this is a no-op for lazy tabs here;
+            // the real panel is wired in selectionChanged below.
+            if (panel is Disposable) {
+                content.setDisposer(panel)
+            }
             contentManager.addContent(content)
         }
 
@@ -360,6 +368,9 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
                 }
                 val content = ContentFactory.getInstance().createContent(panel, provider.tabTitle, false)
                 content.isCloseable = false
+                if (panel is Disposable) {
+                    content.setDisposer(panel)
+                }
                 contentManager.addContent(content)
             }
 
@@ -374,6 +385,13 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
                     val tab = defaultTabs.firstOrNull { it.title == tabTitle } ?: return
                     val realPanel = materializeTab(project, tab, providers)
                     content.component = realPanel
+                    // Now that the placeholder is replaced by the real panel, wire
+                    // dispose cascade. LazyTabPlaceholder isn't Disposable, so no
+                    // prior disposer was registered at buildTabs time -- this is a
+                    // fresh set, not a replacement.
+                    if (realPanel is Disposable) {
+                        content.setDisposer(realPanel)
+                    }
                     log.info("[Workflow:UI] Lazy-loaded tab: $tabTitle")
                 }
             }
