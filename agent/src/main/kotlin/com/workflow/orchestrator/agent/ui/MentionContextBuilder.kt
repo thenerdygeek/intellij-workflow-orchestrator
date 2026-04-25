@@ -1,9 +1,8 @@
 package com.workflow.orchestrator.agent.ui
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.editor.Document
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -80,7 +79,7 @@ class MentionContextBuilder(
         return if (sb.isNotBlank()) sb.toString() else null
     }
 
-    private fun buildFileContext(mention: Mention, basePath: String): String {
+    private suspend fun buildFileContext(mention: Mention, basePath: String): String {
         val fullPath = if (mention.value.startsWith("/")) mention.value
                        else "$basePath/${mention.value}"
         val file = File(fullPath)
@@ -90,7 +89,7 @@ class MentionContextBuilder(
         val content = try {
             val vf = LocalFileSystem.getInstance().findFileByPath(fullPath)
             if (vf != null) {
-                val doc = ReadAction.compute<Document?, Exception> {
+                val doc = readAction {
                     FileDocumentManager.getInstance().getDocument(vf)
                 }
                 doc?.text ?: vf.contentsToByteArray().toString(Charsets.UTF_8)
