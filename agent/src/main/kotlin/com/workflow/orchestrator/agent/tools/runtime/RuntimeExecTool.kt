@@ -21,7 +21,8 @@ import com.intellij.openapi.application.EDT
 import com.intellij.openapi.compiler.CompilationStatusListener
 import com.intellij.openapi.compiler.CompileContext
 import com.intellij.openapi.compiler.CompilerTopics
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
+import com.intellij.openapi.application.smartReadAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
@@ -645,14 +646,14 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
         )
 
         // Name resolution: exact match → unique substring → error
-        // M3 fix: RunManager.getInstance + allSettings access must run inside a ReadAction
+        // M3 fix: RunManager.getInstance + allSettings access must run inside a read action
         // (same pattern as JavaRuntimeExecTool.detectTestFramework / findModuleForClass and
-        // DebugBreakpointsTool.executeMethodBreakpoint which all use ReadAction.compute).
+        // DebugBreakpointsTool.executeMethodBreakpoint which all use a read action).
         val runManager = RunManager.getInstance(project)
-        val allSettings = ReadAction.compute<List<com.intellij.execution.RunnerAndConfigurationSettings>, Throwable> {
+        val allSettings = readAction {
             runManager.allSettings
         }
-        val settings = ReadAction.compute<com.intellij.execution.RunnerAndConfigurationSettings?, Throwable> {
+        val settings = readAction {
             runManager.findConfigurationByName(configName)
         } ?: run {
             val matches = allSettings.filter { it.name.contains(configName, ignoreCase = false) }
@@ -687,11 +688,11 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
         )
 
         // checkConfiguration — errors block, warnings pass.
-        // Must run inside a read action: Spring Boot's checkConfiguration() resolves the
+        // Must run inside a smart read action: Spring Boot's checkConfiguration() resolves the
         // main class via JavaPsiFacade.findClass(), which triggers FileBasedIndex.ensureUpToDate()
-        // and asserts read access. We're on a Dispatchers.IO worker here, so wrap in ReadAction.
+        // and asserts read access. We're on a Dispatchers.IO worker here, so wrap in smartReadAction.
         try {
-            ReadAction.compute<Unit, Throwable> {
+            smartReadAction(project) {
                 config.checkConfiguration()
             }
         } catch (e: RuntimeConfigurationError) {

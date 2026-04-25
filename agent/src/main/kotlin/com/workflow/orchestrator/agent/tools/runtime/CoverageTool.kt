@@ -10,8 +10,9 @@ import com.intellij.execution.testframework.sm.runner.SMTestProxy
 import com.intellij.execution.testframework.sm.runner.ui.TestResultsViewer
 import com.intellij.execution.ui.RunContentDescriptor
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.application.readAction
+import com.intellij.openapi.application.smartReadAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.module.ModuleUtilCore
 import com.intellij.openapi.project.Project
@@ -1007,7 +1008,7 @@ Actions and their parameters:
     // Run configuration creation
     // ══════════════════════════════════════════════════════════════════════
 
-    private fun createJUnitRunSettings(
+    private suspend fun createJUnitRunSettings(
         project: Project, className: String, methods: List<String>
     ): com.intellij.execution.RunnerAndConfigurationSettings? {
         return try {
@@ -1084,12 +1085,12 @@ Actions and their parameters:
         } catch (_: Exception) { null }
     }
 
-    private fun detectTestFramework(project: Project, className: String): String {
+    private suspend fun detectTestFramework(project: Project, className: String): String {
         return try {
-            ReadAction.compute<String, Exception> {
+            smartReadAction(project) {
                 val psiClass = JavaPsiFacade.getInstance(project)
                     .findClass(className, GlobalSearchScope.projectScope(project))
-                    ?: return@compute "Unknown"
+                    ?: return@smartReadAction "Unknown"
                 val annotations = psiClass.annotations.map { it.qualifiedName.orEmpty() } +
                     psiClass.methods.flatMap { m -> m.annotations.map { it.qualifiedName.orEmpty() } }
                 when {
@@ -1101,12 +1102,12 @@ Actions and their parameters:
         } catch (_: Exception) { "Unknown" }
     }
 
-    private fun findModuleForClass(project: Project, className: String): com.intellij.openapi.module.Module? {
+    private suspend fun findModuleForClass(project: Project, className: String): com.intellij.openapi.module.Module? {
         return try {
-            ReadAction.compute<com.intellij.openapi.module.Module?, Exception> {
+            smartReadAction(project) {
                 val psiClass = JavaPsiFacade.getInstance(project)
                     .findClass(className, GlobalSearchScope.projectScope(project))
-                    ?: return@compute null
+                    ?: return@smartReadAction null
                 ModuleUtilCore.findModuleForPsiElement(psiClass)
             }
         } catch (_: Exception) { null }
@@ -1116,26 +1117,26 @@ Actions and their parameters:
     // Utilities
     // ══════════════════════════════════════════════════════════════════════
 
-    private fun resolveToClassName(filePath: String, project: Project): String? {
+    private suspend fun resolveToClassName(filePath: String, project: Project): String? {
         return try {
-            ReadAction.compute<String?, Exception> {
-                val basePath = project.basePath ?: return@compute null
+            readAction {
+                val basePath = project.basePath ?: return@readAction null
                 val absolutePath = if (filePath.startsWith("/") || filePath.contains(":\\")) filePath
                     else "$basePath/$filePath"
                 val vf = com.intellij.openapi.vfs.LocalFileSystem.getInstance()
-                    .findFileByIoFile(java.io.File(absolutePath)) ?: return@compute null
-                val psiFile = com.intellij.psi.PsiManager.getInstance(project).findFile(vf) ?: return@compute null
+                    .findFileByIoFile(java.io.File(absolutePath)) ?: return@readAction null
+                val psiFile = com.intellij.psi.PsiManager.getInstance(project).findFile(vf) ?: return@readAction null
                 if (psiFile is com.intellij.psi.PsiJavaFile) {
                     val pkg = psiFile.packageName
-                    val cls = psiFile.classes.firstOrNull()?.name ?: return@compute null
-                    return@compute if (pkg.isNotBlank()) "$pkg.$cls" else cls
+                    val cls = psiFile.classes.firstOrNull()?.name ?: return@readAction null
+                    return@readAction if (pkg.isNotBlank()) "$pkg.$cls" else cls
                 }
                 try {
                     val ktFileClass = Class.forName("org.jetbrains.kotlin.psi.KtFile")
                     if (ktFileClass.isInstance(psiFile)) {
                         val pkg = ktFileClass.getMethod("getPackageFqName").invoke(psiFile)?.toString() ?: ""
                         val cls = vf.nameWithoutExtension
-                        return@compute if (pkg.isNotBlank()) "$pkg.$cls" else cls
+                        return@readAction if (pkg.isNotBlank()) "$pkg.$cls" else cls
                     }
                 } catch (_: Exception) {}
                 null

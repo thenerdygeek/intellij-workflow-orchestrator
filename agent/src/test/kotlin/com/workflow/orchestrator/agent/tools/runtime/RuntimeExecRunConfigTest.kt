@@ -18,7 +18,8 @@ import com.intellij.execution.runners.ProgramRunner
 import com.intellij.execution.ui.RunContentDescriptor
 import com.intellij.execution.ui.RunContentManager
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
+import com.intellij.openapi.application.smartReadAction
 import com.intellij.openapi.compiler.CompilationStatusListener
 import com.intellij.openapi.compiler.CompileContext
 import com.intellij.openapi.compiler.CompilerMessage
@@ -29,7 +30,6 @@ import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
-import com.intellij.openapi.util.ThrowableComputable
 import com.intellij.testFramework.LightVirtualFile
 import com.workflow.orchestrator.agent.AgentService
 import java.lang.reflect.Proxy
@@ -173,14 +173,13 @@ class RuntimeExecRunConfigTest {
         // without falling through to the real implementation (which requires an initialized
         // IntelliJ Application / ExtensionPoint and throws IllegalArgumentException here).
         mockkObject(ExecutionEnvironmentBuilder.Companion)
-        // M3 fix: ReadAction.compute is now called during name resolution. Mock it to
-        // execute the lambda inline (synchronously on the test thread) so tests don't
-        // need a real IntelliJ Application instance. Pattern from BuildSystemValidatorTest.
-        mockkStatic(ReadAction::class)
-        val readActionComputeSlot = slot<ThrowableComputable<Any?, Throwable>>()
-        every { ReadAction.compute(capture(readActionComputeSlot)) } answers {
-            readActionComputeSlot.captured.compute()
-        }
+        // D7a: readAction { … } / smartReadAction(project) { … } are top-level suspending
+        // functions in com.intellij.openapi.application.CoroutinesKt. There is no
+        // ApplicationManager in unit tests, so the real implementations would NPE on their
+        // ReadWriteActionSupport service lookup. Stub them to invoke the lambda in-place.
+        mockkStatic("com.intellij.openapi.application.CoroutinesKt")
+        coEvery { readAction<Any?>(any()) } coAnswers { firstArg<() -> Any?>().invoke() }
+        coEvery { smartReadAction<Any?>(any(), any()) } coAnswers { secondArg<() -> Any?>().invoke() }
 
         every { RunManager.getInstance(project) } returns runManager
         every { DumbService.isDumb(project) } returns false
