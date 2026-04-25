@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.core.toolwindow.insights
 
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionPlaces
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.application.invokeLater
@@ -15,6 +16,7 @@ import com.workflow.orchestrator.core.services.InsightsService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.awt.BorderLayout
 import java.awt.FlowLayout
@@ -25,7 +27,7 @@ import javax.swing.JTabbedPane
 class InsightsPanel(
     private val project: Project,
     private val service: InsightsService,
-) : JPanel(BorderLayout()) {
+) : JPanel(BorderLayout()), Disposable {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -80,6 +82,15 @@ class InsightsPanel(
             val snapshot = loadSnapshot()
             invokeLater { applySnapshot(snapshot) }
         }
+    }
+
+    override fun dispose() {
+        // Idempotently stop the poller (AncestorListener may have already done so on
+        // soft tab-hide); cancel the scope so the EventBus collector exits and any
+        // in-flight launch is interrupted on hard project close. Wired by
+        // WorkflowToolWindowFactory via content.setDisposer(panel).
+        poller.stop()
+        scope.cancel()
     }
 
     private fun loadSnapshot(): InsightsSnapshot {
