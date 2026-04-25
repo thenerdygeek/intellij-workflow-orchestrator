@@ -14,6 +14,7 @@ import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -114,7 +115,7 @@ class QueueService {
     private var pollingJob: Job? = null
 
     fun enqueue(entry: QueueEntry) {
-        cs.launch {
+        cs.launch(Dispatchers.IO) {
             mutex.withLock {
                 val suiteEntries = _stateFlow.value.count { it.suitePlanKey == entry.suitePlanKey }
                 if (suiteEntries >= maxDepthPerSuite) {
@@ -150,7 +151,7 @@ class QueueService {
     }
 
     fun cancel(entryId: String) {
-        cs.launch {
+        cs.launch(Dispatchers.IO) {
             mutex.withLock {
                 val entry = _stateFlow.value.find { it.id == entryId } ?: return@launch
                 log.info("[Automation:Queue] Cancelling entry $entryId (status=${entry.status}, suite='${entry.suitePlanKey}')")
@@ -191,7 +192,7 @@ class QueueService {
     private fun startPollingIfNeeded() {
         if (pollingJob?.isActive == true) return
         log.info("[Automation:Queue] Starting queue polling")
-        pollingJob = cs.launch {
+        pollingJob = cs.launch(Dispatchers.IO) {
             while (true) {
                 if (pollInProgress.compareAndSet(false, true)) {
                     try {
@@ -352,7 +353,7 @@ class QueueService {
     }
 
     fun restoreFromPersistence() {
-        cs.launch {
+        cs.launch(Dispatchers.IO) {
             mutex.withLock {
                 val persisted = tagHistoryService.getActiveQueueEntries()
                 log.info("[Automation:Queue] Restored ${persisted.size} entries from persistence")
