@@ -2,6 +2,7 @@ package com.workflow.orchestrator.core.healthcheck
 
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.application.readAction
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.healthcheck.checks.*
@@ -31,8 +32,8 @@ class HealthCheckService(
         val hasBuildConfig: Boolean
     )
 
-    private fun classifyChanges(changedFiles: List<com.intellij.openapi.vfs.VirtualFile>): ChangeClassification {
-        return com.intellij.openapi.application.ReadAction.compute<ChangeClassification, RuntimeException> {
+    private suspend fun classifyChanges(changedFiles: List<com.intellij.openapi.vfs.VirtualFile>): ChangeClassification =
+        readAction {
             val fileIndex = com.intellij.openapi.roots.ProjectFileIndex.getInstance(project)
             var hasProd = false; var hasTest = false; var hasRes = false; var hasBuild = false
 
@@ -46,7 +47,6 @@ class HealthCheckService(
             }
             ChangeClassification(hasProd, hasTest, hasRes, hasBuild)
         }
-    }
 
     init {
         // Subscribe to QualityGateResult events to update SonarGateCheck's cached status
