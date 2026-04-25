@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.agent.ui
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.smartReadAction
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
@@ -67,7 +67,7 @@ class MentionSearchProvider(private val project: Project) {
      * @param query Search query (empty = show all/top results)
      * @return JSON string of results array
      */
-    fun search(type: String, query: String): String {
+    suspend fun search(type: String, query: String): String {
         return try {
             when (type) {
                 "categories" -> buildCategoriesJson()
@@ -89,7 +89,7 @@ class MentionSearchProvider(private val project: Project) {
      * Search files, folders, and symbols together with server-side ranking.
      * Returns up to [MAX_RESULTS_PER_TYPE] per type, ranked by name relevance.
      */
-    private fun searchAll(query: String): String {
+    private suspend fun searchAll(query: String): String {
         val results = mutableListOf<JsonObject>()
         val basePath = project.basePath ?: return "[]"
         val lowerQuery = query.lowercase()
@@ -341,12 +341,16 @@ class MentionSearchProvider(private val project: Project) {
         }
     }
 
-    private fun searchSymbols(query: String): String {
+    private suspend fun searchSymbols(query: String): String {
         if (query.length < 2) return "[]" // Need at least 2 chars for symbol search
         val results = mutableListOf<JsonObject>()
 
         try {
-            ReadAction.run<Exception> {
+            // Bucket C (Phase 4 Prong D-grep audit): off-EDT coroutine, indexes-required.
+            // Caller chain: search() ← AgentCefPanel.scope.launch { withTimeout { ... } }.
+            // PsiShortNamesCache.allClassNames + getClassesByName both consult the project index,
+            // so we wait for smart mode (matching JavaRuntimeExecTool's identical PSI lookup).
+            smartReadAction(project) {
                 val cache = PsiShortNamesCache.getInstance(project)
                 // Search classes
                 val classNames = cache.allClassNames.filter { it.lowercase().contains(query.lowercase()) }.take(MAX_RESULTS)

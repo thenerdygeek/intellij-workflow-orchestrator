@@ -3,7 +3,7 @@ package com.workflow.orchestrator.agent.ide
 import com.intellij.execution.configurations.ConfigurationType
 import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.openapi.application.ApplicationInfo
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.runReadAction
 import com.intellij.openapi.extensions.PluginId
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
@@ -102,7 +102,16 @@ object IdeContextDetector {
 
     private fun detectIsMultiModule(project: Project): Boolean {
         return try {
-            ReadAction.compute<Boolean, Throwable> {
+            // Bucket E (Phase 4 Prong D-grep audit): EDT, can't move.
+            // [detect] is called from AgentService's init { } block during the lazy @Service
+            // construction triggered by AgentTabProvider.createPanel() on EDT — making it suspend
+            // would require making init suspend, which is impossible. Body is index-free
+            // (ModuleManager.modules.size), so a plain read action is sufficient.
+            // TODO(2026.1): runReadAction is deprecated in IntelliJ Platform 2026.1 in favour of
+            //   the cancellable readAction { } / readActionBlocking { } builders. When the
+            //   pluginUntilBuild target advances past 253.*, refactor [detect] off the synchronous
+            //   init path so this read can move to readActionBlocking { }.
+            runReadAction {
                 ModuleManager.getInstance(project).modules.size > 1
             }
         } catch (e: kotlinx.coroutines.CancellationException) {

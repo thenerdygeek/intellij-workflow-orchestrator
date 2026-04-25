@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.ui
 import com.intellij.openapi.project.Project
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.*
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
@@ -14,7 +15,7 @@ class MentionSearchProviderTest {
     }
 
     @Test
-    fun `categories returns all 5 types`() {
+    fun `categories returns all 5 types`() = runTest {
         val provider = MentionSearchProvider(project)
         val json = provider.search("categories", "")
         val arr = Json.parseToJsonElement(json).jsonArray
@@ -28,7 +29,7 @@ class MentionSearchProviderTest {
     }
 
     @Test
-    fun `categories have required fields`() {
+    fun `categories have required fields`() = runTest {
         val provider = MentionSearchProvider(project)
         val json = provider.search("categories", "")
         val arr = Json.parseToJsonElement(json).jsonArray
@@ -42,20 +43,20 @@ class MentionSearchProviderTest {
     }
 
     @Test
-    fun `unknown type returns empty array`() {
+    fun `unknown type returns empty array`() = runTest {
         val provider = MentionSearchProvider(project)
         assertEquals("[]", provider.search("unknown", ""))
     }
 
     @Test
-    fun `symbol search with short query returns empty`() {
+    fun `symbol search with short query returns empty`() = runTest {
         val provider = MentionSearchProvider(project)
         val json = provider.search("symbol", "a")
         assertEquals("[]", json)
     }
 
     @Test
-    fun `file search with no roots returns empty array`() {
+    fun `file search with no roots returns empty array`() = runTest {
         val provider = MentionSearchProvider(project)
         val json = provider.search("file", "test")
         val arr = Json.parseToJsonElement(json).jsonArray
@@ -64,7 +65,7 @@ class MentionSearchProviderTest {
     }
 
     @Test
-    fun `tool search returns empty when service unavailable`() {
+    fun `tool search returns empty when service unavailable`() = runTest {
         val provider = MentionSearchProvider(project)
         val json = provider.search("tool", "read")
         val arr = Json.parseToJsonElement(json).jsonArray
@@ -73,7 +74,7 @@ class MentionSearchProviderTest {
     }
 
     @Test
-    fun `skill search returns matching skills from bundled resources`() {
+    fun `skill search returns matching skills from bundled resources`() = runTest {
         val provider = MentionSearchProvider(project)
         val json = provider.search("skill", "debug")
         val arr = Json.parseToJsonElement(json).jsonArray
