@@ -1,6 +1,5 @@
 package com.workflow.orchestrator.pullrequest.service
 
-import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
@@ -24,11 +23,12 @@ import kotlinx.coroutines.sync.withPermit
  * Delegates all HTTP calls to BitbucketBranchClient from :core.
  */
 @Service(Service.Level.PROJECT)
-class PrListService(private val project: Project) : Disposable {
+class PrListService(
+    private val project: Project,
+    private val cs: CoroutineScope,
+) {
 
     private val log = Logger.getInstance(PrListService::class.java)
-
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val _myPrs = MutableStateFlow<List<BitbucketPrDetail>>(emptyList())
     val myPrs: StateFlow<List<BitbucketPrDetail>> = _myPrs.asStateFlow()
@@ -46,7 +46,7 @@ class PrListService(private val project: Project) : Disposable {
             name = "PR-List",
             baseIntervalMs = 60_000,
             maxIntervalMs = 300_000,
-            scope = scope,
+            scope = cs,
             action = {
                 val oldMySize = _myPrs.value.size
                 val oldReviewSize = _reviewingPrs.value.size
@@ -78,7 +78,7 @@ class PrListService(private val project: Project) : Disposable {
      */
     fun setState(state: String) {
         currentState = state
-        scope.launch { refresh() }
+        cs.launch(Dispatchers.IO) { refresh() }
     }
 
     /** Cached Bitbucket username — auto-detected on first refresh. */
@@ -214,7 +214,4 @@ class PrListService(private val project: Project) : Disposable {
         return results
     }
 
-    override fun dispose() {
-        scope.cancel()
-    }
 }

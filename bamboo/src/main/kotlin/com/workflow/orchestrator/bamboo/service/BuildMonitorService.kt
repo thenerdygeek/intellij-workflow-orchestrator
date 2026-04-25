@@ -1,6 +1,5 @@
 package com.workflow.orchestrator.bamboo.service
 
-import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
@@ -20,16 +19,13 @@ import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.polling.SmartPoller
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.time.Instant
 
 @Service(Service.Level.PROJECT)
-class BuildMonitorService : Disposable {
+class BuildMonitorService {
 
     private val log = Logger.getInstance(BuildMonitorService::class.java)
 
@@ -55,7 +51,7 @@ class BuildMonitorService : Disposable {
     }
 
     private val eventBus: EventBus get() = _eventBus ?: _project!!.getService(EventBus::class.java).also { _eventBus = it }
-    private val scope: CoroutineScope
+    private val cs: CoroutineScope
     private val notificationService: WorkflowNotificationService? get() {
         if (!_notificationServiceResolved) {
             _notificationService = _project?.let { WorkflowNotificationService.getInstance(it) }
@@ -65,9 +61,9 @@ class BuildMonitorService : Disposable {
     }
 
     /** Project service constructor — used by IntelliJ DI. Deps are lazy-inited on first use. */
-    constructor(project: Project) {
+    constructor(project: Project, cs: CoroutineScope) {
         this._project = project
-        this.scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        this.cs = cs
     }
 
     /** Test constructor — allows injecting mocks. */
@@ -79,7 +75,7 @@ class BuildMonitorService : Disposable {
     ) {
         this._apiClient = apiClient
         this._eventBus = eventBus
-        this.scope = scope
+        this.cs = scope
         this._notificationService = notificationService
         this._notificationServiceResolved = true
     }
@@ -99,7 +95,7 @@ class BuildMonitorService : Disposable {
         poller = SmartPoller(
             name = "BuildMonitor",
             baseIntervalMs = intervalMs,
-            scope = scope
+            scope = cs
         ) {
             val prevNum = previousBuildNumber
             val prevStat = previousStatus
@@ -122,11 +118,6 @@ class BuildMonitorService : Disposable {
         log.info("[Bamboo:Monitor] Switching branch to '$newBranch' for planKey=$planKey")
         _stateFlow.value = null
         startPolling(planKey, newBranch, intervalMs)
-    }
-
-    override fun dispose() {
-        stopPolling()
-        scope.cancel()
     }
 
     suspend fun pollOnce(planKey: String, branch: String) {

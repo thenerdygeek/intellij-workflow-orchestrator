@@ -22,6 +22,7 @@ import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -93,7 +94,7 @@ class TicketTransitionServiceImplTest {
     }
 
     private fun buildSvc(clockMs: Long = System.currentTimeMillis()): TicketTransitionServiceImpl =
-        TicketTransitionServiceImpl(api, eventBus, clock = { clockMs })
+        TicketTransitionServiceImpl(api, eventBus, cs = TestScope(), clock = { clockMs })
 
     // ── Test 1: getAvailableTransitions caches within TTL ────────────────────
 
@@ -122,8 +123,8 @@ class TicketTransitionServiceImplTest {
 
             // backgroundScope is cancelled automatically when the test finishes, which allows
             // the infinite SharedFlow collector to be cleaned up without blocking test completion.
-            svc = TicketTransitionServiceImpl(api, eventBus, clock = { System.currentTimeMillis() },
-                parentScope = backgroundScope)
+            svc = TicketTransitionServiceImpl(api, eventBus, cs = backgroundScope,
+                clock = { System.currentTimeMillis() })
 
             // First call — populates cache
             svc.getAvailableTransitions("PROJ-1")
@@ -347,7 +348,7 @@ class TicketTransitionServiceImplTest {
     fun `getAvailableTransitions calls API again after TTL expires`() = runTest {
         var fakeTime = 1000L
         coEvery { api.getTransitions("PROJ-1") } returns ApiResult.Success(listOf(noFieldTransition))
-        svc = TicketTransitionServiceImpl(api, eventBus, clock = { fakeTime })
+        svc = TicketTransitionServiceImpl(api, eventBus, cs = TestScope(), clock = { fakeTime })
 
         svc.getAvailableTransitions("PROJ-1") // populate cache at t=1000
 

@@ -1,12 +1,10 @@
 package com.workflow.orchestrator.jira.ui
 
-import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.wm.WindowManager
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
@@ -15,8 +13,6 @@ import com.workflow.orchestrator.jira.service.ActiveTicketService
 import com.workflow.orchestrator.jira.service.DismissedBranchStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -32,19 +28,20 @@ import kotlinx.coroutines.withContext
  * `BranchChangeTicketDetector`. The listener is now stateless and UI-free.
  */
 @Service(Service.Level.PROJECT)
-class TicketDetectionPresenter(private val project: Project) : Disposable {
+class TicketDetectionPresenter(
+    private val project: Project,
+    private val cs: CoroutineScope,
+) {
 
     private val log = Logger.getInstance(TicketDetectionPresenter::class.java)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     init {
-        Disposer.register(project, this)
         startSubscription()
     }
 
     private fun startSubscription() {
         val eventBus = project.getService(EventBus::class.java)
-        scope.launch {
+        cs.launch(Dispatchers.IO) {
             eventBus.events.collect { event ->
                 if (event is WorkflowEvent.TicketDetectedInteractive) {
                     showPopup(event)
@@ -75,7 +72,7 @@ class TicketDetectionPresenter(private val project: Project) : Disposable {
                     DismissedBranchStore.getInstance(project).markDismissed(event.branchName)
                     log.info("[Jira:Branch] User dismissed detection for branch '${event.branchName}'")
                     // Emit banner-only event so Sprint tab shows the detection banner.
-                    scope.launch {
+                    cs.launch(Dispatchers.IO) {
                         project.getService(EventBus::class.java).emit(
                             WorkflowEvent.TicketDetected(
                                 ticketKey = event.ticketKey,
@@ -89,11 +86,6 @@ class TicketDetectionPresenter(private val project: Project) : Disposable {
                 }
             ).show(frame)
         }
-    }
-
-    override fun dispose() {
-        scope.cancel()
-        log.info("[Jira:Branch] TicketDetectionPresenter disposed")
     }
 
     companion object {

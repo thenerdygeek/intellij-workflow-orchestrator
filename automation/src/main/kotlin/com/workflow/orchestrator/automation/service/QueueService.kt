@@ -1,6 +1,5 @@
 package com.workflow.orchestrator.automation.service
 
-import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
@@ -15,10 +14,7 @@ import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,7 +29,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 @Service(Service.Level.PROJECT)
-class QueueService : Disposable {
+class QueueService {
 
     private val log = Logger.getInstance(QueueService::class.java)
 
@@ -69,17 +65,17 @@ class QueueService : Disposable {
     private val eventBus: EventBus get() = _eventBus ?: _project!!.getService(EventBus::class.java).also { _eventBus = it }
     private val tagHistoryService: TagHistoryService get() = _tagHistoryService ?: _project!!.getService(TagHistoryService::class.java).also { _tagHistoryService = it }
 
-    private val scope: CoroutineScope
+    private val cs: CoroutineScope
     private val autoTriggerEnabled: Boolean
     private val maxDepthPerSuite: Int
     private val tagValidationOnTrigger: Boolean
     private val buildVariableName: String
 
     /** Project service constructor — used by IntelliJ DI. Heavy deps are lazy-inited on first use. */
-    constructor(project: Project) {
+    constructor(project: Project, cs: CoroutineScope) {
         this._project = project
         val settings = PluginSettings.getInstance(project)
-        this.scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        this.cs = cs
         this.autoTriggerEnabled = settings.state.queueAutoTriggerEnabled
         this.maxDepthPerSuite = settings.state.queueMaxDepthPerSuite
         this.tagValidationOnTrigger = settings.state.tagValidationOnTrigger
@@ -102,7 +98,7 @@ class QueueService : Disposable {
         this._registryClient = registryClient
         this._eventBus = eventBus
         this._tagHistoryService = tagHistoryService
-        this.scope = scope
+        this.cs = scope
         this.autoTriggerEnabled = autoTriggerEnabled
         this.maxDepthPerSuite = maxDepthPerSuite
         this.tagValidationOnTrigger = tagValidationOnTrigger
@@ -118,7 +114,7 @@ class QueueService : Disposable {
     private var pollingJob: Job? = null
 
     fun enqueue(entry: QueueEntry) {
-        scope.launch {
+        cs.launch {
             mutex.withLock {
                 val suiteEntries = _stateFlow.value.count { it.suitePlanKey == entry.suitePlanKey }
                 if (suiteEntries >= maxDepthPerSuite) {
@@ -154,7 +150,7 @@ class QueueService : Disposable {
     }
 
     fun cancel(entryId: String) {
-        scope.launch {
+        cs.launch {
             mutex.withLock {
                 val entry = _stateFlow.value.find { it.id == entryId } ?: return@launch
                 log.info("[Automation:Queue] Cancelling entry $entryId (status=${entry.status}, suite='${entry.suitePlanKey}')")
@@ -195,7 +191,7 @@ class QueueService : Disposable {
     private fun startPollingIfNeeded() {
         if (pollingJob?.isActive == true) return
         log.info("[Automation:Queue] Starting queue polling")
-        pollingJob = scope.launch {
+        pollingJob = cs.launch {
             while (true) {
                 if (pollInProgress.compareAndSet(false, true)) {
                     try {
@@ -356,7 +352,7 @@ class QueueService : Disposable {
     }
 
     fun restoreFromPersistence() {
-        scope.launch {
+        cs.launch {
             mutex.withLock {
                 val persisted = tagHistoryService.getActiveQueueEntries()
                 log.info("[Automation:Queue] Restored ${persisted.size} entries from persistence")
@@ -366,12 +362,6 @@ class QueueService : Disposable {
                 }
             }
         }
-    }
-
-    override fun dispose() {
-        log.info("[Automation:Queue] QueueService disposing, cancelling polling and scope")
-        pollingJob?.cancel()
-        scope.cancel()
     }
 
     private companion object {

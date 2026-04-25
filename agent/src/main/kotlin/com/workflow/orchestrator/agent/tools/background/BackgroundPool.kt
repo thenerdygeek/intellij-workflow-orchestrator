@@ -13,8 +13,6 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -29,7 +27,10 @@ import kotlinx.coroutines.sync.withLock
  * session-transition kill is handled explicitly in AgentController.
  */
 @Service(Service.Level.PROJECT)
-class BackgroundPool(private val project: Project) : Disposable {
+class BackgroundPool(
+    private val project: Project,
+    private val cs: CoroutineScope,
+) : Disposable {
 
     private val sessionPools = ConcurrentHashMap<String, SessionPool>()
 
@@ -72,7 +73,6 @@ class BackgroundPool(private val project: Project) : Disposable {
     override fun dispose() {
         stopSupervisor()
         killAllForProject()
-        scope.cancel()
     }
 
     private val completionListeners = java.util.concurrent.CopyOnWriteArrayList<(BackgroundCompletionEvent) -> Unit>()
@@ -96,7 +96,6 @@ class BackgroundPool(private val project: Project) : Disposable {
         emitSnapshot(sessionId)
     }
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var supervisorJob: Job? = null
 
     /**
@@ -120,7 +119,7 @@ class BackgroundPool(private val project: Project) : Disposable {
         }
         LOG.info("[BackgroundPool] emitSnapshot session=$sessionId count=${snapshot.size} " +
             "bgIds=${snapshot.map { it.bgId }}")
-        scope.launch {
+        cs.launch(Dispatchers.IO) {
             runCatching {
                 val bus = project.getService(EventBus::class.java)
                 if (bus == null) {
@@ -136,7 +135,7 @@ class BackgroundPool(private val project: Project) : Disposable {
 
     fun startSupervisor(pollIntervalMs: Long = 500) {
         if (supervisorJob?.isActive == true) return
-        supervisorJob = scope.launch {
+        supervisorJob = cs.launch(Dispatchers.IO) {
             while (isActive) {
                 runCatching { tick() }.onFailure {
                     LOG.warn("[BackgroundPool] supervisor tick failed: ${it.message}", it)

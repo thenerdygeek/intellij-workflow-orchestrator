@@ -7,6 +7,10 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.unmockkAll
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -17,6 +21,7 @@ class BackgroundPoolKillOnTransitionTest {
 
     private lateinit var project: Project
     private lateinit var pool: BackgroundPool
+    private lateinit var poolScope: CoroutineScope
 
     @BeforeEach
     fun setUp() {
@@ -27,12 +32,14 @@ class BackgroundPoolKillOnTransitionTest {
         every { settings.state } returns state
         mockkObject(AgentSettings.Companion)
         every { AgentSettings.getInstance(project) } returns settings
-        pool = BackgroundPool(project)
+        poolScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        pool = BackgroundPool(project, poolScope)
     }
 
     @AfterEach
     fun tearDown() {
         pool.stopSupervisor()
+        poolScope.cancel()
         unmockkAll()
         ProcessRegistry.killAll()
     }

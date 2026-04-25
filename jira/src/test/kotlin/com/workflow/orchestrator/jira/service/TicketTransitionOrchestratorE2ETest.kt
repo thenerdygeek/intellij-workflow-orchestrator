@@ -41,8 +41,8 @@ class TicketTransitionOrchestratorE2ETest {
         server = MockWebServer().also { it.start() }
         apiClient = buildClientForTest(server)
         bus = EventBus()
-        // No parentScope here — the backgroundScope provided per-test below handles cleanup
-        // for tests that need event collection; simple tests use the default private scope.
+        // The backgroundScope provided per-test below handles cleanup of the EventBus
+        // subscriber coroutine when the test finishes.
     }
 
     @AfterEach
@@ -67,7 +67,7 @@ class TicketTransitionOrchestratorE2ETest {
                 ).setResponseCode(200)
             )
 
-            orch = TicketTransitionServiceImpl(apiClient, bus, parentScope = backgroundScope)
+            orch = TicketTransitionServiceImpl(apiClient, bus, cs = backgroundScope)
 
             val r = orch.getAvailableTransitions("ABC-1")
 
@@ -97,7 +97,7 @@ class TicketTransitionOrchestratorE2ETest {
             )
             // (Intentionally no further responses — assert no POST is ever made.)
 
-            orch = TicketTransitionServiceImpl(apiClient, bus, parentScope = backgroundScope)
+            orch = TicketTransitionServiceImpl(apiClient, bus, cs = backgroundScope)
 
             val r = orch.executeTransition("ABC-1", TransitionInput("31", emptyMap(), null))
 
@@ -144,7 +144,7 @@ class TicketTransitionOrchestratorE2ETest {
             server.enqueue(MockResponse().setResponseCode(204))
 
             val captured = mutableListOf<TicketTransitioned>()
-            orch = TicketTransitionServiceImpl(apiClient, bus, parentScope = backgroundScope)
+            orch = TicketTransitionServiceImpl(apiClient, bus, cs = backgroundScope)
 
             val job = bus.events
                 .onEach { if (it is TicketTransitioned) captured += it }

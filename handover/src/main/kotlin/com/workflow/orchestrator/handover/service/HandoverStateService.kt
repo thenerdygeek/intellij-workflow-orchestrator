@@ -1,6 +1,5 @@
 package com.workflow.orchestrator.handover.service
 
-import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
@@ -11,9 +10,6 @@ import com.workflow.orchestrator.handover.model.BuildSummary
 import com.workflow.orchestrator.handover.model.HandoverState
 import com.workflow.orchestrator.handover.model.SuiteResult
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,18 +17,18 @@ import kotlinx.coroutines.launch
 import java.time.Instant
 
 @Service(Service.Level.PROJECT)
-class HandoverStateService : Disposable {
+class HandoverStateService {
 
     private val log = Logger.getInstance(HandoverStateService::class.java)
     private val eventBus: EventBus
     private val settings: PluginSettings
-    private val scope: CoroutineScope
+    private val cs: CoroutineScope
 
     /** IntelliJ DI constructor. */
-    constructor(project: Project) {
+    constructor(project: Project, cs: CoroutineScope) {
         this.settings = PluginSettings.getInstance(project)
         this.eventBus = project.getService(EventBus::class.java)
-        this.scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        this.cs = cs
         initialize()
     }
 
@@ -40,7 +36,7 @@ class HandoverStateService : Disposable {
     constructor(eventBus: EventBus, settings: PluginSettings, scope: CoroutineScope) {
         this.eventBus = eventBus
         this.settings = settings
-        this.scope = scope
+        this.cs = scope
         initialize()
     }
 
@@ -56,7 +52,7 @@ class HandoverStateService : Disposable {
         )
 
         // Subscribe to EventBus (handles all cross-module events including ticket changes)
-        scope.launch {
+        cs.launch {
             eventBus.events.collect { event ->
                 handleEvent(event)
             }
@@ -149,10 +145,6 @@ class HandoverStateService : Disposable {
             ticketSummary = ticketSummary,
             startWorkTimestamp = settings.state.startWorkTimestamp
         )
-    }
-
-    override fun dispose() {
-        scope.cancel()
     }
 
     companion object {

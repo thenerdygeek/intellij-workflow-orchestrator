@@ -17,8 +17,6 @@ import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.core.services.jira.TicketTransitionService
 import com.workflow.orchestrator.jira.api.JiraApiClient
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
@@ -38,35 +36,39 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * Registered as a project service in plugin.xml (Task 18).  The platform-invoked
  * constructor pulls [JiraApiClient] from [JiraServiceImpl] and [EventBus] from the
- * project service container, keeping the primary constructor intact for unit tests.
+ * project's service container so that no duplicate HTTP clients are created.
+ * The `cs: CoroutineScope` parameter is injected by the IntelliJ Platform 2024.1+
+ * service container and is cancelled automatically on project close.
  */
 @Service(Service.Level.PROJECT)
 class TicketTransitionServiceImpl(
     private val api: JiraApiClient,
     private val eventBus: EventBus,
-    /** Injectable clock for deterministic tests. */
-    private val clock: () -> Long = { System.currentTimeMillis() },
     /**
      * Scope used for the EventBus subscriber coroutine.
-     * Callers may supply a project-scoped [CoroutineScope] so that the subscriber
-     * is cancelled when the project closes.  When null a private scope is created.
+     * The IntelliJ Platform injects a project-scoped [CoroutineScope] for the
+     * primary `(Project, CoroutineScope)` constructor so that the subscriber is
+     * cancelled when the project closes.  Tests provide their own [TestScope].
      */
-    parentScope: CoroutineScope? = null
+    private val cs: CoroutineScope,
+    /** Injectable clock for deterministic tests. */
+    private val clock: () -> Long = { System.currentTimeMillis() },
 ) : TicketTransitionService {
 
     /**
      * Secondary constructor used by the IntelliJ platform service container.
      * Resolves [JiraApiClient] through [JiraServiceImpl] and [EventBus] from the
      * project's service container so that no duplicate HTTP clients are created.
+     * `cs` is the platform-injected coroutine scope tied to the project lifecycle.
      */
-    constructor(project: Project) : this(
+    constructor(project: Project, cs: CoroutineScope) : this(
         api = JiraServiceImpl.getInstance(project).getApiClient()
             ?: JiraApiClient(
                 baseUrl = "",
                 tokenProvider = { null }
             ),
         eventBus = project.getService(EventBus::class.java),
-        parentScope = null
+        cs = cs,
     )
 
     private val log = Logger.getInstance(TicketTransitionServiceImpl::class.java)
@@ -78,12 +80,10 @@ class TicketTransitionServiceImpl(
     private val cache = ConcurrentHashMap<String, CacheEntry>()
     private val ttlMs = 60_000L
 
-    // ── EventBus subscriber scope ────────────────────────────────────────────
-
-    private val scope = parentScope ?: CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // ── EventBus subscriber ──────────────────────────────────────────────────
 
     init {
-        scope.launch {
+        cs.launch {
             eventBus.events.collect { event ->
                 if (event is TicketTransitioned) {
                     log.debug("[TicketTransition] Cache invalidated for ${event.key} (TicketTransitioned event)")

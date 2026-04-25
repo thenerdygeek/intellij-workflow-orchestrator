@@ -6,6 +6,10 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.unmockkObject
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
@@ -19,6 +23,7 @@ class BackgroundPoolTest {
 
     private val project = mockk<Project>(relaxed = true)
     private lateinit var pool: BackgroundPool
+    private lateinit var poolScope: CoroutineScope
 
     @BeforeEach
     fun setup() {
@@ -28,11 +33,14 @@ class BackgroundPoolTest {
                 every { concurrentBackgroundProcessesPerSession } returns 5
             }
         }
-        pool = BackgroundPool(project)
+        poolScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        pool = BackgroundPool(project, poolScope)
     }
 
     @AfterEach
     fun teardown() {
+        pool.stopSupervisor()
+        poolScope.cancel()
         unmockkObject(AgentSettings.Companion)
     }
 

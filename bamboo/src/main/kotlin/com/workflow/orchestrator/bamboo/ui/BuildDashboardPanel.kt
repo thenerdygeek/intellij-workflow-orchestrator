@@ -707,7 +707,9 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     }
 
     override fun dispose() {
-        monitorService.dispose()
+        // BuildMonitorService is a project-level service whose lifecycle is owned by
+        // the IntelliJ Platform; we only stop our polling subscription here.
+        monitorService.stopPolling()
         scope.cancel()
     }
 

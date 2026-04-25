@@ -93,10 +93,12 @@ import java.util.concurrent.atomic.AtomicReference
  * IntelliJ project-level service: one instance per open project.
  */
 @Service(Service.Level.PROJECT)
-class AgentService(private val project: Project) : Disposable {
+class AgentService(
+    private val project: Project,
+    private val cs: CoroutineScope,
+) : Disposable {
 
     private val log = Logger.getInstance(AgentService::class.java)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     val registry = ToolRegistry()
 
@@ -1159,7 +1161,7 @@ class AgentService(private val project: Project) : Disposable {
         val sessionMetrics = SessionMetrics()
         val sessionStartTime = System.currentTimeMillis()
 
-        val job = scope.launch {
+        val job = cs.launch(Dispatchers.IO) {
             var brainRef: LlmBrain? = null
             try {
                 // TASK_START hook (ported from Cline's TaskStart hook)
@@ -1880,7 +1882,7 @@ class AgentService(private val project: Project) : Disposable {
                 iterations = 0,
                 tokensUsed = 0,
             ))
-            return scope.launch { /* no-op — session already completed, UI messages already pushed */ }
+            return cs.launch(Dispatchers.IO) { /* no-op — session already completed, UI messages already pushed */ }
         }
 
         // Pop trailing user message if interrupted mid-submission
@@ -1955,9 +1957,9 @@ class AgentService(private val project: Project) : Disposable {
         handler.setClineMessages(savedUiMessages)
         handler.setApiConversationHistory(activeApiHistory)
 
-        // TASK_RESUME hook — dispatched within scope.launch (IO coroutine), NOT runBlocking (C5 fix).
+        // TASK_RESUME hook — dispatched within cs.launch (IO coroutine), NOT runBlocking (C5 fix).
         // The hook check and dispatch happen inside the launched coroutine to avoid blocking the calling thread.
-        val job = scope.launch(Dispatchers.IO) {
+        val job = cs.launch(Dispatchers.IO) {
             // Add resume ask to UI messages
             handler.addToClineMessages(UiMessage(
                 ts = System.currentTimeMillis(),
@@ -2233,7 +2235,7 @@ class AgentService(private val project: Project) : Disposable {
             // TASK_CANCEL hook — observation only, fire-and-forget
             // Cline: TaskCancel is non-cancellable (observation only)
             if (hookManager.hasHooks(HookType.TASK_CANCEL)) {
-                scope.launch {
+                cs.launch(Dispatchers.IO) {
                     try {
                         hookManager.dispatch(
                             HookEvent(
@@ -2278,7 +2280,6 @@ class AgentService(private val project: Project) : Disposable {
 
     override fun dispose() {
         cancelCurrentTask()
-        scope.cancel("AgentService disposed")
         ProcessRegistry.killAll()
         debugController?.dispose()
     }
