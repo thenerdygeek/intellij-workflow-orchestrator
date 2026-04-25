@@ -2,8 +2,8 @@
 
 **Status:** parked, awaiting live-IDE profiling capacity
 **Branch:** `refactor/cleanup-perf-caching`
-**Date parked:** 2026-04-25
-**Phase 4 prongs completed:** A (5 EDT-freeze fixes), C (10 commits — coroutine scope tightening)
+**Date parked:** 2026-04-25 (last updated 2026-04-25 after D-grep close)
+**Phase 4 prongs completed:** A (5 commits) + A.2/A.2b (2 commits) + C (11 commits) + D-grep (13 commits)
 **Phase 4 prongs deferred:** B (EDT hotspots), D-profile (PSI batching for hot paths), E (JCEF rendering)
 
 ---
@@ -14,12 +14,12 @@ Phase 4's profile-driven prongs (B and E, plus the profile-portion of D) require
 
 Rather than blind-fix likely hotspots (which violates `intellij-plugin-performance` SKILL.md §0 — "Measure before you touch code"), these prongs are parked with an explicit resumption protocol below. When live-IDE capacity is available — your own dev session or a future agent in an environment that supports it — the protocol is enough to pick up cold and finish.
 
-The correctness-only prongs (A, C, A.2, D-grep) covered everything that could be verified without a live IDE. They are complete:
+The correctness-only prongs covered everything that could be verified without a live IDE. They are **all complete**:
 
 - **Prong A (correctness)** — 5 EDT freezes in AgentController. Done. See `phase4-prong-a-plan.md`.
-- **Prong C (correctness)** — 10 commits, scope-leak elimination across 58 audited sites. Done. See `phase4-prong-c-plan.md` + `phase4-prong-c-audit.md`.
-- **Prong A.2 (BG-thread `runBlocking` polish)** — deferred but optional; not blocking release.
-- **Prong D-grep (`ReadAction.compute` / `runReadAction` deprecation)** — not yet started; can run pre-release without a live IDE.
+- **Prong A.2 + A.2b** — 12 BG-thread `runBlocking` → `runBlockingCancellable` swaps. Done.
+- **Prong C (correctness)** — 11 commits, scope-leak elimination across 58 audited sites. Done. See `phase4-prong-c-plan.md` + `phase4-prong-c-audit.md`.
+- **Prong D-grep (`ReadAction.compute / run / runReadAction` deprecation)** — 13 commits, 49 production sites migrated to `readAction { }` / `smartReadAction(project) { }` / `readActionBlocking { }` (or, in 2 intentional cases, `runReadAction { }` with TODO for 2026.1 platform bump). 2 latent EDT-correctness bugs fixed (MentionContextBuilder.buildFileContext + EnvironmentDetailsBuilder.appendActiveEditor). Done. See `phase4-prong-d-grep-plan.md` + `phase4-prong-d-grep-audit.md`.
 
 ---
 
