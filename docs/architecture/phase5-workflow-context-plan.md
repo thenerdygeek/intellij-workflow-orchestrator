@@ -91,10 +91,10 @@
 
 Unit tests use **`mockk<Project>(relaxed = true)`** + `installReadActionInlineShim()` (existing repo pattern). Reference for the shim: `agent/src/test/kotlin/.../testutil/ReadActionTestShim.kt::installReadActionInlineShim()`.
 
-Pattern:
+Pattern (note: copy `ReadActionTestShim.kt` from `:agent/src/test/.../testutil/` to `:core/src/test/kotlin/com/workflow/orchestrator/core/testutil/` because `:core` does not depend on `:agent`. Implementer copies the file in T1 and updates the import accordingly. Phase 5b cleanup may extract to a shared `testFixtures` source set):
 
 ```kotlin
-import com.workflow.orchestrator.agent.testutil.ReadActionTestShim
+import com.workflow.orchestrator.core.testutil.ReadActionTestShim
 import io.mockk.every
 import io.mockk.mockk
 import com.intellij.openapi.project.Project
@@ -121,10 +121,13 @@ Integration test (T17.5) uses `BasePlatformTestCase` — the only file requiring
 `:core/build.gradle.kts` test deps required:
 
 ```kotlin
+// Use the version-catalog accessors that already exist (gradle/libs.versions.toml).
+// Implementer verifies the catalog has mockk + turbine entries; if not, add them at
+// the catalog level rather than hardcoding versions per-module.
 dependencies {
-    testImplementation("io.mockk:mockk:1.13.13")
-    testImplementation("app.cash.turbine:turbine:1.2.0")
-    testRuntimeOnly("org.junit.vintage:junit-vintage-engine:5.10.2")  // T17.5 only
+    testImplementation(libs.mockk)
+    testImplementation(libs.turbine)
+    testRuntimeOnly(libs.junit.vintage.engine)  // T18 only
 }
 ```
 
@@ -395,12 +398,16 @@ In `<extensionPoints>` (search for the existing `createPrLauncher` declaration a
 ```xml
 <extensionPoints>
     <!-- ... existing EPs ... -->
-    <extensionPoint name="openPrLister"
-                    interface="com.workflow.orchestrator.core.workflow.OpenPrLister"/>
-    <extensionPoint name="latestBuildLookup"
-                    interface="com.workflow.orchestrator.core.workflow.LatestBuildLookup"/>
+    <extensionPoint qualifiedName="com.workflow.orchestrator.openPrLister"
+                    interface="com.workflow.orchestrator.core.workflow.OpenPrLister"
+                    dynamic="true"/>
+    <extensionPoint qualifiedName="com.workflow.orchestrator.latestBuildLookup"
+                    interface="com.workflow.orchestrator.core.workflow.LatestBuildLookup"
+                    dynamic="true"/>
 </extensionPoints>
 ```
+
+**Why `qualifiedName`:** the plugin id is `com.workflow.orchestrator.plugin`, so `name="..."` would prefix `com.workflow.orchestrator.plugin.<name>`. The Kotlin `ExtensionPointName.create<>("com.workflow.orchestrator.openPrLister")` uses the unprefixed form, so `qualifiedName` must be set explicitly to match. Same pattern as existing `createPrLauncher` EP.
 
 - [ ] **Step 4: Run `verifyPlugin`**
 
@@ -624,7 +631,12 @@ class LatestBuildLookupImpl : LatestBuildLookup {
     private val log = Logger.getInstance(LatestBuildLookupImpl::class.java)
 
     override suspend fun fetchLatestBuild(project: Project, planKey: String, branch: String): BuildRef? {
-        val client = project.getService(BambooApiClient::class.java) ?: return null
+        // BambooApiClient is NOT a @Service — it's instantiated inside BambooServiceImpl.
+        // Access via the service that owns it; expose a thin accessor if needed.
+        val bambooService = project.getService(
+            Class.forName("com.workflow.orchestrator.bamboo.service.BambooServiceImpl")
+        ) as? BambooServiceImpl ?: return null
+        val client = bambooService.client  // implementer may need to add an internal getter
         return when (val result = client.getLatestResult(planKey, branch)) {
             is ApiResult.Success -> {
                 val dto = result.data
@@ -644,7 +656,7 @@ class LatestBuildLookupImpl : LatestBuildLookup {
 }
 ```
 
-**Note:** if `BambooApiClient` is not actually a project-level service (the implementer should verify by reading `bamboo/src/main/kotlin/.../BambooApiClient.kt`), substitute the actual entry point. The `BambooServiceImpl` exposes higher-level operations; for this single API call, calling `BambooApiClient` directly through whatever the existing service-discovery path is (likely `BambooServiceImpl.getInstance(project).client` or similar) is the intent. Adjust import + call accordingly.
+**Note on access pattern:** `BambooApiClient` is constructed inside `BambooServiceImpl` (not a `@Service`). The cleanest path is to add a thin `latestBuildResult(planKey, branch)` operation on `BambooService` (the `:core` interface) and call that from the EP impl — or expose `BambooServiceImpl.client` as `internal val`. The sample above uses the second path; the first is preferable but a larger code edit. Implementer chooses; both pass the test as long as `LatestBuildLookupImpl.fetchLatestBuild` returns the right `BuildRef` for `(planKey, branch)`.
 
 - [ ] **Step 4: Register in `plugin.xml`**
 
@@ -847,10 +859,11 @@ class WorkflowContextServiceMutatorsTest {
         project: Project,
         prList: List<PrRef> = emptyList(),
     ): WorkflowContextService {
-        // Mock OpenPrLister.EP_NAME via a test override — implementer wires this through
-        // an EP fixture or via direct stubbing of the EP_NAME companion. Pattern:
-        // mockkObject(OpenPrLister.Companion); every { OpenPrLister.getInstance() } returns
-        // a TestOpenPrLister(prList) that returns prList.
+        // Stub the EP companion so findOpenPrMatchingTicket returns the supplied prList.
+        mockkObject(OpenPrLister.Companion)
+        every { OpenPrLister.getInstance() } returns object : OpenPrLister {
+            override fun listOpenPrs(project: Project): List<PrRef> = prList
+        }
         return WorkflowContextService(project, TestScope())
     }
 
@@ -950,7 +963,9 @@ private fun wireEditorListeners() {
 
 private suspend fun recomputeFromEditor() = cascadeMutex.withLock {
     val resolver = com.workflow.orchestrator.core.settings.RepoContextResolver.getInstance(project)
-    val gitRepo = com.intellij.openapi.application.readAction { resolver.resolveCurrentEditorRepoOrPrimary() }
+    // RepoContextResolver memoises via CachedValuesManager + SimpleModificationTracker;
+    // it does not require a read action wrap (verified by reading the source).
+    val gitRepo = resolver.resolveCurrentEditorRepoOrPrimary()
 
     val repoConfig = gitRepo?.let { repo ->
         com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).getRepos()
@@ -1211,9 +1226,9 @@ class WorkflowEventMirrorTest {
         every { settings.state.activeTicketId } returns null
 
         val bus = EventBus()  // standalone — not project-scoped for unit test
+        // EventBus is a @Service accessed via project.service<EventBus>(); mockk routes
+        // through the underlying project.getService(EventBus::class.java) call.
         every { project.getService(EventBus::class.java) } returns bus
-        mockkObject(EventBus.Companion)
-        every { EventBus.getInstance(project) } returns bus
 
         mockkObject(LatestBuildLookup.Companion)
         every { LatestBuildLookup.getInstance() } returns null
@@ -1295,9 +1310,14 @@ class WorkflowEventMirror(
 ) {
     private val log = Logger.getInstance(WorkflowEventMirror::class.java)
 
+    private var collectorJob: kotlinx.coroutines.Job? = null
+
     fun install() {
-        service.serviceCs.launch {
-            EventBus.getInstance(project).events.collect { event ->
+        // Idempotent install: cancel any prior collector before starting a new one.
+        // Prevents duplicate subscriptions if the ProjectActivity ever re-runs.
+        collectorJob?.cancel()
+        collectorJob = service.serviceCs.launch {
+            project.service<EventBus>().events.collect { event ->
                 when (event) {
                     is WorkflowEvent.PrSelected -> handlePrSelected(event)
                     is WorkflowEvent.TicketChanged -> handleTicketChanged(event)
@@ -1306,6 +1326,11 @@ class WorkflowEventMirror(
             }
         }
         log.info("[Workflow:Mirror] Installed")
+    }
+
+    fun uninstall() {
+        collectorJob?.cancel()
+        collectorJob = null
     }
 
     private suspend fun handlePrSelected(event: WorkflowEvent.PrSelected) {
@@ -1646,7 +1671,7 @@ private fun onRowClicked(pr: BitbucketPrDetail) {
         // Per spec §5.3: migrated call sites re-emit legacy event for back-compat
         // subscribers (e.g., AgentController webview push). Mirror's state-equality guard
         // no-ops since state.focusPr already matches.
-        EventBus.getInstance(project).emit(WorkflowEvent.PrSelected(
+        project.service<EventBus>().emit(WorkflowEvent.PrSelected(
             prId = ref.prId, fromBranch = ref.fromBranch, toBranch = ref.toBranch,
             repoName = ref.repoName, bambooPlanKey = ref.bambooPlanKey,
             sonarProjectKey = ref.sonarProjectKey,
@@ -1701,14 +1726,16 @@ private fun onStartWork(ticket: JiraTicketData) {
     panelScope.launch {
         service.setActiveTicket(TicketRef(ticket.key, ticket.summary))
         // Re-emit legacy event for back-compat (per spec §5.3).
-        EventBus.getInstance(project).emit(WorkflowEvent.TicketChanged(ticket.key, ticket.summary))
+        project.service<EventBus>().emit(WorkflowEvent.TicketChanged(ticket.key, ticket.summary))
     }
     // ... existing branch-creation / commit-prefix logic, unchanged ...
 }
 Disposer.register(parentDisposable, Disposable { panelScope.cancel() })
 ```
 
-- [ ] **Step 2: Convert `ActiveTicketService` to a facade over `WorkflowContextService`**
+- [ ] **Step 2: Convert `ActiveTicketService` to a synchronous facade over `WorkflowContextService`**
+
+**Contract decision:** the existing `setActiveTicket(id, summary)` is **synchronous** — callers in `BranchingService.kt:173/263`, `JiraSearchContributorFactory.kt:61`, `TicketDetectionPresenter.kt:68`, `SprintDashboardPanel.kt:237` write then immediately read `activeTicketId` on the same call stack. The facade MUST preserve this contract or those 5 sites need to become `suspend` (out of scope for 5a). Implementation: maintain a local `MutableStateFlow` that gets updated synchronously; dispatch the canonical `WorkflowContextService.setActiveTicket()` write to the background scope. The local cache is the source of truth for synchronous reads; the canonical service is the source of truth for cross-tab subscribers.
 
 `:jira` depends on `:core`, so direct call is fine. Rewrite `ActiveTicketService.kt`:
 
@@ -1748,18 +1775,35 @@ class ActiveTicketService(
     private val log = Logger.getInstance(ActiveTicketService::class.java)
     private val service get() = WorkflowContextService.getInstance(project)
 
-    val activeTicketFlow: StateFlow<ActiveTicketState?> = service.activeTicketFlow
-        .map { it?.let { t -> ActiveTicketState(t.key, t.summary) } }
-        .stateIn(cs, SharingStarted.Eagerly, null)
+    // Local synchronous cache — preserves the existing sync setActiveTicket → read contract.
+    // Initialized from the canonical service on construction.
+    private val _localFlow = MutableStateFlow<ActiveTicketState?>(
+        service.state.value.activeTicket?.let { ActiveTicketState(it.key, it.summary) }
+    )
 
-    val activeTicketId: String? get() = service.state.value.activeTicket?.key
-    val activeTicketSummary: String? get() = service.state.value.activeTicket?.summary
+    val activeTicketFlow: StateFlow<ActiveTicketState?> = _localFlow.asStateFlow()
+    val activeTicketId: String? get() = _localFlow.value?.ticketId
+    val activeTicketSummary: String? get() = _localFlow.value?.summary
+
+    init {
+        // Mirror canonical state INTO the local cache (catches cross-tab updates from
+        // mirror or other writers).
+        cs.launch {
+            service.activeTicketFlow.collect { ticket ->
+                _localFlow.value = ticket?.let { ActiveTicketState(it.key, it.summary) }
+            }
+        }
+    }
 
     fun setActiveTicket(ticketId: String, summary: String) {
+        // Synchronous: update local cache immediately so callers reading on the next line
+        // see the new value. Then dispatch the canonical write to background.
+        _localFlow.value = ActiveTicketState(ticketId, summary)
         cs.launch { service.setActiveTicket(TicketRef(ticketId, summary)) }
     }
 
     fun clearActiveTicket() {
+        _localFlow.value = null
         cs.launch { service.setActiveTicket(null) }
     }
 
@@ -1774,6 +1818,8 @@ class ActiveTicketService(
     }
 }
 ```
+
+**Update existing `ActiveTicketServiceTest.kt`:** the existing test constructs `ActiveTicketService()` (zero-arg) in 4 tests. New constructor is `(project: Project, cs: CoroutineScope)`. Either delete the test file (the canonical `WorkflowContextServiceMutatorsTest` covers equivalent surface) or rewrite each test to construct `ActiveTicketService(mockk(relaxed=true), TestScope())` plus mock `WorkflowContextService` on the project. **Recommended: delete** — canonical coverage already exists.
 
 Add a test asserting facade delegation:
 
@@ -1794,11 +1840,18 @@ class ActiveTicketServiceFacadeTest {
         val project = mockk<Project>(relaxed = true)
         val canonical = mockk<WorkflowContextService>(relaxed = true)
         every { project.getService(WorkflowContextService::class.java) } returns canonical
+        every { canonical.state } returns kotlinx.coroutines.flow.MutableStateFlow(WorkflowContext())
+        every { canonical.activeTicketFlow } returns kotlinx.coroutines.flow.MutableStateFlow(null)
 
-        val facade = ActiveTicketService(project, TestScope())
+        val scope = TestScope()
+        val facade = ActiveTicketService(project, scope)
         facade.setActiveTicket("AFTER8TE-912", "Fix login")
-        // Verify the suspend mutator is called (mockk records the launch).
-        // Implementer adapts assertion to TestScope timing.
+        // Synchronous local cache update — assert immediately, no advance needed.
+        assertEquals("AFTER8TE-912", facade.activeTicketId)
+
+        // Background dispatch to canonical:
+        scope.advanceUntilIdle()
+        coVerify { canonical.setActiveTicket(TicketRef("AFTER8TE-912", "Fix login")) }
     }
 }
 ```
@@ -2153,8 +2206,9 @@ class EnvironmentDetailsBuilderWorkflowContextTest {
         ))
         every { project.getService(WorkflowContextService::class.java) } returns service
 
-        val builder = EnvironmentDetailsBuilder(project)
-        val block = builder.build()
+        // EnvironmentDetailsBuilder is an `object` (not a class). Call site signature
+        // matches actual: build(project, planModeEnabled, contextManager).
+        val block = EnvironmentDetailsBuilder.build(project, planModeEnabled = false, contextManager = null)
         assertTrue(block.contains("<workflow_context>"))
         assertTrue(block.contains("Active ticket: AFTER8TE-912"))
         assertTrue(block.contains("Focused PR: #42"))
@@ -2166,7 +2220,7 @@ class EnvironmentDetailsBuilderWorkflowContextTest {
         every { service.state } returns MutableStateFlow(WorkflowContext())
         every { project.getService(WorkflowContextService::class.java) } returns service
 
-        val block = EnvironmentDetailsBuilder(project).build()
+        val block = EnvironmentDetailsBuilder.build(project, planModeEnabled = false, contextManager = null)
         assertFalse(block.contains("<workflow_context>"))
     }
 }
@@ -2174,10 +2228,10 @@ class EnvironmentDetailsBuilderWorkflowContextTest {
 
 - [ ] **Step 2: Implement `appendWorkflowContext` in `EnvironmentDetailsBuilder.kt`**
 
-Add a new private method and call it at an appropriate point in `build()` (after editor details, before tool list):
+`EnvironmentDetailsBuilder` is a singleton `object` — add a new private method that takes `(project, sb)` and call it from inside `build()` (after editor details, before tool list):
 
 ```kotlin
-private fun appendWorkflowContext(sb: StringBuilder) {
+private fun appendWorkflowContext(project: Project, sb: StringBuilder) {
     val service = WorkflowContextService.getInstance(project)
     val s = service.state.value
     if (s.activeTicket == null && s.focusPr == null && s.activeBranch == null) return
@@ -2191,6 +2245,8 @@ private fun appendWorkflowContext(sb: StringBuilder) {
     sb.append("</workflow_context>\n")
 }
 ```
+
+Call it from `build(project, ...)` at the appropriate position (after editor details, before tool list).
 
 - [ ] **Step 3: Mention shortcut fallback in `MentionSearchProvider.kt`**
 
@@ -2244,9 +2300,11 @@ git commit -m "feat(agent): inject workflow_context block + mention shortcut fal
 
 ```kotlin
 dependencies {
-    testRuntimeOnly("org.junit.vintage:junit-vintage-engine:5.10.2")
+    testRuntimeOnly(libs.junit.vintage.engine)  // version from gradle/libs.versions.toml
 }
 ```
+
+If `libs.junit.vintage.engine` doesn't exist in `gradle/libs.versions.toml` yet, add it under `[libraries]` matching the existing `junit5-engine` version (currently 5.10.x).
 
 - [ ] **Step 2: Write integration test**
 
