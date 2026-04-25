@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.agent.tools.project
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
@@ -57,7 +57,7 @@ internal suspend fun executeSetLanguageLevel(
     }
 
     // ── Step 3: find module ───────────────────────────────────────────────────
-    val module = ReadAction.compute<com.intellij.openapi.module.Module?, Throwable> {
+    val module = readAction {
         ModuleManager.getInstance(project).findModuleByName(moduleName)
     } ?: return ToolResult(
         content = "Module '$moduleName' not found.",

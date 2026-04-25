@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.agent.tools.project
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.module.ModuleManager
@@ -67,14 +67,14 @@ internal suspend fun executeSetModuleDependency(
 
     // ── Step 2: find both modules ─────────────────────────────────────────────
     data class ModulePair(val owner: Module, val target: Module)
-    val found: ModulePair? = ReadAction.compute<ModulePair?, Throwable> {
+    val found: ModulePair? = readAction {
         val mgr = ModuleManager.getInstance(project)
-        val owner = mgr.findModuleByName(moduleName) ?: return@compute null
-        val target = mgr.findModuleByName(dependsOn) ?: return@compute null
+        val owner = mgr.findModuleByName(moduleName) ?: return@readAction null
+        val target = mgr.findModuleByName(dependsOn) ?: return@readAction null
         ModulePair(owner, target)
     }
     if (found == null) {
-        val available = ReadAction.compute<List<String>, Throwable> {
+        val available = readAction {
             ModuleManager.getInstance(project).modules.map { it.name }.sorted()
         }
         return ToolResult(
@@ -99,7 +99,7 @@ internal suspend fun executeSetModuleDependency(
     }
 
     // ── Step 4: pre-check existing state ──────────────────────────────────────
-    val existingScope: DependencyScope? = ReadAction.compute<DependencyScope?, Throwable> {
+    val existingScope: DependencyScope? = readAction {
         ModuleRootManager.getInstance(owner).orderEntries
             .filterIsInstance<ModuleOrderEntry>()
             .firstOrNull { it.moduleName == dependsOn }

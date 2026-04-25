@@ -1,13 +1,12 @@
 package com.workflow.orchestrator.agent.tools.project
 
-import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ModifiableRootModel
 import com.intellij.openapi.roots.ModuleRootModificationUtil
-import com.intellij.openapi.util.ThrowableComputable
+import com.intellij.openapi.application.readAction
 import com.workflow.orchestrator.agent.loop.ApprovalResult
 import com.workflow.orchestrator.agent.tools.AgentTool
 import io.mockk.coEvery
@@ -28,8 +27,10 @@ import org.junit.jupiter.api.Test
 /**
  * Unit tests for [executeSetLanguageLevel].
  *
- * Strategy: all IntelliJ APIs (ModuleManager, ReadAction, WriteCommandAction,
+ * Strategy: all IntelliJ APIs (ModuleManager, WriteCommandAction,
  * ModuleRootModificationUtil) are static and mocked via mockkStatic.
+ * Reads use the suspending [readAction] builder; tests run inside [runTest] so the
+ * coroutine dispatcher is supplied by `kotlinx.coroutines.test`.
  * [AgentTool] is mocked via MockK coEvery so requestApproval returns a controlled value.
  * [moduleExternalSystemId] is mocked via mockkStatic on the helpers file.
  * [applyLanguageLevelToModule] is mocked via mockkStatic on SetLanguageLevelActionKt so
@@ -57,6 +58,15 @@ class SetLanguageLevelActionTest {
         coEvery {
             tool.requestApproval(any(), any(), any(), any())
         } returns ApprovalResult.APPROVED
+
+        // Stub the suspending readAction { } so it runs the lambda in-place.
+        // The IntelliJ Platform's real implementation requires ApplicationManager
+        // and a ReadWriteActionSupport service, neither of which exist in unit tests.
+        mockkStatic("com.intellij.openapi.application.CoroutinesKt")
+        coEvery { readAction<Any?>(any()) } coAnswers {
+            @Suppress("UNCHECKED_CAST")
+            (firstArg<() -> Any?>()).invoke()
+        }
     }
 
     @AfterEach
@@ -113,13 +123,6 @@ class SetLanguageLevelActionTest {
         every { ModuleManager.getInstance(project) } returns fakeModuleManager
         every { fakeModuleManager.findModuleByName("no-such-module") } returns null
 
-        // Mock ReadAction to execute the lambda directly
-        mockkStatic(ReadAction::class)
-        val computeSlot = slot<ThrowableComputable<Any, RuntimeException>>()
-        every { ReadAction.compute(capture(computeSlot)) } answers {
-            computeSlot.captured.compute()
-        }
-
         val params = buildJsonObject {
             put("module", "no-such-module")
         }
@@ -143,13 +146,6 @@ class SetLanguageLevelActionTest {
         mockkStatic(ModuleManager::class)
         every { ModuleManager.getInstance(project) } returns fakeModuleManager
         every { fakeModuleManager.findModuleByName("my-module") } returns fakeModule
-
-        // Mock ReadAction to execute the lambda directly
-        mockkStatic(ReadAction::class)
-        val computeSlot = slot<ThrowableComputable<Any, RuntimeException>>()
-        every { ReadAction.compute(capture(computeSlot)) } answers {
-            computeSlot.captured.compute()
-        }
 
         mockkStatic("com.workflow.orchestrator.agent.tools.project.ProjectStructureHelpersKt")
         every { moduleExternalSystemId(fakeModule) } returns "GRADLE"
@@ -181,12 +177,6 @@ class SetLanguageLevelActionTest {
         mockkStatic(ModuleManager::class)
         every { ModuleManager.getInstance(project) } returns fakeModuleManager
         every { fakeModuleManager.findModuleByName("my-module") } returns fakeModule
-
-        mockkStatic(ReadAction::class)
-        val computeSlot = slot<ThrowableComputable<Any, RuntimeException>>()
-        every { ReadAction.compute(capture(computeSlot)) } answers {
-            computeSlot.captured.compute()
-        }
 
         mockkStatic("com.workflow.orchestrator.agent.tools.project.ProjectStructureHelpersKt")
         every { moduleExternalSystemId(fakeModule) } returns null
@@ -246,12 +236,6 @@ class SetLanguageLevelActionTest {
         every { ModuleManager.getInstance(project) } returns fakeModuleManager
         every { fakeModuleManager.findModuleByName("my-module") } returns fakeModule
 
-        mockkStatic(ReadAction::class)
-        val computeSlot = slot<ThrowableComputable<Any, RuntimeException>>()
-        every { ReadAction.compute(capture(computeSlot)) } answers {
-            computeSlot.captured.compute()
-        }
-
         mockkStatic("com.workflow.orchestrator.agent.tools.project.ProjectStructureHelpersKt")
         every { moduleExternalSystemId(fakeModule) } returns null
 
@@ -308,12 +292,6 @@ class SetLanguageLevelActionTest {
         mockkStatic(ModuleManager::class)
         every { ModuleManager.getInstance(project) } returns fakeModuleManager
         every { fakeModuleManager.findModuleByName("my-module") } returns fakeModule
-
-        mockkStatic(ReadAction::class)
-        val computeSlot = slot<ThrowableComputable<Any, RuntimeException>>()
-        every { ReadAction.compute(capture(computeSlot)) } answers {
-            computeSlot.captured.compute()
-        }
 
         mockkStatic("com.workflow.orchestrator.agent.tools.project.ProjectStructureHelpersKt")
         every { moduleExternalSystemId(fakeModule) } returns null

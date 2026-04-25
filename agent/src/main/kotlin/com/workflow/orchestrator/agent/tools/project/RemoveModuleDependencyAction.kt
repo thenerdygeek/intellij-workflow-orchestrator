@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.agent.tools.project
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
@@ -46,7 +46,7 @@ internal suspend fun executeRemoveModuleDependency(
         )
 
     // ── Step 2: find module ───────────────────────────────────────────────────
-    val module = ReadAction.compute<com.intellij.openapi.module.Module?, Throwable> {
+    val module = readAction {
         ModuleManager.getInstance(project).findModuleByName(moduleName)
     } ?: return ToolResult(
         content = "Module '$moduleName' not found.",
@@ -68,7 +68,7 @@ internal suspend fun executeRemoveModuleDependency(
     }
 
     // ── Step 4: pre-check — does the dependency exist? ────────────────────────
-    val existingCount = ReadAction.compute<Int, Throwable> {
+    val existingCount = readAction {
         ModuleRootManager.getInstance(module).orderEntries
             .filterIsInstance<ModuleOrderEntry>()
             .count { it.moduleName == dependsOn }

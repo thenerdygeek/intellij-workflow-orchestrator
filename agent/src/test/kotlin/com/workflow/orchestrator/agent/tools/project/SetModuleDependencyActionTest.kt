@@ -1,6 +1,5 @@
 package com.workflow.orchestrator.agent.tools.project
 
-import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.module.ModuleManager
@@ -9,14 +8,13 @@ import com.intellij.openapi.roots.DependencyScope
 import com.intellij.openapi.roots.ModuleOrderEntry
 import com.intellij.openapi.roots.ModuleRootManager
 import com.intellij.openapi.roots.ModuleRootModificationUtil
-import com.intellij.openapi.util.ThrowableComputable
+import com.intellij.openapi.application.readAction
 import com.workflow.orchestrator.agent.loop.ApprovalResult
 import com.workflow.orchestrator.agent.tools.AgentTool
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
-import io.mockk.slot
 import io.mockk.unmockkAll
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
@@ -30,8 +28,10 @@ import org.junit.jupiter.api.Test
 /**
  * Unit tests for [executeSetModuleDependency].
  *
- * Strategy: all IntelliJ APIs (ModuleManager, ReadAction, WriteCommandAction,
+ * Strategy: all IntelliJ APIs (ModuleManager, WriteCommandAction,
  * ModuleRootManager, ModuleRootModificationUtil) are static and mocked via mockkStatic.
+ * Reads use the suspending [readAction] builder; tests run inside [runTest] so the
+ * coroutine dispatcher is supplied by `kotlinx.coroutines.test`.
  * [AgentTool] is mocked via MockK coEvery so requestApproval returns a controlled value.
  * [moduleExternalSystemId] is mocked via mockkStatic on the helpers file.
  * No real IntelliJ services are used.
@@ -58,6 +58,15 @@ class SetModuleDependencyActionTest {
         coEvery {
             tool.requestApproval(any(), any(), any(), any())
         } returns ApprovalResult.APPROVED
+
+        // Stub the suspending readAction { } so it runs the lambda in-place.
+        // The IntelliJ Platform's real implementation requires ApplicationManager
+        // and a ReadWriteActionSupport service, neither of which exist in unit tests.
+        mockkStatic("com.intellij.openapi.application.CoroutinesKt")
+        coEvery { readAction<Any?>(any()) } coAnswers {
+            @Suppress("UNCHECKED_CAST")
+            (firstArg<() -> Any?>()).invoke()
+        }
     }
 
     @AfterEach
@@ -142,13 +151,6 @@ class SetModuleDependencyActionTest {
         every { fakeModuleManager.findModuleByName("other-module") } returns null
         every { fakeModuleManager.modules } returns emptyArray()
 
-        // Mock ReadAction to execute the lambda directly
-        mockkStatic(ReadAction::class)
-        val computeSlot = slot<ThrowableComputable<Any, RuntimeException>>()
-        every { ReadAction.compute(capture(computeSlot)) } answers {
-            computeSlot.captured.compute()
-        }
-
         val params = buildJsonObject {
             put("module", "no-such-module")
             put("dependsOn", "other-module")
@@ -175,13 +177,6 @@ class SetModuleDependencyActionTest {
         every { ModuleManager.getInstance(project) } returns fakeModuleManager
         every { fakeModuleManager.findModuleByName("my-module") } returns fakeOwnerModule
         every { fakeModuleManager.findModuleByName("other-module") } returns fakeTargetModule
-
-        // Mock ReadAction to execute the lambda directly
-        mockkStatic(ReadAction::class)
-        val computeSlot = slot<ThrowableComputable<Any, RuntimeException>>()
-        every { ReadAction.compute(capture(computeSlot)) } answers {
-            computeSlot.captured.compute()
-        }
 
         mockkStatic("com.workflow.orchestrator.agent.tools.project.ProjectStructureHelpersKt")
         every { moduleExternalSystemId(fakeOwnerModule) } returns "GRADLE"
@@ -217,12 +212,6 @@ class SetModuleDependencyActionTest {
         every { ModuleManager.getInstance(project) } returns fakeModuleManager
         every { fakeModuleManager.findModuleByName("my-module") } returns fakeOwnerModule
         every { fakeModuleManager.findModuleByName("other-module") } returns fakeTargetModule
-
-        mockkStatic(ReadAction::class)
-        val computeSlot = slot<ThrowableComputable<Any, RuntimeException>>()
-        every { ReadAction.compute(capture(computeSlot)) } answers {
-            computeSlot.captured.compute()
-        }
 
         mockkStatic("com.workflow.orchestrator.agent.tools.project.ProjectStructureHelpersKt")
         every { moduleExternalSystemId(fakeOwnerModule) } returns null
@@ -265,12 +254,6 @@ class SetModuleDependencyActionTest {
         every { ModuleManager.getInstance(project) } returns fakeModuleManager
         every { fakeModuleManager.findModuleByName("my-module") } returns fakeOwnerModule
         every { fakeModuleManager.findModuleByName("other-module") } returns fakeTargetModule
-
-        mockkStatic(ReadAction::class)
-        val computeSlot = slot<ThrowableComputable<Any, RuntimeException>>()
-        every { ReadAction.compute(capture(computeSlot)) } answers {
-            computeSlot.captured.compute()
-        }
 
         mockkStatic("com.workflow.orchestrator.agent.tools.project.ProjectStructureHelpersKt")
         every { moduleExternalSystemId(fakeOwnerModule) } returns null
