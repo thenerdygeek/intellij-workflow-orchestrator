@@ -1,6 +1,5 @@
 package com.workflow.orchestrator.core.util
 
-import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
@@ -19,14 +18,16 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.util.concurrent.ConcurrentHashMap
 
 @Service(Service.Level.PROJECT)
-class DefaultBranchResolver(private val project: Project) : Disposable {
+class DefaultBranchResolver(
+    private val project: Project,
+    private val cs: CoroutineScope,
+) {
 
     private val log = Logger.getInstance(DefaultBranchResolver::class.java)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val cache = ConcurrentHashMap<String, String>()
 
     init {
-        scope.launch {
+        cs.launch(Dispatchers.IO) {
             project.getService(EventBus::class.java).events.collect { event ->
                 if (event is WorkflowEvent.BranchChanged) {
                     log.info("[BranchResolver] BranchChanged → clearing cache")
@@ -261,10 +262,6 @@ class DefaultBranchResolver(private val project: Project) : Disposable {
 
     private fun createBitbucketClient(): BitbucketBranchClient? =
         BitbucketBranchClient.fromConfiguredSettings()
-
-    override fun dispose() {
-        scope.cancel()
-    }
 
     companion object {
         private val json = Json { ignoreUnknownKeys = true }

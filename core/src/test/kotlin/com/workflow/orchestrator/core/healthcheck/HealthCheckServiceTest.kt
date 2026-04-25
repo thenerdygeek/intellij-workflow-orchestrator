@@ -6,6 +6,7 @@ import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.healthcheck.checks.HealthCheckContext
 import com.workflow.orchestrator.core.settings.PluginSettings
 import io.mockk.*
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
@@ -56,7 +57,7 @@ class HealthCheckServiceTest {
     @Test
     fun `skips when health check disabled`() = runTest {
         val (project, _) = mockSettingsAndBus(enabled = false)
-        val service = HealthCheckService(project)
+        val service = HealthCheckService(project, TestScope())
         val context = HealthCheckContext(project, emptyList(), "main")
         val result = service.runChecks(context)
         assertTrue(result.skipped)
@@ -66,7 +67,7 @@ class HealthCheckServiceTest {
     @Test
     fun `skips when branch matches skip pattern`() = runTest {
         val (project, _) = mockSettingsAndBus(skipPattern = "hotfix/.*")
-        val service = HealthCheckService(project)
+        val service = HealthCheckService(project, TestScope())
         val context = HealthCheckContext(project, emptyList(), "hotfix/urgent-fix")
         val result = service.runChecks(context)
         assertTrue(result.skipped)
@@ -81,7 +82,7 @@ class HealthCheckServiceTest {
             copyrightEnabled = false,
             sonarEnabled = false
         )
-        val service = HealthCheckService(project)
+        val service = HealthCheckService(project, TestScope())
         val context = HealthCheckContext(project, emptyList(), "feature/my-branch")
         val result = service.runChecks(context)
         assertFalse(result.skipped)
@@ -96,7 +97,7 @@ class HealthCheckServiceTest {
             copyrightEnabled = false,
             sonarEnabled = true
         )
-        val service = HealthCheckService(project)
+        val service = HealthCheckService(project, TestScope())
         val context = HealthCheckContext(project, emptyList(), "main")
         val result = service.runChecks(context)
 
@@ -113,7 +114,7 @@ class HealthCheckServiceTest {
             copyrightEnabled = false,
             sonarEnabled = true
         )
-        val service = HealthCheckService(project)
+        val service = HealthCheckService(project, TestScope())
         val context = HealthCheckContext(project, emptyList(), "main")
         service.runChecks(context)
 
