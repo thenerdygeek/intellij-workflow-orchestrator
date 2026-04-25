@@ -797,7 +797,7 @@ flowchart TD
     end
 
     subgraph BG ["Background Pool"]
-        POLL["Build Polling (CoroutineScope)"]
+        POLL["Build Polling (service-injected cs)"]
         HEALTH["Health Check (runBackgroundableTask)"]
         CODY["Cody CLI (stdio reader)"]
     end
@@ -825,14 +825,27 @@ flowchart LR
     style UPD fill:#2d4a22,stroke:#6a9955,color:#d4d4d4
         </div>
 
+        <h3>Service &amp; Threading Conventions (Phase 4)</h3>
+        <p>Canonical patterns enforced across all modules. Migration history in <code>docs/architecture/phase4-prong-{a,c,d-grep}-plan.md</code>; status in <code>phase4-parked-prongs.md</code>.</p>
+        <ul>
+            <li><strong>Service-injected scope (2024.1+).</strong> <code>@Service</code> constructors take <code>cs: CoroutineScope</code>; the platform owns lifecycle and cancels on project close. Do not allocate <code>CoroutineScope(SupervisorJob() + …)</code> inside services. Non-service classes (e.g. <code>AgentController</code>) consolidate fire-and-forget launches onto a single field scope cancelled in <code>dispose()</code>.</li>
+            <li><strong><code>runBlocking</code> policy.</strong> Forbidden on EDT and inside JCEF bridge handlers. On background threads (<code>Task.Backgroundable.run</code>, <code>executeOnPooledThread</code>, <code>runBackgroundableTask</code>, <code>ExternalAnnotator.doAnnotate</code>, <code>SearchEverywhereContributor.fetchWeightedElements</code>), use <code>runBlockingCancellable { … }</code> so <code>ProgressIndicator</code> cancel propagates.</li>
+            <li><strong>Read-action decision tree.</strong> <code>ReadAction.compute / ReadAction.run / runReadAction</code> are deprecated for 2026.1. Pick: <code>readAction { }</code> (default suspend, writes-may-cancel) / <code>smartReadAction(project) { }</code> (waits for indexing) / <code>readActionBlocking { }</code> (write-priority blocking from suspend, EDT-affine reads). Two intentional <code>runReadAction { }</code> survivors with TODOs: <code>jira/ui/CurrentWorkSection.kt:185</code> (non-suspend MouseAdapter) and <code>agent/ide/IdeContextDetector.kt:114</code> (synchronous <code>@Service.init { }</code> chain).</li>
+            <li><strong>Tool-window dispose cascade.</strong> <code>WorkflowToolWindowFactory</code> wires <code>content.setDisposer(panel)</code> for tabs whose panel is <code>Disposable</code>; <code>Disposer.register(this, child)</code> inside dashboards completes the chain into nested panels.</li>
+            <li><strong>Build-cache trap.</strong> Commits that flip a lambda type to or from <code>suspend</code> can leave Gradle compile-avoidance with stale <code>Function0</code> bytecode (<code>NoSuchMethodError</code> at test runtime). Run with <code>--no-build-cache</code> (and <code>--rerun-tasks</code> for reused tests). See root <code>CLAUDE.md</code> &sect; Rebase.</li>
+        </ul>
+
         <h3>Anti-Patterns</h3>
         <table>
             <tr><th>Anti-Pattern</th><th>Problem</th><th>Fix</th></tr>
-            <tr><td><code>runBlocking</code> on EDT</td><td>Freezes IDE</td><td><code>launch(Dispatchers.IO)</code></td></tr>
+            <tr><td><code>runBlocking</code> on EDT (or in JCEF bridge handler)</td><td>Freezes IDE</td><td><code>cs.launch(Dispatchers.EDT) { … }</code></td></tr>
+            <tr><td><code>runBlocking</code> on background thread</td><td>Loses <code>ProgressIndicator</code> cancel</td><td><code>runBlockingCancellable { … }</code></td></tr>
             <tr><td><code>Thread.sleep()</code> on EDT</td><td>Freezes IDE</td><td><code>delay()</code> in coroutine</td></tr>
+            <tr><td><code>CoroutineScope(SupervisorJob() + …)</code> field in <code>@Service</code></td><td>Lifecycle leak</td><td>Inject <code>cs: CoroutineScope</code> constructor parameter</td></tr>
+            <tr><td><code>ReadAction.compute / runReadAction</code> from suspend code</td><td>Deprecated 2026.1; non-cancellable</td><td><code>readAction { }</code> / <code>smartReadAction(project) { }</code> / <code>readActionBlocking { }</code></td></tr>
             <tr><td>Writing PSI off EDT</td><td>IncorrectOperationException</td><td><code>WriteCommandAction</code></td></tr>
             <tr><td>Updating Swing off EDT</td><td>Race conditions</td><td><code>withContext(Dispatchers.EDT)</code></td></tr>
-            <tr><td><code>SwingWorker</code></td><td>No structured concurrency</td><td><code>CoroutineScope + SupervisorJob</code></td></tr>
+            <tr><td><code>SwingWorker</code></td><td>No structured concurrency</td><td>Service-injected <code>cs.launch { }</code></td></tr>
         </table>
     </div>
 </details>

@@ -25,7 +25,7 @@ flowchart TD
 
     subgraph BG ["Background Thread Pool"]
         direction TB
-        POLLING["Build Polling<br/><i>CoroutineScope + SupervisorJob</i>"]
+        POLLING["Build Polling<br/><i>service-injected cs.launch(IO)</i>"]
         HEALTH["Health Check<br/><i>runBackgroundableTask</i>"]
         MAVEN_RUN["Maven Build<br/><i>MavenRunner.run()</i>"]
         CODY_AGENT["Cody CLI Process<br/><i>JSON-RPC stdio reader</i>"]
@@ -103,18 +103,18 @@ runBackgroundableTask("Testing connection...", project) {
 }
 ```
 
-### Rule 5: Background Polling Uses Supervised CoroutineScope
+### Rule 5: Service-Injected CoroutineScope (2024.1+)
 
-Long-running polling is tied to the Project lifecycle and uses `SupervisorJob` so one failure does not cancel sibling coroutines.
+`@Service` classes take `cs: CoroutineScope` as a constructor parameter; the platform owns the scope's lifecycle and cancels it on project (or application) close. Do not allocate `CoroutineScope(SupervisorJob() + …)` inside services.
 
 ```kotlin
-class BuildMonitorService(project: Project) {
-    private val scope = CoroutineScope(
-        SupervisorJob() + Dispatchers.IO + CoroutineName("BuildMonitor")
-    )
-
-    fun startPolling() {
-        scope.launch {
+@Service(Service.Level.PROJECT)
+class BuildMonitorService(
+    private val project: Project,
+    private val cs: CoroutineScope,
+) {
+    fun startPolling(planKey: String) {
+        cs.launch(Dispatchers.IO + CoroutineName("BuildMonitor")) {
             while (isActive) {
                 val result = bambooService.getLatestBuild(planKey)
                 withContext(Dispatchers.EDT) { updateUI(result) }
@@ -124,6 +124,51 @@ class BuildMonitorService(project: Project) {
     }
 }
 ```
+
+Non-`@Service` classes that fan out fire-and-forget launches (e.g. `AgentController`) keep one field-level `controllerScope` cancelled in `dispose()` and route every launch through it.
+
+### Rule 6: `runBlocking` Policy
+
+`runBlocking` is forbidden on EDT and forbidden inside JCEF bridge handlers (`JBCefJSQuery.Handler` runs on EDT). On background threads (`Task.Backgroundable.run`, `executeOnPooledThread`, `runBackgroundableTask`, `ExternalAnnotator.doAnnotate`, `SearchEverywhereContributor.fetchWeightedElements`), use `runBlockingCancellable { … }` so a `ProgressIndicator` cancel propagates into the coroutine.
+
+## Read Actions
+
+`ReadAction.compute / ReadAction.run / runReadAction` are deprecated for IntelliJ Platform 2026.1 (non-cancellable: a user edit mid-read must wait for the read to complete). Pick the correct 2024.1+ API:
+
+| API | When to use |
+|---|---|
+| `readAction { … }` | Default from suspend code. Cancellable: yields to a pending write. |
+| `smartReadAction(project) { … }` | When the read needs the indexing engine (PSI short names cache, stub index, references). Suspends until indexing finishes. |
+| `readActionBlocking { … }` | Write-priority blocking read from a suspend context. Use for short EDT-affine reads (active editor, caret) wrapped in `withContext(Dispatchers.EDT) { … }`. |
+| `runReadAction { }` | **Last resort.** Only for non-suspend EDT call sites where no migration target fits (e.g. inside a Swing `MouseAdapter`). Deprecated by the platform for 2026.1. |
+
+```kotlin
+// Default suspend pattern
+suspend fun classifyChanges(files: List<VirtualFile>): Classification = readAction {
+    files.map { it.toPsiFile()?.classify() }
+}
+
+// Index-required read
+val candidates = smartReadAction(project) {
+    PsiShortNamesCache.getInstance(project).getClassesByName(name, scope)
+}
+
+// EDT-affine read driven from a suspend context
+withContext(Dispatchers.EDT) {
+    readActionBlocking {
+        FileEditorManager.getInstance(project).selectedTextEditor?.caretModel?.offset
+    }
+}
+```
+
+Two intentional `runReadAction { }` survivors are documented in code with a TODO for the 2026.1 platform bump:
+
+- `jira/ui/CurrentWorkSection.kt:185` — non-suspend `MouseAdapter` callback inside the Sprint banner.
+- `agent/ide/IdeContextDetector.kt:114` — synchronous `@Service.init { }` chain.
+
+Migration history for the 49-site sweep lives in `docs/architecture/phase4-prong-d-grep-plan.md` and `phase4-prong-d-grep-audit.md`.
+
+**Build-cache trap.** A commit that flips a lambda type to or from `suspend` (e.g. `(() -> T)?` → `(suspend () -> T)?`) can leave Gradle's compile-avoidance with stale `Function0` bytecode against the new test compile, producing `NoSuchMethodError` at runtime. Always run such commits with `--no-build-cache` (and `--rerun-tasks` for reused tests). See root `CLAUDE.md` § Rebase.
 
 ## Threading Pattern Summary
 
@@ -192,7 +237,7 @@ The `:agent` module introduces additional threading considerations due to the Re
 
 ### Agent ReAct Loop
 
-The core agent loop runs entirely on `Dispatchers.IO` via a `CoroutineScope`. Each iteration makes an LLM call and optionally executes a tool.
+The core agent loop runs entirely on `Dispatchers.IO` via the platform-injected service scope (`AgentService.cs.launch(Dispatchers.IO)`). Each iteration makes an LLM call and optionally executes a tool.
 
 ```kotlin
 // SingleAgentSession.execute() — suspend function, max 50 iterations
@@ -244,13 +289,20 @@ Token reconciliation (ContextManager calibrating heuristic estimates with the AP
 
 The JCEF chat panel runs its JavaScript on the Chromium browser thread (CEF thread). Communication between Kotlin and JavaScript uses `JBCefJSQuery` callbacks which marshal data to the EDT. This is safe because JCEF handles the thread bridging internally.
 
+## Tool-Window Dispose Cascade
+
+`WorkflowToolWindowFactory` wires `content.setDisposer(panel)` for every tab whose panel is `Disposable`, so `Content.dispose()` cascades into the panel (and `Disposer.register(this, child)` inside dashboards completes the chain into nested panels). Any `@Service` that owns its scope via the 2024.1+ injection pattern is cancelled by the platform on project close — Disposer wiring is for non-service Swing components only.
+
 ## Common Anti-Patterns
 
 | Anti-Pattern | Problem | Fix |
 |---|---|---|
-| `runBlocking` on EDT | Freezes the IDE | Use `launch(Dispatchers.IO)` |
-| `Thread.sleep()` on EDT | Freezes the IDE | Use `delay()` in coroutine |
-| `SwingWorker` | Non-structured concurrency | Use `CoroutineScope` with `SupervisorJob` |
-| Direct `Thread()` creation | Unmanaged lifecycle | Use coroutine scope tied to Project |
-| Writing PSI/Document off EDT | `IncorrectOperationException` | Use `WriteCommandAction` |
-| Updating Swing off EDT | Visual glitches, race conditions | Use `withContext(Dispatchers.EDT)` |
+| `runBlocking` on EDT (or in JCEF bridge handler) | Freezes the IDE | `cs.launch(Dispatchers.EDT) { … }` and call the suspend body directly |
+| `runBlocking` on a background thread | Loses `ProgressIndicator` cancellation | `runBlockingCancellable { … }` |
+| `Thread.sleep()` on EDT | Freezes the IDE | `delay()` in coroutine |
+| `CoroutineScope(SupervisorJob() + …)` field in `@Service` | Lifecycle leak; platform owns service scope | Inject `cs: CoroutineScope` constructor parameter |
+| `SwingWorker` | Non-structured concurrency | `cs.launch { }` (service scope) or `controllerScope.launch { }` |
+| Direct `Thread()` creation | Unmanaged lifecycle | Coroutine on the service-injected scope |
+| `ReadAction.compute / runReadAction` from suspend code | Deprecated 2026.1; non-cancellable | `readAction { }` / `smartReadAction(project) { }` / `readActionBlocking { }` |
+| Writing PSI/Document off EDT | `IncorrectOperationException` | `WriteCommandAction` |
+| Updating Swing off EDT | Visual glitches, race conditions | `withContext(Dispatchers.EDT)` |
