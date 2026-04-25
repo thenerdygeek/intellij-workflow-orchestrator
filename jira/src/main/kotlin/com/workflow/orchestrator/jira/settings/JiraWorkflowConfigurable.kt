@@ -18,6 +18,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import javax.swing.JComponent
 import javax.swing.JLabel
@@ -47,7 +48,7 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
 
     private val log = Logger.getInstance(JiraWorkflowConfigurable::class.java)
     private val intentFields = mutableMapOf<WorkflowIntent, String>()
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     // Board selection state
     private var selectedBoardId: Int = 0
@@ -64,6 +65,10 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
     override fun getDisplayName(): String = "Jira & Workflow"
 
     override fun createComponent(): JComponent {
+        // Recreate scope in case it was cancelled by a previous disposeUIResources()
+        if (!scope.isActive) {
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        }
         val settings = PluginSettings.getInstance(project)
         val connSettings = ConnectionSettings.getInstance()
         val store = TransitionMappingStore()

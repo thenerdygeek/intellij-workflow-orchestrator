@@ -61,13 +61,17 @@ class AgentParentConfigurable(
     private var modelComboBox: JComboBox<ModelItem>? = null
     private var modelStatusLabel: JBLabel? = null
     private var loadModelsButton: JButton? = null
-    private val loadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var loadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var cachedModels: List<ModelInfo> = emptyList()
 
     override fun getId(): String = "workflow.orchestrator.agent"
     override fun getDisplayName(): String = "AI Agent"
 
     override fun createComponent(): JComponent {
+        // Recreate scope in case it was cancelled by a previous disposeUIResources()
+        if (!loadScope.isActive) {
+            loadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        }
         lateinit var agentEnabledCell: Cell<JBCheckBox>
 
         val innerPanel = panel {
