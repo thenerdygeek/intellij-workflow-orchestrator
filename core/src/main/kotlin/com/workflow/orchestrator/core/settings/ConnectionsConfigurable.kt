@@ -5,6 +5,7 @@ import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.progress.runBackgroundableTask
+import com.intellij.openapi.progress.runBlockingCancellable
 import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.dsl.builder.*
@@ -12,7 +13,6 @@ import com.workflow.orchestrator.core.auth.AuthTestService
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
-import kotlinx.coroutines.runBlocking
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPasswordField
@@ -228,7 +228,7 @@ class ConnectionsConfigurable(
                     }
                     statusLabel.text = "Testing..."
                     runBackgroundableTask("Testing $title", project, false) {
-                        val result = runBlocking {
+                        val result = runBlockingCancellable {
                             authTestService.testConnection(serviceType, url, token)
                         }
                         invokeLater {
@@ -328,7 +328,7 @@ class ConnectionsConfigurable(
                     }
                     statusLabel.text = "Testing..."
                     runBackgroundableTask("Testing $title", project, false) {
-                        val result = runBlocking {
+                        val result = runBlockingCancellable {
                             authTestService.testConnection(ServiceType.BITBUCKET, url, token)
                         }
 
@@ -441,7 +441,7 @@ class ConnectionsConfigurable(
                     }
                     statusLabel.text = "Testing..."
                     runBackgroundableTask("Testing $title", project, false) {
-                        val result = runBlocking {
+                        val result = runBlockingCancellable {
                             authTestService.testConnection(ServiceType.NEXUS, url, pass, username = user)
                         }
                         invokeLater {

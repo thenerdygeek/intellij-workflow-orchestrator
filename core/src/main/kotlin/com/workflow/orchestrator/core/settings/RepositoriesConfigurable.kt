@@ -5,6 +5,7 @@ import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.invokeLater as platformInvokeLater
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.SearchableConfigurable
+import com.intellij.openapi.progress.runBlockingCancellable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.Messages
@@ -244,7 +245,7 @@ class RepositoriesConfigurable(
             val orchestrator = project.getService(
                 com.workflow.orchestrator.core.autodetect.AutoDetectOrchestrator::class.java
             )
-            val orchestratorResult = kotlinx.coroutines.runBlocking { orchestrator.detectAll() }
+            val orchestratorResult = runBlockingCancellable { orchestrator.detectAll() }
 
             // Modality-aware: the Settings dialog is modal, so a plain invokeLater from
             // this pooled thread would schedule at NON_MODAL and be held on the queue

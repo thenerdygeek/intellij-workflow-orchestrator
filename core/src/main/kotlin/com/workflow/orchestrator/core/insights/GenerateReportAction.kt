@@ -6,10 +6,10 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.extensions.ExtensionPointName
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
+import com.intellij.openapi.progress.runBlockingCancellable
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.workflow.orchestrator.core.services.SessionHistoryReader
 import com.workflow.orchestrator.core.util.ProjectIdentifier
-import kotlinx.coroutines.runBlocking
 
 class GenerateReportAction : AnAction() {
 
@@ -29,14 +29,14 @@ class GenerateReportAction : AnAction() {
             true,
         ) {
             override fun run(indicator: com.intellij.openapi.progress.ProgressIndicator) {
-                runBlocking {
+                runBlockingCancellable {
                     try {
                         indicator.text = "Collecting session data…"
                         indicator.isIndeterminate = true
 
                         val reader = ExtensionPointName
                             .create<SessionHistoryReader>("com.workflow.orchestrator.sessionHistoryReader")
-                            .extensionList.firstOrNull() ?: return@runBlocking
+                            .extensionList.firstOrNull() ?: return@runBlockingCancellable
 
                         val basePath = project.basePath ?: ""
                         val agentDir = ProjectIdentifier.agentDir(basePath)

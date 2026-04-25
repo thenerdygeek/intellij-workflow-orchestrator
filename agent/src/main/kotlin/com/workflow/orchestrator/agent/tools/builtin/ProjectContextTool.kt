@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.tools.builtin
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.module.ModuleManager
+import com.intellij.openapi.progress.runBlockingCancellable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
@@ -223,7 +224,7 @@ class ProjectContextTool : AgentTool {
         if (primaryRepo == null) return
         try {
             val resolver = DefaultBranchResolver.getInstance(project)
-            val resolved = runBlocking {
+            val resolved = runBlockingCancellable {
                 withTimeoutOrNull(2000) { resolver.resolve(primaryRepo) }
             } ?: return
             sb.appendLine("Default Target Branch: $resolved")

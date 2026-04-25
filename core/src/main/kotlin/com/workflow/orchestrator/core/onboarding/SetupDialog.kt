@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.core.onboarding
 
 import com.intellij.openapi.progress.runBackgroundableTask
+import com.intellij.openapi.progress.runBlockingCancellable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.ui.dsl.builder.*
@@ -9,7 +10,6 @@ import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
-import kotlinx.coroutines.runBlocking
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPasswordField
@@ -83,7 +83,7 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
                     }
                     statusLabel.text = "Testing..."
                     runBackgroundableTask("Testing $title", project, false) {
-                        val result = runBlocking {
+                        val result = runBlockingCancellable {
                             authTestService.testConnection(serviceType, url, token)
                         }
                         invokeLater {
@@ -134,7 +134,7 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
                     }
                     statusLabel.text = "Testing..."
                     runBackgroundableTask("Testing Nexus Docker Registry", project, false) {
-                        val result = runBlocking {
+                        val result = runBlockingCancellable {
                             authTestService.testConnection(ServiceType.NEXUS, url, password, username = username)
                         }
                         invokeLater {

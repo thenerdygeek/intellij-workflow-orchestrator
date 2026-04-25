@@ -7,13 +7,13 @@ import com.intellij.ide.actions.searcheverywhere.WeightedSearchEverywhereContrib
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.runBlockingCancellable
 import com.intellij.openapi.project.Project
 import com.intellij.util.Processor
 import com.workflow.orchestrator.core.model.jira.JiraTicketData
 import com.workflow.orchestrator.core.services.JiraService
 import com.workflow.orchestrator.jira.service.ActiveTicketService
 import com.workflow.orchestrator.jira.service.JiraServiceImpl
-import kotlinx.coroutines.runBlocking
 import com.intellij.ui.components.JBLabel
 import javax.swing.JList
 import javax.swing.ListCellRenderer
@@ -75,8 +75,10 @@ private class JiraSearchContributor(
 
         try {
             // Search Everywhere runs fetchWeightedElements on a background thread,
-            // so runBlocking is acceptable here (not on EDT).
-            val result = runBlocking {
+            // so blocking the calling thread is acceptable (not on EDT).
+            // runBlockingCancellable additionally propagates cancellation from
+            // progressIndicator so a user "Cancel" tears down the suspending body.
+            val result = runBlockingCancellable {
                 service.searchIssues(pattern, maxResults = 20)
             }
 

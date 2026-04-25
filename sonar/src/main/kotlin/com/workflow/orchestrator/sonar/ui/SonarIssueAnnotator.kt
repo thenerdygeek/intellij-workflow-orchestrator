@@ -5,6 +5,7 @@ import com.intellij.lang.annotation.ExternalAnnotator
 import com.intellij.lang.annotation.HighlightSeverity
 import com.intellij.openapi.application.readAction
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.progress.runBlockingCancellable
 import com.intellij.openapi.util.TextRange
 import com.intellij.psi.PsiFile
 import com.intellij.psi.PsiManager
@@ -16,7 +17,6 @@ import com.workflow.orchestrator.sonar.model.IssueType
 import com.workflow.orchestrator.sonar.model.MappedIssue
 import com.workflow.orchestrator.sonar.model.SonarState
 import com.workflow.orchestrator.sonar.service.SonarDataService
-import kotlinx.coroutines.runBlocking
 
 /**
  * Input collected on EDT (with read access) in [collectInformation].
@@ -92,9 +92,14 @@ class SonarIssueAnnotator : ExternalAnnotator<SonarAnnotationInput, SonarAnnotat
      * Runs OFF-EDT in a background thread.
      * All PSI tree walks and document offset computations happen here under
      * a readAction so we never touch PSI on the EDT.
+     *
+     * `runBlockingCancellable` is used (instead of bare `runBlocking`) so the
+     * platform's `ProgressIndicator` cancellation propagates into the suspending
+     * `readAction` body — when the user cancels, the coroutine throws
+     * `CancellationException` and the annotator unwinds cleanly.
      */
     override fun doAnnotate(collectedInfo: SonarAnnotationInput): SonarAnnotationResult {
-        val annotations = runBlocking {
+        val annotations = runBlockingCancellable {
             readAction {
                 val psiFile = PsiManager.getInstance(collectedInfo.project)
                     .findFile(collectedInfo.virtualFile)
