@@ -3,6 +3,7 @@ package com.workflow.orchestrator.bamboo.ui
 import com.intellij.icons.AllIcons
 import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBLabel
@@ -282,7 +283,7 @@ class PrBar(
 
         scope.launch {
             // Resolve branch off-EDT to avoid synchronous VCS repository update on EDT
-            val currentBranch = com.intellij.openapi.application.ReadAction.compute<_, Throwable> { resolveCurrentBranch() }
+            val currentBranch = readAction { resolveCurrentBranch() }
             if (currentBranch == null) {
                 log.warn("[Build:PrBar] No Git branch detected")
                 return@launch
