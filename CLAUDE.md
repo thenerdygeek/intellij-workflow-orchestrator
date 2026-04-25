@@ -80,6 +80,8 @@ Per-project file-based memory at `~/.workflow-orchestrator/{proj}/agent/memory/`
 2. `git rebase origin/main`
 3. `./gradlew :agent:clean :agent:test --rerun --no-build-cache` + `./gradlew verifyPlugin`
 
+**Build-cache trap with suspend signature changes:** when a commit changes a lambda type to or from `suspend` (e.g. `(() -> T)?` → `(suspend () -> T)?`), Gradle's compile-avoidance can keep stale `Function0` bytecode against the new test compile and produce `NoSuchMethodError` at runtime. Always run such commits with `--no-build-cache` (and `--rerun-tasks` if reused tests are involved). Pattern surfaced in Phase 4 D8b — see `docs/architecture/phase4-prong-d-grep-plan.md`.
+
 ## Docs
 
 Update module `CLAUDE.md` + `docs/architecture/` (incl. `index.html`) in same commit as architecture changes. Refs: `docs/architecture/index.html` | `ux-design-guide.md` | `requirement.md` | `features.md`
