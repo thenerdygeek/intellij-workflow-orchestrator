@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.agent.tools.runtime
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.externalSystem.model.DataNode
 import com.intellij.openapi.externalSystem.model.ProjectKeys
 import com.intellij.openapi.externalSystem.model.ProjectSystemId
@@ -84,11 +84,11 @@ class BuildSystemValidator(
      *
      * @see docs/plans/2026-04-17-phase2-multi-module-build-validation.md
      */
-    fun validateForTestRun(className: String, module: Module): ValidationResult {
-        // Wrap the whole PSI-touching body in a ReadAction — PSI, VFS, and module-roots
+    suspend fun validateForTestRun(className: String, module: Module): ValidationResult {
+        // Wrap the whole PSI-touching body in a readAction — PSI, VFS, and module-roots
         // reads must run under a read lock in IntelliJ. The test harness stubs
-        // ReadAction.compute to run inline on the test thread.
-        return ReadAction.compute<ValidationResult, RuntimeException> {
+        // readAction to run inline on the test thread.
+        return readAction {
             validateInReadAction(className, module)
         }
     }

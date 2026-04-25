@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.agent.tools.project
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
@@ -49,7 +49,7 @@ internal suspend fun executeAddContentRoot(
         )
 
     // ── Step 2: find module ───────────────────────────────────────────────────
-    val module = ReadAction.compute<com.intellij.openapi.module.Module?, Throwable> {
+    val module = readAction {
         ModuleManager.getInstance(project).findModuleByName(moduleName)
     } ?: return ToolResult(
         content = "Module '$moduleName' not found.",
@@ -94,10 +94,10 @@ internal suspend fun executeAddContentRoot(
 
     // ── Step 5: pre-check — already a content root or overlapping ────────────
     data class OverlapResult(val isExact: Boolean, val overlapPath: String?)
-    val overlapResult = ReadAction.compute<OverlapResult, Throwable> {
+    val overlapResult = readAction {
         val entries = ModuleRootManager.getInstance(module).contentEntries
         val exactMatch = entries.any { it.file?.path == vFile.path }
-        if (exactMatch) return@compute OverlapResult(true, vFile.path)
+        if (exactMatch) return@readAction OverlapResult(true, vFile.path)
         val overlapping = entries.mapNotNull { it.file }.firstOrNull { existing ->
             VfsUtilCore.isAncestor(existing, vFile, false) ||
                 VfsUtilCore.isAncestor(vFile, existing, false)

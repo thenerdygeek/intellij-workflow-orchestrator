@@ -1,11 +1,10 @@
 package com.workflow.orchestrator.agent.tools.runtime
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.module.ModuleUtilCore
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ModuleRootManager
-import com.intellij.openapi.util.ThrowableComputable
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.JavaPsiFacade
@@ -15,11 +14,12 @@ import com.intellij.psi.PsiFile
 import com.intellij.psi.PsiMethod
 import com.intellij.psi.PsiModifierList
 import com.intellij.psi.search.GlobalSearchScope
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
-import io.mockk.slot
 import io.mockk.unmockkAll
+import kotlinx.coroutines.test.runTest
 import org.jetbrains.jps.model.java.JavaSourceRootType
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -58,13 +58,11 @@ class BuildSystemValidatorTest {
         every { project.basePath } returns "/project/root"
         every { module.name } returns "services.auth"
 
-        // ReadAction.compute: execute the lambda inline so the PSI/roots code under
-        // test runs synchronously in the test thread.
-        mockkStatic(ReadAction::class)
-        val computeSlot = slot<ThrowableComputable<Any?, RuntimeException>>()
-        every { ReadAction.compute(capture(computeSlot)) } answers {
-            computeSlot.captured.compute()
-        }
+        // Stub the suspending readAction { } so it runs the lambda in-place — there is no
+        // ApplicationManager in unit tests, so the real builder would NPE on its
+        // ReadWriteActionSupport service lookup.
+        mockkStatic("com.intellij.openapi.application.CoroutinesKt")
+        coEvery { readAction<Any?>(any()) } coAnswers { firstArg<() -> Any?>().invoke() }
     }
 
     @AfterEach
@@ -188,7 +186,7 @@ class BuildSystemValidatorTest {
     // ========================================================================
 
     @Test
-    fun `gradle module missing from settings_gradle is Blocked with add-include suggestion`() {
+    fun `gradle module missing from settings_gradle is Blocked with add-include suggestion`() = runTest {
         // Class itself is fine — under a test source root with an @Test method.
         wirePsiClass(
             className = "com.example.auth.AuthServiceTest",
@@ -240,7 +238,7 @@ class BuildSystemValidatorTest {
     // ========================================================================
 
     @Test
-    fun `class in main sources is Blocked with did-you-mean candidates`() {
+    fun `class in main sources is Blocked with did-you-mean candidates`() = runTest {
         wirePsiClass(
             className = "com.example.MyService",
             testMethodAnnotations = listOf(listOf("org.junit.jupiter.api.Test")),
@@ -283,7 +281,7 @@ class BuildSystemValidatorTest {
     // ========================================================================
 
     @Test
-    fun `maven module not registered is Blocked with reload-maven suggestion`() {
+    fun `maven module not registered is Blocked with reload-maven suggestion`() = runTest {
         wirePsiClass(
             className = "com.example.auth.AuthServiceTest",
             testMethodAnnotations = listOf(listOf("org.junit.jupiter.api.Test")),
@@ -330,7 +328,7 @@ class BuildSystemValidatorTest {
     // ========================================================================
 
     @Test
-    fun `gradle authoritative path overrides filesystem-derived path`() {
+    fun `gradle authoritative path overrides filesystem-derived path`() = runTest {
         // Wire a class under a test source root. Force the module's content root to a
         // filesystem layout that would naively derive ":auth-svc" if the filesystem
         // derivation logic were used — proving the validator chose Gradle's answer.
@@ -369,7 +367,7 @@ class BuildSystemValidatorTest {
     // ========================================================================
 
     @Test
-    fun `test class with zero Test methods is Blocked with annotation hint`() {
+    fun `test class with zero Test methods is Blocked with annotation hint`() = runTest {
         wirePsiClass(
             className = "com.example.EmptyTest",
             testMethodAnnotations = emptyList(), // no @Test methods at all
@@ -419,7 +417,7 @@ class BuildSystemValidatorTest {
     @Test
     fun `build file present without integration plugin returns Ok with filesystem-fallback warning`(
         @TempDir tempDir: Path
-    ) {
+    ) = runTest {
         val moduleDir = tempDir.resolve("services/auth").toFile().apply { mkdirs() }
         File(moduleDir, "build.gradle").writeText("// empty\n")
 
@@ -464,7 +462,7 @@ class BuildSystemValidatorTest {
     // ========================================================================
 
     @Test
-    fun `nested gradle module without intermediate declaration is Blocked`() {
+    fun `nested gradle module without intermediate declaration is Blocked`() = runTest {
         wirePsiClass(
             className = "com.example.auth.AuthServiceTest",
             testMethodAnnotations = listOf(listOf("org.junit.jupiter.api.Test")),

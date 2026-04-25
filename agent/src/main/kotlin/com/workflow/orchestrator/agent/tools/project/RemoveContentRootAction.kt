@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.agent.tools.project
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
@@ -49,7 +49,7 @@ internal suspend fun executeRemoveContentRoot(
         )
 
     // ── Step 2: find module ───────────────────────────────────────────────────
-    val module = ReadAction.compute<com.intellij.openapi.module.Module?, Throwable> {
+    val module = readAction {
         ModuleManager.getInstance(project).findModuleByName(moduleName)
     } ?: return ToolResult(
         content = "Module '$moduleName' not found.",
@@ -79,7 +79,7 @@ internal suspend fun executeRemoveContentRoot(
 
     // ── Step 5: pre-check — does the content root exist? ─────────────────────
     data class PreCheck(val targetEntry: ContentEntry?, val knownPaths: List<String>)
-    val preCheck = ReadAction.compute<PreCheck, Throwable> {
+    val preCheck = readAction {
         val rm = ModuleRootManager.getInstance(module)
         val target = rm.contentEntries.firstOrNull {
             it.file?.path?.let { p -> File(p).canonicalPath } == absolute

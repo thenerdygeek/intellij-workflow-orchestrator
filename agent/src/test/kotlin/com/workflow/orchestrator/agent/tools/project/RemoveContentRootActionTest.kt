@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.agent.tools.project
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.module.ModuleManager
@@ -9,7 +9,6 @@ import com.intellij.openapi.roots.ContentEntry
 import com.intellij.openapi.roots.ModifiableRootModel
 import com.intellij.openapi.roots.ModuleRootManager
 import com.intellij.openapi.roots.ModuleRootModificationUtil
-import com.intellij.openapi.util.ThrowableComputable
 import com.intellij.openapi.vfs.VirtualFile
 import com.workflow.orchestrator.agent.loop.ApprovalResult
 import com.workflow.orchestrator.agent.tools.AgentTool
@@ -31,8 +30,10 @@ import org.junit.jupiter.api.Test
 /**
  * Unit tests for [executeRemoveContentRoot].
  *
- * Strategy: all IntelliJ APIs (ModuleManager, ReadAction, WriteCommandAction,
+ * Strategy: all IntelliJ APIs (ModuleManager, WriteCommandAction,
  * ModuleRootManager, ModuleRootModificationUtil) are static and mocked via mockkStatic.
+ * Reads use the suspending [readAction] builder; tests run inside [runTest] so the
+ * coroutine dispatcher is supplied by `kotlinx.coroutines.test`.
  * [AgentTool] is mocked via MockK coEvery so requestApproval returns a controlled value.
  * [moduleExternalSystemId] is mocked via mockkStatic on the helpers file.
  * No real IntelliJ services are used.
@@ -41,7 +42,7 @@ import org.junit.jupiter.api.Test
  * Test 2 — testMissingPathParamReturnsError: no "path" param → isError=true
  * Test 3 — testModuleNotFoundReturnsError: findModuleByName returns null → isError=true, content has module name
  * Test 4 — testExternalSystemModuleReturnsError: moduleExternalSystemId returns "GRADLE" → isError=true, content contains "external"
- * Test 5 — testContentRootNotFoundReturnsError: ReadAction returns preCheck with targetEntry=null → isError=true, content contains "not found" and lists known roots
+ * Test 5 — testContentRootNotFoundReturnsError: readAction returns preCheck with targetEntry=null → isError=true, content contains "not found" and lists known roots
  * Test 6 — testApprovalDeniedReturnsError: full chain reaches approval gate → DENIED → isError=true, content contains "denied"
  * Test 7 — testHappyPathRemovesRoot: approval APPROVED → write runs → remainingCount=1 → isError=false, content contains "Removed"
  * Test 8 — testRemovingLastRootProducesWarning: approval APPROVED → write runs → remainingCount=0 → content contains "0 content roots"
@@ -60,6 +61,15 @@ class RemoveContentRootActionTest {
         coEvery {
             tool.requestApproval(any(), any(), any(), any())
         } returns ApprovalResult.APPROVED
+
+        // Stub the suspending readAction { } so it runs the lambda in-place.
+        // The IntelliJ Platform's real implementation requires ApplicationManager
+        // and a ReadWriteActionSupport service, neither of which exist in unit tests.
+        mockkStatic("com.intellij.openapi.application.CoroutinesKt")
+        coEvery { readAction<Any?>(any()) } coAnswers {
+            @Suppress("UNCHECKED_CAST")
+            (firstArg<() -> Any?>()).invoke()
+        }
     }
 
     @AfterEach
@@ -105,12 +115,6 @@ class RemoveContentRootActionTest {
         every { ModuleManager.getInstance(project) } returns fakeModuleManager
         every { fakeModuleManager.findModuleByName("no-such-module") } returns null
 
-        mockkStatic(ReadAction::class)
-        val computeSlot = slot<ThrowableComputable<Any, RuntimeException>>()
-        every { ReadAction.compute(capture(computeSlot)) } answers {
-            computeSlot.captured.compute()
-        }
-
         val params = buildJsonObject {
             put("module", "no-such-module")
             put("path", "/some/path")
@@ -136,12 +140,6 @@ class RemoveContentRootActionTest {
         every { ModuleManager.getInstance(project) } returns fakeModuleManager
         every { fakeModuleManager.findModuleByName("my-module") } returns fakeModule
 
-        mockkStatic(ReadAction::class)
-        val computeSlot = slot<ThrowableComputable<Any, RuntimeException>>()
-        every { ReadAction.compute(capture(computeSlot)) } answers {
-            computeSlot.captured.compute()
-        }
-
         mockkStatic("com.workflow.orchestrator.agent.tools.project.ProjectStructureHelpersKt")
         every { moduleExternalSystemId(fakeModule) } returns "GRADLE"
 
@@ -161,7 +159,7 @@ class RemoveContentRootActionTest {
     // Test 5 — Content root not found (no match) → isError=true, content contains "not found"
     //          and lists known roots
     //
-    // Module found + not external + ReadAction returns preCheck with targetEntry=null
+    // Module found + not external + readAction returns preCheck with targetEntry=null
     // + knownPaths = ["/some/other/path"] → error listing known root
     // ────────────────────────────────────────────────────────────────────────
 
@@ -176,13 +174,6 @@ class RemoveContentRootActionTest {
         mockkStatic(ModuleManager::class)
         every { ModuleManager.getInstance(project) } returns fakeModuleManager
         every { fakeModuleManager.findModuleByName("my-module") } returns fakeModule
-
-        // Set up ReadAction to execute lambdas directly
-        mockkStatic(ReadAction::class)
-        val computeSlot = slot<ThrowableComputable<Any, RuntimeException>>()
-        every { ReadAction.compute(capture(computeSlot)) } answers {
-            computeSlot.captured.compute()
-        }
 
         mockkStatic("com.workflow.orchestrator.agent.tools.project.ProjectStructureHelpersKt")
         every { moduleExternalSystemId(fakeModule) } returns null
@@ -213,7 +204,7 @@ class RemoveContentRootActionTest {
     // ────────────────────────────────────────────────────────────────────────
     // Test 6 — Approval denied → isError=true, content contains "denied"
     //
-    // Module found + not external + ReadAction returns entry found → approval gate → DENIED
+    // Module found + not external + readAction returns entry found → approval gate → DENIED
     // ────────────────────────────────────────────────────────────────────────
 
     @Test
@@ -227,12 +218,6 @@ class RemoveContentRootActionTest {
         mockkStatic(ModuleManager::class)
         every { ModuleManager.getInstance(project) } returns fakeModuleManager
         every { fakeModuleManager.findModuleByName("my-module") } returns fakeModule
-
-        mockkStatic(ReadAction::class)
-        val computeSlot = slot<ThrowableComputable<Any, RuntimeException>>()
-        every { ReadAction.compute(capture(computeSlot)) } answers {
-            computeSlot.captured.compute()
-        }
 
         mockkStatic("com.workflow.orchestrator.agent.tools.project.ProjectStructureHelpersKt")
         every { moduleExternalSystemId(fakeModule) } returns null
@@ -280,12 +265,6 @@ class RemoveContentRootActionTest {
         mockkStatic(ModuleManager::class)
         every { ModuleManager.getInstance(project) } returns fakeModuleManager
         every { fakeModuleManager.findModuleByName("my-module") } returns fakeModule
-
-        mockkStatic(ReadAction::class)
-        val computeSlot = slot<ThrowableComputable<Any, RuntimeException>>()
-        every { ReadAction.compute(capture(computeSlot)) } answers {
-            computeSlot.captured.compute()
-        }
 
         mockkStatic("com.workflow.orchestrator.agent.tools.project.ProjectStructureHelpersKt")
         every { moduleExternalSystemId(fakeModule) } returns null
@@ -352,12 +331,6 @@ class RemoveContentRootActionTest {
         mockkStatic(ModuleManager::class)
         every { ModuleManager.getInstance(project) } returns fakeModuleManager
         every { fakeModuleManager.findModuleByName("my-module") } returns fakeModule
-
-        mockkStatic(ReadAction::class)
-        val computeSlot = slot<ThrowableComputable<Any, RuntimeException>>()
-        every { ReadAction.compute(capture(computeSlot)) } answers {
-            computeSlot.captured.compute()
-        }
 
         mockkStatic("com.workflow.orchestrator.agent.tools.project.ProjectStructureHelpersKt")
         every { moduleExternalSystemId(fakeModule) } returns null

@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.agent.tools.project
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
@@ -72,7 +72,7 @@ internal suspend fun executeAddSourceRoot(
         )
 
     // ── Step 3: find module ───────────────────────────────────────────────────
-    val module = ReadAction.compute<com.intellij.openapi.module.Module?, Throwable> {
+    val module = readAction {
         ModuleManager.getInstance(project).findModuleByName(moduleName)
     } ?: return ToolResult(
         content = "Module not found: '$moduleName'",
@@ -111,13 +111,13 @@ internal suspend fun executeAddSourceRoot(
         )
 
     // ── Step 6: find containing ContentEntry ─────────────────────────────────
-    val parentEntry = ReadAction.compute<com.intellij.openapi.roots.ContentEntry?, Throwable> {
+    val parentEntry = readAction {
         ModuleRootManager.getInstance(module).contentEntries.find { ce ->
             ce.file != null && VfsUtil.isAncestor(ce.file!!, vFile, false)
         }
     }
     if (parentEntry == null) {
-        val contentRoots = ReadAction.compute<List<String>, Throwable> {
+        val contentRoots = readAction {
             ModuleRootManager.getInstance(module).contentEntries
                 .mapNotNull { it.file?.path }
         }
