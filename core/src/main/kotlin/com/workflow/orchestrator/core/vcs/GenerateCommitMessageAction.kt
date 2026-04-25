@@ -13,6 +13,7 @@ import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
+import com.intellij.openapi.progress.runBlockingCancellable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.CheckinProjectPanel
 import com.intellij.openapi.vcs.VcsDataKeys
@@ -38,7 +39,6 @@ import git4idea.commands.GitLineHandler
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.runBlocking
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -93,7 +93,8 @@ class GenerateCommitMessageAction : AnAction(
         }
 
         // Run as a backgroundable task with progress in the status bar.
-        // Uses runBlocking inside the background thread (NOT EDT — safe per project rules).
+        // Uses runBlockingCancellable inside the background thread (NOT EDT — safe per
+        // project rules).
         ProgressManager.getInstance().run(object : Task.Backgroundable(
             project,
             "Generating commit message...",
@@ -107,8 +108,13 @@ class GenerateCommitMessageAction : AnAction(
                 renderer.update("Starting...")
 
                 try {
-                    // runBlocking is safe here — we're on a background thread, not EDT
-                    val message = runBlocking {
+                    // runBlockingCancellable is safe here — we're on a background thread,
+                    // not EDT. With cancellable=true on the Task.Backgroundable above, the
+                    // user's Cancel click now propagates CancellationException straight into
+                    // the suspending body (and the per-token AI streaming inside
+                    // generateMessage), producing immediate teardown instead of waiting for
+                    // the LLM stream to finish.
+                    val message = runBlockingCancellable {
                         generateMessage(
                             project, targetRepo, selectedChanges, indicator, renderer,
                             commitMessage, modalityState

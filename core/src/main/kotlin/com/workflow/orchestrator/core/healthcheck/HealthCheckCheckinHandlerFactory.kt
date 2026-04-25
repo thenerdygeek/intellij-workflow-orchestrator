@@ -3,6 +3,7 @@ package com.workflow.orchestrator.core.healthcheck
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
+import com.intellij.openapi.progress.runBlockingCancellable
 import com.intellij.openapi.vcs.CheckinProjectPanel
 import com.intellij.openapi.vcs.changes.CommitContext
 import com.intellij.openapi.vcs.checkin.CheckinHandler
@@ -15,7 +16,6 @@ import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoContextResolver
 import git4idea.GitVcs
 import git4idea.repo.GitRepositoryManager
-import kotlinx.coroutines.runBlocking
 import java.awt.BorderLayout
 import javax.swing.JComponent
 import javax.swing.JPanel
@@ -77,16 +77,20 @@ class HealthCheckCheckinHandler(
         )
 
         // Task.Modal.run() executes on a pooled background thread, not the EDT.
-        // runBlocking is safe here because the entire coroutine chain (HealthCheckService,
-        // MavenBuildService, EventBus.emit) uses Dispatchers.IO or suspend-only calls —
-        // none dispatch to the EDT. The modal dialog blocks the EDT visually (progress bar)
-        // but does not hold the EDT thread itself.
+        // runBlockingCancellable is safe here because the entire coroutine chain
+        // (HealthCheckService, MavenBuildService, EventBus.emit) uses Dispatchers.IO or
+        // suspend-only calls — none dispatch to the EDT. The modal dialog blocks the EDT
+        // visually (progress bar) but does not hold the EDT thread itself.
+        // runBlockingCancellable additionally propagates cancellation from the platform's
+        // ProgressIndicator: when the user clicks Cancel on the modal dialog, the suspending
+        // body throws CancellationException and unwinds cleanly instead of running to
+        // completion in the background.
         var healthResult: HealthCheckResult? = null
         ProgressManager.getInstance().run(object : Task.Modal(
             project, "Running Health Checks...", true
         ) {
             override fun run(indicator: ProgressIndicator) {
-                healthResult = runBlocking {
+                healthResult = runBlockingCancellable {
                     HealthCheckService.getInstance(project).runChecks(context)
                 }
             }
