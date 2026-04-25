@@ -1520,8 +1520,10 @@ class AgentService(
                 var writeCheckpointCounter = 0
 
                 // Resolve default target branch asynchronously — DefaultBranchResolver.resolve()
-                // is suspend, but environmentDetailsProvider is a non-suspend lambda.
-                // Capture result once at task start; lambda reads the var once it is populated.
+                // is suspend. environmentDetailsProvider is now also a suspend lambda (D8b),
+                // but resolution is fire-and-forget so the provider doesn't block on git per
+                // invocation. Capture result once at task start; lambda reads the var once
+                // it is populated.
                 val resolvedDefaultBranch = AtomicReference<String?>(null)
                 launch(Dispatchers.IO) {
                     try {

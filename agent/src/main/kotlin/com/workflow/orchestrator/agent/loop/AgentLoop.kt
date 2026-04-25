@@ -232,7 +232,7 @@ class AgentLoop(
      * at the entry point of every user message — current mode, open editor, open tabs,
      * context usage, active plan, active ticket.
      */
-    val environmentDetailsProvider: (() -> String?)? = null,
+    val environmentDetailsProvider: (suspend () -> String?)? = null,
     /**
      * Thread-safe queue of user messages sent while the agent is actively running.
      * Drained at the start of each loop iteration (between compaction and LLM call).
@@ -1787,8 +1787,12 @@ class AgentLoop(
     /**
      * Append the latest environment_details block to a user message.
      * Returns the message unchanged if the provider returns null.
+     *
+     * Suspending: the provider invokes `EnvironmentDetailsBuilder.build`, which now
+     * runs editor reads on `Dispatchers.EDT` and tab/file reads under `readAction`.
+     * All call sites already live in suspending coroutine contexts.
      */
-    private fun withEnvDetails(message: String): String {
+    private suspend fun withEnvDetails(message: String): String {
         val envDetails = environmentDetailsProvider?.invoke()
         return if (envDetails != null) "$message\n\n$envDetails" else message
     }

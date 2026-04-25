@@ -1,16 +1,40 @@
 package com.workflow.orchestrator.agent.prompt
 
+import com.intellij.openapi.application.readAction
+import com.intellij.openapi.application.readActionBlocking
 import com.intellij.openapi.project.Project
+import io.mockk.coEvery
 import io.mockk.mockk
+import io.mockk.mockkStatic
+import io.mockk.unmockkAll
+import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
 class EnvironmentDetailsBuilderTest {
 
     private val project = mockk<Project>(relaxed = true)
 
+    @BeforeEach
+    fun setUp() {
+        // D8b: readAction { … } and readActionBlocking { … } are top-level suspending
+        // functions in com.intellij.openapi.application.CoroutinesKt. Stub them to
+        // invoke the lambda in-place so tests don't need an initialized IntelliJ
+        // Application or EDT. Pattern from D7a/D7b/D8a.
+        mockkStatic("com.intellij.openapi.application.CoroutinesKt")
+        coEvery { readAction<Any?>(any()) } coAnswers { firstArg<() -> Any?>().invoke() }
+        coEvery { readActionBlocking<Any?>(any()) } coAnswers { firstArg<() -> Any?>().invoke() }
+    }
+
+    @AfterEach
+    fun tearDown() {
+        unmockkAll()
+    }
+
     @Test
-    fun `branch and target branch appear in output when provided`() {
+    fun `branch and target branch appear in output when provided`() = runTest {
         val result = EnvironmentDetailsBuilder.build(
             project = project,
             planModeEnabled = false,
@@ -23,7 +47,7 @@ class EnvironmentDetailsBuilderTest {
     }
 
     @Test
-    fun `branch section omitted when currentBranch is null`() {
+    fun `branch section omitted when currentBranch is null`() = runTest {
         val result = EnvironmentDetailsBuilder.build(
             project = project,
             planModeEnabled = false,
@@ -35,7 +59,7 @@ class EnvironmentDetailsBuilderTest {
     }
 
     @Test
-    fun `target branch omitted gracefully when only branch is provided`() {
+    fun `target branch omitted gracefully when only branch is provided`() = runTest {
         val result = EnvironmentDetailsBuilder.build(
             project = project,
             planModeEnabled = false,
@@ -48,7 +72,7 @@ class EnvironmentDetailsBuilderTest {
     }
 
     @Test
-    fun `output is wrapped in environment_details tags`() {
+    fun `output is wrapped in environment_details tags`() = runTest {
         val result = EnvironmentDetailsBuilder.build(
             project = project,
             planModeEnabled = false,
@@ -59,7 +83,7 @@ class EnvironmentDetailsBuilderTest {
     }
 
     @Test
-    fun `multi-repo project labels primary branch and lists other repos`() {
+    fun `multi-repo project labels primary branch and lists other repos`() = runTest {
         val result = EnvironmentDetailsBuilder.build(
             project = project,
             planModeEnabled = false,
@@ -82,7 +106,7 @@ class EnvironmentDetailsBuilderTest {
     }
 
     @Test
-    fun `single-repo rendering is unchanged when otherRepoBranches is empty`() {
+    fun `single-repo rendering is unchanged when otherRepoBranches is empty`() = runTest {
         val result = EnvironmentDetailsBuilder.build(
             project = project,
             planModeEnabled = false,

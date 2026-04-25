@@ -1,10 +1,14 @@
 package com.workflow.orchestrator.agent.prompt
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.EDT
+import com.intellij.openapi.application.readAction
+import com.intellij.openapi.application.readActionBlocking
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.workflow.orchestrator.agent.loop.ContextManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -16,7 +20,7 @@ import java.time.format.DateTimeFormatter
  */
 object EnvironmentDetailsBuilder {
 
-    fun build(
+    suspend fun build(
         project: Project,
         planModeEnabled: Boolean,
         contextManager: ContextManager?,
@@ -27,47 +31,47 @@ object EnvironmentDetailsBuilder {
         primaryRepoLabel: String? = null,
         otherRepoBranches: List<Pair<String, String>> = emptyList(),
     ): String {
-        return buildString {
-            appendLine("<environment_details>")
+        val sb = StringBuilder()
+        sb.appendLine("<environment_details>")
 
-            // 1. Current Mode
-            appendLine("# Current Mode")
-            appendLine(if (planModeEnabled) "PLAN MODE" else "ACT MODE")
-            appendLine()
+        // 1. Current Mode
+        sb.appendLine("# Current Mode")
+        sb.appendLine(if (planModeEnabled) "PLAN MODE" else "ACT MODE")
+        sb.appendLine()
 
-            // 2. Current Time
-            appendCurrentTime()
+        // 2. Current Time
+        sb.appendCurrentTime()
 
-            // 3. VCS State (branch + dirty files)
-            appendVcsState(project, currentBranch, defaultTargetBranch, primaryRepoLabel, otherRepoBranches)
+        // 3. VCS State (branch + dirty files)
+        sb.appendVcsState(project, currentBranch, defaultTargetBranch, primaryRepoLabel, otherRepoBranches)
 
-            // 4. Active Editor (file, cursor, selection range)
-            appendActiveEditor(project)
+        // 4. Active Editor (file, cursor, selection range)
+        sb.appendActiveEditor(project)
 
-            // 5. Open Tabs
-            appendOpenTabs(project)
+        // 5. Open Tabs
+        sb.appendOpenTabs(project)
 
-            // 6. Context Window Usage
-            appendContextUsage(contextManager)
+        // 6. Context Window Usage
+        sb.appendContextUsage(contextManager)
 
-            // 7. Active Plan
-            val planPath = contextManager?.getActivePlanPath()
-            if (planPath != null) {
-                appendLine("# Active Plan")
-                appendLine(planPath)
-                appendLine()
-            }
-
-            // 8. Active Ticket
-            if (!activeTicketId.isNullOrBlank()) {
-                appendLine("# Active Ticket")
-                val summary = if (!activeTicketSummary.isNullOrBlank()) " — $activeTicketSummary" else ""
-                appendLine("$activeTicketId$summary")
-                appendLine()
-            }
-
-            append("</environment_details>")
+        // 7. Active Plan
+        val planPath = contextManager?.getActivePlanPath()
+        if (planPath != null) {
+            sb.appendLine("# Active Plan")
+            sb.appendLine(planPath)
+            sb.appendLine()
         }
+
+        // 8. Active Ticket
+        if (!activeTicketId.isNullOrBlank()) {
+            sb.appendLine("# Active Ticket")
+            val summary = if (!activeTicketSummary.isNullOrBlank()) " — $activeTicketSummary" else ""
+            sb.appendLine("$activeTicketId$summary")
+            sb.appendLine()
+        }
+
+        sb.append("</environment_details>")
+        return sb.toString()
     }
 
     private fun StringBuilder.appendCurrentTime() {
@@ -80,27 +84,34 @@ object EnvironmentDetailsBuilder {
         appendLine()
     }
 
-    private fun StringBuilder.appendActiveEditor(project: Project) {
+    /**
+     * Editor APIs (`caretModel`, `selectionModel`, `document`) are EDT-affine — they
+     * must be touched on the EDT. We hop to `Dispatchers.EDT` and acquire the read
+     * lock via `readActionBlocking` (the EDT-callable suspend variant).
+     */
+    private suspend fun StringBuilder.appendActiveEditor(project: Project) {
         try {
-            val editorData = ReadAction.compute<EditorSnapshot?, Exception> {
-                val fem = FileEditorManager.getInstance(project)
-                val editor = fem.selectedTextEditor ?: return@compute null
-                val file = editor.virtualFile ?: return@compute null
-                val basePath = project.basePath
-                val relativePath = if (basePath != null && file.path.startsWith(basePath))
-                    file.path.removePrefix("$basePath/") else file.path
+            val editorData = withContext(Dispatchers.EDT) {
+                readActionBlocking {
+                    val fem = FileEditorManager.getInstance(project)
+                    val editor = fem.selectedTextEditor ?: return@readActionBlocking null
+                    val file = editor.virtualFile ?: return@readActionBlocking null
+                    val basePath = project.basePath
+                    val relativePath = if (basePath != null && file.path.startsWith(basePath))
+                        file.path.removePrefix("$basePath/") else file.path
 
-                val caretLine = editor.caretModel.logicalPosition.line + 1  // 1-based
-                val caretCol = editor.caretModel.logicalPosition.column + 1
+                    val caretLine = editor.caretModel.logicalPosition.line + 1  // 1-based
+                    val caretCol = editor.caretModel.logicalPosition.column + 1
 
-                val selection = editor.selectionModel
-                val hasSelection = selection.hasSelection()
-                val startLine = if (hasSelection)
-                    editor.document.getLineNumber(selection.selectionStart) + 1 else null
-                val endLine = if (hasSelection)
-                    editor.document.getLineNumber(selection.selectionEnd) + 1 else null
+                    val selection = editor.selectionModel
+                    val hasSelection = selection.hasSelection()
+                    val startLine = if (hasSelection)
+                        editor.document.getLineNumber(selection.selectionStart) + 1 else null
+                    val endLine = if (hasSelection)
+                        editor.document.getLineNumber(selection.selectionEnd) + 1 else null
 
-                EditorSnapshot(relativePath, caretLine, caretCol, startLine, endLine)
+                    EditorSnapshot(relativePath, caretLine, caretCol, startLine, endLine)
+                }
             }
 
             if (editorData != null) {
@@ -116,12 +127,16 @@ object EnvironmentDetailsBuilder {
         } catch (_: Exception) { /* EDT/read action not available */ }
     }
 
-    private fun StringBuilder.appendOpenTabs(project: Project) {
+    /**
+     * `FileEditorManager.openFiles` is an index-free snapshot — plain `readAction` is
+     * sufficient (no EDT requirement, no smart-mode requirement).
+     */
+    private suspend fun StringBuilder.appendOpenTabs(project: Project) {
         try {
-            val tabs = ReadAction.compute<List<String>?, Exception> {
+            val tabs = readAction {
                 val fem = FileEditorManager.getInstance(project)
                 val files = fem.openFiles
-                if (files.isEmpty()) return@compute null
+                if (files.isEmpty()) return@readAction null
                 val basePath = project.basePath
                 files.take(20).map { vf ->
                     val rel = if (basePath != null && vf.path.startsWith(basePath))
