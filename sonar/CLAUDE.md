@@ -30,7 +30,7 @@ Key endpoints:
 
 - `QualityDashboardPanel` — 3 sub-panels: overview, issue list (with detail split pane), coverage table (with preview pane). GateStatusBanner shown when gate fails.
 - `IssueDetailPanel` — Split pane detail view: code snippet, rule info, severity/type badges, Fix with AI Agent
-- `CoveragePreviewPanel` — Uncovered region preview with file metrics, Open in Editor action
+- `CoveragePreviewPanel` — Uncovered region preview with file metrics, Open in Editor action. `Disposable` (Phase 4 C5/C5b) — owned by `CoverageTablePanel`, which is also `Disposable`, completing the `QualityDashboardPanel → CoverageTablePanel → CoveragePreviewPanel` cascade via the tool-window `setDisposer` chain (see `:core` "Service & threading conventions").
 - `GateStatusBanner` — Full-width error banner for failed quality gate with Show Blocking Issues cross-tab action
 - `QualityListItem` — Sealed interface unifying MappedIssue and SecurityHotspotData for the issues list
 - `SonarIssueAnnotator` — `ExternalAnnotator` (3-phase async: collectInfo -> doAnnotate -> apply)

@@ -75,3 +75,12 @@ JBColor constants with light/dark variants: SUCCESS (green), ERROR (red), WARNIN
   used by the transition dialog widgets. Versions/components cached 5 min.
 - `TransitionDialogOpener` — bridge interface so :core callers can open the
   transition dialog without depending on :jira/ui.
+
+## Service & threading conventions (Phase 4)
+
+Canonical patterns enforced across all modules. Migration history in `docs/architecture/phase4-prong-a-plan.md`, `phase4-prong-c-plan.md`, `phase4-prong-d-grep-plan.md`; status in `phase4-parked-prongs.md`.
+
+- **Service-injected scope.** `@Service` constructors take `cs: CoroutineScope` (2024.1+ platform pattern). Do not allocate `CoroutineScope(SupervisorJob() + …)` inside services — the platform owns lifecycle. `HealthCheckService` and `DefaultBranchResolver` (and the 8 project services across modules) use this form. Non-`@Service` classes consolidate fire-and-forget launches onto a single field scope (e.g., `AgentController.controllerScope`).
+- **`runBlocking` policy.** Never on EDT. On background threads (`Task.Backgroundable.run`, `executeOnPooledThread`, `runBackgroundableTask`, `ExternalAnnotator.doAnnotate`, `SearchEverywhereContributor.fetchWeightedElements`), use `runBlockingCancellable { … }` so `ProgressIndicator` cancel propagates.
+- **Read actions.** `ReadAction.compute / ReadAction.run / runReadAction` are deprecated for 2026.1. From suspend code use `readAction { }` (writes-may-cancel) or `smartReadAction(project) { }` (waits for indexing) or `readActionBlocking { }` (write-priority blocking). Two intentional `runReadAction { }` survivors are documented in code with TODO for the 2026.1 platform bump: `jira/ui/CurrentWorkSection.kt:185` (non-suspend EDT MouseAdapter) and `agent/ide/IdeContextDetector.kt:114` (synchronous `@Service.init { }` chain).
+- **Tool-window dispose cascade.** `WorkflowToolWindowFactory` wires `content.setDisposer(panel)` for tabs whose panel is `Disposable`, so dispose cascades from the tool window into panel children (`Disposer.register(this, child)` inside dashboards completes the chain).

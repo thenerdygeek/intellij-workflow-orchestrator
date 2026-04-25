@@ -15,7 +15,7 @@ Key endpoints:
 
 - `DockerRegistryClient` — HTTP client for Docker Registry v2
 - `TagBuilderService` — builds `dockerTagsAsJson` payload (service-to-tag mappings)
-- `QueueService` — smart queue with position tracking, wait time estimation, auto-trigger
+- `QueueService` — smart queue with position tracking, wait time estimation, auto-trigger. Uses platform-injected `cs: CoroutineScope`; pollers explicitly `cs.launch(Dispatchers.IO)` (HTTP/SQLite I/O, see `:core` "Service & threading conventions").
 - `DriftDetectorService` — detects tag drift across environments
 - `ConflictDetectorService` — detects conflicting tag selections
 - `TagHistoryService` — persists last 5 tag configurations

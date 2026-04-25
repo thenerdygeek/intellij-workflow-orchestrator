@@ -11,7 +11,7 @@ Task completion workflow: Jira closure, copyright enforcement, pre-review, QA ha
 - `CopyrightFixService` — copyright header enforcement with year consolidation (earliest-currentYear)
 - `QaClipboardService` — formatted export for email/Slack
 - `CompletionMacroService` — orchestrates completion steps
-- `HandoverStateService` — tracks handover progress across panels
+- `HandoverStateService` — tracks handover progress across panels. Uses platform-injected `cs: CoroutineScope` (see `:core` "Service & threading conventions").
 
 ## UI
 

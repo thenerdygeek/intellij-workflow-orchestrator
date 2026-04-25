@@ -49,6 +49,15 @@ AgentController (UI entry point, owns AgentCefPanel + JCEF bridges)
 - **TaskReportTool** (`task_report`) — Completion signal for **sub-agents** (replaces `attempt_completion` at the sub-agent boundary). Forces the sub-agent to produce a structured report (summary, findings, files, next_steps, issues) that flows directly into the parent LLM's tool result — unlike `attempt_completion`, which targets the user UI. `allowedWorkers = {CODER, REVIEWER, ANALYZER, TOOLER}`. Auto-injected by `SpawnAgentTool.resolveConfigToolsTiered()`; any `attempt_completion` in a config's `tools:` field is silently dropped and replaced by this tool.
 - **StreamBatcher** (`ui/StreamBatcher.kt`) — 16ms EDT timer coalesces rapid SSE chunks into single JCEF bridge calls (~5000 → ~300 per response).
 
+## Service & threading (Phase 4)
+
+Follows the canonical conventions documented in `:core` ("Service & threading conventions"); module-specific notes:
+
+- **Injected scope.** `AgentService`, `BackgroundPool`, `TicketDetectionPresenter` (and the other project services) take `cs: CoroutineScope` in their `@Service` constructor. `AgentController` is not a service and consolidates fire-and-forget launches onto its own `controllerScope` field (Phase 4 C2 collapsed 14 ad-hoc `CoroutineScope(Dispatchers.IO + SupervisorJob())` sites onto it).
+- **Suspend builders.** `EnvironmentDetailsBuilder.build` and `MentionContextBuilder.buildContext` are `suspend fun`. `AgentLoop.environmentDetailsProvider: (suspend () -> String?)?`. PSI reads inside use `readAction { }` (writes-may-cancel) or `smartReadAction(project) { }` when index access is required (e.g., `MentionSearchProvider` for `PsiShortNamesCache`). EDT-affine reads (active editor, caret) wrap in `withContext(Dispatchers.EDT) { readActionBlocking { … } }`.
+- **Survivor.** `IdeContextDetector` keeps a single `runReadAction { }` at the synchronous `@Service.init { }` chain (see TODO at `ide/IdeContextDetector.kt:114`, retire on 2026.1 platform bump).
+- **Background `runBlocking`.** `ProjectContextTool` (and other BG-thread sites) use `runBlockingCancellable { … }` so cancellation propagates.
+
 ## System Prompt Structure (`SystemPrompt`)
 
 Built by `SystemPrompt.build()`, called from `AgentService` at task start and when tool set changes. 11 sections following Cline's section ordering:
@@ -777,6 +786,8 @@ Two layers between raw SSE token and rendered DOM:
 ```
 
 Key test patterns: JUnit 5 + MockK + `@TempDir` for file I/O, `runTest` for coroutines, `mockk<Project>` for IntelliJ services.
+
+**Read-action shim.** Tests that exercise code calling `readAction { }` / `smartReadAction(project) { }` / `readActionBlocking { }` must call `installReadActionInlineShim()` from `testutil/ReadActionTestShim.kt` in `@BeforeEach`, paired with `unmockkAll()` in `@AfterEach`. The real builders resolve `ApplicationManager.getApplication().getService(ReadWriteActionSupport::class.java)` and NPE without a live `Application`; the shim invokes lambdas inline on the calling coroutine. This replaces the pre-Phase-4 `mockkStatic(ReadAction::class)` pattern.
 
 ## IntelliJ-Native APIs
 

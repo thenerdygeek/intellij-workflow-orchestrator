@@ -27,7 +27,7 @@ Build variables include `dockerTagsAsJson` — JSON payload of service-to-docker
 
 - `BambooApiClient` — HTTP client for all Bamboo REST calls
 - `BambooServiceImpl` — implements `BambooService` (in :core), returns `ToolResult<T>`
-- `BuildMonitorService` — background polling via SmartPoller, emits `BuildFinished`/`BuildLogReady` events
+- `BuildMonitorService` — background polling via SmartPoller, emits `BuildFinished`/`BuildLogReady` events. Uses platform-injected `cs: CoroutineScope` (see `:core` "Service & threading conventions"). `PrBar` git reads use `readAction { }`.
 - `BuildLogParser` — extracts errors, test failures, CVE warnings from build logs
 - `CveRemediationService` — parses CVE data, provides version bump suggestions
 - `PlanDetectionService` — auto-detects Bamboo plan key from project

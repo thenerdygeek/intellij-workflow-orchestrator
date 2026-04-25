@@ -27,10 +27,11 @@ Owns the PR creation dialog, list, detail view, and merge flow for Bitbucket Ser
 ## Threading
 
 - Prefetch + LLM on `Dispatchers.IO` inside `scope.launch`
-- Git reads wrapped in `ReadAction.compute`
+- Git reads use `readAction { }` (suspending — see `:core` "Service & threading conventions")
 - UI mutations via `invokeLater` / `Dispatchers.EDT`
 - LLM calls wrapped with `withTimeoutOrNull(120_000)`
 - Both `descriptionGenJob` and `titleGenJob` cancelled in `CreatePrDialog.dispose()`
+- `PrListService` and `PrDescriptionGenerator` use platform-injected `cs: CoroutineScope`
 
 ## Bitbucket Server REST API v1.0
 
