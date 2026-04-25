@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.agent.tools.project
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.projectRoots.ProjectJdkTable
 import com.intellij.openapi.roots.ProjectRootManager
@@ -14,11 +14,11 @@ import kotlinx.serialization.json.JsonObject
  * Lists all SDKs registered in the global [ProjectJdkTable] along with the
  * project-level SDK selected via [ProjectRootManager].
  *
- * All IntelliJ model reads run inside [ReadAction.compute] so this function is
+ * All IntelliJ model reads run inside [readAction] so this function is
  * safe to call from any non-EDT background thread.
  */
-internal fun executeListSdks(params: JsonObject, project: Project): ToolResult {
-    return ReadAction.compute<ToolResult, RuntimeException> {
+internal suspend fun executeListSdks(params: JsonObject, project: Project): ToolResult {
+    return readAction {
         val sdks = ProjectJdkTable.getInstance().allJdks
         val projectSdk = ProjectRootManager.getInstance(project).projectSdk
 

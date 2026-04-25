@@ -1,16 +1,16 @@
 package com.workflow.orchestrator.agent.tools.project
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.ThrowableComputable
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
-import io.mockk.slot
 import io.mockk.unmockkAll
+import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.AfterEach
@@ -34,6 +34,12 @@ class TopologyActionTest {
     fun setUp() {
         project = mockk(relaxed = true)
         every { project.basePath } returns "/project/root"
+
+        // Stub the suspending readAction { } so it runs the lambda in-place — there is no
+        // ApplicationManager in unit tests, so the real builder would NPE on its
+        // ReadWriteActionSupport service lookup.
+        mockkStatic("com.intellij.openapi.application.CoroutinesKt")
+        coEvery { readAction<Any?>(any()) } coAnswers { firstArg<() -> Any?>().invoke() }
     }
 
     @AfterEach
@@ -46,7 +52,7 @@ class TopologyActionTest {
     // ────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun testDumbModeReturnsError() {
+    fun testDumbModeReturnsError() = runTest {
         mockkStatic(DumbService::class)
         every { DumbService.isDumb(project) } returns true
 
@@ -65,7 +71,7 @@ class TopologyActionTest {
     // ────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun testTopologyReturnsModuleList() {
+    fun testTopologyReturnsModuleList() = runTest {
         // -- DumbService: not indexing --
         mockkStatic(DumbService::class)
         every { DumbService.isDumb(project) } returns false
@@ -84,13 +90,6 @@ class TopologyActionTest {
         every { mockModuleManager.sortedModules } returns arrayOf(mockModuleA, mockModuleB)
         // moduleGraph needed for cycle detection — relax it to avoid NPE
         every { mockModuleManager.moduleGraph() } returns mockk(relaxed = true)
-
-        // -- ReadAction: intercept and execute the lambda directly --
-        mockkStatic(ReadAction::class)
-        val computeSlot = slot<ThrowableComputable<Any, RuntimeException>>()
-        every { ReadAction.compute(capture(computeSlot)) } answers {
-            computeSlot.captured.compute()
-        }
 
         val params = buildJsonObject { put("detect_cycles", false) }
         val result = executeTopology(params, project)

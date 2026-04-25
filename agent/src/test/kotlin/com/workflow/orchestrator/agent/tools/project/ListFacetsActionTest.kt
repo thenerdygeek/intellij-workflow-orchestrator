@@ -3,16 +3,16 @@ package com.workflow.orchestrator.agent.tools.project
 import com.intellij.facet.Facet
 import com.intellij.facet.FacetManager
 import com.intellij.facet.FacetType
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.ThrowableComputable
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
-import io.mockk.slot
 import io.mockk.unmockkAll
+import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.AfterEach
@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Test
 /**
  * Unit tests for [executeListFacets].
  *
- *  1. testListFacetsReturnsContent     — mock ModuleManager + FacetManager + ReadAction → no error
+ *  1. testListFacetsReturnsContent     — mock ModuleManager + FacetManager + readAction → no error
  *  2. testModuleNotFoundReturnsError   — give a module name, mock ModuleManager returning null → isError
  */
 class ListFacetsActionTest {
@@ -34,6 +34,12 @@ class ListFacetsActionTest {
     @BeforeEach
     fun setUp() {
         project = mockk(relaxed = true)
+
+        // Stub the suspending readAction { } so it runs the lambda in-place — there is no
+        // ApplicationManager in unit tests, so the real builder would NPE on its
+        // ReadWriteActionSupport service lookup.
+        mockkStatic("com.intellij.openapi.application.CoroutinesKt")
+        coEvery { readAction<Any?>(any()) } coAnswers { firstArg<() -> Any?>().invoke() }
     }
 
     @AfterEach
@@ -46,7 +52,7 @@ class ListFacetsActionTest {
     // ────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun testListFacetsReturnsContent() {
+    fun testListFacetsReturnsContent() = runTest {
         // -- Mock facet type --
         val mockFacetType = mockk<FacetType<*, *>>(relaxed = true)
         every { mockFacetType.presentableName } returns "Spring"
@@ -74,13 +80,6 @@ class ListFacetsActionTest {
         mockkStatic(FacetManager::class)
         every { FacetManager.getInstance(mockModule) } returns mockFacetManager
 
-        // -- ReadAction: intercept and execute the lambda directly --
-        mockkStatic(ReadAction::class)
-        val computeSlot = slot<ThrowableComputable<Any, RuntimeException>>()
-        every { ReadAction.compute(capture(computeSlot)) } answers {
-            computeSlot.captured.compute()
-        }
-
         val params = buildJsonObject {}
         val result = executeListFacets(params, project)
 
@@ -100,7 +99,7 @@ class ListFacetsActionTest {
     // ────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun testModuleNotFoundReturnsError() {
+    fun testModuleNotFoundReturnsError() = runTest {
         val unknownModuleName = "non-existent-module"
 
         // -- ModuleManager: findModuleByName returns null --
@@ -108,13 +107,6 @@ class ListFacetsActionTest {
         mockkStatic(ModuleManager::class)
         every { ModuleManager.getInstance(project) } returns mockModuleManager
         every { mockModuleManager.findModuleByName(unknownModuleName) } returns null
-
-        // -- ReadAction: intercept and execute the lambda directly --
-        mockkStatic(ReadAction::class)
-        val computeSlot = slot<ThrowableComputable<Any, RuntimeException>>()
-        every { ReadAction.compute(capture(computeSlot)) } answers {
-            computeSlot.captured.compute()
-        }
 
         val params = buildJsonObject { put("module", unknownModuleName) }
         val result = executeListFacets(params, project)

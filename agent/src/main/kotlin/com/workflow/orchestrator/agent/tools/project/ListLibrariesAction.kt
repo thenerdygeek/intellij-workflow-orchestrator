@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.agent.tools.project
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.OrderRootType
 import com.intellij.openapi.roots.libraries.Library
@@ -21,13 +21,13 @@ import kotlinx.serialization.json.jsonPrimitive
  *
  * For each library the class root count and source root count are reported.
  *
- * All IntelliJ model reads run inside [ReadAction.compute] so this function is
+ * All IntelliJ model reads run inside [readAction] so this function is
  * safe to call from any non-EDT background thread.
  */
-internal fun executeListLibraries(params: JsonObject, project: Project): ToolResult {
+internal suspend fun executeListLibraries(params: JsonObject, project: Project): ToolResult {
     val scope = params["scope"]?.jsonPrimitive?.content ?: "all"
 
-    return ReadAction.compute<ToolResult, RuntimeException> {
+    return readAction {
         val reg = LibraryTablesRegistrar.getInstance()
 
         data class TableEntry(val tableName: String, val libraries: Array<out Library>)

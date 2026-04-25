@@ -1,7 +1,7 @@
 package com.workflow.orchestrator.agent.tools.project
 
 import com.intellij.facet.FacetManager
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.DumbService
@@ -10,13 +10,13 @@ import com.intellij.openapi.roots.CompilerModuleExtension
 import com.intellij.openapi.roots.ContentEntry
 import com.intellij.openapi.roots.ModuleRootManager
 import com.intellij.openapi.roots.SourceFolder
-import com.intellij.openapi.util.ThrowableComputable
 import com.intellij.openapi.vfs.VirtualFile
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
-import io.mockk.slot
 import io.mockk.unmockkAll
+import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.jetbrains.jps.model.java.JavaSourceRootType
@@ -47,6 +47,12 @@ class ModuleDetailActionTest {
     fun setUp() {
         project = mockk(relaxed = true)
         every { project.basePath } returns "/project/root"
+
+        // Stub the suspending readAction { } so it runs the lambda in-place — there is no
+        // ApplicationManager in unit tests, so the real builder would NPE on its
+        // ReadWriteActionSupport service lookup.
+        mockkStatic("com.intellij.openapi.application.CoroutinesKt")
+        coEvery { readAction<Any?>(any()) } coAnswers { firstArg<() -> Any?>().invoke() }
     }
 
     @AfterEach
@@ -59,7 +65,7 @@ class ModuleDetailActionTest {
     // ────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun testMissingModuleParamReturnsError() {
+    fun testMissingModuleParamReturnsError() = runTest {
         val params = buildJsonObject { /* no "module" key */ }
         val result = executeModuleDetail(params, project)
 
@@ -75,7 +81,7 @@ class ModuleDetailActionTest {
     // ────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun testModuleNotFoundReturnsError() {
+    fun testModuleNotFoundReturnsError() = runTest {
         val unknownName = "non-existent-module"
 
         mockkStatic(DumbService::class)
@@ -85,12 +91,6 @@ class ModuleDetailActionTest {
         mockkStatic(ModuleManager::class)
         every { ModuleManager.getInstance(project) } returns mockModuleManager
         every { mockModuleManager.findModuleByName(unknownName) } returns null
-
-        mockkStatic(ReadAction::class)
-        val computeSlot = slot<ThrowableComputable<Any, RuntimeException>>()
-        every { ReadAction.compute(capture(computeSlot)) } answers {
-            computeSlot.captured.compute()
-        }
 
         val params = buildJsonObject { put("module", unknownName) }
         val result = executeModuleDetail(params, project)
@@ -108,7 +108,7 @@ class ModuleDetailActionTest {
     // ────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun testDumbModeReturnsError() {
+    fun testDumbModeReturnsError() = runTest {
         mockkStatic(DumbService::class)
         every { DumbService.isDumb(project) } returns true
 
@@ -127,7 +127,7 @@ class ModuleDetailActionTest {
     // ────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun testModuleDetailReturnsContent() {
+    fun testModuleDetailReturnsContent() = runTest {
         val moduleName = "my-core-module"
 
         // -- DumbService: not indexing --
@@ -183,13 +183,6 @@ class ModuleDetailActionTest {
         every { mockFacetManager.allFacets } returns emptyArray()
         mockkStatic(FacetManager::class)
         every { FacetManager.getInstance(mockModule) } returns mockFacetManager
-
-        // -- ReadAction: intercept and execute the lambda directly --
-        mockkStatic(ReadAction::class)
-        val computeSlot = slot<ThrowableComputable<Any, RuntimeException>>()
-        every { ReadAction.compute(capture(computeSlot)) } answers {
-            computeSlot.captured.compute()
-        }
 
         val params = buildJsonObject { put("module", moduleName) }
         val result = executeModuleDetail(params, project)

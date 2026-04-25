@@ -1,7 +1,7 @@
 package com.workflow.orchestrator.agent.tools.project
 
 import com.intellij.facet.FacetManager
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
@@ -29,10 +29,10 @@ import org.jetbrains.jps.model.java.JavaSourceRootType
  *  - Compiler output URLs (main + test + inherit flag)
  *  - Facets (Spring, Android, JPA, etc.)
  *
- * All IntelliJ model reads run inside [ReadAction.compute] so this function is
+ * All IntelliJ model reads run inside [readAction] so this function is
  * safe to call from any non-EDT background thread.
  */
-internal fun executeModuleDetail(params: JsonObject, project: Project): ToolResult {
+internal suspend fun executeModuleDetail(params: JsonObject, project: Project): ToolResult {
     // 1. Validate "module" parameter
     val moduleName = params["module"]?.jsonPrimitive?.content
         ?: return ToolResult.error("Missing required parameter 'module'")
@@ -42,10 +42,10 @@ internal fun executeModuleDetail(params: JsonObject, project: Project): ToolResu
         return ToolResult.error("Project is indexing — retry after indexing completes.")
     }
 
-    // 3. Locate the module + all IntelliJ model reads inside ReadAction
-    return ReadAction.compute<ToolResult, RuntimeException> {
+    // 3. Locate the module + all IntelliJ model reads inside readAction
+    return readAction {
         val module = ModuleManager.getInstance(project).findModuleByName(moduleName)
-            ?: return@compute ToolResult.error(
+            ?: return@readAction ToolResult.error(
                 "Module not found: '$moduleName'. Use build.project_modules to list modules."
             )
 

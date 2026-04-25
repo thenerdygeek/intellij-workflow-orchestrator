@@ -1,17 +1,17 @@
 package com.workflow.orchestrator.agent.tools.project
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.projectRoots.Sdk
 import com.intellij.openapi.projectRoots.SdkType
 import com.intellij.openapi.projectRoots.ProjectJdkTable
 import com.intellij.openapi.roots.ProjectRootManager
-import com.intellij.openapi.util.ThrowableComputable
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
-import io.mockk.slot
 import io.mockk.unmockkAll
+import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Test
 /**
  * Unit tests for [executeListSdks].
  *
- *  1. testListSdksReturnsContent — mock ReadAction.compute + ProjectJdkTable + ProjectRootManager →
+ *  1. testListSdksReturnsContent — mock readAction + ProjectJdkTable + ProjectRootManager →
  *                                  no error, content contains "SDK"
  */
 class ListSdksActionTest {
@@ -32,6 +32,12 @@ class ListSdksActionTest {
     @BeforeEach
     fun setUp() {
         project = mockk(relaxed = true)
+
+        // Stub the suspending readAction { } so it runs the lambda in-place — there is no
+        // ApplicationManager in unit tests, so the real builder would NPE on its
+        // ReadWriteActionSupport service lookup.
+        mockkStatic("com.intellij.openapi.application.CoroutinesKt")
+        coEvery { readAction<Any?>(any()) } coAnswers { firstArg<() -> Any?>().invoke() }
     }
 
     @AfterEach
@@ -44,7 +50,7 @@ class ListSdksActionTest {
     // ────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun testListSdksReturnsContent() {
+    fun testListSdksReturnsContent() = runTest {
         // -- Mock SDK type --
         val mockSdkType = mockk<SdkType>(relaxed = true)
         every { mockSdkType.name } returns "Java"
@@ -71,13 +77,6 @@ class ListSdksActionTest {
         every { mockRootManager.projectSdk } returns mockSdk1
         mockkStatic(ProjectRootManager::class)
         every { ProjectRootManager.getInstance(project) } returns mockRootManager
-
-        // -- ReadAction: intercept and execute the lambda directly --
-        mockkStatic(ReadAction::class)
-        val computeSlot = slot<ThrowableComputable<Any, RuntimeException>>()
-        every { ReadAction.compute(capture(computeSlot)) } answers {
-            computeSlot.captured.compute()
-        }
 
         val params = buildJsonObject {}
         val result = executeListSdks(params, project)

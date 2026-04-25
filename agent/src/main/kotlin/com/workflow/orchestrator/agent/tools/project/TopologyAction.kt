@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.agent.tools.project
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.DumbService
@@ -21,10 +21,10 @@ import kotlinx.serialization.json.jsonPrimitive
  * the current platform version. It is wrapped in a broad try/catch so the action always
  * succeeds even when that internal API is absent.
  *
- * All IntelliJ model reads run inside [ReadAction.compute] so this function is safe to
+ * All IntelliJ model reads run inside [readAction] so this function is safe to
  * call from any non-EDT background thread.
  */
-internal fun executeTopology(params: JsonObject, project: Project): ToolResult {
+internal suspend fun executeTopology(params: JsonObject, project: Project): ToolResult {
     // 1. Dumb mode guard
     if (DumbService.isDumb(project)) {
         return ToolResult.error("Project is indexing — retry after indexing completes.")
@@ -33,8 +33,8 @@ internal fun executeTopology(params: JsonObject, project: Project): ToolResult {
     // 2. Parameters
     val detectCycles = params["detect_cycles"]?.jsonPrimitive?.booleanOrNull ?: true
 
-    // 3. All model reads inside ReadAction
-    return ReadAction.compute<ToolResult, RuntimeException> {
+    // 3. All model reads inside readAction
+    return readAction {
         val mgr = ModuleManager.getInstance(project)
         val sorted: Array<Module> = mgr.sortedModules
 

@@ -1,7 +1,7 @@
 package com.workflow.orchestrator.agent.tools.project
 
 import com.intellij.facet.FacetManager
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
@@ -18,19 +18,19 @@ import kotlinx.serialization.json.jsonPrimitive
  * If `module` parameter is present, only that module is inspected; otherwise all
  * modules are iterated in alphabetical order.
  *
- * All IntelliJ model reads run inside [ReadAction.compute] so this function is
+ * All IntelliJ model reads run inside [readAction] so this function is
  * safe to call from any non-EDT background thread.
  *
  * Summary uses natural pluralisation (facet/facets, module/modules) rather than
  * the literal module(s) template form.
  */
-internal fun executeListFacets(params: JsonObject, project: Project): ToolResult {
+internal suspend fun executeListFacets(params: JsonObject, project: Project): ToolResult {
     val moduleName = params["module"]?.jsonPrimitive?.content
 
-    return ReadAction.compute<ToolResult, RuntimeException> {
+    return readAction {
         val modules: List<Module> = if (moduleName != null) {
             val found = ModuleManager.getInstance(project).findModuleByName(moduleName)
-                ?: return@compute ToolResult.error("Module not found: '$moduleName'")
+                ?: return@readAction ToolResult.error("Module not found: '$moduleName'")
             listOf(found)
         } else {
             ModuleManager.getInstance(project).modules.toList().sortedBy { it.name }
