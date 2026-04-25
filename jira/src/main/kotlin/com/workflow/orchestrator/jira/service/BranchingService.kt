@@ -3,6 +3,7 @@ package com.workflow.orchestrator.jira.service
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranch
@@ -104,7 +105,7 @@ class BranchingService(
         log.info("[Jira:Branch] Using existing branch '$branchName' for ${issue.key} (pinned root: ${localVcsRootPath ?: "<editor-context>"})")
 
         try {
-            val repositories = com.intellij.openapi.application.ReadAction.compute<List<git4idea.repo.GitRepository>, Throwable> {
+            val repositories = readAction {
                 GitRepositoryManager.getInstance(project).repositories
             }
             if (repositories.isEmpty()) {
@@ -118,7 +119,7 @@ class BranchingService(
                     val editorFile = withContext(Dispatchers.EDT) {
                         com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project).selectedEditor?.file
                     }
-                    val repoConfig = com.intellij.openapi.application.ReadAction.compute<com.workflow.orchestrator.core.settings.RepoConfig?, Throwable> {
+                    val repoConfig = readAction {
                         if (editorFile != null) resolver.resolveFromFile(editorFile) else resolver.getPrimary()
                     }
                     if (repoConfig?.localVcsRootPath != null) {
@@ -208,7 +209,7 @@ class BranchingService(
 
         // 2. Fetch and checkout locally
         try {
-            val repositories = com.intellij.openapi.application.ReadAction.compute<List<git4idea.repo.GitRepository>, Throwable> {
+            val repositories = readAction {
                 GitRepositoryManager.getInstance(project).repositories
             }
             if (repositories.isEmpty()) {
@@ -223,7 +224,7 @@ class BranchingService(
                     val editorFile2 = withContext(Dispatchers.EDT) {
                         com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project).selectedEditor?.file
                     }
-                    val repoConfig = com.intellij.openapi.application.ReadAction.compute<com.workflow.orchestrator.core.settings.RepoConfig?, Throwable> {
+                    val repoConfig = readAction {
                         if (editorFile2 != null) resolver.resolveFromFile(editorFile2) else resolver.getPrimary()
                     }
                     if (repoConfig?.localVcsRootPath != null) {

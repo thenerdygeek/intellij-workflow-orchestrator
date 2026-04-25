@@ -41,6 +41,7 @@ import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.asContextElement
+import com.intellij.openapi.application.readAction
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -790,7 +791,7 @@ class SprintDashboardPanel(
 
             scope.launch {
                 // Resolve repo context off-EDT to avoid synchronous VCS repository update
-                val detectedRepo = com.intellij.openapi.application.ReadAction.compute<com.workflow.orchestrator.core.settings.RepoConfig?, Throwable> {
+                val detectedRepo = readAction {
                     resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
                 }
                 val detectedIndex = allRepos.indexOfFirst {
@@ -818,7 +819,7 @@ class SprintDashboardPanel(
                     return@launch
                 }
 
-                val gitRepo = com.intellij.openapi.application.ReadAction.compute<git4idea.repo.GitRepository?, Throwable> {
+                val gitRepo = readAction {
                     GitRepositoryManager.getInstance(project).repositories.firstOrNull()
                 }
                 val defaultSource = gitRepo?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
@@ -883,7 +884,7 @@ class SprintDashboardPanel(
                                 } else emptyList()
                                 // Resolve the new repo's default source branch off-EDT — needs
                                 // the matching GitRepository for DefaultBranchResolver.
-                                val newGitRepo = com.intellij.openapi.application.ReadAction.compute<git4idea.repo.GitRepository?, Throwable> {
+                                val newGitRepo = readAction {
                                     GitRepositoryManager.getInstance(project).repositories
                                         .find { it.root.path == newRepo.localVcsRootPath }
                                 }

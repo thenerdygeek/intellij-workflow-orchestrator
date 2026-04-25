@@ -2,6 +2,8 @@ package com.workflow.orchestrator.jira.ui
 
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.application.readAction
+import com.intellij.openapi.application.runReadAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.ui.JBColor
@@ -140,7 +142,7 @@ class CurrentWorkSection(
 
         scope.launch {
             val resolver = RepoContextResolver.getInstance(project)
-            val targetRepo = com.intellij.openapi.application.ReadAction.compute<git4idea.repo.GitRepository?, Throwable> {
+            val targetRepo = readAction {
                 resolver.resolveCurrentEditorRepoOrPrimary()
             }
             val currentBranch = targetRepo?.currentBranchName ?: ""
@@ -180,7 +182,7 @@ class CurrentWorkSection(
     }
 
     private fun showBranchPicker() {
-        val repo = com.intellij.openapi.application.ReadAction.compute<git4idea.repo.GitRepository?, Throwable> {
+        val repo = runReadAction {
             GitRepositoryManager.getInstance(project).repositories.firstOrNull()
         } ?: return
         val branches = repo.branches.remoteBranches
