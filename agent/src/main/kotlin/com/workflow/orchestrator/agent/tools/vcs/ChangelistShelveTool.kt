@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.agent.tools.vcs
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.intellij.openapi.vcs.changes.ChangeListManagerImpl
@@ -80,13 +80,13 @@ class ChangelistShelveTool : AgentTool {
         }
     }
 
-    private fun listChangelists(project: Project): ToolResult {
-        val content = ReadAction.compute<String, Exception> {
+    private suspend fun listChangelists(project: Project): ToolResult {
+        val content = readAction {
             val clm = ChangeListManager.getInstance(project)
             val changeLists = clm.changeLists
 
             if (changeLists.isEmpty()) {
-                return@compute "No changelists found."
+                return@readAction "No changelists found."
             }
 
             buildString {

@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.agent.tools.framework.build
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
@@ -17,14 +17,14 @@ private data class ModuleDependencyInfo(
     val scope: String = "COMPILE"
 )
 
-internal fun executeModuleDependencyGraph(params: JsonObject, project: Project): ToolResult {
+internal suspend fun executeModuleDependencyGraph(params: JsonObject, project: Project): ToolResult {
     return try {
         val moduleName = params["module"]?.jsonPrimitive?.content
         val transitive = params["transitive"]?.jsonPrimitive?.booleanOrNull ?: false
         val includeLibraries = params["include_libraries"]?.jsonPrimitive?.booleanOrNull ?: false
         val detectCycles = params["detect_cycles"]?.jsonPrimitive?.booleanOrNull ?: true
 
-        val allModules = ReadAction.compute<Array<Module>, Throwable> {
+        val allModules = readAction {
             ModuleManager.getInstance(project).modules
         }
 
@@ -45,7 +45,7 @@ internal fun executeModuleDependencyGraph(params: JsonObject, project: Project):
             allModules
         }
 
-        val adjacency = ReadAction.compute<Map<String, List<ModuleDependencyInfo>>, Throwable> {
+        val adjacency = readAction {
             buildAdjacencyList(allModules)
         }
 
@@ -86,7 +86,7 @@ internal fun executeModuleDependencyGraph(params: JsonObject, project: Project):
                 }
 
                 if (includeLibraries) {
-                    val libraries = ReadAction.compute<List<String>, Throwable> {
+                    val libraries = readAction {
                         collectLibraries(module)
                     }
                     if (libraries.isNotEmpty()) {

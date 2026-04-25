@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.progress.runBlockingCancellable
@@ -251,14 +251,14 @@ class ProjectContextTool : AgentTool {
         } catch (_: Exception) { /* git log failed, skip */ }
     }
 
-    private fun appendUncommittedChanges(sb: StringBuilder, project: Project) {
+    private suspend fun appendUncommittedChanges(sb: StringBuilder, project: Project) {
         try {
-            val content = ReadAction.compute<String?, Exception> {
+            val content = readAction {
                 val clm = ChangeListManager.getInstance(project)
                 val changes = clm.allChanges
                 val untracked = clm.modifiedWithoutEditing
 
-                if (changes.isEmpty() && untracked.isEmpty()) return@compute null
+                if (changes.isEmpty() && untracked.isEmpty()) return@readAction null
 
                 buildString {
                     if (changes.isNotEmpty()) {

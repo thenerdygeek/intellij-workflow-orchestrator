@@ -1,7 +1,7 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
 import com.intellij.lang.java.JavaLanguage
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiErrorElement
@@ -17,7 +17,7 @@ import com.intellij.psi.util.PsiTreeUtil
  * Strategy:
  * - For .kt/.java files: parse in-memory via PsiFileFactory, walk for PsiErrorElement
  * - For other file types: skip validation (return empty list)
- * - Uses ReadAction — no EDT requirement, lightweight
+ * - Uses [readAction] — no EDT requirement, lightweight
  */
 object SyntaxValidator {
 
@@ -37,7 +37,7 @@ object SyntaxValidator {
      * @param content The file content to validate
      * @return List of syntax errors found (empty if valid or non-supported file type)
      */
-    fun validate(project: Project, filePath: String, content: String): List<SyntaxError> {
+    suspend fun validate(project: Project, filePath: String, content: String): List<SyntaxError> {
         val extension = filePath.substringAfterLast('.', "").lowercase()
 
         val language = when (extension) {
@@ -53,7 +53,7 @@ object SyntaxValidator {
         }
 
         return try {
-            ReadAction.compute<List<SyntaxError>, Exception> {
+            readAction {
                 val fileName = filePath.substringAfterLast('/')
                 val psiFile = PsiFileFactory.getInstance(project)
                     .createFileFromText(fileName, language, content)

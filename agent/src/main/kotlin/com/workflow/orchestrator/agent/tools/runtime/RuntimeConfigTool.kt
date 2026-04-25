@@ -6,7 +6,7 @@ import com.intellij.execution.application.ApplicationConfigurationType
 import com.intellij.execution.configurations.ConfigurationFactory
 import com.intellij.execution.configurations.RunConfiguration
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
@@ -255,7 +255,7 @@ description optional: for approval dialog on create/modify/delete.
     // Action: create_run_config
     // ══════════════════════════════════════════════════════════════════════
 
-    private fun executeCreateRunConfig(params: JsonObject, project: Project): ToolResult {
+    private suspend fun executeCreateRunConfig(params: JsonObject, project: Project): ToolResult {
         val configName = params["name"]?.jsonPrimitive?.contentOrNull
             ?: return ToolResult("Missing required parameter: name", "Error: missing name", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
@@ -378,7 +378,7 @@ description optional: for approval dialog on create/modify/delete.
     }
 
     @Suppress("LongParameterList")
-    private fun applyCreateConfigSettings(
+    private suspend fun applyCreateConfigSettings(
         config: RunConfiguration, configType: String, mainClass: String?,
         testClass: String?, testMethod: String?, module: String?,
         envVars: Map<String, String>?, vmOptions: String?, programArgs: String?,
@@ -394,7 +394,7 @@ description optional: for approval dialog on create/modify/delete.
         }
     }
 
-    private fun applyApplicationConfig(
+    private suspend fun applyApplicationConfig(
         config: RunConfiguration, mainClass: String?, vmOptions: String?,
         programArgs: String?, envVars: Map<String, String>?, workingDir: String?,
         module: String?, project: Project
@@ -411,7 +411,7 @@ description optional: for approval dialog on create/modify/delete.
         return failures
     }
 
-    private fun applyReflectionConfig(
+    private suspend fun applyReflectionConfig(
         config: RunConfiguration, mainClass: String?, vmOptions: String?,
         programArgs: String?, envVars: Map<String, String>?, workingDir: String?,
         activeProfiles: String?, module: String?, project: Project
@@ -427,7 +427,7 @@ description optional: for approval dialog on create/modify/delete.
         return failures
     }
 
-    private fun applyJUnitConfig(
+    private suspend fun applyJUnitConfig(
         config: RunConfiguration, testClass: String?, testMethod: String?,
         vmOptions: String?, envVars: Map<String, String>?, workingDir: String?,
         module: String?, project: Project
@@ -459,7 +459,7 @@ description optional: for approval dialog on create/modify/delete.
         return failures
     }
 
-    private fun applyRemoteConfig(config: RunConfiguration, port: Int): List<String> {
+    private suspend fun applyRemoteConfig(config: RunConfiguration, port: Int): List<String> {
         val failures = mutableListOf<String>()
         trySetProperty(failures, "port") {
             val portField = config.javaClass.getField("PORT")
@@ -476,7 +476,7 @@ description optional: for approval dialog on create/modify/delete.
         return failures
     }
 
-    private fun applyGradleConfig(
+    private suspend fun applyGradleConfig(
         config: RunConfiguration, programArgs: String?, vmOptions: String?,
         envVars: Map<String, String>?, workingDir: String?
     ): List<String> {
@@ -499,7 +499,7 @@ description optional: for approval dialog on create/modify/delete.
         method.invoke(config, envs)
     }
 
-    private inline fun trySetProperty(failures: MutableList<String>, propertyName: String, block: () -> Unit) {
+    private suspend inline fun trySetProperty(failures: MutableList<String>, propertyName: String, block: suspend () -> Unit) {
         try {
             block()
         } catch (e: Exception) {
@@ -507,25 +507,25 @@ description optional: for approval dialog on create/modify/delete.
         }
     }
 
-    private fun trySetReflection(
+    private suspend fun trySetReflection(
         failures: MutableList<String>, propertyName: String,
         config: RunConfiguration, methodName: String, value: String
     ) {
         trySetProperty(failures, propertyName) { setViaReflection(config, methodName, value) }
     }
 
-    private fun trySetEnvsReflection(
+    private suspend fun trySetEnvsReflection(
         failures: MutableList<String>, propertyName: String,
         config: RunConfiguration, envs: Map<String, String>
     ) {
         trySetProperty(failures, propertyName) { setEnvsViaReflection(config, envs) }
     }
 
-    private fun applyModuleByName(
+    private suspend fun applyModuleByName(
         config: RunConfiguration, moduleName: String, project: Project, failures: MutableList<String>
     ) {
         trySetProperty(failures, "module") {
-            val (mod, availableNames) = ReadAction.compute<Pair<com.intellij.openapi.module.Module?, List<String>>, Throwable> {
+            val (mod, availableNames) = readAction {
                 val mgr = ModuleManager.getInstance(project)
                 mgr.findModuleByName(moduleName) to mgr.modules.map { it.name }.sorted()
             }
@@ -547,7 +547,7 @@ description optional: for approval dialog on create/modify/delete.
     // Action: modify_run_config
     // ══════════════════════════════════════════════════════════════════════
 
-    private fun executeModifyRunConfig(params: JsonObject, project: Project): ToolResult {
+    private suspend fun executeModifyRunConfig(params: JsonObject, project: Project): ToolResult {
         val configName = params["name"]?.jsonPrimitive?.contentOrNull
             ?: return ToolResult("Missing required parameter: name", "Error: missing name", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
@@ -631,7 +631,7 @@ description optional: for approval dialog on create/modify/delete.
         }
     }
 
-    private fun modifyApplyEnvVars(
+    private suspend fun modifyApplyEnvVars(
         config: RunConfiguration, envVars: Map<String, String>,
         replaceEnvVars: Boolean, failures: MutableList<String>
     ) {
@@ -668,7 +668,7 @@ description optional: for approval dialog on create/modify/delete.
         return (method.invoke(config) as? Map<String, String>) ?: emptyMap()
     }
 
-    private fun modifyApplyVmOptions(config: RunConfiguration, vmOptions: String, failures: MutableList<String>) {
+    private suspend fun modifyApplyVmOptions(config: RunConfiguration, vmOptions: String, failures: MutableList<String>) {
         if (config is ApplicationConfiguration) {
             trySetProperty(failures, "vm_options") { config.vmParameters = vmOptions }
         } else {
@@ -683,7 +683,7 @@ description optional: for approval dialog on create/modify/delete.
         }
     }
 
-    private fun modifyApplyProgramArgs(config: RunConfiguration, args: String, failures: MutableList<String>) {
+    private suspend fun modifyApplyProgramArgs(config: RunConfiguration, args: String, failures: MutableList<String>) {
         if (config is ApplicationConfiguration) {
             trySetProperty(failures, "program_args") { config.programParameters = args }
         } else {
@@ -698,7 +698,7 @@ description optional: for approval dialog on create/modify/delete.
         }
     }
 
-    private fun modifyApplyWorkingDir(config: RunConfiguration, dir: String, failures: MutableList<String>) {
+    private suspend fun modifyApplyWorkingDir(config: RunConfiguration, dir: String, failures: MutableList<String>) {
         if (config is ApplicationConfiguration) {
             trySetProperty(failures, "working_dir") { config.workingDirectory = dir }
         } else {
@@ -706,7 +706,7 @@ description optional: for approval dialog on create/modify/delete.
         }
     }
 
-    private fun modifyApplyActiveProfiles(config: RunConfiguration, profiles: String, failures: MutableList<String>) {
+    private suspend fun modifyApplyActiveProfiles(config: RunConfiguration, profiles: String, failures: MutableList<String>) {
         trySetReflection(failures, "active_profiles", config, "setActiveProfiles", profiles)
     }
 

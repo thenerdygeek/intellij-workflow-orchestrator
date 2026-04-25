@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.tools.builtin
 
 import com.intellij.openapi.project.Project
 import io.mockk.mockk
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
@@ -19,31 +20,31 @@ class SyntaxValidatorTest {
     private val project = mockk<Project>(relaxed = true)
 
     @Test
-    fun `non-java-kotlin files return empty list`() {
+    fun `non-java-kotlin files return empty list`() = runTest {
         val errors = SyntaxValidator.validate(project, "style.css", "body { color: red; }")
         assertTrue(errors.isEmpty(), "CSS files should not be validated")
     }
 
     @Test
-    fun `non-supported extension returns empty list`() {
+    fun `non-supported extension returns empty list`() = runTest {
         val errors = SyntaxValidator.validate(project, "data.json", """{"key": "value"}""")
         assertTrue(errors.isEmpty(), "JSON files should not be validated")
     }
 
     @Test
-    fun `txt files return empty list`() {
+    fun `txt files return empty list`() = runTest {
         val errors = SyntaxValidator.validate(project, "notes.txt", "some notes")
         assertTrue(errors.isEmpty(), "TXT files should not be validated")
     }
 
     @Test
-    fun `xml files return empty list`() {
+    fun `xml files return empty list`() = runTest {
         val errors = SyntaxValidator.validate(project, "pom.xml", "<project></project>")
         assertTrue(errors.isEmpty(), "XML files should not be validated")
     }
 
     @Test
-    fun `kotlin file extension is recognized`() {
+    fun `kotlin file extension is recognized`() = runTest {
         // Without IntelliJ platform, validate catches exception and returns empty
         // This test verifies the extension matching logic routes kt files to validation
         val errors = SyntaxValidator.validate(project, "Test.kt", "fun main() {}")
@@ -52,21 +53,21 @@ class SyntaxValidatorTest {
     }
 
     @Test
-    fun `java file extension is recognized`() {
+    fun `java file extension is recognized`() = runTest {
         // Without IntelliJ platform, validate catches exception and returns empty
         val errors = SyntaxValidator.validate(project, "Test.java", "public class Test {}")
         assertTrue(errors.isEmpty(), "Should fail-open without platform environment")
     }
 
     @Test
-    fun `case insensitive extension matching`() {
+    fun `case insensitive extension matching`() = runTest {
         val errors = SyntaxValidator.validate(project, "Test.JAVA", "public class Test {}")
         // Extension matching is case-insensitive
         assertTrue(errors.isEmpty(), "Should handle uppercase extensions")
     }
 
     @Test
-    fun `file with no extension returns empty`() {
+    fun `file with no extension returns empty`() = runTest {
         val errors = SyntaxValidator.validate(project, "Makefile", "all: build")
         assertTrue(errors.isEmpty(), "Files without extension should not be validated")
     }
