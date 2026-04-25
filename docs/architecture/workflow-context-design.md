@@ -57,6 +57,14 @@ data class WorkflowContext(
     }
 }
 
+// INVARIANT: interactionMode (and any future derived property exposed via state.map { ... })
+// MUST be a pure function of declared WorkflowContext fields. Reading external state inside
+// a derived getter (e.g., git4idea APIs, settings, system clock) breaks the
+// state.map { it.interactionMode }.distinctUntilChanged() flow — the underlying state will
+// not change when external state changes, so the flow will silently miss transitions.
+// Any new contributing factor must be added as a declared field on WorkflowContext.
+// Enforced by InteractionModePurityTest in §9.1.
+
 enum class InteractionMode { Live, ReadOnly }
 
 // :core/model/workflow/refs.kt — small immutable value types
@@ -120,6 +128,29 @@ Service constructor matches the **Phase 4 service-injected scope convention** (n
 
 ## 4. Sources of truth & write paths
 
+### 4.0 Cascade serialization (mutex-guarded)
+
+Every public mutator (`setActiveTicket`, `focusPr`, `focusBuild`) and every internal mirror invocation acquires a single project-scoped `Mutex` for the duration of the cascade. This produces three guarantees:
+
+- **Cascade atomicity.** A cascade composes its entire next `WorkflowContext` and writes `_state.value =` exactly once. No subscriber observes a half-applied cascade.
+- **No interleaving.** If two `focusPr()` calls arrive at t=0 and t=200ms (the C1 race), the second blocks until the first releases. The first's `_state.value =` write completes before the second starts.
+- **Cancel-previous semantics for `focusPr`.** When the second `focusPr(...)` enters the mutex, it inspects a `currentFocusJob: Job?` field; if non-null and active, it calls `cancelAndJoin()` on it before starting its own HTTP lookup. Rationale: when a user clicks a newer PR, they don't care about the older PR's build lookup. The HTTP call for the abandoned PR is cancelled cooperatively.
+
+The mirror (§5.1 step 4) routes through the same mutex. Combined with the `state.value`-equality guard, this eliminates the C2 feedback path: by the time the mirror processes a legacy event whose state was just updated by a direct mutator call, `state.value` already matches the event's payload → no-op.
+
+```kotlin
+private val cascadeMutex = Mutex()
+private var currentFocusJob: Job? = null
+
+suspend fun focusPr(pr: PrRef?) = cascadeMutex.withLock {
+    currentFocusJob?.cancelAndJoin()
+    currentFocusJob = cs.launch {
+        // ... cascade body, single _state.value = next at end ...
+    }
+}
+```
+
+
 Each field has exactly one writer.
 
 | Field | Writer | Trigger |
@@ -132,28 +163,57 @@ Each field has exactly one writer.
 
 ### 4.1 Cascade on `focusPr(pr)`
 
-1. Lookup latest build for `pr.fromBranch` via `BambooApiClient` (suspend, off-EDT — `withContext(Dispatchers.IO)`).
-2. Compose new context with `focusPr = pr`, `focusBuild = b`, `focusQualityScope = q`.
-3. Single `_state.value = newContext` — **one observable transition.**
-4. **Mutator does NOT emit any legacy event.** Legacy event re-emission is the call site's responsibility during the migration window — see §5.
+Runs inside the mutex (§4.0). For non-null `pr`:
+
+1. `currentFocusJob?.cancelAndJoin()` — abandon any in-flight focus.
+2. Lookup latest build for `pr.fromBranch` via `BambooApiClient` (suspend, off-EDT — `withContext(Dispatchers.IO)`). Wrapped in `withTimeoutOrNull(5_000)` per R2.
+3. Compose new context with `focusPr = pr`, `focusBuild = b` (or null on timeout), `focusQualityScope = q`.
+4. Single `_state.value = newContext` — **one observable transition.**
+5. **Mutator does NOT emit any legacy event.** Legacy event re-emission is the call site's responsibility during the migration window — see §5.
+
+For `pr == null` (Clear PR focus from banner, or unmatched anchor change):
+
+1. Cancel any in-flight focus job.
+2. Re-derive `focusBuild` from `activeBranch` (`computeFocusFromBranch(activeBranch)`); null if `activeBranch` is null.
+3. Re-derive `focusQualityScope` from new `focusBuild`.
+4. Single `_state.value = newContext` with `focusPr = null` and the re-derived `focusBuild` / `focusQualityScope`.
+
+`computeFocusFromBranch` only fires HTTP if `activeBranch != previous activeBranch` (cached result otherwise — avoids editor-storm HTTP traffic per NB11).
 
 ### 4.2 Cascade on `setActiveTicket(t)` (auto-seed per a.ii)
 
-1. Persist `t` to `PluginSettings.activeTicketId` / `activeTicketSummary`.
-2. Search open PRs for one whose source branch contains `t.key` (regex via existing `TicketKeyExtractor`).
-3. If a match exists, also compute focus chain (call internal helper `computeFocusForPr(matchingPr)`).
-4. Single `_state.value = newContext` carrying both `activeTicket` and the new focus chain.
-5. Mutator does NOT emit legacy events (same rule as §4.1.4).
+Runs inside the mutex (§4.0).
+
+1. **Persist `t` to `PluginSettings` BEFORE any suspend point.** This guarantees disk-state never lags in-memory state — a project close mid-cascade leaves persistence consistent with what the next boot will load.
+2. Search open PRs for one whose source branch contains `t.key` (regex via existing `TicketKeyExtractor`). When multiple match, the **highest PR id wins** (deterministic across IDE restarts).
+3. If a match exists, compute focus chain (internal helper `computeFocusForPr(matchingPr)`).
+4. Single `_state.value = newContext` carrying both `activeTicket` and the new focus chain (or just `activeTicket` if no PR matched).
+5. Mutator does NOT emit legacy events (same rule as §4.1.5).
 
 ### 4.3 Cascade on editor changes
 
+Runs inside the mutex (§4.0).
+
 1. Listener calls `onEditorRepoChanged(repo, branch, module)` from a coroutine on `cs`.
-2. If `branch` changed and `focusPr` is non-null, the new state's `interactionMode` will recompute automatically.
-3. `_state.value = newContext` — single emission; `interactionMode` is computed-on-read.
+2. Compose new context with updated `activeRepo`, `activeBranch`, `activeModule`.
+3. **`focusBuild` is NOT re-derived on editor changes** when `focusPr != null` — `focusBuild` is bound to the focused PR's source branch, not the editor's branch. When `focusPr == null`, `focusBuild` remains the value from the most recent `focusPr(null)` call (which itself was derived from `activeBranch` at that point); editor-only branch changes do NOT trigger an HTTP build re-lookup. This avoids the N+1 traffic NB11 flagged. Panels that need "build for current branch (regardless of focus)" will subscribe to a separate `latestBuildForBranchFlow` (deferred — see §10).
+4. `_state.value = newContext` — single emission. `interactionMode` is computed-on-read; if `focusPr != null` and the new `activeBranch` differs, the next `state.value.interactionMode` returns `ReadOnly` automatically.
 
 ### 4.4 Single-merged-emission invariant
 
 Every cascade computes the entire next `WorkflowContext` immutably, then performs **one** `_state.value = next`. Subscribers MUST observe a coherent snapshot. This invariant is the structural reason "PR bar shows X, job stages render Y" becomes impossible.
+
+**Boot-time exception (documented carve-out):** §4.5 describes service initialization. Boot performs *two* emissions — a synchronous anchor-load and an asynchronous PR auto-seed. This is the only place in the design where two emissions per logical cascade occur. Subscribers using `state.collect { }` see both transitions naturally; subscribers reading `state.value` once at construction see the synchronous anchor (never `null`).
+
+### 4.5 Service initialization (boot semantics)
+
+`init` does only synchronous work:
+
+1. `wireEditorListeners()` — registers `FileEditorManagerListener`, `VCS_REPOSITORY_MAPPING_UPDATED`, `BranchChangeListener` via `project.messageBus.connect(this)`. `@Service` instances are platform-disposed in 2024.1+; this connect call is the sanctioned pattern (see also `RepoContextResolver`).
+2. `loadAnchorFromSettings()` — reads `PluginSettings.activeTicketId` / `activeTicketSummary`, sets `_state.value = WorkflowContext(activeTicket = persistedTicket)` synchronously. Subscribers reading `state.value` immediately see the persisted anchor. No HTTP, no suspend points.
+3. `cs.launch { autoSeedFromAnchor() }` — if a persisted anchor exists, asynchronously runs the `setActiveTicket(persistedTicket)` cascade *just for the auto-seed half* (skipping the persistence step since it's already on disk). This may produce a second emission as `focusPr` populates. Boot-time only.
+
+The mirror (§5.1 step 4) is installed via a separate `ProjectActivity` that runs after service construction but before any panel emits, guaranteeing no events are dropped at startup.
 
 ## 5. Migration path
 
@@ -164,7 +224,7 @@ Every cascade computes the entire next `WorkflowContext` immutably, then perform
 3. Migrate **`EventBus.prContextMap` reads** to `service.state.value.focusPr` + `service.state.value.activeRepo`. Delete `prContextMap` and the side-effect mutation inside `EventBus.emit`.
 4. **Bridge legacy events into the service** via `WorkflowEventMirror`: a startup subscriber installed on `EventBus.events` that forwards `PrSelected → service.focusPr(...)`, `TicketChanged → service.setActiveTicket(...)`, `BranchChanged → service.onEditorRepoChanged(...)`. **One-way only** — mirror reads events, never emits them. The mirror checks `state.value` first and no-ops if the incoming payload already matches (loop prevention). Existing emit sites stay untouched in 5a; the mirror keeps state in sync until each emit site is migrated to call the mutator directly. **Migration rule:** when an emit site is converted to call a mutator, the call site explicitly re-emits the legacy event after the mutator returns (until 5b deletes the event subscribers entirely).
 5. For each panel that today resolves "current ticket / PR / branch / build" locally, replace with `service.state.collect`:
-   - `BuildDashboardPanel` (PrBar + job stages — same `state.value` snapshot)
+   - `BuildDashboardPanel` (PrBar + job stages — same `state.value` snapshot). **Migration constraint:** PrBar and job stages MUST be migrated in the same commit; partially-migrated state would re-introduce the original within-tab incoherence bug from a different source pair (legacy local vs. service).
    - `QualityDashboardPanel`
    - `PrDashboardPanel` (focus mutator on row click)
    - `PrDetailPanel`
@@ -306,6 +366,10 @@ These are the structural tests that prove Phase 5 fixed the reported bugs.
 - `SprintStartWorkTest`: simulate Start Work on a ticket whose key matches an open PR's source branch → assert `focusPr` cascade fires.
 - `BranchMismatchInteractionModeTest`: editor branch = `feat/abc`, focus PR on `bugfix/xyz` → `interactionMode == ReadOnly`. Then simulate branch checkout to `bugfix/xyz` → `interactionMode == Live`.
 - `WorkflowEventMirrorTest`: emit `WorkflowEvent.PrSelected` directly onto `EventBus.events` → mirror updates `service.state.focusPr`. Re-emit the same event → mirror no-ops (loop prevention via `state.value`-equality check).
+- `WorkflowEventMirrorRaceTest`: emit two distinct `PrSelected` events in rapid succession (event A then event B) → mutex serializes; both cascades complete; assert exactly two `_state.value =` writes occur (one per event) AND the final `state.value` reflects event B (the later-arriving event wins). Asserts the C1+C2 fix.
+- `InteractionModePurityTest`: assert `interactionMode` only reads declared fields. Implementation: construct two `WorkflowContext` instances differing only in non-declared external state (e.g., system time); assert `interactionMode` equal. Also: kotlin-reflect introspection sanity check that `WorkflowContext::interactionMode` getter references no field outside `WorkflowContext`. Enforces the §3.1 invariant.
+- `PersistenceRoundTripTest`: `setActiveTicket(t)` → re-instantiate `WorkflowContextService` with same `Project` → assert `state.value.activeTicket == t` after `loadAnchorFromSettings()`. Validates §4.5 boot synchronization.
+- `BannerVisibilityFlickerTest`: rapidly call `focusPr(prX)` / `focusPr(null)` 10 times → assert banner-visibility transitions ≤ 2 (validates `distinctUntilChanged` per R4).
 
 ### 9.3 Integration test (`:core`)
 
@@ -317,7 +381,9 @@ One smoke test wiring real `FileEditorManager` + `GitRepositoryManager` listener
 - **`focusBuild` "pin" capability** — design includes the mutator but no UI invokes it. Drop from initial implementation; revisit when a panel needs it. *(Push-back point #1 from the design conversation: defer.)*
 - **Agent write tools** (`set_active_ticket`, `focus_pr`) — decision (B); revisit after (A) ships.
 - **Multi-project workflow context** — `WorkflowContextService` is `Service.Level.PROJECT`. No cross-project coordination.
+- **Multi-window same project** — IntelliJ allows the same Project open in multiple frames (Window > New Window for Project). All frames share the single `Service.Level.PROJECT` instance, so all frames see the same context. Intentional.
 - **Background "follow active branch" auto-focus** — when the user checks out a branch that is the source of an open PR, do we auto-focus that PR? Behavior change with surprise risk; defer until UX feedback.
+- **`latestBuildForBranchFlow` separate flow** — Build tab can show "build for current branch" when no PR is focused. Currently §4.3 doesn't re-derive `focusBuild` on editor changes; if a panel needs that, it'll subscribe to a small dedicated flow that polls the latest build for `activeBranch` (with cache). Out of scope for 5a; revisit if Build tab UX requires it.
 - **Persistence of `focusPr` across restart** — decision (A) rejected this. If users complain about losing PR focus on restart, revisit with a TTL (focus expires after N hours).
 - **`docs/architecture/threading-model.md` and `index.html` updates** for the new service — same-commit rule applies, but listed here for explicit scope.
 
@@ -332,6 +398,8 @@ One smoke test wiring real `FileEditorManager` + `GitRepositoryManager` listener
 | R5 | Agent prompt growth from `<workflow_context>` block | Block is ≤7 short lines; omitted entirely when state is empty. Negligible token cost. |
 | R6 | Phase 5 breaks an active-ticket-bar consumer (e.g., gear menu actions) | Active-ticket-bar migration is one of the first commits in 5a — characterization test asserts label and "Open in Jira" gear action still work. |
 | R7 | A panel-author forgets to gate a live-only control | Per-control disable contract requires explicit `bindLiveOnlyEnablement(...)` call; live-only enumeration in §7.3 is the canonical list to audit against. Add a doc note in `:core/CLAUDE.md`. |
+| R8 | Mirror startup race — early panel emission lost before mirror subscribes | Mirror installed via `ProjectActivity` (or equivalent), not lazy on first `service.getInstance()`. Guarantees subscription before any panel construction. See §4.5 step 3. |
+| R9 | Future maintainer adds external-state factor to `interactionMode` (or new derived getter) | §3.1 invariant + `InteractionModePurityTest` (§9.1) catch this. Reviewers of any change to `WorkflowContext` derived getters MUST verify purity. |
 
 ## 12. Exit criteria
 
