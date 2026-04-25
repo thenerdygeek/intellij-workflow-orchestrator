@@ -140,8 +140,19 @@ dependencies {
 **Files:**
 - Create: `core/src/main/kotlin/com/workflow/orchestrator/core/model/workflow/WorkflowContext.kt`
 - Create: `core/src/main/kotlin/com/workflow/orchestrator/core/model/workflow/Refs.kt`
+- Copy: `agent/src/test/kotlin/com/workflow/orchestrator/agent/testutil/ReadActionTestShim.kt` → `core/src/test/kotlin/com/workflow/orchestrator/core/testutil/ReadActionTestShim.kt` (update package declaration)
 - Create: `core/src/test/kotlin/com/workflow/orchestrator/core/workflow/InteractionModePurityTest.kt`
 - Create: `core/src/test/kotlin/com/workflow/orchestrator/core/workflow/WorkflowContextEqualsTest.kt`
+
+- [ ] **Step 0: Copy `ReadActionTestShim.kt` into `:core` test sources**
+
+```bash
+mkdir -p core/src/test/kotlin/com/workflow/orchestrator/core/testutil
+cp agent/src/test/kotlin/com/workflow/orchestrator/agent/testutil/ReadActionTestShim.kt \
+   core/src/test/kotlin/com/workflow/orchestrator/core/testutil/ReadActionTestShim.kt
+```
+
+Then edit the copy's package declaration: `package com.workflow.orchestrator.agent.testutil` → `package com.workflow.orchestrator.core.testutil`. The shim is needed by every `:core` unit test that exercises `readAction { }` calls inside the service. (`:core` cannot import test code from `:agent` — modules don't share test classpaths.) Phase 5b cleanup may extract to a shared `testFixtures` source set.
 
 - [ ] **Step 1: Write failing tests**
 
@@ -1328,10 +1339,9 @@ class WorkflowEventMirror(
         log.info("[Workflow:Mirror] Installed")
     }
 
-    fun uninstall() {
-        collectorJob?.cancel()
-        collectorJob = null
-    }
+    // No explicit uninstall: collectorJob runs on service.serviceCs which the platform
+    // cancels at project close. The idempotent install() above is sufficient to handle
+    // any rare ProjectActivity re-run.
 
     private suspend fun handlePrSelected(event: WorkflowEvent.PrSelected) {
         val incoming = PrRef(
@@ -1751,10 +1761,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 
 data class ActiveTicketState(
     val ticketId: String,
@@ -1827,10 +1837,14 @@ Add a test asserting facade delegation:
 package com.workflow.orchestrator.jira.service
 
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.core.model.workflow.TicketRef
+import com.workflow.orchestrator.core.model.workflow.WorkflowContext
 import com.workflow.orchestrator.core.workflow.WorkflowContextService
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
