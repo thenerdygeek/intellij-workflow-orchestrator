@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.pullrequest.service
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.changes.ChangeListManager
@@ -192,9 +192,9 @@ object PrDescriptionGenerator {
         append("**Branch:** $branch")
     }
 
-    private fun getCommitMessages(project: Project, repo: GitRepository, source: String, target: String): List<String> {
+    private suspend fun getCommitMessages(project: Project, repo: GitRepository, source: String, target: String): List<String> {
         return try {
-            ReadAction.compute<List<String>, Throwable> {
+            readAction {
                 val handler = git4idea.commands.GitLineHandler(project, repo.root, git4idea.commands.GitCommand.LOG)
                 handler.addParameters("--oneline", "$target..$source")
                 val result = Git.getInstance().runCommand(handler)
@@ -208,9 +208,9 @@ object PrDescriptionGenerator {
         }
     }
 
-    private fun getDiffBetweenBranches(project: Project, repo: GitRepository, source: String, target: String): String? {
+    private suspend fun getDiffBetweenBranches(project: Project, repo: GitRepository, source: String, target: String): String? {
         return try {
-            ReadAction.compute<String?, Throwable> {
+            readAction {
                 val handler = git4idea.commands.GitLineHandler(project, repo.root, git4idea.commands.GitCommand.DIFF)
                 handler.addParameters("$target...$source", "--no-color")
                 val result = Git.getInstance().runCommand(handler)
@@ -224,9 +224,9 @@ object PrDescriptionGenerator {
         }
     }
 
-    private fun getChangedFilePaths(project: Project): List<String> {
+    private suspend fun getChangedFilePaths(project: Project): List<String> {
         return try {
-            ReadAction.compute<List<String>, Throwable> {
+            readAction {
                 ChangeListManager.getInstance(project).allChanges
                     .mapNotNull { it.virtualFile?.path }
                     .take(MAX_CONTEXT_FILES)

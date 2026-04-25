@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.pullrequest.action
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
@@ -118,7 +118,7 @@ object CreatePrPrefetch {
         }
 
         // 3. Resolve initial selected repo index from the current editor's git root
-        val editorGitRoot = ReadAction.compute<String?, Throwable> {
+        val editorGitRoot = readAction {
             resolver.resolveCurrentEditorRepoOrPrimary()?.root?.path
         }
         val initialSelectedRepoIndex = if (editorGitRoot != null) {
@@ -228,12 +228,12 @@ object CreatePrPrefetch {
                 return null
             }
 
-            val gitRepo = ReadAction.compute<git4idea.repo.GitRepository?, Throwable> {
+            val gitRepo = readAction {
                 GitRepositoryManager.getInstance(project).repositories
                     .find { it.root.path == config.localVcsRootPath }
             }
 
-            val sourceBranch = ReadAction.compute<String?, Throwable> {
+            val sourceBranch = readAction {
                 gitRepo?.currentBranchName
             } ?: run {
                 log.warn("[PR:Prefetch] No current branch for repo '${config.displayLabel}'")
