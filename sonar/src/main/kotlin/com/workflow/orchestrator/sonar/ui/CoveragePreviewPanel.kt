@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.sonar.ui
 
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -22,7 +23,7 @@ import javax.swing.SwingConstants
  * Panel showing uncovered code regions for a selected file.
  * Displays a metrics header, code preview with coverage markers, and a footer with navigation.
  */
-class CoveragePreviewPanel(private val project: Project) : JPanel(BorderLayout()) {
+class CoveragePreviewPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -173,7 +174,7 @@ class CoveragePreviewPanel(private val project: Project) : JPanel(BorderLayout()
         OpenFileDescriptor(project, vf, 0, 0).navigate(true)
     }
 
-    fun dispose() {
+    override fun dispose() {
         scope.cancel()
     }
 
