@@ -10,9 +10,9 @@ import com.intellij.execution.remote.RemoteConfiguration
 import com.intellij.execution.remote.RemoteConfigurationType
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder
 import com.intellij.openapi.application.EDT
-import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.application.readAction
+import com.intellij.openapi.application.smartReadAction
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
@@ -362,15 +362,15 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
         }
 
         return try {
-            val psiResult = ReadAction.compute<PsiLookupResult, Exception> {
+            val psiResult = smartReadAction(project) {
                 val facade = JavaPsiFacade.getInstance(project)
                 val psiClass = facade.findClass(className, GlobalSearchScope.allScope(project))
-                    ?: return@compute PsiLookupResult.ClassNotFound
+                    ?: return@smartReadAction PsiLookupResult.ClassNotFound
 
                 val methods = psiClass.methods.filter { it.name == methodName }
                 if (methods.isEmpty()) {
                     val availableMethods = psiClass.methods.map { it.name }.distinct().sorted()
-                    return@compute PsiLookupResult.MethodNotFound(availableMethods)
+                    return@smartReadAction PsiLookupResult.MethodNotFound(availableMethods)
                 }
 
                 val targetMethod = methods.first()
@@ -536,10 +536,8 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
         }
 
         return try {
-            val fieldInfo = withContext(Dispatchers.IO) {
-                ReadAction.compute<FieldInfo?, Exception> {
-                    findFieldInClass(project, className, fieldName, filePath)
-                }
+            val fieldInfo = smartReadAction(project) {
+                findFieldInClass(project, className, fieldName, filePath)
             }
 
             if (fieldInfo == null) {

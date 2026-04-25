@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.agent.tools.project
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.smartReadAction
 import com.intellij.openapi.module.ModuleUtilCore
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
@@ -19,10 +19,11 @@ import kotlinx.serialization.json.jsonPrimitive
  * [ProjectFileIndex] and [ModuleUtilCore] (the two IntelliJ module-resolution strategies)
  * so callers can debug project model inconsistencies.
  *
- * Must be called from a non-EDT thread — [ReadAction.compute] is used internally for
- * all IntelliJ platform reads.
+ * Must be called from a non-EDT thread — [smartReadAction] is used internally for
+ * all IntelliJ platform reads (indexes-required because [ProjectFileIndex]
+ * touches index-backed source-root classification).
  */
-internal fun executeResolveFile(params: JsonObject, project: Project): ToolResult {
+internal suspend fun executeResolveFile(params: JsonObject, project: Project): ToolResult {
     // 1. Extract and validate "path" parameter
     val rawPath = params["path"]?.jsonPrimitive?.content
         ?: return ToolResult.error("Missing required parameter 'path'")
@@ -43,8 +44,9 @@ internal fun executeResolveFile(params: JsonObject, project: Project): ToolResul
     val vFile = LocalFileSystem.getInstance().findFileByPath(absolutePath)
         ?: return ToolResult.error("File not found: $absolutePath")
 
-    // 5. All IntelliJ model reads inside ReadAction
-    return ReadAction.compute<ToolResult, RuntimeException> {
+    // 5. All IntelliJ model reads inside smartReadAction (indexes-required:
+    //    ProjectFileIndex source-root classification reads index data).
+    return smartReadAction(project) {
         val index = ProjectFileIndex.getInstance(project)
 
         val moduleViaIndex = index.getModuleForFile(vFile)

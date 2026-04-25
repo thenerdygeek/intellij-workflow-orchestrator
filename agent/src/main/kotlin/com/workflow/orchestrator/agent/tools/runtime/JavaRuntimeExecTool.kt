@@ -14,6 +14,7 @@ import com.intellij.execution.testframework.sm.runner.SMTestProxy
 import com.intellij.execution.testframework.sm.runner.ui.TestResultsViewer
 import com.intellij.execution.ui.RunContentDescriptor
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.smartReadAction
 import com.intellij.openapi.compiler.CompilationStatusListener
 import com.intellij.openapi.compiler.CompileContext
 import com.intellij.openapi.compiler.CompilerManager
@@ -762,7 +763,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         }
     }
 
-    private fun createJUnitRunSettings(
+    private suspend fun createJUnitRunSettings(
         project: Project, className: String, methods: List<String>,
         reasonOut: StringBuilder
     ): JUnitLaunchSpec? {
@@ -900,12 +901,12 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         }
     }
 
-    private fun detectTestFramework(project: Project, className: String): String {
+    private suspend fun detectTestFramework(project: Project, className: String): String {
         return try {
-            com.intellij.openapi.application.ReadAction.compute<String, Exception> {
+            smartReadAction(project) {
                 val psiClass = com.intellij.psi.JavaPsiFacade.getInstance(project)
                     .findClass(className, com.intellij.psi.search.GlobalSearchScope.projectScope(project))
-                    ?: return@compute "Unknown"
+                    ?: return@smartReadAction "Unknown"
 
                 val annotations = psiClass.annotations.map { it.qualifiedName.orEmpty() } +
                     psiClass.methods.flatMap { m -> m.annotations.map { it.qualifiedName.orEmpty() } }
@@ -919,12 +920,12 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         } catch (_: Exception) { "Unknown" }
     }
 
-    private fun findModuleForClass(project: Project, className: String): com.intellij.openapi.module.Module? {
+    private suspend fun findModuleForClass(project: Project, className: String): com.intellij.openapi.module.Module? {
         return try {
-            com.intellij.openapi.application.ReadAction.compute<com.intellij.openapi.module.Module?, Exception> {
+            smartReadAction(project) {
                 val psiClass = com.intellij.psi.JavaPsiFacade.getInstance(project)
                     .findClass(className, com.intellij.psi.search.GlobalSearchScope.projectScope(project))
-                    ?: return@compute null
+                    ?: return@smartReadAction null
                 com.intellij.openapi.module.ModuleUtilCore.findModuleForPsiElement(psiClass)
             }
         } catch (_: Exception) { null }

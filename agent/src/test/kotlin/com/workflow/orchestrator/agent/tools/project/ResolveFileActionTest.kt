@@ -1,19 +1,20 @@
 package com.workflow.orchestrator.agent.tools.project
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
+import com.intellij.openapi.application.smartReadAction
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.module.ModuleUtilCore
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectFileIndex
-import com.intellij.openapi.util.ThrowableComputable
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
-import io.mockk.slot
 import io.mockk.unmockkAll
+import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.AfterEach
@@ -28,7 +29,7 @@ import java.nio.file.Path
  * Tests for [executeResolveFile].
  *
  * executeResolveFile uses IntelliJ platform services (LocalFileSystem, ProjectFileIndex,
- * DumbService, ReadAction, ModuleUtilCore). These tests use MockK to stub the static
+ * DumbService, smartReadAction, ModuleUtilCore). These tests use MockK to stub the static
  * service lookups and verify the three key contracts:
  *
  *  1. testResolvesFileUnderModuleSourceRoot  — happy path: no error, content has module + "source"
@@ -59,7 +60,7 @@ class ResolveFileActionTest {
     // ────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun testResolvesFileUnderModuleSourceRoot() {
+    fun testResolvesFileUnderModuleSourceRoot() = runTest {
         val sourceFile = File(tempDir.toFile(), "src/main/kotlin/Foo.kt").also {
             it.parentFile.mkdirs()
             it.writeText("class Foo")
@@ -94,12 +95,13 @@ class ResolveFileActionTest {
         mockkStatic(ModuleUtilCore::class)
         every { ModuleUtilCore.findModuleForFile(mockVFile, project) } returns mockModule
 
-        // Intercept ReadAction.compute and execute the lambda directly
-        mockkStatic(ReadAction::class)
-        val computeSlot = slot<ThrowableComputable<Any, RuntimeException>>()
-        every { ReadAction.compute(capture(computeSlot)) } answers {
-            computeSlot.captured.compute()
-        }
+        // D7b: readAction { … } / smartReadAction(project) { … } are top-level suspending
+        // functions in com.intellij.openapi.application.CoroutinesKt. Stub them to invoke
+        // the lambda in-place so tests don't need an initialized IntelliJ Application.
+        // Pattern from D7a's RuntimeExecRunConfigTest.
+        mockkStatic("com.intellij.openapi.application.CoroutinesKt")
+        coEvery { readAction<Any?>(any()) } coAnswers { firstArg<() -> Any?>().invoke() }
+        coEvery { smartReadAction<Any?>(any(), any()) } coAnswers { secondArg<() -> Any?>().invoke() }
 
         val params = buildJsonObject { put("path", absolutePath) }
         val result = executeResolveFile(params, project)
@@ -120,7 +122,7 @@ class ResolveFileActionTest {
     // ────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun testReturnsErrorForNonexistentPath() {
+    fun testReturnsErrorForNonexistentPath() = runTest {
         val fakePath = "/nonexistent/path/does-not-exist-xyz.kt"
 
         mockkStatic(LocalFileSystem::class)
@@ -146,7 +148,7 @@ class ResolveFileActionTest {
     // ────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun testReturnsErrorWhenProjectIsIndexing() {
+    fun testReturnsErrorWhenProjectIsIndexing() = runTest {
         val fakePath = "/some/valid/path/Foo.kt"
 
         mockkStatic(DumbService::class)
@@ -167,7 +169,7 @@ class ResolveFileActionTest {
     // ────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun testReturnsErrorForMissingPath() {
+    fun testReturnsErrorForMissingPath() = runTest {
         val params = buildJsonObject { /* no "path" key */ }
         val result = executeResolveFile(params, project)
 
