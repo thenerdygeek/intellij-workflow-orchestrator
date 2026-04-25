@@ -92,7 +92,9 @@ class QualityDashboardPanel(
     private val issueListPanel = IssueListPanel(project).also {
         com.intellij.openapi.util.Disposer.register(this, it)
     }
-    private val coverageTablePanel = CoverageTablePanel(project)
+    private val coverageTablePanel = CoverageTablePanel(project).also {
+        com.intellij.openapi.util.Disposer.register(this, it)
+    }
     private val statusLabel = JBLabel("Loading...")
     private val loadingIcon = JBLabel(AnimatedIcon.Default()).apply { isVisible = false }
 

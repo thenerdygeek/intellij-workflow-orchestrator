@@ -1,7 +1,9 @@
 package com.workflow.orchestrator.sonar.ui
 
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.JBColor
 import com.intellij.ui.JBSplitter
@@ -26,7 +28,7 @@ import javax.swing.event.ListSelectionListener
 import javax.swing.table.AbstractTableModel
 import javax.swing.table.DefaultTableCellRenderer
 
-class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()) {
+class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
     private val tableModel = CoverageTableModel()
     private val table = JBTable(tableModel).apply {
@@ -93,6 +95,9 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()) 
 
     init {
         border = JBUI.Borders.empty(8)
+
+        // Cascade dispose to previewPanel (which cancels its IO scope on project close).
+        Disposer.register(this, previewPanel)
 
         // Stitch design: uppercase bold header text in SECONDARY_TEXT color
         table.tableHeader.defaultRenderer = object : DefaultTableCellRenderer() {
@@ -284,6 +289,10 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()) 
         val basePath = project.basePath ?: return
         val vf = LocalFileSystem.getInstance().findFileByPath(java.io.File(basePath, filePath).path) ?: return
         OpenFileDescriptor(project, vf, 0, 0).navigate(true)
+    }
+
+    override fun dispose() {
+        // No own resources to clean up — Disposer cascades to registered children (previewPanel).
     }
 }
 
