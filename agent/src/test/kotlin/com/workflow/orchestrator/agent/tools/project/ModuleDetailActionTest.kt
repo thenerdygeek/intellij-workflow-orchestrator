@@ -1,17 +1,16 @@
 package com.workflow.orchestrator.agent.tools.project
 
 import com.intellij.facet.FacetManager
-import com.intellij.openapi.application.readAction
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.testutil.installReadActionInlineShim
 import com.intellij.openapi.roots.CompilerModuleExtension
 import com.intellij.openapi.roots.ContentEntry
 import com.intellij.openapi.roots.ModuleRootManager
 import com.intellij.openapi.roots.SourceFolder
 import com.intellij.openapi.vfs.VirtualFile
-import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
@@ -48,11 +47,7 @@ class ModuleDetailActionTest {
         project = mockk(relaxed = true)
         every { project.basePath } returns "/project/root"
 
-        // Stub the suspending readAction { } so it runs the lambda in-place — there is no
-        // ApplicationManager in unit tests, so the real builder would NPE on its
-        // ReadWriteActionSupport service lookup.
-        mockkStatic("com.intellij.openapi.application.CoroutinesKt")
-        coEvery { readAction<Any?>(any()) } coAnswers { firstArg<() -> Any?>().invoke() }
+        installReadActionInlineShim()
     }
 
     @AfterEach

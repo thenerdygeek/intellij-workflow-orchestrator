@@ -6,8 +6,8 @@ import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ModifiableRootModel
 import com.intellij.openapi.roots.ModuleRootModificationUtil
-import com.intellij.openapi.application.readAction
 import com.workflow.orchestrator.agent.loop.ApprovalResult
+import com.workflow.orchestrator.agent.testutil.installReadActionInlineShim
 import com.workflow.orchestrator.agent.tools.AgentTool
 import io.mockk.coEvery
 import io.mockk.every
@@ -59,14 +59,7 @@ class SetLanguageLevelActionTest {
             tool.requestApproval(any(), any(), any(), any())
         } returns ApprovalResult.APPROVED
 
-        // Stub the suspending readAction { } so it runs the lambda in-place.
-        // The IntelliJ Platform's real implementation requires ApplicationManager
-        // and a ReadWriteActionSupport service, neither of which exist in unit tests.
-        mockkStatic("com.intellij.openapi.application.CoroutinesKt")
-        coEvery { readAction<Any?>(any()) } coAnswers {
-            @Suppress("UNCHECKED_CAST")
-            (firstArg<() -> Any?>()).invoke()
-        }
+        installReadActionInlineShim()
     }
 
     @AfterEach

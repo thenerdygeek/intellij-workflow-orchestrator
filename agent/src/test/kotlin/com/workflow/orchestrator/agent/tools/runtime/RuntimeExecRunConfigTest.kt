@@ -18,8 +18,7 @@ import com.intellij.execution.runners.ProgramRunner
 import com.intellij.execution.ui.RunContentDescriptor
 import com.intellij.execution.ui.RunContentManager
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.application.readAction
-import com.intellij.openapi.application.smartReadAction
+import com.workflow.orchestrator.agent.testutil.installReadActionInlineShim
 import com.intellij.openapi.compiler.CompilationStatusListener
 import com.intellij.openapi.compiler.CompileContext
 import com.intellij.openapi.compiler.CompilerMessage
@@ -173,13 +172,7 @@ class RuntimeExecRunConfigTest {
         // without falling through to the real implementation (which requires an initialized
         // IntelliJ Application / ExtensionPoint and throws IllegalArgumentException here).
         mockkObject(ExecutionEnvironmentBuilder.Companion)
-        // D7a: readAction { … } / smartReadAction(project) { … } are top-level suspending
-        // functions in com.intellij.openapi.application.CoroutinesKt. There is no
-        // ApplicationManager in unit tests, so the real implementations would NPE on their
-        // ReadWriteActionSupport service lookup. Stub them to invoke the lambda in-place.
-        mockkStatic("com.intellij.openapi.application.CoroutinesKt")
-        coEvery { readAction<Any?>(any()) } coAnswers { firstArg<() -> Any?>().invoke() }
-        coEvery { smartReadAction<Any?>(any(), any()) } coAnswers { secondArg<() -> Any?>().invoke() }
+        installReadActionInlineShim()
 
         every { RunManager.getInstance(project) } returns runManager
         every { DumbService.isDumb(project) } returns false

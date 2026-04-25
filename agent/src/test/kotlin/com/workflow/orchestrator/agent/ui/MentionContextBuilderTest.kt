@@ -1,11 +1,9 @@
 package com.workflow.orchestrator.agent.ui
 
-import com.intellij.openapi.application.readAction
 import com.intellij.openapi.project.Project
-import io.mockk.coEvery
+import com.workflow.orchestrator.agent.testutil.installReadActionInlineShim
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.mockkStatic
 import io.mockk.unmockkAll
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
@@ -30,12 +28,7 @@ class MentionContextBuilderTest {
         }
         builder = MentionContextBuilder(project)
 
-        // D8a: readAction { … } is a top-level suspending function in
-        // com.intellij.openapi.application.CoroutinesKt. Stub it to invoke the
-        // lambda in-place so tests don't need an initialized IntelliJ Application.
-        // Pattern from D7a/D7b.
-        mockkStatic("com.intellij.openapi.application.CoroutinesKt")
-        coEvery { readAction<Any?>(any()) } coAnswers { firstArg<() -> Any?>().invoke() }
+        installReadActionInlineShim()
     }
 
     @AfterEach

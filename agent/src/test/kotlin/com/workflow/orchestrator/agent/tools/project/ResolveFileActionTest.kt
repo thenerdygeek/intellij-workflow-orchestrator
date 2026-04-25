@@ -1,7 +1,5 @@
 package com.workflow.orchestrator.agent.tools.project
 
-import com.intellij.openapi.application.readAction
-import com.intellij.openapi.application.smartReadAction
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.module.ModuleUtilCore
 import com.intellij.openapi.project.DumbService
@@ -9,7 +7,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectFileIndex
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
-import io.mockk.coEvery
+import com.workflow.orchestrator.agent.testutil.installReadActionInlineShim
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
@@ -95,13 +93,7 @@ class ResolveFileActionTest {
         mockkStatic(ModuleUtilCore::class)
         every { ModuleUtilCore.findModuleForFile(mockVFile, project) } returns mockModule
 
-        // D7b: readAction { … } / smartReadAction(project) { … } are top-level suspending
-        // functions in com.intellij.openapi.application.CoroutinesKt. Stub them to invoke
-        // the lambda in-place so tests don't need an initialized IntelliJ Application.
-        // Pattern from D7a's RuntimeExecRunConfigTest.
-        mockkStatic("com.intellij.openapi.application.CoroutinesKt")
-        coEvery { readAction<Any?>(any()) } coAnswers { firstArg<() -> Any?>().invoke() }
-        coEvery { smartReadAction<Any?>(any(), any()) } coAnswers { secondArg<() -> Any?>().invoke() }
+        installReadActionInlineShim()
 
         val params = buildJsonObject { put("path", absolutePath) }
         val result = executeResolveFile(params, project)

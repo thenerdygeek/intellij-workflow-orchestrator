@@ -1,11 +1,8 @@
 package com.workflow.orchestrator.agent.prompt
 
-import com.intellij.openapi.application.readAction
-import com.intellij.openapi.application.readActionBlocking
 import com.intellij.openapi.project.Project
-import io.mockk.coEvery
+import com.workflow.orchestrator.agent.testutil.installReadActionInlineShim
 import io.mockk.mockk
-import io.mockk.mockkStatic
 import io.mockk.unmockkAll
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
@@ -19,13 +16,7 @@ class EnvironmentDetailsBuilderTest {
 
     @BeforeEach
     fun setUp() {
-        // D8b: readAction { … } and readActionBlocking { … } are top-level suspending
-        // functions in com.intellij.openapi.application.CoroutinesKt. Stub them to
-        // invoke the lambda in-place so tests don't need an initialized IntelliJ
-        // Application or EDT. Pattern from D7a/D7b/D8a.
-        mockkStatic("com.intellij.openapi.application.CoroutinesKt")
-        coEvery { readAction<Any?>(any()) } coAnswers { firstArg<() -> Any?>().invoke() }
-        coEvery { readActionBlocking<Any?>(any()) } coAnswers { firstArg<() -> Any?>().invoke() }
+        installReadActionInlineShim()
     }
 
     @AfterEach
