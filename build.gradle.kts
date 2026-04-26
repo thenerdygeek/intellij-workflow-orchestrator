@@ -31,6 +31,22 @@ configurations.all {
     exclude(group = "org.slf4j")
 }
 
+// ---- Dependency Locking (Phase 6 T6) ----
+// Locks every configuration in every module to a deterministic resolution
+// recorded in `<module>/gradle.lockfile`. Combined with
+// `gradle/verification-metadata.xml` (SHA-256 per artifact), this protects the
+// supply chain from version drift and tampered downloads.
+//
+// Update protocol when bumping `libs.versions.toml`:
+//   ./gradlew dependencies --write-locks --write-verification-metadata sha256
+//   ./gradlew clean verifyPlugin buildPlugin --refresh-dependencies
+// See docs/architecture/dependency-locking.md.
+allprojects {
+    dependencyLocking {
+        lockAllConfigurations()
+    }
+}
+
 // ---- Dependencies ----
 dependencies {
     // -- IntelliJ Platform --
