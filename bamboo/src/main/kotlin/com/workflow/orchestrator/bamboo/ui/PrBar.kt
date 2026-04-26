@@ -219,7 +219,13 @@ class PrBar(
 
     /**
      * Show a read-only PR info strip for the given PR context.
-     * Called by BuildDashboardPanel when PrSelected event or PrContext provides the PR.
+     *
+     * Phase 5 T10: called by [BuildDashboardPanel.onFocusPrChanged] with values sourced
+     * from `WorkflowContextService.state.value.focusPr`. The panel's single subscription
+     * drives both this header AND the job-stages list — the spec §4.4 single-merged-
+     * emission invariant guarantees both readers see the same `WorkflowContext` snapshot,
+     * so we DELIBERATELY do not collect the flow inside `PrBar` (a duplicate collector
+     * would re-introduce the dual-path divergence the migration is fixing).
      */
     fun showPrInfo(prId: Int, fromBranch: String, toBranch: String) {
         prInfoLabel.text = "<html><b>PR #$prId</b> &nbsp; ${HtmlEscape.escapeHtml(fromBranch)} \u2192 $toBranch</html>"
