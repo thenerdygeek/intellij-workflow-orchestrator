@@ -17,6 +17,7 @@ import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.workflow.WorkflowContextService
+import com.workflow.orchestrator.core.workflow.ui.ReadOnlyBanner
 import com.workflow.orchestrator.sonar.model.QualityGateStatus
 import com.workflow.orchestrator.sonar.model.SonarState
 import com.workflow.orchestrator.sonar.service.SonarDataService
@@ -44,6 +45,10 @@ class QualityDashboardPanel(
     private val settings = PluginSettings.getInstance(project)
     private val dataService = SonarDataService.getInstance(project)
     private val workflowContextService = WorkflowContextService.getInstance(project)
+    // Phase 5 T15: amber banner shown when interactionMode == ReadOnly (spec §7.1).
+    private val readOnlyBanner = ReadOnlyBanner(project).also {
+        com.intellij.openapi.util.Disposer.register(this, it)
+    }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.EDT)
 
     // Repo selector for multi-repo support — show all configured repos
@@ -166,9 +171,12 @@ class QualityDashboardPanel(
             add(newCodePeriodLabel)
         }
 
-        // Top section: toolbar + branch info + gate banner + hint
+        // Top section: read-only banner + toolbar + branch info + gate banner + hint
+        // Phase 5 T15: ReadOnly banner is the FIRST child so it stays at the top of the
+        // panel even as the toolbar / branch info / gate banner change height.
         val topSection = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            add(readOnlyBanner)
             val toolbarRow = JPanel(BorderLayout()).apply {
                 add(headerPanel, BorderLayout.CENTER)
                 add(createToolbar(), BorderLayout.EAST)

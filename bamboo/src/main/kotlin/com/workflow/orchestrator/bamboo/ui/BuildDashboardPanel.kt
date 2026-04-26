@@ -2,6 +2,7 @@ package com.workflow.orchestrator.bamboo.ui
 
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionPlaces
 import com.intellij.openapi.actionSystem.ActionUpdateThread
@@ -42,6 +43,7 @@ import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import com.workflow.orchestrator.core.workflow.WorkflowContextService
+import com.workflow.orchestrator.core.workflow.ui.ReadOnlyBanner
 import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -68,6 +70,12 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     private var localBuildRunning = false
     private val bambooService = project.getService(BambooService::class.java)
     private val workflowContextService = WorkflowContextService.getInstance(project)
+    // Phase 5 T15: amber banner shown when interactionMode == ReadOnly. Wires
+    // its own coroutine scope; we register it as a child Disposable so the
+    // collector cancels when this panel is disposed (tool-window dispose cascade).
+    private val readOnlyBanner = ReadOnlyBanner(project).also {
+        Disposer.register(this, it)
+    }
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     // Auto-detected plan key (not saved to settings — it's branch-specific)
     @Volatile
@@ -391,8 +399,11 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         add(headerPanel, BorderLayout.NORTH)
 
         // PR bar + warning + newer build banner + historical build banner + history list + build splitter
+        // Phase 5 T15: ReadOnly banner sits ABOVE prBar so it's the first thing the user
+        // sees when the focused PR diverges from the active branch (spec §7.1).
         val topPanel2 = JPanel().apply {
             layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.Y_AXIS)
+            add(readOnlyBanner)
             add(prBar)
             add(hintLabel)
             add(warningLabel)

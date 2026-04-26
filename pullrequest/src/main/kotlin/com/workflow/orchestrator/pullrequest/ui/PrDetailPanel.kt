@@ -6,6 +6,7 @@ import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.icons.AllIcons
 import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
@@ -40,7 +41,10 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketUser
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.services.BitbucketService
+import com.workflow.orchestrator.core.model.workflow.InteractionMode
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
+import com.workflow.orchestrator.core.workflow.WorkflowContextService
+import com.workflow.orchestrator.core.workflow.ui.ReadOnlyBanner
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.wm.ToolWindowManager
 import com.workflow.orchestrator.core.ai.AgentChatRedirect
@@ -80,6 +84,13 @@ class PrDetailPanel(
 
     private val log = Logger.getInstance(PrDetailPanel::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    // Phase 5 T15: amber banner shown when interactionMode == ReadOnly (spec §7.1).
+    // Wired into the detail card's content layout — see [buildDetailPanel].
+    private val workflowContextService = WorkflowContextService.getInstance(project)
+    private val readOnlyBanner = ReadOnlyBanner(project).also {
+        Disposer.register(this, it)
+    }
 
     private var currentPrId: Int? = null
     private var currentPr: BitbucketPrDetail? = null
@@ -1100,6 +1111,9 @@ class PrDetailPanel(
             isOpaque = false
             viewport.isOpaque = false
         }
+        // Phase 5 T15: ReadOnly banner sits OUTSIDE the scroll pane so it stays visible
+        // even when the user scrolls through a long PR (spec §7.1).
+        detailPanel.add(readOnlyBanner, BorderLayout.NORTH)
         detailPanel.add(scrollPane, BorderLayout.CENTER)
     }
 
@@ -2070,6 +2084,18 @@ class PrDetailPanel(
         }
 
         private fun navigateToFile(relativePath: String, line: Int) {
+            // Phase 5 T15 / spec §7.3 — line-anchored navigation is a live-only interaction.
+            // The local document's line numbers don't match the focused PR's branch when
+            // we're in ReadOnly mode, so the caret would land on the wrong line.
+            if (workflowContextService.state.value.interactionMode == InteractionMode.ReadOnly) {
+                val focusBranch = workflowContextService.state.value.focusPr?.fromBranch ?: "<none>"
+                WorkflowNotificationService.getInstance(project).notifyInfo(
+                    WorkflowNotificationService.GROUP_PR,
+                    "Disabled in read-only mode",
+                    "Switch to '$focusBranch' to navigate to file lines anchored on the PR's diff."
+                )
+                return
+            }
             val basePath = project.basePath ?: return
             val resolved = java.io.File(basePath, relativePath).canonicalFile
             if (!resolved.canonicalPath.startsWith(java.io.File(basePath).canonicalPath)) {
