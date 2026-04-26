@@ -248,13 +248,16 @@ class PrDashboardPanel(
                 val toBranch = prDetail.toRef?.displayId ?: ""
                 val repoName = prDetail.repoName ?: ""
                 if (fromBranch.isNotBlank()) {
-                    // Resolve RepoConfig; fall back to scalar settings for single-repo projects
+                    // Resolve RepoConfig only (no scalar fallback). The service fills in
+                    // bambooPlanKey/sonarProjectKey from RepoConfig via its own resolver,
+                    // which is the canonical lookup — and which also handles the single-
+                    // repo scalar-fallback case. Doing it here would cross-pollute keys
+                    // between repos in multi-repo setups (the bug Phase 5 was supposed
+                    // to fix but only half-fixed).
                     val repoConfig = prRepoConfig
                         ?: pluginSettings.getRepos().find { it.displayLabel == repoName }
                     val bambooPlanKey = repoConfig?.bambooPlanKey?.takeIf { it.isNotBlank() }
-                        ?: pluginSettings.state.bambooPlanKey?.takeIf { it.isNotBlank() }
                     val sonarProjectKey = repoConfig?.sonarProjectKey?.takeIf { it.isNotBlank() }
-                        ?: pluginSettings.state.sonarProjectKey?.takeIf { it.isNotBlank() }
 
                     scope.launch {
                         val ref = PrRef(

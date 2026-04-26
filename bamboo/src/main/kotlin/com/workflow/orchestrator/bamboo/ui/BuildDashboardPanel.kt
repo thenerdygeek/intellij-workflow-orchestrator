@@ -42,6 +42,7 @@ import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.core.util.DefaultBranchResolver
+import com.workflow.orchestrator.core.workflow.OpenPrLister
 import com.workflow.orchestrator.core.workflow.WorkflowContextService
 import com.workflow.orchestrator.core.workflow.ui.ReadOnlyBanner
 import git4idea.repo.GitRepositoryManager
@@ -82,21 +83,33 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     private var activePlanKey: String = ""
 
     /**
-     * The Build tab's single source of truth for "which repo am I looking at".
+     * Derived "which repo am I looking at" — never mutable. Reads from the canonical
+     * [WorkflowContextService.state] so the Build tab cannot drift from the project-wide
+     * focus. When no PR is focused yet, falls back to the editor or primary repo so
+     * startup / no-PR states still have a valid repo context for plan-key polling.
      *
-     * Every subsystem that previously re-resolved repo coordinates independently
-     * (PrBar.refreshPrs, getGitRepo, currentPlanKey, the Refresh toolbar action,
-     * the Quality-tab cascade) now reads from this one field. Pre-fix, each
-     * subsystem resolved via `RepoContextResolver` / scalar defaults and they
-     * silently disagreed — the dropdown showed my-common-lib but Refresh would
-     * snap PrBar to my-service and jobs to my-service's plan (documented in
-     * idea.log at 15:29:54 during v0.83.23 investigation).
-     *
-     * Mutated by: initial load, [onFocusPrChanged], [repoSelector] listener.
-     * Read by: everything downstream.
+     * The previous implementation kept this as a `@Volatile var` mutated by three
+     * paths (init, onFocusPrChanged, the repoSelector listener) — that's how the
+     * dropdown could say repo_1 while the build content stayed on repo_3. Now there's
+     * one source: the service.
      */
-    @Volatile
-    private var activeRepoConfig: RepoConfig? = null
+    private val activeRepoConfig: RepoConfig?
+        get() {
+            val focusedRepoName = workflowContextService.state.value.focusPr?.repoName
+            if (focusedRepoName != null) {
+                allRepos.firstOrNull { it.displayLabel == focusedRepoName }
+                    ?.let { return it }
+            }
+            // No focused PR (or focused on an unknown repo) — fall back to editor/primary.
+            val resolver = RepoContextResolver.getInstance(project)
+            val fromEditor = try { resolver.resolveFromCurrentEditor() } catch (_: Exception) { null }
+            val candidate = fromEditor ?: resolver.getPrimary()
+            return when {
+                candidate != null && allRepos.any { it.displayLabel == candidate.displayLabel } -> candidate
+                allRepos.isNotEmpty() -> allRepos.firstOrNull { it.isPrimary } ?: allRepos.first()
+                else -> settings.getPrimaryRepo()
+            }
+        }
     private val monitorService = BuildMonitorService.getInstance(project)
 
     private val stageListPanel = StageListPanel()
@@ -367,20 +380,11 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     init {
         border = JBUI.Borders.empty()
 
-        // Initialize activeRepoConfig BEFORE any subsystem reads it. Prefer the
-        // editor-context repo (if it's in allRepos), else the primary. Single-repo
-        // projects use allRepos.first() or settings.getPrimaryRepo() as a fallback.
-        activeRepoConfig = run {
-            val resolver = RepoContextResolver.getInstance(project)
-            val fromEditor = try { resolver.resolveFromCurrentEditor() } catch (_: Exception) { null }
-            val candidate = fromEditor ?: resolver.getPrimary()
-            when {
-                candidate != null && allRepos.any { it.displayLabel == candidate.displayLabel } -> candidate
-                allRepos.isNotEmpty() -> allRepos.firstOrNull { it.isPrimary } ?: allRepos.first()
-                else -> settings.getPrimaryRepo()
-            }
-        }
-        log.info("[Build:Dashboard] Initial activeRepoConfig='${activeRepoConfig?.displayLabel}'")
+        // activeRepoConfig is now a derived getter — no init-time assignment. The first
+        // read returns either the canonical service.state.focusPr.repoName (if a PR was
+        // focused in another tab before this panel was opened) or the editor/primary
+        // fallback. Either way, the value is correct without a writer race.
+        log.info("[Build:Dashboard] Initial activeRepoConfig='${activeRepoConfig?.displayLabel}' (focusPr=${workflowContextService.state.value.focusPr?.repoName ?: "<none>"})")
 
         // Toolbar
         val toolbar = createToolbar()
@@ -561,10 +565,22 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             }
         }
 
-        // Start polling
-        startMonitoring()
+        // Fallback polling — only when no PR is focused. The focusPr collector below
+        // subscribes earlier and is the canonical driver when a PR exists; we wait a
+        // short tick to let its first emission land, then fall back if state is empty.
+        // Replaces the old unconditional startMonitoring() that raced the collector.
+        scope.launch {
+            delay(150)
+            if (workflowContextService.state.value.focusPr == null) {
+                invokeLater { startMonitoring() }
+            }
+        }
 
-        // Repo selector listener — switch monitored plan when a different repo is selected
+        // Repo selector listener — write through to the canonical service. The dropdown
+        // is a USER input ("switch focus to this repo"), not a private tab-local field.
+        // Look up an open PR matching the new repo; if found, call service.focusPr(...)
+        // and let the cascade drive Build/Quality/PrBar uniformly. If no PR matches,
+        // clear focus and fall back to the no-PR hint.
         repoSelector?.addActionListener {
             if (suppressRepoSelectorListener) return@addActionListener
             val selectedIndex = repoSelector.selectedIndex
@@ -572,45 +588,34 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
             val selectedRepo = allRepos[selectedIndex]
             val repoName = selectedRepo.displayLabel
-
-            // Mutate the single source of truth FIRST — PrBar.refreshPrs, getGitRepo,
-            // currentPlanKey all read from activeRepoConfig, so we want them to see
-            // the new repo immediately. Also reset activePlanKey so currentPlanKey()
-            // falls through to the new repo's bambooPlanKey (otherwise the previously
-            // auto-detected plan would still win).
-            activeRepoConfig = selectedRepo
             activePlanKey = ""
-            log.info("[Build:Dashboard] repoSelector changed -> activeRepoConfig='$repoName' (reset activePlanKey)")
+            log.info("[Build:Dashboard] repoSelector changed -> '$repoName' — writing through to service")
 
-            // Read current focus PR from WorkflowContextService \u2014 the single source of
-            // truth for "which PR is the user looking at" (Phase 5 T10). The legacy
-            // EventBus.prContextMap path is gone; the service's state.value snapshot
-            // is what onFocusPrChanged would receive on a fresh emit, so we apply it
-            // directly here when it matches the newly-selected repo.
-            val focusPr = workflowContextService.state.value.focusPr
-            if (focusPr != null && focusPr.repoName == repoName) {
-                onFocusPrChanged(focusPr)
-                // Re-emit legacy event for back-compat subscribers (Quality / SonarDataService
-                // are still EventBus-driven during the \u00a75.3 transition window). The
-                // WorkflowEventMirror's state-equality guard no-ops on the round-trip
-                // since state.focusPr already matches this PrRef.
-                scope.launch {
+            // Look up an open PR matching the new repo via the canonical OpenPrLister
+            // EP. If found, write through to the service's focusPr \u2014 that's the single
+            // source of truth and drives Build/Quality/PrBar via the cascade. If no PR
+            // matches, clear focus and let the no-PR fallback render.
+            scope.launch {
+                val matchedPr = OpenPrLister.getInstance()
+                    ?.listOpenPrs(project)
+                    ?.firstOrNull { it.repoName == repoName }
+                if (matchedPr != null) {
+                    workflowContextService.focusPr(matchedPr)
                     project.getService(EventBus::class.java).emit(WorkflowEvent.PrSelected(
-                        prId = focusPr.prId,
-                        fromBranch = focusPr.fromBranch,
-                        toBranch = focusPr.toBranch,
-                        repoName = focusPr.repoName,
-                        bambooPlanKey = focusPr.bambooPlanKey,
-                        sonarProjectKey = focusPr.sonarProjectKey,
+                        prId = matchedPr.prId,
+                        fromBranch = matchedPr.fromBranch,
+                        toBranch = matchedPr.toBranch,
+                        repoName = matchedPr.repoName,
+                        bambooPlanKey = matchedPr.bambooPlanKey,
+                        sonarProjectKey = matchedPr.sonarProjectKey,
                     ))
+                } else {
+                    workflowContextService.focusPr(null)
+                    invokeLater {
+                        showHint("No PR for $repoName \u2014 select one in the PR tab or push a branch to create one")
+                        prBar.refreshPrs()
+                    }
                 }
-            } else {
-                // No matching focus for this repo yet \u2014 ask PrBar to look for PRs on
-                // the current branch of the NEW repo (refreshPrs reads activeRepoConfig,
-                // so it fetches for the selected module). If a PR is found, PrBar's
-                // single-PR path fires onPrSelected and auto-detects the plan.
-                showHint("No PR selected for $repoName \u2014 select one in the PR tab")
-                prBar.refreshPrs()
             }
         }
 
@@ -666,22 +671,16 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
      * `BuildDashboardPanelCoherenceTest`.
      */
     private fun onFocusPrChanged(pr: PrRef) {
-        // Accept single-repo projects too: if there's no selector, we still need to
-        // update activeRepoConfig + load builds. Only bail when the focus targets a
-        // repo we don't know about.
         val matchedRepo = allRepos.firstOrNull { it.displayLabel == pr.repoName }
         if (matchedRepo == null && allRepos.isNotEmpty()) {
             log.warn("[Build:Dashboard] focusPr for unknown repoName='${pr.repoName}' — ignoring")
             return
         }
 
-        // Mutate the single source of truth FIRST so any downstream action (including
-        // listeners reacting to the combo change) reads the new active repo.
-        activeRepoConfig = matchedRepo ?: activeRepoConfig
-        log.info("[Build:Dashboard] onFocusPrChanged: activeRepoConfig='${matchedRepo?.displayLabel}' planKey='${pr.bambooPlanKey}'")
+        log.info("[Build:Dashboard] onFocusPrChanged: matchedRepo='${matchedRepo?.displayLabel}' planKey='${pr.bambooPlanKey}'")
 
-        // Switch repo selector to match (suppress listener — we've already mutated the
-        // state and we're about to load builds synchronously below).
+        // Sync repo selector UI to match. The listener is suppressed because the change
+        // was driven by the canonical service state, not by the user.
         if (repoSelector != null && matchedRepo != null) {
             val repoIndex = allRepos.indexOf(matchedRepo)
             if (repoIndex >= 0) {
@@ -691,9 +690,6 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             }
         }
 
-        // Update PrBar and load builds for this PR — both paths read the SAME PrRef
-        // snapshot, eliminating the within-tab incoherence bug from the legacy dual
-        // (EventBus + prContextMap) source pair.
         prBar.showPrInfo(pr.prId, pr.fromBranch, pr.toBranch)
         loadBuildsForContext(pr.repoName, pr.fromBranch, pr.bambooPlanKey)
     }

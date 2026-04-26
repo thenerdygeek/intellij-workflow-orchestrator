@@ -228,24 +228,53 @@ class WorkflowContextService(
         base: WorkflowContext,
         pr: PrRef,
     ): WorkflowContext {
+        // Resolve keys with the service as the single source of truth: prefer what the
+        // caller passed (already filled by the writer), otherwise look up by repoName in
+        // RepoConfig. NEVER fall back to the scalar setting in multi-repo projects —
+        // that's how the plugin used to mix repo_3's plan key into repo_1's PrRef.
+        // Scalar fallback is allowed only when there's exactly one configured repo
+        // (legacy single-repo setups that never migrated to per-repo keys).
+        val resolvedPr = pr.copy(
+            bambooPlanKey = pr.bambooPlanKey ?: resolveBambooPlanKey(pr.repoName),
+            sonarProjectKey = pr.sonarProjectKey ?: resolveSonarProjectKey(pr.repoName),
+        )
+
         // The [LatestBuildLookup] EP contract documents the implementation as "off-EDT"
         // (`:bamboo`'s `BambooApiClient.get()` already dispatches to `Dispatchers.IO`),
         // so we don't double-wrap with `withContext(Dispatchers.IO)` here. We do bound
         // it with [withTimeoutOrNull] (5s, per spec §4.1 R2) so a stalled HTTP call
         // never wedges the cascade — null on timeout is the documented degraded state.
-        val build = pr.bambooPlanKey?.let { planKey ->
+        val build = resolvedPr.bambooPlanKey?.let { planKey ->
             withTimeoutOrNull(5_000) {
-                LatestBuildLookup.getInstance()?.fetchLatestBuild(project, planKey, pr.fromBranch)
+                LatestBuildLookup.getInstance()?.fetchLatestBuild(project, planKey, resolvedPr.fromBranch)
             }
         }
-        val quality = pr.sonarProjectKey?.let {
+        val quality = resolvedPr.sonarProjectKey?.let {
             QualityScope(
                 sonarProjectKey = it,
-                branchName = pr.fromBranch,
+                branchName = resolvedPr.fromBranch,
                 moduleKey = null,
             )
         }
-        return base.copy(focusPr = pr, focusBuild = build, focusQualityScope = quality)
+        return base.copy(focusPr = resolvedPr, focusBuild = build, focusQualityScope = quality)
+    }
+
+    private fun resolveBambooPlanKey(repoName: String): String? {
+        val settings = PluginSettings.getInstance(project)
+        val configured = settings.getRepos().filter { it.isConfigured }
+        val match = configured.firstOrNull { it.name == repoName || it.displayLabel == repoName }
+        val perRepo = match?.bambooPlanKey?.takeIf { it.isNotBlank() }
+        if (perRepo != null) return perRepo
+        return if (configured.size <= 1) settings.state.bambooPlanKey?.takeIf { it.isNotBlank() } else null
+    }
+
+    private fun resolveSonarProjectKey(repoName: String): String? {
+        val settings = PluginSettings.getInstance(project)
+        val configured = settings.getRepos().filter { it.isConfigured }
+        val match = configured.firstOrNull { it.name == repoName || it.displayLabel == repoName }
+        val perRepo = match?.sonarProjectKey?.takeIf { it.isNotBlank() }
+        if (perRepo != null) return perRepo
+        return if (configured.size <= 1) settings.state.sonarProjectKey?.takeIf { it.isNotBlank() } else null
     }
 
     /**
