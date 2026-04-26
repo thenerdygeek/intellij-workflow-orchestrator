@@ -5,9 +5,35 @@ Eliminates context-switching between Jira, Bamboo, SonarQube, Bitbucket, and Cod
 ## Installation
 
 1. Download `intellij-workflow-orchestrator-<version>.zip` from [Releases](https://github.com/example/intellij-workflow-orchestrator/releases)
-2. Open IntelliJ IDEA 2025.1+
+2. Open **IntelliJ IDEA Ultimate 2025.1+** (Community Edition is not supported — see Requirements below)
 3. **Settings → Plugins → ⚙ → Install Plugin from Disk…** → select the ZIP
 4. Restart IDE
+
+### Requirements
+
+- **IntelliJ IDEA Ultimate 2025.1+** — Community Edition will refuse to install
+  this plugin because of unsatisfied bundled-plugin dependencies
+  (`com.intellij.database`, `com.intellij.spring`, `com.intellij.grpc`,
+  `com.intellij.persistence`, `com.intellij.spring.boot`,
+  `com.intellij.modules.microservices`).
+- **Sourcegraph Cody Enterprise** subscription — required for all AI features
+  (chat, code generation, commit messages, agent loop). The plugin does not
+  call Anthropic / OpenAI directly; all LLM traffic flows through Cody
+  Enterprise. Keep Cody on the current version with content filters enabled
+  to preserve Sourcegraph's IP indemnification terms.
+- **Customer-licensed deployments** of the integrated services. The plugin is
+  a thin client; you must already operate your own:
+  - Atlassian Jira Server / Data Center
+  - Atlassian Bamboo
+  - Atlassian Bitbucket Data Center
+  - SonarQube Server
+  - Sonatype Nexus (with Docker Registry)
+
+### Licensing
+
+The plugin itself is distributed under the Apache License 2.0 (see `LICENSE`).
+Third-party attribution notices are aggregated in `THIRD_PARTY_NOTICES.md`
+and shipped inside the plugin JAR at `META-INF/THIRD_PARTY_NOTICES.md`.
 
 ## First-Time Setup
 

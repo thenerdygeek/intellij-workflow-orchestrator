@@ -90,8 +90,8 @@ intellijPlatform {
         }
 
         vendor {
-            name = "Your Name"
-            email = "you@example.com"
+            name = "Subhankar Halder"
+            email = "subhankarhalder22@gmail.com"
             url = "https://example.com"
         }
     }
