@@ -263,7 +263,15 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     chip.dataset.chipStatus = status;
     chip.className = 'inline-flex items-center gap-0.5 rounded px-1 py-0 text-[11px] font-medium mx-0.5 align-baseline transition-colors duration-300';
     chip.style.cssText = `color:${colors.color};background:${colors.bg};border:1px solid ${colors.border};user-select:none;cursor:default;line-height:1.6;`;
-    chip.innerHTML = `<span>${mention.label}</span><button data-remove aria-label="Remove ${mention.label}" style="opacity:0.6;cursor:pointer;margin-left:2px;font-size:9px;line-height:1;">&times;</button>`;
+    const labelSpan = document.createElement('span');
+    labelSpan.textContent = mention.label;
+    chip.appendChild(labelSpan);
+    const removeBtn = document.createElement('button');
+    removeBtn.setAttribute('data-remove', '');
+    removeBtn.setAttribute('aria-label', `Remove ${mention.label}`);
+    removeBtn.style.cssText = 'opacity:0.6;cursor:pointer;margin-left:2px;font-size:9px;line-height:1;';
+    removeBtn.textContent = '×';
+    chip.appendChild(removeBtn);
 
     // Replace the text node content
     textNode.textContent = before;
@@ -466,7 +474,15 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       chip.dataset.chipStatus = 'pending';
       chip.className = 'inline-flex items-center gap-0.5 rounded px-1 py-0 text-[11px] font-medium mx-0.5 align-baseline transition-colors duration-300';
       chip.style.cssText = `color:${colors.color};background:${colors.bg};border:1px solid ${colors.border};user-select:none;cursor:default;line-height:1.6;`;
-      chip.innerHTML = `<span>${ticketKey}</span><button data-remove aria-label="Remove ${ticketKey}" style="opacity:0.6;cursor:pointer;margin-left:2px;font-size:9px;line-height:1;">&times;</button>`;
+      const ticketLabelSpan = document.createElement('span');
+      ticketLabelSpan.textContent = ticketKey;
+      chip.appendChild(ticketLabelSpan);
+      const ticketRemoveBtn = document.createElement('button');
+      ticketRemoveBtn.setAttribute('data-remove', '');
+      ticketRemoveBtn.setAttribute('aria-label', `Remove ${ticketKey}`);
+      ticketRemoveBtn.style.cssText = 'opacity:0.6;cursor:pointer;margin-left:2px;font-size:9px;line-height:1;';
+      ticketRemoveBtn.textContent = '×';
+      chip.appendChild(ticketRemoveBtn);
       fragment.appendChild(chip);
 
       // Track the mention
