@@ -1,5 +1,7 @@
 package com.workflow.orchestrator.agent.tools.runtime
 
+import com.intellij.openapi.diagnostic.Logger
+import com.workflow.orchestrator.core.security.UrlSafetyGuard
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -23,6 +25,8 @@ import kotlin.coroutines.coroutineContext
  */
 class HttpReadinessProbe(private val httpClient: HttpClient = DEFAULT_CLIENT) {
 
+    private val log = Logger.getInstance(HttpReadinessProbe::class.java)
+
     /** Result of a completed probe attempt. */
     sealed class ProbeResult {
         /** HTTP 200 received — app is ready. [responseSummary] is the first 200 chars of body. */
@@ -33,6 +37,18 @@ class HttpReadinessProbe(private val httpClient: HttpClient = DEFAULT_CLIENT) {
         object ConnectionRefused : ProbeResult()
         /** Server responded with a non-200 status code throughout. [status] is the last seen code. */
         data class HttpError(val status: Int) : ProbeResult()
+        /**
+         * URL was rejected by [UrlSafetyGuard] before any socket was opened — points at AWS
+         * metadata, link-local, loopback (when not allowed), or another blocked range.
+         * [reason] names the offending category; [message] is a human-readable description.
+         *
+         * Callers (e.g. `runtime_exec.run_config`) should map this to an `URL_BLOCKED` reason in
+         * their `READINESS_DETECTION_FAILED` error result.
+         */
+        data class Blocked(
+            val reason: UrlSafetyGuard.Reason,
+            val message: String,
+        ) : ProbeResult()
     }
 
     /**
@@ -50,6 +66,19 @@ class HttpReadinessProbe(private val httpClient: HttpClient = DEFAULT_CLIENT) {
         gracePeriodMs: Long = DEFAULT_GRACE_MS,
         connectTimeoutMs: Long = DEFAULT_CONNECT_TIMEOUT_MS,
     ): ProbeResult {
+        // SSRF guard: reject AWS metadata / link-local / 0.0.0.0 / IPv6 link-local before
+        // any socket is opened. A prompt-injected LLM cannot use runtime_exec.run_config(
+        // ready_url=…) to probe internal addresses. allowLoopback=true because the legitimate
+        // use case is the developer's local Spring Boot app at http://localhost:PORT/health.
+        val safety = withContext(Dispatchers.IO) {
+            UrlSafetyGuard.isUrlSafe(url, allowLoopback = true)
+        }
+        if (safety.isFailure) {
+            val ex = safety.exceptionOrNull() as UrlSafetyGuard.UrlBlockedException
+            log.debug("HttpReadinessProbe blocked URL '$url': ${ex.message}")
+            return ProbeResult.Blocked(ex.reason, ex.message ?: "URL blocked")
+        }
+
         var lastStatus = -1
         var lastConnRefused = false
         var backoffMs = BACKOFF_START_MS
