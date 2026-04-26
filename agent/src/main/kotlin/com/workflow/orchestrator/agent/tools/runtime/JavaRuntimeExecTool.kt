@@ -1018,35 +1018,66 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             if (authoritativeBuildPath != null && !authoritativeBuildPath.startsWith(":")) File(authoritativeBuildPath)
             else mavenModuleDir
 
-        val command = when {
+        // For Maven multi-module: run from the submodule directory so Maven uses the
+        // submodule's pom.xml and doesn't walk unrelated modules. For everything else
+        // (Gradle, single-module Maven) always run from the project root.
+        val workDir = if (hasMaven && effectiveMavenDir != null && effectiveMavenDir != baseDir) effectiveMavenDir else baseDir
+
+        // Build the argv list directly — no shell interpreter is invoked.
+        //
+        // Security rationale (T4): passing a single command string to `sh -c` would allow
+        // shell metacharacters in class names, method names, or module paths to be interpreted
+        // by the shell even after input validation. argv-form ProcessBuilder passes each
+        // argument as a discrete array element to execve(2); the OS never invokes a shell and
+        // metacharacters are treated as literal characters.
+        //
+        // METHOD_NAME_REGEX still runs first (above) and rejects method names that contain
+        // `;`, `$`, backticks, spaces, or other non-identifier characters. That validation
+        // is the primary guard; argv-form is defence-in-depth.
+        //
+        // Wrapper resolution: prefer the project-local wrapper script (`mvnw` / `gradlew`)
+        // over the system-installed binary so the project's pinned Maven/Gradle version is
+        // used. The wrapper is resolved to an absolute path so `ProcessBuilder` does not
+        // depend on the working directory's position in PATH.
+        val argv: List<String> = when {
             hasMaven -> {
                 // Surefire native multi-method syntax: `-Dtest=ClassName#method1+method2+method3`.
                 // The `+` separator is Surefire-specific (NOT comma — comma separates
                 // distinct classes). Single-method stays `-Dtest=Class#m`; whole-class
-                // stays `-Dtest=Class`.
+                // stays `-Dtest=Class`. The entire value is a single argv element — the OS
+                // does not split on `+` or `#`, so no quoting is needed.
                 val methodPart = when (methods.size) {
                     0 -> ""
                     1 -> "#${methods.first()}"
                     else -> "#${methods.joinToString("+")}"
                 }
+                val dTestArg = "-Dtest=${className}${methodPart}"
+                // Resolve mvnw → absolute path; fall back to `mvn` on PATH.
+                val mvnExec = File(baseDir, "mvnw").takeIf { it.canExecute() }?.absolutePath ?: "mvn"
                 if (effectiveMavenDir != null && effectiveMavenDir != baseDir) {
-                    // Run only the submodule to avoid rebuilding unrelated modules
-                    "mvn test -Dtest=${className}${methodPart} -Dsurefire.useFile=false -q --also-make"
+                    // Run only the submodule to avoid rebuilding unrelated modules.
+                    // workDir is already set to effectiveMavenDir above so Maven's pom.xml
+                    // is the submodule's pom — no `-pl` needed, but `--also-make` ensures
+                    // upstream dependencies are up to date.
+                    listOf(mvnExec, "test", dTestArg, "-Dsurefire.useFile=false", "-q", "--also-make")
                 } else {
-                    "mvn test -Dtest=${className}${methodPart} -Dsurefire.useFile=false -q"
+                    listOf(mvnExec, "test", dTestArg, "-Dsurefire.useFile=false", "-q")
                 }
             }
             hasGradle -> {
-                val gradleWrapper = if (File(baseDir, "gradlew").exists()) "./gradlew" else "gradle"
+                // Resolve gradlew → absolute path; fall back to `gradle` on PATH.
+                val gradlewFile = File(baseDir, "gradlew").takeIf { it.canExecute() }
+                val gradleExec = gradlewFile?.absolutePath ?: "gradle"
+                val taskPrefix = if (effectiveGradlePath != null) "${effectiveGradlePath}:test" else "test"
                 // Gradle multi-method: repeat the `--tests` flag once per selector.
                 // Each selector is 'ClassName.methodName' (Gradle uses `.` not `#`).
-                // Whole-class: one flag with no method suffix.
-                val testsFlags = when (methods.size) {
-                    0 -> "--tests '$className'"
-                    else -> methods.joinToString(" ") { "--tests '$className.$it'" }
+                // Each `--tests` value is a discrete argv element — no shell quoting needed.
+                // Whole-class: a single `--tests ClassName` element with no method suffix.
+                val testsArgs: List<String> = when (methods.size) {
+                    0 -> listOf("--tests", className)
+                    else -> methods.flatMap { m -> listOf("--tests", "$className.$m") }
                 }
-                val taskPrefix = if (effectiveGradlePath != null) "${effectiveGradlePath}:test" else "test"
-                "$gradleWrapper $taskPrefix $testsFlags --no-daemon -q"
+                listOf(gradleExec, taskPrefix) + testsArgs + listOf("--no-daemon", "-q")
             }
             else -> return ToolResult(
                 "No Maven (pom.xml) or Gradle (build.gradle) build file found in project root.",
@@ -1054,18 +1085,8 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             )
         }
 
-        // For Maven multi-module: run from the submodule directory so Maven uses the
-        // submodule's pom.xml and doesn't walk unrelated modules. For everything else
-        // (Gradle, single-module Maven) always run from the project root.
-        val workDir = if (hasMaven && effectiveMavenDir != null && effectiveMavenDir != baseDir) effectiveMavenDir else baseDir
-
         return try {
-            val isWindows = System.getProperty("os.name").lowercase().contains("win")
-            val processBuilder = if (isWindows) {
-                ProcessBuilder("cmd.exe", "/c", command)
-            } else {
-                ProcessBuilder("sh", "-c", command)
-            }
+            val processBuilder = ProcessBuilder(argv)
 
             processBuilder.directory(workDir)
             processBuilder.redirectErrorStream(true)
@@ -1166,7 +1187,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                 }
                 reportEntries != null && reportEntries.isEmpty() -> {
                     // XML reports exist but all had tests="0" → class had no @Test methods
-                    noTestsFoundResult(testTarget, command, exitCode, spilledOutput.preview, spillPath = spilledOutput.spilledToFile)
+                    noTestsFoundResult(testTarget, argv.joinToString(" "), exitCode, spilledOutput.preview, spillPath = spilledOutput.spilledToFile)
                 }
                 isBuildFailure -> {
                     // Preserve the existing BUILD FAILED message — no reports to parse
@@ -1201,7 +1222,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                     // Neither XML reports nor "Tests run:" marker — nothing actually
                     // executed. This is the user-incident-#2 case: target wasn't a
                     // real test class.
-                    noTestsFoundResult(testTarget, command, exitCode, spilledOutput.preview, spillPath = spilledOutput.spilledToFile)
+                    noTestsFoundResult(testTarget, argv.joinToString(" "), exitCode, spilledOutput.preview, spillPath = spilledOutput.spilledToFile)
                 }
             }
         } catch (e: Exception) {

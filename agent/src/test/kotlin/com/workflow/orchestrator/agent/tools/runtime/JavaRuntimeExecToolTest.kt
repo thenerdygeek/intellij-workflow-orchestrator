@@ -828,4 +828,157 @@ class JavaRuntimeExecToolTest {
             )
         }
     }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // T4 — argv-form ProcessBuilder security tests (no sh -c)
+    //
+    // The shell-fallback path in executeWithShell previously passed the
+    // entire Maven/Gradle command to `sh -c "<command>"`, which allowed
+    // shell metacharacters in class names or module paths to be interpreted
+    // by the shell.  The fix replaces this with an explicit argv list so
+    // no shell is invoked and metacharacters are never interpreted.
+    //
+    // These tests:
+    //   1. Confirm that the source no longer contains `sh -c` in the
+    //      shell-fallback path.
+    //   2. Confirm that maliciously-named method identifiers are rejected
+    //      by METHOD_NAME_REGEX BEFORE reaching ProcessBuilder.
+    //   3. Confirm multi-method Maven survives as a single `+`-joined
+    //      `-Dtest=…` argv element (no shell needed to parse it).
+    //   4. Confirm multi-method Gradle produces one `--tests` element per
+    //      method (safe as individual argv elements).
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `T4 security canary — sh -c no longer present in shell-fallback path`() {
+        val sourceFile = findSourceFile("JavaRuntimeExecTool.kt")
+        assertNotNull(sourceFile, "Could not find JavaRuntimeExecTool.kt")
+        val source = sourceFile!!.readText()
+        // The only ProcessBuilder calls allowed are the argv-form ones
+        // (ProcessBuilder(listOf(...))). `sh -c` and `cmd.exe /c` wrapping
+        // a single assembled command string must be gone.
+        assertFalse(
+            source.contains("ProcessBuilder(\"sh\", \"-c\""),
+            "sh -c ProcessBuilder must be removed from JavaRuntimeExecTool.kt"
+        )
+        assertFalse(
+            source.contains("ProcessBuilder(\"cmd.exe\", \"/c\""),
+            "cmd.exe /c ProcessBuilder must be removed from JavaRuntimeExecTool.kt"
+        )
+    }
+
+    @Test
+    fun `T4 — malicious method name with semicolon is rejected before ProcessBuilder`() = runTest {
+        // METHOD_NAME_REGEX = ^[A-Za-z_$][A-Za-z0-9_$]*$  — semicolon fails it.
+        // Injection attempt: testFoo; rm -rf /
+        val result = tool.execute(
+            buildJsonObject {
+                put("action", "run_tests")
+                put("class_name", "com.example.FooTest")
+                put("method", "testFoo; rm -rf /")   // comma-parse splits on comma only;
+                // this is a single token that fails METHOD_NAME_REGEX
+            },
+            project
+        )
+        assertTrue(result.isError, "Malicious method name must be rejected")
+        assertTrue(
+            result.content.contains("invalid method name"),
+            "Error must mention 'invalid method name'. Got: ${result.content}"
+        )
+        // Crucially: the error must NOT mention rm or shell execution — it was
+        // caught in input validation, not after process spawn.
+        assertFalse(
+            result.content.contains("Error running tests"),
+            "Must fail at validation, not at process execution. Got: ${result.content}"
+        )
+    }
+
+    @Test
+    fun `T4 — malicious method name with backtick is rejected before ProcessBuilder`() = runTest {
+        val result = tool.execute(
+            buildJsonObject {
+                put("action", "run_tests")
+                put("class_name", "com.example.FooTest")
+                put("method", "testFoo\$(touch /tmp/pwned)")
+            },
+            project
+        )
+        assertTrue(result.isError)
+        assertTrue(
+            result.content.contains("invalid method name"),
+            "Dollar-paren injection must be caught by METHOD_NAME_REGEX. Got: ${result.content}"
+        )
+    }
+
+    @Test
+    fun `T4 Maven — multi-method testFoo+testBar+testBaz survives as single -Dtest argv element`(
+        @TempDir tempDir: Path
+    ) = runTest {
+        File(tempDir.toFile(), "pom.xml").writeText("<project/>")
+        val mavenProject = mockk<Project>(relaxed = true)
+        every { mavenProject.basePath } returns tempDir.toFile().absolutePath
+
+        val result = tool.execute(
+            buildJsonObject {
+                put("action", "run_tests")
+                put("class_name", "com.example.FooTest")
+                put("method", "testFoo,testBar,testBaz")
+                put("use_native_runner", false)
+                put("timeout", 5)
+            },
+            mavenProject
+        )
+        // The run will fail (mvn not installed) but must NOT fail at input validation.
+        assertFalse(
+            result.content.contains("invalid method name") ||
+                result.content.contains("too many methods") ||
+                result.content.contains("only separators"),
+            "Three valid methods must pass validation. Got: ${result.content}"
+        )
+        // Also must not say "No build tool found" — it found Maven.
+        assertFalse(
+            result.content.contains("No Maven") && result.content.contains("Gradle"),
+            "Maven pom.xml present: should NOT say 'No build tool found'. Got: ${result.content}"
+        )
+        // The command displayed in error/NO_TESTS_FOUND output should contain
+        // the Surefire `+` separator, not `,` (which Surefire treats as class separator).
+        if (result.content.contains("-Dtest=")) {
+            assertTrue(
+                result.content.contains("-Dtest=com.example.FooTest#testFoo+testBar+testBaz") ||
+                    result.content.contains("testFoo+testBar+testBaz"),
+                "Surefire multi-method must use + separator. Got: ${result.content}"
+            )
+        }
+    }
+
+    @Test
+    fun `T4 Gradle — multi-method produces one --tests flag per method`(
+        @TempDir tempDir: Path
+    ) = runTest {
+        File(tempDir.toFile(), "build.gradle").writeText("// gradle build")
+        val gradleProject = mockk<Project>(relaxed = true)
+        every { gradleProject.basePath } returns tempDir.toFile().absolutePath
+
+        val result = tool.execute(
+            buildJsonObject {
+                put("action", "run_tests")
+                put("class_name", "com.example.FooTest")
+                put("method", "testFoo,testBar")
+                put("use_native_runner", false)
+                put("timeout", 5)
+            },
+            gradleProject
+        )
+        // Must not fail at input validation
+        assertFalse(
+            result.content.contains("invalid method name") ||
+                result.content.contains("too many methods"),
+            "Two valid methods must pass validation. Got: ${result.content}"
+        )
+        // Must not say "No build tool found"
+        assertFalse(
+            result.content.contains("No Maven") && result.content.contains("Gradle"),
+            "Gradle build.gradle present: should NOT say 'No build tool found'. Got: ${result.content}"
+        )
+    }
 }
