@@ -23,8 +23,6 @@ import com.workflow.orchestrator.core.model.workflow.WorkflowContext
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoContextResolver
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -40,13 +38,17 @@ import kotlinx.coroutines.withTimeoutOrNull
 /**
  * Project-level holder for the unified [WorkflowContext] state cell. See
  * `docs/architecture/workflow-context-design.md` (§3.2 + §4.5) and
- * `docs/architecture/phase5-workflow-context-plan.md` (Task 5/6).
+ * `docs/architecture/phase5-workflow-context-plan.md` (Task 5/6/7).
  *
- * Phase 5 T7 — adds the `focusPr` cascade with mutex serialization, cancel-previous,
- * and EP-driven build lookup (spec §4.0, §4.1, §4.4). The [setActiveTicket] auto-seed
- * (T6) now routes through [computeFocusForPr] so the build/quality cascade runs there
- * too. Mirror integration (`WorkflowEventMirror`) lands in T8 — it uses [serviceCs] to
- * launch event-driven cascades on the platform-managed scope.
+ * Phase 5 T7 — adds the `focusPr` cascade with mutex serialization and EP-driven build
+ * lookup (spec §4.0, §4.1, §4.4). The [setActiveTicket] auto-seed (T6) routes through
+ * [computeFocusForPr] so the build/quality cascade runs there too. Cascade serialization
+ * is via the mutex alone (the cascade body runs inline under the lock); the spec's
+ * launch-cancel example was simplified to inline-mutex during plan v2 because (a) the 5s
+ * `withTimeoutOrNull` already bounds worst-case latency, (b) `runTest` virtual-time
+ * interaction with launched HTTP cascades is fragile. Mirror integration
+ * (`WorkflowEventMirror`) lands in T8 — it uses [serviceCs] to launch event-driven
+ * cascades on the platform-managed scope.
  */
 @Service(Service.Level.PROJECT)
 class WorkflowContextService(
@@ -55,13 +57,6 @@ class WorkflowContextService(
 ) : Disposable {
     private val log = Logger.getInstance(WorkflowContextService::class.java)
     private val cascadeMutex = Mutex()
-
-    /**
-     * Tracks any in-flight `focusPr` cascade so a newer call can `cancelAndJoin()` it
-     * before starting its own HTTP build lookup (spec §4.0 cancel-previous semantics).
-     * Read/written only under [cascadeMutex].
-     */
-    private var currentFocusJob: Job? = null
 
     private val _state = MutableStateFlow(WorkflowContext())
     val state: StateFlow<WorkflowContext> = _state.asStateFlow()
@@ -200,8 +195,9 @@ class WorkflowContextService(
      * Sets (or clears) the focused PR and cascades to `focusBuild` + `focusQualityScope`
      * in a single observable state transition (spec §4.0, §4.1, §4.4).
      *
-     * Mutex-serialized with all other mutators. On entry, any prior in-flight focus job
-     * is `cancelAndJoin()`-ed so a stale build lookup never overwrites a newer cascade.
+     * Mutex-serialized with all other mutators — concurrent calls run sequentially, so
+     * a stale build lookup can never overwrite a newer cascade (each call's `_state.value`
+     * write completes before the next call enters the lock).
      *
      * For `pr == null`, the focus chain is fully cleared. Per-spec §4.1, re-deriving
      * `focusBuild` from `activeBranch` is deferred to `latestBuildForBranchFlow`
@@ -209,8 +205,6 @@ class WorkflowContextService(
      * call is made.
      */
     suspend fun focusPr(pr: PrRef?) = cascadeMutex.withLock {
-        currentFocusJob?.cancelAndJoin()
-
         val newCtx = if (pr == null) {
             _state.value.copy(focusPr = null, focusBuild = null, focusQualityScope = null)
         } else {

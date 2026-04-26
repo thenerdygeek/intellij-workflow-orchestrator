@@ -130,25 +130,27 @@ Service constructor matches the **Phase 4 service-injected scope convention** (n
 
 ### 4.0 Cascade serialization (mutex-guarded)
 
-Every public mutator (`setActiveTicket`, `focusPr`, `focusBuild`) and every internal mirror invocation acquires a single project-scoped `Mutex` for the duration of the cascade. This produces three guarantees:
+Every public mutator (`setActiveTicket`, `focusPr`, `focusBuild`) and every internal mirror invocation acquires a single project-scoped `Mutex` for the duration of the cascade. The cascade body — including any HTTP lookups — runs **inline under the lock**. This produces two guarantees:
 
 - **Cascade atomicity.** A cascade composes its entire next `WorkflowContext` and writes `_state.value =` exactly once. No subscriber observes a half-applied cascade.
-- **No interleaving.** If two `focusPr()` calls arrive at t=0 and t=200ms (the C1 race), the second blocks until the first releases. The first's `_state.value =` write completes before the second starts.
-- **Cancel-previous semantics for `focusPr`.** When the second `focusPr(...)` enters the mutex, it inspects a `currentFocusJob: Job?` field; if non-null and active, it calls `cancelAndJoin()` on it before starting its own HTTP lookup. Rationale: when a user clicks a newer PR, they don't care about the older PR's build lookup. The HTTP call for the abandoned PR is cancelled cooperatively.
+- **No interleaving (last-wins).** If two `focusPr()` calls arrive at t=0 and t=200ms (the C1 race), the second blocks on the mutex until the first fully completes (including its HTTP). The final `state.value` reflects the latest call.
 
 The mirror (§5.1 step 4) routes through the same mutex. Combined with the `state.value`-equality guard, this eliminates the C2 feedback path: by the time the mirror processes a legacy event whose state was just updated by a direct mutator call, `state.value` already matches the event's payload → no-op.
 
 ```kotlin
 private val cascadeMutex = Mutex()
-private var currentFocusJob: Job? = null
 
 suspend fun focusPr(pr: PrRef?) = cascadeMutex.withLock {
-    currentFocusJob?.cancelAndJoin()
-    currentFocusJob = cs.launch {
-        // ... cascade body, single _state.value = next at end ...
+    val newCtx = if (pr == null) {
+        _state.value.copy(focusPr = null, focusBuild = null, focusQualityScope = null)
+    } else {
+        computeFocusForPr(_state.value, pr)  // does HTTP build lookup off-EDT
     }
+    _state.value = newCtx
 }
 ```
+
+**Cancel-previous semantics considered and dropped.** Earlier drafts launched the cascade body on `cs` and used a `currentFocusJob: Job?` field to `cancelAndJoin()` the previous launch — letting a newer click immediately abort an older PR's in-flight HTTP. That design was simplified to inline-mutex during plan v2 because (a) the 5s `withTimeoutOrNull` already bounds the worst-case latency a rapid clicker faces, (b) `runTest` virtual-time interaction with launched HTTP cascades is fragile and was producing spurious test failures, and (c) the C1 correctness fix is fully provided by the mutex alone — cancel-previous was a UX optimization, not a correctness requirement. Revisit if real-world rapid-click latency becomes a complaint.
 
 
 Each field has exactly one writer.
@@ -165,7 +167,7 @@ Each field has exactly one writer.
 
 Runs inside the mutex (§4.0). For non-null `pr`:
 
-1. `currentFocusJob?.cancelAndJoin()` — abandon any in-flight focus.
+1. (No cancel-previous step — mutex serialization provides last-wins semantics; see §4.0.)
 2. Lookup latest build for `pr.fromBranch` via `BambooApiClient` (suspend, off-EDT — `withContext(Dispatchers.IO)`). Wrapped in `withTimeoutOrNull(5_000)` per R2.
 3. Compose new context with `focusPr = pr`, `focusBuild = b` (or null on timeout), `focusQualityScope = q`.
 4. Single `_state.value = newContext` — **one observable transition.**
