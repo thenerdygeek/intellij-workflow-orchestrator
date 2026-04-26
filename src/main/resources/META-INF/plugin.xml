@@ -212,6 +212,9 @@
         <postStartupActivity
             implementation="com.workflow.orchestrator.core.autodetect.WorkflowAutoDetectStartupActivity"/>
 
+        <postStartupActivity
+            implementation="com.workflow.orchestrator.core.workflow.WorkflowContextProjectActivity"/>
+
         <!-- TODO Phase 1B: BuildStatusBarWidgetFactory -->
 
         <!-- Auto-detect orchestrator (core, no module dependency) -->
