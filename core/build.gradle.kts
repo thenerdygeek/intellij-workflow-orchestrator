@@ -43,6 +43,9 @@ dependencies {
     // Test
     testImplementation(libs.junit5.api)
     testRuntimeOnly(libs.junit5.engine)
+    // JUnit Vintage engine — bridges JUnit 4 tests (BasePlatformTestCase) onto the JUnit 5 platform.
+    // Phase 5 T18 — only required by `WorkflowContextEditorIntegrationTest`.
+    testRuntimeOnly(libs.junit5.vintage.engine)
     testRuntimeOnly(libs.junit5.platform.launcher)
     testImplementation(libs.mockk)
     testImplementation(libs.kotlinx.coroutines.test)
