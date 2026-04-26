@@ -12,8 +12,6 @@ import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.integration.ServiceLookup
 import com.workflow.orchestrator.core.ai.TokenEstimator
-import com.workflow.orchestrator.core.events.EventBus
-import com.workflow.orchestrator.core.events.PrContext
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.util.DefaultBranchResolver
@@ -78,7 +76,6 @@ class ProjectContextTool : AgentTool {
         val settings = try { PluginSettings.getInstance(project) } catch (_: Exception) { null }
         val state = settings?.state
         val repoConfigs = settings?.getRepos()?.filter { it.isConfigured } ?: emptyList()
-        val eventBus = try { project.getService(EventBus::class.java) } catch (_: Exception) { null }
 
         if (repoConfigs.size > 1) {
             // Multi-repo: iterate each repo
@@ -88,7 +85,6 @@ class ProjectContextTool : AgentTool {
                 val primary = if (config.isPrimary) " [PRIMARY]" else ""
                 val sonarKey = config.sonarProjectKey?.takeIf { it.isNotBlank() } ?: ""
                 val bambooPlanKey = config.bambooPlanKey?.takeIf { it.isNotBlank() } ?: ""
-                val prContext = eventBus?.prContextMap?.get(config.displayLabel)
 
                 sb.appendLine()
                 sb.appendLine("── ${config.displayLabel}$primary ──")
@@ -97,8 +93,8 @@ class ProjectContextTool : AgentTool {
                 // Recent commits for this repo
                 appendRecentCommits(sb, project, gitRepo, branch)
 
-                // Network: PR, build, quality — use PrContext for quick status, fetch details in parallel
-                appendRepoStatus(sb, project, config.displayLabel, branch, bambooPlanKey, sonarKey, prContext)
+                // Network: PR, build, quality — fetch details in parallel.
+                appendRepoStatus(sb, project, config.displayLabel, branch, bambooPlanKey, sonarKey)
             }
         } else {
             // Single repo: original behavior
@@ -107,10 +103,9 @@ class ProjectContextTool : AgentTool {
             val bambooPlanKey = repoConfigs.firstOrNull()?.bambooPlanKey?.takeIf { it.isNotBlank() }
                 ?: state?.bambooPlanKey ?: ""
             val repoName = repoConfigs.firstOrNull()?.displayLabel ?: ""
-            val prContext = if (repoName.isNotBlank()) eventBus?.prContextMap?.get(repoName) else null
 
             appendRecentCommits(sb, project, primaryRepo, currentBranch)
-            appendRepoStatus(sb, project, repoName, currentBranch, bambooPlanKey, sonarKey, prContext)
+            appendRepoStatus(sb, project, repoName, currentBranch, bambooPlanKey, sonarKey)
         }
 
         val content = sb.toString().trimEnd()
@@ -122,8 +117,13 @@ class ProjectContextTool : AgentTool {
     }
 
     /**
-     * Appends PR, build, and quality status for a single repo.
-     * Uses PrContext for immediate status if available, fetches details in parallel.
+     * Appends PR, build, and quality status for a single repo. Fetches details in parallel.
+     *
+     * Phase 5 T16 removed the quick build/quality status line that previously read
+     * `EventBus.prContextMap`: T12 deleted the only writer for those fields (the dashboard's
+     * `fetchAndUpdateStatuses`), and the focused PR snapshot in `WorkflowContextService` only
+     * carries keys (`bambooPlanKey`, `sonarProjectKey`), not statuses. The Bamboo and Sonar
+     * detail sections fetched below already provide richer, authoritative status.
      */
     private suspend fun appendRepoStatus(
         sb: StringBuilder,
@@ -132,19 +132,7 @@ class ProjectContextTool : AgentTool {
         branch: String,
         bambooPlanKey: String,
         sonarKey: String,
-        prContext: PrContext?
     ) {
-        // Quick status line from PrContext (if available)
-        if (prContext != null) {
-            val buildIcon = when (prContext.buildStatus) {
-                "SUCCESSFUL" -> "✓"; "FAILED" -> "✗"; "INPROGRESS" -> "⟳"; else -> "?"
-            }
-            val gateIcon = when (prContext.qualityGateStatus) {
-                "OK" -> "✓"; "ERROR" -> "✗"; else -> "?"
-            }
-            sb.appendLine("  Status: Build $buildIcon ${prContext.buildStatus ?: "unknown"}  |  Quality Gate $gateIcon ${prContext.qualityGateStatus ?: "unknown"}")
-        }
-
         // Fetch detailed sections in parallel
         val networkSections = coroutineScope {
             val cachePrefix = if (repoName.isNotBlank()) "${repoName}:" else ""
