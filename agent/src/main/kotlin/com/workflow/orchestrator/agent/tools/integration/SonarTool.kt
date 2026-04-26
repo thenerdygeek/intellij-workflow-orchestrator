@@ -337,28 +337,21 @@ Common optional: repo_name for multi-repo projects.
         val scannerInclusions = (mavenScope?.relativePathsFromWorkingDir ?: relativePaths).joinToString(",")
 
         val buildTool = if (hasMaven) "Maven" else "Gradle"
-        val branchFlag = branch?.let { " -Dsonar.branch.name=$it" } ?: ""
-        val projectsFlag = mavenScope?.projectsFlag?.let { " -pl $it -am" } ?: ""
-        // sonar.token is the current standard (SonarQube 10+); sonar.login still accepted on older versions
-        val command = when {
-            // TODO(backlog): Use IntelliJ's MavenRunner/ExternalSystemUtil instead of ProcessBuilder
-            //   so that Settings > Build Tools > Maven/Gradle (custom home, JVM args, settings.xml) are respected.
-            hasMaven -> "mvn sonar:sonar$projectsFlag -Dsonar.host.url=$sonarUrl -Dsonar.token=$token -Dsonar.inclusions=$scannerInclusions$branchFlag"
-            else -> {
-                val gradle = if (File(baseDir, "gradlew").exists()) "./gradlew" else "gradle"
-                "$gradle sonar -Dsonar.host.url=$sonarUrl -Dsonar.token=$token -Dsonar.inclusions=$scannerInclusions$branchFlag"
-            }
-        }
+        val projectsFlag = mavenScope?.projectsFlag
+
+        // ── 3c. Validate branch name before any process spawn ─────────────
+        val branchValidation = validateBranchName(branch)
+        if (branchValidation.isError) return branchValidation
 
         // ── 4. Execute scanner, stream output, capture CE task ID ──────────
         val startTime = System.currentTimeMillis()
         val outputBuilder = StringBuilder()
         var ceTaskId: String? = null
 
-        val isWindows = System.getProperty("os.name").lowercase().contains("win")
-        val pb = if (isWindows) ProcessBuilder("cmd.exe", "/c", command)
-        else ProcessBuilder("sh", "-c", command)
-        pb.directory(workingDir).redirectErrorStream(true)
+        // TODO(backlog): Use IntelliJ's MavenRunner/ExternalSystemUtil instead of ProcessBuilder
+        //   so that Settings > Build Tools > Maven/Gradle (custom home, JVM args, settings.xml) are respected.
+        val pb = buildScannerProcess(buildTool, sonarUrl, token, projectsFlag, scannerInclusions, branch, workingDir)
+        pb.redirectErrorStream(true)
 
         // Streaming pipe: tool-call correlation is set by AgentLoop via STREAMING_TOOLS.
         // When the ID is null (direct invocation in a test, or missing wiring), heartbeats
@@ -888,6 +881,107 @@ Common optional: repo_name for multi-repo projects.
         return "local-scratch-$sanitized"
     }
 
+    // ══════════════════════════════════════════════════════════════════════
+    // Security helpers — T2 (HIGH): token off argv + branch-name validation
+    // ══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Validate a Sonar branch name against the allowed-character allowlist.
+     *
+     * Allowed: `[a-zA-Z0-9._\-/]+`
+     * Rejected: any character outside that set (semicolons, backticks, `$`, `&`, `|`, spaces, …).
+     *
+     * Null and blank are both treated as "omit the branch flag" — non-error so the caller can
+     * skip adding `-Dsonar.branch.name` without additional null-checks.
+     *
+     * Threat model: even though we use the argv `ProcessBuilder` form (which prevents shell
+     * metacharacter interpretation in the OS), validation is applied as defense-in-depth so
+     * the LLM cannot accidentally pass a branch name that confuses the Sonar scanner CLI parser
+     * itself (e.g. a value like `foo -Dsonar.token=stolen`).
+     */
+    fun validateBranchName(branch: String?): ToolResult {
+        if (branch.isNullOrBlank()) {
+            return ToolResult("OK", "branch validation: omitted", 1, isError = false)
+        }
+        return if (BRANCH_NAME_REGEX.matches(branch)) {
+            ToolResult("OK", "branch validation: passed", 1, isError = false)
+        } else {
+            ToolResult(
+                "INVALID_BRANCH_NAME: '$branch' contains characters not allowed in a SonarQube branch name. " +
+                    "Allowed: alphanumerics, '.', '_', '-', '/'. " +
+                    "Found disallowed character(s). Shell metacharacters (';', '`', '\$', '&', '|', space) are never permitted.",
+                "Invalid branch name",
+                ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+        }
+    }
+
+    /**
+     * Build a [ProcessBuilder] for a local Sonar scanner invocation.
+     *
+     * Security guarantees (T2):
+     *  1. **Token NOT in argv**: `token` is placed in `SONAR_TOKEN` env var (SonarQube scanner
+     *     reads it natively as of v4.x). The process argument list never includes
+     *     `-Dsonar.token=<value>` — so `ps aux` output can never leak the credential.
+     *  2. **No shell wrapper**: the returned ProcessBuilder uses a discrete argv list, never
+     *     `["sh", "-c", "..."]` or `["cmd.exe", "/c", "..."]`. Shell metacharacter injection
+     *     via `branch`, `sonarUrl`, or `scannerInclusions` is structurally impossible.
+     *  3. **Wrapper preference**: if a project-local `mvnw` / `gradlew` is executable,
+     *     its absolute path is used (same pattern as JavaRuntimeExecTool, commit 8d297ef4).
+     *     This avoids PATH ambiguity and respects the project's pinned build-tool version.
+     *
+     * @param buildTool    "Maven" or "Gradle" (case-insensitive first letter).
+     * @param sonarUrl     SonarQube server URL (trailing slash must already be trimmed by caller).
+     * @param token        Sonar authentication token — placed in env, NOT in argv.
+     * @param projectsFlag Maven `-pl` value (e.g. `"module-a,module-b"`) or null. When non-null,
+     *                     two discrete argv elements `-pl <value>` are inserted. Gradle projects
+     *                     do not use this flag.
+     * @param scannerInclusions Value for `-Dsonar.inclusions=` (comma-separated paths).
+     * @param branch       Branch name (already validated by [validateBranchName]), or null to omit.
+     * @param workingDir   Directory the scanner process should run in.
+     */
+    fun buildScannerProcess(
+        buildTool: String,
+        sonarUrl: String,
+        token: String,
+        projectsFlag: String?,
+        scannerInclusions: String,
+        branch: String?,
+        workingDir: java.io.File
+    ): ProcessBuilder {
+        val isMaven = buildTool.startsWith("M", ignoreCase = true)
+
+        val argv: MutableList<String> = if (isMaven) {
+            // Resolve mvnw → absolute path; fall back to `mvn` on PATH.
+            val mvnExec = File(workingDir, "mvnw").takeIf { it.canExecute() }?.absolutePath ?: "mvn"
+            mutableListOf(mvnExec, "sonar:sonar").apply {
+                if (projectsFlag != null) {
+                    add("-pl")
+                    add(projectsFlag)
+                    add("-am")
+                }
+                add("-Dsonar.host.url=$sonarUrl")
+                add("-Dsonar.inclusions=$scannerInclusions")
+            }
+        } else {
+            // Resolve gradlew → absolute path; fall back to `gradle` on PATH.
+            val gradleExec = File(workingDir, "gradlew").takeIf { it.canExecute() }?.absolutePath ?: "gradle"
+            mutableListOf(gradleExec, "sonar", "-Dsonar.host.url=$sonarUrl", "-Dsonar.inclusions=$scannerInclusions")
+        }
+
+        // Branch flag: only appended when non-null/non-blank (caller has already validated).
+        if (!branch.isNullOrBlank()) {
+            argv.add("-Dsonar.branch.name=$branch")
+        }
+
+        val pb = ProcessBuilder(argv)
+        pb.directory(workingDir)
+        // Token via environment variable — never appears in ps aux output.
+        pb.environment()["SONAR_TOKEN"] = token
+        return pb
+    }
+
     /** Collapse a sorted list of line numbers into [first, last] pairs for compact display. */
     private fun collapseRanges(lines: List<Int>): List<Pair<Int, Int>> {
         if (lines.isEmpty()) return emptyList()
@@ -907,6 +1001,12 @@ Common optional: repo_name for multi-repo projects.
         private const val CE_POLL_TIMEOUT_MS  = 120_000L   // 2 min max wait for CE processing
         private const val CE_FALLBACK_WAIT_MS = 5_000L     // wait when CE task ID not found in output
         private const val MAX_SCANNER_OUTPUT_CHARS = 50_000
+
+        /**
+         * Allowlist regex for SonarQube branch names (T2 security fix).
+         * Permits alphanumerics, '.', '_', '-', '/'. Rejects all shell metacharacters.
+         */
+        internal val BRANCH_NAME_REGEX = Regex("^[a-zA-Z0-9._\\-/]+\$")
 
         // Branch names that must never be overwritten by a local scan.
         // Exact match, case-insensitive.
