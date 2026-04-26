@@ -16,12 +16,15 @@ import com.intellij.openapi.roots.ModuleRootManager
 import com.workflow.orchestrator.core.model.workflow.InteractionMode
 import com.workflow.orchestrator.core.model.workflow.ModuleRef
 import com.workflow.orchestrator.core.model.workflow.PrRef
+import com.workflow.orchestrator.core.model.workflow.QualityScope
 import com.workflow.orchestrator.core.model.workflow.RepoRef
 import com.workflow.orchestrator.core.model.workflow.TicketRef
 import com.workflow.orchestrator.core.model.workflow.WorkflowContext
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoContextResolver
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -32,16 +35,18 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Project-level holder for the unified [WorkflowContext] state cell. See
  * `docs/architecture/workflow-context-design.md` (§3.2 + §4.5) and
  * `docs/architecture/phase5-workflow-context-plan.md` (Task 5/6).
  *
- * Phase 5 T6 — adds editor listener wiring + the `setActiveTicket` cascade with PR
- * auto-seed (spec §4.2). [focusPr] mutator (with build cascade) lands in T7. Mirror
- * integration (`WorkflowEventMirror`) lands in T8 — it uses [serviceCs] to launch
- * event-driven cascades on the platform-managed scope.
+ * Phase 5 T7 — adds the `focusPr` cascade with mutex serialization, cancel-previous,
+ * and EP-driven build lookup (spec §4.0, §4.1, §4.4). The [setActiveTicket] auto-seed
+ * (T6) now routes through [computeFocusForPr] so the build/quality cascade runs there
+ * too. Mirror integration (`WorkflowEventMirror`) lands in T8 — it uses [serviceCs] to
+ * launch event-driven cascades on the platform-managed scope.
  */
 @Service(Service.Level.PROJECT)
 class WorkflowContextService(
@@ -50,6 +55,13 @@ class WorkflowContextService(
 ) : Disposable {
     private val log = Logger.getInstance(WorkflowContextService::class.java)
     private val cascadeMutex = Mutex()
+
+    /**
+     * Tracks any in-flight `focusPr` cascade so a newer call can `cancelAndJoin()` it
+     * before starting its own HTTP build lookup (spec §4.0 cancel-previous semantics).
+     * Read/written only under [cascadeMutex].
+     */
+    private var currentFocusJob: Job? = null
 
     private val _state = MutableStateFlow(WorkflowContext())
     val state: StateFlow<WorkflowContext> = _state.asStateFlow()
@@ -159,8 +171,8 @@ class WorkflowContextService(
      * Persistence to [PluginSettings] happens BEFORE any suspend point so a crash
      * mid-cascade never loses the anchor (spec §4.2 R-PERSIST).
      *
-     * The build cascade triggered by an auto-seeded `focusPr` is intentionally NOT run
-     * here — that lives in T7's `focusPr` mutator. T6 only sets the field.
+     * Auto-seed routes through [computeFocusForPr] so the matched PR also drives the
+     * `focusBuild` + `focusQualityScope` cascade (T7).
      */
     suspend fun setActiveTicket(ticket: TicketRef?) = cascadeMutex.withLock {
         // 1. Persist BEFORE any suspend point.
@@ -168,12 +180,13 @@ class WorkflowContextService(
         settings.state.activeTicketId = ticket?.key.orEmpty()
         settings.state.activeTicketSummary = ticket?.summary.orEmpty()
 
-        // 2. Auto-seed focusPr (spec §4.2.2.a.ii).
+        // 2. Auto-seed focusPr (spec §4.2.2.a.ii) and run the full focus cascade so
+        //    the auto-seeded PR's build + quality scope are populated in the same write.
         var next = _state.value.copy(activeTicket = ticket)
         if (ticket != null) {
             val matching = findOpenPrMatchingTicket(ticket.key)
             if (matching != null && matching != next.focusPr) {
-                next = next.copy(focusPr = matching)  // T7 will add focusBuild + quality cascade
+                next = computeFocusForPr(next, matching)
             }
         }
         _state.value = next
@@ -181,6 +194,64 @@ class WorkflowContextService(
             "[Workflow:Context] setActiveTicket: ${ticket?.key ?: "<cleared>"}, " +
                 "focusPr=${next.focusPr?.prId}"
         )
+    }
+
+    /**
+     * Sets (or clears) the focused PR and cascades to `focusBuild` + `focusQualityScope`
+     * in a single observable state transition (spec §4.0, §4.1, §4.4).
+     *
+     * Mutex-serialized with all other mutators. On entry, any prior in-flight focus job
+     * is `cancelAndJoin()`-ed so a stale build lookup never overwrites a newer cascade.
+     *
+     * For `pr == null`, the focus chain is fully cleared. Per-spec §4.1, re-deriving
+     * `focusBuild` from `activeBranch` is deferred to `latestBuildForBranchFlow`
+     * (out of scope for Phase 5a) — null is correct here, and no [LatestBuildLookup]
+     * call is made.
+     */
+    suspend fun focusPr(pr: PrRef?) = cascadeMutex.withLock {
+        currentFocusJob?.cancelAndJoin()
+
+        val newCtx = if (pr == null) {
+            _state.value.copy(focusPr = null, focusBuild = null, focusQualityScope = null)
+        } else {
+            computeFocusForPr(_state.value, pr)
+        }
+        _state.value = newCtx
+        log.info(
+            "[Workflow:Context] focusPr → ${pr?.prId ?: "<cleared>"}, " +
+                "focusBuild=${newCtx.focusBuild?.buildNumber}"
+        )
+    }
+
+    /**
+     * Pure-ish builder that composes the next [WorkflowContext] for a non-null PR focus:
+     * looks up the latest build via the [LatestBuildLookup] EP (5s timeout, off-EDT) and
+     * derives [QualityScope] from the PR's Sonar project key. Returns `base.copy(...)`
+     * with all three focus fields populated; the caller writes `_state.value` exactly
+     * once, preserving the single-merged-emission invariant (§4.4).
+     */
+    private suspend fun computeFocusForPr(
+        base: WorkflowContext,
+        pr: PrRef,
+    ): WorkflowContext {
+        // The [LatestBuildLookup] EP contract documents the implementation as "off-EDT"
+        // (`:bamboo`'s `BambooApiClient.get()` already dispatches to `Dispatchers.IO`),
+        // so we don't double-wrap with `withContext(Dispatchers.IO)` here. We do bound
+        // it with [withTimeoutOrNull] (5s, per spec §4.1 R2) so a stalled HTTP call
+        // never wedges the cascade — null on timeout is the documented degraded state.
+        val build = pr.bambooPlanKey?.let { planKey ->
+            withTimeoutOrNull(5_000) {
+                LatestBuildLookup.getInstance()?.fetchLatestBuild(project, planKey, pr.fromBranch)
+            }
+        }
+        val quality = pr.sonarProjectKey?.let {
+            QualityScope(
+                sonarProjectKey = it,
+                branchName = pr.fromBranch,
+                moduleKey = null,
+            )
+        }
+        return base.copy(focusPr = pr, focusBuild = build, focusQualityScope = quality)
     }
 
     /**
