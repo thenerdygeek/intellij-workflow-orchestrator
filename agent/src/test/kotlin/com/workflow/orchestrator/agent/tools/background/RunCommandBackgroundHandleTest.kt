@@ -28,8 +28,13 @@ class RunCommandBackgroundHandleTest {
             bgId = "bg_t1", sessionId = "s", managed = managed, label = "echo hi"
         )
 
-        // Wait for the process to finish.
+        // Wait for the process to finish AND the reader daemon to drain stdout.
+        // Race fix: state() flipping to EXITED only means the OS-level process exited;
+        // the daemon thread reading stdout may still be in-flight, leaving outputLines
+        // empty when we read it below. `readerDone` is the explicit reader-completion
+        // latch the daemon counts down once the input stream is fully consumed.
         while (handle.state() == BackgroundState.RUNNING) { delay(50) }
+        managed.readerDone.await(2, java.util.concurrent.TimeUnit.SECONDS)
 
         assertEquals(BackgroundState.EXITED, handle.state())
         assertEquals(0, handle.exitCode())

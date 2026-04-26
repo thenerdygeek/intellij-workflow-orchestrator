@@ -1,6 +1,8 @@
 package com.workflow.orchestrator.agent.tools.debug
 
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.Application
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.xdebugger.XDebugSession
@@ -46,12 +48,25 @@ class AgentDebugControllerTest {
         controller = AgentDebugController(mockProject) { name ->
             DebugInvocation(testParentDisposable, name)
         }
+
+        // `stopAllSessions` (and `dispose` which calls it) routes session.stop()
+        // through `ApplicationManager.getApplication().invokeAndWait { … }` because
+        // XDebugSession.stop() requires the EDT in production. In a unit test we
+        // have no live Application — stub one that runs the runnable inline so
+        // the verify { session.stop() } expectations can fire.
+        mockkStatic(ApplicationManager::class)
+        val app = mockk<Application>(relaxed = true)
+        every { app.invokeAndWait(any()) } answers {
+            firstArg<Runnable>().run()
+        }
+        every { ApplicationManager.getApplication() } returns app
     }
 
     @AfterEach
     fun tearDown() {
         controller.dispose()
         Disposer.dispose(testParentDisposable)
+        unmockkStatic(ApplicationManager::class)
     }
 
     @Test

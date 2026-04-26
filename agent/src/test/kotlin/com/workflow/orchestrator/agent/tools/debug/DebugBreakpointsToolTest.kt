@@ -11,6 +11,7 @@ import com.intellij.xdebugger.breakpoints.XBreakpoint
 import com.intellij.xdebugger.breakpoints.XBreakpointManager
 import com.intellij.xdebugger.breakpoints.XBreakpointType
 import com.intellij.xdebugger.breakpoints.XLineBreakpoint
+import com.workflow.orchestrator.agent.testutil.installReadActionInlineShim
 import com.workflow.orchestrator.agent.tools.WorkerType
 import io.mockk.every
 import io.mockk.mockk
@@ -24,12 +25,20 @@ import org.jetbrains.java.debugger.breakpoints.properties.JavaFieldBreakpointPro
 import org.jetbrains.java.debugger.breakpoints.properties.JavaMethodBreakpointProperties
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
 class DebugBreakpointsToolTest {
     private val project = mockk<Project>(relaxed = true)
     private val controller = mockk<AgentDebugController>(relaxed = true)
     private val tool = DebugBreakpointsTool(controller)
+
+    @BeforeEach
+    fun setUp() {
+        // The non-breakpointable validation path calls `readAction { }`. Without
+        // the shim, the real builder NPEs on `ApplicationManager.getApplication()`.
+        installReadActionInlineShim()
+    }
 
     @AfterEach
     fun tearDown() {
