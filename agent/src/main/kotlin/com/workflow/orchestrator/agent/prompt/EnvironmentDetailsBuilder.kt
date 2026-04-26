@@ -62,7 +62,11 @@ object EnvironmentDetailsBuilder {
             sb.appendLine()
         }
 
-        // 8. Active Ticket
+        // 8. Workflow Context (Phase 5 T17) — canonical state from WorkflowContextService.
+        sb.appendWorkflowContext(project)
+
+        // 9. Active Ticket (legacy — passed in by caller from :jira ActiveTicketService;
+        //    coexists with §8 during the §5.3 dual-write window).
         if (!activeTicketId.isNullOrBlank()) {
             sb.appendLine("# Active Ticket")
             val summary = if (!activeTicketSummary.isNullOrBlank()) " — $activeTicketSummary" else ""
@@ -72,6 +76,29 @@ object EnvironmentDetailsBuilder {
 
         sb.append("</environment_details>")
         return sb.toString()
+    }
+
+    /**
+     * Phase 5 T17: appends a `<workflow_context>` block with the canonical
+     * workflow state (active ticket, branch, repo, focused PR, interaction mode).
+     * Block omitted when all relevant fields are null. Spec §6.1.
+     */
+    private fun StringBuilder.appendWorkflowContext(project: Project) {
+        val service = try {
+            com.workflow.orchestrator.core.workflow.WorkflowContextService.getInstance(project)
+        } catch (_: Exception) { return }
+        val s = try { service.state.value } catch (_: Exception) { return }
+        if (s.activeTicket == null && s.focusPr == null && s.activeBranch == null &&
+            s.activeRepo == null && s.activeModule == null) return
+
+        appendLine("<workflow_context>")
+        s.activeTicket?.let { appendLine("Active ticket: ${it.key} — \"${it.summary}\"") }
+        s.activeBranch?.let { appendLine("Active branch: $it") }
+        s.activeRepo?.let { appendLine("Active repo: ${it.name}") }
+        s.focusPr?.let { appendLine("Focused PR: #${it.prId} (${it.fromBranch} -> ${it.toBranch})") }
+        appendLine("Interaction mode: ${s.interactionMode}")
+        appendLine("</workflow_context>")
+        appendLine()
     }
 
     private fun StringBuilder.appendCurrentTime() {

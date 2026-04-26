@@ -426,6 +426,26 @@ class MentionSearchProvider(private val project: Project) {
     }
 
     suspend fun searchTickets(query: String): String {
+        // Phase 5 T17 — fallback: empty/active/current query surfaces the canonical
+        // workflow-context active ticket (spec §6.2). Falls through if none.
+        if (query.isBlank() || query.equals("active", ignoreCase = true) || query.equals("current", ignoreCase = true)) {
+            val active = try {
+                com.workflow.orchestrator.core.workflow.WorkflowContextService.getInstance(project)
+                    .state.value.activeTicket
+            } catch (_: Exception) { null }
+            if (active != null) {
+                return buildJsonArray {
+                    add(buildJsonObject {
+                        put("type", JsonPrimitive("ticket"))
+                        put("label", JsonPrimitive(active.key))
+                        put("path", JsonPrimitive(active.key))
+                        put("description", JsonPrimitive(active.summary.take(60)))
+                        put("source", JsonPrimitive("workflow_context_active"))
+                    })
+                }.toString()
+            }
+            // No active ticket — fall through to existing search (sprint cache or empty list).
+        }
         return try {
             val jiraService = try {
                 project.getService(JiraService::class.java)
