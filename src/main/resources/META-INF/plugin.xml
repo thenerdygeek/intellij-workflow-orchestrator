@@ -385,6 +385,7 @@
         <sessionHistoryReader implementation="com.workflow.orchestrator.agent.insights.AgentSessionHistoryReader"/>
         <createPrLauncher implementation="com.workflow.orchestrator.pullrequest.action.CreatePrLauncherImpl"/>
         <openPrLister implementation="com.workflow.orchestrator.pullrequest.workflow.OpenPrListerImpl"/>
+        <latestBuildLookup implementation="com.workflow.orchestrator.bamboo.workflow.LatestBuildLookupImpl"/>
     </extensions>
 
     <applicationListeners>

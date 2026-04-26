@@ -43,7 +43,14 @@ class BambooServiceImpl(private val project: Project) : BambooService {
     /** Test-only override: when set, [client] returns this instead of building from settings. */
     @Volatile internal var testClientOverride: BambooApiClient? = null
 
-    private val client: BambooApiClient?
+    /**
+     * The lazy [BambooApiClient] used for all REST calls. Exposed as `internal` so that
+     * sibling classes in `:bamboo` (notably [com.workflow.orchestrator.bamboo.workflow.LatestBuildLookupImpl],
+     * the EP wired into the cross-module workflow context) can perform thin Bamboo lookups
+     * without going through the heavyweight [getLatestBuild] mapper. Returns null when
+     * Bamboo is not configured.
+     */
+    internal val client: BambooApiClient?
         get() {
             testClientOverride?.let { return it }
             val url = settings.connections.bambooUrl.orEmpty().trimEnd('/')
