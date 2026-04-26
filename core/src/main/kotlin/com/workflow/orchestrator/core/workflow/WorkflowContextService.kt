@@ -88,12 +88,16 @@ class WorkflowContextService(
     }
 
     /**
-     * Subscribe to editor selection + VCS mapping changes; each fires a coroutine to
-     * recompute the editor-derived slice (`activeRepo`, `activeBranch`, `activeModule`).
+     * Subscribe to editor selection, VCS mapping, and module-set changes; each fires a
+     * coroutine to recompute the editor-derived slice (`activeRepo`, `activeBranch`,
+     * `editorModule`, `projectModules`).
      *
      * NOTE: `GitRepositoryChangeListener` intentionally NOT subscribed — git4idea is an
      * optional dependency. `VCS_REPOSITORY_MAPPING_UPDATED` (in the `com.intellij.dvcs`
      * platform module) covers the branch-change signal we need without that risk.
+     *
+     * `ModuleListener` invalidates the [cachedProjectModules] field; the next
+     * recompute re-reads from `ModuleManager` under `readAction`.
      */
     private fun wireEditorListeners() {
         val bus = project.messageBus.connect(this)
@@ -113,7 +117,34 @@ class WorkflowContextService(
                 cs.launch { recomputeFromEditor() }
             }
         )
+
+        bus.subscribe(
+            com.intellij.openapi.project.ModuleListener.TOPIC,
+            object : com.intellij.openapi.project.ModuleListener {
+                override fun modulesAdded(project: Project, modules: List<com.intellij.openapi.module.Module>) {
+                    cachedProjectModules = null
+                    cs.launch { recomputeFromEditor() }
+                }
+                override fun moduleRemoved(project: Project, module: com.intellij.openapi.module.Module) {
+                    cachedProjectModules = null
+                    cs.launch { recomputeFromEditor() }
+                }
+                // `modulesRenamed` intentionally not overridden — the parent signature uses
+                // a wildcard-typed `Function` whose Kotlin override binding has been
+                // unstable across platform versions. Renames are rare and the next
+                // editor/VCS event will refresh the cached module names anyway.
+            },
+        )
     }
+
+    /**
+     * Cached snapshot of the project's modules — repopulated lazily inside
+     * [recomputeFromEditor] and invalidated by the [com.intellij.openapi.project.ModuleListener]
+     * subscription above. Avoids the per-tab-switch cost of re-reading
+     * `ModuleManager.modules` (which doesn't change with editor selection).
+     */
+    @Volatile
+    private var cachedProjectModules: List<ModuleRef>? = null
 
     /**
      * Recomputes the editor-derived slice. Mutex-serialized with all other mutators
@@ -123,8 +154,14 @@ class WorkflowContextService(
      * `CachedValuesManager` + `SimpleModificationTracker`, so it does NOT need a
      * `readAction { }` wrap. Module computation (PSI access via `ModuleUtilCore` +
      * `ModuleRootManager`) DOES need `readAction { }`.
+     *
+     * `internal` (was `private`) so [WorkflowContextProjectActivity] can seed the editor
+     * slice at project open — without this seed, multi-module projects (where each
+     * submodule has its own `.git` and the project root has none) display
+     * `activeBranch = null` until the user opens any file. See
+     * `docs/architecture/multi-module-compliance-plan.md` Phase A.
      */
-    private suspend fun recomputeFromEditor() = cascadeMutex.withLock {
+    internal suspend fun recomputeFromEditor() = cascadeMutex.withLock {
         val gitRepo = RepoContextResolver.getInstance(project).resolveCurrentEditorRepoOrPrimary()
 
         val repoConfig = gitRepo?.let { repo ->
@@ -140,7 +177,7 @@ class WorkflowContextService(
             )
         }
         val branch = gitRepo?.currentBranchName
-        val module = readAction {
+        val editorModuleRef = readAction {
             val fem = FileEditorManager.getInstance(project)
             val file = fem.selectedEditor?.file ?: return@readAction null
             val mod = ModuleUtilCore.findModuleForFile(file, project)
@@ -151,11 +188,21 @@ class WorkflowContextService(
                     .firstOrNull()?.path.orEmpty(),
             )
         }
+        val projectModulesRef = cachedProjectModules ?: readAction {
+            com.intellij.openapi.module.ModuleManager.getInstance(project).modules.map { mod ->
+                ModuleRef(
+                    name = mod.name,
+                    rootPath = ModuleRootManager.getInstance(mod).contentRoots
+                        .firstOrNull()?.path.orEmpty(),
+                )
+            }
+        }.also { cachedProjectModules = it }
 
         _state.value = _state.value.copy(
             activeRepo = repoRef,
             activeBranch = branch,
-            activeModule = module,
+            editorModule = editorModuleRef,
+            projectModules = projectModulesRef,
         )
     }
 

@@ -89,12 +89,16 @@ object EnvironmentDetailsBuilder {
         } catch (_: Exception) { return }
         val s = try { service.state.value } catch (_: Exception) { return }
         if (s.activeTicket == null && s.focusPr == null && s.activeBranch == null &&
-            s.activeRepo == null && s.activeModule == null) return
+            s.activeRepo == null && s.editorModule == null && s.projectModules.isEmpty()) return
 
         appendLine("<workflow_context>")
         s.activeTicket?.let { appendLine("Active ticket: ${it.key} — \"${it.summary}\"") }
         s.activeBranch?.let { appendLine("Active branch: $it") }
         s.activeRepo?.let { appendLine("Active repo: ${it.name}") }
+        s.editorModule?.let { appendLine("Editor module: ${it.name}") }
+        if (s.projectModules.isNotEmpty()) {
+            appendLine("Project modules: ${s.projectModules.joinToString(", ") { it.name }}")
+        }
         s.focusPr?.let { appendLine("Focused PR: #${it.prId} (${it.fromBranch} -> ${it.toBranch})") }
         appendLine("Interaction mode: ${s.interactionMode}")
         appendLine("</workflow_context>")

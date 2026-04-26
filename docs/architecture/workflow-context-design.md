@@ -28,7 +28,7 @@ Phase 5 introduces a single project-level service, `WorkflowContextService` in `
 | # | Decision | Choice | Rationale |
 |---|---|---|---|
 | 1 | Mental model | **Anchor + transient focus** | Active ticket is sticky (`Start Work` lasts hours/days); PR/build are browseable without losing the anchor. |
-| 2 | Field bucketing | Anchor: `activeTicket`. Editor-derived: `activeRepo`, `activeBranch`, `activeModule`. Focus chain: `focusPr → focusBuild → focusQualityScope`. | One slot per kind of update; eliminates ambiguity about who writes what. |
+| 2 | Field bucketing | Anchor: `activeTicket`. Editor-derived: `activeRepo`, `activeBranch`, `editorModule`, `projectModules`. Focus chain: `focusPr → focusBuild → focusQualityScope`. | One slot per kind of update; eliminates ambiguity about who writes what. (Multi-module post-fix 2026-04-26: `activeModule` was renamed to `editorModule` to reflect that IntelliJ has all modules simultaneously loaded; `projectModules: List<ModuleRef>` snapshots the full set, invalidated by `ModuleListener`.) |
 | 3 | Start Work behavior | **a.ii — anchor + auto-seed focus chain** | If an open PR matches the ticket key, focus the PR (and cascade build / quality) so all tabs are immediately coherent. |
 | 4 | Conflict rule | Derived `interactionMode = Live | ReadOnly` based on `activeBranch == focusPr?.fromBranch` | Branch mismatch is a *correctness* issue (line numbers don't match), not a UX preference. |
 | 5 | ReadOnly affordance | **B — per-panel banner + per-control disable** | Banner makes the state legible with visible escape hatches; per-control disable prevents misleading interactions. |
@@ -45,7 +45,8 @@ data class WorkflowContext(
     val activeTicket: TicketRef? = null,                // anchor
     val activeRepo: RepoRef? = null,                    // editor-derived
     val activeBranch: String? = null,                   // editor-derived
-    val activeModule: ModuleRef? = null,                // editor-derived
+    val editorModule: ModuleRef? = null,                // editor-derived (renamed from activeModule, 2026-04-26)
+    val projectModules: List<ModuleRef> = emptyList(),  // ModuleManager snapshot, invalidated by ModuleListener
     val focusPr: PrRef? = null,                         // focus chain
     val focusBuild: BuildRef? = null,                   // derived from focusPr or activeBranch
     val focusQualityScope: QualityScope? = null,        // derived from focusBuild
@@ -158,7 +159,7 @@ Each field has exactly one writer.
 | Field | Writer | Trigger |
 |---|---|---|
 | `activeTicket` | `setActiveTicket()` | Sprint tab "Start Work"; branch-change ticket-detection accept; gear "Clear Active Ticket" |
-| `activeRepo`, `activeBranch`, `activeModule` | `onEditorRepoChanged()` *(internal)* | `FileEditorManagerListener.selectionChanged`; `VCS_REPOSITORY_MAPPING_UPDATED`; `BranchChangeListener` |
+| `activeRepo`, `activeBranch`, `editorModule`, `projectModules` | `recomputeFromEditor()` *(internal)* | `FileEditorManagerListener.selectionChanged`; `VCS_REPOSITORY_MAPPING_UPDATED`; `BranchChangeListener`; `ModuleListener.TOPIC` (modulesAdded / moduleRemoved) |
 | `focusPr` | `focusPr()` | PR tab row click; auto-seeded by `setActiveTicket()` if a PR matches ticket key |
 | `focusBuild` | `focusBuild()` *(rare; usually derived)* | Build tab "pin this build" *(deferred — see §10)*; otherwise re-derived from `focusPr.fromBranch` whenever `focusPr` or `activeBranch` changes |
 | `focusQualityScope` | derived only | Re-derived from `focusBuild.selectedJob` whenever `focusBuild` changes |
@@ -400,7 +401,7 @@ One smoke test wiring real `FileEditorManager` + `GitRepositoryManager` listener
 | R5 | Agent prompt growth from `<workflow_context>` block | Block is ≤7 short lines; omitted entirely when state is empty. Negligible token cost. |
 | R6 | Phase 5 breaks an active-ticket-bar consumer (e.g., gear menu actions) | Active-ticket-bar migration is one of the first commits in 5a — characterization test asserts label and "Open in Jira" gear action still work. |
 | R7 | A panel-author forgets to gate a live-only control | Per-control disable contract requires explicit `bindLiveOnlyEnablement(...)` call; live-only enumeration in §7.3 is the canonical list to audit against. Add a doc note in `:core/CLAUDE.md`. |
-| R8 | Mirror startup race — early panel emission lost before mirror subscribes | Mirror installed via `ProjectActivity` (or equivalent), not lazy on first `service.getInstance()`. Guarantees subscription before any panel construction. See §4.5 step 3. |
+| R8 | Mirror startup race — early panel emission lost before mirror subscribes | Mirror installed via `ProjectActivity` (or equivalent), not lazy on first `service.getInstance()`. Guarantees subscription before any panel construction. See §4.5 step 3. **Multi-module post-fix (2026-04-26):** `WorkflowContextProjectActivity` now ALSO seeds `recomputeFromEditor()` BEFORE installing the mirror, so `activeBranch` / `activeRepo` / `editorModule` / `projectModules` are populated at boot. Without this seed, multi-module projects (each submodule has its own `.git`, root has none) showed `activeBranch = null` until the user opened any file — banner displayed `<none>` and disabled all PR interactions. See `docs/architecture/multi-module-compliance-plan.md`. |
 | R9 | Future maintainer adds external-state factor to `interactionMode` (or new derived getter) | §3.1 invariant + `InteractionModePurityTest` (§9.1) catch this. Reviewers of any change to `WorkflowContext` derived getters MUST verify purity. |
 
 ## 12. Exit criteria

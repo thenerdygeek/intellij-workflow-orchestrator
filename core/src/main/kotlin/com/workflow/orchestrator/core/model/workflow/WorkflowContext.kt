@@ -13,7 +13,18 @@ data class WorkflowContext(
     val activeTicket: TicketRef? = null,
     val activeRepo: RepoRef? = null,
     val activeBranch: String? = null,
-    val activeModule: ModuleRef? = null,
+    /**
+     * The module containing the currently selected editor's file, or null when no
+     * editor is open. Renamed from `activeModule` (which falsely implied IntelliJ
+     * has a single "active" module — it doesn't; all modules are simultaneously
+     * loaded). See [projectModules] for the full module list.
+     */
+    val editorModule: ModuleRef? = null,
+    /**
+     * All modules currently registered with this project's `ModuleManager`. Refreshed
+     * on `ModuleListener` events. Empty list if the project has no modules (rare).
+     */
+    val projectModules: List<ModuleRef> = emptyList(),
     val focusPr: PrRef? = null,
     val focusBuild: BuildRef? = null,
     val focusQualityScope: QualityScope? = null,

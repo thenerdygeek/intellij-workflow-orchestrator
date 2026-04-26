@@ -40,7 +40,14 @@ class ReadOnlyBanner(private val project: Project) : JPanel(BorderLayout()), Dis
 
     private val message = JBLabel("")
     private val switchBranchLink = ActionLink("Switch branch") {
-        // T15 wires actual branch-checkout. For now: no-op placeholder.
+        // Off-EDT: dirty-tree guard + GitBrancher.checkout. The link callback fires on EDT;
+        // we hand off immediately. See BranchSwitchAction for the single-repo semantics
+        // (only the resolved/selected module's repo is touched) and dirty-tree contract.
+        scope.launch {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                BranchSwitchAction.trySwitch(project)
+            }
+        }
     }
     private val clearFocusLink = ActionLink("Clear PR focus") {
         scope.launch { service.focusPr(null) }
@@ -80,7 +87,7 @@ class ReadOnlyBanner(private val project: Project) : JPanel(BorderLayout()), Dis
     private fun updateMessage() {
         val s = service.state.value
         val pr = s.focusPr ?: return
-        val branch = s.activeBranch ?: "<none>"
+        val branch = s.activeBranch ?: "branch unknown"
         message.text = "Viewing PR #${pr.prId} (${pr.fromBranch}). You're on $branch — interactions disabled."
     }
 

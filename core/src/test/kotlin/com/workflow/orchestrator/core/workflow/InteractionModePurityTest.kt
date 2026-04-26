@@ -51,7 +51,8 @@ class InteractionModePurityTest {
         val ctxLiveWithExtras = ctxLiveBase.copy(
             activeTicket = com.workflow.orchestrator.core.model.workflow.TicketRef("X-1", "s"),
             activeRepo = com.workflow.orchestrator.core.model.workflow.RepoRef("r", "P", "s", "/p"),
-            activeModule = com.workflow.orchestrator.core.model.workflow.ModuleRef("m", "/p"),
+            editorModule = com.workflow.orchestrator.core.model.workflow.ModuleRef("m", "/p"),
+            projectModules = listOf(com.workflow.orchestrator.core.model.workflow.ModuleRef("m", "/p")),
             focusBuild = com.workflow.orchestrator.core.model.workflow.BuildRef("PLAN", 1, "feat/abc", null),
             focusQualityScope = com.workflow.orchestrator.core.model.workflow.QualityScope("k", "feat/abc", null),
         )
