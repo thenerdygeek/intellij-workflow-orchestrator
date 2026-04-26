@@ -75,6 +75,20 @@ JBColor constants with light/dark variants: SUCCESS (green), ERROR (red), WARNIN
   used by the transition dialog widgets. Versions/components cached 5 min.
 - `TransitionDialogOpener` — bridge interface so :core callers can open the
   transition dialog without depending on :jira/ui.
+- `WorkflowContextService` (Phase 5) — single source of truth for active ticket,
+  focused PR, editor-derived branch/repo/module across all 6 tool-window tabs and
+  the agent. Exposes `StateFlow<WorkflowContext>` plus `activeTicketFlow` and
+  `interactionModeFlow` projections. All mutators (`setActiveTicket`, `focusPr`,
+  `onEditorRepoChanged`) are mutex-serialized; cascades produce one observable
+  `WorkflowContext` transition per call (spec §4.4 single-merged-emission). Two
+  EPs in `:core` (`openPrLister`, `latestBuildLookup`) bridge `:pullrequest` and
+  `:bamboo` without module-cycle. `WorkflowEventMirror` (one-way bridge from
+  legacy `EventBus` events into the service) is installed at startup by
+  `WorkflowContextProjectActivity` so panels see a hydrated state on first
+  subscribe (spec R8). Anchor (`activeTicket`) persisted via `PluginSettings`;
+  focus chain (`focusPr → focusBuild → focusQualityScope`) is session-only.
+  Spec: `docs/architecture/workflow-context-design.md`. Plan:
+  `docs/architecture/phase5-workflow-context-plan.md`.
 
 ## Service & threading conventions (Phase 4)
 

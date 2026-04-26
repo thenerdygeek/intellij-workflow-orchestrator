@@ -289,6 +289,38 @@ Token reconciliation (ContextManager calibrating heuristic estimates with the AP
 
 The JCEF chat panel runs its JavaScript on the Chromium browser thread (CEF thread). Communication between Kotlin and JavaScript uses `JBCefJSQuery` callbacks which marshal data to the EDT. This is safe because JCEF handles the thread bridging internally.
 
+## Workflow context (Phase 5)
+
+Every panel that needs "what am I working on" — active ticket, focused PR, current branch,
+current repo, current module — subscribes to `WorkflowContextService.state` (a
+`StateFlow<WorkflowContext>` in `:core`). Mutators are mutex-serialized and emit one
+observable transition per cascade (spec §4.4 single-merged-emission invariant). Panels
+MUST NOT resolve these fields locally.
+
+### Threading shape
+
+- `@Service(Service.Level.PROJECT)` — platform-injected `cs: CoroutineScope` (Phase 4 convention).
+- `cascadeMutex: Mutex` — single project-scoped mutex serializes every mutator and the mirror.
+- `recomputeFromEditor()` — runs inside the mutex; uses `readAction { }` for module lookup.
+- HTTP calls (`LatestBuildLookup.fetchLatestBuild`) wrapped in `withTimeoutOrNull(5_000)` per spec §4.1 R2.
+- All Swing subscribers run on `Dispatchers.EDT` (e.g., `ReadOnlyBanner`, `ActiveTicketBar`).
+
+### Editor listener wiring
+
+`init` block subscribes to:
+- `FileEditorManagerListener.FILE_EDITOR_MANAGER` — selection changes.
+- `VcsRepositoryManager.VCS_REPOSITORY_MAPPING_UPDATED` — VCS root + branch updates (covers the same signals as the optional `git4idea` `BranchChangeListener` without the optional-dep risk).
+
+Both fire `cs.launch { recomputeFromEditor() }`.
+
+### Mirror (`WorkflowEventMirror`)
+
+One-way bridge: legacy `EventBus.events` → service mutators. Loop prevention is
+structural (mutators never emit events) plus a `state.value`-equality guard. Installed
+at startup by `WorkflowContextProjectActivity` (`postStartupActivity`).
+
+See `docs/architecture/workflow-context-design.md` for the full design.
+
 ## Tool-Window Dispose Cascade
 
 `WorkflowToolWindowFactory` wires `content.setDisposer(panel)` for every tab whose panel is `Disposable`, so `Content.dispose()` cascades into the panel (and `Disposer.register(this, child)` inside dashboards completes the chain into nested panels). Any `@Service` that owns its scope via the 2024.1+ injection pattern is cancelled by the platform on project close — Disposer wiring is for non-service Swing components only.
