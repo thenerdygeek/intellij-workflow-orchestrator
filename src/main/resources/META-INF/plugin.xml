@@ -48,6 +48,14 @@
             qualifiedName="com.workflow.orchestrator.createPrLauncher"
             interface="com.workflow.orchestrator.core.bitbucket.CreatePrLauncher"
             dynamic="true"/>
+        <extensionPoint
+            qualifiedName="com.workflow.orchestrator.openPrLister"
+            interface="com.workflow.orchestrator.core.workflow.OpenPrLister"
+            dynamic="true"/>
+        <extensionPoint
+            qualifiedName="com.workflow.orchestrator.latestBuildLookup"
+            interface="com.workflow.orchestrator.core.workflow.LatestBuildLookup"
+            dynamic="true"/>
     </extensionPoints>
 
     <extensions defaultExtensionNs="com.intellij">
