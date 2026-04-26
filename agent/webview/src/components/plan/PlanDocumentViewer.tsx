@@ -1,7 +1,7 @@
 import { memo, useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import rehypeRaw from 'rehype-raw';
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import { CodeBlock } from '@/components/markdown/CodeBlock';
 import './plan-document.css';
 
@@ -131,6 +131,21 @@ function groupLinesIntoBlocks(lines: string[]): LineBlock[] {
   return blocks;
 }
 
+/**
+ * Sanitization schema for plan document markdown (T1 — XSS hardening).
+ *
+ * Extends the GitHub-style defaultSchema to allow the task-list `input` and
+ * `li.task-list-item` that remark-gfm generates. The default schema already
+ * permits these, but we spell them out here for clarity. No other additions
+ * are required for the plan document renderer.
+ */
+const PLAN_SANITIZE_SCHEMA = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+  },
+};
+
 export const PlanDocumentViewer = memo(function PlanDocumentViewer({
   markdown,
   comments = [],
@@ -172,7 +187,7 @@ export const PlanDocumentViewer = memo(function PlanDocumentViewer({
         <div className="plan-document-body">
           <Markdown
             remarkPlugins={[remarkGfm]}
-            rehypePlugins={[rehypeRaw]}
+            rehypePlugins={[[rehypeSanitize, PLAN_SANITIZE_SCHEMA]]}
             components={createDocumentComponents()}
           >
             {markdown}
@@ -220,7 +235,7 @@ export const PlanDocumentViewer = memo(function PlanDocumentViewer({
               <div className="plan-block-content">
                 <Markdown
                   remarkPlugins={[remarkGfm]}
-                  rehypePlugins={[rehypeRaw]}
+                  rehypePlugins={[[rehypeSanitize, PLAN_SANITIZE_SCHEMA]]}
                   components={createDocumentComponents()}
                 >
                   {block.content}

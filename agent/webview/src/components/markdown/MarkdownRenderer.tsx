@@ -1,7 +1,7 @@
 import { memo, useMemo } from 'react';
 import { Streamdown, useIsCodeFenceIncomplete } from 'streamdown';
 import remarkGfm from 'remark-gfm';
-import rehypeRaw from 'rehype-raw';
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import { visit, SKIP } from 'unist-util-visit';
 import { CodeBlock } from '@/components/markdown/CodeBlock';
 import { MermaidDiagram } from '@/components/rich/MermaidDiagram';
@@ -175,8 +175,41 @@ function hasClass(node: any, cls: string): boolean {
  * to any inline `components` / `remarkPlugins` / `rehypePlugins` prop.
  * ──────────────────────────────────────────────────────────────────────────── */
 
+/**
+ * Extended sanitization schema (T1 — XSS hardening).
+ *
+ * Starts from the GitHub-style `defaultSchema` (strips <script>, <iframe>,
+ * <object>, on* handlers, javascript:/data: URLs) and adds the minimum
+ * extensions required by this renderer:
+ *
+ *   pre.ascii-art — emitted by autoFenceAsciiArt; the class is needed for
+ *                   the ASCII-art passthrough in CustomPre.
+ *   code[data-meta] — written by remarkCodeMeta so line-highlight ranges
+ *                     survive from the remark AST to the CodeBlock component.
+ *
+ * rehypeWordFade runs AFTER this plugin in the REHYPE_PLUGINS array, so the
+ * sd-word spans it adds are never seen by the sanitizer.
+ */
+const SANITIZE_SCHEMA = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+    pre: [
+      ...(defaultSchema.attributes?.pre ?? []),
+      ['className', 'ascii-art'],
+    ],
+    code: [
+      ...(defaultSchema.attributes?.code ?? []),
+      'dataMeta',
+    ],
+  },
+};
+
 const REMARK_PLUGINS = [remarkGfm, remarkCodeMeta] as const;
-const REHYPE_PLUGINS = [rehypeRaw, rehypeWordFade] as const;
+const REHYPE_PLUGINS = [
+  [rehypeSanitize, SANITIZE_SCHEMA] as const,
+  rehypeWordFade,
+] as const;
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
