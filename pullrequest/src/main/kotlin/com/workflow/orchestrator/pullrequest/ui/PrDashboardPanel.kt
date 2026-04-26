@@ -17,10 +17,10 @@ import com.workflow.orchestrator.core.bitbucket.CreatePrLauncher
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.ui.StatusColors
-import com.workflow.orchestrator.core.services.BitbucketService
-import com.workflow.orchestrator.core.services.SonarService
+import com.workflow.orchestrator.core.model.workflow.PrRef
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoContextResolver
+import com.workflow.orchestrator.core.workflow.WorkflowContextService
 import com.workflow.orchestrator.pullrequest.service.PrListService
 import kotlinx.coroutines.flow.filterIsInstance
 import com.intellij.openapi.vcs.BranchChangeListener
@@ -239,7 +239,11 @@ class PrDashboardPanel(
                     projectKey = prRepoConfig?.bitbucketProjectKey,
                     repoSlug = prRepoConfig?.bitbucketRepoSlug
                 )
-                // Emit PrSelected event so other tabs (Build, Quality) can update context
+                // Phase 5 T12: drive the canonical WorkflowContextService.focusPr cascade
+                // (single-source-of-truth write — Build + Quality + ActiveTicketBar all read
+                // from service.state). Re-emit the legacy PrSelected event for unmigrated
+                // subscribers (SonarDataService, :agent ProjectContextTool — to be removed
+                // in T16). The mirror's state-equality guard short-circuits the round-trip.
                 val fromBranch = prDetail.fromRef?.displayId ?: ""
                 val toBranch = prDetail.toRef?.displayId ?: ""
                 val repoName = prDetail.repoName ?: ""
@@ -251,11 +255,23 @@ class PrDashboardPanel(
                         ?: pluginSettings.state.bambooPlanKey?.takeIf { it.isNotBlank() }
                     val sonarProjectKey = repoConfig?.sonarProjectKey?.takeIf { it.isNotBlank() }
                         ?: pluginSettings.state.sonarProjectKey?.takeIf { it.isNotBlank() }
-                    val latestCommit = prDetail.fromRef?.latestCommit?.takeIf { it.isNotBlank() }
 
                     scope.launch {
-                        val eventBus = project.getService(EventBus::class.java)
-                        eventBus.emit(WorkflowEvent.PrSelected(
+                        val ref = PrRef(
+                            prId = prId,
+                            fromBranch = fromBranch,
+                            toBranch = toBranch,
+                            repoName = repoName,
+                            bambooPlanKey = bambooPlanKey,
+                            sonarProjectKey = sonarProjectKey,
+                        )
+                        // Canonical write — cascades focusBuild + focusQualityScope.
+                        WorkflowContextService.getInstance(project).focusPr(ref)
+
+                        // Per spec §5.3: re-emit the legacy event for back-compat subscribers
+                        // until T16 deletes them. The mirror no-ops on the round-trip via its
+                        // state-equality guard (WorkflowEventMirror.kt:58).
+                        project.getService(EventBus::class.java).emit(WorkflowEvent.PrSelected(
                             prId = prId,
                             fromBranch = fromBranch,
                             toBranch = toBranch,
@@ -263,9 +279,6 @@ class PrDashboardPanel(
                             bambooPlanKey = bambooPlanKey,
                             sonarProjectKey = sonarProjectKey,
                         ))
-
-                        // Async: fetch build + quality gate statuses and update PrContext
-                        fetchAndUpdateStatuses(eventBus, repoName, latestCommit, sonarProjectKey, fromBranch)
                     }
                 }
             } else {
@@ -585,61 +598,6 @@ class PrDashboardPanel(
             compareByDescending<BitbucketPrDetail> { it.repoName == primaryLabel }
                 .thenByDescending { it.updatedDate }
         ).first()
-    }
-
-    // ---------------------------------------------------------------
-    // Async status fetch: build + quality gate
-    // ---------------------------------------------------------------
-
-    /**
-     * Fetches build status (from Bitbucket commit statuses) and quality gate status
-     * (from SonarQube) in parallel, then updates the PrContext map so other tabs
-     * can immediately show statuses without waiting for their own full data fetch.
-     */
-    private suspend fun fetchAndUpdateStatuses(
-        eventBus: EventBus,
-        repoName: String,
-        latestCommit: String?,
-        sonarProjectKey: String?,
-        branch: String
-    ) {
-        var buildStatus: String? = null
-        var qualityGateStatus: String? = null
-
-        // Fetch build status from Bitbucket commit build statuses
-        if (!latestCommit.isNullOrBlank()) {
-            try {
-                val bitbucketService = project.getService(BitbucketService::class.java)
-                val result = bitbucketService.getBuildStatuses(latestCommit, repoName)
-                if (result.data.isNotEmpty()) {
-                    // Aggregate: if any FAILED → FAILED, else if any INPROGRESS → INPROGRESS, else SUCCESSFUL
-                    val states = result.data.map { it.state.uppercase() }
-                    buildStatus = when {
-                        states.any { it == "FAILED" } -> "FAILED"
-                        states.any { it == "INPROGRESS" } -> "INPROGRESS"
-                        else -> "SUCCESSFUL"
-                    }
-                }
-            } catch (_: Exception) { /* non-critical — status stays null */ }
-        }
-
-        // Fetch quality gate from SonarQube
-        if (!sonarProjectKey.isNullOrBlank()) {
-            try {
-                val sonarService = project.getService(SonarService::class.java)
-                val result = sonarService.getQualityGateStatus(sonarProjectKey, branch, repoName)
-                qualityGateStatus = result.data.status  // "OK" or "ERROR"
-            } catch (_: Exception) { /* non-critical — status stays null */ }
-        }
-
-        // Update PrContext with fetched statuses
-        if (buildStatus != null || qualityGateStatus != null) {
-            val existing = eventBus.prContextMap[repoName] ?: return
-            eventBus.prContextMap[repoName] = existing.copy(
-                buildStatus = buildStatus ?: existing.buildStatus,
-                qualityGateStatus = qualityGateStatus ?: existing.qualityGateStatus,
-            )
-        }
     }
 
     // ---------------------------------------------------------------

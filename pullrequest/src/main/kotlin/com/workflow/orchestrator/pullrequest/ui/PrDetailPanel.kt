@@ -382,6 +382,13 @@ class PrDetailPanel(
 
     /**
      * Show a PR directly from a BitbucketPrDetail object (avoids re-fetch).
+     *
+     * Phase 5 T12: PrDashboardPanel's row-click handler invokes both
+     * `WorkflowContextService.focusPr(...)` (canonical single-source-of-truth write that
+     * cascades to Build + Quality tabs via `state.collect`) AND this `showPrDetail(...)`
+     * call. Both paths are gated by the same row-click event and share the same `prDetail`,
+     * so PrDetailPanel remains call-driven without a redundant `state.map { it.focusPr }`
+     * collector that would create dual-control with the parent's call.
      */
     fun showPrDetail(pr: BitbucketPrDetail, projectKey: String? = null, repoSlug: String? = null) {
         currentPrId = pr.id
