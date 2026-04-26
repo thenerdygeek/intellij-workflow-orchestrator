@@ -11,11 +11,12 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
-import com.workflow.orchestrator.core.events.EventBus
-import com.workflow.orchestrator.core.events.WorkflowEvent
+import com.workflow.orchestrator.core.model.workflow.PrRef
+import com.workflow.orchestrator.core.model.workflow.QualityScope
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.ui.StatusColors
+import com.workflow.orchestrator.core.workflow.WorkflowContextService
 import com.workflow.orchestrator.sonar.model.QualityGateStatus
 import com.workflow.orchestrator.sonar.model.SonarState
 import com.workflow.orchestrator.sonar.service.SonarDataService
@@ -23,6 +24,8 @@ import com.intellij.openapi.application.EDT
 import kotlinx.coroutines.*
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Cursor
@@ -40,6 +43,7 @@ class QualityDashboardPanel(
 
     private val settings = PluginSettings.getInstance(project)
     private val dataService = SonarDataService.getInstance(project)
+    private val workflowContextService = WorkflowContextService.getInstance(project)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.EDT)
 
     // Repo selector for multi-repo support — show all configured repos
@@ -253,16 +257,17 @@ class QualityDashboardPanel(
                 return@addActionListener
             }
 
-            // Priority 2: Check if a PR is selected for this repo
-            val eventBus = project.getService(EventBus::class.java)
-            val context = eventBus.prContextMap[repoName]
-
-            if (context != null) {
+            // Priority 2: Check if a PR is focused for this repo. Phase 5 T11 reads
+            // focusPr from WorkflowContextService instead of the legacy event-bus cache.
+            // One-shot direct flow read is correct here: this listener fires on user
+            // dropdown action, not on flow emission.
+            val focusPr = workflowContextService.state.value.focusPr
+            if (focusPr != null && focusPr.repoName == repoName && focusPr.fromBranch.isNotBlank()) {
                 qualityHintLabel.isVisible = false
                 tabbedPane.isVisible = true
                 statusLabel.text = "Switching to $sonarKey..."
                 loadingIcon.isVisible = true
-                dataService.refreshForBranch(context.fromBranch, sonarKey)
+                dataService.refreshForBranch(focusPr.fromBranch, sonarKey)
             } else {
                 showQualityHint("No PR selected for $repoName \u2014 select one in the PR tab")
             }
@@ -279,14 +284,27 @@ class QualityDashboardPanel(
                 }
         }
 
-        // Subscribe to PrSelected events to auto-switch repo selector
+        // Auto-sync repo selector to focused PR (Phase 5 T11). Narrow subscription on
+        // focusPr.repoName so unrelated state changes (e.g., activeBranch) don't fire.
         scope.launch {
-            val eventBus = project.getService(EventBus::class.java)
-            eventBus.events.collect { event ->
-                if (event is WorkflowEvent.PrSelected) {
-                    onPrSelectedEvent(event)
+            workflowContextService.state
+                .map { it.focusPr }
+                .distinctUntilChanged()
+                .collect { pr ->
+                    if (pr != null) onFocusPrChanged(pr)
                 }
-            }
+        }
+
+        // Refresh Sonar data when the focused quality scope changes (Phase 5 T11).
+        // Narrow subscription on focusQualityScope keeps heavy HTTP refreshes scoped
+        // to actual scope changes, not every state mutation.
+        scope.launch {
+            workflowContextService.state
+                .map { it.focusQualityScope }
+                .distinctUntilChanged()
+                .collect { qualityScope ->
+                    renderForQualityScope(qualityScope)
+                }
         }
 
         // Initial refresh
@@ -531,23 +549,46 @@ class QualityDashboardPanel(
         }
     }
 
-    private fun onPrSelectedEvent(event: WorkflowEvent.PrSelected) {
+    /**
+     * Sync the repo selector to the focused PR (Phase 5 T11). Drives the UI affordance
+     * only - actual data refresh is handled by [renderForQualityScope] subscribed to
+     * `focusQualityScope`.
+     */
+    private fun onFocusPrChanged(pr: PrRef) {
         if (repoSelector == null || allRepos.isEmpty()) return
 
-        val repoIndex = allRepos.indexOfFirst { it.displayLabel == event.repoName }
+        val repoIndex = allRepos.indexOfFirst { it.displayLabel == pr.repoName }
         if (repoIndex < 0) return
 
         suppressRepoSelectorListener = true
         repoSelector.selectedIndex = repoIndex
         suppressRepoSelectorListener = false
 
-        // Clear hint — SonarDataService handles the actual data refresh via its own event subscription
-        if (!event.sonarProjectKey.isNullOrBlank()) {
+        if (!pr.sonarProjectKey.isNullOrBlank()) {
             qualityHintLabel.isVisible = false
             tabbedPane.isVisible = true
         } else {
-            showQualityHint("SonarQube project key not configured for ${event.repoName} \u2014 configure in Settings > CI/CD")
+            showQualityHint("SonarQube project key not configured for ${pr.repoName} \u2014 configure in Settings > CI/CD")
         }
+    }
+
+    /**
+     * Refresh Sonar data when the focused quality scope changes (Phase 5 T11). Driven
+     * by the `focusQualityScope` flow - fires only when the scope actually changes,
+     * not on every workflow state mutation.
+     */
+    private fun renderForQualityScope(qualityScope: QualityScope?) {
+        if (qualityScope == null) {
+            // No focused PR / no Sonar key - leave panel state alone. The repoSelector
+            // listener and refreshData() handle the empty-state hint already.
+            return
+        }
+        qualityHintLabel.isVisible = false
+        tabbedPane.isVisible = true
+        statusLabel.text = "Switching to ${qualityScope.sonarProjectKey}..."
+        loadingIcon.isVisible = true
+        val branch = qualityScope.branchName ?: return
+        dataService.refreshForBranch(branch, qualityScope.sonarProjectKey)
     }
 
     private fun showQualityHint(message: String) {
