@@ -15,8 +15,12 @@ import com.intellij.ui.components.JBTextField
 import com.intellij.ui.dsl.builder.*
 import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.autodetect.AutoDetectOrchestrator
+import com.workflow.orchestrator.core.services.SonarProjectPickerLauncher
+import com.workflow.orchestrator.core.services.SonarService
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.util.DefaultBranchResolver
+import javax.swing.JButton
 import javax.swing.JCheckBox
 import javax.swing.JComponent
 import javax.swing.ListSelectionModel
@@ -39,10 +43,10 @@ class RepositoriesConfigurable(
     private var dialogPanel: com.intellij.openapi.ui.DialogPanel? = null
 
     // --- Repository table state ---
-    private val repoTableColumnNames = arrayOf("Name", "Bitbucket", "Bamboo Plan", "SonarQube", "Primary")
+    private val repoTableColumnNames = arrayOf("Name", "Bitbucket", "Bamboo Plan", "SonarQube", "Canonical URL", "Primary")
     private val repoTableModel = object : DefaultTableModel(repoTableColumnNames, 0) {
         override fun getColumnClass(columnIndex: Int): Class<*> =
-            if (columnIndex == 4) java.lang.Boolean::class.java else String::class.java
+            if (columnIndex == 5) java.lang.Boolean::class.java else String::class.java
 
         override fun isCellEditable(row: Int, column: Int): Boolean = false
     }
@@ -85,6 +89,7 @@ class RepositoriesConfigurable(
                 edited.sonarProjectKey != saved.sonarProjectKey ||
                 edited.dockerTagKey != saved.dockerTagKey ||
                 edited.defaultTargetBranch != saved.defaultTargetBranch ||
+                edited.canonicalCloneUrl != saved.canonicalCloneUrl ||
                 edited.isPrimary != saved.isPrimary
             ) return true
         }
@@ -107,6 +112,7 @@ class RepositoriesConfigurable(
                 dockerTagKey = repo.dockerTagKey ?: ""
                 defaultTargetBranch = repo.defaultTargetBranch ?: "develop"
                 localVcsRootPath = repo.localVcsRootPath ?: ""
+                canonicalCloneUrl = repo.canonicalCloneUrl ?: ""
                 isPrimary = repo.isPrimary
             }
             pluginSettings.state.repos.add(copy)
@@ -142,10 +148,11 @@ class RepositoriesConfigurable(
             row {
                 val table = JBTable(repoTableModel).apply {
                     setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
-                    preferredScrollableViewportSize = JBUI.size(600, 120)
+                    preferredScrollableViewportSize = JBUI.size(700, 120)
                     tableHeader.reorderingAllowed = false
-                    columnModel.getColumn(4).preferredWidth = JBUI.scale(60)
-                    columnModel.getColumn(4).maxWidth = JBUI.scale(70)
+                    columnModel.getColumn(4).preferredWidth = JBUI.scale(160)
+                    columnModel.getColumn(5).preferredWidth = JBUI.scale(60)
+                    columnModel.getColumn(5).maxWidth = JBUI.scale(70)
                 }
                 repoTable = table
                 val scrollPane = JBScrollPane(table)
@@ -158,6 +165,7 @@ class RepositoriesConfigurable(
                 button("Edit") { onEditRepo() }
                 button("Remove") { onRemoveRepo() }
                 button("Auto-Detect") { onAutoDetectRepos() }
+                button("Refresh from Bitbucket") { onRefreshFromBitbucket() }
                 button("Clear Branch Overrides") {
                     DefaultBranchResolver.getInstance(project).clearAllOverrides()
                     repoStatusLabel.text = "Branch target overrides cleared"
@@ -171,12 +179,16 @@ class RepositoriesConfigurable(
     private fun refreshRepoTable() {
         repoTableModel.rowCount = 0
         for (repo in editedRepos) {
+            val canonicalDisplay = repo.canonicalCloneUrl
+                ?.takeIf { it.isNotBlank() }
+                ?: "(not yet validated)"
             repoTableModel.addRow(
                 arrayOf<Any>(
                     repo.name ?: "",
                     "${repo.bitbucketProjectKey ?: ""}/${repo.bitbucketRepoSlug ?: ""}",
                     repo.bambooPlanKey ?: "",
                     repo.sonarProjectKey ?: "",
+                    canonicalDisplay,
                     repo.isPrimary
                 )
             )
@@ -235,6 +247,26 @@ class RepositoriesConfigurable(
         }
     }
 
+    private fun onRefreshFromBitbucket() {
+        repoStatusLabel.text = "Refreshing canonical URLs from Bitbucket..."
+        repoStatusLabel.foreground = StatusColors.INFO
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val orchestrator = project.getService(AutoDetectOrchestrator::class.java)
+            // Validate against the in-memory editedRepos so the table reflects the result
+            // immediately; the user still has to click Apply to persist.
+            runBlockingCancellable {
+                val filled = mutableListOf<String>()
+                orchestrator.validateBitbucketRepos(filled, editedRepos)
+            }
+            val modality = ModalityState.stateForComponent(repoStatusLabel)
+            platformInvokeLater(modality) {
+                refreshRepoTable()
+                repoStatusLabel.text = "Canonical URLs refreshed (click Apply to save)"
+                repoStatusLabel.foreground = StatusColors.SUCCESS
+            }
+        }
+    }
+
     private fun onAutoDetectRepos() {
         repoStatusLabel.text = "Detecting repositories from VCS roots..."
         ApplicationManager.getApplication().executeOnPooledThread {
@@ -283,7 +315,7 @@ class RepositoriesConfigurable(
     // ========== Repo Config Dialog ==========
 
     private class RepoConfigDialog(
-        project: Project,
+        private val project: Project,
         private val existing: RepoConfig?
     ) : DialogWrapper(project, false) {
 
@@ -296,21 +328,112 @@ class RepositoriesConfigurable(
         private val branchField = JBTextField(existing?.defaultTargetBranch ?: "develop", 30)
         private val primaryCheckbox = JCheckBox("Primary repository", existing?.isPrimary ?: false)
 
+        /** Displays ✓/✗ or a running indicator next to the Sonar field. */
+        private val sonarValidateStatusLabel = JBLabel("").apply {
+            font = font.deriveFont(JBUI.scale(11).toFloat())
+            border = JBUI.Borders.emptyLeft(4)
+        }
+
         init {
             title = if (existing != null) "Edit Repository" else "Add Repository"
             init()
         }
 
         override fun createCenterPanel(): JComponent {
+            val validateButton = JButton("Validate").apply {
+                toolTipText = "Check if the current key matches a project on the SonarQube server"
+                addActionListener { onValidateSonarKey() }
+            }
+            val findButton = JButton("Find on Server").apply {
+                toolTipText = "Search the SonarQube server and pick a project key"
+                addActionListener { onFindSonarKey() }
+            }
+
             return panel {
                 row("Name:") { cell(nameField).align(AlignX.FILL) }
                 row("Bitbucket Project Key:") { cell(bbProjectField).align(AlignX.FILL) }
                 row("Bitbucket Repo Slug:") { cell(bbRepoField).align(AlignX.FILL) }
                 row("Bamboo Plan Key:") { cell(bambooField).align(AlignX.FILL) }
-                row("SonarQube Project Key:") { cell(sonarField).align(AlignX.FILL) }
+                row("SonarQube Project Key:") {
+                    cell(sonarField).align(AlignX.FILL)
+                    cell(validateButton)
+                    cell(findButton)
+                    cell(sonarValidateStatusLabel)
+                }
                 row("Docker Tag Key:") { cell(dockerField).align(AlignX.FILL) }
                 row("Default Target Branch:") { cell(branchField).align(AlignX.FILL) }
                 row { cell(primaryCheckbox) }
+            }
+        }
+
+        /**
+         * Calls [SonarService.searchProjects] with the current key value and shows
+         * a ✓ (green) when an exact-key match is found, or ✗ (red) on mismatch.
+         *
+         * Runs the HTTP call on a pooled thread; UI update is modality-aware so it
+         * fires inside this modal dialog while it is open.
+         */
+        private fun onValidateSonarKey() {
+            val key = sonarField.text.trim()
+            if (key.isBlank()) {
+                sonarValidateStatusLabel.text = "Enter a key first"
+                sonarValidateStatusLabel.foreground = StatusColors.WARNING
+                return
+            }
+            sonarValidateStatusLabel.text = "Validating…"
+            sonarValidateStatusLabel.foreground = StatusColors.INFO
+            val modality = ModalityState.stateForComponent(sonarValidateStatusLabel)
+            ApplicationManager.getApplication().executeOnPooledThread {
+                val sonarService = project.getService(SonarService::class.java)
+                val result = runBlockingCancellable { sonarService.searchProjects(key) }
+                platformInvokeLater(modality) {
+                    if (result.isError) {
+                        sonarValidateStatusLabel.text = "Error — check connection"
+                        sonarValidateStatusLabel.foreground = StatusColors.ERROR
+                        return@platformInvokeLater
+                    }
+                    val match = result.data.any { it.key == key }
+                    if (match) {
+                        sonarValidateStatusLabel.text = "✓ Key found on server"
+                        sonarValidateStatusLabel.foreground = StatusColors.SUCCESS
+                    } else {
+                        sonarValidateStatusLabel.text = "✗ No exact match on server"
+                        sonarValidateStatusLabel.foreground = StatusColors.ERROR
+                    }
+                }
+            }
+        }
+
+        /**
+         * Opens [SonarProjectPickerLauncher] to let the user search and pick a project key.
+         * On selection the sonar key field is updated.
+         *
+         * The launcher itself dispatches the dialog to the EDT; we call it from a pooled
+         * thread so we don't block the Settings dialog's event thread.
+         */
+        private fun onFindSonarKey() {
+            val launcher = SonarProjectPickerLauncher.getInstance()
+            if (launcher == null) {
+                sonarValidateStatusLabel.text = "Sonar module not loaded"
+                sonarValidateStatusLabel.foreground = StatusColors.WARNING
+                return
+            }
+            sonarValidateStatusLabel.text = "Opening picker…"
+            sonarValidateStatusLabel.foreground = StatusColors.INFO
+            val modality = ModalityState.stateForComponent(sonarValidateStatusLabel)
+            ApplicationManager.getApplication().executeOnPooledThread {
+                val picked = runBlockingCancellable {
+                    launcher.pick(project, sonarField.text.trim().takeIf { it.isNotBlank() })
+                }
+                platformInvokeLater(modality) {
+                    if (!picked.isNullOrBlank()) {
+                        sonarField.text = picked
+                        sonarValidateStatusLabel.text = "✓ Key selected"
+                        sonarValidateStatusLabel.foreground = StatusColors.SUCCESS
+                    } else {
+                        sonarValidateStatusLabel.text = ""
+                    }
+                }
             }
         }
 

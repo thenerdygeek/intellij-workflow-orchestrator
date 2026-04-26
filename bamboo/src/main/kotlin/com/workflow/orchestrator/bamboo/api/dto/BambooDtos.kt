@@ -254,3 +254,93 @@ data class BambooArtifact(
 
 @Serializable
 data class BambooArtifactLink(val href: String = "")
+
+// --- Phase F: Tier 2 / 3 / branch-resolution DTOs ---
+
+/** Wraps byChangeset response: results.result[] */
+@Serializable
+data class BambooResultsByChangesetResponse(
+    val results: BambooChangesetResultList = BambooChangesetResultList()
+)
+
+@Serializable
+data class BambooChangesetResultList(
+    val result: List<BambooChangesetResultEntry> = emptyList(),
+    val size: Int = 0
+)
+
+@Serializable
+data class BambooChangesetResultEntry(
+    val plan: BambooPlanRef? = null,
+    val planResultKey: BambooPlanResultKey? = null
+)
+
+@Serializable
+data class BambooPlanRef(
+    val key: String,
+    val name: String? = null
+)
+
+@Serializable
+data class BambooPlanResultKey(
+    val key: String
+)
+
+/** Wraps GET /rest/api/latest/repository — array under "searchResults" key */
+@Serializable
+data class BambooLinkedRepositoryListResponse(
+    val searchResults: List<BambooLinkedRepositoryItem> = emptyList(),
+    val size: Int = 0,
+    @SerialName("max-result") val maxResult: Int = 0,
+    @SerialName("start-index") val startIndex: Int = 0
+)
+
+@Serializable
+data class BambooLinkedRepositoryItem(
+    val id: Int = 0,
+    val searchEntity: BambooLinkedRepository = BambooLinkedRepository()
+)
+
+@Serializable
+data class BambooLinkedRepository(
+    val id: Int = 0,
+    val name: String = "",
+    val repositoryUrl: String? = null,
+    val pluginKey: String? = null
+)
+
+/** Wraps GET /rest/api/latest/repository/{id}/usedBy */
+@Serializable
+data class BambooRepositoryUsageListResponse(
+    val results: List<BambooRepositoryUsage> = emptyList(),
+    val size: Int = 0
+)
+
+@Serializable
+data class BambooRepositoryUsage(
+    val key: String,
+    val name: String? = null,
+    val entityType: String? = null  // "CHAIN" (plan) or "DEPLOYMENT_PROJECT"
+)
+
+/** Wraps GET /rest/api/latest/plan/{masterKey}/branch */
+@Serializable
+data class BambooPlanBranchListResponse(
+    val branches: BambooPlanBranchCollection = BambooPlanBranchCollection()
+)
+
+@Serializable
+data class BambooPlanBranchCollection(
+    val branch: List<BambooPlanBranch> = emptyList(),
+    val size: Int = 0,
+    @SerialName("max-result") val maxResult: Int = 0,
+    @SerialName("start-index") val startIndex: Int = 0
+)
+
+@Serializable
+data class BambooPlanBranch(
+    val key: String,
+    val name: String? = null,
+    val shortName: String? = null,
+    val enabled: Boolean = true
+)

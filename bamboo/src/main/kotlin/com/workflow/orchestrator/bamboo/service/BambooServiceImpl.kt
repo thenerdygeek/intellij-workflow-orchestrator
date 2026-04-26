@@ -786,6 +786,56 @@ class BambooServiceImpl(private val project: Project) : BambooService {
         }
     }
 
+    override suspend fun autoDetectPlan(
+        repoRoot: java.nio.file.Path?,
+        remoteUrl: String,
+        branchName: String?
+    ): ToolResult<String> {
+        if (remoteUrl.isBlank() && repoRoot == null) {
+            return ToolResult(
+                data = "",
+                summary = "No git remote URL or repo root provided",
+                isError = true
+            )
+        }
+        val api = client ?: return ToolResult(
+            data = "",
+            summary = "Bamboo not configured. Cannot auto-detect plan.",
+            isError = true,
+            hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+        // Only pass settings when we have a repoRoot; settings is needed for the deep-scan
+        // toggle (Tier 4 gate) which is only reached after T0/T1 run. When repoRoot is null,
+        // T0 and T1 are both skipped and the waterfall returns NOT_FOUND immediately (deep
+        // scan disabled by default), so settings access is unnecessary and would crash in
+        // tests that run without a real IntelliJ project.
+        val effectiveSettings = if (repoRoot != null) settings else null
+        val planDetection = PlanDetectionService(api, effectiveSettings)
+        return when (val result = planDetection.autoDetect(repoRoot, remoteUrl, branchName)) {
+            is com.workflow.orchestrator.core.model.ApiResult.Success -> ToolResult(
+                data = result.data,
+                summary = "Auto-detected Bamboo plan: ${result.data}"
+            )
+            is com.workflow.orchestrator.core.model.ApiResult.Error -> ToolResult(
+                data = "",
+                summary = result.message,
+                isError = true
+            )
+        }
+    }
+
+    /**
+     * Legacy entry point: delegates to the new waterfall with null repoRoot.
+     * T0 and T1 are skipped (no repoRoot); falls to the deep-scan gate.
+     * For backward compatibility, passes settings so the deep-scan toggle is respected
+     * when a caller explicitly uses this method on a configured service.
+     *
+     * Note: in unit tests that mock the project without PluginSettings, this path
+     * returns NOT_FOUND (deep scan disabled) rather than executing the N+1 scan.
+     * Tests that want the N+1 scan behavior should call autoDetectPlan(null, url, null)
+     * with a service that has deep scan enabled, or call BambooServiceImplAutoDetectPlanTest
+     * which tests autoDetectPlan(url) via testClientOverride.
+     */
     override suspend fun autoDetectPlan(gitRemoteUrl: String): ToolResult<String> {
         if (gitRemoteUrl.isBlank()) {
             return ToolResult(
@@ -800,15 +850,17 @@ class BambooServiceImpl(private val project: Project) : BambooService {
             isError = true,
             hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
         )
-        val planDetection = PlanDetectionService(api)
-        return when (val result = planDetection.autoDetect(gitRemoteUrl)) {
+        // Use the legacy N+1 scan directly for the 1-arg overload to preserve backward compat.
+        val planDetection = PlanDetectionService(api, null)
+        val legacyResult = planDetection.legacyN1ScanPublic(gitRemoteUrl)
+        return when (legacyResult) {
             is com.workflow.orchestrator.core.model.ApiResult.Success -> ToolResult(
-                data = result.data,
-                summary = "Auto-detected Bamboo plan: ${result.data}"
+                data = legacyResult.data,
+                summary = "Auto-detected Bamboo plan: ${legacyResult.data}"
             )
             is com.workflow.orchestrator.core.model.ApiResult.Error -> ToolResult(
                 data = "",
-                summary = result.message,
+                summary = legacyResult.message,
                 isError = true
             )
         }

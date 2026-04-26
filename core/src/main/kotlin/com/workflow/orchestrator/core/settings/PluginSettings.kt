@@ -160,6 +160,23 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
          * Leave empty to disable the automatic transition.
          */
         var ticketTransitionDefaultPrCreateStatusName by string("In Review")
+
+        // ── Bamboo auto-detection ────────────────────────────────────────────────
+        /**
+         * When true, plan auto-detection falls back to the full N+1 plan-listing scan
+         * (Tier 4) after Tier 0 (local bamboo-specs) and Tier 1 (Bitbucket commit walk)
+         * both miss. Disabled by default because the scan is slow (one HTTP call per plan).
+         */
+        var bambooDeepScanEnabled by property(false)
+
+        /**
+         * Validation cache for Bamboo plan keys, keyed by plan key.
+         * Positive validations persist indefinitely (plan keys don't change once created).
+         * Negative validations expire after 5 min.
+         *
+         * Format: "PROJ-PLAN=POSITIVE" or "PROJ-PLAN=NEGATIVE:<expiryEpochMs>"
+         */
+        var bambooPlanValidationCache by list<String>()
     }
 
     /**
@@ -194,4 +211,50 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
             return project.service<PluginSettings>()
         }
     }
+}
+
+/**
+ * Records a validation result in the persistent Bamboo plan validation cache.
+ *
+ * Positive entries persist indefinitely (plan keys don't change once created).
+ * Negative entries are stored with an expiry timestamp 5 minutes in the future.
+ */
+fun PluginSettings.recordPlanValidation(key: String, valid: Boolean) {
+    val cacheList = state.bambooPlanValidationCache
+    cacheList.removeAll { it.startsWith("$key=") }
+    if (valid) {
+        cacheList.add("$key=POSITIVE")
+    } else {
+        cacheList.add("$key=NEGATIVE:${System.currentTimeMillis() + 5 * 60 * 1000L}")
+    }
+}
+
+/**
+ * Looks up a validation result from the persistent Bamboo plan validation cache.
+ *
+ * Returns:
+ * - `true`  — plan key is known-valid (positive cache hit)
+ * - `false` — plan key is known-invalid and the negative entry has not yet expired
+ * - `null`  — unknown / missing / negative entry has expired (caller must re-validate)
+ */
+fun PluginSettings.lookupPlanValidation(key: String): Boolean? {
+    val now = System.currentTimeMillis()
+    val entry = state.bambooPlanValidationCache.firstOrNull { it.startsWith("$key=") } ?: return null
+    return when {
+        entry == "$key=POSITIVE" -> true
+        entry.startsWith("$key=NEGATIVE:") -> {
+            val expiry = entry.substringAfter("$key=NEGATIVE:").toLongOrNull() ?: return null
+            if (expiry > now) false else null
+        }
+        else -> null
+    }
+}
+
+/**
+ * Clears all entries in the Bamboo plan-validation cache. Used by Settings UI when a
+ * plan is renamed or deleted on the server and the persistent POSITIVE entry would
+ * otherwise stick forever.
+ */
+fun PluginSettings.clearPlanValidationCache() {
+    state.bambooPlanValidationCache.clear()
 }

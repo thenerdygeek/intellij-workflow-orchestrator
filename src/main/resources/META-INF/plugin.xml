@@ -56,6 +56,10 @@
             qualifiedName="com.workflow.orchestrator.latestBuildLookup"
             interface="com.workflow.orchestrator.core.workflow.LatestBuildLookup"
             dynamic="true"/>
+        <extensionPoint
+            qualifiedName="com.workflow.orchestrator.plugin.sonarProjectPickerLauncher"
+            interface="com.workflow.orchestrator.core.services.SonarProjectPickerLauncher"
+            dynamic="true"/>
     </extensionPoints>
 
     <extensions defaultExtensionNs="com.intellij">
@@ -391,6 +395,8 @@
         <createPrLauncher implementation="com.workflow.orchestrator.pullrequest.action.CreatePrLauncherImpl"/>
         <openPrLister implementation="com.workflow.orchestrator.pullrequest.workflow.OpenPrListerImpl"/>
         <latestBuildLookup implementation="com.workflow.orchestrator.bamboo.workflow.LatestBuildLookupImpl"/>
+        <sonarProjectPickerLauncher
+            implementation="com.workflow.orchestrator.sonar.service.SonarProjectPickerLauncherImpl"/>
     </extensions>
 
     <applicationListeners>

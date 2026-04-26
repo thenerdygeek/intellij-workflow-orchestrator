@@ -1,0 +1,27 @@
+{
+  "branches": {
+    "size": 3,
+    "max-result": 200,
+    "start-index": 0,
+    "branch": [
+      {
+        "key": "PROJ-BUILD-7",
+        "name": "feature/PROJ-123-add-login",
+        "shortName": "feature/PROJ-123-add-login",
+        "enabled": true
+      },
+      {
+        "key": "PROJ-BUILD-8",
+        "name": "bugfix/PROJ-456-fix-crash",
+        "shortName": "bugfix/PROJ-456-fix-crash",
+        "enabled": true
+      },
+      {
+        "key": "PROJ-BUILD-9",
+        "name": "release/1.2.0",
+        "shortName": "release/1.2.0",
+        "enabled": false
+      }
+    ]
+  }
+}

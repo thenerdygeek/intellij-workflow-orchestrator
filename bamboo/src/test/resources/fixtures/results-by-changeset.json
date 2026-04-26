@@ -1,0 +1,25 @@
+{
+  "results": {
+    "size": 2,
+    "result": [
+      {
+        "plan": {
+          "key": "PROJ-BUILD",
+          "name": "My Project - Build"
+        },
+        "planResultKey": {
+          "key": "PROJ-BUILD-42"
+        }
+      },
+      {
+        "plan": {
+          "key": "PROJ-DEPLOY",
+          "name": "My Project - Deploy"
+        },
+        "planResultKey": {
+          "key": "PROJ-DEPLOY-15"
+        }
+      }
+    ]
+  }
+}

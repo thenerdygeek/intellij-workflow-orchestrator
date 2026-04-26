@@ -1,17 +1,22 @@
 package com.workflow.orchestrator.core.autodetect
 
+import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.services.SonarKeyDetectorService
+import com.workflow.orchestrator.core.services.SonarProjectPickerLauncher
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoConfig
+import com.workflow.orchestrator.core.settings.RepoContextResolver
 import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -44,6 +49,10 @@ class AutoDetectOrchestrator(private val project: Project, private val cs: Corou
     internal val scope: CoroutineScope get() = cs
     private val firstSweepNotified = AtomicBoolean(false)
     private val detectionMutex = Mutex()
+    // Per-session set of repo labels that have already been notified about a missing
+    // Sonar key — prevents balloon spam across multiple `detectAll()` sweeps (startup,
+    // BranchChanged, manual Auto-Detect button, etc.).
+    private val sonarMissNotifiedRepos = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     init {
         scope.launch {
@@ -78,12 +87,19 @@ class AutoDetectOrchestrator(private val project: Project, private val cs: Corou
             runDetector("git-remote", filled, errors) { detectGitDerivable(it) }
             runDetector("sonar-key", filled, errors) { detectSonarKey(it) }
 
-            // Suspend detector — call directly with try/catch
+            // Suspend detectors — call directly with try/catch
             try {
                 detectBambooPlan(filled)
             } catch (e: Exception) {
                 log.warn("[AutoDetect] Detector 'bamboo-plan' failed", e)
                 errors.add("bamboo-plan: ${e.message ?: "unknown"}")
+            }
+
+            try {
+                validateBitbucketRepos(filled)
+            } catch (e: Exception) {
+                log.warn("[AutoDetect] Detector 'bitbucket-validate' failed", e)
+                errors.add("bitbucket-validate: ${e.message ?: "unknown"}")
             }
 
             // After per-repo writes, mirror primary repo values to global as fallback
@@ -181,13 +197,115 @@ class AutoDetectOrchestrator(private val project: Project, private val cs: Corou
             return
         }
 
+        // Repos with missing Sonar keys after all local tiers — used to fire a single
+        // actionable notification per sweep (capped to the first unresolved repo).
+        val missingKeyRepos = mutableListOf<RepoConfig>()
+
         for (repo in repos) {
             val rootPath = repo.localVcsRootPath?.takeIf { it.isNotBlank() } ?: continue
-            val detected = detector.detectForPath(rootPath) ?: continue
+            val detected = detector.detectForPath(rootPath) ?: run {
+                // Local tiers all returned null; track this repo for the miss notification.
+                if (repo.sonarProjectKey.isNullOrBlank()) missingKeyRepos += repo
+                return@run null
+            }
             val updated = fillIfEmpty(repo.sonarProjectKey, detected)
             if (updated != repo.sonarProjectKey && !updated.isNullOrBlank()) {
                 repo.sonarProjectKey = updated
                 filled += "${repoLabel(repo)}.sonarProjectKey"
+            }
+        }
+
+        // Notify for the first unresolved repo, but only if we haven't already notified
+        // about it this session (the per-repo dedup set prevents balloon spam on
+        // every BranchChanged / Auto-Detect / startup re-sweep).
+        val firstMissing = missingKeyRepos.firstOrNull { sonarMissNotifiedRepos.add(repoLabel(it)) } ?: return
+        showSonarNotDetectedNotification(firstMissing)
+    }
+
+    /**
+     * Posts a single INFORMATION balloon when no local tier resolved the Sonar key for [repo].
+     * The action opens Settings so the user can use the "Find" button, or they can click
+     * "Search Sonar Server" to pick directly from the notification (if :sonar is loaded).
+     */
+    private fun showSonarNotDetectedNotification(repo: RepoConfig) {
+        val label = repoLabel(repo)
+        val msg = "Sonar key not auto-detected for repository '$label'. " +
+                  "Open Settings to validate or search the server."
+        val notification = NotificationGroupManager.getInstance()
+            .getNotificationGroup("workflow.autodetect")
+            .createNotification(msg, NotificationType.INFORMATION)
+        notification.addAction(NotificationAction.createSimple("Open Repositories Settings") {
+            ShowSettingsUtil.getInstance()
+                .showSettingsDialog(project, "workflow.orchestrator.repositories")
+            notification.expire()
+        })
+        notification.addAction(NotificationAction.createSimple("Search Sonar Server") {
+            val launcher = SonarProjectPickerLauncher.getInstance()
+            if (launcher == null) {
+                ShowSettingsUtil.getInstance()
+                    .showSettingsDialog(project, "workflow.orchestrator.repositories")
+                notification.expire()
+                return@createSimple
+            }
+            scope.launch {
+                val picked = launcher.pick(project, repo.sonarProjectKey)
+                if (!picked.isNullOrBlank()) {
+                    repo.sonarProjectKey = picked
+                    log.info("[AutoDetect] Sonar key set via notification picker for '$label': $picked")
+                    // Pick is in-memory only until the user applies Settings. Nudge them
+                    // explicitly so they don't think the picker silently failed when the
+                    // key disappears on next IDE restart.
+                    showSonarKeyStagedNotification(label, picked)
+                }
+                notification.expire()
+            }
+        })
+        notification.notify(project)
+    }
+
+    /**
+     * Follow-up balloon shown after the user picks a Sonar key from the picker action of
+     * [showSonarNotDetectedNotification]. The pick is staged in memory only; the user must
+     * open Settings and click Apply to persist. This nudge points them at the Settings page
+     * directly instead of leaving them to wonder if the pick silently failed.
+     */
+    private fun showSonarKeyStagedNotification(label: String, picked: String) {
+        val msg = "Sonar key '$picked' staged for repository '$label'. " +
+                  "Open Settings and click Apply to save."
+        val followup = NotificationGroupManager.getInstance()
+            .getNotificationGroup("workflow.autodetect")
+            .createNotification(msg, NotificationType.INFORMATION)
+        followup.addAction(NotificationAction.createSimple("Open Settings") {
+            ShowSettingsUtil.getInstance()
+                .showSettingsDialog(project, "workflow.orchestrator.repositories")
+            followup.expire()
+        })
+        followup.notify(project)
+    }
+
+    /**
+     * Validates parsed Bitbucket project/slug values against the server and persists the
+     * server-canonical HTTPS clone URL on each [RepoConfig]. Runs after [detectGitDerivable]
+     * has populated [RepoConfig.bitbucketProjectKey] and [RepoConfig.bitbucketRepoSlug].
+     *
+     * Silently skips repos with missing keys, and skips the entire sweep if Bitbucket is
+     * not configured (blank base URL).
+     */
+    suspend fun validateBitbucketRepos(filled: MutableList<String>, targetRepos: List<RepoConfig>? = null) {
+        val client = BitbucketBranchClient.fromConfiguredSettings() ?: run {
+            log.info("[AutoDetect] Bitbucket not configured — skipping canonical URL validation")
+            return
+        }
+        val resolver = RepoContextResolver.getInstance(project)
+        val repos = targetRepos ?: PluginSettings.getInstance(project).getRepos()
+        if (repos.isEmpty()) return
+
+        for (repo in repos) {
+            if (repo.bitbucketProjectKey.isNullOrBlank() || repo.bitbucketRepoSlug.isNullOrBlank()) continue
+            if (!repo.canonicalCloneUrl.isNullOrBlank()) continue  // already validated
+            resolver.validateAndPersistCanonicalUrl(repo, client)
+            if (!repo.canonicalCloneUrl.isNullOrBlank()) {
+                filled += "${repoLabel(repo)}.canonicalCloneUrl"
             }
         }
     }
@@ -201,8 +319,11 @@ class AutoDetectOrchestrator(private val project: Project, private val cs: Corou
         if (repos.isEmpty()) {
             val state = settings.state
             if (!state.bambooPlanKey.isNullOrBlank()) return
-            val remoteUrl = gitRepos.firstOrNull()?.remotes?.firstOrNull()?.firstUrl ?: return
-            val result = bambooService.autoDetectPlan(remoteUrl)
+            val gitRepo = gitRepos.firstOrNull() ?: return
+            val remoteUrl = gitRepo.remotes.firstOrNull()?.firstUrl ?: return
+            val repoRoot = Paths.get(gitRepo.root.path)
+            val branchName = gitRepo.currentBranch?.name
+            val result = bambooService.autoDetectPlan(repoRoot, remoteUrl, branchName)
             if (result.isError || result.data.isBlank()) return
             state.bambooPlanKey = result.data
             filled += "global.bambooPlanKey"
@@ -214,7 +335,9 @@ class AutoDetectOrchestrator(private val project: Project, private val cs: Corou
             val repoConfig = settings.getRepoForPath(rootPath) ?: continue
             if (!repoConfig.bambooPlanKey.isNullOrBlank()) continue
             val remoteUrl = gitRepo.remotes.firstOrNull()?.firstUrl ?: continue
-            val result = bambooService.autoDetectPlan(remoteUrl)
+            val repoRoot = Paths.get(gitRepo.root.path)
+            val branchName = gitRepo.currentBranch?.name
+            val result = bambooService.autoDetectPlan(repoRoot, remoteUrl, branchName)
             if (result.isError || result.data.isBlank()) continue
             repoConfig.bambooPlanKey = result.data
             filled += "${repoLabel(repoConfig)}.bambooPlanKey"

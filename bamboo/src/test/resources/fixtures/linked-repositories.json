@@ -1,0 +1,25 @@
+{
+  "searchResults": [
+    {
+      "id": 10,
+      "searchEntity": {
+        "id": 10,
+        "name": "my-repo",
+        "repositoryUrl": "https://bitbucket.org/mycompany/myrepo.git",
+        "pluginKey": "com.atlassian.bamboo.plugins.atlassian-bamboo-plugin-git:gitv2"
+      }
+    },
+    {
+      "id": 11,
+      "searchEntity": {
+        "id": 11,
+        "name": "other-repo",
+        "repositoryUrl": "https://bitbucket.org/mycompany/other.git",
+        "pluginKey": "com.atlassian.bamboo.plugins.atlassian-bamboo-plugin-git:gitv2"
+      }
+    }
+  ],
+  "size": 2,
+  "max-result": 200,
+  "start-index": 0
+}

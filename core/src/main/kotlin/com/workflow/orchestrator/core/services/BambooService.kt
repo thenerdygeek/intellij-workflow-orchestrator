@@ -65,13 +65,30 @@ interface BambooService {
     suspend fun searchPlans(query: String): ToolResult<List<PlanData>>
 
     /**
-     * Auto-detects the Bamboo plan key associated with a git repository by
-     * fetching all plans, parsing each plan's bamboo-specs YAML for repository
-     * URLs, and matching against the given git remote URL.
+     * Auto-detects the Bamboo plan key associated with a git repository.
+     *
+     * Runs a three-tier waterfall:
+     * - Tier 0: parse local `bamboo-specs/bamboo.yml` (0 HTTP calls)
+     * - Tier 1: walk last 10 commits via Bitbucket build-status API (1–10 calls)
+     * - Tier 4: full N+1 plan-listing scan (only when `bambooDeepScanEnabled` is ON)
+     *
+     * @param repoRoot  local path to the git repository root; null disables Tier 0 + Tier 1
+     * @param remoteUrl the git remote URL to match against for Tier 4 (SSH or HTTPS)
+     * @param branchName current branch name (reserved for future Tier 2/3 use)
+     * @return ToolResult with the detected plan key on success, or isError=true
+     *         when no plan is found
+     */
+    suspend fun autoDetectPlan(
+        repoRoot: java.nio.file.Path?,
+        remoteUrl: String,
+        branchName: String? = null
+    ): ToolResult<String>
+
+    /**
+     * Legacy entry point — auto-detects by fetching all plans and scanning bamboo-specs YAML.
+     * Delegates to [autoDetectPlan] with null repoRoot.
      *
      * @param gitRemoteUrl the git remote URL to match against (SSH or HTTPS)
-     * @return ToolResult with the detected plan key on success, or isError=true
-     *         when the URL is blank, no plans match, or multiple plans match
      */
     suspend fun autoDetectPlan(gitRemoteUrl: String): ToolResult<String>
 

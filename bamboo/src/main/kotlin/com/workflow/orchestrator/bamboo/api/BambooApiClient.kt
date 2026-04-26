@@ -328,6 +328,78 @@ class BambooApiClient(
         return get("/rest/api/latest/result/$resultKey?expand=stages.stage")
     }
 
+    /**
+     * GET /rest/api/latest/result/byChangeset/{sha}
+     * Returns all build results for the given commit SHA. The plan key in each entry is
+     * branch-aware (Bamboo returns the branch plan key when the result was built on a branch).
+     */
+    suspend fun getResultsByChangeset(sha: String): ApiResult<List<com.workflow.orchestrator.bamboo.api.dto.BambooChangesetResultEntry>> =
+        get<com.workflow.orchestrator.bamboo.api.dto.BambooResultsByChangesetResponse>(
+            "/rest/api/latest/result/byChangeset/$sha?expand=results.result.plan"
+        ).map { it.results.result }
+
+    /**
+     * GET /rest/api/latest/repository
+     * Returns all Linked Repositories configured in Bamboo.
+     */
+    suspend fun getLinkedRepositories(): ApiResult<List<com.workflow.orchestrator.bamboo.api.dto.BambooLinkedRepository>> =
+        get<com.workflow.orchestrator.bamboo.api.dto.BambooLinkedRepositoryListResponse>(
+            "/rest/api/latest/repository?max-results=200"
+        ).map { it.searchResults.map { item -> item.searchEntity.copy(id = item.id) } }
+
+    /**
+     * GET /rest/api/latest/repository/{id}/usedBy
+     * Returns all plans (and deployment projects) that use the given linked repository.
+     */
+    suspend fun getRepositoryUsedBy(id: Int): ApiResult<List<com.workflow.orchestrator.bamboo.api.dto.BambooRepositoryUsage>> =
+        get<com.workflow.orchestrator.bamboo.api.dto.BambooRepositoryUsageListResponse>(
+            "/rest/api/latest/repository/$id/usedBy"
+        ).map { it.results }
+
+    /**
+     * GET /rest/api/latest/plan/{masterPlanKey}/branch?max-results={maxResults}
+     * Returns all branch plans for the given master plan key.
+     */
+    suspend fun getPlanBranches(
+        masterPlanKey: String,
+        maxResults: Int = 200
+    ): ApiResult<List<com.workflow.orchestrator.bamboo.api.dto.BambooPlanBranch>> =
+        get<com.workflow.orchestrator.bamboo.api.dto.BambooPlanBranchListResponse>(
+            "/rest/api/latest/plan/$masterPlanKey/branch?max-results=$maxResults"
+        ).map { it.branches.branch }
+
+    /**
+     * Returns Success(true) if `GET /rest/api/latest/plan/{candidate}` returns 200,
+     * Success(false) on 404, or Error on other status / network error.
+     *
+     * Used to drop wrong key candidates that survive the parsing waterfall (e.g.,
+     * over-stripped keys from extractPlanKey).
+     */
+    suspend fun validatePlan(candidate: String): ApiResult<Boolean> =
+        withContext(Dispatchers.IO) {
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/latest/plan/$candidate")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    log.debug("[Bamboo:API] validatePlan $candidate -> ${it.code}")
+                    when (it.code) {
+                        in 200..299 -> ApiResult.Success(true)
+                        404 -> ApiResult.Success(false)
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token")
+                        403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bamboo permissions")
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bamboo returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.warn("[Bamboo:API] validatePlan network error: ${e.message}")
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bamboo: ${e.message}", e)
+            }
+        }
+
     private suspend fun put(path: String): ApiResult<Unit> =
         withContext(Dispatchers.IO) {
             try {

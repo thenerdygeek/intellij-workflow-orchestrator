@@ -2,8 +2,11 @@ package com.workflow.orchestrator.core.settings
 
 import com.intellij.dvcs.repo.VcsRepositoryManager
 import com.intellij.dvcs.repo.VcsRepositoryMappingListener
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.fileEditor.FileEditorManagerEvent
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.project.Project
@@ -12,11 +15,17 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.util.CachedValue
 import com.intellij.psi.util.CachedValueProvider
 import com.intellij.psi.util.CachedValuesManager
+import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
+import com.workflow.orchestrator.core.bitbucket.RemoteUrlParseResult
+import com.workflow.orchestrator.core.bitbucket.RemoteUrlParser
+import com.workflow.orchestrator.core.model.ErrorType
 import git4idea.repo.GitRepository
 import git4idea.repo.GitRepositoryManager
 
 @Service(Service.Level.PROJECT)
 class RepoContextResolver(private val project: Project) : Disposable {
+
+    private val log = logger<RepoContextResolver>()
 
     /**
      * Bumped when any input to [resolveCurrentEditorRepoOrPrimary] may have changed:
@@ -140,24 +149,108 @@ class RepoContextResolver(private val project: Project) : Disposable {
     fun autoDetectRepos(): List<RepoConfig> {
         val gitRepos = GitRepositoryManager.getInstance(project).repositories
         return gitRepos.mapNotNull { repo ->
-            val remoteUrl = repo.remotes.firstOrNull()?.firstUrl ?: return@mapNotNull null
-            val (projectKey, repoSlug) = parseRemoteUrl(remoteUrl) ?: return@mapNotNull null
-            RepoConfig().apply {
-                name = repoSlug
-                bitbucketProjectKey = projectKey
-                bitbucketRepoSlug = repoSlug
-                localVcsRootPath = repo.root.path
-                isPrimary = repo == gitRepos.first()
+            // Action 2: iterate remotes in priority order
+            val remote = pickBestRemote(repo) ?: return@mapNotNull null
+            // Try all fetch URLs, then push URLs as fallback
+            val urls = remote.urls.takeIf { it.isNotEmpty() }
+                ?: remote.pushUrls.takeIf { it.isNotEmpty() }
+                ?: return@mapNotNull null
+
+            var result: RepoConfig? = null
+            for (url in urls) {
+                when (val parsed = RemoteUrlParser.parse(url)) {
+                    is RemoteUrlParseResult.CloudNotSupported -> {
+                        // Action 3: explicit user-facing warning for Cloud remotes
+                        NotificationGroupManager.getInstance()
+                            .getNotificationGroup("workflow.autodetect")
+                            .createNotification(
+                                "Repository '${repo.root.name}' uses Bitbucket Cloud — " +
+                                    "auto-detection skipped (plugin targets Bitbucket Server).",
+                                NotificationType.WARNING
+                            )
+                            .notify(project)
+                        break
+                    }
+                    is RemoteUrlParseResult.Unparseable -> {
+                        log.warn("[AutoDetect] Could not parse remote URL '$url': ${parsed.reason}")
+                        // try next URL
+                    }
+                    is RemoteUrlParseResult.Success -> {
+                        result = RepoConfig().apply {
+                            name = parsed.parsed.repoSlug
+                            bitbucketProjectKey = parsed.parsed.projectKey
+                            bitbucketRepoSlug = parsed.parsed.repoSlug
+                            localVcsRootPath = repo.root.path
+                            isPrimary = repo == gitRepos.first()
+                            // canonicalCloneUrl left blank; populated by validateAndPersistCanonicalUrl
+                        }
+                        break
+                    }
+                }
+            }
+            result
+        }
+    }
+
+    /**
+     * Validates a parsed repo against the Bitbucket Server REST API and persists
+     * the server-canonical HTTPS clone URL on [repo] if available.
+     *
+     * On NOT_FOUND: logs a warning (parse may have produced wrong key/slug).
+     * On AUTH/NETWORK: logs info and leaves [repo.canonicalCloneUrl] blank for
+     * retry on the next sweep.
+     */
+    suspend fun validateAndPersistCanonicalUrl(repo: RepoConfig, client: BitbucketBranchClient) {
+        val projectKey = repo.bitbucketProjectKey ?: return
+        val repoSlug = repo.bitbucketRepoSlug ?: return
+        if (projectKey.isBlank() || repoSlug.isBlank()) return
+
+        when (val apiResult = client.getRepository(projectKey, repoSlug)) {
+            is com.workflow.orchestrator.core.model.ApiResult.Success -> {
+                // Some Bitbucket DC versions emit the HTTPS clone link as name="http",
+                // others as name="https". Accept either; prefer http if both present
+                // (matches the Atlassian default branding).
+                val cloneLinks = apiResult.data.links.clone
+                val httpClone = (cloneLinks.firstOrNull { it.name == "http" }
+                    ?: cloneLinks.firstOrNull { it.name == "https" })?.href
+                if (!httpClone.isNullOrBlank()) {
+                    repo.canonicalCloneUrl = httpClone
+                    log.info("[AutoDetect] Persisted canonical URL for $projectKey/$repoSlug: $httpClone")
+                }
+            }
+            is com.workflow.orchestrator.core.model.ApiResult.Error -> {
+                when (apiResult.type) {
+                    ErrorType.NOT_FOUND ->
+                        log.warn("[AutoDetect] $projectKey/$repoSlug not found on server — auto-detected key may be wrong")
+                    else ->
+                        log.info("[AutoDetect] Cannot validate $projectKey/$repoSlug (${apiResult.type}): ${apiResult.message}")
+                }
             }
         }
     }
 
+    /**
+     * Selects the best remote from [repo] using priority order:
+     * `origin` → `upstream` → `bitbucket` → first available.
+     */
+    private fun pickBestRemote(repo: GitRepository): git4idea.repo.GitRemote? {
+        val remotes = repo.remotes
+        if (remotes.isEmpty()) return null
+        return remotes.find { it.name == "origin" }
+            ?: remotes.find { it.name == "upstream" }
+            ?: remotes.find { it.name == "bitbucket" }
+            ?: remotes.first()
+    }
+
+    /**
+     * Retained for backwards compatibility with [resolveFromGitRepo] Tier 2.
+     * Delegates to [RemoteUrlParser] so both paths share the same parsing logic.
+     */
     private fun parseRemoteUrl(url: String): Pair<String, String>? {
-        // SSH: ssh://git@server/PROJECT/repo.git or git@server:PROJECT/repo.git
-        // HTTPS: https://server/scm/PROJECT/repo.git
-        val pattern = Regex(".*/([^/]+)/([^/]+?)(?:\\.git)?$")
-        val match = pattern.find(url) ?: return null
-        return Pair(match.groupValues[1], match.groupValues[2])
+        return when (val r = RemoteUrlParser.parse(url)) {
+            is RemoteUrlParseResult.Success -> r.parsed.projectKey to r.parsed.repoSlug
+            else -> null
+        }
     }
 
     override fun dispose() {

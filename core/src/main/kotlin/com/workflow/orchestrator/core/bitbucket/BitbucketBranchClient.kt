@@ -24,6 +24,26 @@ data class BitbucketProject(
 )
 
 @Serializable
+data class BitbucketCloneLink(
+    val name: String,
+    val href: String
+)
+
+@Serializable
+data class BitbucketRepoLinks(
+    val clone: List<BitbucketCloneLink> = emptyList(),
+    val self: List<BitbucketCloneLink> = emptyList()
+)
+
+@Serializable
+data class BitbucketRepoDetail(
+    val slug: String,
+    val name: String? = null,
+    val project: BitbucketProject,
+    val links: BitbucketRepoLinks = BitbucketRepoLinks()
+)
+
+@Serializable
 data class BitbucketBranch(
     val id: String,
     val displayId: String,
@@ -565,6 +585,42 @@ class BitbucketBranchClient(
             } catch (e: IOException) {
                 log.error("[Core:Bitbucket] Network error fetching projects", e)
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Fetches authoritative repository metadata including server-canonical clone URLs.
+     * GET /rest/api/1.0/projects/{projectKey}/repos/{repoSlug}
+     *
+     * Returns 200 → Success(detail with links.clone[]), 404 → Error(NOT_FOUND), 401/403 → Error(AUTH_FAILED).
+     * Used by auto-detection to validate parsed remote URLs and persist a canonical URL
+     * that survives URL drift (PAT changes, mirror swap, server-side renames).
+     */
+    suspend fun getRepository(projectKey: String, repoSlug: String): ApiResult<BitbucketRepoDetail> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Fetching repo detail $projectKey/$repoSlug")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                httpClient.newCall(request).execute().use { response ->
+                    when (response.code) {
+                        200 -> {
+                            val body = response.body?.string()
+                                ?: return@use ApiResult.Error(ErrorType.NETWORK_ERROR, "empty body")
+                            ApiResult.Success(json.decodeFromString<BitbucketRepoDetail>(body))
+                        }
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "repo not found: $projectKey/$repoSlug")
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "auth failure (401)")
+                        403 -> ApiResult.Error(ErrorType.AUTH_FAILED, "auth failure (403)")
+                        else -> ApiResult.Error(ErrorType.NETWORK_ERROR, "http ${response.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.warn("[Core:Bitbucket] getRepository failed", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, e.message ?: "io error")
             }
         }
 

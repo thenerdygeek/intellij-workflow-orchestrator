@@ -7,6 +7,7 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.dsl.builder.*
 import com.workflow.orchestrator.core.settings.ConnectionStatusBanner
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.settings.clearPlanValidationCache
 import javax.swing.JComponent
 
 /**
@@ -56,6 +57,23 @@ class BuildsAndHealthChecksConfigurable(private val project: Project) : Searchab
                 row("Build poll interval (seconds):") {
                     intTextField(range = 5..3600)
                         .bindIntText(settings.state::buildPollIntervalSeconds)
+                }
+                row {
+                    checkBox("Deep scan Bamboo plans (slower; needed for plans with inline repo definitions)")
+                        .bindSelected(settings.state::bambooDeepScanEnabled)
+                        .comment(
+                            "When enabled, auto-detection falls back to fetching all plans and scanning " +
+                            "their specs YAML. Disable to keep auto-detection fast (uses local bamboo-specs " +
+                            "and Bitbucket build-status history only)."
+                        )
+                }
+                row {
+                    button("Clear Bamboo plan-validation cache") {
+                        settings.clearPlanValidationCache()
+                    }.comment(
+                        "Removes all cached plan-existence results. Use when a Bamboo plan is renamed or " +
+                        "deleted and auto-detection is still picking up the stale key."
+                    )
                 }
             }
 

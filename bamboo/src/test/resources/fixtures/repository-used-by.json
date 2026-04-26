@@ -1,0 +1,15 @@
+{
+  "results": [
+    {
+      "key": "PROJ-BUILD",
+      "name": "My Project - Build",
+      "entityType": "CHAIN"
+    },
+    {
+      "key": "DEPLOY-PROD",
+      "name": "Deploy to Prod",
+      "entityType": "DEPLOYMENT_PROJECT"
+    }
+  ],
+  "size": 2
+}

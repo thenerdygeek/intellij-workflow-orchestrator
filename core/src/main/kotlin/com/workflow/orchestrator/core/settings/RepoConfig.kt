@@ -11,6 +11,8 @@ class RepoConfig : BaseState() {
     var dockerTagKey by string("")
     var defaultTargetBranch by string("develop")
     var localVcsRootPath by string("")
+    /** Server-anchored HTTPS clone URL, populated after first successful Bitbucket validation. */
+    var canonicalCloneUrl by string("")
     var isPrimary by property(false)
 
     val isConfigured: Boolean

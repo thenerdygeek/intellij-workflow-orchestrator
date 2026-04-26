@@ -27,6 +27,7 @@ dependencies {
         bundledPlugin("com.intellij.java")
         bundledPlugin("Coverage")
         bundledPlugin("org.jetbrains.idea.maven")
+        bundledPlugin("com.intellij.gradle")
         testFramework(TestFrameworkType.Platform)
     }
 
