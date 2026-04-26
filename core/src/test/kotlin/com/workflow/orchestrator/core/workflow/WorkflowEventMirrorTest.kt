@@ -3,6 +3,7 @@ package com.workflow.orchestrator.core.workflow
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
+import com.workflow.orchestrator.core.model.workflow.PrRef
 import com.workflow.orchestrator.core.settings.PluginSettings
 import io.mockk.every
 import io.mockk.mockk
@@ -72,7 +73,7 @@ class WorkflowEventMirrorTest {
         assertEquals("AFTER8TE-912", service.state.value.activeTicket?.key)
     }
 
-    @Test fun `mirror serializes concurrent events through cascadeMutex`() = runTest {
+    @Test fun `mirror processes events in FIFO order — last write wins`() = runTest {
         val (_, bus, service) = setup(testScheduler)
         testScheduler.runCurrent()
         listOf(
@@ -82,5 +83,24 @@ class WorkflowEventMirrorTest {
         ).forEach { bus.emit(it) }
         delay(500)
         assertEquals(44, service.state.value.focusPr?.prId)
+    }
+
+    @Test fun `mirror does not loop on migrated-panel re-emit (spec §5_3)`() = runTest {
+        val (_, bus, service) = setup(testScheduler)
+        testScheduler.runCurrent()
+        val pr = PrRef(42, "feat/abc", "main", "repo", null, null)
+
+        // 1. Migrated panel path: direct mutator call.
+        service.focusPr(pr)
+        val afterMutator = service.state.value
+
+        // 2. Same panel re-emits the legacy event for unmigrated subscribers.
+        bus.emit(WorkflowEvent.PrSelected(42, "feat/abc", "main", "repo", null, null))
+        delay(100)
+        val afterReEmit = service.state.value
+
+        // Equality guard prevents the mirror from re-running the cascade.
+        assertSame(afterMutator, afterReEmit)
+        assertEquals(42, afterReEmit.focusPr?.prId)
     }
 }

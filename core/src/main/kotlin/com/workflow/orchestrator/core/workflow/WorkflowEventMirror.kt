@@ -42,6 +42,10 @@ class WorkflowEventMirror(
         log.info("[Workflow:Mirror] Installed")
     }
 
+    // No explicit uninstall: collectorJob runs on service.serviceCs which the platform
+    // cancels at project close. The idempotent install() above is sufficient to handle
+    // any rare ProjectActivity re-run.
+
     private suspend fun handlePrSelected(event: WorkflowEvent.PrSelected) {
         val incoming = PrRef(
             prId = event.prId,
