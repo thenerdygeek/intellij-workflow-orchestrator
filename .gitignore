@@ -13,8 +13,10 @@ build/
 out/
 .intellijPlatform/
 
-# Claude
-.claude/
+# Claude — ignore everything under .claude/ except team-shared hooks + settings
+.claude/*
+!.claude/hooks/
+!.claude/settings.json
 
 # Node
 agent/webview/node_modules/
