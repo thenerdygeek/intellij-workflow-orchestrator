@@ -5,8 +5,6 @@ import com.workflow.orchestrator.core.model.workflow.PrRef
 import com.workflow.orchestrator.core.model.workflow.WorkflowContext
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
-import kotlin.reflect.KProperty1
-import kotlin.reflect.full.declaredMemberProperties
 
 class InteractionModePurityTest {
     @Test fun `Live when focusPr is null`() {
