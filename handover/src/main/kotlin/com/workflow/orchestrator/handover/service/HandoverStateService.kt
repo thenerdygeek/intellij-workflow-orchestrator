@@ -6,6 +6,7 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.workflow.WorkflowContextService
 import com.workflow.orchestrator.handover.model.BuildSummary
 import com.workflow.orchestrator.handover.model.HandoverState
 import com.workflow.orchestrator.handover.model.SuiteResult
@@ -20,12 +21,14 @@ import java.time.Instant
 class HandoverStateService {
 
     private val log = Logger.getInstance(HandoverStateService::class.java)
+    private val workflowService: WorkflowContextService
     private val eventBus: EventBus
     private val settings: PluginSettings
     private val cs: CoroutineScope
 
     /** IntelliJ DI constructor. */
     constructor(project: Project, cs: CoroutineScope) {
+        this.workflowService = WorkflowContextService.getInstance(project)
         this.settings = PluginSettings.getInstance(project)
         this.eventBus = project.getService(EventBus::class.java)
         this.cs = cs
@@ -33,7 +36,13 @@ class HandoverStateService {
     }
 
     /** Test constructor — allows injecting mocks. */
-    constructor(eventBus: EventBus, settings: PluginSettings, scope: CoroutineScope) {
+    constructor(
+        workflowService: WorkflowContextService,
+        eventBus: EventBus,
+        settings: PluginSettings,
+        scope: CoroutineScope,
+    ) {
+        this.workflowService = workflowService
         this.eventBus = eventBus
         this.settings = settings
         this.cs = scope
@@ -44,17 +53,26 @@ class HandoverStateService {
     val stateFlow: StateFlow<HandoverState> = _stateFlow.asStateFlow()
 
     private fun initialize() {
-        // Set initial state from settings
+        // Initial state from canonical service (which already loaded from settings).
+        val initialTicket = workflowService.state.value.activeTicket
         _stateFlow.value = HandoverState(
-            ticketId = settings.state.activeTicketId.orEmpty(),
-            ticketSummary = settings.state.activeTicketSummary.orEmpty(),
+            ticketId = initialTicket?.key.orEmpty(),
+            ticketSummary = initialTicket?.summary.orEmpty(),
             startWorkTimestamp = settings.state.startWorkTimestamp
         )
 
-        // Subscribe to EventBus (handles all cross-module events including ticket changes)
+        // Subscribe to EventBus for non-ticket events (build/quality/health/automation/PR/comment).
         cs.launch {
             eventBus.events.collect { event ->
                 handleEvent(event)
+            }
+        }
+
+        // Phase 5 T13: ticket changes now come from the canonical WorkflowContextService.
+        cs.launch {
+            workflowService.activeTicketFlow.collect { ticket ->
+                log.info("[Handover:State] Ticket changed to ${ticket?.key ?: "<cleared>"}")
+                resetForNewTicket(ticket?.key.orEmpty(), ticket?.summary.orEmpty())
             }
         }
     }
@@ -108,14 +126,7 @@ class HandoverStateService {
 
             is WorkflowEvent.JiraCommentPosted -> current.copy(jiraCommentPosted = true)
 
-            is WorkflowEvent.TicketChanged -> {
-                log.info("[Handover:State] Ticket changed to ${event.ticketId}")
-                // resetForNewTicket updates _stateFlow directly; return to skip the assignment below.
-                resetForNewTicket(event.ticketId, event.ticketSummary)
-                return
-            }
-
-            else -> return // Ignore events we don't care about
+            else -> return // Ignore events we don't care about (TicketChanged is now handled by activeTicketFlow)
         }
         _stateFlow.value = next
     }

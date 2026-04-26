@@ -3,15 +3,20 @@ package com.workflow.orchestrator.handover.service
 import app.cash.turbine.test
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
+import com.workflow.orchestrator.core.model.workflow.TicketRef
+import com.workflow.orchestrator.core.model.workflow.WorkflowContext
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.workflow.WorkflowContextService
 import com.workflow.orchestrator.handover.model.BuildSummary
 import com.workflow.orchestrator.handover.model.HandoverState
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import org.junit.jupiter.api.AfterEach
@@ -21,6 +26,8 @@ import org.junit.jupiter.api.Test
 
 class HandoverStateServiceTest {
 
+    private lateinit var workflowService: WorkflowContextService
+    private lateinit var activeTicketFlow: MutableStateFlow<TicketRef?>
     private lateinit var eventBus: EventBus
     private lateinit var settings: PluginSettings
     private lateinit var scope: CoroutineScope
@@ -35,8 +42,17 @@ class HandoverStateServiceTest {
             activeTicketSummary = "Add login feature"
         }
         every { settings.connections.bambooUrl } returns "https://bamboo.example.com"
+
+        // Phase 5 T13: HandoverStateService now subscribes to WorkflowContextService.activeTicketFlow
+        // for ticket changes. Stub the canonical service with the seeded ticket.
+        val seededTicket = TicketRef("PROJ-123", "Add login feature")
+        activeTicketFlow = MutableStateFlow(seededTicket)
+        workflowService = mockk(relaxed = true)
+        every { workflowService.state } returns MutableStateFlow(WorkflowContext(activeTicket = seededTicket))
+        every { workflowService.activeTicketFlow } returns activeTicketFlow
+
         scope = CoroutineScope(Dispatchers.Unconfined + SupervisorJob())
-        service = HandoverStateService(eventBus, settings, scope)
+        service = HandoverStateService(workflowService, eventBus, settings, scope)
     }
 
     @AfterEach
@@ -202,7 +218,7 @@ class HandoverStateServiceTest {
     }
 
     @Test
-    fun `TicketChanged event resets state for new ticket`() = runTest {
+    fun `ticket change from canonical service resets state for new ticket`() = runTest {
         service.stateFlow.test {
             skipItems(1)
 
@@ -210,8 +226,8 @@ class HandoverStateServiceTest {
             service.markCopyrightFixed()
             awaitItem()
 
-            // Emit ticket change
-            eventBus.emit(WorkflowEvent.TicketChanged("PROJ-456", "New feature"))
+            // Phase 5 T13: ticket changes flow from WorkflowContextService.activeTicketFlow.
+            activeTicketFlow.value = TicketRef("PROJ-456", "New feature")
 
             val state = awaitItem()
             assertEquals("PROJ-456", state.ticketId)

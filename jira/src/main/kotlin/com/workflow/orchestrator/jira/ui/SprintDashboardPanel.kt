@@ -231,9 +231,8 @@ class SprintDashboardPanel(
                     sprint = lastDetectedSprint,
                     assignee = lastDetectedAssignee,
                     onAccept = {
-                        val settings = PluginSettings.getInstance(project)
-                        settings.state.activeTicketId = key
-                        settings.state.activeTicketSummary = summary
+                        // Phase 5 T13: facade now persists via WorkflowContextService and re-emits the legacy
+                        // TicketChanged event itself, so the inline settings writes + EventBus emit are gone.
                         ActiveTicketService.getInstance(project).setActiveTicket(key, summary)
                         detectionBanner.isVisible = false
                         // Remove this branch from dismissed so it won't re-trigger banner

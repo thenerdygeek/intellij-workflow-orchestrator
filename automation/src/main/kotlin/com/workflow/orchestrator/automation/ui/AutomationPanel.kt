@@ -158,8 +158,14 @@ class AutomationPanel(
             // right repo then ignore it" mismatch on multi-module setups where each module
             // has its own docker image. (serviceCiPlanKey remains scalar-only for now —
             // RepoConfig doesn't carry a per-repo CI plan key yet.)
-            val resolver = com.workflow.orchestrator.core.settings.RepoContextResolver.getInstance(project)
-            val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
+            //
+            // Phase 5 T13: read activeRepo from the canonical WorkflowContextService snapshot
+            // (one-shot — onSuiteSelected runs once per user click). Fall back to PluginSettings
+            // primary if no editor context is available yet.
+            val activeRepo = com.workflow.orchestrator.core.workflow.WorkflowContextService
+                .getInstance(project).state.value.activeRepo
+            val repoConfig = activeRepo?.let { ar -> settings.getRepos().firstOrNull { it.name == ar.name } }
+                ?: settings.getPrimaryRepo()
             val dockerTagKey = repoConfig?.dockerTagKey?.takeIf { it.isNotBlank() }
                 ?: settings.state.dockerTagKey.orEmpty()
             val serviceCiPlanKey = settings.state.serviceCiPlanKey.orEmpty()
