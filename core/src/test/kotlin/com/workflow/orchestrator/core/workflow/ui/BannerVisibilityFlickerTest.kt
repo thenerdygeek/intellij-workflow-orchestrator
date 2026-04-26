@@ -20,10 +20,22 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Phase 5 T14 — verifies spec R4: rapid focusPr toggles produce ≤2 visibility transitions.
- * Banner subscribes to `interactionModeFlow` which uses `distinctUntilChanged`, so even
- * 10 alternating focusPr/null calls collapse to at most one Live -> ReadOnly transition
- * (when the activeBranch differs from focusPr.fromBranch).
+ * Phase 5 T14 — verifies that the upstream [interactionModeFlow] subscribed to by
+ * [ReadOnlyBanner] is a `StateFlow` whose conflation collapses unobserved
+ * intermediate values. Under `runTest`'s single-threaded scheduler, 10 alternating
+ * `focusPr(pr)`/`focusPr(null)` calls do NOT produce 20 collected emissions — most
+ * are dropped because the collector only resumes after `advanceUntilIdle()`, by
+ * which time `_state.value` reflects the final write.
+ *
+ * This is a regression guard against a future maintainer accidentally swapping
+ * `stateIn(...)` for `shareIn(replay = N)` in [WorkflowContextService.interactionModeFlow] —
+ * such a swap would replay every intermediate value and break the conflation guarantee
+ * the banner relies on.
+ *
+ * NOTE: this test does NOT prove the user-perceptible R4 invariant ("no banner flicker
+ * on rapid clicks"). That invariant rests on real EDT dispatch + human click cadence and
+ * cannot be validated under a virtual-time scheduler. A real-EDT smoke test belongs in
+ * a separate platform-fixture test (deferred).
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class BannerVisibilityFlickerTest {
@@ -33,7 +45,7 @@ class BannerVisibilityFlickerTest {
         unmockkObject(OpenPrLister.Companion)
     }
 
-    @Test fun `rapid focusPr toggle results in at most 2 visibility transitions`() = runTest {
+    @Test fun `interactionModeFlow conflates intermediate transitions under StateFlow semantics`() = runTest {
         val project = mockk<Project>(relaxed = true)
         val settings = mockk<PluginSettings>(relaxed = true)
         every { project.getService(PluginSettings::class.java) } returns settings
@@ -63,11 +75,10 @@ class BannerVisibilityFlickerTest {
 
         collectorJob.cancel()
 
-        // Initial Live emission + at most 1 transition to ReadOnly + back to Live = 3 total
-        // BUT distinctUntilChanged collapses repeated values, so at most 3 distinct values.
-        // The test asserts the spec-mandated ≤2 transitions invariant (transitions = changes,
-        // not absolute emissions). 'transitions.size' counts emissions; subtract 1 for the
-        // initial value to get the number of actual transitions.
+        // Under runTest's single-threaded scheduler, StateFlow conflation drops intermediate
+        // emissions — the collector observes ≤2 transitions (typically 1: Live -> Live again,
+        // since the final state matches the initial). This guards the conflation property,
+        // not user-perceptible flicker.
         val transitionCount = (transitions.size - 1).coerceAtLeast(0)
         assertTrue(transitionCount <= 2, "Banner flickered: $transitionCount transitions, history=$transitions")
     }
