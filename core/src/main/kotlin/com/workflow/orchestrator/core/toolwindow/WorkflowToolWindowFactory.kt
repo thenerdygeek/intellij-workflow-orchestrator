@@ -4,8 +4,7 @@ import com.intellij.icons.AllIcons
 import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.*
-import com.intellij.openapi.application.invokeLater
-import com.intellij.openapi.components.service
+import com.intellij.openapi.application.EDT
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.DumbAware
@@ -20,12 +19,9 @@ import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.content.ContentManagerEvent
 import com.intellij.ui.content.ContentManagerListener
 import com.intellij.util.ui.JBUI
-import com.workflow.orchestrator.core.events.EventBus
-import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.ui.StatusColors
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.filterIsInstance
 import java.awt.BorderLayout
 import java.awt.Cursor
 import java.awt.FlowLayout
@@ -96,55 +92,33 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
             cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
             addMouseListener(object : MouseAdapter() {
                 override fun mouseClicked(e: MouseEvent?) {
-                    // Switch to Sprint tab (index 0)
                     val cm = toolWindow.contentManager
                     val sprintTab = cm.contents.firstOrNull { it.displayName == "Sprint" }
-                    if (sprintTab != null) {
-                        cm.setSelectedContent(sprintTab)
-                    }
+                    if (sprintTab != null) cm.setSelectedContent(sprintTab)
                 }
             })
         }
+        toolWindow.component.add(bar, BorderLayout.NORTH)
 
-        // Add the bar above the tool window content
-        val twComponent = toolWindow.component
-        twComponent.add(bar, BorderLayout.NORTH)
-
-        // Initialize from persisted settings
-        val settings = PluginSettings.getInstance(project)
-        val activeId = settings.state.activeTicketId
-        if (!activeId.isNullOrBlank()) {
-            ticketLabel.text = activeId
-            summaryLabel.text = settings.state.activeTicketSummary ?: ""
-            bar.isVisible = true
-        }
-
-        // Subscribe to TicketChanged events
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-        val eventBus = project.service<EventBus>()
-
+        val service = com.workflow.orchestrator.core.workflow.WorkflowContextService.getInstance(project)
+        // The factory is not @Service; CoroutineScope() allocation is permitted here
+        // (Phase 4 convention applies to @Service classes only — see core/CLAUDE.md
+        // "Service & threading conventions").
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.EDT)
         scope.launch {
-            eventBus.events.filterIsInstance<WorkflowEvent.TicketChanged>().collect { event ->
-                invokeLater {
-                    if (event.ticketId.isNotBlank()) {
-                        ticketLabel.text = event.ticketId
-                        summaryLabel.text = event.ticketSummary
-                        bar.isVisible = true
-                    } else {
-                        bar.isVisible = false
-                    }
-                    bar.parent?.revalidate()
-                    bar.parent?.repaint()
+            service.activeTicketFlow.collect { ticket ->
+                if (ticket != null) {
+                    ticketLabel.text = ticket.key
+                    summaryLabel.text = ticket.summary
+                    bar.isVisible = true
+                } else {
+                    bar.isVisible = false
                 }
+                bar.parent?.revalidate()
+                bar.parent?.repaint()
             }
         }
-
-        // Cancel coroutine scope when tool window is disposed
-        toolWindow.disposable.let { disposable ->
-            com.intellij.openapi.util.Disposer.register(disposable) {
-                scope.cancel()
-            }
-        }
+        com.intellij.openapi.util.Disposer.register(toolWindow.disposable) { scope.cancel() }
     }
 
     // ---------------------------------------------------------------
