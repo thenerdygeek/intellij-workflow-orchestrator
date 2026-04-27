@@ -266,6 +266,50 @@ class WorkflowContextService(
     }
 
     /**
+     * Called by [com.workflow.orchestrator.core.settings.RepositoriesConfigurable.apply]
+     * after the user mutates the project's `repos` list. Fires the reconcile cascade on
+     * the service scope; non-suspend so the EDT-bound `apply()` can call it directly.
+     *
+     * Without this hook, [WorkflowContext.focusPr] outlives its [com.workflow.orchestrator.core.settings.RepoConfig]:
+     * `PrBar` keeps rendering the stale strip and `BuildDashboardActionGate` keeps gating
+     * against a repo that no longer exists. Editor and VCS listeners don't fire on
+     * settings edits — same reason `RepoContextResolver.invalidateCache()` is called by
+     * hand from the same `apply()` site.
+     */
+    fun onReposChanged() {
+        cs.launch { reconcileFocusPrWithRepos() }
+    }
+
+    /**
+     * Clears [WorkflowContext.focusPr] (and the cascaded `focusBuild` + `focusQualityScope`)
+     * when its `repoName` no longer matches any configured [com.workflow.orchestrator.core.settings.RepoConfig].
+     * The match rule mirrors [resolveBambooPlanKey] / [resolveSonarProjectKey]: a repo is
+     * "still there" if its `name` or `displayLabel` equals `focusPr.repoName`. With
+     * `focusPr` nulled, [WorkflowContext.interactionMode] returns to `Live` automatically.
+     *
+     * `internal` so [WorkflowContextServiceMutatorsTest] can call it directly under
+     * `runTest` and avoid `cs.launch { }` virtual-time fragility.
+     */
+    internal suspend fun reconcileFocusPrWithRepos() = cascadeMutex.withLock {
+        val pr = _state.value.focusPr ?: return@withLock
+        if (pr.repoName.isBlank()) return@withLock
+        val configured = PluginSettings.getInstance(project).getRepos()
+        val stillConfigured = configured.any {
+            it.name == pr.repoName || it.displayLabel == pr.repoName
+        }
+        if (!stillConfigured) {
+            _state.value = _state.value.copy(
+                focusPr = null,
+                focusBuild = null,
+                focusQualityScope = null,
+            )
+            log.info(
+                "[Workflow:Context] focusPr cleared — repo '${pr.repoName}' no longer in PluginSettings"
+            )
+        }
+    }
+
+    /**
      * Pure-ish builder that composes the next [WorkflowContext] for a non-null PR focus:
      * looks up the latest build via the [LatestBuildLookup] EP (5s timeout, off-EDT) and
      * derives [QualityScope] from the PR's Sonar project key. Returns `base.copy(...)`

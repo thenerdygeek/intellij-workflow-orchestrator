@@ -20,6 +20,7 @@ import com.workflow.orchestrator.core.services.SonarProjectPickerLauncher
 import com.workflow.orchestrator.core.services.SonarService
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.util.DefaultBranchResolver
+import com.workflow.orchestrator.core.workflow.WorkflowContextService
 import javax.swing.JButton
 import javax.swing.JCheckBox
 import javax.swing.JComponent
@@ -121,6 +122,10 @@ class RepositoriesConfigurable(
         // Invalidate RepoContextResolver's memoized resolution — VCS and editor
         // listeners don't fire on settings edits, so hand-bump the cache tracker here.
         RepoContextResolver.getInstance(project).invalidateCache()
+
+        // Same reason: `WorkflowContextService.focusPr` can outlive its `RepoConfig`
+        // when the user removes the repo it was anchored to.
+        WorkflowContextService.getInstance(project).onReposChanged()
 
         log.info("[Settings:Repositories] Saved ${editedRepos.size} repos, primary='${(editedRepos.find { it.isPrimary } ?: editedRepos.firstOrNull())?.displayLabel}'")
     }
