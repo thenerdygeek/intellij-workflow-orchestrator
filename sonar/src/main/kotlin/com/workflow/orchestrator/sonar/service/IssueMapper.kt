@@ -28,7 +28,8 @@ object IssueMapper {
                 endOffset = dto.textRange?.endOffset ?: 0,
                 effort = dto.effort,
                 creationDate = dto.creationDate,
-                status = dto.status
+                status = dto.status,
+                projectKey = projectKey,
             )
         }
     }

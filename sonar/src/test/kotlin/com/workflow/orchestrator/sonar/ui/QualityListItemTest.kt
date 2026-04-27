@@ -26,7 +26,8 @@ class QualityListItemTest {
         endLine = startLine,
         startOffset = 0,
         endOffset = 10,
-        effort = "15min"
+        effort = "15min",
+        projectKey = "test-project",
     )
 
     private fun hotspot(

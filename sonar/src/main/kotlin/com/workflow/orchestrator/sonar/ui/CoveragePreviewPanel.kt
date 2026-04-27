@@ -55,6 +55,8 @@ class CoveragePreviewPanel(private val project: Project) : JPanel(BorderLayout()
     }
 
     private var currentFilePath: String? = null
+    /** The owning repo's local root, captured from the row's projectKey at [showFile] time. */
+    private var currentBaseForFile: String? = null
 
     init {
         border = JBUI.Borders.empty(4)
@@ -86,17 +88,29 @@ class CoveragePreviewPanel(private val project: Project) : JPanel(BorderLayout()
         filePathLabel.text = filePath
         openInEditorButton.isEnabled = true
 
+        // Resolve the file's owning repo from the project key carried on the
+        // coverage row — `filePath` is repo-relative (Sonar component path), so
+        // the aggregator basePath is wrong on multi-repo setups. The owning repo's
+        // localVcsRootPath is the correct base for the absolute file lookup.
+        val settings = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
+        val owningRepo = settings.getRepos().firstOrNull { it.sonarProjectKey == coverageData.projectKey }
+        val resolver = com.workflow.orchestrator.core.settings.RepoContextResolver.getInstance(project)
+        val branch = owningRepo?.localVcsRootPath?.let { resolver.findRepositoryForPath(it)?.currentBranchName }
+        val baseForFile = owningRepo?.localVcsRootPath?.takeIf { it.isNotBlank() } ?: project.basePath
+        currentBaseForFile = baseForFile
+
         // Fetch line coverage asynchronously and render regions
         scope.launch {
             val lineStatuses = if (coverageData.lineStatuses.isNotEmpty()) {
                 coverageData.lineStatuses
             } else {
-                SonarDataService.getInstance(project).getLineCoverage(filePath)
+                SonarDataService.getInstance(project)
+                    .getLineCoverage(filePath, coverageData.projectKey, branch)
             }
 
             // Read file content
-            val basePath = project.basePath ?: return@launch
-            val file = java.io.File(basePath, filePath)
+            if (baseForFile == null) return@launch
+            val file = java.io.File(baseForFile, filePath)
             if (!file.exists()) {
                 withContext(Dispatchers.Main) {
                     codeArea.text = "File not found: $filePath"
@@ -169,7 +183,7 @@ class CoveragePreviewPanel(private val project: Project) : JPanel(BorderLayout()
     }
 
     private fun navigateToFile(filePath: String) {
-        val basePath = project.basePath ?: return
+        val basePath = currentBaseForFile ?: project.basePath ?: return
         val vf = LocalFileSystem.getInstance().findFileByPath(java.io.File(basePath, filePath).path) ?: return
         OpenFileDescriptor(project, vf, 0, 0).navigate(true)
     }

@@ -24,7 +24,7 @@ class CoverageMapperTest {
             )
         )
 
-        val result = CoverageMapper.mapMeasures(components)
+        val result = CoverageMapper.mapMeasures(components, projectKey = "test-project")
 
         assertEquals(1, result.size)
         val file = result["src/main/kotlin/UserService.kt"]!!
@@ -44,7 +44,7 @@ class CoverageMapperTest {
             )
         )
 
-        val result = CoverageMapper.mapMeasures(components)
+        val result = CoverageMapper.mapMeasures(components, projectKey = "test-project")
 
         assertTrue(result.isEmpty())
     }
@@ -59,7 +59,7 @@ class CoverageMapperTest {
             )
         )
 
-        val result = CoverageMapper.mapMeasures(components)
+        val result = CoverageMapper.mapMeasures(components, projectKey = "test-project")
 
         val file = result["src/File.kt"]!!
         assertEquals(50.0, file.lineCoverage, 0.01)
@@ -101,7 +101,7 @@ class CoverageMapperTest {
             )
         )
 
-        val result = CoverageMapper.mapMeasures(components)
+        val result = CoverageMapper.mapMeasures(components, projectKey = "test-project")
 
         val file = result["src/main/kotlin/OrderService.kt"]!!
         assertEquals(100.0, file.newCoverage!!, 0.01)
@@ -118,7 +118,7 @@ class CoverageMapperTest {
             )
         )
 
-        val result = CoverageMapper.mapMeasures(components)
+        val result = CoverageMapper.mapMeasures(components, projectKey = "test-project")
 
         val file = result["src/File.kt"]!!
         assertNull(file.newCoverage)

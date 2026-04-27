@@ -180,7 +180,7 @@ private class TestSonarDataServiceWithHotspots(private val apiClient: SonarApiCl
         }
 
         val fileCoverage = when (measuresResult) {
-            is ApiResult.Success -> CoverageMapper.mapMeasures(measuresResult.data)
+            is ApiResult.Success -> CoverageMapper.mapMeasures(measuresResult.data, projectKey)
             is ApiResult.Error -> _stateFlow.value.fileCoverage
         }
 

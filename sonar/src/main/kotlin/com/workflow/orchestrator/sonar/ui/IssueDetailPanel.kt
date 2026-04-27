@@ -197,7 +197,7 @@ class IssueDetailPanel(
         fixWithAgentButton.isEnabled = AgentChatRedirect.getInstance() != null
 
         // Load code snippet and rule info asynchronously
-        loadCodeSnippet(issue.filePath, issue.startLine)
+        loadCodeSnippet(issue.filePath, issue.startLine, issue.projectKey)
         loadRuleInfo(issue.rule)
     }
 
@@ -214,6 +214,9 @@ class IssueDetailPanel(
             "SECURITY HOTSPOT \u2014 ${hotspot.message}</html>"
 
         // Metadata: file path, line, review status, security category
+        // hotspot.component is "projectKey:relativePath" — split into both halves so
+        // the snippet loader can resolve the file's owning repo.
+        val hotspotProjectKey = hotspot.component.substringBeforeLast(':')
         val filePath = hotspot.component.substringAfterLast(':')
         val lineStr = hotspot.line?.toString() ?: "?"
         val statusText = when (hotspot.status) {
@@ -227,17 +230,17 @@ class IssueDetailPanel(
         fixWithAgentButton.isVisible = false
 
         // Load code snippet
-        loadCodeSnippet(filePath, hotspot.line ?: 1)
+        loadCodeSnippet(filePath, hotspot.line ?: 1, hotspotProjectKey)
         // Hotspots use security category rule key — try loading
         ruleInfoLabel.text = ""
     }
 
     // --- Async loading ---
 
-    private fun loadCodeSnippet(relativePath: String, issueLine: Int) {
+    private fun loadCodeSnippet(relativePath: String, issueLine: Int, projectKey: String) {
         codeArea.text = "Loading..."
         scope.launch {
-            val snippet = buildCodeSnippet(relativePath, issueLine)
+            val snippet = buildCodeSnippet(relativePath, issueLine, projectKey)
             withContext(Dispatchers.Main) {
                 codeArea.text = snippet
                 codeArea.caretPosition = 0
@@ -245,8 +248,21 @@ class IssueDetailPanel(
         }
     }
 
-    private suspend fun buildCodeSnippet(relativePath: String, issueLine: Int): String {
-        val basePath = project.basePath ?: return "Project base path not available"
+    private suspend fun buildCodeSnippet(
+        relativePath: String,
+        issueLine: Int,
+        projectKey: String,
+    ): String {
+        // Resolve the file's owning repo via projectKey — `relativePath` is repo-relative
+        // (Sonar component path), so the aggregator basePath is wrong on multi-repo setups.
+        val settings = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
+        val owningRepo = settings.getRepos().firstOrNull { it.sonarProjectKey == projectKey }
+        val basePath = owningRepo?.localVcsRootPath?.takeIf { it.isNotBlank() }
+            ?: project.basePath
+            ?: return "Project base path not available"
+        val resolver = com.workflow.orchestrator.core.settings.RepoContextResolver.getInstance(project)
+        val branch = owningRepo?.localVcsRootPath?.let { resolver.findRepositoryForPath(it)?.currentBranchName }
+
         val file = File(basePath, relativePath)
         if (!file.exists()) return "File not found: $relativePath"
 
@@ -263,7 +279,7 @@ class IssueDetailPanel(
 
         // Try to load line coverage data for uncovered line markers
         val coverageMap = try {
-            SonarDataService.getInstance(project).getLineCoverage(relativePath)
+            SonarDataService.getInstance(project).getLineCoverage(relativePath, projectKey, branch)
         } catch (_: Exception) {
             emptyMap()
         }

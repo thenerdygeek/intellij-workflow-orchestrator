@@ -37,7 +37,15 @@ data class MappedIssue(
     val endOffset: Int,
     val effort: String?,
     val creationDate: String? = null,
-    val status: String = "OPEN"
+    val status: String = "OPEN",
+    /**
+     * The Sonar project key the issue belongs to. Required for multi-repo projects:
+     * `filePath` alone is repo-relative and cannot identify the owning repo when two
+     * repos share a relative path. Carry the projectKey through so detail panels and
+     * coverage lookups can resolve the owning [com.workflow.orchestrator.core.settings.RepoConfig]
+     * (and its local VCS root + branch).
+     */
+    val projectKey: String,
 )
 
 data class FileCoverageData(
@@ -52,7 +60,13 @@ data class FileCoverageData(
     val newUncoveredLines: Int? = null,
     val newLinesToCover: Int? = null,
     val complexity: Int = 0,
-    val cognitiveComplexity: Int = 0
+    val cognitiveComplexity: Int = 0,
+    /**
+     * The Sonar project key this file belongs to. Same multi-repo motivation as
+     * [MappedIssue.projectKey]: `filePath` is repo-relative, so the projectKey is
+     * needed to identify the owning [com.workflow.orchestrator.core.settings.RepoConfig].
+     */
+    val projectKey: String,
 )
 
 data class CoverageMetrics(

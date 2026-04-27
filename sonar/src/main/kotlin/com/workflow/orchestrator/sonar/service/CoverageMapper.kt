@@ -7,7 +7,10 @@ import com.workflow.orchestrator.sonar.model.LineCoverageStatus
 
 object CoverageMapper {
 
-    fun mapMeasures(components: List<SonarMeasureComponentDto>): Map<String, FileCoverageData> {
+    fun mapMeasures(
+        components: List<SonarMeasureComponentDto>,
+        projectKey: String,
+    ): Map<String, FileCoverageData> {
         return components
             .filter { it.path != null }
             .associate { comp ->
@@ -25,7 +28,8 @@ object CoverageMapper {
                     newUncoveredLines = measures["new_uncovered_lines"]?.toIntOrNull(),
                     newLinesToCover = measures["new_lines_to_cover"]?.toIntOrNull(),
                     complexity = measures["complexity"]?.toIntOrNull() ?: 0,
-                    cognitiveComplexity = measures["cognitive_complexity"]?.toIntOrNull() ?: 0
+                    cognitiveComplexity = measures["cognitive_complexity"]?.toIntOrNull() ?: 0,
+                    projectKey = projectKey,
                 )
             }
     }
