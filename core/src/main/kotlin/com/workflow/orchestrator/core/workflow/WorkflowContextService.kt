@@ -275,6 +275,11 @@ class WorkflowContextService(
      * against a repo that no longer exists. Editor and VCS listeners don't fire on
      * settings edits — same reason `RepoContextResolver.invalidateCache()` is called by
      * hand from the same `apply()` site.
+     *
+     * Best-effort, eventual: reconcile is async on the service scope, so
+     * [state] consumers may observe stale `focusPr` for one StateFlow tick after
+     * `apply()` returns (one extra render of the stale strip, then a re-render after
+     * the cascade completes — both off-EDT, milliseconds apart).
      */
     fun onReposChanged() {
         cs.launch { reconcileFocusPrWithRepos() }

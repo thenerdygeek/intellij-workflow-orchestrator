@@ -10,6 +10,8 @@ import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.unmockkObject
 import io.mockk.verify
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
@@ -119,5 +121,74 @@ class WorkflowContextServiceMutatorsTest {
         service.reconcileFocusPrWithRepos()
 
         assertEquals(pr, service.state.value.focusPr)
+    }
+
+    @Test fun `reconcileFocusPrWithRepos leaves focusPr alone when its repoName is blank`() = runTest {
+        val project = mockk<Project>(relaxed = true)
+        val settings = mockk<PluginSettings>(relaxed = true)
+        every { project.getService(PluginSettings::class.java) } returns settings
+        every { settings.state.activeTicketId } returns null
+        every { settings.getRepos() } returns emptyList()
+
+        val blankRepoPr = PrRef(42, "feat/x", "main", "", null, null)
+        val service = makeService(project)
+        service.focusPr(blankRepoPr)
+
+        every { settings.getRepos() } returns listOf(RepoConfig().apply { name = "R1" })
+        service.reconcileFocusPrWithRepos()
+
+        assertEquals(blankRepoPr, service.state.value.focusPr)
+    }
+
+    @Test fun `reconcileFocusPrWithRepos matches focusPr by displayLabel when name is blank`() = runTest {
+        val project = mockk<Project>(relaxed = true)
+        val settings = mockk<PluginSettings>(relaxed = true)
+        every { project.getService(PluginSettings::class.java) } returns settings
+        every { settings.state.activeTicketId } returns null
+        every { settings.getRepos() } returns emptyList()
+
+        // focusPr.repoName is the displayLabel form ("PROJ/repo") because the writer
+        // didn't have a `name` to use — RepoConfig.displayLabel falls back to that form.
+        val pr = PrRef(42, "feat/x", "main", "PROJ/repo", null, null)
+        val service = makeService(project)
+        service.focusPr(pr)
+
+        every { settings.getRepos() } returns listOf(
+            RepoConfig().apply {
+                name = ""
+                bitbucketProjectKey = "PROJ"
+                bitbucketRepoSlug = "repo"
+            }
+        )
+        service.reconcileFocusPrWithRepos()
+
+        assertEquals(pr, service.state.value.focusPr)
+    }
+
+    @Test fun `reconcileFocusPrWithRepos serializes against focusPr cascade via cascadeMutex`() = runTest {
+        val project = mockk<Project>(relaxed = true)
+        val settings = mockk<PluginSettings>(relaxed = true)
+        every { project.getService(PluginSettings::class.java) } returns settings
+        every { settings.state.activeTicketId } returns null
+        every { settings.getRepos() } returns listOf(RepoConfig().apply { name = "R1" })
+
+        val pr = PrRef(42, "feat/x", "main", "R1", null, null)
+        val service = makeService(project)
+
+        // Race a fresh focusPr write against a reconcile that would null it. Mutex
+        // serialization means whichever lock-acquirer runs first commits its full
+        // cascade before the other observes — final state is one of the two writes,
+        // never a torn mid-cascade state (focusPr non-null while focusBuild already nulled).
+        every { settings.getRepos() } returns emptyList()
+        listOf(
+            async { service.focusPr(pr) },
+            async { service.reconcileFocusPrWithRepos() },
+        ).awaitAll()
+
+        val finalState = service.state.value
+        val torn = finalState.focusPr != null &&
+            (finalState.focusBuild != null || finalState.focusQualityScope != null) &&
+            finalState.focusPr != pr
+        assert(!torn) { "Cascade torn: $finalState" }
     }
 }
