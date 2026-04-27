@@ -352,9 +352,21 @@ class QualityDashboardPanel(
     }
 
     fun refreshData() {
+        // Refresh whatever the panel is currently anchored on — the focused PR's
+        // QualityScope. No fall-through to the editor's branch + scalar projectKey:
+        // multi-repo users would see Sonar data for a repo they aren't looking at.
+        // The auto-render via the focusQualityScope flow handles the active path on
+        // boot and on PR change; this is the manual button.
+        val scope = workflowContextService.state.value.focusQualityScope
+        val branch = scope?.branchName?.takeIf { it.isNotBlank() }
+        if (scope == null || branch == null) {
+            statusLabel.text = ""
+            loadingIcon.isVisible = false
+            return
+        }
         statusLabel.text = "Refreshing..."
         loadingIcon.isVisible = true
-        dataService.refresh()
+        dataService.refreshForBranch(branch, scope.sonarProjectKey)
     }
 
     private fun updateUI(state: SonarState) {
