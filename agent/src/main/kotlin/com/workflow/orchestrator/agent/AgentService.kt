@@ -1608,17 +1608,12 @@ class AgentService(
                     sessionMetrics = sessionMetrics,
                     environmentDetailsProvider = {
                         val pluginSettings = PluginSettings.getInstance(project)
-                        // Multi-repo-aware branch resolution:
-                        // 1. Primary = current-editor's repo (falls back to configured primary, then
-                        //    first known repo). Fixes the `.firstOrNull()` bug where editing a file
-                        //    in a non-first repo would surface the wrong branch.
-                        // 2. Enumerate ALL repos so multi-repo projects expose per-repo branches to
-                        //    the LLM — previously only one unlabelled branch was ever shown.
-                        val vcsData = try {
-                            val resolver = com.workflow.orchestrator.core.settings.RepoContextResolver.getInstance(project)
-                            val primaryRepo = resolver.resolveCurrentEditorRepoOrPrimary()
+                        // Per-repo branch enumeration — flat list, no "primary" distinction.
+                        // The agent picks the right repo per-call from user-action signals
+                        // (checked changes, focused PR, file-arg). environment_details only
+                        // enumerates what is currently checked out where.
+                        val repoBranches: List<Pair<String, String>> = try {
                             val allRepos = git4idea.repo.GitRepositoryManager.getInstance(project).repositories
-                            val primaryBranch = primaryRepo?.currentBranchName
                             val basePath = project.basePath
                             fun labelFor(repo: git4idea.repo.GitRepository): String {
                                 val root = repo.root.path
@@ -1628,27 +1623,19 @@ class AgentService(
                                 }
                                 return repo.root.name
                             }
-                            val primaryLabel = primaryRepo?.let { labelFor(it) }
-                            val others = if (allRepos.size > 1) {
-                                allRepos
-                                    .filter { it !== primaryRepo }
-                                    .mapNotNull { repo ->
-                                        val b = repo.currentBranchName ?: return@mapNotNull null
-                                        labelFor(repo) to b
-                                    }
-                            } else emptyList()
-                            Triple(primaryBranch, primaryLabel, others)
-                        } catch (_: Exception) { Triple(null, null, emptyList()) }
+                            allRepos.mapNotNull { repo ->
+                                val b = repo.currentBranchName ?: return@mapNotNull null
+                                labelFor(repo) to b
+                            }
+                        } catch (_: Exception) { emptyList() }
                         EnvironmentDetailsBuilder.build(
                             project = project,
                             planModeEnabled = planModeActive.get(),
                             contextManager = ctx,
                             activeTicketId = pluginSettings.state.activeTicketId,
                             activeTicketSummary = pluginSettings.state.activeTicketSummary,
-                            currentBranch = vcsData.first,
                             defaultTargetBranch = resolvedDefaultBranch.get(),
-                            primaryRepoLabel = vcsData.second,
-                            otherRepoBranches = vcsData.third,
+                            repoBranches = repoBranches,
                         )
                     },
                     steeringQueue = steeringQueue,

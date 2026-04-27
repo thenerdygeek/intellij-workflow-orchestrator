@@ -71,10 +71,7 @@ class GenerateCommitMessageAction : AnAction(
 
         log.info("[AI:CommitMsg] Generate commit message triggered")
 
-        // Resolve the target repo on EDT (before launching background work)
-        val targetRepo = resolveTargetRepo(project)
-
-        // Resolve the user's checked (included-for-commit) changes on EDT.
+        // Resolve the user's checked (included-for-commit) changes on EDT FIRST.
         // Priority: modern commit tool-window UI → legacy checkin panel → SELECTED_CHANGES.
         // CHANGES is deliberately excluded — it returns the whole changelist regardless of
         // what the user has checked, which was the root-cause bug.
@@ -91,6 +88,17 @@ class GenerateCommitMessageAction : AnAction(
             generating.set(false)
             return
         }
+
+        // Derive the target repo from the first checked change's path — this is a stronger
+        // user-action signal than the editor's current file in multi-module projects (the
+        // user may have the editor in submodule A but be committing files from submodule B).
+        // Falls back to the editor-or-primary resolver only when no checked path is available.
+        val firstCheckedPath = selectedChanges.firstNotNullOfOrNull {
+            (it.afterRevision ?: it.beforeRevision)?.file?.path
+        }
+        val targetRepo = firstCheckedPath
+            ?.let { RepoContextResolver.getInstance(project).findRepositoryForPath(it) }
+            ?: resolveTargetRepo(project)
 
         // Run as a backgroundable task with progress in the status bar.
         // Uses runBlockingCancellable inside the background thread (NOT EDT — safe per
@@ -464,6 +472,7 @@ class GenerateCommitMessageAction : AnAction(
      * Tries staged diff first, falls back to unstaged diff.
      */
     private fun resolveTargetRepo(project: Project): git4idea.repo.GitRepository? =
+        // editor-fallback-allowed: commit-msg fallback — fires only when no change has a path
         RepoContextResolver.getInstance(project).resolveCurrentEditorRepoOrPrimary()
 
     private fun getGitDiff(

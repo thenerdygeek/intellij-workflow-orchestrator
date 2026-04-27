@@ -6,7 +6,6 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.workflow.orchestrator.core.model.workflow.PrRef
-import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.core.workflow.WorkflowContextService
 import git4idea.branch.GitBrancher
 import git4idea.repo.GitRepository
@@ -17,11 +16,17 @@ import kotlinx.coroutines.withContext
 /**
  * Phase D — wires the [ReadOnlyBanner] "Switch branch" link.
  *
- * Single-repo semantics by design: checks out `pr.fromBranch` only on the resolved
- * repo (the editor's repo, falling back to the configured primary). Multi-repo
- * "checkout same branch in all matching" is intentionally NOT supported — that's
- * a workspace-wide decision the user should make via the IDE's VCS popup, not a
+ * Single-repo semantics by design: checks out `pr.fromBranch` only on the repo
+ * named by the focused PR's `RepoRef.localVcsRootPath`. Multi-repo "checkout
+ * same branch in all matching" is intentionally NOT supported — that's a
+ * workspace-wide decision the user should make via the IDE's VCS popup, not a
  * side effect of clicking a banner link.
+ *
+ * Repo source: `WorkflowContext.activeRepo.localVcsRootPath` is the user-action
+ * signal (the focused PR's repo) and is REQUIRED. There is no editor-context
+ * fallback — if the focus chain doesn't pin a repo, the action aborts with
+ * `NoRepoResolved`. Falling back to the editor's repo would silently switch
+ * the wrong submodule's branch in multi-module projects.
  *
  * Dirty-tree guard: aborts with a warning notification if the resolved repo has
  * any tracked-but-uncommitted changes OR any untracked files. Saved unsaved
@@ -50,7 +55,12 @@ internal object BranchSwitchAction {
         val state = service.state.value
         val pr: PrRef = state.focusPr ?: return@withContext Result.NoFocusPr
 
-        val repo = resolveTargetRepo(project, state.activeRepo?.localVcsRootPath)
+        val preferredRoot = state.activeRepo?.localVcsRootPath
+        if (preferredRoot == null) {
+            log.warn("[Workflow:Banner] Switch branch aborted: no activeRepo pinned in WorkflowContext")
+            return@withContext Result.NoRepoResolved
+        }
+        val repo = resolveTargetRepo(project, preferredRoot)
             ?: return@withContext Result.NoRepoResolved
 
         val dirtyCount = countDirtyEntries(project, repo)
@@ -74,14 +84,15 @@ internal object BranchSwitchAction {
         }
     }
 
-    private fun resolveTargetRepo(project: Project, preferredRoot: String?): GitRepository? {
+    private fun resolveTargetRepo(project: Project, preferredRoot: String): GitRepository? {
+        // `preferredRoot` is the contract: it comes from the focused PR's
+        // `RepoRef.localVcsRootPath`. If the manager doesn't know about it
+        // (project re-opened with stale context, repo unmounted, etc.) we
+        // return null so the caller surfaces `NoRepoResolved` — silently
+        // switching the editor's repo's branch would be the wrong submodule
+        // in multi-module projects.
         val mgr = GitRepositoryManager.getInstance(project)
-        if (preferredRoot != null) {
-            mgr.repositories.firstOrNull { it.root.path == preferredRoot }?.let { return it }
-        }
-        // Fallback chain: editor-derived repo → primary → first known.
-        return RepoContextResolver.getInstance(project).resolveCurrentEditorRepoOrPrimary()
-            ?: mgr.repositories.firstOrNull()
+        return mgr.repositories.firstOrNull { it.root.path == preferredRoot }
     }
 
     private fun countDirtyEntries(project: Project, repo: GitRepository): Int {

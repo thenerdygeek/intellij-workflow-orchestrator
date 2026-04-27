@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.prompt
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.testutil.installReadActionInlineShim
 import com.workflow.orchestrator.core.model.workflow.PrRef
+import com.workflow.orchestrator.core.model.workflow.RepoRef
 import com.workflow.orchestrator.core.model.workflow.TicketRef
 import com.workflow.orchestrator.core.model.workflow.WorkflowContext
 import com.workflow.orchestrator.core.workflow.WorkflowContextService
@@ -42,6 +43,7 @@ class EnvironmentDetailsBuilderWorkflowContextTest {
             WorkflowContext(
                 activeTicket = TicketRef("AFTER8TE-912", "Fix login"),
                 activeBranch = "feat/login-fix",
+                activeRepo = RepoRef("repo", "P", "repo", "/p/repo"),
                 focusPr = PrRef(42, "feat/login-fix", "main", "repo", null, null),
             )
         )
@@ -57,7 +59,7 @@ class EnvironmentDetailsBuilderWorkflowContextTest {
         assertTrue(out.contains("Active ticket: AFTER8TE-912"), "active ticket key must appear")
         assertTrue(out.contains("Active branch: feat/login-fix"), "active branch must appear")
         assertTrue(out.contains("Focused PR: #42"), "focused PR id must appear")
-        // activeBranch == focusPr.fromBranch → InteractionMode.Live
+        // activeBranch == focusPr.fromBranch AND activeRepo.name == focusPr.repoName → InteractionMode.Live
         assertTrue(out.contains("Interaction mode: Live"), "interaction mode must reflect derived value")
     }
 

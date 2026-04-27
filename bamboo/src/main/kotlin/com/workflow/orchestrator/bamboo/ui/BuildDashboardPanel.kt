@@ -37,6 +37,7 @@ import com.workflow.orchestrator.core.model.bamboo.BuildResultData
 import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
+import com.workflow.orchestrator.core.model.workflow.InteractionMode
 import com.workflow.orchestrator.core.model.workflow.PrRef
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoConfig
@@ -85,8 +86,10 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     /**
      * Derived "which repo am I looking at" — never mutable. Reads from the canonical
      * [WorkflowContextService.state] so the Build tab cannot drift from the project-wide
-     * focus. When no PR is focused yet, falls back to the editor or primary repo so
-     * startup / no-PR states still have a valid repo context for plan-key polling.
+     * focus. When no PR is focused yet, falls back to the first configured repo (item 4
+     * of the repo-resolution sweep) — the editor is no longer consulted for the Build
+     * tab's initial repo. Once the user picks a PR or repo from the dropdown, the
+     * service is the single source of truth.
      *
      * The previous implementation kept this as a `@Volatile var` mutated by three
      * paths (init, onFocusPrChanged, the repoSelector listener) — that's how the
@@ -100,12 +103,12 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                 allRepos.firstOrNull { it.displayLabel == focusedRepoName }
                     ?.let { return it }
             }
-            // No focused PR (or focused on an unknown repo) — fall back to editor/primary.
-            val resolver = RepoContextResolver.getInstance(project)
-            val fromEditor = try { resolver.resolveFromCurrentEditor() } catch (_: Exception) { null }
-            val candidate = fromEditor ?: resolver.getPrimary()
+            // No focused PR (or focused on an unknown repo). Item 4: fall back to the
+            // first configured repo (primary if marked, else first). The editor is
+            // explicitly NOT consulted — the user's dropdown selection is the source
+            // of truth from then on. Returns null only when no repos are configured;
+            // the rest of the panel already handles that case.
             return when {
-                candidate != null && allRepos.any { it.displayLabel == candidate.displayLabel } -> candidate
                 allRepos.isNotEmpty() -> allRepos.firstOrNull { it.isPrimary } ?: allRepos.first()
                 else -> settings.getPrimaryRepo()
             }
@@ -198,23 +201,15 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     private val prBar = PrBar(
         project = project,
         scope = scope,
-        repoConfigProvider = { activeRepoConfig },
-        onPrSelected = { branchName ->
-            log.info("[Build:Dashboard] onPrSelected called with branch='$branchName'")
-            if (branchName.isNotBlank()) {
-                // Auto-detect Bamboo plan + check divergence
-                scope.launch {
-                    autoDetectAndMonitor(branchName)
-                }
-            } else {
-                log.warn("[Build:Dashboard] Branch name is blank — fromRef may not be in API response")
-            }
-        }
     )
 
     private suspend fun autoDetectAndMonitor(branchName: String) {
-        val selectedPr = prBar.getSelectedPr()
-        val latestCommit = selectedPr?.fromRef?.latestCommit.orEmpty()
+        // Previously read `prBar.getSelectedPr()?.fromRef?.latestCommit` — that path is
+        // gone now that PrBar is a passive WorkflowContextService mirror. Use the local
+        // git HEAD instead. When `interactionMode == Live`, the local HEAD typically
+        // matches (or leads/trails) the focused PR's source — divergence display is now
+        // a Phase-6+ concern routed through the PR tab, not this fallback path.
+        val latestCommit = readActionLocalHead().orEmpty()
 
         // Reset activePlanKey so the "configuredPlanKey" fallback below reads the
         // active repo's bambooPlanKey, not a stale auto-detected key from the
@@ -613,23 +608,28 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                     workflowContextService.focusPr(null)
                     invokeLater {
                         showHint("No PR for $repoName \u2014 select one in the PR tab or push a branch to create one")
-                        prBar.refreshPrs()
+                        // PrBar updates itself via its own WorkflowContextService.state collector
+                        // \u2014 no manual refresh needed.
                     }
                 }
             }
         }
 
-        // Fetch PRs for current branch — delay to wait for Git repository initialization
+        // PrBar self-renders from WorkflowContextService.state — no explicit Bitbucket
+        // fetch is needed at startup. The PR tab is responsible for hydrating focusPr
+        // (and the editor seed at boot populates activeBranch); both flow into PrBar.
+
+        // Item 10: subscribe to interactionMode so the action toolbar refreshes its
+        // enabled state immediately when the local branch matches/diverges from the
+        // focused PR. update() is BGT, but we trigger an explicit refresh so the user
+        // doesn't have to mouse over the buttons to see the state change.
         scope.launch {
-            // Wait for Git to be ready (repositories list becomes non-empty)
-            var retries = 0
-            while (retries < 10) {
-                val repos = GitRepositoryManager.getInstance(project).repositories
-                if (repos.isNotEmpty()) break
-                delay(1000)
-                retries++
+            workflowContextService.interactionModeFlow.collect {
+                invokeLater {
+                    @Suppress("DEPRECATION")
+                    cachedActionToolbar?.updateActionsImmediately()
+                }
             }
-            invokeLater { prBar.refreshPrs() }
         }
 
         // Phase 5 T10: subscribe to the unified focusPr flow on WorkflowContextService.
@@ -690,7 +690,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             }
         }
 
-        prBar.showPrInfo(pr.prId, pr.fromBranch, pr.toBranch)
+        // PrBar renders itself from WorkflowContextService.state — no manual hand-off.
         loadBuildsForContext(pr.repoName, pr.fromBranch, pr.bambooPlanKey)
     }
 
@@ -786,6 +786,9 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     }
 
     private fun getCurrentBranch(): String? = getGitRepo()?.currentBranchName
+
+    /** Local HEAD SHA of the active repo, or null when no repo is configured. */
+    private fun readActionLocalHead(): String? = getGitRepo()?.currentRevision
 
     /**
      * Resolve the plan key for an action, preferring in order:
@@ -894,8 +897,8 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             override fun actionPerformed(e: AnActionEvent) {
                 val planKey = currentPlanKey()
                 if (planKey.isBlank()) {
-                    // Try to re-detect from PR
-                    prBar.refreshPrs()
+                    // No plan key — surface a hint. PR-driven detection is handled by the
+                    // PR tab via WorkflowContextService.focusPr; this panel observes that.
                     headerLabel.text = "Detecting Bamboo plan..."
                     return
                 }
@@ -907,10 +910,16 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                     val branch = getCurrentBranch() ?: getGitRepo()?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
                     monitorService.pollOnce(planKey, branch)
                 }
-                // Also refresh PR bar and build history
-                prBar.refreshPrs()
+                // Refresh the build history; PrBar self-updates via its state collector.
                 loadBuildHistory()
             }
+            override fun update(e: AnActionEvent) {
+                e.presentation.isEnabled = isLiveMode()
+                e.presentation.description = if (e.presentation.isEnabled)
+                    "Force poll build status now"
+                else readOnlyTooltip()
+            }
+            override fun getActionUpdateThread() = ActionUpdateThread.BGT
         })
 
         group.add(object : AnAction("Stop Build", "Stop a running build", AllIcons.Actions.Suspend) {
@@ -1028,7 +1037,11 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                 openTriggerDialog(planKey)
             }
             override fun update(e: AnActionEvent) {
-                e.presentation.isEnabled = currentPlanKey().isNotBlank()
+                val live = isLiveMode()
+                e.presentation.isEnabled = live && currentPlanKey().isNotBlank()
+                e.presentation.description = if (live)
+                    "Trigger a new build with custom variables"
+                else readOnlyTooltip()
             }
             override fun getActionUpdateThread() = ActionUpdateThread.BGT
         })
@@ -1051,8 +1064,12 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         val actionToolbar = ActionManager.getInstance()
             .createActionToolbar(ActionPlaces.TOOLBAR, group, true)
         actionToolbar.targetComponent = this
+        cachedActionToolbar = actionToolbar
         return actionToolbar.component
     }
+
+    @Volatile
+    private var cachedActionToolbar: com.intellij.openapi.actionSystem.ActionToolbar? = null
 
     private fun runLocalMavenBuild(goals: String) {
         localBuildRunning = true
@@ -1180,9 +1197,28 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     }
 
     private fun triggerManualStage(stageName: String) {
+        if (!isLiveMode()) {
+            statusLabel.text = readOnlyTooltip()
+            return
+        }
         val planKey = currentPlanKey()
         ManualStageDialog(project, planKey, stageName, scope).show()
     }
+
+    /**
+     * Item 10 helpers — branch-match guard.
+     *
+     * `isLiveMode` returns true when [com.workflow.orchestrator.core.model.workflow.WorkflowContext.interactionMode]
+     * is `Live` — i.e., either no PR is focused, or the focused PR's `fromBranch`
+     * matches the local checkout's `activeBranch`. When false, the action buttons
+     * (Refresh, Trigger Build, Trigger Manual Stage) are disabled and the status bar
+     * messages with `readOnlyTooltip()` to explain why.
+     */
+    private fun isLiveMode(): Boolean =
+        BuildDashboardActionGate.isLiveMode(workflowContextService.state.value)
+
+    private fun readOnlyTooltip(): String =
+        BuildDashboardActionGate.readOnlyTooltip(workflowContextService.state.value)
 
     private fun openTriggerDialog(planKey: String) {
         ManualStageDialog(project, planKey, scope = scope, triggerMode = TriggerMode.FULL_BUILD).show()

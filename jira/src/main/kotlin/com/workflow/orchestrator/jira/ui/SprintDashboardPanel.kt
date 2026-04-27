@@ -789,7 +789,8 @@ class SprintDashboardPanel(
             setLoading(true, "Fetching branches\u2026")
 
             scope.launch {
-                // Resolve repo context off-EDT to avoid synchronous VCS repository update
+                // Resolve repo context off-EDT to avoid synchronous VCS repository update.
+                // editor-fallback-allowed: Start Work dropdown initial highlight (Q2 = B, 2026-04-27)
                 val detectedRepo = readAction {
                     resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
                 }

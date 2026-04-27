@@ -62,9 +62,24 @@ class HealthCheckCheckinHandler(
         if (mode == "off") return ReturnResult.COMMIT
 
         val resolver = RepoContextResolver.getInstance(project)
-        val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
         val gitRepos = GitRepositoryManager.getInstance(project).repositories
-        val targetRepo = gitRepos.find { it.root.path == repoConfig?.localVcsRootPath } ?: gitRepos.firstOrNull()
+
+        // Derive the repo from the user's checked changes — these are the files about to be
+        // committed, so they name the right repo even when the editor is focused on a file
+        // in a different submodule. Fall back to the editor-or-primary chain only when no
+        // checked change has a usable path.
+        val firstCheckedPath = panel.selectedChanges.firstNotNullOfOrNull {
+            it.virtualFile?.path
+                ?: it.afterRevision?.file?.path
+                ?: it.beforeRevision?.file?.path
+        }
+        val targetRepo = firstCheckedPath
+            ?.let { resolver.findRepositoryForPath(it) }
+            ?: run {
+                // editor-fallback-allowed: HealthCheck — fires only when no change has a path
+                val repoConfig = resolver.resolveFromCurrentEditor() ?: resolver.getPrimary()
+                gitRepos.find { it.root.path == repoConfig?.localVcsRootPath } ?: gitRepos.firstOrNull()
+            }
         val currentBranch = targetRepo?.currentBranchName ?: ""
 
         val changedFiles = panel.selectedChanges

@@ -30,23 +30,24 @@ class EnvironmentDetailsBuilderTest {
             project = project,
             planModeEnabled = false,
             contextManager = null,
-            currentBranch = "feature/my-feature",
-            defaultTargetBranch = "develop"
+            defaultTargetBranch = "develop",
+            repoBranches = listOf("services/order" to "feature/my-feature")
         )
         assertTrue(result.contains("feature/my-feature"), "current branch must appear")
-        assertTrue(result.contains("target: develop"), "target branch must appear in parens")
+        assertTrue(result.contains("default target: develop"), "target branch must appear")
     }
 
     @Test
-    fun `branch section omitted when currentBranch is null`() = runTest {
+    fun `branch section omitted when repoBranches is empty`() = runTest {
         val result = EnvironmentDetailsBuilder.build(
             project = project,
             planModeEnabled = false,
             contextManager = null,
-            currentBranch = null,
-            defaultTargetBranch = null
+            defaultTargetBranch = null,
+            repoBranches = emptyList()
         )
-        assertFalse(result.contains("# Current Branch"), "branch section must not appear when null")
+        assertFalse(result.contains("# Current Branch"), "branch section must not appear when empty")
+        assertFalse(result.contains("# Branches"), "branches block must not appear when empty")
     }
 
     @Test
@@ -55,8 +56,8 @@ class EnvironmentDetailsBuilderTest {
             project = project,
             planModeEnabled = false,
             contextManager = null,
-            currentBranch = "main",
-            defaultTargetBranch = null
+            defaultTargetBranch = null,
+            repoBranches = listOf("repo" to "main")
         )
         assertTrue(result.contains("main"))
         assertFalse(result.contains("target:"), "target label must not appear when defaultTargetBranch is null")
@@ -74,42 +75,47 @@ class EnvironmentDetailsBuilderTest {
     }
 
     @Test
-    fun `multi-repo project labels primary branch and lists other repos`() = runTest {
+    fun `single-repo project keeps the unlabelled branch form`() = runTest {
         val result = EnvironmentDetailsBuilder.build(
             project = project,
             planModeEnabled = false,
             contextManager = null,
-            currentBranch = "feature/ORDER-42",
             defaultTargetBranch = "main",
-            primaryRepoLabel = "services/order",
-            otherRepoBranches = listOf(
+            repoBranches = listOf("services/order" to "feature/foo")
+        )
+        // Single-repo: bare "<branch> (default target: <target>)" — no label prefix, no "# Branches"
+        assertTrue(result.contains("# Current Branch"), "single-repo uses '# Current Branch' header")
+        assertFalse(result.contains("# Branches"), "single-repo must not use '# Branches' header")
+        assertTrue(result.contains("feature/foo (default target: main)"))
+        assertFalse(result.contains("services/order:"), "single-repo must not prefix the branch with the label")
+    }
+
+    @Test
+    fun `multi-repo project lists all repos as a flat per-repo branch list with no primary`() = runTest {
+        val result = EnvironmentDetailsBuilder.build(
+            project = project,
+            planModeEnabled = false,
+            contextManager = null,
+            defaultTargetBranch = "main",
+            repoBranches = listOf(
+                "services/order" to "feature/ORDER-42",
                 "services/payment" to "develop",
                 "common" to "main"
             )
         )
-        assertTrue(
-            result.contains("services/order: feature/ORDER-42 (target: main)"),
-            "primary repo should be labelled alongside its branch + target"
+        assertTrue(result.contains("# Branches"), "multi-repo block must use '# Branches' header")
+        assertFalse(result.contains("# Current Branch"), "multi-repo must not use single-repo header")
+        assertTrue(result.contains("- services/order: feature/ORDER-42"), "first repo + branch must appear")
+        assertTrue(result.contains("- services/payment: develop"), "second repo + branch must appear")
+        assertTrue(result.contains("- common: main"), "third repo + branch must appear")
+        // No "primary" framing — the word should not appear anywhere in the output.
+        assertFalse(
+            result.contains("Other repositories", ignoreCase = true),
+            "no primary/other-repos framing in the new flat list"
         )
-        assertTrue(result.contains("Other repositories in project:"), "multi-repo header should appear")
-        assertTrue(result.contains("- services/payment: develop"), "sibling repo + branch should appear")
-        assertTrue(result.contains("- common: main"), "sibling repo + branch should appear")
-    }
-
-    @Test
-    fun `single-repo rendering is unchanged when otherRepoBranches is empty`() = runTest {
-        val result = EnvironmentDetailsBuilder.build(
-            project = project,
-            planModeEnabled = false,
-            contextManager = null,
-            currentBranch = "feature/foo",
-            defaultTargetBranch = "main",
-            primaryRepoLabel = "ignored-for-single-repo",
-            otherRepoBranches = emptyList()
+        assertFalse(
+            result.contains("primary", ignoreCase = true),
+            "no 'primary' wording in the new flat list"
         )
-        // Unchanged: unlabelled "<branch> (target: <target>)" form when only one repo exists.
-        assertTrue(result.contains("feature/foo (target: main)"))
-        assertFalse(result.contains("ignored-for-single-repo:"))
-        assertFalse(result.contains("Other repositories in project:"))
     }
 }

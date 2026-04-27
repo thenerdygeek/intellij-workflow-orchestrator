@@ -42,6 +42,7 @@ class BranchChangedEventEmitter(private val project: Project) : BranchChangeList
             val repoConfig = if (changedRepo != null) {
                 resolver.resolveFromGitRepo(changedRepo)
             } else {
+                // editor-fallback-allowed: branch-change listener has no per-action context
                 resolver.getPrimary()
             }
             project.getService(EventBus::class.java)

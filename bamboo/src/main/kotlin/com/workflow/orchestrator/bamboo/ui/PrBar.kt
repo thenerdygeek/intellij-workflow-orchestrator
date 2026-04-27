@@ -1,80 +1,68 @@
 package com.workflow.orchestrator.bamboo.ui
 
 import com.intellij.icons.AllIcons
-import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.application.invokeLater
-import com.intellij.openapi.application.readAction
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.model.workflow.InteractionMode
+import com.workflow.orchestrator.core.model.workflow.PrRef
+import com.workflow.orchestrator.core.model.workflow.WorkflowContext
 import com.workflow.orchestrator.core.ui.StatusColors
-import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
-import com.workflow.orchestrator.core.bitbucket.BitbucketPrResponse
-import com.workflow.orchestrator.core.bitbucket.CreatePrLauncher
-import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.core.settings.PluginSettings
-import com.workflow.orchestrator.core.settings.RepoConfig
-import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.core.util.HtmlEscape
+import com.workflow.orchestrator.core.workflow.WorkflowContextService
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import java.awt.BorderLayout
 import java.awt.FlowLayout
-import javax.swing.*
+import javax.swing.JPanel
 
 /**
- * PR bar for the Build tab — thin adaptive strip that shows PR status.
+ * PR bar for the Build tab — passive mirror of [WorkflowContextService.state].
  *
- * Three states:
- * 1. No PR: blue banner with "Create PR" button (expandable inline form)
- * 2. Single PR: green info bar with PR title, target branch, status
- * 3. Multiple PRs: green bar with dropdown selector
+ * Two states, both driven by `state.value.focusPr` + `state.value.interactionMode`:
+ *  1. Live + focusPr != null   → green strip with "PR-#id  fromBranch → toBranch" + Open-in-browser
+ *  2. otherwise                → blue strip with "No PR for this branch — pick one in the PR tab →"
+ *                                + clickable affordance that activates the Workflow tool window
+ *                                and selects the PR tab.
  *
- * PR detection uses BitbucketBranchClient.getPullRequestsForBranch() from :core.
+ * This bar no longer fetches PRs from Bitbucket, no longer polls, and no longer hosts a
+ * "+ Create PR" button. It is purely a render of whatever the PR tab focused (via the
+ * canonical [WorkflowContextService.focusPr]). All branch-match / read-only gating is
+ * derived from [WorkflowContext.interactionMode] — no local state machine.
+ *
+ * Trade-off: PR title is NOT rendered (only `PR-#id` + branches). [PrRef] doesn't carry
+ * the title, and re-introducing a Bitbucket fetch here would defeat the redesign.  If we
+ * later need the title, the right move is to extend [PrRef] to carry it (broadcast by the
+ * PR tab via `WorkflowContextService.focusPr(...)`) — not to add a fetch path here.
  */
 class PrBar(
     private val project: Project,
     private val scope: CoroutineScope,
-    /**
-     * Supplies the Build tab's active [RepoConfig] — the single source of truth for
-     * "which repo should I fetch PRs from". Replaces the old [RepoContextResolver]-based
-     * resolution that silently snapped back to the editor's primary repo on Refresh,
-     * causing the "module dropdown shows my-common-lib but PR + jobs show my-service"
-     * inconsistency documented in v0.83.24. When the provider returns null (not yet
-     * initialized), `refreshPrs` falls back to [RepoContextResolver] — old behavior
-     * preserved for startup before the dashboard has finished constructing.
-     */
-    private val repoConfigProvider: () -> RepoConfig? = { null },
-    private val onPrSelected: (branchName: String) -> Unit
 ) : JPanel(BorderLayout()) {
 
     private val log = Logger.getInstance(PrBar::class.java)
-    private val settings = PluginSettings.getInstance(project)
+    private val contextService = WorkflowContextService.getInstance(project)
     private val contentPanel = JPanel(BorderLayout())
 
-    // State
-    private var currentPrs: List<BitbucketPrResponse> = emptyList()
-    private var selectedPr: BitbucketPrResponse? = null
+    // Track currently rendered PR so the "Open in browser" link knows what to open.
+    @Volatile
+    private var renderedPr: PrRef? = null
 
-    fun getSelectedPr(): BitbucketPrResponse? = selectedPr
-
-    // --- No PR state components ---
-    private val noPrPanel = JPanel(BorderLayout())
-    private val createButton = JButton("Create PR")
-
-    // --- Single PR state components ---
-    private val singlePrPanel = JPanel(BorderLayout())
-    private val prInfoLabel = JBLabel("")
-    private val openInBrowserLink = JBLabel("Open in browser ↗").apply {
+    // --- Empty-state panel (shown when interactionMode == ReadOnly OR focusPr == null) ---
+    private val emptyPanel = JPanel(BorderLayout())
+    private val emptyMessageLabel = JBLabel(EMPTY_MESSAGE).apply {
         foreground = StatusColors.LINK
         cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
     }
 
-    // --- Multiple PRs state components ---
-    private val multiPrPanel = JPanel(BorderLayout())
-    private val prDropdown = JComboBox<PrComboItem>()
-    private val multiOpenLink = JBLabel("Open in browser ↗").apply {
+    // --- Single-PR rendered state ---
+    private val singlePrPanel = JPanel(BorderLayout())
+    private val prInfoLabel = JBLabel("")
+    private val openInBrowserLink = JBLabel("Open in browser ↗").apply {
         foreground = StatusColors.LINK
         cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
     }
@@ -84,44 +72,46 @@ class PrBar(
         private val GREEN_BG = StatusColors.SUCCESS_BG
         private val BLUE_BORDER = StatusColors.LINK
         private val GREEN_BORDER = StatusColors.SUCCESS
+        private const val EMPTY_MESSAGE = "No PR for this branch — pick one in the PR tab →"
     }
 
     init {
-        buildNoPrPanel()
+        buildEmptyPanel()
         buildSinglePrPanel()
-        buildMultiPrPanel()
-
         add(contentPanel, BorderLayout.CENTER)
+        showPanel(emptyPanel)
 
-        // Default state
-        showPanel(noPrPanel)
+        // Subscribe to the canonical state. EVERY render decision flows from this single
+        // collector — no event subscriptions, no Bitbucket fetches, no internal state.
+        scope.launch {
+            contextService.state
+                .distinctUntilChanged { a, b ->
+                    a.focusPr == b.focusPr && a.interactionMode == b.interactionMode
+                }
+                .collect { ctx ->
+                    invokeLater { renderFromContext(ctx) }
+                }
+        }
     }
 
-    private fun buildNoPrPanel() {
-        noPrPanel.background = BLUE_BG
-        noPrPanel.border = JBUI.Borders.customLine(BLUE_BORDER, 0, 0, 1, 0)
-        noPrPanel.preferredSize = java.awt.Dimension(0, JBUI.scale(36))
-        noPrPanel.maximumSize = java.awt.Dimension(Int.MAX_VALUE, JBUI.scale(36))
+    private fun buildEmptyPanel() {
+        emptyPanel.background = BLUE_BG
+        emptyPanel.border = JBUI.Borders.customLine(BLUE_BORDER, 0, 0, 1, 0)
+        emptyPanel.preferredSize = java.awt.Dimension(0, JBUI.scale(36))
+        emptyPanel.maximumSize = java.awt.Dimension(Int.MAX_VALUE, JBUI.scale(36))
 
         val left = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), JBUI.scale(4))).apply {
             isOpaque = false
             add(JBLabel(AllIcons.Vcs.Branch))
-            add(JBLabel("No pull request for this branch"))
-            add(JBLabel("Create a PR to trigger Bamboo builds").apply {
-                foreground = StatusColors.SECONDARY_TEXT
-                font = font.deriveFont(font.size2D - 1f)
-            })
+            add(emptyMessageLabel)
         }
+        emptyPanel.add(left, BorderLayout.CENTER)
 
-        val right = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(8), JBUI.scale(4))).apply {
-            isOpaque = false
-            add(createButton)
-        }
-
-        noPrPanel.add(left, BorderLayout.CENTER)
-        noPrPanel.add(right, BorderLayout.EAST)
-
-        createButton.addActionListener { openCreatePrDialog() }
+        emptyMessageLabel.addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mouseClicked(e: java.awt.event.MouseEvent?) {
+                switchToPrTab()
+            }
+        })
     }
 
     private fun buildSinglePrPanel() {
@@ -139,238 +129,76 @@ class PrBar(
             isOpaque = false
             add(openInBrowserLink)
         }
-
         singlePrPanel.add(left, BorderLayout.CENTER)
         singlePrPanel.add(right, BorderLayout.EAST)
 
         openInBrowserLink.addMouseListener(object : java.awt.event.MouseAdapter() {
             override fun mouseClicked(e: java.awt.event.MouseEvent?) {
-                selectedPr?.links?.self?.firstOrNull()?.href?.let { BrowserUtil.browse(it) }
+                openCurrentPrInBrowser()
             }
         })
     }
-
-    private fun buildMultiPrPanel() {
-        multiPrPanel.background = GREEN_BG
-        multiPrPanel.border = JBUI.Borders.customLine(GREEN_BORDER, 0, 0, 1, 0)
-        multiPrPanel.preferredSize = java.awt.Dimension(0, JBUI.scale(36))
-        multiPrPanel.maximumSize = java.awt.Dimension(Int.MAX_VALUE, JBUI.scale(36))
-
-        val left = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), JBUI.scale(4))).apply {
-            isOpaque = false
-            add(JBLabel("✓").apply { foreground = StatusColors.SUCCESS })
-            add(prDropdown)
-        }
-        val right = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(8), JBUI.scale(4))).apply {
-            isOpaque = false
-            add(multiOpenLink)
-        }
-
-        multiPrPanel.add(left, BorderLayout.CENTER)
-        multiPrPanel.add(right, BorderLayout.EAST)
-
-        prDropdown.addActionListener {
-            val item = prDropdown.selectedItem as? PrComboItem ?: return@addActionListener
-            selectedPr = item.pr
-            onPrSelected(item.pr.fromRef?.displayId ?: "")
-        }
-
-        multiOpenLink.addMouseListener(object : java.awt.event.MouseAdapter() {
-            override fun mouseClicked(e: java.awt.event.MouseEvent?) {
-                selectedPr?.links?.self?.firstOrNull()?.href?.let { BrowserUtil.browse(it) }
-            }
-        })
-    }
-
-    // --- State management ---
 
     private fun showPanel(panel: JPanel) {
         contentPanel.removeAll()
         contentPanel.add(panel, BorderLayout.CENTER)
         contentPanel.revalidate()
         contentPanel.repaint()
-        // Force parent to recalculate layout since our preferred size changed
         this.revalidate()
         this.repaint()
     }
 
     /**
-     * Opens the full Create PR dialog via the [CreatePrLauncher] extension point.
-     *
-     * Phase 6: delegates entirely to [CreatePrLauncherImpl] which runs [CreatePrPrefetch]
-     * and opens [com.workflow.orchestrator.pullrequest.ui.CreatePrDialog]. The temporary
-     * `:bamboo → :pullrequest` compile dep has been removed.
-     *
-     * Passing `autoGenerateDescription = true` preserves the Build-tab UX where the
-     * description is generated automatically when the dialog opens.
-     *
-     * After the dialog closes successfully it emits [com.workflow.orchestrator.core.events.WorkflowEvent.PullRequestCreated],
-     * which triggers any EventBus subscribers (including PrBar's refreshPrs() below).
+     * Render decision from a [WorkflowContext] snapshot. Single source of truth for what
+     * the bar shows — no other path mutates UI state.
      */
-    private fun openCreatePrDialog() {
-        val launcher = CreatePrLauncher.getInstance() ?: run {
-            log.warn("[Build:PrBar] CreatePrLauncher EP not registered")
+    private fun renderFromContext(ctx: WorkflowContext) {
+        val focus = ctx.focusPr
+        if (focus != null && ctx.interactionMode == InteractionMode.Live) {
+            renderedPr = focus
+            // PR title not rendered — see class kdoc trade-off.
+            prInfoLabel.text = "<html><b>PR #${focus.prId}</b> &nbsp; " +
+                "${HtmlEscape.escapeHtml(focus.fromBranch)} &rarr; " +
+                "${HtmlEscape.escapeHtml(focus.toBranch)}</html>"
+            showPanel(singlePrPanel)
+        } else {
+            renderedPr = null
+            showPanel(emptyPanel)
+        }
+    }
+
+    private fun switchToPrTab() {
+        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow("Workflow")
+        if (toolWindow == null) {
+            log.warn("[Build:PrBar] Workflow tool window not found")
             return
         }
-        launcher.launch(project, scope, autoGenerateDescription = true)
-    }
-
-    // --- External state setters (called by BuildDashboardPanel on EventBus events) ---
-
-    /**
-     * Show a read-only PR info strip for the given PR context.
-     *
-     * Phase 5 T10: called by [BuildDashboardPanel.onFocusPrChanged] with values sourced
-     * from `WorkflowContextService.state.value.focusPr`. The panel's single subscription
-     * drives both this header AND the job-stages list — the spec §4.4 single-merged-
-     * emission invariant guarantees both readers see the same `WorkflowContext` snapshot,
-     * so we DELIBERATELY do not collect the flow inside `PrBar` (a duplicate collector
-     * would re-introduce the dual-path divergence the migration is fixing).
-     */
-    fun showPrInfo(prId: Int, fromBranch: String, toBranch: String) {
-        prInfoLabel.text = "<html><b>PR #$prId</b> &nbsp; ${HtmlEscape.escapeHtml(fromBranch)} \u2192 $toBranch</html>"
-        selectedPr = currentPrs.find { it.id.toInt() == prId }
-        showPanel(singlePrPanel)
+        toolWindow.activate {
+            val cm = toolWindow.contentManager
+            cm.contents.firstOrNull { it.displayName == "PR" }
+                ?.let { cm.setSelectedContent(it) }
+        }
     }
 
     /**
-     * Show the "no PR" state.
+     * Open the focused PR in the browser using the configured Bitbucket base URL.
+     * Built from PrRef + connection settings — no Bitbucket REST fetch.
      */
-    fun showNoPr() {
-        selectedPr = null
-        showPanel(noPrPanel)
-    }
-
-    // --- Actions ---
-
-    fun refreshPrs() {
+    private fun openCurrentPrInBrowser() {
+        val pr = renderedPr ?: return
+        val settings = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
         val bitbucketUrl = settings.connections.bitbucketUrl.orEmpty().trimEnd('/')
-        log.info("[Build:PrBar] refreshPrs: url='$bitbucketUrl'")
-        if (bitbucketUrl.isBlank()) {
-            log.warn("[Build:PrBar] Bitbucket URL not configured, hiding PrBar")
-            isVisible = false
-            return
-        }
-
-        // Prefer the Build tab's active RepoConfig (the single source of truth threaded
-        // in via repoConfigProvider). Fall back to RepoContextResolver only when the
-        // provider returns null — startup before the dashboard has wired itself, or
-        // direct PrBar instantiation in tests.
-        val repoConfig = repoConfigProvider() ?: run {
-            log.info("[Build:PrBar] repoConfigProvider returned null — falling back to editor-context resolver")
-            RepoContextResolver.getInstance(project).resolveCurrentEditorRepoOrPrimary()
-                ?.let { RepoContextResolver.getInstance(project).resolveFromGitRepo(it) }
-        }
-        val projectKey = repoConfig?.bitbucketProjectKey.orEmpty()
-        val repoSlug = repoConfig?.bitbucketRepoSlug.orEmpty()
-
+        if (bitbucketUrl.isBlank()) return
+        val repoConfig = settings.getRepos().firstOrNull { it.displayLabel == pr.repoName || it.name == pr.repoName }
+        val projectKey = repoConfig?.bitbucketProjectKey?.takeIf { it.isNotBlank() }
+            ?: settings.state.bitbucketProjectKey.orEmpty()
+        val repoSlug = repoConfig?.bitbucketRepoSlug?.takeIf { it.isNotBlank() }
+            ?: settings.state.bitbucketRepoSlug.orEmpty()
         if (projectKey.isBlank() || repoSlug.isBlank()) {
-            // Fall back to single-value legacy settings for backwards compatibility
-            val legacyKey = settings.state.bitbucketProjectKey.orEmpty()
-            val legacySlug = settings.state.bitbucketRepoSlug.orEmpty()
-            if (legacyKey.isBlank() || legacySlug.isBlank()) {
-                log.warn("[Build:PrBar] No Bitbucket project/repo configured, hiding PrBar")
-                isVisible = false
-                return
-            }
-            log.info("[Build:PrBar] Using legacy single-value settings: project='$legacyKey' repo='$legacySlug'")
-            refreshPrsWithCoords(bitbucketUrl, legacyKey, legacySlug)
+            log.warn("[Build:PrBar] Cannot open PR — Bitbucket project/repo not configured for '${pr.repoName}'")
             return
         }
-
-        log.info("[Build:PrBar] Using RepoContextResolver: project='$projectKey' repo='$repoSlug'")
-        refreshPrsWithCoords(bitbucketUrl, projectKey, repoSlug)
-    }
-
-    private fun refreshPrsWithCoords(bitbucketUrl: String, projectKey: String, repoSlug: String) {
-        isVisible = true
-
-        val client = BitbucketBranchClient.fromConfiguredSettings() ?: return
-
-        scope.launch {
-            // Resolve branch off-EDT to avoid synchronous VCS repository update on EDT
-            val currentBranch = readAction { resolveCurrentBranch() }
-            if (currentBranch == null) {
-                log.warn("[Build:PrBar] No Git branch detected")
-                return@launch
-            }
-            log.info("[Build:PrBar] Fetching PRs for branch '$currentBranch'")
-
-            val result = client.getPullRequestsForBranch(projectKey, repoSlug, currentBranch)
-            invokeLater {
-                when (result) {
-                    is ApiResult.Success -> setPrs(result.data)
-                    is ApiResult.Error -> {
-                        log.warn("[Build:PrBar] Failed to fetch PRs: ${result.message}")
-                        setPrs(emptyList())
-                    }
-                }
-            }
-        }
-    }
-
-    private fun setPrs(prs: List<BitbucketPrResponse>) {
-        currentPrs = prs
-        log.info("[Build:PrBar] setPrs called with ${prs.size} PRs")
-        for (pr in prs) {
-            log.info("[Build:PrBar]   PR #${pr.id}: '${pr.title}' fromRef=${pr.fromRef?.displayId} toRef=${pr.toRef?.displayId}")
-        }
-        when {
-            prs.isEmpty() -> {
-                selectedPr = null
-                showPanel(noPrPanel)
-            }
-            prs.size == 1 -> {
-                selectedPr = prs[0]
-                updateSinglePrInfo(prs[0])
-                showPanel(singlePrPanel)
-                val branchName = prs[0].fromRef?.displayId ?: ""
-                log.info("[Build:PrBar] Single PR selected, branch='$branchName'")
-                onPrSelected(branchName)
-            }
-            else -> {
-                prDropdown.removeAllItems()
-                prs.forEach { prDropdown.addItem(PrComboItem(it)) }
-                selectedPr = prs[0]
-                showPanel(multiPrPanel)
-                val branchName = prs[0].fromRef?.displayId ?: ""
-                log.info("[Build:PrBar] Multi PR, first selected, branch='$branchName'")
-                onPrSelected(branchName)
-            }
-        }
-    }
-
-    private fun updateSinglePrInfo(pr: BitbucketPrResponse) {
-        val target = pr.toRef?.displayId ?: "?"
-        prInfoLabel.text = "<html><b>PR #${pr.id}</b> &nbsp; ${HtmlEscape.escapeHtml(pr.title)} &nbsp; <font color='${StatusColors.htmlColor(StatusColors.SECONDARY_TEXT)}'>→ $target</font> &nbsp; <font color='${statusColor(pr.state)}'>${pr.state}</font></html>"
-    }
-
-    private fun statusColor(state: String): String = when (state.uppercase()) {
-        "OPEN" -> StatusColors.htmlColor(StatusColors.SUCCESS)
-        "MERGED" -> StatusColors.htmlColor(StatusColors.MERGED)
-        "DECLINED" -> StatusColors.htmlColor(StatusColors.ERROR)
-        else -> StatusColors.htmlColor(StatusColors.INFO)
-    }
-
-    private fun getGitRepo(): git4idea.repo.GitRepository? {
-        // Resolve via the Build tab's active RepoConfig first so we get the branch
-        // of the repo the user is looking at — not the editor-context repo. Falls
-        // back to resolver when no active repo is set (early startup, tests).
-        val activeRoot = repoConfigProvider()?.localVcsRootPath
-        if (activeRoot != null) {
-            val repos = git4idea.repo.GitRepositoryManager.getInstance(project).repositories
-            repos.find { it.root.path == activeRoot }?.let { return it }
-        }
-        return RepoContextResolver.getInstance(project).resolveCurrentEditorRepoOrPrimary()
-    }
-
-    private fun resolveCurrentBranch(): String? = getGitRepo()?.currentBranchName
-}
-
-/** ComboBox item wrapper to show PR info in the dropdown. */
-private data class PrComboItem(val pr: BitbucketPrResponse) {
-    override fun toString(): String {
-        val target = pr.toRef?.displayId ?: "?"
-        return "PR #${pr.id}  ${pr.title}  → $target"
+        val url = "$bitbucketUrl/projects/$projectKey/repos/$repoSlug/pull-requests/${pr.prId}"
+        com.intellij.ide.BrowserUtil.browse(url)
     }
 }

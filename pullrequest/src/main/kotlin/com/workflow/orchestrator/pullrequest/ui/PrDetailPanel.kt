@@ -56,7 +56,6 @@ import com.workflow.orchestrator.pullrequest.service.PrReviewSessionRegistry
 import com.workflow.orchestrator.pullrequest.service.PrReviewTaskBuilder
 import java.util.UUID
 import com.workflow.orchestrator.core.settings.RepoConfig
-import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import com.workflow.orchestrator.core.util.StringUtils
 import git4idea.repo.GitRepositoryManager
@@ -458,19 +457,18 @@ class PrDetailPanel(
     // Create PR form
     // ---------------------------------------------------------------
 
-    fun showCreateForm(repoConfig: RepoConfig? = null) {
+    fun showCreateForm(repoConfig: RepoConfig) {
         currentPrId = null
         currentPr = null
         loadJob?.cancel()
         createRepoConfig = repoConfig
 
-        // Get current git branch using the provided repo config or falling back to context detection
-        val targetRepo = if (repoConfig?.localVcsRootPath?.isNotBlank() == true) {
-            val gitRepos = GitRepositoryManager.getInstance(project).repositories
-            gitRepos.find { it.root.path == repoConfig.localVcsRootPath } ?: gitRepos.firstOrNull()
-        } else {
-            RepoContextResolver.getInstance(project).resolveCurrentEditorRepoOrPrimary()
-        }
+        // Resolve the GitRepository whose root matches the caller-supplied repoConfig.
+        // No editor fallback: the caller owns the user-action signal that picked this repo.
+        // If the configured path no longer matches a checked-out repo (e.g. settings drift),
+        // targetRepo is null and currentBranch falls back to "unknown" below.
+        val gitRepos = GitRepositoryManager.getInstance(project).repositories
+        val targetRepo = gitRepos.find { it.root.path == repoConfig.localVcsRootPath }
         val currentBranch = targetRepo?.currentBranch?.name ?: "unknown"
         createSourceBranchLabel.text = currentBranch
 

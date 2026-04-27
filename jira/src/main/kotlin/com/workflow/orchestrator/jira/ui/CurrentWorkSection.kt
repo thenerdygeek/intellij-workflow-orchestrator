@@ -143,6 +143,7 @@ class CurrentWorkSection(
         scope.launch {
             val resolver = RepoContextResolver.getInstance(project)
             val targetRepo = readAction {
+                // editor-fallback-allowed: deferred — replace with active-ticket multi-repo chip (memory: project_active_ticket_multi_repo_chip.md)
                 resolver.resolveCurrentEditorRepoOrPrimary()
             }
             val currentBranch = targetRepo?.currentBranchName ?: ""

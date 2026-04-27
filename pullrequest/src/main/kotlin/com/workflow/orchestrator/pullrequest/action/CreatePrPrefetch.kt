@@ -117,7 +117,8 @@ object CreatePrPrefetch {
             return PrefetchResult.Failure(ERROR_BITBUCKET_NOT_CONFIGURED)
         }
 
-        // 3. Resolve initial selected repo index from the current editor's git root
+        // 3. Resolve initial selected repo index from the current editor's git root.
+        // editor-fallback-allowed: PR tab Create-PR launcher takes no repo context; user can switch in dropdown
         val editorGitRoot = readAction {
             resolver.resolveCurrentEditorRepoOrPrimary()?.root?.path
         }

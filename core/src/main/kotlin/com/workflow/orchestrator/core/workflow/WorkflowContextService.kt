@@ -162,6 +162,7 @@ class WorkflowContextService(
      * `docs/architecture/multi-module-compliance-plan.md` Phase A.
      */
     internal suspend fun recomputeFromEditor() = cascadeMutex.withLock {
+        // editor-fallback-allowed: WorkflowContextService owns the editor slice by design
         val gitRepo = RepoContextResolver.getInstance(project).resolveCurrentEditorRepoOrPrimary()
 
         val repoConfig = gitRepo?.let { repo ->

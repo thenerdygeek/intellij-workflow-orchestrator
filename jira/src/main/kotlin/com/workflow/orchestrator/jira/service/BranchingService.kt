@@ -15,16 +15,12 @@ import com.workflow.orchestrator.core.model.jira.TransitionError
 import com.workflow.orchestrator.core.services.jira.TicketTransitionService
 import com.workflow.orchestrator.core.services.jira.TransitionDialogOpener
 import com.workflow.orchestrator.core.settings.PluginSettings
-import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.jira.api.JiraApiClient
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.application.EDT
 import git4idea.branch.GitBrancher
 import git4idea.commands.Git
 import git4idea.repo.GitRepositoryManager
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 class BranchingService(
     private val project: Project,
@@ -91,18 +87,19 @@ class BranchingService(
      * Uses an existing branch: fetch from remote, checkout locally,
      * and transition the Jira ticket via the orchestrator.
      *
-     * [localVcsRootPath], when non-null, pins the local checkout to that Git root —
-     * used by the Start Work dialog to honor the user's repo dropdown selection
-     * regardless of which repo the current editor is in. Falling back to editor
-     * context was the root cause of the false "branch already exists" notification
-     * when the selected repo and editor repo disagreed.
+     * [localVcsRootPath] is the user-pinned Git root from the Start Work dialog.
+     * It must match a known repository's `root.path`; if it does not, this
+     * function returns `ApiResult.Error(NOT_FOUND, ...)` rather than silently
+     * falling back to the editor's repo or the first known repo. Falling back
+     * was the root cause of false "branch already exists" notifications and of
+     * checkouts landing in the wrong module in multi-repo projects.
      */
     suspend fun useExistingBranch(
         issue: JiraIssue,
         branchName: String,
         localVcsRootPath: String? = null
     ): ApiResult<String> {
-        log.info("[Jira:Branch] Using existing branch '$branchName' for ${issue.key} (pinned root: ${localVcsRootPath ?: "<editor-context>"})")
+        log.info("[Jira:Branch] Using existing branch '$branchName' for ${issue.key} (pinned root: ${localVcsRootPath ?: "<none>"})")
 
         try {
             val repositories = readAction {
@@ -111,22 +108,14 @@ class BranchingService(
             if (repositories.isEmpty()) {
                 return ApiResult.Error(ErrorType.NOT_FOUND, "No Git repository found in this project.")
             }
-            // Prefer the explicitly-pinned local VCS root (from Start Work dropdown).
-            // Only fall back to editor-context resolution when no pin was provided.
+            // The Start Work dropdown is the authoritative repo signal; falling back to
+            // editor context (or `repositories.first()`) silently checked out the wrong
+            // module in multi-repo projects. Hard-error instead so the user can repick.
             val repo: git4idea.repo.GitRepository = repositories.find { it.root.path == localVcsRootPath }
-                ?: run {
-                    val resolver = RepoContextResolver.getInstance(project)
-                    val editorFile = withContext(Dispatchers.EDT) {
-                        com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project).selectedEditor?.file
-                    }
-                    val repoConfig = readAction {
-                        if (editorFile != null) resolver.resolveFromFile(editorFile) else resolver.getPrimary()
-                    }
-                    if (repoConfig?.localVcsRootPath != null) {
-                        repositories.find { it.root.path == repoConfig.localVcsRootPath }
-                    } else null
-                }
-                ?: repositories.first()
+                ?: return ApiResult.Error(
+                    ErrorType.NOT_FOUND,
+                    "Configured VCS root '$localVcsRootPath' not found — repick in Start Work dialog"
+                )
             val git = Git.getInstance()
 
             // Fetch to update remote tracking refs (safe, doesn't touch local branches)
@@ -180,9 +169,11 @@ class BranchingService(
      * Creates a branch on Bitbucket, fetches it locally, checks it out,
      * and transitions the Jira ticket via the orchestrator.
      *
-     * [localVcsRootPath], when non-null, pins the local checkout to that Git root —
-     * used by the Start Work dialog to honor the user's repo dropdown selection
-     * regardless of which repo the current editor is in.
+     * [localVcsRootPath] is the user-pinned Git root from the Start Work dialog.
+     * It must match a known repository's `root.path`; if it does not, this
+     * function returns `ApiResult.Error(NOT_FOUND, ...)` rather than silently
+     * falling back to the editor's repo or the first known repo (which would
+     * land the local checkout in the wrong module).
      */
     suspend fun startWork(
         issue: JiraIssue,
@@ -193,7 +184,7 @@ class BranchingService(
         repoSlug: String,
         localVcsRootPath: String? = null
     ): ApiResult<String> {
-        log.info("[Jira:Branch] Creating remote branch '$branchName' from '$sourceBranch' for ${issue.key} in $projectKey/$repoSlug (pinned root: ${localVcsRootPath ?: "<editor-context>"})")
+        log.info("[Jira:Branch] Creating remote branch '$branchName' from '$sourceBranch' for ${issue.key} in $projectKey/$repoSlug (pinned root: ${localVcsRootPath ?: "<none>"})")
 
         // 1. Create branch on Bitbucket
         val createResult = branchClient.createBranch(projectKey, repoSlug, branchName, sourceBranch)
@@ -215,23 +206,14 @@ class BranchingService(
             if (repositories.isEmpty()) {
                 return ApiResult.Error(ErrorType.NOT_FOUND, "No Git repository found in this project.")
             }
-            // Prefer the explicitly-pinned local VCS root (from Start Work dropdown).
-            // Falling back to editor context was the root cause of local checkout landing
-            // in the wrong repo when the user picked a non-default module in the dialog.
+            // The Start Work dropdown is the authoritative repo signal; falling back to
+            // editor context (or `repositories.first()`) silently checked out the wrong
+            // module in multi-repo projects. Hard-error instead so the user can repick.
             val repo: git4idea.repo.GitRepository = repositories.find { it.root.path == localVcsRootPath }
-                ?: run {
-                    val resolver = RepoContextResolver.getInstance(project)
-                    val editorFile2 = withContext(Dispatchers.EDT) {
-                        com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project).selectedEditor?.file
-                    }
-                    val repoConfig = readAction {
-                        if (editorFile2 != null) resolver.resolveFromFile(editorFile2) else resolver.getPrimary()
-                    }
-                    if (repoConfig?.localVcsRootPath != null) {
-                        repositories.find { it.root.path == repoConfig.localVcsRootPath }
-                    } else null
-                }
-                ?: repositories.first()
+                ?: return ApiResult.Error(
+                    ErrorType.NOT_FOUND,
+                    "Configured VCS root '$localVcsRootPath' not found — repick in Start Work dialog"
+                )
             val git = Git.getInstance()
             val fetchResult = git.fetch(repo, repo.remotes.first(), emptyList())
             if (!fetchResult.success()) {

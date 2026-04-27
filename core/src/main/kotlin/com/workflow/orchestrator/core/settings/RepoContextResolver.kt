@@ -65,17 +65,29 @@ class RepoContextResolver(private val project: Project) : Disposable {
     fun resolveFromFile(file: VirtualFile): RepoConfig? {
         // Use cached repositories list instead of getRepositoryForFile() which triggers
         // a synchronous repository update that is forbidden on EDT (IntelliJ 2025.1+)
-        val gitRepo = findRepositoryForFile(file) ?: return getPrimary()
+        val gitRepo = findRepositoryForPath(file.path) ?: return getPrimary()
         return resolveFromGitRepo(gitRepo)
     }
 
-    private fun findRepositoryForFile(file: VirtualFile): GitRepository? {
+    /**
+     * Resolves a [GitRepository] from a file system path. Prefers the deepest matching
+     * repository root, so a file in a nested submodule resolves to the submodule, not
+     * the parent. Returns null only when no repository contains the path AND the project
+     * has multiple repos (single-repo projects always return that repo regardless).
+     *
+     * Use this from any caller that already knows which file the user is acting on
+     * (checked changes, selected PR's source branch tip, build's plan VCS root, etc.)
+     * — it is strictly more accurate than [resolveCurrentEditorRepoOrPrimary] for those
+     * call sites because the user's chosen object names the right repo, while the editor
+     * may be in a different submodule.
+     */
+    fun findRepositoryForPath(path: String): GitRepository? {
         val repos = GitRepositoryManager.getInstance(project).repositories
         if (repos.isEmpty()) return null
         if (repos.size == 1) return repos.first()
-        // Find the repo whose root is an ancestor of the file, preferring the deepest match
+        // Find the repo whose root is an ancestor of the path, preferring the deepest match
         return repos
-            .filter { file.path.startsWith(it.root.path + "/") || file.path == it.root.path }
+            .filter { path == it.root.path || path.startsWith(it.root.path + "/") }
             .maxByOrNull { it.root.path.length }
     }
 

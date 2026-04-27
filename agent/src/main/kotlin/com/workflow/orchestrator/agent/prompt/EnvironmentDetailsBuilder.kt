@@ -26,10 +26,8 @@ object EnvironmentDetailsBuilder {
         contextManager: ContextManager?,
         activeTicketId: String? = null,
         activeTicketSummary: String? = null,
-        currentBranch: String? = null,
         defaultTargetBranch: String? = null,
-        primaryRepoLabel: String? = null,
-        otherRepoBranches: List<Pair<String, String>> = emptyList(),
+        repoBranches: List<Pair<String, String>> = emptyList(),
     ): String {
         val sb = StringBuilder()
         sb.appendLine("<environment_details>")
@@ -42,8 +40,8 @@ object EnvironmentDetailsBuilder {
         // 2. Current Time
         sb.appendCurrentTime()
 
-        // 3. VCS State (branch + dirty files)
-        sb.appendVcsState(project, currentBranch, defaultTargetBranch, primaryRepoLabel, otherRepoBranches)
+        // 3. VCS State (per-repo branches + dirty files)
+        sb.appendVcsState(project, defaultTargetBranch, repoBranches)
 
         // 4. Active Editor (file, cursor, selection range)
         sb.appendActiveEditor(project)
@@ -198,26 +196,24 @@ object EnvironmentDetailsBuilder {
 
     private fun StringBuilder.appendVcsState(
         project: Project,
-        currentBranch: String?,
         defaultTargetBranch: String?,
-        primaryRepoLabel: String?,
-        otherRepoBranches: List<Pair<String, String>>
+        repoBranches: List<Pair<String, String>>
     ) {
-        // Branch line — shown only when available.
-        // Multi-repo projects: label the primary branch with its repo identity and list the
-        // other repos below, so the LLM never confuses modules or picks the wrong branch for
-        // tools like sonar(action=local_analysis, branch=...).
-        if (currentBranch != null) {
-            appendLine("# Current Branch")
-            val target = if (defaultTargetBranch != null) " (target: $defaultTargetBranch)" else ""
-            if (otherRepoBranches.isNotEmpty() && primaryRepoLabel != null) {
-                appendLine("$primaryRepoLabel: $currentBranch$target")
-                appendLine("Other repositories in project:")
-                for ((label, branch) in otherRepoBranches) {
+        // Branches block — flat per-repo list, no "primary" framing. The agent picks the
+        // right repo per-call from user-action signals (checked changes, focused PR, file
+        // arg) — environment_details only enumerates what is currently checked out where.
+        if (repoBranches.isNotEmpty()) {
+            val target = if (defaultTargetBranch != null) " (default target: $defaultTargetBranch)" else ""
+            if (repoBranches.size == 1) {
+                // Single-repo project: keep the original "<branch>" form for compactness.
+                val (_, branch) = repoBranches.single()
+                appendLine("# Current Branch")
+                appendLine("$branch$target")
+            } else {
+                appendLine("# Branches$target")
+                for ((label, branch) in repoBranches) {
                     appendLine("- $label: $branch")
                 }
-            } else {
-                appendLine("$currentBranch$target")
             }
             appendLine()
         }

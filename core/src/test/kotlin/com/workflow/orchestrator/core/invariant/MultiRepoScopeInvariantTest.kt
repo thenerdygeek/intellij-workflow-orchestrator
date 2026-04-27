@@ -59,6 +59,38 @@ class MultiRepoScopeInvariantTest {
         "/invariant/MultiRepoScopeInvariantTest.kt",
     )
 
+    /**
+     * Editor-or-primary resolvers on [com.workflow.orchestrator.core.settings.RepoContextResolver].
+     * These resolvers always return *some* repo by chaining current-editor → configured primary →
+     * `repositories.firstOrNull()`. That makes them dangerous defaults — UI and service code that
+     * already knows the repo from a stronger user-action signal (checked changes, focused PR,
+     * selected build, clicked ticket) silently loses that signal when these resolvers run instead.
+     *
+     * The 2026-04-27 sweep audit found 11 misuse sites (see
+     * `docs/architecture/repo-resolution-sweep-plan.md`). To prevent regression, every call to
+     * one of these resolvers MUST sit on the same or an adjacent line as a `// editor-fallback-allowed:`
+     * comment explaining why editor/primary is the right answer here.
+     */
+    private val editorOrPrimaryResolverPattern = Regex("""\.(resolveCurrentEditorRepoOrPrimary|resolveFromCurrentEditor|getPrimary)\b\(""")
+
+    /**
+     * Marker token engineers add adjacent to a legitimate editor-fallback call site, e.g.:
+     *
+     *   // editor-fallback-allowed: BranchChangedEventEmitter — listener has no per-action context
+     *   resolver.getPrimary()
+     */
+    private val editorFallbackMarker = "editor-fallback-allowed"
+
+    /**
+     * Files where these resolver method names appear without being actual calls — the resolver's
+     * own definition file (where the methods are declared) and this invariant test (which references
+     * the method names in regex literals + kdoc).
+     */
+    private val resolverDefinitionFiles = listOf(
+        "/settings/RepoContextResolver.kt",
+        "/invariant/MultiRepoScopeInvariantTest.kt",
+    )
+
     @Test
     fun `no UI or action file reads scalar repo-scoped settings without a RepoConfig fallback`() {
         val offenders = mutableListOf<String>()
@@ -113,6 +145,57 @@ class MultiRepoScopeInvariantTest {
                 appendLine(" 2. Add the file to `allowlistPathFragments` with a justification.")
                 appendLine()
                 appendLine("Offending reads:")
+                offenders.forEach { appendLine("  $it") }
+            }
+        )
+    }
+
+    @Test
+    fun `no file calls editor-or-primary repo resolvers without an explicit allow marker`() {
+        val offenders = mutableListOf<String>()
+
+        projectRoot.walkTopDown()
+            .filter { it.isFile && it.name.endsWith(".kt") }
+            .filter { it.path.contains("/src/main/") }
+            .filter { !it.path.contains("/build/") && !it.path.contains("/.worktrees/") }
+            .filter { file -> resolverDefinitionFiles.none { file.path.contains(it) } }
+            .forEach { file ->
+                val lines = file.readLines()
+                lines.forEachIndexed { idx, line ->
+                    // Skip kdoc/line-comment lines — they reference method names in prose, not calls.
+                    val trimmed = line.trimStart()
+                    if (trimmed.startsWith("*") || trimmed.startsWith("//")) return@forEachIndexed
+                    if (!editorOrPrimaryResolverPattern.containsMatchIn(line)) return@forEachIndexed
+                    // Allow if the marker appears on this line, the previous line, or any of the
+                    // 4 preceding lines (covers multi-line statements where the marker is at the
+                    // top of the block).
+                    val contextStart = (idx - 4).coerceAtLeast(0)
+                    val context = lines.subList(contextStart, idx + 1).joinToString("\n")
+                    if (context.contains(editorFallbackMarker)) return@forEachIndexed
+                    offenders.add("${file.path}:${idx + 1}: ${line.trim()}")
+                }
+            }
+
+        assertTrue(
+            offenders.isEmpty(),
+            buildString {
+                appendLine("Found ${offenders.size} unguarded call(s) to editor-or-primary repo resolvers")
+                appendLine("(resolveCurrentEditorRepoOrPrimary / resolveFromCurrentEditor / getPrimary).")
+                appendLine()
+                appendLine("These resolvers always return *some* repo, hiding cases where the caller had")
+                appendLine("a stronger signal one line away (checked changes, focused PR, selected build,")
+                appendLine("clicked ticket). Past bugs from this pattern: commit-msg generation against the")
+                appendLine("wrong submodule (2026-04-27), Refresh fetching the wrong PR (2026-04-24),")
+                appendLine("Sonar coverage looking up the wrong repo (2026-04-23).")
+                appendLine()
+                appendLine("Fix options:")
+                appendLine(" 1. Derive the repo from the user's action — e.g. for checked changes:")
+                appendLine("       RepoContextResolver.getInstance(project).findRepositoryForPath(path)")
+                appendLine(" 2. If the call truly is a last-resort fallback, add the marker on the same")
+                appendLine("    or an immediately preceding line (up to 4 lines above):")
+                appendLine("       // editor-fallback-allowed: <one-line reason>")
+                appendLine()
+                appendLine("Offending calls:")
                 offenders.forEach { appendLine("  $it") }
             }
         )

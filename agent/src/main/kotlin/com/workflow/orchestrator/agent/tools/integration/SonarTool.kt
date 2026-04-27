@@ -11,6 +11,7 @@ import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoContextResolver
+import com.workflow.orchestrator.core.workflow.WorkflowContextService
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -819,7 +820,7 @@ Common optional: repo_name for multi-repo projects.
     // Branch resolution for local_analysis
     // ══════════════════════════════════════════════════════════════════════
 
-    private sealed class BranchResolution {
+    internal sealed class BranchResolution {
         abstract val note: String
         // Publish under this specific branch (emits -Dsonar.branch.name=<branch>).
         data class Use(val branch: String, override val note: String) : BranchResolution()
@@ -828,11 +829,24 @@ Common optional: repo_name for multi-repo projects.
         data class Omit(override val note: String) : BranchResolution()
     }
 
-    private fun resolveLocalAnalysisBranch(project: Project, userProvided: String?): BranchResolution {
+    internal fun resolveLocalAnalysisBranch(project: Project, userProvided: String?): BranchResolution {
         val userBranch = userProvided?.trim()?.takeIf { it.isNotBlank() }
-        val currentGitBranch = runCatching {
+        // Branch resolution chain (repo-resolution sweep, item 8):
+        //   A. file-arg's repo  — SKIPPED today: `local_analysis` accepts a `files` CSV but
+        //      derives the project root via Maven/Gradle multi-module scoping, not a single
+        //      path. Wiring per-file repo lookup here is tracked for future work.
+        //   B. WorkflowContextService.state.activeBranch — the user's "currently working in"
+        //      signal mirrored across all 6 tabs (cached, survives editor switches).
+        //   C. RepoContextResolver.resolveCurrentEditorRepoOrPrimary — fresh editor/primary
+        //      lookup as last resort.
+        val workflowContextBranch = runCatching {
+            WorkflowContextService.getInstance(project).state.value.activeBranch
+        }.getOrNull()?.trim()?.takeIf { it.isNotBlank() }
+        val editorOrPrimaryBranch = runCatching {
+            // editor-fallback-allowed: Sonar branch resolution case C — last resort after WorkflowContext
             RepoContextResolver.getInstance(project).resolveCurrentEditorRepoOrPrimary()?.currentBranchName
         }.getOrNull()?.trim()?.takeIf { it.isNotBlank() }
+        val currentGitBranch = workflowContextBranch ?: editorOrPrimaryBranch
 
         val candidate = userBranch ?: currentGitBranch
 
