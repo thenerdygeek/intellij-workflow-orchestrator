@@ -357,10 +357,15 @@ class QualityDashboardPanel(
         // multi-repo users would see Sonar data for a repo they aren't looking at.
         // The auto-render via the focusQualityScope flow handles the active path on
         // boot and on PR change; this is the manual button.
+        //
+        // EDT read of `state.value`; cascade writes happen on the service scope. A
+        // click during an in-flight cascade reads the previous scope; the user's
+        // next click sees the new value. Cascade completes in milliseconds, so
+        // worst-case stale-by-one-click is acceptable.
         val scope = workflowContextService.state.value.focusQualityScope
         val branch = scope?.branchName?.takeIf { it.isNotBlank() }
         if (scope == null || branch == null) {
-            statusLabel.text = ""
+            statusLabel.text = "Select a PR to refresh quality data"
             loadingIcon.isVisible = false
             return
         }
