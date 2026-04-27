@@ -78,7 +78,15 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     private val readOnlyBanner = ReadOnlyBanner(project).also {
         Disposer.register(this, it)
     }
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    /**
+     * Single field scope for all fire-and-forget launches in this panel — follows the
+     * non-`@Service` convention in `core/CLAUDE.md` "Service & threading conventions"
+     * (canonical example: `AgentController.controllerScope`). Cancelled in [dispose],
+     * which the tool-window `Content` lifecycle guarantees via the
+     * `WorkflowToolWindowFactory` dispose cascade. `Dispatchers.IO` (not `.Default`)
+     * because every launch here is I/O — Bamboo HTTP, log fetch, monitor polling.
+     */
+    private val panelScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     // Auto-detected plan key (not saved to settings — it's branch-specific)
     @Volatile
     private var activePlanKey: String = ""
@@ -200,7 +208,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
     private val prBar = PrBar(
         project = project,
-        scope = scope,
+        scope = panelScope,
     )
 
     private suspend fun autoDetectAndMonitor(branchName: String) {
@@ -497,7 +505,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         // load the OLD plan's log while the header showed the new plan. Null now clears the
         // stage list and log pane so there's never a mismatch between header and content.
         var lastDisplayedBuildKey: String? = null
-        scope.launch {
+        panelScope.launch {
             monitorService.stateFlow.collect { state ->
                 invokeLater {
                     if (state == null) {
@@ -564,7 +572,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         // subscribes earlier and is the canonical driver when a PR exists; we wait a
         // short tick to let its first emission land, then fall back if state is empty.
         // Replaces the old unconditional startMonitoring() that raced the collector.
-        scope.launch {
+        panelScope.launch {
             delay(150)
             if (workflowContextService.state.value.focusPr == null) {
                 invokeLater { startMonitoring() }
@@ -590,7 +598,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             // EP. If found, write through to the service's focusPr \u2014 that's the single
             // source of truth and drives Build/Quality/PrBar via the cascade. If no PR
             // matches, clear focus and let the no-PR fallback render.
-            scope.launch {
+            panelScope.launch {
                 val matchedPr = OpenPrLister.getInstance()
                     ?.listOpenPrs(project)
                     ?.firstOrNull { it.repoName == repoName }
@@ -623,7 +631,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         // enabled state immediately when the local branch matches/diverges from the
         // focused PR. update() is BGT, but we trigger an explicit refresh so the user
         // doesn't have to mouse over the buttons to see the state change.
-        scope.launch {
+        panelScope.launch {
             workflowContextService.interactionModeFlow.collect {
                 invokeLater {
                     @Suppress("DEPRECATION")
@@ -637,7 +645,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         // single subscription via [onFocusPrChanged] → [loadBuildsForContext] +
         // [PrBar.showPrInfo], so they share one WorkflowContext snapshot per emit
         // (spec §4.4 single-merged-emission invariant; §9.2 coherence test).
-        scope.launch {
+        panelScope.launch {
             workflowContextService.state
                 .map { it.focusPr }
                 .distinctUntilChanged()
@@ -700,7 +708,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
         if (bambooPlanKey.isNullOrBlank()) {
             // No Bamboo plan key — try auto-detect from build statuses, show hint if that also fails
-            scope.launch {
+            panelScope.launch {
                 autoDetectAndMonitor(branch)
                 // If auto-detect didn't find a plan key, show actionable hint
                 if (activePlanKey.isBlank()) {
@@ -743,7 +751,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         // BuildMonitorService is a project-level service whose lifecycle is owned by
         // the IntelliJ Platform; we only stop our polling subscription here.
         monitorService.stopPolling()
-        scope.cancel()
+        panelScope.cancel()
     }
 
     private fun startMonitoring() {
@@ -762,7 +770,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             monitorService.startPolling(planKey, knownBranch, interval)
         } else {
             loadingIcon.isVisible = true
-            scope.launch {
+            panelScope.launch {
                 val branch = getGitRepo()?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
                 invokeLater { headerLabel.text = "Plan: $planKey / $branch" }
                 monitorService.startPolling(planKey, branch, interval)
@@ -812,7 +820,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         val planKey = currentPlanKey()
         if (planKey.isBlank()) return
 
-        scope.launch {
+        panelScope.launch {
             val result = bambooService.getRecentBuilds(planKey, 10)
             if (!result.isError) {
                 val builds = result.data
@@ -848,7 +856,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             statusLabel.text = "Loading build #${build.buildNumber}..."
         }
 
-        scope.launch {
+        panelScope.launch {
             val buildResult = bambooService.getBuild(resultKey)
             if (!buildResult.isError) {
                 val data = buildResult.data
@@ -906,7 +914,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                 if (viewingHistoricalBuild) {
                     returnToLatestBuild()
                 }
-                scope.launch {
+                panelScope.launch {
                     val branch = getCurrentBranch() ?: getGitRepo()?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
                     monitorService.pollOnce(planKey, branch)
                 }
@@ -934,12 +942,12 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                 )
                 if (confirm != Messages.YES) return
                 statusLabel.text = "Stopping build..."
-                scope.launch {
+                panelScope.launch {
                     val result = bambooService.stopBuild(resultKey)
                     invokeLater {
                         if (!result.isError) {
                             statusLabel.text = "Build $resultKey stopped"
-                            scope.launch {
+                            panelScope.launch {
                                 delay(2000)
                                 monitorService.pollOnce(state.planKey, state.branch)
                             }
@@ -969,12 +977,12 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                 )
                 if (confirm != Messages.YES) return
                 statusLabel.text = "Cancelling build..."
-                scope.launch {
+                panelScope.launch {
                     val result = bambooService.cancelBuild(resultKey)
                     invokeLater {
                         if (!result.isError) {
                             statusLabel.text = "Build $resultKey cancelled"
-                            scope.launch {
+                            panelScope.launch {
                                 delay(2000)
                                 monitorService.pollOnce(state.planKey, state.branch)
                             }
@@ -1006,13 +1014,13 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                     return
                 }
                 statusLabel.text = "Rerunning failed jobs..."
-                scope.launch {
+                panelScope.launch {
                     val result = bambooService.rerunFailedJobs(planKey, buildNumber)
                     invokeLater {
                         if (!result.isError) {
                             statusLabel.text = "Rerun triggered for $planKey #$buildNumber"
                             // Poll immediately to get updated status
-                            scope.launch {
+                            panelScope.launch {
                                 delay(2000)
                                 monitorService.pollOnce(planKey, state.branch)
                             }
@@ -1076,7 +1084,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         loadingIcon.isVisible = true
         statusLabel.text = "Running local: mvn $goals..."
 
-        scope.launch {
+        panelScope.launch {
             try {
                 val mavenService = MavenBuildService.getInstance(project)
                 val result = mavenService.runBuild(goals)
@@ -1149,7 +1157,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         log.info("[Build:Dashboard] Loading job log + test results + artifacts for $resultKey")
         invokeLater { stageDetailPanel.showLog("Loading log...", emptyList()) }
         stageDetailPanel.showArtifacts(resultKey)
-        scope.launch {
+        panelScope.launch {
             // Fetch log first (needed for both display and test error extraction)
             var buildLogText: String? = null
             val logResult = bambooService.getBuildLog(resultKey)
@@ -1186,7 +1194,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         val resultKey = "${state.planKey}-${state.buildNumber}"
 
         invokeLater { stageDetailPanel.showLog("Loading log...", emptyList()) }
-        scope.launch {
+        panelScope.launch {
             val logResult = bambooService.getBuildLog(resultKey)
             if (!logResult.isError) {
                 invokeLater { stageDetailPanel.showLog(logResult.data, emptyList()) }
@@ -1202,7 +1210,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             return
         }
         val planKey = currentPlanKey()
-        ManualStageDialog(project, planKey, stageName, scope).show()
+        ManualStageDialog(project, planKey, stageName, panelScope).show()
     }
 
     /**
@@ -1221,7 +1229,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         BuildDashboardActionGate.readOnlyTooltip(workflowContextService.state.value)
 
     private fun openTriggerDialog(planKey: String) {
-        ManualStageDialog(project, planKey, scope = scope, triggerMode = TriggerMode.FULL_BUILD).show()
+        ManualStageDialog(project, planKey, scope = panelScope, triggerMode = TriggerMode.FULL_BUILD).show()
     }
 
     /**
