@@ -1,11 +1,16 @@
 package com.workflow.orchestrator.core.workflow
 
 import com.intellij.openapi.extensions.ExtensionPointName
-import com.intellij.openapi.project.Project
 
 /**
  * Interface for cross-module Jira ticket access.
- * Implemented by :jira module, consumed by :bamboo (PR dialog) without compile-time dependency.
+ * Implemented by :jira module, consumed by :core / :pullrequest without compile-time dependency.
+ *
+ * Transition operations live on [com.workflow.orchestrator.core.services.jira.TicketTransitionService]
+ * (rich [com.workflow.orchestrator.core.model.jira.TransitionMeta] payload, dialog routing via
+ * [com.workflow.orchestrator.core.services.jira.TransitionDialogOpener]). The legacy
+ * `transitionTicket` / `getAvailableTransitions` / `showTransitionDialog` methods on this
+ * interface were removed in the unified-transition-UX redesign.
  */
 interface JiraTicketProvider {
 
@@ -17,21 +22,6 @@ interface JiraTicketProvider {
      * Returns null if the ticket cannot be fetched (network error, not found, etc.).
      */
     suspend fun getTicketContext(key: String): TicketContext?
-
-    suspend fun getAvailableTransitions(ticketId: String): List<TicketTransition>
-
-    suspend fun transitionTicket(ticketId: String, transitionId: String): Boolean
-
-    /**
-     * Shows a transition dialog if the transition has mandatory fields,
-     * or executes the transition immediately if no fields required.
-     * @param onTransitioned callback after successful transition
-     */
-    fun showTransitionDialog(
-        project: Project,
-        ticketId: String,
-        onTransitioned: () -> Unit = {}
-    )
 
     companion object {
         val EP_NAME = ExtensionPointName.create<JiraTicketProvider>(
@@ -48,10 +38,4 @@ data class TicketDetails(
     val summary: String,
     val description: String?,
     val type: String?
-)
-
-data class TicketTransition(
-    val id: String,
-    val name: String,
-    val targetStatus: String
 )

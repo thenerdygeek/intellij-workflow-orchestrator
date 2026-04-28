@@ -4,7 +4,6 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.workflow.JiraTicketProvider
 import com.workflow.orchestrator.core.workflow.TicketContext
 import com.workflow.orchestrator.core.workflow.TicketDetails
-import com.workflow.orchestrator.core.workflow.TicketTransition
 import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -96,9 +95,6 @@ class TicketChipInputTest {
             if (key in notFoundKeys) return null
             return validKeys[key]
         }
-        override suspend fun getAvailableTransitions(ticketId: String): List<TicketTransition> = emptyList()
-        override suspend fun transitionTicket(ticketId: String, transitionId: String): Boolean = false
-        override fun showTransitionDialog(project: Project, ticketId: String, onTransitioned: () -> Unit) {}
     }
 
     // ── 1. valid key → VALID status ──────────────────────────────────────────

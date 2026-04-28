@@ -284,6 +284,11 @@ class BranchingService(
         }
 
         val transitions = transitionsResult.data.orEmpty()
+        if (transitions.isEmpty()) {
+            log.info("[Jira:Branch] $issueKey has no available transitions from its current status — skipping prompt")
+            return
+        }
+
         val target = transitions.find { it.toStatus.name.equals(targetStatusName, ignoreCase = true) }
         if (target == null) {
             log.info(

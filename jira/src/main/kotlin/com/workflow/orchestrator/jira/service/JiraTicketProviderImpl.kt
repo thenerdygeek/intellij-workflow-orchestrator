@@ -10,8 +10,6 @@ import com.workflow.orchestrator.core.workflow.JiraTicketProvider
 import com.workflow.orchestrator.core.workflow.TicketComment
 import com.workflow.orchestrator.core.workflow.TicketContext
 import com.workflow.orchestrator.core.workflow.TicketDetails
-import com.workflow.orchestrator.core.workflow.TicketTransition
-import com.workflow.orchestrator.core.model.jira.TransitionInput
 import com.workflow.orchestrator.jira.api.JiraApiClient
 
 /**
@@ -159,47 +157,4 @@ class JiraTicketProviderImpl : JiraTicketProvider {
         }
     }
 
-    override suspend fun getAvailableTransitions(ticketId: String): List<TicketTransition> {
-        val client = createClient() ?: return emptyList()
-        return when (val result = client.getTransitions(ticketId)) {
-            is ApiResult.Success -> result.data.map { t ->
-                TicketTransition(
-                    id = t.id,
-                    name = t.name,
-                    targetStatus = t.toStatus.name
-                )
-            }
-            is ApiResult.Error -> {
-                log.warn("[Jira:TicketProvider] Failed to get transitions for $ticketId: ${result.message}")
-                emptyList()
-            }
-        }
-    }
-
-    override suspend fun transitionTicket(ticketId: String, transitionId: String): Boolean {
-        val client = createClient() ?: return false
-        return when (val result = client.transitionIssue(ticketId, TransitionInput(transitionId, emptyMap(), null))) {
-            is ApiResult.Success -> true
-            is ApiResult.Error -> {
-                log.warn("[Jira:TicketProvider] Failed to transition $ticketId: ${result.message}")
-                false
-            }
-        }
-    }
-
-    override fun showTransitionDialog(
-        project: com.intellij.openapi.project.Project,
-        ticketId: String,
-        onTransitioned: () -> Unit
-    ) {
-        com.intellij.openapi.application.invokeLater {
-            com.workflow.orchestrator.jira.ui.TicketTransitionDialog(
-                project = project,
-                ticketKey = ticketId,
-                projectKey = ticketId.substringBefore("-"),
-                initialTransitionId = null
-            ).showAndGet()
-            onTransitioned()
-        }
-    }
 }
