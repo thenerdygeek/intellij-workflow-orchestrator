@@ -14,9 +14,13 @@ import org.junit.jupiter.api.Test
  * Unit tests for the storage and ring-buffer behaviour of
  * [BuildEventCaptureServiceImpl]. Listener-installation paths
  * (`installCaptureListeners`) are deliberately NOT exercised here — they wire
- * IntelliJ Platform listeners that need a real Application/Project. The
- * end-to-end characterisation lives in `BuildProblemsEndToEndTest`
- * (BasePlatformTestCase, separate file).
+ * IntelliJ Platform listeners that need a real Application/Project.
+ *
+ * TODO(v1.1-followup): add `BuildProblemsEndToEndTest` (BasePlatformTestCase)
+ * that drives a synthetic ExternalSystemTaskNotificationListener.onFailure
+ * and a BuildProgressListener.onEvent through the real platform listener
+ * registry, asserting the agent tool returns problems from BOTH event-time
+ * sources. Plan §Commit 4 in agent-build-problems-v1.1-plan.md.
  */
 class BuildEventCaptureServiceImplTest {
 

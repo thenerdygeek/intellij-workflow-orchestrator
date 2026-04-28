@@ -92,7 +92,10 @@ object GradleErrorParser {
                 severity = Severity.ERROR,
             )
         }
-        return out
+        // Gradle re-fires the same exception across phases (configuration, dependency
+        // resolution, sync). Dedup by (type, description, coords) so the ring buffer
+        // doesn't fill with duplicates of the same failure.
+        return out.distinctBy { Triple(it.type, it.description, it.artifactCoords) }
     }
 
     private fun dep(projectPath: String, fullMatch: String, coords: String) = BuildProblem(

@@ -117,11 +117,39 @@ class GradleErrorParserTest {
     }
 
     @Test
-    fun `coords regex does not match URL tokens`() {
-        // Same URL false-positive case as V1 extractArtifactCoords; ensure parser
-        // does not generate a fake DEPENDENCY for a URL with port.
+    fun `coords regex does not match URL tokens — input has no Could-not prefix`() {
+        // Sanity: "Build failed at <url>" is never matched by the resolve/find regexes
+        // (no anchor word). Falls through to OTHER. Pinning negative case.
         val msg = "Build failed at https://nexus.example.com:443/path/to/repo"
         val problems = GradleErrorParser.parse(pomPath, msg)
         assertTrue(problems.none { it.artifactCoords?.contains("nexus") == true })
+        assertTrue(problems.none { it.artifactCoords?.contains("443") == true })
+    }
+
+    @Test
+    fun `URL token in same message as Could-not-resolve does not become coords`() {
+        // Real Maven-style failure: "Could not resolve" + valid coord + URL on same line.
+        // The valid coord must win; the URL token must NOT be extracted.
+        val msg = "Could not resolve org.foo:bar:1.0 from https://nexus.example.com:443/path/to/repo"
+        val problems = GradleErrorParser.parse(pomPath, msg)
+        // Whatever was extracted, it must be the artifact, not the URL.
+        assertTrue(problems.none { it.artifactCoords?.contains("nexus") == true })
+        assertTrue(problems.none { it.artifactCoords?.contains("example.com") == true })
+        assertTrue(problems.none { it.artifactCoords?.contains("443") == true })
+        // Positive: at least one DEPENDENCY problem with the real coord.
+        assertTrue(problems.any { it.type == ProblemType.DEPENDENCY && it.artifactCoords == "org.foo:bar:1.0" })
+    }
+
+    @Test
+    fun `dedup collapses identical re-fired errors`() {
+        // Gradle re-fires the same error across phases — parser should dedup.
+        val msg = """
+            Could not find org.foo:bar:1.0
+            Could not find org.foo:bar:1.0
+            Could not find org.foo:bar:1.0
+        """.trimIndent()
+        val problems = GradleErrorParser.parse(pomPath, msg)
+        assertEquals(1, problems.size)
+        assertEquals("org.foo:bar:1.0", problems.single().artifactCoords)
     }
 }

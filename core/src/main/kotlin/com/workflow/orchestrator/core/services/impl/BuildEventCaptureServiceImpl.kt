@@ -105,6 +105,14 @@ class BuildEventCaptureServiceImpl(
                 if (id.projectSystemId.id != GRADLE_SYSTEM_ID) return
                 synchronized(lock) { gradleStderrBuffer.remove(id) }
             }
+
+            override fun onEnd(projectPath: String, id: ExternalSystemTaskId) {
+                // Final event for every task. Idempotent with success/failure/cancel
+                // above (the entry is already gone) but closes the gap when none of
+                // the three fired (provider crash, host shutdown mid-flight).
+                if (id.projectSystemId.id != GRADLE_SYSTEM_ID) return
+                synchronized(lock) { gradleStderrBuffer.remove(id) }
+            }
         }
         try {
             ExternalSystemProgressNotificationManager.getInstance()
