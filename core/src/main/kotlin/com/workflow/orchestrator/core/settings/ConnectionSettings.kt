@@ -32,7 +32,13 @@ class ConnectionSettings : PersistentStateComponent<ConnectionSettings.State> {
         // Username alone without password is non-sensitive. Password is in PasswordSafe.
         // Full migration to PasswordSafe deferred to avoid multi-file refactor.
         var nexusUsername: String = "",
-        var ticketKeyRegex: String = "\\b([A-Z][A-Z0-9]+-\\d+)\\b"
+        var ticketKeyRegex: String = "\\b([A-Z][A-Z0-9]+-\\d+)\\b",
+        // Last-used Jira board, mirrored from PluginSettings on apply().
+        // Fresh projects (e.g. new clones) hydrate from these when their
+        // project-local jiraBoardId is still the default 0.
+        var lastJiraBoardId: Int = 0,
+        var lastJiraBoardName: String = "",
+        var lastJiraBoardType: String = ""
     )
 
     private var myState = State()

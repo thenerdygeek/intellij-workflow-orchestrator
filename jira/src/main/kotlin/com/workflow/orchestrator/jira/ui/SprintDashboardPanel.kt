@@ -20,6 +20,7 @@ import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.ai.BranchNameAiGenerator
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
@@ -488,6 +489,17 @@ class SprintDashboardPanel(
 
     fun loadData() {
         val settings = PluginSettings.getInstance(project)
+        // Hydrate from app-level last-used board on a fresh project (e.g. new clone),
+        // and persist back so subsequent loads stay project-local.
+        if (settings.state.jiraBoardId == 0) {
+            val conn = ConnectionSettings.getInstance().state
+            if (conn.lastJiraBoardId > 0) {
+                settings.state.jiraBoardId = conn.lastJiraBoardId
+                settings.state.jiraBoardType = conn.lastJiraBoardType
+                settings.state.jiraBoardName = conn.lastJiraBoardName
+                log.info("[Jira:UI] Hydrated board from app-level fallback: id=${conn.lastJiraBoardId} name='${conn.lastJiraBoardName}'")
+            }
+        }
         val boardId = settings.state.jiraBoardId.takeIf { it > 0 }
         val boardType = settings.state.jiraBoardType ?: ""
         val boardName = settings.state.jiraBoardName ?: ""

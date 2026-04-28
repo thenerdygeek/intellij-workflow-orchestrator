@@ -1,5 +1,7 @@
 package com.workflow.orchestrator.jira.settings
 
+import com.intellij.notification.NotificationType
+import com.intellij.notification.NotificationGroupManager
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.SearchableConfigurable
@@ -79,10 +81,17 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
             intentFields[intent] = mapping?.transitionName ?: ""
         }
 
-        // Initialize board state from persisted settings
+        // Initialize board state from persisted project settings, falling back to
+        // the application-level last-used board for fresh clones (project default 0).
         selectedBoardId = settings.state.jiraBoardId
         selectedBoardType = settings.state.jiraBoardType ?: ""
         selectedBoardName = settings.state.jiraBoardName ?: ""
+        if (selectedBoardId == 0 && connSettings.state.lastJiraBoardId > 0) {
+            selectedBoardId = connSettings.state.lastJiraBoardId
+            selectedBoardType = connSettings.state.lastJiraBoardType
+            selectedBoardName = connSettings.state.lastJiraBoardName
+            log.info("[JiraWorkflow:Settings] Hydrated board from app-level fallback: id=$selectedBoardId name='$selectedBoardName'")
+        }
 
         val boardStatusLabel = JLabel("")
         val boardSearchField = javax.swing.JTextField(20)
@@ -137,28 +146,41 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
                         .comment("e.g. <code>MyTeam</code> or <code>Sprint Board</code> (leave blank for all)")
                     button("Search Boards") {
                         val searchText = boardSearchField.text.trim()
+                        log.info("[JiraWorkflow:Settings] Search button clicked, query='$searchText'")
                         boardStatusLabel.text = "Searching boards..."
                         scope.launch {
                             val result = JiraServiceImpl.getInstance(project).searchBoards(searchText)
                             invokeLater {
                                 if (result.isError) {
                                     boardStatusLabel.text = "Error: ${result.summary}"
+                                    notifyJira(
+                                        title = "Board search failed",
+                                        message = result.summary + (result.hint?.let { "\n$it" } ?: ""),
+                                        type = NotificationType.ERROR
+                                    )
                                 } else {
                                     val boards = result.data
                                     log.info("[JiraWorkflow:Settings] Search '$searchText' returned ${boards.size} boards")
                                     boardComboBox.removeAllItems()
                                     if (boards.isEmpty()) {
-                                        boardStatusLabel.text = if (searchText.isNotBlank()) {
+                                        val msg = if (searchText.isNotBlank()) {
                                             "No boards matching '$searchText'. Try a different search or leave blank."
                                         } else {
                                             "No boards returned from Jira. Check your permissions."
                                         }
+                                        boardStatusLabel.text = msg
+                                        notifyJira("No boards found", msg, NotificationType.WARNING)
                                     } else {
                                         for (board in boards) {
                                             boardComboBox.addItem(JiraWorkflowBoardItem(board))
                                         }
                                         boardComboBox.selectedIndex = 0
                                         boardStatusLabel.text = "${boards.size} board(s) found"
+                                        notifyJira(
+                                            title = "Board search",
+                                            message = "${boards.size} board(s) found for '${searchText.ifBlank { "*" }}'. Pick one in the dropdown, then Apply.",
+                                            type = NotificationType.INFORMATION
+                                        )
                                     }
                                 }
                             }
@@ -374,11 +396,15 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
         val settings = PluginSettings.getInstance(project)
         val connSettings = ConnectionSettings.getInstance()
 
-        // Write board selection
+        // Write board selection (project) and mirror to application-level last-used
+        // so future fresh clones inherit it (see ConnectionSettings.lastJiraBoard*).
         if (selectedBoardId > 0) {
             settings.state.jiraBoardId = selectedBoardId
             settings.state.jiraBoardType = selectedBoardType
             settings.state.jiraBoardName = selectedBoardName
+            connSettings.state.lastJiraBoardId = selectedBoardId
+            connSettings.state.lastJiraBoardType = selectedBoardType
+            connSettings.state.lastJiraBoardName = selectedBoardName
         }
         settings.state.boardFilterRegex = boardSearchFieldRef?.text?.trim() ?: ""
 
@@ -416,10 +442,15 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
         val settings = PluginSettings.getInstance(project)
         val connSettings = ConnectionSettings.getInstance()
 
-        // Reset board state
+        // Reset board state — project value first, app-level fallback for fresh projects.
         selectedBoardId = settings.state.jiraBoardId
         selectedBoardType = settings.state.jiraBoardType ?: ""
         selectedBoardName = settings.state.jiraBoardName ?: ""
+        if (selectedBoardId == 0 && connSettings.state.lastJiraBoardId > 0) {
+            selectedBoardId = connSettings.state.lastJiraBoardId
+            selectedBoardType = connSettings.state.lastJiraBoardType
+            selectedBoardName = connSettings.state.lastJiraBoardName
+        }
         boardSearchFieldRef?.text = settings.state.boardFilterRegex ?: ""
 
         // Reset ticket key regex
@@ -441,5 +472,12 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
         dialogPanel = null
         boardSearchFieldRef = null
         ticketKeyRegexField = null
+    }
+
+    private fun notifyJira(title: String, message: String, type: NotificationType) {
+        NotificationGroupManager.getInstance()
+            .getNotificationGroup("workflow.jira")
+            .createNotification(title, message, type)
+            .notify(project)
     }
 }
