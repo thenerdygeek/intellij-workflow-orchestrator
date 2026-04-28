@@ -264,14 +264,6 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
 
             // === 6. Ticket Transitions ===
             group("Ticket Transitions") {
-                row {
-                    checkBox("Silently apply transition when only one next state matches")
-                        .bindSelected(settings.state::ticketTransitionAutoTransitionSilently)
-                        .comment(
-                            "Skip the transition dialog when the target status has no required fields " +
-                                "and only one valid next-state matches."
-                        )
-                }
                 row("Start Work target status:") {
                     textField()
                         .bindText(

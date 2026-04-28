@@ -3,7 +3,6 @@ package com.workflow.orchestrator.pullrequest.action
 import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.util.TicketKeyExtractor
 import com.workflow.orchestrator.core.workflow.TicketContext
-import com.workflow.orchestrator.core.workflow.TicketTransition
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
@@ -211,7 +210,6 @@ class CreatePrPrefetchTest {
             initialSelectedRepoIndex = 0,
             initialTicketKeys = listOf("WO-1"),
             initialTicketContexts = mapOf("WO-1" to ticket("WO-1", "Test")),
-            transitions = listOf(TicketTransition("1", "In Review", "In Review")),
             defaultTitle = "WO-1: Test",
             defaultReviewers = listOf("alice", "bob")
         )
@@ -231,7 +229,6 @@ class CreatePrPrefetchTest {
             initialSelectedRepoIndex = 1,
             initialTicketKeys = listOf("WO-20"),
             initialTicketContexts = emptyMap(),
-            transitions = emptyList(),
             defaultTitle = "WO-20: Frontend work",
             defaultReviewers = emptyList()
         )

@@ -68,14 +68,6 @@ class TicketTransitionServiceImplTest {
         )
     )
 
-    private val screenTransition = TransitionMeta(
-        id = "31",
-        name = "In Review",
-        toStatus = StatusRef("5", "In Review", StatusCategory.IN_PROGRESS),
-        hasScreen = true,
-        fields = emptyList()
-    )
-
     private val stubIssue = JiraIssue(
         id = "10001",
         key = "PROJ-1",
@@ -239,55 +231,7 @@ class TicketTransitionServiceImplTest {
         coVerify(exactly = 1) { api.transitionIssue("PROJ-1", any()) }
     }
 
-    // ── Test 6: tryAutoTransition fires when no screen no required fields ────
-
-    @Test
-    fun `tryAutoTransition fires when no screen and no required fields`() = runTest {
-        coEvery { api.getTransitions("PROJ-1") } returns ApiResult.Success(listOf(noFieldTransition))
-        coEvery { api.transitionIssue("PROJ-1", any()) } returns ApiResult.Success(Unit)
-        svc = buildSvc()
-
-        val result = svc.tryAutoTransition("PROJ-1", "11")
-
-        assertFalse(result.isError, "Expected success but got: ${result.summary}")
-        assertEquals("PROJ-1", result.data.key)
-        coVerify(exactly = 1) { api.transitionIssue("PROJ-1", any()) }
-    }
-
-    // ── Test 7: tryAutoTransition returns RequiresInteraction when screen ────
-
-    @Test
-    fun `tryAutoTransition returns RequiresInteraction when hasScreen is true`() = runTest {
-        coEvery { api.getTransitions("PROJ-1") } returns ApiResult.Success(listOf(screenTransition))
-        svc = buildSvc()
-
-        val result = svc.tryAutoTransition("PROJ-1", "31")
-
-        assertTrue(result.isError)
-        val payload = result.payload
-        assertNotNull(payload)
-        assertTrue(payload is TransitionError.RequiresInteraction,
-            "Expected TransitionError.RequiresInteraction but got: ${payload?.javaClass?.simpleName}")
-        val ri = payload as TransitionError.RequiresInteraction
-        assertEquals("31", ri.meta.id)
-        coVerify(exactly = 0) { api.transitionIssue(any(), any()) }
-    }
-
-    // ── Test 8: tryAutoTransition returns RequiresInteraction for required fields
-
-    @Test
-    fun `tryAutoTransition returns RequiresInteraction when required fields present`() = runTest {
-        coEvery { api.getTransitions("PROJ-1") } returns ApiResult.Success(listOf(requiredFieldTransition))
-        svc = buildSvc()
-
-        val result = svc.tryAutoTransition("PROJ-1", "21")
-
-        assertTrue(result.isError)
-        assertTrue(result.payload is TransitionError.RequiresInteraction)
-        coVerify(exactly = 0) { api.transitionIssue(any(), any()) }
-    }
-
-    // ── Test 9: getAvailableTransitions returns error when API fails ─────────
+    // ── Test 6: getAvailableTransitions returns error when API fails ─────────
 
     @Test
     fun `getAvailableTransitions returns error when API returns error`() = runTest {

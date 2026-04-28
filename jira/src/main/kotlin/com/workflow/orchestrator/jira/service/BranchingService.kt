@@ -1,7 +1,5 @@
 package com.workflow.orchestrator.jira.service
 
-import com.intellij.notification.NotificationGroupManager
-import com.intellij.notification.NotificationType
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.application.readAction
 import com.intellij.openapi.components.service
@@ -10,8 +8,6 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketBranch
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
-import com.workflow.orchestrator.core.model.jira.StatusCategory
-import com.workflow.orchestrator.core.model.jira.TransitionError
 import com.workflow.orchestrator.core.services.jira.TicketTransitionService
 import com.workflow.orchestrator.core.services.jira.TransitionDialogOpener
 import com.workflow.orchestrator.core.settings.PluginSettings
@@ -249,24 +245,28 @@ class BranchingService(
     }
 
     /**
-     * Orchestrates the Jira ticket transition when Start Work is triggered.
+     * Opens the unified transition dialog after Start Work creates a branch.
      *
-     * Resolution order:
-     * 1. Read [PluginSettings.ticketTransitionDefaultStartWorkStatusName]. If empty → skip.
-     * 2. Fetch available transitions via [TicketTransitionService].
-     * 3. Pick the transition whose [toStatus.name] matches the configured name (case-insensitive),
-     *    or fall back to the first IN_PROGRESS-category transition. If none found → skip.
-     * 4. If [PluginSettings.ticketTransitionAutoTransitionSilently] is true:
-     *    - Call [TicketTransitionService.tryAutoTransition]. On success → show a balloon.
-     *    - On [TransitionError.RequiresInteraction] → open [TransitionDialogOpener] on EDT.
-     *    - On other error → log and show balloon with the error summary.
-     * 5. If silent = false → open [TransitionDialogOpener] directly on EDT.
+     * Resolution:
+     * 1. Read [PluginSettings.ticketTransitionDefaultStartWorkStatusName]. If empty → skip
+     *    the prompt entirely (user opted out).
+     * 2. Fetch the ticket's available transitions to find the one whose `toStatus.name`
+     *    matches the configured target (case-insensitive, exact-name only — no category
+     *    fallback so we never silently swap "In Progress" for "In Review").
+     * 3. Open [TransitionDialogOpener] with the matched transition pre-selected. If no
+     *    match was found, the opener still opens the dialog with no pre-selection so the
+     *    user can pick from the full list of valid transitions for the ticket's current
+     *    state.
+     *
+     * The dialog is the single confirmation point — required fields are rendered for the
+     * selected transition, the user can switch to any other available transition, and
+     * nothing mutates Jira until they click Transition.
      */
     private suspend fun transitionToStartWorkStatus(issueKey: String) {
         val settings = PluginSettings.getInstance(project)
         val targetStatusName = settings.state.ticketTransitionDefaultStartWorkStatusName.orEmpty().trim()
         if (targetStatusName.isEmpty()) {
-            log.info("[Jira:Branch] Start Work transition skipped: ticketTransitionDefaultStartWorkStatusName is empty")
+            log.info("[Jira:Branch] Start Work transition prompt skipped: ticketTransitionDefaultStartWorkStatusName is empty")
             return
         }
 
@@ -285,56 +285,17 @@ class BranchingService(
 
         val transitions = transitionsResult.data.orEmpty()
         val target = transitions.find { it.toStatus.name.equals(targetStatusName, ignoreCase = true) }
-            ?: transitions.find { it.toStatus.category == StatusCategory.IN_PROGRESS }
-
         if (target == null) {
-            log.warn("[Jira:Branch] No matching transition for '$targetStatusName' on $issueKey. Available: ${transitions.joinToString { it.name }}")
-            return
+            log.info(
+                "[Jira:Branch] No transition with name '$targetStatusName' on $issueKey — opening dialog with no pre-selection. " +
+                    "Available: ${transitions.joinToString { "${it.name}→${it.toStatus.name}" }}"
+            )
+        } else {
+            log.info("[Jira:Branch] Opening transition dialog for $issueKey, pre-selecting '${target.toStatus.name}' (id=${target.id})")
         }
 
-        val targetId = target.id
-        val statusName = target.toStatus.name
-
-        if (settings.state.ticketTransitionAutoTransitionSilently) {
-            val autoResult = transitionService.tryAutoTransition(issueKey, targetId)
-            when {
-                !autoResult.isError -> {
-                    log.info("[Jira:Branch] Auto-transitioned $issueKey → $statusName")
-                    invokeLater {
-                        NotificationGroupManager.getInstance()
-                            .getNotificationGroup("workflow.jira")
-                            .createNotification(
-                                "$issueKey → $statusName",
-                                NotificationType.INFORMATION
-                            )
-                            .notify(project)
-                    }
-                }
-                autoResult.payload is TransitionError.RequiresInteraction -> {
-                    log.info("[Jira:Branch] Transition for $issueKey requires interaction — opening dialog")
-                    invokeLater {
-                        project.service<TransitionDialogOpener>().open(project, issueKey, targetId)
-                    }
-                }
-                else -> {
-                    log.warn("[Jira:Branch] Auto-transition failed for $issueKey: ${autoResult.summary}")
-                    invokeLater {
-                        NotificationGroupManager.getInstance()
-                            .getNotificationGroup("workflow.jira")
-                            .createNotification(
-                                "Transition failed",
-                                autoResult.summary,
-                                NotificationType.WARNING
-                            )
-                            .notify(project)
-                    }
-                }
-            }
-        } else {
-            log.info("[Jira:Branch] Opening transition dialog for $issueKey (silent=false)")
-            invokeLater {
-                project.service<TransitionDialogOpener>().open(project, issueKey, targetId)
-            }
+        invokeLater {
+            project.service<TransitionDialogOpener>().open(project, issueKey, target?.id)
         }
     }
 }

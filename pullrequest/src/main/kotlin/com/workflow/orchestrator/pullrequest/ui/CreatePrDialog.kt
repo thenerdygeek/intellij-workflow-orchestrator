@@ -31,9 +31,7 @@ import com.workflow.orchestrator.core.model.jira.TransitionMeta
 import com.workflow.orchestrator.core.services.jira.TransitionDialogOpener
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.ui.StatusColors
-import com.workflow.orchestrator.core.workflow.JiraTicketProvider
 import com.workflow.orchestrator.core.workflow.TicketContext
-import com.workflow.orchestrator.core.workflow.TicketTransition
 import com.workflow.orchestrator.pullrequest.action.CreatePrContext
 import com.workflow.orchestrator.pullrequest.action.RepoPrefetch
 import com.workflow.orchestrator.pullrequest.service.MarkdownToHtml
@@ -60,7 +58,6 @@ import javax.swing.BorderFactory
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JButton
-import javax.swing.JCheckBox
 import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JEditorPane
@@ -221,10 +218,6 @@ class CreatePrDialog(
     private val repoDefaultReviewerChips = mutableMapOf<String, JPanel>()
     private var userSearchJob: Job? = null
 
-    // Transition (existing — legacy JiraTicketProvider path)
-    private val transitionCheckbox = JCheckBox("Transition ticket to").apply { isSelected = true }
-    private val transitionCombo = JComboBox<TransitionItem>()
-
     // Post-PR transition — uses TransitionDialogOpener so the user can fill any required fields.
     // Shown only when transitionMetas is non-empty and a default post-PR status is configured.
     private val postPrTransitionCombo: JComboBox<TransitionMeta?>? = run {
@@ -297,19 +290,6 @@ class CreatePrDialog(
             addReviewerChip(user.name, displayName = user.displayName.ifBlank { null }, fromRepoDefaults = true)
         }
 
-        // Populate transitions
-        if (context.transitions.isNotEmpty() && context.initialTicketKeys.isNotEmpty()) {
-            context.transitions.forEach { transitionCombo.addItem(TransitionItem(it)) }
-            val reviewIdx = context.transitions.indexOfFirst {
-                it.name.contains("Review", ignoreCase = true) ||
-                    it.name.contains("In Review", ignoreCase = true)
-            }
-            if (reviewIdx >= 0) transitionCombo.selectedIndex = reviewIdx
-        } else {
-            transitionCheckbox.isVisible = false
-            transitionCombo.isVisible = false
-        }
-
         // Wire module combo selection change
         moduleCombo?.addActionListener {
             val selected = moduleCombo.selectedItem as? RepoComboItem ?: return@addActionListener
@@ -339,10 +319,6 @@ class CreatePrDialog(
         editTabButton.addActionListener { showDescriptionTab("edit") }
         previewTabButton.addActionListener { showDescriptionTab("preview") }
         regenerateButton.addActionListener { generateDescription() }
-
-        transitionCheckbox.addActionListener {
-            transitionCombo.isEnabled = transitionCheckbox.isSelected
-        }
 
         // Default target is already resolved per-repo in prefetch (currentRepo.defaultTarget).
         // The field is initialized there; no async resolution needed here.
@@ -505,12 +481,6 @@ class CreatePrDialog(
         content.add(Box.createVerticalStrut(JBUI.scale(8)))
         content.add(JSeparator())
         content.add(Box.createVerticalStrut(JBUI.scale(8)))
-
-        // Transition (existing — legacy path via JiraTicketProvider)
-        val transPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0))
-        transPanel.add(transitionCheckbox)
-        transPanel.add(transitionCombo)
-        content.add(transPanel)
 
         // Post-PR transition — only shown when transitionMetas prefetched successfully
         if (postPrTransitionCombo != null) {
@@ -1072,16 +1042,6 @@ class CreatePrDialog(
                         val prUrl = result.data.links.self.firstOrNull()?.href ?: ""
                         log.info("[PR:Create] PR #${result.data.id} created: $prUrl")
 
-                        if (transitionCheckbox.isSelected && transitionCheckbox.isVisible && primary != null) {
-                            val selected = transitionCombo.selectedItem as? TransitionItem
-                            if (selected != null) {
-                                scope.launch {
-                                    JiraTicketProvider.getInstance()
-                                        ?.transitionTicket(primary.key, selected.transition.id)
-                                }
-                            }
-                        }
-
                         // Post-PR transition via TransitionDialogOpener (not blocking PR creation)
                         val postTransMeta = postPrTransitionCombo?.selectedItem as? TransitionMeta
                         if (postTransMeta != null && primary != null) {
@@ -1135,10 +1095,6 @@ class CreatePrDialog(
             return base + suffix
         }
     }
-}
-
-private data class TransitionItem(val transition: TicketTransition) {
-    override fun toString() = transition.name
 }
 
 private data class RepoComboItem(val repoPrefetch: RepoPrefetch) {

@@ -21,20 +21,22 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Implements [TicketTransitionService] (T15 + T16 + T17):
+ * Implements [TicketTransitionService]:
  *
- * - T15: [getAvailableTransitions] with a 60-second TTL cache per ticket key.
- * - T16: [prepareTransition] — validates the requested transition exists; [executeTransition]
+ * - [getAvailableTransitions] with a 60-second TTL cache per ticket key.
+ * - [prepareTransition] — validates the requested transition exists; [executeTransition]
  *   performs required-field preflight, POSTs the transition, invalidates the cache,
  *   and emits [TicketTransitioned] on the bus.
- * - T17: [tryAutoTransition] — fires without prompting when no screen and no required fields;
- *   otherwise returns a [TransitionError.RequiresInteraction] payload.
+ *
+ * All transitions go through the [com.workflow.orchestrator.core.services.jira.TransitionDialogOpener]
+ * dialog — the silent-transition path was removed in the unified-transition-UX redesign so
+ * every state mutation requires explicit user confirmation with the per-transition field schema.
  *
  * Cache invalidation is event-driven: a [TicketTransitioned] event on the shared bus
  * (e.g. emitted by this service itself or by a post-commit hook) removes the cached
  * entry so the next call fetches fresh transitions from the API.
  *
- * Registered as a project service in plugin.xml (Task 18).  The platform-invoked
+ * Registered as a project service in plugin.xml.  The platform-invoked
  * constructor pulls [JiraApiClient] from [JiraServiceImpl] and [EventBus] from the
  * project's service container so that no duplicate HTTP clients are created.
  * The `cs: CoroutineScope` parameter is injected by the IntelliJ Platform 2024.1+
@@ -251,46 +253,6 @@ class TicketTransitionServiceImpl(
                 )
             }
         }
-    }
-
-    /**
-     * Fires a transition without user interaction **only** if the transition
-     * has no screen and no required fields.
-     *
-     * If [meta.hasScreen] is true or the transition has at least one required field,
-     * returns a [TransitionError.RequiresInteraction] payload so callers can fall back
-     * to the interactive [executeTransition] path with collected field values.
-     */
-    override suspend fun tryAutoTransition(
-        ticketKey: String,
-        transitionId: String,
-        comment: String?
-    ): ToolResult<TransitionOutcome> {
-        val prep = prepareTransition(ticketKey, transitionId)
-        if (prep.isError) {
-            return ToolResult(
-                data = outcomeError(ticketKey),
-                summary = prep.summary,
-                isError = true,
-                hint = prep.hint,
-                payload = prep.payload
-            )
-        }
-        val meta = prep.data
-
-        val hasRequiredFields = meta.fields.any { it.required }
-        if (meta.hasScreen || hasRequiredFields) {
-            log.debug("[TicketTransition] Auto-transition blocked for $ticketKey (${meta.id}): hasScreen=${meta.hasScreen}, hasRequiredFields=$hasRequiredFields")
-            return ToolResult(
-                data = outcomeError(ticketKey),
-                summary = "Transition '${meta.name}' for $ticketKey requires interaction (screen or required fields present).",
-                isError = true,
-                hint = "Use executeTransition with the required field values.",
-                payload = TransitionError.RequiresInteraction(meta)
-            )
-        }
-
-        return executeTransition(ticketKey, TransitionInput(transitionId, emptyMap(), comment))
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

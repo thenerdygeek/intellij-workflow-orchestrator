@@ -15,7 +15,6 @@ import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.core.util.TicketKeyExtractor
 import com.workflow.orchestrator.core.workflow.JiraTicketProvider
 import com.workflow.orchestrator.core.workflow.TicketContext
-import com.workflow.orchestrator.core.workflow.TicketTransition
 import com.workflow.orchestrator.core.bitbucket.PrService
 import com.workflow.orchestrator.pullrequest.service.PrDescriptionGenerator
 import git4idea.repo.GitRepositoryManager
@@ -48,7 +47,6 @@ data class CreatePrContext(
     val initialSelectedRepoIndex: Int,
     val initialTicketKeys: List<String>,
     val initialTicketContexts: Map<String, TicketContext>,
-    val transitions: List<TicketTransition>,
     val defaultTitle: String,
     val defaultReviewers: List<String>,
     /**
@@ -154,15 +152,6 @@ object CreatePrPrefetch {
                 }
             }
 
-            val transitionsDeferred = async(Dispatchers.IO) {
-                val primaryKey = keys.firstOrNull()
-                if (jiraProvider == null || primaryKey.isNullOrBlank()) return@async emptyList<TicketTransition>()
-                try { jiraProvider.getAvailableTransitions(primaryKey) } catch (e: Exception) {
-                    log.warn("[PR:Prefetch] getAvailableTransitions failed: ${e.message}")
-                    emptyList()
-                }
-            }
-
             val transitionMetasDeferred = async(Dispatchers.IO) {
                 val primaryKey = keys.firstOrNull()
                 if (primaryKey.isNullOrBlank()) return@async emptyList<TransitionMeta>()
@@ -185,7 +174,6 @@ object CreatePrPrefetch {
             }
 
             val contextPairs = contextPairsDeferred.await()
-            val transitions = transitionsDeferred.await()
             val transitionMetas = transitionMetasDeferred.await()
             val defaultReviewers = defaultReviewersDeferred.await()
 
@@ -208,7 +196,6 @@ object CreatePrPrefetch {
                     initialSelectedRepoIndex = initialSelectedRepoIndex,
                     initialTicketKeys = keys,
                     initialTicketContexts = initialTicketContexts,
-                    transitions = transitions,
                     defaultTitle = defaultTitle,
                     defaultReviewers = defaultReviewers,
                     transitionMetas = transitionMetas

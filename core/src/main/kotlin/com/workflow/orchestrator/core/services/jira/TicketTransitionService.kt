@@ -9,9 +9,4 @@ interface TicketTransitionService {
     suspend fun getAvailableTransitions(ticketKey: String): ToolResult<List<TransitionMeta>>
     suspend fun prepareTransition(ticketKey: String, transitionId: String): ToolResult<TransitionMeta>
     suspend fun executeTransition(ticketKey: String, input: TransitionInput): ToolResult<TransitionOutcome>
-    suspend fun tryAutoTransition(
-        ticketKey: String,
-        transitionId: String,
-        comment: String? = null
-    ): ToolResult<TransitionOutcome>
 }

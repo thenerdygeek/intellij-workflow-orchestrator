@@ -144,20 +144,18 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
 
         // ── Ticket Transitions ───────────────────────────────────────────────
         /**
-         * Skip the transition dialog when the target status has no required fields
-         * and only one valid next-state matches.
-         */
-        var ticketTransitionAutoTransitionSilently by property(false)
-
-        /**
-         * Preferred target status name when Start Work creates a branch.
-         * Leave empty to skip the transition.
+         * Preferred target status name when Start Work creates a branch. Drives the
+         * dialog's pre-selection only — every transition is confirmed in
+         * [com.workflow.orchestrator.jira.ui.TicketTransitionDialog]. Leave empty to
+         * skip the post-Start-Work transition prompt entirely.
          */
         var ticketTransitionDefaultStartWorkStatusName by string("In Progress")
 
         /**
-         * Preferred target status after PR creation.
-         * Leave empty to disable the automatic transition.
+         * Preferred target status after PR creation. Drives the dialog's pre-selection
+         * only — every transition is confirmed in
+         * [com.workflow.orchestrator.jira.ui.TicketTransitionDialog]. Leave empty to
+         * skip the post-PR transition prompt entirely.
          */
         var ticketTransitionDefaultPrCreateStatusName by string("In Review")
 
