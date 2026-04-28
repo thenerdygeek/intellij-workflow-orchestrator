@@ -165,6 +165,21 @@ class WorkflowContextServiceMutatorsTest {
         assertEquals(pr, service.state.value.focusPr)
     }
 
+    @Test fun `onBranchChanged is a no-op when activeRepo is not seeded`() = runTest {
+        // Without an editor having opened a file yet, activeRepo is null. A branch-change
+        // event must not crash, must not touch GitRepositoryManager, and must leave state
+        // unchanged. The next recomputeFromEditor tick will seed everything together.
+        val project = mockk<Project>(relaxed = true)
+        val settings = mockk<PluginSettings>(relaxed = true)
+        every { project.getService(PluginSettings::class.java) } returns settings
+        every { settings.state.activeTicketId } returns null
+
+        val service = makeService(project)
+        val before = service.state.value
+        service.onBranchChanged()
+        assertEquals(before, service.state.value)
+    }
+
     @Test fun `reconcileFocusPrWithRepos serializes against focusPr cascade via cascadeMutex`() = runTest {
         val project = mockk<Project>(relaxed = true)
         val settings = mockk<PluginSettings>(relaxed = true)

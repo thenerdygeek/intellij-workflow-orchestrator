@@ -275,6 +275,11 @@ class GenerateCommitMessageAction : AnAction(
             }
 
             log.info("[AI:CommitMsg] Generating: ${diff.length} char diff, ticket='$ticketId' details=${ticketDetails != null}, ${recentCommits.size} recent commits, codeContext=${codeContext.length} chars")
+            log.info("[AI:CommitMsg] Branch='${targetRepo?.currentBranch?.name ?: "<none>"}' upstream='${targetRepo?.currentBranch?.findTrackedBranch(targetRepo)?.nameForRemoteOperations ?: "<none>"}'")
+            log.info("[AI:CommitMsg] Files in scope (${scopedChanges.size}): ${filesSummary.ifBlank { "<none>" }}")
+            recentCommits.forEachIndexed { i, c -> log.info("[AI:CommitMsg]   recentCommit[$i] = $c") }
+            val diffPreview = diff.lineSequence().take(40).joinToString("\n")
+            log.info("[AI:CommitMsg] Diff preview (first 40 lines, full length=${diff.length}):\n$diffPreview${if (diff.length > diffPreview.length) "\n...<truncated>" else ""}")
 
             // Phase 5 — AI generation (streaming)
             // Stream tokens live into the commit field so the user sees the message
@@ -511,6 +516,8 @@ class GenerateCommitMessageAction : AnAction(
             }
         }
 
+        log.info("[AI:CommitMsg] getGitDiff: root='$rootPath' relativePaths(${relativePaths.size})=${relativePaths.take(10)}")
+
         // Try staged changes first (what would be committed)
         val stagedHandler = GitLineHandler(project, root, GitCommand.DIFF).apply {
             addParameters("--cached", "--no-color")
@@ -518,6 +525,7 @@ class GenerateCommitMessageAction : AnAction(
         }
         val stagedResult = Git.getInstance().runCommand(stagedHandler)
         if (stagedResult.success() && stagedResult.output.isNotEmpty()) {
+            log.info("[AI:CommitMsg] getGitDiff: source=STAGED (--cached) lines=${stagedResult.output.size}")
             return stagedResult.output.joinToString("\n")
         }
 
@@ -528,6 +536,7 @@ class GenerateCommitMessageAction : AnAction(
         }
         val unstagedResult = Git.getInstance().runCommand(unstagedHandler)
         if (unstagedResult.success() && unstagedResult.output.isNotEmpty()) {
+            log.info("[AI:CommitMsg] getGitDiff: source=UNSTAGED lines=${unstagedResult.output.size}")
             return unstagedResult.output.joinToString("\n")
         }
 
@@ -538,7 +547,10 @@ class GenerateCommitMessageAction : AnAction(
         // a diff comparing the file to an empty blob.
         if (relativePaths.isNotEmpty()) {
             val untrackedDiff = diffUntrackedFiles(project, root, relativePaths)
-            if (!untrackedDiff.isNullOrBlank()) return untrackedDiff
+            if (!untrackedDiff.isNullOrBlank()) {
+                log.info("[AI:CommitMsg] getGitDiff: source=UNTRACKED (--no-index) length=${untrackedDiff.length}")
+                return untrackedDiff
+            }
         }
 
         log.warn(
@@ -606,12 +618,16 @@ class GenerateCommitMessageAction : AnAction(
     private fun getRecentCommits(project: Project, preResolvedRepo: git4idea.repo.GitRepository? = null): List<String> {
         return try {
             val repo = preResolvedRepo ?: resolveTargetRepo(project) ?: return emptyList()
+            log.info("[AI:CommitMsg] getRecentCommits: running 'git log -5 --no-merges' on root='${repo.root.path}' branch='${repo.currentBranch?.name ?: "<detached>"}' (no upstream-range filter — walks full HEAD history including merged-in commits)")
             // Get message + file names in one call: --name-only shows files after each commit
             val handler = GitLineHandler(project, repo.root, GitCommand.LOG).apply {
                 addParameters("--format=COMMIT_START%n%s", "--name-only", "-5", "--no-merges")
             }
             val result = Git.getInstance().runCommand(handler)
-            if (!result.success()) return emptyList()
+            if (!result.success()) {
+                log.warn("[AI:CommitMsg] getRecentCommits: git log failed exit=${result.exitCode} stderr='${result.errorOutputAsJoinedString.take(200)}'")
+                return emptyList()
+            }
 
             val commits = mutableListOf<String>()
             var currentMessage: String? = null

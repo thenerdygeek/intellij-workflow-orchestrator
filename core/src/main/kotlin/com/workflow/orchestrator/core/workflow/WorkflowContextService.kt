@@ -13,6 +13,8 @@ import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.module.ModuleUtilCore
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ModuleRootManager
+import com.intellij.openapi.vcs.BranchChangeListener
+import git4idea.repo.GitRepositoryManager
 import com.workflow.orchestrator.core.model.workflow.InteractionMode
 import com.workflow.orchestrator.core.model.workflow.ModuleRef
 import com.workflow.orchestrator.core.model.workflow.PrRef
@@ -88,13 +90,20 @@ class WorkflowContextService(
     }
 
     /**
-     * Subscribe to editor selection, VCS mapping, and module-set changes; each fires a
-     * coroutine to recompute the editor-derived slice (`activeRepo`, `activeBranch`,
-     * `editorModule`, `projectModules`).
+     * Subscribe to editor selection, VCS mapping, branch-change, and module-set events.
+     *
+     * Editor / VCS-mapping / module events fire a coroutine into [recomputeFromEditor]
+     * which refreshes the full editor-derived slice. Branch-change events use the narrow
+     * [onBranchChanged] mutator instead — a checkout cannot change the editor, the
+     * tracked repo, or the module set, so the heavy editor + PSI lookups in
+     * [recomputeFromEditor] are wasted work for a branch event.
      *
      * NOTE: `GitRepositoryChangeListener` intentionally NOT subscribed — git4idea is an
-     * optional dependency. `VCS_REPOSITORY_MAPPING_UPDATED` (in the `com.intellij.dvcs`
-     * platform module) covers the branch-change signal we need without that risk.
+     * optional dependency. [BranchChangeListener.VCS_BRANCH_CHANGED] is a platform topic
+     * in `com.intellij.openapi.vcs` (no git4idea coupling) and is the same signal that
+     * `PrDashboardPanel` and `BuildDashboardPanel` already subscribe to. The previous
+     * assumption that `VCS_REPOSITORY_MAPPING_UPDATED` covered branch-change is wrong —
+     * that topic only fires on VCS root mapping changes (e.g., adding a submodule).
      *
      * `ModuleListener` invalidates the [cachedProjectModules] field; the next
      * recompute re-reads from `ModuleManager` under `readAction`.
@@ -119,6 +128,16 @@ class WorkflowContextService(
         )
 
         bus.subscribe(
+            BranchChangeListener.VCS_BRANCH_CHANGED,
+            object : BranchChangeListener {
+                override fun branchWillChange(branchName: String) {}
+                override fun branchHasChanged(branchName: String) {
+                    cs.launch { onBranchChanged() }
+                }
+            }
+        )
+
+        bus.subscribe(
             com.intellij.openapi.project.ModuleListener.TOPIC,
             object : com.intellij.openapi.project.ModuleListener {
                 override fun modulesAdded(project: Project, modules: List<com.intellij.openapi.module.Module>) {
@@ -135,6 +154,35 @@ class WorkflowContextService(
                 // editor/VCS event will refresh the cached module names anyway.
             },
         )
+    }
+
+    /**
+     * Narrow mutator fired by [BranchChangeListener.VCS_BRANCH_CHANGED]. Updates only
+     * `activeBranch` by re-reading the *already-tracked* `activeRepo` — no editor
+     * lookup, no PSI, no module scan. A `git checkout` cannot change the editor,
+     * the tracked repo, or the module set, so calling [recomputeFromEditor] here
+     * would re-introduce the editor-coupling the `refactor/cleanup-perf-caching` sweep
+     * worked to minimize (see `editor-fallback-allowed` marker convention in
+     * `RepoContextResolver`).
+     *
+     * If `activeRepo` has not been seeded yet (no editor opened since project start),
+     * this no-ops; the next [recomputeFromEditor] tick will pick up the current branch
+     * along with the rest of the editor slice.
+     *
+     * Mutex-serialized with the other cascade mutators so an in-flight `focusPr`
+     * cascade observes a coherent `activeBranch` value.
+     */
+    internal suspend fun onBranchChanged() = cascadeMutex.withLock {
+        val current = _state.value
+        val rootPath = current.activeRepo?.localVcsRootPath ?: return@withLock
+        val gitRepo = GitRepositoryManager.getInstance(project).repositories
+            .firstOrNull { it.root.path == rootPath }
+            ?: return@withLock
+        val newBranch = gitRepo.currentBranchName
+        if (newBranch != current.activeBranch) {
+            _state.value = current.copy(activeBranch = newBranch)
+            log.info("[Workflow:Context] activeBranch → ${newBranch ?: "<detached>"} (branch-change event)")
+        }
     }
 
     /**

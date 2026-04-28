@@ -265,7 +265,9 @@ class StartWorkDialog(
         // Source branch row
         val sourceRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0))
         sourceRow.add(JBLabel("Source branch:"))
-        val branchNames = remoteBranches.map { it.displayId }
+        // Bitbucket returns branches recency-sorted (orderBy=MODIFICATION). For the
+        // Start Work picker, alphabetical is easier to scan than recency.
+        val branchNames = remoteBranches.map { it.displayId }.sortedBy { it.lowercase() }
         sourceBranchCombo = JComboBox(branchNames.toTypedArray()).apply {
             selectedItem = defaultSourceBranch
             addActionListener {
