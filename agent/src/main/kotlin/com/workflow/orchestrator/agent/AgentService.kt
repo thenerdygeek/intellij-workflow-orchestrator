@@ -705,6 +705,9 @@ class AgentService(
             log.info("Skipping PSI tools — neither Java nor Python plugin available")
         }
 
+        // Local IDE build/import problems — distinct from remote CI (bamboo_*) builds.
+        safeRegisterCore { BuildProblemsTool() }
+
         // tool_search itself is core (the LLM needs it to discover deferred tools)
         safeRegisterCore { ToolSearchTool(registry) }
 
