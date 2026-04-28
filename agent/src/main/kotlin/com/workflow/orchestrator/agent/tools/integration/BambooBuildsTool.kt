@@ -26,7 +26,10 @@ class BambooBuildsTool : AgentTool {
     override val name = "bamboo_builds"
 
     override val description = """
-Bamboo build lifecycle — trigger, monitor, stop, inspect builds and test results.
+REMOTE CI ONLY: Bamboo build lifecycle — trigger, monitor, stop, inspect builds and test results.
+
+Use for: 'show me the latest Bamboo build', 'why did CI fail', 'fetch artifact from build N', 'rerun failed CI jobs'.
+Do NOT use for: local IDE Maven/Gradle reload errors, 'why did my IDE build fail', or anything in the IDE's Build tool window — use get_build_problems for those.
 
 Actions and their parameters:
 - build_status(plan_key, branch?, repo_name?) → Latest build status for plan

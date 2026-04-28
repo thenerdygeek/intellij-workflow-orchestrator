@@ -24,7 +24,10 @@ class BambooPlansTool : AgentTool {
     override val name = "bamboo_plans"
 
     override val description = """
-Bamboo plan management — discover, search, and configure build plans and variables.
+REMOTE CI ONLY: Bamboo plan management — discover, search, and configure build plans and variables.
+
+Use for: 'list Bamboo plans', 'find a CI plan for repo X', 'show plan branches', 'rerun failed CI jobs'.
+Do NOT use for: local IDE Maven/Gradle reload, project module discovery, or local build configuration — use get_build_problems / project_structure for those.
 
 Actions and their parameters:
 - get_plans() → List all build plans
