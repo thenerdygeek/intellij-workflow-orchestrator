@@ -178,6 +178,11 @@
         <projectService
             serviceInterface="com.workflow.orchestrator.core.services.BuildProblemsService"
             serviceImplementation="com.workflow.orchestrator.core.services.impl.BuildProblemsServiceImpl"/>
+        <projectService
+            serviceInterface="com.workflow.orchestrator.core.services.BuildEventCaptureService"
+            serviceImplementation="com.workflow.orchestrator.core.services.impl.BuildEventCaptureServiceImpl"/>
+        <postStartupActivity
+            implementation="com.workflow.orchestrator.core.services.impl.BuildEventCaptureProjectActivity"/>
 
         <!-- Health Check -->
         <vcsCheckinHandlerFactory

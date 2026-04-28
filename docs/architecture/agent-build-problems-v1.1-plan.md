@@ -1,10 +1,19 @@
 # Agent — `get_build_problems` V1.1: Gradle import + compile event capture
 
-**Status:** Plan, ready to execute
-**Branch:** `refactor/cleanup-perf-caching` (or fresh `feat/build-problems-v1.1`)
+**Status:** Plan, ready to execute (revised after API verification)
+**Branch:** `refactor/cleanup-perf-caching`
 **Owner:** Subhankar
 **Date:** 2026-04-28
 **Predecessor:** `agent-build-problems-tool-plan.md` (V1, shipped)
+**API verification:** `agent-build-problems-v1.1-research.md` — source-of-truth for all API names and signatures. If this plan and that doc disagree, that doc wins.
+
+## Important corrections after verification
+
+- `ProjectTaskListener.finished(Result)` is **insufficient** for per-error capture — `Result` only exposes aggregate `hasErrors()`. Use `BuildProgressListener` registered via `BuildViewManager.addListener(listener, disposable)` instead.
+- Gradle imports flow through `ExternalSystemProgressNotificationManager.getInstance().addNotificationListener(listener, disposable)` (application-scoped manager, project-scoped via the disposable).
+- Filter Maven out of the ExternalSystem listener (project-system-id check) so V1's Maven probe and V1.1's Gradle path do not double-count.
+- `BuildViewManager` and `MessageEventImpl`/`FileMessageEventImpl` are `lang-impl` (not public API). Use reflective access.
+- `MessageEvent`, `FileMessageEvent`, `FilePosition`, `BuildEvent` interfaces live in `platform/build-events-api` — these we CAN compile-time-depend on (verify at implementation time).
 
 ## Background
 
