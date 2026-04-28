@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.core.services.impl
 
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
@@ -39,7 +40,11 @@ class BuildProblemsServiceImpl(
 ) : BuildProblemsService {
 
     override suspend fun getRecentBuildProblems(): ToolResult<List<BuildProblem>> {
-        val maven = mavenProbe.read(project).map { mapMavenProblem(it) }
+        // Reflective access to MavenProject.problems mutates under the import write
+        // thread; readAction { } gives the platform's standard read-side synchronization
+        // per :core "Service & threading conventions" (Phase 4).
+        val raws = readAction { mavenProbe.read(project) }
+        val maven = raws.map { mapMavenProblem(it) }
         // V1.1: combine with Gradle + compile sources here.
         val all = maven
         val summary = if (all.isEmpty()) {
@@ -83,12 +88,21 @@ class BuildProblemsServiceImpl(
      * Best-effort extraction of `groupId:artifactId:version` from a Maven dependency
      * error message like "Could not transfer artifact org.foo:bar:jar:1.2.3 from/to ..."
      * Returns null when no coordinate-shape token is found.
+     *
+     * The token must look like 3-5 colon-separated alphanumeric/dot/dash segments and
+     * must not contain `/` or look like a URL — that excludes false positives like
+     * `https://nexus.example.com:443/path` (which has 3 colons but a URL shape).
      */
     internal fun extractArtifactCoords(description: String): String? {
         val token = description.split(' ', '\n', '\t', ',').firstOrNull { fragment ->
-            fragment.count { it == ':' } in 2..4 && fragment.none { it.isWhitespace() }
+            val trimmed = fragment.trimEnd('.', ',', ':')
+            COORD_REGEX.matches(trimmed)
         } ?: return null
         return token.trimEnd('.', ',', ':')
+    }
+
+    private companion object {
+        private val COORD_REGEX = Regex("""^[\w.\-]+(:[\w.\-]+){2,4}$""")
     }
 }
 
@@ -113,37 +127,23 @@ object ReflectiveMavenProblemsProbe : MavenProblemsProbe {
             if (!isMavenized) return emptyList()
 
             @Suppress("UNCHECKED_CAST")
-            val rootProjects = managerClass.getMethod("getRootProjects").invoke(manager) as? List<Any>
+            val rootProjects = invokeAny(manager, "getRootProjects", "rootProjects") as? List<Any>
                 ?: return emptyList()
 
             val out = mutableListOf<MavenProblemsProbe.RawProblem>()
             for (mavenProject in rootProjects) {
                 val pomPath = readMavenProjectPath(mavenProject)
                 @Suppress("UNCHECKED_CAST")
-                val mavenProblems = try {
-                    mavenProject.javaClass.getMethod("getProblems").invoke(mavenProject) as? List<Any>
-                } catch (_: Throwable) {
-                    null
-                } ?: continue
+                val mavenProblems = invokeAny(mavenProject, "getProblems", "problems") as? List<Any>
+                    ?: continue
 
                 for (problem in mavenProblems) {
-                    val description = try {
-                        problem.javaClass.getMethod("getDescription").invoke(problem) as? String
-                    } catch (_: Throwable) {
-                        null
-                    } ?: "Maven import problem"
+                    val description = invokeAny(problem, "getDescription", "description") as? String
+                        ?: "Maven import problem"
 
-                    val path = try {
-                        problem.javaClass.getMethod("getPath").invoke(problem) as? String
-                    } catch (_: Throwable) {
-                        null
-                    } ?: pomPath
+                    val path = invokeAny(problem, "getPath", "path") as? String ?: pomPath
 
-                    val typeName = try {
-                        problem.javaClass.getMethod("getType").invoke(problem)?.toString()
-                    } catch (_: Throwable) {
-                        null
-                    }
+                    val typeName = invokeAny(problem, "getType", "type")?.toString()
 
                     out += MavenProblemsProbe.RawProblem(path = path, description = description, typeName = typeName)
                 }
@@ -159,12 +159,27 @@ object ReflectiveMavenProblemsProbe : MavenProblemsProbe {
     }
 
     private fun readMavenProjectPath(mavenProject: Any): String {
-        return try {
-            mavenProject.javaClass.getMethod("getPath").invoke(mavenProject) as? String
-                ?: mavenProject.javaClass.getMethod("getFile").invoke(mavenProject)?.toString()
-                ?: ""
-        } catch (_: Throwable) {
-            ""
+        return (invokeAny(mavenProject, "getPath", "path") as? String)
+            ?: (invokeAny(mavenProject, "getFile", "file")?.toString())
+            ?: ""
+    }
+
+    /**
+     * Try a list of method names against a target object; return the first non-null result.
+     * Mirrors the "older/newer Maven APIs" hedge in `BuildSystemValidator.kt:482-487` —
+     * Kotlin properties on platform classes can be exposed as either `getX()` or `x()`
+     * depending on the build, and we want to be resilient to either.
+     */
+    private fun invokeAny(target: Any, vararg methodNames: String): Any? {
+        for (name in methodNames) {
+            try {
+                return target.javaClass.getMethod(name).invoke(target)
+            } catch (_: NoSuchMethodException) {
+                continue
+            } catch (_: Throwable) {
+                return null
+            }
         }
+        return null
     }
 }

@@ -25,14 +25,12 @@ class BuildProblemsTool : AgentTool {
     override val name = "get_build_problems"
 
     override val description = """
-LOCAL IDE ONLY: Read errors from the most recent local IDE build/import.
+LOCAL IDE ONLY: Read errors from the most recent local IDE build/import. V1: Maven only — Gradle and compile coverage land in V1.1.
 
-Use for: 'why did my Maven reload fail', 'what's wrong with my pom.xml', 'check the IDE Build tool window', 'why won't my Gradle import succeed', 'show local build errors'.
+Use for: 'why did my Maven reload fail', 'what's wrong with my pom.xml', 'check the IDE Build tool window for Maven errors', 'show local Maven build errors'. Gradle reload and compile errors are best-effort today (often empty) — the LLM should fall back to run_command + tail of the Build tool window for those.
 Do NOT use for: remote CI builds (use bamboo_builds for those), code-level inspection problems (use problem_view), or runtime errors (use diagnostics).
 
 Returns structured problems with file path, problem type (DEPENDENCY, REPOSITORY, PARENT, STRUCTURE, SYNTAX, SETTINGS, COMPILE, OTHER), description, and — for dependency errors — extracted artifact coordinates (groupId:artifactId:version).
-
-V1 covers Maven import problems. Gradle and compile-cascade problems are coming in a follow-up; an empty result for those sources today does not necessarily mean the build succeeded.
 """.trimIndent()
 
     override val parameters = FunctionParameters(
