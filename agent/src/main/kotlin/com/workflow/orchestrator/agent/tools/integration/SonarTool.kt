@@ -835,18 +835,20 @@ Common optional: repo_name for multi-repo projects.
         //   A. file-arg's repo  — SKIPPED today: `local_analysis` accepts a `files` CSV but
         //      derives the project root via Maven/Gradle multi-module scoping, not a single
         //      path. Wiring per-file repo lookup here is tracked for future work.
-        //   B. WorkflowContextService.state.activeBranch — the user's "currently working in"
-        //      signal mirrored across all 6 tabs (cached, survives editor switches).
+        //   B. focusPr.fromBranch — the user's anchored "current task" branch. Authoritative
+        //      when set; the agent should report Sonar issues for the PR being worked on,
+        //      not whichever submodule the editor file happens to live in.
         //   C. RepoContextResolver.resolveCurrentEditorRepoOrPrimary — fresh editor/primary
-        //      lookup as last resort.
-        val workflowContextBranch = runCatching {
-            WorkflowContextService.getInstance(project).state.value.activeBranch
+        //      lookup as last resort. Editor-derived; only consulted when no PR is focused.
+        val focusedPrBranch = runCatching {
+            WorkflowContextService.getInstance(project).state.value.focusPr?.fromBranch
         }.getOrNull()?.trim()?.takeIf { it.isNotBlank() }
         val editorOrPrimaryBranch = runCatching {
-            // editor-fallback-allowed: Sonar branch resolution case C — last resort after WorkflowContext
+            // editor-fallback-allowed: Sonar branch resolution case C — agent context for
+            // "what is the user looking at", consulted only when no PR is focused.
             RepoContextResolver.getInstance(project).resolveCurrentEditorRepoOrPrimary()?.currentBranchName
         }.getOrNull()?.trim()?.takeIf { it.isNotBlank() }
-        val currentGitBranch = workflowContextBranch ?: editorOrPrimaryBranch
+        val currentGitBranch = focusedPrBranch ?: editorOrPrimaryBranch
 
         val candidate = userBranch ?: currentGitBranch
 

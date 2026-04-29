@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.tools.integration
 
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.core.model.workflow.PrRef
 import com.workflow.orchestrator.core.model.workflow.WorkflowContext
 import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.core.workflow.WorkflowContextService
@@ -15,18 +16,19 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Repo-resolution sweep — item 8.
+ * Pins the resolution order in [SonarTool.resolveLocalAnalysisBranch]:
+ *   - A. file-arg's repo                                       — not wired today (local_analysis
+ *                                                                accepts a `files` CSV but resolves
+ *                                                                the project root via Maven/Gradle
+ *                                                                multi-module scoping). Skipped.
+ *   - B. focusPr.fromBranch                                    — anchored "current task" branch.
+ *                                                                Authoritative when set.
+ *   - C. RepoContextResolver.resolveCurrentEditorRepoOrPrimary — editor/primary fallback, only
+ *                                                                consulted when no PR is focused.
  *
- * Pins the A → B → C resolution order in [SonarTool.resolveLocalAnalysisBranch]:
- *   - A. file-arg's repo                                  — not wired today (local_analysis
- *                                                           accepts a `files` CSV but resolves
- *                                                           the project root via Maven/Gradle
- *                                                           multi-module scoping). Skipped.
- *   - B. WorkflowContextService.state.activeBranch         — user's "currently working in"
- *                                                           signal mirrored across all 6 tabs.
- *   - C. RepoContextResolver.resolveCurrentEditorRepoOrPrimary — fresh editor/primary fallback.
- *
- * Plan: docs/architecture/repo-resolution-sweep-plan.md.
+ * After the 2026-04-30 editor-coupling rip-out, the previous source B (editor-derived
+ * `state.activeBranch`) was demoted: opening any random file in another submodule used
+ * to swing Sonar's branch hint, contradicting whatever PR the user was actively working on.
  */
 class SonarToolBranchResolutionTest {
 
@@ -37,12 +39,14 @@ class SonarToolBranchResolutionTest {
         unmockkAll()
     }
 
+    private fun pr(branch: String) = PrRef(42, branch, "main", "repo", null, null)
+
     @Test
-    fun `B - WorkflowContextService activeBranch wins when present`() {
+    fun `B - focusPr fromBranch wins when a PR is focused`() {
         val project = mockk<Project>(relaxed = true)
         val workflowContext = mockk<WorkflowContextService>()
         every { workflowContext.state } returns MutableStateFlow(
-            WorkflowContext(activeBranch = "feature/foo")
+            WorkflowContext(focusPr = pr("feature/foo"))
         )
         every { project.getService(WorkflowContextService::class.java) } returns workflowContext
 
@@ -61,11 +65,42 @@ class SonarToolBranchResolutionTest {
         assertEquals("feature/foo", (result as SonarTool.BranchResolution.Use).branch)
     }
 
+    /**
+     * Editor-coupling regression guard: when a PR is focused, the editor's branch must NOT
+     * override `focusPr.fromBranch`. Previously, opening any file in another submodule would
+     * silently re-target Sonar at the wrong branch.
+     */
     @Test
-    fun `C - falls through to editor-or-primary when WorkflowContext branch is null`() {
+    fun `B wins over C - editor-derived branch must not override focusPr`() {
         val project = mockk<Project>(relaxed = true)
         val workflowContext = mockk<WorkflowContextService>()
-        every { workflowContext.state } returns MutableStateFlow(WorkflowContext(activeBranch = null))
+        every { workflowContext.state } returns MutableStateFlow(
+            WorkflowContext(focusPr = pr("feature/from-pr"))
+        )
+        every { project.getService(WorkflowContextService::class.java) } returns workflowContext
+
+        // Editor sits on a different branch — must be ignored when focusPr is set.
+        val gitRepo = mockk<GitRepository>()
+        every { gitRepo.currentBranchName } returns "feature/from-editor-different"
+        val repoResolver = mockk<RepoContextResolver>()
+        every { repoResolver.resolveCurrentEditorRepoOrPrimary() } returns gitRepo
+        every { project.getService(RepoContextResolver::class.java) } returns repoResolver
+
+        val result = tool.resolveLocalAnalysisBranch(project, userProvided = null)
+
+        assertTrue(result is SonarTool.BranchResolution.Use, "expected Use, got: $result")
+        assertEquals(
+            "feature/from-pr",
+            (result as SonarTool.BranchResolution.Use).branch,
+            "focusPr.fromBranch must win over editor-derived branch",
+        )
+    }
+
+    @Test
+    fun `C - falls through to editor-or-primary when no PR is focused`() {
+        val project = mockk<Project>(relaxed = true)
+        val workflowContext = mockk<WorkflowContextService>()
+        every { workflowContext.state } returns MutableStateFlow(WorkflowContext(focusPr = null))
         every { project.getService(WorkflowContextService::class.java) } returns workflowContext
 
         val gitRepo = mockk<GitRepository>()
@@ -87,7 +122,7 @@ class SonarToolBranchResolutionTest {
     fun `Omit - all sources blank returns Omit`() {
         val project = mockk<Project>(relaxed = true)
         val workflowContext = mockk<WorkflowContextService>()
-        every { workflowContext.state } returns MutableStateFlow(WorkflowContext(activeBranch = null))
+        every { workflowContext.state } returns MutableStateFlow(WorkflowContext(focusPr = null))
         every { project.getService(WorkflowContextService::class.java) } returns workflowContext
 
         val repoResolver = mockk<RepoContextResolver>()
@@ -105,13 +140,15 @@ class SonarToolBranchResolutionTest {
     /**
      * Protected branch redirect: when the resolved branch is `main`/`master`/`develop`/`release`/
      * `hotfix`/`trunk`, publish to a `local-scratch-<branch>` name instead of overwriting the
-     * shared dashboard. Asserts this still fires when the branch comes from WorkflowContext.
+     * shared dashboard. Asserts this still fires when the branch comes from focusPr.
      */
     @Test
-    fun `protected branch from WorkflowContext is redirected to local-scratch`() {
+    fun `protected branch from focusPr is redirected to local-scratch`() {
         val project = mockk<Project>(relaxed = true)
         val workflowContext = mockk<WorkflowContextService>()
-        every { workflowContext.state } returns MutableStateFlow(WorkflowContext(activeBranch = "main"))
+        every { workflowContext.state } returns MutableStateFlow(
+            WorkflowContext(focusPr = pr("main"))
+        )
         every { project.getService(WorkflowContextService::class.java) } returns workflowContext
 
         val repoResolver = mockk<RepoContextResolver>()
@@ -132,15 +169,15 @@ class SonarToolBranchResolutionTest {
     }
 
     /**
-     * `userBranch` (LLM- or user-supplied) wins over the auto-detected WorkflowContext branch —
-     * the function's argument explicitly names the analysis target.
+     * `userBranch` (LLM- or user-supplied) wins over auto-detected sources — the function's
+     * argument explicitly names the analysis target.
      */
     @Test
-    fun `userProvided branch wins over WorkflowContext`() {
+    fun `userProvided branch wins over focusPr`() {
         val project = mockk<Project>(relaxed = true)
         val workflowContext = mockk<WorkflowContextService>()
         every { workflowContext.state } returns MutableStateFlow(
-            WorkflowContext(activeBranch = "feature/from-context")
+            WorkflowContext(focusPr = pr("feature/from-pr"))
         )
         every { project.getService(WorkflowContextService::class.java) } returns workflowContext
 

@@ -153,18 +153,16 @@ class AutomationPanel(
             // Load baseline tags
             val tags = tagBuilderService.loadBaseline(planKey)
 
-            // Auto-replace current repo's docker tag. Resolve the editor's repo FIRST and read
-            // its dockerTagKey — reading the scalar default instead produced a "resolve the
-            // right repo then ignore it" mismatch on multi-module setups where each module
-            // has its own docker image. (serviceCiPlanKey remains scalar-only for now —
-            // RepoConfig doesn't carry a per-repo CI plan key yet.)
-            //
-            // Phase 5 T13: read activeRepo from the canonical WorkflowContextService snapshot
-            // (one-shot — onSuiteSelected runs once per user click). Fall back to PluginSettings
-            // primary if no editor context is available yet.
-            val activeRepo = com.workflow.orchestrator.core.workflow.WorkflowContextService
-                .getInstance(project).state.value.activeRepo
-            val repoConfig = activeRepo?.let { ar -> settings.getRepos().firstOrNull { it.name == ar.name } }
+            // Auto-replace current repo's docker tag. Pick the target repo from the focused
+            // PR (the user's "current task" anchor) — never from the editor. Editor-derived
+            // activeRepo previously drove this and produced cross-repo bleed: opening any
+            // file in another submodule swapped the staged docker tag for the wrong service.
+            // (serviceCiPlanKey remains scalar-only for now — RepoConfig doesn't carry a
+            // per-repo CI plan key yet.)
+            val focusedRepoName = com.workflow.orchestrator.core.workflow.WorkflowContextService
+                .getInstance(project).state.value.focusPr?.repoName
+            val repoConfig = focusedRepoName
+                ?.let { name -> settings.getRepos().firstOrNull { it.name == name || it.displayLabel == name } }
                 ?: settings.getPrimaryRepo()
             val dockerTagKey = repoConfig?.dockerTagKey?.takeIf { it.isNotBlank() }
                 ?: settings.state.dockerTagKey.orEmpty()
