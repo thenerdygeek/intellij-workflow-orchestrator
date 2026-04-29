@@ -9,6 +9,8 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.events.EventBus
+import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import com.workflow.orchestrator.core.workflow.TicketBranchLocator
@@ -57,6 +59,15 @@ class CurrentWorkSection(
 
     init {
         buildEmptyState()
+        scope.launch {
+            project.getService(EventBus::class.java).events.collect { event ->
+                when (event) {
+                    is WorkflowEvent.TicketChanged,
+                    is WorkflowEvent.BranchChanged -> invokeLater { refresh() }
+                    else -> Unit
+                }
+            }
+        }
     }
 
     fun refresh() {
