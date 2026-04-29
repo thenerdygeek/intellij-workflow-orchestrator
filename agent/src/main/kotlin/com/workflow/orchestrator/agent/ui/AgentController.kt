@@ -76,9 +76,6 @@ class AgentController(
 ) : Disposable {
     companion object {
         private val LOG = Logger.getInstance(AgentController::class.java)
-
-        /** Commands handled directly by the controller (not LLM skills). */
-        private val BUILTIN_COMMANDS = setOf("compact")
     }
 
     private val service = AgentService.getInstance(project)
@@ -456,10 +453,7 @@ class AgentController(
             onChangeModel = ::changeModel,
             onTogglePlanMode = ::togglePlanMode,
             onToggleRalphLoop = { /* Ralph loop not wired in lean rewrite */ },
-            onActivateSkill = { skillName ->
-                if (skillName in BUILTIN_COMMANDS) executeTask("/$skillName")
-                else executeTask("/skill $skillName")
-            },
+            onActivateSkill = { skillName -> executeTask("/skill $skillName") },
             onRequestFocusIde = { /* No-op: focus returns to IDE naturally */ },
             onOpenSettings = ::openSettings,
             onOpenToolsPanel = ::showToolsPanel
@@ -998,16 +992,11 @@ class AgentController(
                 // LLM-only skills (systematic-debugging, tdd, etc.) and the auto-injected meta-skill
                 // should not appear in the user's skill picker — they're triggered by the LLM.
                 val uiSkills = allSkills.filter { it.userInvocable }
-                // Built-in commands (not LLM skills — handled directly by the controller)
-                val builtInCommands = listOf(
-                    """{"name":"compact","description":"Compact conversation context to free up space"}"""
-                )
-                val skillEntries = uiSkills.map { skill ->
+                val skillsJson = uiSkills.joinToString(",", "[", "]") { skill ->
                     val name = skill.name.replace("\"", "\\\"")
                     val desc = skill.description.replace("\"", "\\\"").take(200)
                     """{"name":"$name","description":"$desc"}"""
                 }
-                val skillsJson = (builtInCommands + skillEntries).joinToString(",", "[", "]")
                 invokeLater {
                     dashboard.updateSkillsList(skillsJson)
                 }
@@ -1015,86 +1004,6 @@ class AgentController(
             }
         } catch (e: Exception) {
             LOG.debug("AgentController: failed to load skills list: ${e.message}")
-        }
-    }
-
-    // ═══════════════════════════════════════════════════
-    //  /compact — manual context compaction
-    // ═══════════════════════════════════════════════════
-
-    /**
-     * Handle /compact slash command — directly compact the conversation context
-     * without an LLM round-trip. Shows utilization stats before/after.
-     *
-     * Safety: blocks when the agent loop is actively running to avoid concurrent
-     * mutation of ContextManager (which is not thread-safe).
-     */
-    private fun handleCompactCommand() {
-        // Show /compact as a user message for conversation continuity
-        invokeLater { dashboard.appendUserMessage("/compact") }
-
-        val cm = contextManager
-        if (cm == null) {
-            invokeLater { dashboard.appendStatus("No active session to compact.", RichStreamingPanel.StatusType.WARNING) }
-            return
-        }
-
-        // Block when loop is actively running — ContextManager is not thread-safe
-        if (currentJob?.isActive == true) {
-            invokeLater {
-                dashboard.appendStatus(
-                    "Cannot compact while agent is running. Wait for the current turn to complete or cancel first.",
-                    RichStreamingPanel.StatusType.WARNING
-                )
-            }
-            return
-        }
-
-        val utilBefore = cm.utilizationPercent()
-        if (utilBefore <= 70.0) {
-            invokeLater {
-                dashboard.appendStatus(
-                    "Context at ${"%.0f".format(utilBefore)}% — compaction not needed (threshold: 70%).",
-                    RichStreamingPanel.StatusType.INFO
-                )
-            }
-            return
-        }
-
-        invokeLater { dashboard.appendStatus("Compacting context...", RichStreamingPanel.StatusType.INFO) }
-
-        // Assign to currentJob so dispose/newChat can cancel if needed.
-        // Safe: we verified no active job above.
-        currentJob = controllerScope.launch(Dispatchers.IO) {
-            try {
-                val result = service.compactContext(cm)
-                if (result == null) {
-                    invokeLater {
-                        dashboard.appendStatus(
-                            "Context at ${"%.0f".format(utilBefore)}% — below compaction threshold.",
-                            RichStreamingPanel.StatusType.INFO
-                        )
-                    }
-                    return@launch
-                }
-                val (tokensBefore, tokensAfter) = result
-                val utilAfter = cm.utilizationPercent()
-                val saved = tokensBefore - tokensAfter
-                invokeLater {
-                    dashboard.appendStatus(
-                        "Compacted: ${"%.0f".format(utilBefore)}% → ${"%.0f".format(utilAfter)}% " +
-                            "($tokensBefore → $tokensAfter tokens, saved $saved)",
-                        RichStreamingPanel.StatusType.INFO
-                    )
-                }
-            } catch (e: Exception) {
-                LOG.warn("Manual compaction failed", e)
-                invokeLater {
-                    dashboard.appendError("Compaction failed: ${e.message}")
-                }
-            } finally {
-                currentJob = null
-            }
         }
     }
 
@@ -1190,12 +1099,6 @@ class AgentController(
      */
     fun executeTask(task: String, displayText: String? = null, displayMentionsJson: String? = null, uiMessageOverride: UiMessage? = null) {
         if (task.isBlank()) return
-
-        // Intercept /compact — direct context compaction without LLM round-trip
-        if (task.trim().equals("/compact", ignoreCase = true)) {
-            handleCompactCommand()
-            return
-        }
 
         LOG.info("AgentController.executeTask: ${task.take(80)}")
 

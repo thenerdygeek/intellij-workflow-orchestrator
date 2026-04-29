@@ -596,12 +596,17 @@ class ContextManager(
      *
      * @param brain the LLM brain for Stage 3 summarization
      * @param hookManager optional hook manager for PRE_COMPACT dispatch
+     * @param force when true, bypasses the 70% utilization floor and the Stage 2 (>85%)
+     *   inner gate so the user can manually clean up context pollution (e.g. accumulated
+     *   `[empty-assistant, ERROR-nudge]` pairs from misbehaving turns) without waiting for
+     *   utilization to climb. Stage 3 (LLM summarization) stays gated at >95% even under
+     *   force — running an API call to summarize a sparsely-filled context is net-negative.
      */
-    suspend fun compact(brain: LlmBrain, hookManager: HookManager? = null) {
+    suspend fun compact(brain: LlmBrain, hookManager: HookManager? = null, force: Boolean = false) {
         val util = utilizationPercent()
-        if (util <= 70.0) return
+        if (!force && util <= 70.0) return
 
-        LOG.info("[Context] Compacting at ${"%.1f".format(util)}% utilization (${messageCount()} messages)")
+        LOG.info("[Context] Compacting at ${"%.1f".format(util)}% utilization (${messageCount()} messages)${if (force) " [forced]" else ""}")
 
         // PRE_COMPACT hook — cancellable (user can skip compaction)
         if (hookManager != null && hookManager.hasHooks(HookType.PRE_COMPACT)) {
@@ -628,11 +633,15 @@ class ContextManager(
             LOG.info("[Context] Dedup: removed $dedupCount duplicate file reads, saved ${"%.1f".format(percentSaved * 100)}%")
         }
 
-        // Cline's logic: if optimization saves >= 30%, skip truncation
-        if (percentSaved >= 0.30) return
+        // Cline's logic: if optimization saves >= 30%, skip truncation.
+        // When forced, the user has explicitly asked for full cleanup, so we proceed
+        // to truncation regardless of dedup savings.
+        if (!force && percentSaved >= 0.30) return
 
-        // Stage 2: Conversation truncation (from Cline)
-        if (utilizationPercent() > 85.0) {
+        // Stage 2: Conversation truncation (from Cline). Forced manual compaction
+        // bypasses the 85% inner gate — at low utilization there's still value in
+        // dropping polluted middle messages (e.g. nudge-pair chains) the user wants gone.
+        if (force || utilizationPercent() > 85.0) {
             // Match Cline's strategy selection:
             // If tokens/2 > maxAllowed, use quarter (more aggressive); else half
             val estimatedTokens = lastPromptTokens ?: tokenEstimate()

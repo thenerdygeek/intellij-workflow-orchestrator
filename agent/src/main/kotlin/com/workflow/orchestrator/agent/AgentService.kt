@@ -612,18 +612,23 @@ class AgentService(
     // ── Manual Compaction ──────────────────────────────────────────────────
 
     /**
-     * Manually compact the conversation context (user-triggered via /compact).
+     * Manually compact the conversation context (user-triggered).
      * Creates a temporary brain for LLM summarization if needed (Stage 3 only).
      *
+     * @param force when true, bypass the 70% utilization floor so the user can clean up
+     *   context pollution (empty-assistant/nudge chains, redundant tool spam) without
+     *   waiting for utilization to climb. Stage 3 LLM summarization stays gated at >95%
+     *   internally even under force — see [ContextManager.compact].
      * @return pair of (tokensBefore, tokensAfter), or null if utilization is too low to compact
+     *   (only returned when `force=false`)
      */
-    suspend fun compactContext(contextManager: ContextManager): Pair<Int, Int>? {
+    suspend fun compactContext(contextManager: ContextManager, force: Boolean = false): Pair<Int, Int>? {
         val utilization = contextManager.utilizationPercent()
-        if (utilization <= 70.0) return null // Matches ContextManager.compact() internal threshold
+        if (!force && utilization <= 70.0) return null // Matches ContextManager.compact() internal threshold
 
         val tokensBefore = contextManager.tokenEstimate()
         val brain = createBrain()
-        contextManager.compact(brain, hookManager)
+        contextManager.compact(brain, hookManager, force = force)
         val tokensAfter = contextManager.tokenEstimate()
         return tokensBefore to tokensAfter
     }
