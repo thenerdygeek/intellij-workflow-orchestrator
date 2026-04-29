@@ -19,7 +19,7 @@ class DevStatusBundleTest {
 
     private fun branch() = DevStatusBranchData(name = "feature/foo", url = "")
     private fun pr() = DevStatusPrData(name = "PR-1", url = "", status = "OPEN", lastUpdate = null)
-    private fun commit() = DevStatusCommitData(displayId = "abc1234", message = "fix thing", url = "", authorName = null, authorTimestamp = null, merge = false)
+    private fun commit() = DevStatusCommitData(sha = "abc1234abc1234abc1234abc1234abc1234abc1234", displayId = "abc1234", message = "fix thing", url = "", authorName = null, authorTimestamp = null, merge = false)
     private fun build() = DevStatusBuildData(name = "Build #1", url = "", state = "SUCCESSFUL", lastUpdated = null, description = null)
     private fun deployment() = DevStatusDeploymentData(displayName = "deploy", url = "", state = "SUCCESS", environmentName = "prod", environmentType = "production", lastUpdated = null)
     private fun review() = DevStatusReviewData(name = "Review 1", url = "", state = "APPROVED", reviewerNames = emptyList(), lastUpdated = null)
@@ -91,5 +91,28 @@ class DevStatusBundleTest {
             fetchedAt = 0L
         )
         assertEquals("1 branch, 1 PR, 1 commit, 1 build, 1 deployment, 1 review", bundle.summaryLine())
+    }
+
+    @Test
+    fun `summaryLine with fetchErrors and isEmpty appends error count`() {
+        val bundle = emptyBundle().copy(fetchErrors = 3)
+        assertEquals("no linked development activity (3 of 6 feeds errored)", bundle.summaryLine())
+    }
+
+    @Test
+    fun `summaryLine with fetchErrors and data appends error count suffix`() {
+        val bundle = emptyBundle().copy(branches = listOf(branch()), fetchErrors = 2)
+        assertEquals("1 branch (2 of 6 feeds errored)", bundle.summaryLine())
+    }
+
+    @Test
+    fun `summaryLine with zero fetchErrors has no error suffix`() {
+        val bundle = emptyBundle().copy(branches = listOf(branch()), fetchErrors = 0)
+        assertEquals("1 branch", bundle.summaryLine())
+    }
+
+    @Test
+    fun `fetchErrors defaults to zero`() {
+        assertEquals(0, emptyBundle().fetchErrors)
     }
 }

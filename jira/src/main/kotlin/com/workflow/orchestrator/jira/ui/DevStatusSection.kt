@@ -82,13 +82,28 @@ class DevStatusSection(private val project: Project) : JPanel(BorderLayout()) {
         removeAll()
 
         if (bundle.isEmpty) {
-            showMessage("No linked development activity.")
+            val msg = if (bundle.fetchErrors > 0)
+                "Could not load dev status (${bundle.fetchErrors} of 6 feeds errored)."
+            else
+                "No linked development activity."
+            showMessage(msg)
             return
         }
 
         val outer = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = false
+        }
+
+        // Partial-error notice
+        if (bundle.fetchErrors > 0) {
+            val notice = JBLabel("Partial result — ${bundle.fetchErrors} of 6 feeds errored").apply {
+                font = font.deriveFont(Font.ITALIC, JBUI.scale(10).toFloat())
+                foreground = StatusColors.SECONDARY_TEXT
+                border = JBUI.Borders.empty(2, 8)
+            }
+            notice.alignmentX = Component.LEFT_ALIGNMENT
+            outer.add(notice)
         }
 
         // Chip strip
@@ -123,10 +138,10 @@ class DevStatusSection(private val project: Project) : JPanel(BorderLayout()) {
         val failedBuild = bundle.builds.any { it.state.uppercase() in setOf("FAILED", "FAILURE") }
         val declinedPr = bundle.pullRequests.any { it.status.uppercase() == "DECLINED" }
 
-        addSection("BRANCHES", bundle.branches.map { renderBranchRow(it) }, bundle.branches.isNotEmpty() && bundle.builds.isEmpty() && bundle.pullRequests.isEmpty())
-        addSection("PULL REQUESTS", bundle.pullRequests.map { renderPrRow(it) }, declinedPr || (bundle.pullRequests.isNotEmpty() && bundle.builds.isEmpty()))
+        addSection("BRANCHES", bundle.branches.map { renderBranchRow(it) }, bundle.builds.isEmpty() && bundle.pullRequests.isEmpty())
+        addSection("PULL REQUESTS", bundle.pullRequests.map { renderPrRow(it) }, declinedPr || bundle.builds.isEmpty())
         addSection("COMMITS", bundle.commits.map { renderCommitRow(it) }, false)
-        addSection("BUILDS", bundle.builds.map { renderBuildRow(it) }, failedBuild || bundle.builds.isNotEmpty())
+        addSection("BUILDS", bundle.builds.map { renderBuildRow(it) }, failedBuild)
         addSection("DEPLOYMENTS", bundle.deployments.map { renderDeploymentRow(it) }, false)
         addSection("REVIEWS", bundle.reviews.map { renderReviewRow(it) }, false)
 
@@ -232,12 +247,12 @@ class DevStatusSection(private val project: Project) : JPanel(BorderLayout()) {
     private fun renderDeploymentRow(deployment: DevStatusDeploymentData): JComponent {
         val envType = deployment.environmentType?.uppercase() ?: ""
         val (badgeBg, badgeFg, borderColor) = when {
-            envType == "PRODUCTION" || envType == "PROD" -> Triple(DECLINED_BADGE_BG, DECLINED_BADGE_FG, DECLINED_BORDER)
-            envType == "STAGING" || envType == "STAGE" -> Triple(AMBER_BADGE_BG, AMBER_BADGE_FG, AMBER_BADGE_BG)
+            envType == "PRODUCTION" || envType == "PROD" -> Triple(MERGED_BADGE_BG, MERGED_BADGE_FG, MERGED_BORDER)
+            envType == "STAGING" || envType == "STAGE" -> Triple(AMBER_BADGE_BG, AMBER_BADGE_FG, AMBER_BADGE_BORDER)
             else -> Triple(DEFAULT_BADGE_BG, StatusColors.SECONDARY_TEXT, StatusColors.BORDER)
         }
         val envLabel = deployment.environmentName?.let { "→ $it" } ?: ""
-        return buildRow(badgeBg, badgeFg, deployment.state.uppercase().take(10), borderColor, deployment.displayName, StatusColors.SECONDARY_TEXT, deployment.url, envLabel)
+        return buildRow(badgeBg, badgeFg, deployment.state.uppercase().take(12), borderColor, deployment.displayName, StatusColors.SECONDARY_TEXT, deployment.url, envLabel)
     }
 
     private fun renderReviewRow(review: DevStatusReviewData): JComponent {
@@ -362,5 +377,6 @@ class DevStatusSection(private val project: Project) : JPanel(BorderLayout()) {
         // Amber / staging
         private val AMBER_BADGE_BG = JBColor(0xFFF4D9, 0x3D2F1A)
         private val AMBER_BADGE_FG = JBColor(0xB8860B, 0xE3B341)
+        private val AMBER_BADGE_BORDER = JBColor(0xCC8800, 0xE3B341)
     }
 }

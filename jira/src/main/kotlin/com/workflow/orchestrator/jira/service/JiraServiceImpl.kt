@@ -826,6 +826,7 @@ class JiraServiceImpl(private val project: Project) : JiraService {
             is ApiResult.Success -> {
                 val commits = result.data.map { c ->
                     DevStatusCommitData(
+                        sha = c.id,
                         displayId = c.displayId,
                         message = c.message,
                         url = c.url,
@@ -947,61 +948,70 @@ class JiraServiceImpl(private val project: Project) : JiraService {
 
     override suspend fun getFullDevStatus(issueId: String): ToolResult<DevStatusBundle> {
         val api = client ?: return ToolResult(
-            data = DevStatusBundle(emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), System.currentTimeMillis()),
+            data = DevStatusBundle(emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), fetchedAt = System.currentTimeMillis()),
             summary = "Jira not configured. Cannot fetch dev status for issue $issueId.",
             isError = true,
             hint = "Set up Jira connection in Settings."
         )
+        return fetchFullDevStatus(issueId, api)
+    }
 
-        return coroutineScope {
-            val branchesDeferred = async {
-                when (val r = api.getDevStatusBranches(issueId)) {
-                    is ApiResult.Success -> r.data.map { b -> DevStatusBranchData(name = b.name, url = b.url) }
-                    is ApiResult.Error -> { log.warn("[JiraService] branches fetch failed: ${r.message}"); emptyList() }
-                }
-            }
-            val prsDeferred = async {
-                when (val r = api.getDevStatusPullRequests(issueId)) {
-                    is ApiResult.Success -> r.data.map { pr -> DevStatusPrData(name = pr.name, url = pr.url, status = pr.status, lastUpdate = pr.lastUpdate) }
-                    is ApiResult.Error -> { log.warn("[JiraService] PRs fetch failed: ${r.message}"); emptyList() }
-                }
-            }
-            val commitsDeferred = async {
-                when (val r = api.getDevStatusCommits(issueId)) {
-                    is ApiResult.Success -> r.data.map { c -> DevStatusCommitData(displayId = c.displayId, message = c.message, url = c.url, authorName = c.author?.name, authorTimestamp = c.authorTimestamp, merge = c.merge) }
-                    is ApiResult.Error -> { log.warn("[JiraService] commits fetch failed: ${r.message}"); emptyList() }
-                }
-            }
-            val buildsDeferred = async {
-                when (val r = api.getDevStatusBuilds(issueId)) {
-                    is ApiResult.Success -> r.data.map { b -> DevStatusBuildData(name = b.name, url = b.url, state = b.state, lastUpdated = b.lastUpdated, description = b.description) }
-                    is ApiResult.Error -> { log.warn("[JiraService] builds fetch failed: ${r.message}"); emptyList() }
-                }
-            }
-            val deploymentsDeferred = async {
-                when (val r = api.getDevStatusDeployments(issueId)) {
-                    is ApiResult.Success -> r.data.map { d -> DevStatusDeploymentData(displayName = d.displayName, url = d.url, state = d.state, environmentName = d.environment?.displayName, environmentType = d.environment?.type, lastUpdated = d.lastUpdated) }
-                    is ApiResult.Error -> { log.warn("[JiraService] deployments fetch failed: ${r.message}"); emptyList() }
-                }
-            }
-            val reviewsDeferred = async {
-                when (val r = api.getDevStatusReviews(issueId)) {
-                    is ApiResult.Success -> r.data.map { rv -> DevStatusReviewData(name = rv.name, url = rv.url, state = rv.state, reviewerNames = rv.reviewers.map { it.name }, lastUpdated = rv.lastUpdated) }
-                    is ApiResult.Error -> { log.warn("[JiraService] reviews fetch failed: ${r.message}"); emptyList() }
-                }
-            }
+    internal suspend fun fetchFullDevStatus(
+        issueId: String,
+        fetcher: com.workflow.orchestrator.jira.api.DevStatusFetcher
+    ): ToolResult<DevStatusBundle> = coroutineScope {
+        val branchesDeferred = async { fetcher.getDevStatusBranches(issueId) }
+        val prsDeferred = async { fetcher.getDevStatusPullRequests(issueId) }
+        val commitsDeferred = async { fetcher.getDevStatusCommits(issueId) }
+        val buildsDeferred = async { fetcher.getDevStatusBuilds(issueId) }
+        val deploymentsDeferred = async { fetcher.getDevStatusDeployments(issueId) }
+        val reviewsDeferred = async { fetcher.getDevStatusReviews(issueId) }
 
-            val bundle = DevStatusBundle(
-                branches = branchesDeferred.await(),
-                pullRequests = prsDeferred.await(),
-                commits = commitsDeferred.await(),
-                builds = buildsDeferred.await(),
-                deployments = deploymentsDeferred.await(),
-                reviews = reviewsDeferred.await(),
-                fetchedAt = System.currentTimeMillis()
-            )
-            ToolResult.success(data = bundle, summary = bundle.summaryLine())
+        val branchesResult = branchesDeferred.await()
+        val prsResult = prsDeferred.await()
+        val commitsResult = commitsDeferred.await()
+        val buildsResult = buildsDeferred.await()
+        val deploymentsResult = deploymentsDeferred.await()
+        val reviewsResult = reviewsDeferred.await()
+
+        var fetchErrors = 0
+
+        val branches = when (branchesResult) {
+            is ApiResult.Success -> branchesResult.data.map { b -> DevStatusBranchData(name = b.name, url = b.url) }
+            is ApiResult.Error -> { log.warn("[JiraService] branches fetch failed: ${branchesResult.message}"); fetchErrors++; emptyList() }
         }
+        val prs = when (prsResult) {
+            is ApiResult.Success -> prsResult.data.map { pr -> DevStatusPrData(name = pr.name, url = pr.url, status = pr.status, lastUpdate = pr.lastUpdate) }
+            is ApiResult.Error -> { log.warn("[JiraService] PRs fetch failed: ${prsResult.message}"); fetchErrors++; emptyList() }
+        }
+        val commits = when (commitsResult) {
+            is ApiResult.Success -> commitsResult.data.map { c -> DevStatusCommitData(sha = c.id, displayId = c.displayId, message = c.message, url = c.url, authorName = c.author?.name, authorTimestamp = c.authorTimestamp, merge = c.merge) }
+            is ApiResult.Error -> { log.warn("[JiraService] commits fetch failed: ${commitsResult.message}"); fetchErrors++; emptyList() }
+        }
+        val builds = when (buildsResult) {
+            is ApiResult.Success -> buildsResult.data.map { b -> DevStatusBuildData(name = b.name, url = b.url, state = b.state, lastUpdated = b.lastUpdated, description = b.description) }
+            is ApiResult.Error -> { log.warn("[JiraService] builds fetch failed: ${buildsResult.message}"); fetchErrors++; emptyList() }
+        }
+        val deployments = when (deploymentsResult) {
+            is ApiResult.Success -> deploymentsResult.data.map { d -> DevStatusDeploymentData(displayName = d.displayName, url = d.url, state = d.state, environmentName = d.environment?.displayName, environmentType = d.environment?.type, lastUpdated = d.lastUpdated) }
+            is ApiResult.Error -> { log.warn("[JiraService] deployments fetch failed: ${deploymentsResult.message}"); fetchErrors++; emptyList() }
+        }
+        val reviews = when (reviewsResult) {
+            is ApiResult.Success -> reviewsResult.data.map { rv -> DevStatusReviewData(name = rv.name, url = rv.url, state = rv.state, reviewerNames = rv.reviewers.map { it.name }, lastUpdated = rv.lastUpdated) }
+            is ApiResult.Error -> { log.warn("[JiraService] reviews fetch failed: ${reviewsResult.message}"); fetchErrors++; emptyList() }
+        }
+
+        val bundle = DevStatusBundle(
+            branches = branches,
+            pullRequests = prs,
+            commits = commits,
+            builds = builds,
+            deployments = deployments,
+            reviews = reviews,
+            fetchErrors = fetchErrors,
+            fetchedAt = System.currentTimeMillis()
+        )
+        ToolResult.success(data = bundle, summary = bundle.summaryLine())
     }
 
     override suspend fun searchBoards(query: String): ToolResult<List<JiraBoardSummary>> {

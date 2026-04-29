@@ -434,14 +434,26 @@ description optional: for approval dialog on write actions.
                         val prsDeferred = async { service.getLinkedPullRequests(issueKey) }
                         val branches = branchesDeferred.await()
                         val prs = prsDeferred.await()
+                        if (branches.isError && prs.isError) {
+                            val msg = "Could not fetch branches or PRs: ${branches.summary} | ${prs.summary}"
+                            return@coroutineScope ToolResult(msg, "Dev status fetch failed", TokenEstimator.estimate(msg), isError = true)
+                        }
                         val content = buildString {
                             appendLine("Dev status for $issueKey (branches + PRs):")
-                            appendLine("Branches (${branches.data.size}):")
-                            if (branches.data.isEmpty()) appendLine("  none")
-                            else branches.data.forEach { appendLine("  - ${it.name}${if (it.url.isNotBlank()) " (${it.url})" else ""}") }
-                            appendLine("Pull Requests (${prs.data.size}):")
-                            if (prs.data.isEmpty()) appendLine("  none")
-                            else prs.data.forEach { appendLine("  - [${it.status}] ${it.name}${if (it.url.isNotBlank()) " (${it.url})" else ""}") }
+                            if (branches.isError) {
+                                appendLine("Branches: (error: ${branches.summary})")
+                            } else {
+                                appendLine("Branches (${branches.data.size}):")
+                                if (branches.data.isEmpty()) appendLine("  none")
+                                else branches.data.forEach { appendLine("  - ${it.name}${if (it.url.isNotBlank()) " (${it.url})" else ""}") }
+                            }
+                            if (prs.isError) {
+                                appendLine("Pull Requests: (error: ${prs.summary})")
+                            } else {
+                                appendLine("Pull Requests (${prs.data.size}):")
+                                if (prs.data.isEmpty()) appendLine("  none")
+                                else prs.data.forEach { appendLine("  - [${it.status}] ${it.name}${if (it.url.isNotBlank()) " (${it.url})" else ""}") }
+                            }
                         }.trim()
                         ToolResult(content, "Branches and PRs for $issueKey", TokenEstimator.estimate(content))
                     }
@@ -450,6 +462,7 @@ description optional: for approval dialog on write actions.
                     val bundle = result.data
                     val content = buildString {
                         appendLine("Full dev status for $issueKey: ${bundle.summaryLine()}")
+                        if (bundle.fetchErrors > 0) appendLine("Note: ${bundle.fetchErrors} of 6 feeds errored — result may be incomplete.")
                         if (bundle.branches.isNotEmpty()) {
                             appendLine("\nBranches (${bundle.branches.size}):")
                             bundle.branches.forEach { appendLine("  - ${it.name}${if (it.url.isNotBlank()) " (${it.url})" else ""}") }

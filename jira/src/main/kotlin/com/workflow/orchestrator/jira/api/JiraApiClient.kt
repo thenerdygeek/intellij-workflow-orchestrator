@@ -31,7 +31,7 @@ import java.net.URLEncoder
 class JiraApiClient(
     private val baseUrl: String,
     private val tokenProvider: () -> String?
-) {
+) : DevStatusFetcher {
     private val log = Logger.getInstance(JiraApiClient::class.java)
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -392,7 +392,7 @@ class JiraApiClient(
      * Note: This is an internal Jira API (not officially supported) but has been
      * stable since Jira 7.x and powers Jira's own Development Panel.
      */
-    suspend fun getDevStatusBranches(issueId: String): ApiResult<List<DevStatusBranch>> {
+    override suspend fun getDevStatusBranches(issueId: String): ApiResult<List<DevStatusBranch>> {
         log.debug("[Jira:API] GET /rest/dev-status/1.0/issue/detail (issueId=$issueId, type=stash, data=branch)")
         return try {
             val result = get<DevStatusResponse>(
@@ -466,19 +466,19 @@ class JiraApiClient(
         return get<JiraSprintSearchResult>("/rest/agile/1.0/board/$boardId/sprint?state=closed&startAt=$startAt&maxResults=$maxResults")
     }
 
-    suspend fun getDevStatusPullRequests(issueId: String): ApiResult<List<DevStatusPullRequest>> =
+    override suspend fun getDevStatusPullRequests(issueId: String): ApiResult<List<DevStatusPullRequest>> =
         fetchDevStatus(issueId, "pullrequest") { it.pullRequests }
 
-    suspend fun getDevStatusCommits(issueId: String): ApiResult<List<DevStatusCommit>> =
+    override suspend fun getDevStatusCommits(issueId: String): ApiResult<List<DevStatusCommit>> =
         fetchDevStatus(issueId, "repository") { d -> d.repositories.flatMap { it.commits } }
 
-    suspend fun getDevStatusBuilds(issueId: String): ApiResult<List<DevStatusBuild>> =
+    override suspend fun getDevStatusBuilds(issueId: String): ApiResult<List<DevStatusBuild>> =
         fetchDevStatus(issueId, "build") { it.builds }
 
-    suspend fun getDevStatusDeployments(issueId: String): ApiResult<List<DevStatusDeployment>> =
+    override suspend fun getDevStatusDeployments(issueId: String): ApiResult<List<DevStatusDeployment>> =
         fetchDevStatus(issueId, "deployment") { it.deployments }
 
-    suspend fun getDevStatusReviews(issueId: String): ApiResult<List<DevStatusReview>> =
+    override suspend fun getDevStatusReviews(issueId: String): ApiResult<List<DevStatusReview>> =
         fetchDevStatus(issueId, "review") { it.reviews }
 
     private suspend inline fun <reified R> fetchDevStatus(

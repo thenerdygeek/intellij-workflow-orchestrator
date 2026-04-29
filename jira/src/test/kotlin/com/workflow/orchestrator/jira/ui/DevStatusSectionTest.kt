@@ -83,8 +83,8 @@ class DevStatusSectionTest {
     fun `bundle with commits and builds produces expected summary`() {
         val bundle = emptyBundle().copy(
             commits = listOf(
-                DevStatusCommitData("abc1234", "fix thing", "", null, null, false),
-                DevStatusCommitData("def5678", "add feature", "", null, null, false)
+                DevStatusCommitData("abc1234abc1234abc1234abc1234abc1234abc1234", "abc1234", "fix thing", "", null, null, false),
+                DevStatusCommitData("def5678def5678def5678def5678def5678def5678", "def5678", "add feature", "", null, null, false)
             ),
             builds = listOf(DevStatusBuildData("Build #5", "", "SUCCESSFUL", null, null))
         )
@@ -96,7 +96,7 @@ class DevStatusSectionTest {
         val bundle = DevStatusBundle(
             branches = listOf(DevStatusBranchData("feature/foo", "")),
             pullRequests = listOf(DevStatusPrData("PR-1", "", "OPEN", null)),
-            commits = listOf(DevStatusCommitData("abc1234", "msg", "", null, null, false)),
+            commits = listOf(DevStatusCommitData("abc1234abc1234abc1234abc1234abc1234abc1234", "abc1234", "msg", "", null, null, false)),
             builds = listOf(DevStatusBuildData("Build", "", "SUCCESSFUL", null, null)),
             deployments = listOf(DevStatusDeploymentData("deploy", "", "SUCCESS", "prod", "production", null)),
             reviews = listOf(DevStatusReviewData("Review 1", "", "APPROVED", emptyList(), null)),
