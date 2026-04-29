@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
@@ -17,11 +18,11 @@ import kotlin.coroutines.coroutineContext
 
 class SearchCodeTool : AgentTool {
     override val name = "search_code"
-    override val description = "Perform a regex search across files in a specified directory, providing context-rich results. This tool searches for patterns or specific content across multiple files, displaying each match with encapsulating context. Use this for finding code patterns, function definitions, imports, error messages, or any text content across the codebase. Supports three output modes: 'files' (paths only — default, lightweight), 'content' (matching lines with context), 'count' (match counts per file)."
+    override val description = "Perform a regex search across files in a specified directory, providing context-rich results. This tool searches for patterns or specific content across multiple files, displaying each match with encapsulating context. Use this for finding code patterns, function definitions, imports, error messages, or any text content across the codebase. The path may also point under the agent's data directory (~/.workflow-orchestrator/) to grep through spilled tool output (look under sessions/{id}/tool-output/); matches outside the project are emitted as absolute canonical paths. Supports three output modes: 'files' (paths only — default, lightweight), 'content' (matching lines with context), 'count' (match counts per file)."
     override val parameters = FunctionParameters(
         properties = mapOf(
             "pattern" to ParameterProperty(type = "string", description = "The regular expression pattern to search for. Uses standard regex syntax. Literal strings are also accepted and will be auto-escaped if they contain invalid regex."),
-            "path" to ParameterProperty(type = "string", description = "The path of the directory to search in (absolute or relative to the project root). This directory will be recursively searched. Defaults to project root."),
+            "path" to ParameterProperty(type = "string", description = "The path of the directory to search in (absolute or relative to the project root). May also point under ~/.workflow-orchestrator/ (e.g. agent session tool-output dir) to search spilled output. This directory will be recursively searched. Defaults to project root."),
             "output_mode" to ParameterProperty(type = "string", description = "Output mode: 'files' (file paths only, default — lightweight for discovery), 'content' (matching lines with surrounding context), 'count' (match counts per file)."),
             "file_type" to ParameterProperty(type = "string", description = "File extension filter (e.g., 'kt' for Kotlin files, 'java' for Java files). If not provided, it will search all files."),
             "case_insensitive" to ParameterProperty(type = "boolean", description = "Case-insensitive search. Default: false."),
@@ -41,9 +42,12 @@ class SearchCodeTool : AgentTool {
         )
         private val SKIP_DIRS = setOf(
             ".git", ".idea", "node_modules", "target", "build", ".gradle", ".worktrees", ".workflow",
-            "out", "dist", ".svn", ".hg", "__pycache__", ".tox", ".mypy_cache"
+            "out", "dist", ".svn", ".hg", "__pycache__", ".tox", ".mypy_cache",
+            "api-debug", "checkpoints"
         )
     }
+
+    private val log = Logger.getInstance(SearchCodeTool::class.java)
 
     data class SearchMatch(
         val relativePath: String,
@@ -71,7 +75,7 @@ class SearchCodeTool : AgentTool {
             ?: return ToolResult("Error: Project base path not available", "Error: no project path", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
         val searchRoot = if (searchPath != null) {
-            val (validatedPath, pathError) = PathValidator.resolveAndValidate(searchPath, basePath)
+            val (validatedPath, pathError) = PathValidator.resolveAndValidateForRead(searchPath, basePath)
             if (pathError != null) return pathError
             File(validatedPath!!)
         } else {
@@ -91,7 +95,13 @@ class SearchCodeTool : AgentTool {
 
         val collectContext = outputMode == "content" && contextLines > 0
         val matches = mutableListOf<SearchMatch>()
-        searchFiles(searchRoot, basePath, regex, fileType, collectContext, contextLines, matches, maxResults)
+        val canonicalProjectRoot = try {
+            File(basePath).canonicalPath
+        } catch (e: Exception) {
+            log.warn("canonicalPath failed for $basePath; falling back to non-canonical (inside-project relative paths may degrade)", e)
+            basePath
+        }
+        searchFiles(searchRoot, canonicalProjectRoot, regex, fileType, collectContext, contextLines, matches, maxResults)
 
         if (matches.isEmpty()) {
             return ToolResult(
@@ -166,7 +176,7 @@ class SearchCodeTool : AgentTool {
 
     private fun searchFiles(
         dir: File,
-        basePath: String,
+        canonicalProjectRoot: String,
         regex: Regex,
         fileType: String?,
         collectContext: Boolean,
@@ -185,7 +195,7 @@ class SearchCodeTool : AgentTool {
 
             if (file.isDirectory) {
                 if (file.name !in SKIP_DIRS) {
-                    searchFiles(file, basePath, regex, fileType, collectContext, contextLines, matches, maxResults)
+                    searchFiles(file, canonicalProjectRoot, regex, fileType, collectContext, contextLines, matches, maxResults)
                 }
                 continue
             }
@@ -195,7 +205,12 @@ class SearchCodeTool : AgentTool {
             if (fileType != null && file.extension.lowercase() != fileType) continue
 
             try {
-                val relativePath = file.absolutePath.removePrefix(basePath).removePrefix("/")
+                val canonical = try { file.canonicalPath } catch (_: Exception) { file.absolutePath }
+                val relativePath = if (canonical.startsWith(canonicalProjectRoot + File.separator)) {
+                    canonical.removePrefix(canonicalProjectRoot + File.separator).replace('\\', '/')
+                } else {
+                    canonical.replace('\\', '/')
+                }
                 if (collectContext) {
                     // Need full file lines for context window — read all lines
                     val lines = file.readLines(Charsets.UTF_8)

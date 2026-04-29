@@ -18,6 +18,9 @@ class GlobFilesToolTest {
     @TempDir
     lateinit var tempDir: Path
 
+    @TempDir
+    lateinit var fakeHomeDir: Path
+
     private lateinit var project: Project
 
     @BeforeEach
@@ -219,5 +222,91 @@ class GlobFilesToolTest {
         assertTrue(tool.parameters.properties.containsKey("pattern"))
         assertTrue(tool.parameters.properties.containsKey("path"))
         assertTrue(tool.parameters.properties.containsKey("max_results"))
+    }
+
+    @Test
+    fun `finds spilled tool-output file under agent data dir and emits absolute canonical path`() = runTest {
+        val originalHome = System.getProperty("user.home")
+        System.setProperty("user.home", fakeHomeDir.toFile().absolutePath)
+        try {
+            val sessionDir = File(fakeHomeDir.toFile(), ".workflow-orchestrator/proj-abc/agent/sessions/sess-1").apply { mkdirs() }
+            val toolOutputDir = File(sessionDir, "tool-output").apply { mkdirs() }
+            val spilled = File(toolOutputDir, "run_command-1234-output.txt").apply {
+                writeText("BUILD FAILURE\n  at com.example.Foo.bar(Foo.kt:42)\n")
+            }
+
+            val result = GlobFilesTool().execute(
+                buildJsonObject {
+                    put("pattern", "**/*.txt")
+                    put("path", sessionDir.absolutePath)
+                }, project
+            )
+
+            assertFalse(result.isError, "glob under agent data dir should be allowed; got: ${result.content}")
+            val emitted = result.content.lines().first { it.isNotBlank() }
+            // Outside-project hits emit the absolute canonical path — no relativized "../" form.
+            assertTrue(File(emitted).isAbsolute, "Outside-project path should be absolute: $emitted")
+            assertEquals(spilled.canonicalPath, File(emitted).canonicalPath)
+        } finally {
+            System.setProperty("user.home", originalHome)
+        }
+    }
+
+    @Test
+    fun `glob match under agent data dir round-trips into ReadFileTool`() = runTest {
+        val originalHome = System.getProperty("user.home")
+        System.setProperty("user.home", fakeHomeDir.toFile().absolutePath)
+        try {
+            val sessionDir = File(fakeHomeDir.toFile(), ".workflow-orchestrator/proj-abc/agent/sessions/sess-2").apply { mkdirs() }
+            val toolOutputDir = File(sessionDir, "tool-output").apply { mkdirs() }
+            val spilled = File(toolOutputDir, "long-output.txt").apply { writeText("SENTINEL_TOKEN_XYZ\n") }
+
+            val globResult = GlobFilesTool().execute(
+                buildJsonObject {
+                    put("pattern", "**/*.txt")
+                    put("path", sessionDir.absolutePath)
+                }, project
+            )
+            assertFalse(globResult.isError)
+            val emittedPath = globResult.content.lines().first { it.isNotBlank() }
+
+            val readResult = ReadFileTool().execute(
+                buildJsonObject { put("path", emittedPath) }, project
+            )
+            assertFalse(readResult.isError, "ReadFileTool should accept the path glob_files emitted (got: ${readResult.content})")
+            assertTrue(readResult.content.contains("SENTINEL_TOKEN_XYZ"), "Read should return file contents")
+            assertEquals(spilled.canonicalPath, File(emittedPath).canonicalPath)
+        } finally {
+            System.setProperty("user.home", originalHome)
+        }
+    }
+
+    @Test
+    fun `skips api-debug and checkpoints subdirs under agent sessions`() = runTest {
+        val originalHome = System.getProperty("user.home")
+        System.setProperty("user.home", fakeHomeDir.toFile().absolutePath)
+        try {
+            val sessionDir = File(fakeHomeDir.toFile(), ".workflow-orchestrator/proj-abc/agent/sessions/sess-3").apply { mkdirs() }
+            File(sessionDir, "tool-output").mkdirs()
+            File(sessionDir, "tool-output/keep.txt").writeText("keep")
+            File(sessionDir, "api-debug").mkdirs()
+            File(sessionDir, "api-debug/skip.txt").writeText("skip")
+            File(sessionDir, "checkpoints").mkdirs()
+            File(sessionDir, "checkpoints/also-skip.txt").writeText("also-skip")
+
+            val result = GlobFilesTool().execute(
+                buildJsonObject {
+                    put("pattern", "**/*.txt")
+                    put("path", sessionDir.absolutePath)
+                }, project
+            )
+
+            assertFalse(result.isError)
+            assertTrue(result.content.contains("keep.txt"))
+            assertFalse(result.content.contains("skip.txt"), "api-debug/ should be skipped: ${result.content}")
+            assertFalse(result.content.contains("also-skip.txt"), "checkpoints/ should be skipped: ${result.content}")
+        } finally {
+            System.setProperty("user.home", originalHome)
+        }
     }
 }

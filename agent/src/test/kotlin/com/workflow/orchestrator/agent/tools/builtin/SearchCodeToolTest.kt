@@ -18,6 +18,9 @@ class SearchCodeToolTest {
     @TempDir
     lateinit var tempDir: Path
 
+    @TempDir
+    lateinit var fakeHomeDir: Path
+
     private lateinit var project: Project
 
     @BeforeEach
@@ -429,5 +432,64 @@ class SearchCodeToolTest {
         assertTrue(tool.parameters.properties.containsKey("file_type"))
         assertTrue(tool.parameters.properties.containsKey("case_insensitive"))
         assertTrue(tool.parameters.properties.containsKey("context_lines"))
+    }
+
+    @Test
+    fun `greps spilled tool-output under agent data dir and emits absolute canonical path`() = runTest {
+        val originalHome = System.getProperty("user.home")
+        System.setProperty("user.home", fakeHomeDir.toFile().absolutePath)
+        try {
+            val toolOutputDir = File(fakeHomeDir.toFile(), ".workflow-orchestrator/proj-abc/agent/sessions/sess-1/tool-output").apply { mkdirs() }
+            val spilled = File(toolOutputDir, "run_command-9999-output.txt").apply {
+                writeText("trace line\nNullPointerException at com.example.Foo.bar(Foo.kt:42)\nmore trace\n")
+            }
+
+            val result = SearchCodeTool().execute(
+                buildJsonObject {
+                    put("pattern", "NullPointerException")
+                    put("path", toolOutputDir.absolutePath)
+                    put("output_mode", "content")
+                }, project
+            )
+
+            assertFalse(result.isError, "search_code under agent data dir should be allowed; got: ${result.content}")
+            assertTrue(result.content.contains("NullPointerException"))
+            // Outside-project hits should emit the absolute canonical path, not a junk relative path.
+            val firstLine = result.content.lines().first { it.isNotBlank() }
+            val pathInLine = firstLine.substringBefore(":")
+            assertTrue(File(pathInLine).isAbsolute, "Emitted path should be absolute: $firstLine")
+            assertEquals(spilled.canonicalPath, File(pathInLine).canonicalPath)
+        } finally {
+            System.setProperty("user.home", originalHome)
+        }
+    }
+
+    @Test
+    fun `search_code match path round-trips into ReadFileTool`() = runTest {
+        val originalHome = System.getProperty("user.home")
+        System.setProperty("user.home", fakeHomeDir.toFile().absolutePath)
+        try {
+            val toolOutputDir = File(fakeHomeDir.toFile(), ".workflow-orchestrator/proj-abc/agent/sessions/sess-rt/tool-output").apply { mkdirs() }
+            val spilled = File(toolOutputDir, "build-output.txt").apply { writeText("hit-me ROUND_TRIP_TOKEN end\n") }
+
+            val searchResult = SearchCodeTool().execute(
+                buildJsonObject {
+                    put("pattern", "ROUND_TRIP_TOKEN")
+                    put("path", toolOutputDir.absolutePath)
+                    put("output_mode", "files")
+                }, project
+            )
+            assertFalse(searchResult.isError)
+            val emittedPath = searchResult.content.lines().first { it.isNotBlank() }
+
+            val readResult = ReadFileTool().execute(
+                buildJsonObject { put("path", emittedPath) }, project
+            )
+            assertFalse(readResult.isError, "ReadFileTool should accept the path search_code emitted (got: ${readResult.content})")
+            assertTrue(readResult.content.contains("ROUND_TRIP_TOKEN"))
+            assertEquals(spilled.canonicalPath, File(emittedPath).canonicalPath)
+        } finally {
+            System.setProperty("user.home", originalHome)
+        }
     }
 }
