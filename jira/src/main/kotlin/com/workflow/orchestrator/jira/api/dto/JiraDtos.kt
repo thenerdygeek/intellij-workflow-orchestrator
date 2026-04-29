@@ -244,13 +244,18 @@ data class DevStatusResponse(
 @Serializable
 data class DevStatusDetail(
     val branches: List<DevStatusBranch> = emptyList(),
-    val pullRequests: List<DevStatusPullRequest> = emptyList()
+    val pullRequests: List<DevStatusPullRequest> = emptyList(),
+    val repositories: List<DevStatusRepository> = emptyList(),
+    val builds: List<DevStatusBuild> = emptyList(),
+    val deployments: List<DevStatusDeployment> = emptyList(),
+    val reviews: List<DevStatusReview> = emptyList()
 )
 
 @Serializable
 data class DevStatusBranch(
     val name: String,
-    val url: String = ""
+    val url: String = "",
+    val lastCommit: DevStatusCommit? = null
 )
 
 @Serializable
@@ -259,6 +264,64 @@ data class DevStatusPullRequest(
     val url: String = "",
     val status: String = "",
     val lastUpdate: String? = null
+)
+
+@Serializable
+data class DevStatusRepository(
+    val name: String = "",
+    val url: String = "",
+    val commits: List<DevStatusCommit> = emptyList()
+)
+
+@Serializable
+data class DevStatusCommit(
+    val id: String = "",
+    val displayId: String = "",
+    val message: String = "",
+    val url: String = "",
+    val authorTimestamp: String? = null,
+    val author: DevStatusAuthor? = null,
+    val merge: Boolean = false
+)
+
+@Serializable
+data class DevStatusBuild(
+    val name: String = "",
+    val url: String = "",
+    val state: String = "",
+    val lastUpdated: String? = null,
+    val description: String? = null
+)
+
+@Serializable
+data class DevStatusDeployment(
+    val displayName: String = "",
+    val url: String = "",
+    val state: String = "",
+    val environment: DevStatusEnvironment? = null,
+    val lastUpdated: String? = null
+)
+
+@Serializable
+data class DevStatusEnvironment(
+    val displayName: String = "",
+    val type: String = ""
+)
+
+@Serializable
+data class DevStatusReview(
+    val id: String = "",
+    val url: String = "",
+    val state: String = "",
+    val name: String = "",
+    val reviewers: List<DevStatusAuthor> = emptyList(),
+    val lastUpdated: String? = null
+)
+
+@Serializable
+data class DevStatusAuthor(
+    val name: String = "",
+    val avatar: String = ""
 )
 
 // --- Fix Versions ---
