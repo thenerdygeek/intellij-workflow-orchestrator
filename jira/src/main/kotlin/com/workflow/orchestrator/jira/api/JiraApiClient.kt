@@ -466,15 +466,34 @@ class JiraApiClient(
         return get<JiraSprintSearchResult>("/rest/agile/1.0/board/$boardId/sprint?state=closed&startAt=$startAt&maxResults=$maxResults")
     }
 
-    suspend fun getDevStatusPullRequests(issueId: String): ApiResult<List<DevStatusPullRequest>> {
-        log.debug("[Jira:API] GET /rest/dev-status/1.0/issue/detail (issueId=$issueId, type=stash, data=pullrequest)")
+    suspend fun getDevStatusPullRequests(issueId: String): ApiResult<List<DevStatusPullRequest>> =
+        fetchDevStatus(issueId, "pullrequest") { it.pullRequests }
+
+    suspend fun getDevStatusCommits(issueId: String): ApiResult<List<DevStatusCommit>> =
+        fetchDevStatus(issueId, "repository") { d -> d.repositories.flatMap { it.commits } }
+
+    suspend fun getDevStatusBuilds(issueId: String): ApiResult<List<DevStatusBuild>> =
+        fetchDevStatus(issueId, "build") { it.builds }
+
+    suspend fun getDevStatusDeployments(issueId: String): ApiResult<List<DevStatusDeployment>> =
+        fetchDevStatus(issueId, "deployment") { it.deployments }
+
+    suspend fun getDevStatusReviews(issueId: String): ApiResult<List<DevStatusReview>> =
+        fetchDevStatus(issueId, "review") { it.reviews }
+
+    private suspend inline fun <reified R> fetchDevStatus(
+        issueId: String,
+        dataType: String,
+        crossinline picker: (DevStatusDetail) -> List<R>
+    ): ApiResult<List<R>> {
+        log.debug("[Jira:API] GET /rest/dev-status/1.0/issue/detail (issueId=$issueId, type=stash, data=$dataType)")
         return try {
             val response = get<DevStatusResponse>(
-                "/rest/dev-status/1.0/issue/detail?issueId=$issueId&applicationType=stash&dataType=pullrequest"
+                "/rest/dev-status/1.0/issue/detail?issueId=$issueId&applicationType=stash&dataType=$dataType"
             )
-            response.map { it.detail.flatMap { d -> d.pullRequests } }
+            response.map { it.detail.flatMap { d -> picker(d) } }
         } catch (e: Exception) {
-            log.warn("[Jira:API] Dev-status PR API failed: ${e.message}")
+            log.warn("[Jira:API] Dev-status $dataType API failed: ${e.message}")
             ApiResult.Success(emptyList())
         }
     }
