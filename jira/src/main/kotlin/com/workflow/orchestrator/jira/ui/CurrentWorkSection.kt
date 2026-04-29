@@ -31,7 +31,7 @@ class CurrentWorkSection(
     private val project: Project,
     private val onTicketClicked: ((String) -> Unit)? = null,
     locatorOverride: TicketBranchLocator? = null,
-) : JPanel(BorderLayout()) {
+) : JPanel(BorderLayout()), com.intellij.openapi.Disposable {
 
     private val settings get() = PluginSettings.getInstance(project)
     private val locator: TicketBranchLocator =
@@ -202,10 +202,15 @@ class CurrentWorkSection(
                 val resolver = DefaultBranchResolver.getInstance(project)
                 val repoPath = repo.root.path
                 resolver.setOverride(repoPath, repo.currentBranchName ?: "", selected)
-                // Invalidate locator cache so the re-render picks up the new target branch.
+                // Invalidate locator cache, then refresh on EDT so the re-render
+                // picks up the new target branch (sequenced to avoid a race
+                // between invalidate and locate).
                 val ticketId = settings.state.activeTicketId.orEmpty()
-                scope.launch { locator.invalidate(ticketId) }
-                refresh()
+                scope.launch {
+                    locator.invalidate(ticketId)
+                    com.intellij.openapi.application.ApplicationManager.getApplication()
+                        .invokeLater { refresh() }
+                }
             }
             .createPopup()
 
@@ -261,5 +266,9 @@ class CurrentWorkSection(
 
         cardPanel.add(inner, BorderLayout.CENTER)
         add(cardPanel, BorderLayout.CENTER)
+    }
+
+    override fun dispose() {
+        scope.cancel()
     }
 }

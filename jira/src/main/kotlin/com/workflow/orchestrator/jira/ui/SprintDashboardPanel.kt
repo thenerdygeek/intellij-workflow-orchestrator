@@ -336,6 +336,7 @@ class SprintDashboardPanel(
                 }
             }
         })
+        Disposer.register(this, currentWorkSection)
         val currentWorkCollapsible = CollapsibleSection(
             title = "CURRENTLY WORKING ON",
             content = currentWorkSection,
