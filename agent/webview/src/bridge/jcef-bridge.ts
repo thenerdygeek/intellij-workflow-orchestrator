@@ -559,6 +559,7 @@ export const kotlinBridge = {
   sendMessage(text: string): void { callKotlin('_sendMessage', text); },
   changeModel(modelId: string): void { callKotlin('_changeModel', modelId); },
   togglePlanMode(enabled: boolean): void { callKotlin('_togglePlanMode', enabled); },
+  compactContext(force: boolean): void { callKotlin('_compactContext', force); },
   toggleRalphLoop(enabled: boolean): void { callKotlin('_toggleRalphLoop', enabled); },
   activateSkill(name: string): void { callKotlin('_activateSkill', name); },
   requestFocusIde(): void { callKotlin('_requestFocusIde'); },

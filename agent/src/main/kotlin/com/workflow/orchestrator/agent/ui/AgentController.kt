@@ -467,6 +467,64 @@ class AgentController(
         panel.setCefNavigationCallbacks(onNavigateToFile = ::navigateToFile)
         panel.onValidatePaths = ::handleValidatePaths
         panel.onSendMessage = ::executeTask
+        panel.setOnCompactContext(::compactContext)
+    }
+
+    /**
+     * Manually compact conversation context. Triggered by the TopBar Compact button.
+     *
+     * @param force when true, bypasses the 70% utilization floor in [AgentService.compactContext]
+     *   so the user can clean up nudge-pair pollution / misbehavior at any utilization level.
+     *
+     * Safety: blocks while the agent loop is actively running (ContextManager is not thread-safe).
+     */
+    private fun compactContext(force: Boolean) {
+        val cm = contextManager
+        if (cm == null) {
+            invokeLater { dashboard.appendStatus("No active session to compact.", RichStreamingPanel.StatusType.WARNING) }
+            return
+        }
+        if (currentJob?.isActive == true) {
+            invokeLater {
+                dashboard.appendStatus(
+                    "Cannot compact while agent is running. Wait for the current turn to complete or cancel first.",
+                    RichStreamingPanel.StatusType.WARNING
+                )
+            }
+            return
+        }
+        val utilBefore = cm.utilizationPercent()
+        invokeLater { dashboard.appendStatus("Compacting context${if (force) " (forced)" else ""}...", RichStreamingPanel.StatusType.INFO) }
+
+        currentJob = controllerScope.launch(Dispatchers.IO) {
+            try {
+                val result = service.compactContext(cm, force = force)
+                if (result == null) {
+                    invokeLater {
+                        dashboard.appendStatus(
+                            "Context at ${"%.0f".format(utilBefore)}% — below compaction threshold (70%).",
+                            RichStreamingPanel.StatusType.INFO
+                        )
+                    }
+                    return@launch
+                }
+                val (tokensBefore, tokensAfter) = result
+                val utilAfter = cm.utilizationPercent()
+                val saved = tokensBefore - tokensAfter
+                invokeLater {
+                    dashboard.appendStatus(
+                        "Compacted: ${"%.0f".format(utilBefore)}% → ${"%.0f".format(utilAfter)}% " +
+                            "($tokensBefore → $tokensAfter tokens, saved $saved)",
+                        RichStreamingPanel.StatusType.INFO
+                    )
+                }
+            } catch (e: Exception) {
+                LOG.warn("Manual compaction failed", e)
+                invokeLater { dashboard.appendError("Compaction failed: ${e.message}") }
+            } finally {
+                currentJob = null
+            }
+        }
     }
 
     private fun wireCallbacks() {

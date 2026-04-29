@@ -107,6 +107,21 @@ export const TopBar = memo(function TopBar() {
                 {statusLabel}
               </span>
             )}
+            <button
+              onClick={() => kotlinBridge.compactContext(true)}
+              disabled={busy}
+              className="flex items-center rounded px-1 py-0.5 transition-colors hover:bg-[var(--hover-overlay)] disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{ color: 'var(--fg-muted, #6b7280)' }}
+              title="Compact context — clean up conversation history (deduplicates file reads, drops middle messages). Useful when the agent gets stuck repeating empty responses."
+              aria-label="Compact context"
+            >
+              {/* Compress / collapse-vertical SVG icon */}
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                <path d="M4 6l4-3 4 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M4 10l4 3 4-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M2 8h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+            </button>
           </div>
         ) : (
           <span className="text-[10px]" style={{ color: 'var(--fg-muted, #6b7280)' }}>

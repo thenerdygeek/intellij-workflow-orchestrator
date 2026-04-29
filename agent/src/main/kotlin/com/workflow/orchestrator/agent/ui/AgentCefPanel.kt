@@ -81,6 +81,7 @@ class AgentCefPanel(
     private var sendMessageQuery: JBCefJSQuery? = null
     private var changeModelQuery: JBCefJSQuery? = null
     private var togglePlanModeQuery: JBCefJSQuery? = null
+    private var compactContextQuery: JBCefJSQuery? = null
     private var toggleRalphLoopQuery: JBCefJSQuery? = null
     private var activateSkillQuery: JBCefJSQuery? = null
     private var requestFocusIdeQuery: JBCefJSQuery? = null
@@ -182,6 +183,8 @@ class AgentCefPanel(
     var onSendMessage: ((String) -> Unit)? = null
     var onChangeModel: ((String) -> Unit)? = null
     var onTogglePlanMode: ((Boolean) -> Unit)? = null
+    /** Callback when user clicks the Compact button in the TopBar. Param is `force` — true bypasses the 70% utilization floor. */
+    var onCompactContext: ((Boolean) -> Unit)? = null
     var onToggleRalphLoop: ((Boolean) -> Unit)? = null
     var onActivateSkill: ((String) -> Unit)? = null
     var onRequestFocusIde: (() -> Unit)? = null
@@ -387,6 +390,7 @@ class AgentCefPanel(
         sendMessageQuery = registerQuery(b) { text -> onSendMessage?.invoke(text); JBCefJSQuery.Response("ok") }
         changeModelQuery = registerQuery(b) { modelId -> onChangeModel?.invoke(modelId); JBCefJSQuery.Response("ok") }
         togglePlanModeQuery = registerQuery(b) { enabled -> onTogglePlanMode?.invoke(enabled == "true"); JBCefJSQuery.Response("ok") }
+        compactContextQuery = registerQuery(b) { force -> onCompactContext?.invoke(force == "true"); JBCefJSQuery.Response("ok") }
         toggleRalphLoopQuery = registerQuery(b) { enabled -> onToggleRalphLoop?.invoke(enabled == "true"); JBCefJSQuery.Response("ok") }
         activateSkillQuery = registerQuery(b) { name -> onActivateSkill?.invoke(name); JBCefJSQuery.Response("ok") }
         requestFocusIdeQuery = registerQuery(b) { _ -> onRequestFocusIde?.invoke(); JBCefJSQuery.Response("ok") }
@@ -581,6 +585,7 @@ class AgentCefPanel(
                     injectBridge("_sendMessage") { sendMessageQuery?.let { q -> js("window._sendMessage = function(text) { ${q.inject("text")} }") } }
                     injectBridge("_changeModel") { changeModelQuery?.let { q -> js("window._changeModel = function(modelId) { ${q.inject("modelId")} }") } }
                     injectBridge("_togglePlanMode") { togglePlanModeQuery?.let { q -> js("window._togglePlanMode = function(enabled) { ${q.inject("String(enabled)")} }") } }
+                    injectBridge("_compactContext") { compactContextQuery?.let { q -> js("window._compactContext = function(force) { ${q.inject("String(force)")} }") } }
                     injectBridge("_toggleRalphLoop") { toggleRalphLoopQuery?.let { q -> js("window._toggleRalphLoop = function(enabled) { ${q.inject("String(enabled)")} }") } }
                     injectBridge("_activateSkill") { activateSkillQuery?.let { q -> js("window._activateSkill = function(name) { ${q.inject("name")} }") } }
                     injectBridge("_requestFocusIde") { requestFocusIdeQuery?.let { q -> js("window._requestFocusIde = function() { ${q.inject("'focus'")} }") } }

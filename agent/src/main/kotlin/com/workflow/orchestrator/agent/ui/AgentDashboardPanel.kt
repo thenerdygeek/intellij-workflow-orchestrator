@@ -153,6 +153,11 @@ class AgentDashboardPanel(
         cefPanel?.onViewInEditor = action
     }
 
+    /** Wire the "Compact context" toolbar button. Param `force` bypasses the 70% utilization floor. */
+    fun setOnCompactContext(action: (Boolean) -> Unit) {
+        cefPanel?.onCompactContext = action
+    }
+
     // ═══════════════════════════════════════════════════
     //  Delegated state methods — route to JCEF
     // ═══════════════════════════════════════════════════
