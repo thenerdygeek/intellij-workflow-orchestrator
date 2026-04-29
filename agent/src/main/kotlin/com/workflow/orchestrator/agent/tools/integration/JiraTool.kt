@@ -39,7 +39,7 @@ class JiraTool : AgentTool {
 Jira ticket management — issues, sprints, boards, transitions, comments, time logging.
 
 Actions and their parameters:
-- get_ticket(key) → Full ticket details
+- get_ticket(key, include_dev_status?) → Full ticket details. When include_dev_status=true, also embeds the linked dev panel (branches, PRs, commits, builds, deployments, reviews) — use this for broad questions like 'has this been deployed' or 'what's the status'
 - get_transitions(key) → Available status transitions
 - transition(key, transition_id, fields?, comment?) → Move ticket to new status.
   If the response payload is MissingFields, call ask_followup_question for each
@@ -63,7 +63,6 @@ Actions and their parameters:
 - search_tickets(jql, max_results?) → Run raw JQL query
 - get_linked_prs(key) → PRs linked to issue
 - get_dev_branches(key) → Dev branches for issue
-- get_dev_status(key, full?) → Linked dev activity for issue (full=true returns commits, builds, deploys, reviews)
 - start_work(key, branch_name, source_branch) → Create branch and start work
 - download_attachment(key, attachment_id) → Download attachment content
 
@@ -80,7 +79,7 @@ description optional: for approval dialog on write actions.
                     "get_ticket", "get_transitions", "transition", "comment", "get_comments",
                     "log_work", "get_worklogs", "get_sprints", "get_linked_prs", "get_boards",
                     "get_sprint_issues", "get_board_issues", "search_issues", "search_tickets",
-                    "get_dev_branches", "get_dev_status", "start_work", "download_attachment"
+                    "get_dev_branches", "start_work", "download_attachment"
                 )
             ),
             "key" to ParameterProperty(
@@ -160,11 +159,10 @@ description optional: for approval dialog on write actions.
                 type = "string",
                 description = "Brief description of this action shown to user in approval dialog — recommended for transition, comment, start_work"
             ),
-            "full" to ParameterProperty(
+            "include_dev_status" to ParameterProperty(
                 type = "boolean",
-                description = "When true, returns complete dev status: branches, PRs, commits, builds, deployments, reviews. " +
-                    "When false (default), returns only branches + PRs. " +
-                    "Use full=true for broad questions like 'has this been deployed' or 'what\\'s the status of this ticket'."
+                description = "When true, get_ticket also embeds the full dev panel (branches, PRs, commits, builds, deployments, reviews) " +
+                    "in the response. Default false. Use for broad questions like 'has this been deployed' or 'what\\'s the status of this ticket'."
             )
         ),
         required = listOf("action")
@@ -190,7 +188,24 @@ description optional: for approval dialog on write actions.
                 val key = params["key"]?.jsonPrimitive?.content
                     ?: return ToolValidation.missingParam("key")
                 ToolValidation.validateJiraKey(key)?.let { return it }
-                service.getTicket(key).toAgentToolResult()
+                val includeDevStatus = params["include_dev_status"]?.jsonPrimitive?.content?.lowercase() == "true"
+                if (!includeDevStatus) {
+                    service.getTicket(key).toAgentToolResult()
+                } else {
+                    coroutineScope {
+                        val ticketDeferred = async { service.getTicket(key) }
+                        val devStatusDeferred = async { service.getFullDevStatus(key) }
+                        val ticketResult = ticketDeferred.await()
+                        val devStatus = devStatusDeferred.await()
+                        if (ticketResult.isError) {
+                            return@coroutineScope ticketResult.toAgentToolResult()
+                        }
+                        val ticketAgent = ticketResult.toAgentToolResult()
+                        val devStatusBlock = formatDevStatusBundle(key, devStatus.data)
+                        val combined = ticketAgent.content + "\n\n" + devStatusBlock
+                        ToolResult(combined, "${ticketAgent.summary} · ${devStatus.data.summaryLine()}", TokenEstimator.estimate(combined))
+                    }
+                }
             }
 
             "get_transitions" -> {
@@ -421,78 +436,6 @@ description optional: for approval dialog on write actions.
                 service.getDevStatusBranches(issueKey).toAgentToolResult()
             }
 
-            "get_dev_status" -> {
-                val issueKey = params["key"]?.jsonPrimitive?.content
-                    ?: params["issue_key"]?.jsonPrimitive?.content
-                    ?: params["issue_id"]?.jsonPrimitive?.content
-                    ?: return ToolValidation.missingParam("key")
-                ToolValidation.validateNotBlank(issueKey, "key")?.let { return it }
-                val full = params["full"]?.jsonPrimitive?.content?.lowercase() == "true"
-                if (!full) {
-                    coroutineScope {
-                        val branchesDeferred = async { service.getDevStatusBranches(issueKey) }
-                        val prsDeferred = async { service.getLinkedPullRequests(issueKey) }
-                        val branches = branchesDeferred.await()
-                        val prs = prsDeferred.await()
-                        if (branches.isError && prs.isError) {
-                            val msg = "Could not fetch branches or PRs: ${branches.summary} | ${prs.summary}"
-                            return@coroutineScope ToolResult(msg, "Dev status fetch failed", TokenEstimator.estimate(msg), isError = true)
-                        }
-                        val content = buildString {
-                            appendLine("Dev status for $issueKey (branches + PRs):")
-                            if (branches.isError) {
-                                appendLine("Branches: (error: ${branches.summary})")
-                            } else {
-                                appendLine("Branches (${branches.data.size}):")
-                                if (branches.data.isEmpty()) appendLine("  none")
-                                else branches.data.forEach { appendLine("  - ${it.name}${if (it.url.isNotBlank()) " (${it.url})" else ""}") }
-                            }
-                            if (prs.isError) {
-                                appendLine("Pull Requests: (error: ${prs.summary})")
-                            } else {
-                                appendLine("Pull Requests (${prs.data.size}):")
-                                if (prs.data.isEmpty()) appendLine("  none")
-                                else prs.data.forEach { appendLine("  - [${it.status}] ${it.name}${if (it.url.isNotBlank()) " (${it.url})" else ""}") }
-                            }
-                        }.trim()
-                        ToolResult(content, "Branches and PRs for $issueKey", TokenEstimator.estimate(content))
-                    }
-                } else {
-                    val result = service.getFullDevStatus(issueKey)
-                    val bundle = result.data
-                    val content = buildString {
-                        appendLine("Full dev status for $issueKey: ${bundle.summaryLine()}")
-                        if (bundle.fetchErrors > 0) appendLine("Note: ${bundle.fetchErrors} of 6 feeds errored — result may be incomplete.")
-                        if (bundle.branches.isNotEmpty()) {
-                            appendLine("\nBranches (${bundle.branches.size}):")
-                            bundle.branches.forEach { appendLine("  - ${it.name}${if (it.url.isNotBlank()) " (${it.url})" else ""}") }
-                        }
-                        if (bundle.pullRequests.isNotEmpty()) {
-                            appendLine("\nPull Requests (${bundle.pullRequests.size}):")
-                            bundle.pullRequests.forEach { appendLine("  - [${it.status}] ${it.name}${if (it.url.isNotBlank()) " (${it.url})" else ""}") }
-                        }
-                        if (bundle.commits.isNotEmpty()) {
-                            appendLine("\nCommits (${bundle.commits.size}):")
-                            bundle.commits.take(10).forEach { appendLine("  - ${it.displayId}: ${it.message.take(72)}${if (it.merge) " [merge]" else ""}") }
-                            if (bundle.commits.size > 10) appendLine("  ... and ${bundle.commits.size - 10} more")
-                        }
-                        if (bundle.builds.isNotEmpty()) {
-                            appendLine("\nBuilds (${bundle.builds.size}):")
-                            bundle.builds.forEach { appendLine("  - [${it.state}] ${it.name}${if (!it.description.isNullOrBlank()) ": ${it.description}" else ""}${if (it.url.isNotBlank()) " (${it.url})" else ""}") }
-                        }
-                        if (bundle.deployments.isNotEmpty()) {
-                            appendLine("\nDeployments (${bundle.deployments.size}):")
-                            bundle.deployments.forEach { appendLine("  - [${it.state}] ${it.displayName}${if (!it.environmentName.isNullOrBlank()) " → ${it.environmentName}" else ""}${if (it.url.isNotBlank()) " (${it.url})" else ""}") }
-                        }
-                        if (bundle.reviews.isNotEmpty()) {
-                            appendLine("\nReviews (${bundle.reviews.size}):")
-                            bundle.reviews.forEach { appendLine("  - [${it.state}] ${it.name}${if (it.url.isNotBlank()) " (${it.url})" else ""}") }
-                        }
-                    }.trim()
-                    ToolResult(content, bundle.summaryLine(), TokenEstimator.estimate(content))
-                }
-            }
-
             "start_work" -> {
                 val issueKey = params["key"]?.jsonPrimitive?.content
                     ?: params["issue_key"]?.jsonPrimitive?.content
@@ -621,4 +564,34 @@ description optional: for approval dialog on write actions.
         )
         return transitionSvc.executeTransition(key, input)
     }
+
+    private fun formatDevStatusBundle(issueKey: String, bundle: com.workflow.orchestrator.core.model.jira.DevStatusBundle): String = buildString {
+        appendLine("Dev Status for $issueKey: ${bundle.summaryLine()}")
+        if (bundle.fetchErrors > 0) appendLine("Note: ${bundle.fetchErrors} of 6 feeds errored — result may be incomplete.")
+        if (bundle.branches.isNotEmpty()) {
+            appendLine("\nBranches (${bundle.branches.size}):")
+            bundle.branches.forEach { appendLine("  - ${it.name}${if (it.url.isNotBlank()) " (${it.url})" else ""}") }
+        }
+        if (bundle.pullRequests.isNotEmpty()) {
+            appendLine("\nPull Requests (${bundle.pullRequests.size}):")
+            bundle.pullRequests.forEach { appendLine("  - [${it.status}] ${it.name}${if (it.url.isNotBlank()) " (${it.url})" else ""}") }
+        }
+        if (bundle.commits.isNotEmpty()) {
+            appendLine("\nCommits (${bundle.commits.size}):")
+            bundle.commits.take(10).forEach { appendLine("  - ${it.displayId}: ${it.message.take(72)}${if (it.merge) " [merge]" else ""}") }
+            if (bundle.commits.size > 10) appendLine("  ... and ${bundle.commits.size - 10} more")
+        }
+        if (bundle.builds.isNotEmpty()) {
+            appendLine("\nBuilds (${bundle.builds.size}):")
+            bundle.builds.forEach { appendLine("  - [${it.state}] ${it.name}${if (!it.description.isNullOrBlank()) ": ${it.description}" else ""}${if (it.url.isNotBlank()) " (${it.url})" else ""}") }
+        }
+        if (bundle.deployments.isNotEmpty()) {
+            appendLine("\nDeployments (${bundle.deployments.size}):")
+            bundle.deployments.forEach { appendLine("  - [${it.state}] ${it.displayName}${if (!it.environmentName.isNullOrBlank()) " → ${it.environmentName}" else ""}${if (it.url.isNotBlank()) " (${it.url})" else ""}") }
+        }
+        if (bundle.reviews.isNotEmpty()) {
+            appendLine("\nReviews (${bundle.reviews.size}):")
+            bundle.reviews.forEach { appendLine("  - [${it.state}] ${it.name}${if (it.url.isNotBlank()) " (${it.url})" else ""}") }
+        }
+    }.trim()
 }
