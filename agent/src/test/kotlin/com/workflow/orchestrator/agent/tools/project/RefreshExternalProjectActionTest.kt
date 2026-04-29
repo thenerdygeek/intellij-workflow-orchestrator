@@ -1,6 +1,8 @@
 package com.workflow.orchestrator.agent.tools.project
 
+import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.externalSystem.ExternalSystemManager
+import com.intellij.openapi.externalSystem.model.ProjectSystemId
 import com.intellij.openapi.externalSystem.settings.AbstractExternalSystemSettings
 import com.intellij.openapi.externalSystem.settings.ExternalProjectSettings
 import com.intellij.openapi.externalSystem.util.ExternalSystemApiUtil
@@ -13,6 +15,7 @@ import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkAll
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -112,6 +115,101 @@ class RefreshExternalProjectActionTest {
         assertTrue(
             result.content.lowercase().contains("nothing to refresh"),
             "Expected 'nothing to refresh' in content (case-insensitive), got: ${result.content}"
+        )
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Helper: stub a single Maven (or Gradle) root into ExternalSystemApiUtil
+    // ────────────────────────────────────────────────────────────────────────
+
+    private fun stubSingleRoot(systemId: ProjectSystemId, rootPath: String = "/fake/project") {
+        val fakeSettings = mockk<ExternalProjectSettings>(relaxed = true)
+        every { fakeSettings.externalProjectPath } returns rootPath
+        val fakeSystemSettings = mockk<AbstractExternalSystemSettings<*, *, *>>(relaxed = true)
+        @Suppress("UNCHECKED_CAST")
+        every { fakeSystemSettings.linkedProjectsSettings } returns
+            setOf(fakeSettings) as Collection<ExternalProjectSettings>
+        val fakeManager = mockk<ExternalSystemManager<*, *, *, *, *>>(relaxed = true)
+        every { fakeManager.getSystemId() } returns systemId
+
+        mockkStatic(ExternalSystemApiUtil::class)
+        @Suppress("UNCHECKED_CAST")
+        every { ExternalSystemApiUtil.getAllManagers() } returns
+            listOf(fakeManager) as List<ExternalSystemManager<*, *, *, *, *>>
+        every { ExternalSystemApiUtil.getSettings(project, any()) } returns fakeSystemSettings
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Test 3 — Invalid mode → isError=true with "Unknown mode" + valid-mode list
+    // ────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun testInvalidModeReturnsError() = runTest {
+        stubSingleRoot(ProjectSystemId("Maven"))
+
+        val params = buildJsonObject { put("mode", JsonPrimitive("bogus_mode")) }
+        val result = executeRefreshExternalProject(params, project, tool)
+
+        assertTrue(result.isError, "Expected isError=true for unknown mode, got: ${result.content}")
+        assertTrue(
+            result.content.contains("Unknown mode 'bogus_mode'"),
+            "Expected 'Unknown mode' diagnostic, got: ${result.content}"
+        )
+        // Error message should enumerate valid modes so the LLM can recover.
+        assertTrue(result.content.contains("reload"), "Expected 'reload' in valid-mode list")
+        assertTrue(result.content.contains("generate_sources"), "Expected 'generate_sources' in valid-mode list")
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Test 4 — Non-Maven root + non-reload mode is skipped with a Maven-only warning
+    // ────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun testNonReloadOnGradleIsSkippedWithWarning() = runTest {
+        stubSingleRoot(ProjectSystemId("GRADLE", "Gradle"))
+
+        val params = buildJsonObject { put("mode", JsonPrimitive("generate_sources")) }
+        val result = executeRefreshExternalProject(params, project, tool)
+
+        // Non-error overall (this is a warning, not a hard failure for mixed builds)
+        // and the warning text should call out the Maven-only restriction.
+        assertTrue(
+            result.content.contains("Maven-only", ignoreCase = true),
+            "Expected 'Maven-only' warning for Gradle + non-reload, got: ${result.content}"
+        )
+        assertTrue(
+            result.content.contains("Skipped"),
+            "Expected 'Skipped' note for Gradle + non-reload, got: ${result.content}"
+        )
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Test 5 — Maven non-reload mode invokes the matching action ID; when the
+    //          action isn't registered (Maven plugin disabled), surface that as a warning.
+    // ────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun testMavenNonReloadActionMissingProducesWarning() = runTest {
+        stubSingleRoot(ProjectSystemId("Maven"))
+
+        // Simulate Maven plugin disabled: ActionManager.getAction(...) returns null
+        mockkStatic(ActionManager::class)
+        val actionMgr = mockk<ActionManager>(relaxed = true)
+        every { ActionManager.getInstance() } returns actionMgr
+        every { actionMgr.getAction("Maven.UpdateAllFolders") } returns null
+
+        val params = buildJsonObject { put("mode", JsonPrimitive("generate_sources")) }
+        val result = executeRefreshExternalProject(params, project, tool)
+
+        // Action ID must appear in output so the operator can diagnose the disabled-plugin case.
+        assertTrue(
+            result.content.contains("Maven.UpdateAllFolders"),
+            "Expected action ID 'Maven.UpdateAllFolders' in output, got: ${result.content}"
+        )
+        assertTrue(
+            result.content.contains("disabled", ignoreCase = true) ||
+                result.content.contains("not found", ignoreCase = true),
+            "Expected 'disabled' or 'not found' diagnostic, got: ${result.content}"
         )
     }
 }

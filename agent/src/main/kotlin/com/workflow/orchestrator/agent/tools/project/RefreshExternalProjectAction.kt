@@ -1,5 +1,11 @@
 package com.workflow.orchestrator.agent.tools.project
 
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionPlaces
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.Presentation
+import com.intellij.openapi.actionSystem.ex.ActionUtil
+import com.intellij.openapi.actionSystem.impl.SimpleDataContext
 import com.intellij.openapi.externalSystem.model.ProjectSystemId
 import com.intellij.openapi.externalSystem.util.ExternalSystemApiUtil
 import com.intellij.openapi.externalSystem.util.ExternalSystemUtil
@@ -14,13 +20,98 @@ import com.intellij.openapi.externalSystem.importing.ImportSpecBuilder
 import java.io.File
 
 /**
+ * Mode → Maven action ID map. Single source of truth for both validation and dispatch.
+ *
+ *  - `null` = handled directly (currently only `reload`, which uses
+ *    [forceMavenReimport] / [ExternalSystemUtil.refreshProject], not action invocation).
+ *  - non-null = the Maven plugin action ID to invoke (mirrors a tool-window button click).
+ *
+ * Adding a new mode requires only an entry here — `VALID_REFRESH_MODES` derives from the keys.
+ */
+private val MAVEN_MODE_ACTIONS: Map<String, String?> = mapOf(
+    "reload" to null,
+    "generate_sources" to "Maven.UpdateAllFolders",
+    "download_sources" to "Maven.DownloadAllSources",
+    "download_javadocs" to "Maven.DownloadAllDocs",
+    "download_sources_and_javadocs" to "Maven.DownloadAllSourcesAndDocs"
+)
+
+private val VALID_REFRESH_MODES: Set<String> = MAVEN_MODE_ACTIONS.keys
+
+/**
+ * Invokes a Maven tool window action by ID — the same code path the user clicks
+ * trigger. Returns null on success; an error string when the action is unavailable
+ * (Maven plugin not loaded) or invocation throws.
+ */
+private fun invokePlatformAction(project: Project, actionId: String): String? = try {
+    val action = ActionManager.getInstance().getAction(actionId)
+        ?: return "Action '$actionId' not found — Maven plugin may be disabled in this IDE."
+    val dataContext = SimpleDataContext.getProjectContext(project)
+    val event = AnActionEvent.createEvent(
+        action,
+        dataContext,
+        Presentation(),
+        ActionPlaces.UNKNOWN,
+        com.intellij.openapi.actionSystem.ActionUiKind.NONE,
+        null
+    )
+    ActionUtil.invokeAction(action, event, null)
+    null
+} catch (e: Throwable) {
+    "Failed to invoke '$actionId': ${e::class.simpleName}: ${e.message}"
+}
+
+/**
+ * Maven full-reload via MavenProjectsManager.forceUpdateAllProjectsOrFindAllAvailablePomFiles().
+ * ExternalSystemUtil.refreshProject is the canonical Gradle path but for Maven only re-syncs the
+ * project model without re-resolving dependencies.
+ *
+ * Reflective so :agent stays compile-clean against IDEs without the Maven plugin. Distinguishes:
+ *  - [ClassNotFoundException] → expected (Maven plugin not loaded); silently return false.
+ *  - any other throwable → unexpected (API drift / signature change in a future Platform);
+ *    swallow but pass the cause into [warningSink] so the caller can include it in the result.
+ *
+ * Returns true on success, false on any failure.
+ */
+private fun forceMavenReimport(project: Project, warningSink: MutableList<String>): Boolean {
+    val cls = try {
+        Class.forName("org.jetbrains.idea.maven.project.MavenProjectsManager")
+    } catch (_: ClassNotFoundException) {
+        return false
+    }
+    return try {
+        val mgr = cls.getMethod("getInstance", Project::class.java).invoke(null, project)
+        cls.getMethod("forceUpdateAllProjectsOrFindAllAvailablePomFiles").invoke(mgr)
+        true
+    } catch (e: Throwable) {
+        warningSink.add(
+            "Warning: MavenProjectsManager reflection failed (${e::class.simpleName}: ${e.message}). " +
+                "Falling back to ExternalSystemUtil.refreshProject — Platform API may have drifted."
+        )
+        false
+    }
+}
+
+/**
  * Write action: triggers an external system (Maven/Gradle) reimport for linked roots.
+ *
+ * Modes (Maven-only except `reload`):
+ *  - `reload` → MavenProjectsManager.forceUpdateAllProjectsOrFindAllAvailablePomFiles
+ *      (Gradle/others fall through to ExternalSystemUtil.refreshProject)
+ *  - `generate_sources` → invokes Maven action `Maven.UpdateAllFolders`
+ *  - `download_sources` → invokes `Maven.DownloadAllSources`
+ *  - `download_javadocs` → invokes `Maven.DownloadAllDocs`
+ *  - `download_sources_and_javadocs` → invokes `Maven.DownloadAllSourcesAndDocs`
+ *
+ * Non-reload modes against Gradle/other roots are skipped with a warning, not failed,
+ * so a mixed-build project can still partially complete.
  *
  * 1. Collects all linked external project roots via [ExternalSystemApiUtil].
  * 2. If none are linked, returns a non-error "nothing to refresh" result immediately.
- * 3. Requests user approval via [AgentTool.requestApproval] — denied ⇒ error result.
+ * 3. Validates `mode`, requests approval — denied ⇒ error result.
  * 4. Filters to the requested `path` root when provided; no match ⇒ error result.
- * 5. Triggers [ExternalSystemUtil.refreshProject] for each target root in the background.
+ * 5. Dispatches per target: Maven uses MavenProjectsManager / action invocation;
+ *    Gradle uses [ExternalSystemUtil.refreshProject] in `IN_BACKGROUND_ASYNC`.
  *
  * This function is called from [ProjectStructureTool] for the "refresh_external_project" action.
  */
@@ -64,10 +155,19 @@ internal suspend fun executeRefreshExternalProject(
         )
     }
 
-    // ── Step 3: approval gate ─────────────────────────────────────────────────
+    // ── Step 3: parse mode + approval gate ────────────────────────────────────
     val path = params["path"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+    val mode = params["mode"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() } ?: "reload"
+    if (mode !in VALID_REFRESH_MODES) {
+        return ToolResult(
+            content = "Unknown mode '$mode'. Expected one of: ${VALID_REFRESH_MODES.joinToString(", ")}.",
+            summary = "Invalid mode '$mode'",
+            tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+            isError = true
+        )
+    }
     val systemNames = rootsPerSystem.joinToString(", ") { (id, _) -> id.readableName }
-    val argsDescription = "refresh ${if (path != null) "root=$path" else "all external roots"} ($systemNames)"
+    val argsDescription = "refresh mode=$mode ${if (path != null) "root=$path" else "all external roots"} ($systemNames)"
 
     val approval = tool.requestApproval(
         toolName = "project_structure.refresh_external_project",
@@ -115,13 +215,57 @@ internal suspend fun executeRefreshExternalProject(
 
     for ((systemId, root) in targets) {
         try {
-            ExternalSystemUtil.refreshProject(
-                root,
-                ImportSpecBuilder(project, systemId)
-                    .use(ProgressExecutionMode.IN_BACKGROUND_ASYNC)
-                    .build()
-            )
-            triggered.add("${systemId.readableName}: $root")
+            val isMaven = systemId.readableName.equals("Maven", ignoreCase = true) ||
+                systemId.id.equals("Maven", ignoreCase = true)
+
+            if (mode != "reload" && !isMaven) {
+                warnings.add(
+                    "Skipped $root (${systemId.readableName}): mode=$mode is Maven-only. " +
+                        "Use mode=reload for Gradle/other systems."
+                )
+                continue
+            }
+
+            val noteSuffix: String = when {
+                isMaven && mode == "reload" -> {
+                    val ok = forceMavenReimport(project, warnings)
+                    if (!ok) {
+                        ExternalSystemUtil.refreshProject(
+                            root,
+                            ImportSpecBuilder(project, systemId)
+                                .use(ProgressExecutionMode.IN_BACKGROUND_ASYNC)
+                                .build()
+                        )
+                        " (via ExternalSystemUtil fallback)"
+                    } else " (via MavenProjectsManager)"
+                }
+                isMaven -> {
+                    val actionId = MAVEN_MODE_ACTIONS[mode]
+                    if (actionId == null) {
+                        // Defensive: VALID_REFRESH_MODES derives from the same map, so this can
+                        // only fire if a future contributor adds a mode key with a null value
+                        // and forgets to handle it directly above.
+                        warnings.add("Warning: no Maven action mapping for mode='$mode' (internal bug — please file).")
+                        continue
+                    }
+                    val err = invokePlatformAction(project, actionId)
+                    if (err != null) {
+                        warnings.add("Warning: $err")
+                        continue
+                    }
+                    " (via $actionId)"
+                }
+                else -> {
+                    ExternalSystemUtil.refreshProject(
+                        root,
+                        ImportSpecBuilder(project, systemId)
+                            .use(ProgressExecutionMode.IN_BACKGROUND_ASYNC)
+                            .build()
+                    )
+                    ""
+                }
+            }
+            triggered.add("${systemId.readableName}: $root$noteSuffix")
         } catch (e: Exception) {
             warnings.add("Warning: could not trigger refresh for $root (${systemId.readableName}): ${e.message}")
         }
@@ -129,7 +273,7 @@ internal suspend fun executeRefreshExternalProject(
 
     // ── Step 6: result ────────────────────────────────────────────────────────
     val sb = StringBuilder()
-    sb.appendLine("Refresh triggered for ${triggered.size} root(s):")
+    sb.appendLine("Refresh triggered (mode=$mode) for ${triggered.size} root(s):")
     triggered.forEach { sb.appendLine("  • $it") }
     if (warnings.isNotEmpty()) {
         sb.appendLine()
@@ -139,7 +283,7 @@ internal suspend fun executeRefreshExternalProject(
 
     return ToolResult(
         content = sb.toString(),
-        summary = "${triggered.size} refresh(es) triggered",
+        summary = "${triggered.size} refresh(es) triggered (mode=$mode)",
         tokenEstimate = (sb.length / 4) + 1
     )
 }

@@ -42,7 +42,7 @@ Actions and their parameters:
 - list_sdks(scope?) → List all configured SDKs (project SDK, module-level overrides)
 - list_libraries(module?, scope?) → List libraries attached to a module or the project
 - list_facets(module?) → List facets (Spring, Android, JPA, etc.) attached to a module or all modules
-- refresh_external_project(module?) → Trigger an external system (Maven/Gradle) reimport for a module or the root
+- refresh_external_project(module?, mode?) → Trigger Maven/Gradle reimport. Maven `mode`: reload (default) | generate_sources | download_sources | download_javadocs | download_sources_and_javadocs — mirrors the Maven tool window buttons. Non-reload modes are Maven-only.
 - add_source_root(module, path, kind) → Add a source root to a module (kind: source/test_source/resource/test_resource)
 - set_module_dependency(module, dependsOn, scope?, exported?) → Add or update a module-to-module dependency (scope: compile/test/runtime/provided, default compile)
 - remove_module_dependency(module, dependsOn) → Remove an inter-module dependency from a non-external-system module
@@ -111,6 +111,17 @@ Actions and their parameters:
             "languageLevel" to ParameterProperty(
                 type = "string",
                 description = "Java language level for set_language_level, e.g. '8', '11', '17', '21'. Empty string = inherit."
+            ),
+            "mode" to ParameterProperty(
+                type = "string",
+                description = "For refresh_external_project on Maven roots: which tool-window button to invoke. Default 'reload'. Non-reload modes are Maven-only.",
+                enumValues = listOf(
+                    "reload",
+                    "generate_sources",
+                    "download_sources",
+                    "download_javadocs",
+                    "download_sources_and_javadocs"
+                )
             )
         ),
         required = listOf("action")
