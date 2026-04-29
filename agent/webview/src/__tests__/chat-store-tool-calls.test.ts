@@ -7,10 +7,10 @@
  * - Same-id + same-name is a legitimate status update.
  * - Same-id + different-name is a caller bug (Kotlin-side id scope); the
  *   store must rekey the incoming entry instead of silently overwriting.
- * - A completed tool chain drains into a `tc-chain` system message when the
+ * - A completed tool chain drains into individual TOOL messages when the
  *   next text turn starts, preserving chronological order in the chat.
- * - A tool call arriving mid-stream must not duplicate the streaming text
- *   into a second message — the text already lives in `messages`.
+ * - A tool call arriving mid-stream flushes the streaming buffer into
+ *   messages and clears streamingText — no duplication.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { ToolCall } from '@/bridge/types';
@@ -150,11 +150,11 @@ describe('chatStore — tool call UI state', () => {
     expect(byName.get('glob_files')![0]!.result).toBe('3 matches');
   });
 
-  it('first-token drain: completed tool chain becomes individual TOOL messages before the streaming placeholder', () => {
+  it('first-token drain: completed tool chain becomes individual TOOL messages before the streaming text', () => {
     // Agent runs a tool, then streams a text response. The first text token
     // must drain the completed tool chain into individual UiMessage{say:'TOOL'}
-    // entries BEFORE creating the streaming placeholder, so the visual
-    // order is: prior messages -> tool messages -> streaming text.
+    // entries and start the streaming buffer. In the streaming-isolation model,
+    // streaming text lives in `streamingText`, not in `messages`, until endStream.
     const { addToolCall, updateToolCall, appendToken } = chatState();
 
     addToolCall('tc-1', 'glob_files', '{"pattern":"**"}', 'RUNNING');
@@ -166,39 +166,39 @@ describe('chatStore — tool call UI state', () => {
     const state = chatState();
     // activeToolCalls should be drained.
     expect(state.activeToolCalls.size).toBe(0);
-    // messages should now contain TOOL message(s) AND the streaming placeholder.
+    // messages contains the TOOL message(s); streaming text is in streamingText.
     const toolMessages = state.messages.filter(m => m.say === 'TOOL');
     expect(toolMessages).toHaveLength(1);
     expect(toolMessages[0]!.toolCallData!.toolName).toBe('glob_files');
     expect(toolMessages[0]!.toolCallData!.status).toBe('COMPLETED');
 
-    // The streaming placeholder is a TEXT message that comes AFTER the tool messages.
-    const textMessages = state.messages.filter(m => m.say === 'TEXT');
-    expect(textMessages).toHaveLength(1);
-    expect(textMessages[0]!.text).toBe('Here is what I found:');
-
-    const toolIdx = state.messages.findIndex(m => m.say === 'TOOL');
-    const textIdx = state.messages.findIndex(m => m.say === 'TEXT');
-    expect(toolIdx).toBeLessThan(textIdx);
+    // Streaming text is buffered in streamingText, NOT yet in messages.
+    expect(state.streamingText).toBe('Here is what I found:');
+    expect(state.messages.filter(m => m.say === 'TEXT')).toHaveLength(0);
   });
 
-  it('tool call arriving mid-stream clears the caret without duplicating the streaming text', () => {
+  it('tool call arriving mid-stream flushes streaming buffer into messages without duplicating text', () => {
     const { appendToken, addToolCall } = chatState();
 
     appendToken('Let me check ');
     appendToken('the files. ');
 
+    // In the streaming-isolation model, no TEXT message in `messages` yet —
+    // streaming text is in streamingText.
     let state = chatState();
-    expect(state.messages.filter(m => m.say === 'TEXT')).toHaveLength(1);
-    expect(state.messages.filter(m => m.say === 'TEXT')[0]!.text).toBe('Let me check the files. ');
+    expect(state.streamingText).toBe('Let me check the files. ');
+    expect(state.messages.filter(m => m.say === 'TEXT')).toHaveLength(0);
 
     addToolCall('tc-1', 'read_file', '{"path":"a.kt"}', 'RUNNING');
 
     state = chatState();
-    expect(state.activeStream).toBeNull();
+    // addToolCall flushed the buffer into messages and cleared streamingText.
+    expect(state.streamingText).toBeNull();
+    expect(state.streamingMsgTs).toBeNull();
     const textMessages = state.messages.filter(m => m.say === 'TEXT');
     expect(textMessages).toHaveLength(1);
     expect(textMessages[0]!.text).toBe('Let me check the files. ');
+    expect(textMessages[0]!.partial).toBe(false);
     expect(state.activeToolCalls.size).toBe(1);
     expect(state.activeToolCalls.get('tc-1')?.name).toBe('read_file');
   });

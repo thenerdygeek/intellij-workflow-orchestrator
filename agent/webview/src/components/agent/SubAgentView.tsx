@@ -7,7 +7,6 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { Bot, Loader2, XCircle, AlertCircle, Check, ChevronDown, Square } from 'lucide-react';
 import { useChatStore } from '@/stores/chatStore';
-import { useStickToBottomContext } from 'use-stick-to-bottom';
 
 // ── Helpers ──
 
@@ -92,12 +91,6 @@ export const SubAgentView = memo(function SubAgentView({ subAgent }: SubAgentVie
   const agentName = extractName(subAgent.label);
   const elapsedStr = useLiveTimer(subAgent.startedAt, isRunning);
 
-  // ── Outer chat scroll context ──
-  // SubAgentView has max-h-[400px] on its body, so once full the outer StickToBottom
-  // ResizeObserver sees no further height changes. We reach up and nudge it ourselves
-  // so the outer chat keeps scrolling to show the sub-agent while it is active.
-  const { scrollToBottom, isAtBottom: outerIsAtBottom } = useStickToBottomContext();
-
   // ── Internal scroll (within the 400px body) ──
   const scrollRef = useRef<HTMLDivElement>(null);
   const userScrolledUp = useRef(false);
@@ -109,17 +102,22 @@ export const SubAgentView = memo(function SubAgentView({ subAgent }: SubAgentVie
     userScrolledUp.current = !isAtBottom;
   }, []);
 
+  // NOTE: pre-virtualization, this effect also nudged the OUTER chat to
+  // scroll-to-bottom when the inner body filled its max-h-[400px] (because
+  // react-stick-to-bottom's ResizeObserver couldn't see growth past max-h).
+  // react-virtuoso (the new outer container) sees the wrapper's height
+  // changes natively, so most cases are covered. The remaining gap: once
+  // the inner body is saturated, further sub-agent activity inside the
+  // 400px window does not scroll the outer chat. Trade-off: the outer chat
+  // stays parked on the sub-agent card (arguably better UX). If a user
+  // reports outer-scroll regressions during long sub-agent runs, route
+  // MessageList's scrollToBottom() through chatStore and re-add the nudge.
   useEffect(() => {
     // Scroll the inner body to the latest content
     if (!userScrolledUp.current && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-    // Also nudge the outer StickToBottom — once the card's body hits max-h the outer
-    // ResizeObserver sees no resize, so we trigger the scroll manually.
-    if (outerIsAtBottom) {
-      scrollToBottom('instant');
-    }
-  }, [subAgent.messages.length, subAgent.activeToolChain?.length, outerIsAtBottom, scrollToBottom]);
+  }, [subAgent.messages.length, subAgent.activeToolChain?.length]);
 
   const handleKill = useCallback((e: React.MouseEvent) => {
     e.stopPropagation(); // Don't toggle collapse

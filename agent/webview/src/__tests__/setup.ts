@@ -1,5 +1,9 @@
 import '@testing-library/jest-dom/vitest'
 
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
+}
+
 // Mock window globals that JCEF injects — these simulate the Kotlin bridge
 // In the real app, these are injected by AgentCefPanel.kt on page load
 Object.defineProperty(window, '_approvePlan', { value: vi.fn(), writable: true });

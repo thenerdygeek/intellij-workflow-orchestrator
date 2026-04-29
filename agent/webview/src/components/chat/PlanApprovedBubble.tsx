@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import type { UiMessage } from '@/bridge/types';
 import { CheckCircle2 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 interface PlanApprovedBubbleProps {
   message: UiMessage;
@@ -8,7 +9,10 @@ interface PlanApprovedBubbleProps {
 
 export const PlanApprovedBubble = memo(function PlanApprovedBubble({ message }: PlanApprovedBubbleProps) {
   return (
-    <div className="flex justify-end w-full animate-[message-enter_220ms_ease-out_both]">
+    <div className={cn(
+      "flex justify-end w-full",
+      Date.now() - message.ts < 1000 && "animate-[message-enter_220ms_ease-out_both]",
+    )}>
       <div className="max-w-[85%] rounded-lg border border-[var(--border)] p-3 bg-[var(--user-bg)]">
         <div className="flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4 shrink-0" style={{ color: 'var(--accent, #6366f1)' }} />

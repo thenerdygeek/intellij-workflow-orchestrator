@@ -1,27 +1,25 @@
 /**
- * Scenario tests for the unified streaming-message model in `chatStore`.
+ * Scenario tests for the streaming-isolation model in `chatStore`.
  *
- * Contracts:
- * - The first `appendToken` of a new stream creates a placeholder `UiMessage`
- *   in `messages` with `say:'TEXT'`, `partial:true`, and points
- *   `activeStream.messageTs` at its `ts`.
- * - Subsequent `appendToken` calls update that specific message's `text`
- *   in place via `.map(...)`. The message ts never changes during a stream.
- * - `endStream` just clears `activeStream` and sets `partial:false`. It MUST
- *   NOT add or remove any messages -- the placeholder stays where it is with
- *   identical ts and text, so React reconciles in place (no remount -> no flash).
- * - A second stream after `endStream` creates a brand-new placeholder with
- *   a different ts.
- * - A tool call arriving mid-stream clears the caret but must not duplicate
- *   the streaming text into a second message.
+ * Contracts (new streaming-isolation model):
+ * - The first `appendToken` of a new stream sets `streamingText` and
+ *   `streamingMsgTs`. NO placeholder is added to `messages` — so the
+ *   `messages` array reference never changes during streaming.
+ * - Subsequent `appendToken` calls concatenate onto `streamingText`.
+ *   The `messages` array reference stays the same for the full stream.
+ * - `endStream` flushes `streamingText` into `messages` as a finalized
+ *   UiMessage using `streamingMsgTs` as the ts. It then clears both fields.
+ * - A second stream after `endStream` creates a brand-new `streamingMsgTs`
+ *   with a different ts.
+ * - A tool call arriving mid-stream flushes the streaming buffer into
+ *   `messages` and clears `streamingText`.
  * - Non-streaming messages keep their exact object reference across token
- *   updates, so `React.memo` can skip re-rendering them and streaming stays
- *   O(1) in the growing message per token.
+ *   updates, so `React.memo` can skip re-rendering them.
  */
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { chatState, resetChatStore } from './chat-store-test-utils';
 
-describe('chatStore -- unified streaming-message model', () => {
+describe('chatStore -- streaming-isolation model', () => {
   // Use fake timers to ensure Date.now() returns distinct values across
   // successive store actions (real Date.now() can return the same ms in
   // fast synchronous test code, causing ts collisions).
@@ -34,103 +32,100 @@ describe('chatStore -- unified streaming-message model', () => {
     vi.restoreAllMocks();
   });
 
-  it('first appendToken creates a placeholder agent message and points activeStream at it', () => {
+  it('first appendToken sets streamingText and streamingMsgTs, does NOT add to messages', () => {
     chatState().appendToken('Hello');
 
     const state = chatState();
-    expect(state.messages).toHaveLength(1);
-    expect(state.messages[0]!.say).toBe('TEXT');
-    expect(state.messages[0]!.text).toBe('Hello');
-    expect(state.messages[0]!.partial).toBe(true);
-    expect(state.activeStream).not.toBeNull();
-    expect(state.activeStream!.messageTs).toBe(state.messages[0]!.ts);
+    expect(state.messages).toHaveLength(0);
+    expect(state.streamingText).toBe('Hello');
+    expect(state.streamingMsgTs).not.toBeNull();
   });
 
-  it('empty-token appendToken is a no-op: no placeholder, no wasted state churn', () => {
+  it('empty-token appendToken is a no-op: no streamingText, no wasted state churn', () => {
     chatState().appendToken('');
     const state = chatState();
     expect(state.messages).toHaveLength(0);
-    expect(state.activeStream).toBeNull();
+    expect(state.streamingText).toBeNull();
+    expect(state.streamingMsgTs).toBeNull();
   });
 
-  it('subsequent appendToken updates the SAME message in place -- ts never changes', () => {
-    const { appendToken } = chatState();
-    appendToken('Hello');
-    const firstTs = chatState().messages[0]!.ts;
+  it('subsequent appendToken concatenates onto streamingText -- messages array stays the same reference', () => {
+    const { addUserMessage, appendToken } = chatState();
+    addUserMessage('question');
+    const messagesBefore = chatState().messages;
 
+    appendToken('Hello');
     appendToken(', world');
     appendToken('. How are you?');
 
     const state = chatState();
-    expect(state.messages).toHaveLength(1);
-    expect(state.messages[0]!.ts).toBe(firstTs);
-    expect(state.messages[0]!.text).toBe('Hello, world. How are you?');
-    expect(state.activeStream?.messageTs).toBe(firstTs);
+    expect(state.messages).toBe(messagesBefore);
+    expect(state.streamingText).toBe('Hello, world. How are you?');
   });
 
-  it('endStream does NOT add or remove messages -- it only clears activeStream and sets partial:false', () => {
+  it('endStream flushes streamingText into messages with streamingMsgTs as ts and partial:false', () => {
     const { appendToken, endStream } = chatState();
     appendToken('Some text');
     appendToken(' streamed in.');
 
-    const before = chatState();
-    const beforeLength = before.messages.length;
-    const beforeTs = before.messages[0]!.ts;
-    const beforeText = before.messages[0]!.text;
+    const streamTs = chatState().streamingMsgTs;
+    const beforeMsgCount = chatState().messages.length;
 
     endStream();
 
     const after = chatState();
-    // No new message was pushed; the placeholder stays in place with the
-    // same ts and text. React sees the same key and same prop reference
-    // -> no reconciliation delta -> no remount -> no flash.
-    expect(after.messages).toHaveLength(beforeLength);
-    expect(after.messages[0]!.ts).toBe(beforeTs);
-    expect(after.messages[0]!.text).toBe(beforeText);
-    expect(after.messages[0]!.partial).toBe(false);
-    expect(after.activeStream).toBeNull();
+    // One new message was added by endStream.
+    expect(after.messages).toHaveLength(beforeMsgCount + 1);
+    const last = after.messages.at(-1)!;
+    expect(last.ts).toBe(streamTs);
+    expect(last.text).toBe('Some text streamed in.');
+    expect(last.partial).toBe(false);
+    expect(after.streamingText).toBeNull();
+    expect(after.streamingMsgTs).toBeNull();
   });
 
-  it('a second stream after endStream creates a NEW placeholder with a different ts', () => {
+  it('a second stream after endStream creates a NEW streamingMsgTs with a different ts', () => {
     const { appendToken, endStream } = chatState();
     appendToken('First response.');
-    const firstTs = chatState().messages[0]!.ts;
+    const firstStreamTs = chatState().streamingMsgTs;
     endStream();
 
     appendToken('Second response.');
     const state = chatState();
 
-    expect(state.messages).toHaveLength(2);
-    expect(state.messages[0]!.ts).toBe(firstTs);
+    // endStream committed first message; second appendToken started new stream
+    expect(state.messages).toHaveLength(1);
     expect(state.messages[0]!.text).toBe('First response.');
-    expect(state.messages[1]!.ts).not.toBe(firstTs);
-    expect(state.messages[1]!.text).toBe('Second response.');
-    expect(state.activeStream!.messageTs).toBe(state.messages[1]!.ts);
+    expect(state.streamingText).toBe('Second response.');
+    expect(state.streamingMsgTs).not.toBe(firstStreamTs);
+    expect(state.streamingMsgTs).not.toBeNull();
   });
 
-  it('addToolCall mid-stream clears the caret but does NOT duplicate the streaming message', () => {
+  it('addToolCall mid-stream flushes streamingText into messages and clears it', () => {
     const { appendToken, addToolCall } = chatState();
     appendToken('Reading ');
     appendToken('the file...');
 
-    expect(chatState().messages.filter(m => m.say === 'TEXT')).toHaveLength(1);
+    const streamTs = chatState().streamingMsgTs;
+    expect(chatState().messages).toHaveLength(0);
 
     addToolCall('tc-1', 'read_file', '{"path":"a.kt"}', 'RUNNING');
 
     const state = chatState();
+    // The streamed text was flushed into messages before the tool card
     const textMessages = state.messages.filter(m => m.say === 'TEXT');
     expect(textMessages).toHaveLength(1);
+    expect(textMessages[0]!.ts).toBe(streamTs);
     expect(textMessages[0]!.text).toBe('Reading the file...');
-    expect(state.activeStream).toBeNull();
+    expect(textMessages[0]!.partial).toBe(false);
+    expect(state.streamingText).toBeNull();
+    expect(state.streamingMsgTs).toBeNull();
     expect(state.activeToolCalls.size).toBe(1);
   });
 
   it('non-streaming messages keep the SAME object reference across token updates', () => {
     // Object identity (not deep equality) is the contract React.memo needs
-    // to skip re-rendering unchanged messages per token. If the `.map` in
-    // `appendToken` ever stops returning `m` by reference for non-matching
-    // items, every message re-renders on every token and streaming perf
-    // collapses.
+    // to skip re-rendering unchanged messages per token.
     const { addUserMessage, appendToken } = chatState();
     addUserMessage('First user question');
     const userMsgBefore = chatState().messages[0]!;

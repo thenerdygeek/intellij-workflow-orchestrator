@@ -14,11 +14,7 @@ import { ApprovalView } from '@/components/agent/ApprovalView';
 import { ProcessInputView } from '@/components/agent/ProcessInputView';
 import { RollbackCard } from '@/components/agent/RollbackCard';
 import type { UiMessage, ToolCall, Plan, SubAgentState } from '@/bridge/types';
-import {
-  ChatContainerRoot,
-  ChatContainerContent,
-  ChatContainerScrollAnchor,
-} from '@/components/ui/prompt-kit/chat-container';
+import { MessageList, type MessageListHandle } from '@/components/chat/MessageList';
 import { ScrollButton } from '@/components/ui/prompt-kit/scroll-button';
 import { Loader } from '@/components/ui/prompt-kit/loader';
 import { TextShimmer } from '@/components/ui/prompt-kit/text-shimmer';
@@ -303,7 +299,8 @@ export function WorkingIndicator() {
 
 export const ChatView = memo(function ChatView() {
   const messages = useChatStore(s => s.messages);
-  const activeStream = useChatStore(s => s.activeStream);
+  const streamingText = useChatStore(s => s.streamingText);
+  const streamingMsgTs = useChatStore(s => s.streamingMsgTs);
   const activeToolCalls = useChatStore(s => s.activeToolCalls);
   const busy = useChatStore(s => s.busy);
   const plan = useChatStore(s => s.plan);
@@ -321,29 +318,10 @@ export const ChatView = memo(function ChatView() {
 
   const approvalRef = useRef<HTMLDivElement>(null);
   const questionsRef = useRef<HTMLDivElement>(null);
-  const lastAgentMsgRef = useRef<HTMLDivElement>(null);
-  const wasStreamingRef = useRef(false);
 
   const handleApprove = useCallback(() => resolveApproval('approve'), [resolveApproval]);
   const handleDeny = useCallback(() => resolveApproval('deny'), [resolveApproval]);
   const handleAllowForSession = useCallback(() => resolveApproval('allowForSession'), [resolveApproval]);
-
-  // When streaming ends, scroll to the TOP of the last agent message if it's
-  // taller than the viewport — lets the user read a long response from the
-  // beginning instead of landing at the end.
-  const isStreaming = activeStream != null;
-  useEffect(() => {
-    if (wasStreamingRef.current && !isStreaming && lastAgentMsgRef.current) {
-      const el = lastAgentMsgRef.current;
-      const viewportHeight = el.closest('[role="log"]')?.clientHeight ?? window.innerHeight;
-      if (el.offsetHeight > viewportHeight * 0.6) {
-        requestAnimationFrame(() => {
-          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        });
-      }
-    }
-    wasStreamingRef.current = isStreaming;
-  }, [isStreaming]);
 
   // Auto-scroll to question wizard when it appears
   useEffect(() => {
@@ -401,361 +379,364 @@ export const ChatView = memo(function ChatView() {
     return result;
   }, [messages]);
 
-  return (
-    <ChatContainerRoot
-      className="relative flex-1 min-h-0"
-      aria-live="polite"
-      aria-label="Agent chat messages"
-    >
-      <ChatContainerContent className="px-4 py-3 pb-4 gap-3">
-        {/* Messages — dispatch on say/ask to the appropriate component */}
-        {renderItems.map((item) => {
-          if (item.kind === 'toolGroup') {
-            // Consecutive TOOL messages grouped into a single ToolCallChain
-            const toolCalls: ToolCall[] = item.tools.map(t => ({
-              id: t.toolCallData!.toolCallId,
-              name: t.toolCallData!.toolName,
-              args: t.toolCallData!.args ?? '',
-              status: (t.toolCallData!.status as any) ?? 'COMPLETED',
-              result: t.toolCallData!.result,
-              output: t.toolCallData!.output,
-              durationMs: t.toolCallData!.durationMs,
-              diff: t.toolCallData!.diff,
-            }));
-            return (
-              <ErrorBoundary key={`toolgroup-${item.tools[0]!.ts}-${item.idx}`}>
-                <ToolCallChain toolCalls={toolCalls} />
-              </ErrorBoundary>
-            );
-          }
+  const renderItem = useCallback((index: number) => {
+    const item = renderItems[index];
+    if (!item) return null;
 
-          const msg = item.msg;
-          const idx = item.idx;
-          const key = `msg-${msg.ts}-${idx}`;
+    if (item.kind === 'toolGroup') {
+      // Consecutive TOOL messages grouped into a single ToolCallChain
+      const toolCalls: ToolCall[] = item.tools.map(t => ({
+        id: t.toolCallData!.toolCallId,
+        name: t.toolCallData!.toolName,
+        args: t.toolCallData!.args ?? '',
+        status: (t.toolCallData!.status as any) ?? 'COMPLETED',
+        result: t.toolCallData!.result,
+        output: t.toolCallData!.output,
+        durationMs: t.toolCallData!.durationMs,
+        diff: t.toolCallData!.diff,
+      }));
+      return (
+        <ErrorBoundary key={`toolgroup-${item.tools[0]!.ts}-${item.idx}`}>
+          <ToolCallChain toolCalls={toolCalls} />
+        </ErrorBoundary>
+      );
+    }
 
-          // Sub-agent messages — use live state from activeSubAgents for running agents,
-          // fall back to flat UiMessage data for completed/resumed agents
-          if (msg.say === 'SUBAGENT_STARTED' || msg.say === 'SUBAGENT_PROGRESS' || msg.say === 'SUBAGENT_COMPLETED') {
-            if (!msg.subagentData) return null;
-            const liveState = activeSubAgents.get(msg.subagentData.agentId);
-            const subAgentState: SubAgentState = liveState ?? {
-              agentId: msg.subagentData.agentId,
-              label: msg.subagentData.description,
-              status: msg.subagentData.status as any,
-              iteration: msg.subagentData.iterations,
-              tokensUsed: 0,
-              messages: [],
-              activeToolChain: [],
-              summary: msg.subagentData.summary,
-              startedAt: msg.ts,
-            };
-            return (
-              <ErrorBoundary key={key}>
-                <SubAgentView subAgent={subAgentState} />
-              </ErrorBoundary>
-            );
-          }
+    const msg = item.msg;
+    const idx = item.idx;
+    const key = `msg-${msg.ts}-${idx}`;
 
-          // Artifacts
-          if (msg.say === 'ARTIFACT_RESULT' && msg.text) {
-            return (
-              <ErrorBoundary key={key}>
-                <ArtifactRenderer source={msg.text} title="Artifact" renderId={msg.artifactId} />
-              </ErrorBoundary>
-            );
-          }
+    // Sub-agent messages — use live state from activeSubAgents for running agents,
+    // fall back to flat UiMessage data for completed/resumed agents
+    if (msg.say === 'SUBAGENT_STARTED' || msg.say === 'SUBAGENT_PROGRESS' || msg.say === 'SUBAGENT_COMPLETED') {
+      if (!msg.subagentData) return null;
+      const liveState = activeSubAgents.get(msg.subagentData.agentId);
+      const subAgentState: SubAgentState = liveState ?? {
+        agentId: msg.subagentData.agentId,
+        label: msg.subagentData.description,
+        status: msg.subagentData.status as any,
+        iteration: msg.subagentData.iterations,
+        tokensUsed: 0,
+        messages: [],
+        activeToolChain: [],
+        summary: msg.subagentData.summary,
+        startedAt: msg.ts,
+      };
+      return (
+        <ErrorBoundary key={key}>
+          <SubAgentView subAgent={subAgentState} />
+        </ErrorBoundary>
+      );
+    }
 
-          // Reasoning / thinking
-          if (msg.say === 'REASONING') {
-            return (
-              <ErrorBoundary key={key}>
-                <ThinkingView content={msg.text ?? ''} isStreaming={false} />
-              </ErrorBoundary>
-            );
-          }
+    // Artifacts
+    if (msg.say === 'ARTIFACT_RESULT' && msg.text) {
+      return (
+        <ErrorBoundary key={key}>
+          <ArtifactRenderer source={msg.text} title="Artifact" renderId={msg.artifactId} />
+        </ErrorBoundary>
+      );
+    }
 
-          // Completion result
-          if (msg.ask === 'COMPLETION_RESULT') {
-            return (
-              <ErrorBoundary key={key}>
-                <CompletionCard data={msg.completionData ?? { kind: 'done' as const, result: msg.text ?? '' }} />
-              </ErrorBoundary>
-            );
-          }
+    // Reasoning / thinking
+    if (msg.say === 'REASONING') {
+      return (
+        <ErrorBoundary key={key}>
+          <ThinkingView content={msg.text ?? ''} isStreaming={false} />
+        </ErrorBoundary>
+      );
+    }
 
-          // Approval gate
-          if (msg.ask === 'APPROVAL_GATE' && msg.approvalData) {
-            const toolCalls: ToolCall[] = [{
-              id: msg.approvalData.toolName,
-              name: msg.approvalData.toolName,
-              args: msg.approvalData.toolInput,
-              status: msg.approvalData.status === 'APPROVED' ? 'COMPLETED'
-                    : msg.approvalData.status === 'REJECTED' ? 'ERROR'
-                    : 'PENDING',
-              diff: msg.approvalData.diffPreview,
-            }];
-            return (
-              <ErrorBoundary key={key}>
-                <ToolCallChain toolCalls={toolCalls} />
-              </ErrorBoundary>
-            );
-          }
+    // Completion result
+    if (msg.ask === 'COMPLETION_RESULT') {
+      return (
+        <ErrorBoundary key={key}>
+          <CompletionCard data={msg.completionData ?? { kind: 'done' as const, result: msg.text ?? '' }} />
+        </ErrorBoundary>
+      );
+    }
 
-          // Completed question wizard
-          if (msg.ask === 'QUESTION_WIZARD' && msg.questionData?.status === 'COMPLETED') {
-            const questions = msg.questionData.questions.map((q, qi) => ({
-              id: String(qi),
-              text: q.text,
-              type: 'single-select' as const,
-              options: q.options.map(o => ({ label: o })),
-              answer: msg.questionData?.answers?.[qi],
-            }));
-            return (
-              <ErrorBoundary key={key}>
-                <AnsweredQuestionsCard questions={questions} />
-              </ErrorBoundary>
-            );
-          }
+    // Approval gate
+    if (msg.ask === 'APPROVAL_GATE' && msg.approvalData) {
+      const toolCalls: ToolCall[] = [{
+        id: msg.approvalData.toolName,
+        name: msg.approvalData.toolName,
+        args: msg.approvalData.toolInput,
+        status: msg.approvalData.status === 'APPROVED' ? 'COMPLETED'
+              : msg.approvalData.status === 'REJECTED' ? 'ERROR'
+              : 'PENDING',
+        diff: msg.approvalData.diffPreview,
+      }];
+      return (
+        <ErrorBoundary key={key}>
+          <ToolCallChain toolCalls={toolCalls} />
+        </ErrorBoundary>
+      );
+    }
 
-          // Status-line messages
-          if (msg.say === 'ERROR' || msg.say === 'CHECKPOINT_CREATED' || msg.say === 'CONTEXT_COMPRESSED' ||
-              msg.say === 'MEMORY_SAVED' || msg.say === 'ROLLBACK_PERFORMED' || msg.say === 'STEERING_RECEIVED') {
-            return (
-              <div key={key} className="px-1 py-0.5 text-[11px]" style={{ color: 'var(--fg-muted, #888)' }}>
-                {msg.text}
-              </div>
-            );
-          }
+    // Completed question wizard
+    if (msg.ask === 'QUESTION_WIZARD' && msg.questionData?.status === 'COMPLETED') {
+      const questions = msg.questionData.questions.map((q, qi) => ({
+        id: String(qi),
+        text: q.text,
+        type: 'single-select' as const,
+        options: q.options.map(o => ({ label: o })),
+        answer: msg.questionData?.answers?.[qi],
+      }));
+      return (
+        <ErrorBoundary key={key}>
+          <AnsweredQuestionsCard questions={questions} />
+        </ErrorBoundary>
+      );
+    }
 
-          // Resume markers — render as a subtle status line
-          if (msg.ask === 'RESUME_TASK' || msg.ask === 'RESUME_COMPLETED_TASK') {
-            return (
-              <div key={key} className="px-1 py-0.5 text-[11px]" style={{ color: 'var(--fg-muted, #888)' }}>
-                {msg.text || 'Session resumed'}
-              </div>
-            );
-          }
+    // Status-line messages
+    if (msg.say === 'ERROR' || msg.say === 'CHECKPOINT_CREATED' || msg.say === 'CONTEXT_COMPRESSED' ||
+        msg.say === 'MEMORY_SAVED' || msg.say === 'ROLLBACK_PERFORMED' || msg.say === 'STEERING_RECEIVED') {
+      return (
+        <div key={key} className="px-1 py-0.5 text-[11px]" style={{ color: 'var(--fg-muted, #888)' }}>
+          {msg.text}
+        </div>
+      );
+    }
 
-          // Followup — agent asking a follow-up question
-          if (msg.ask === 'FOLLOWUP') {
-            return (
-              <ErrorBoundary key={key}>
-                <AgentMessage message={msg} />
-              </ErrorBoundary>
-            );
-          }
+    // Resume markers — render as a subtle status line
+    if (msg.ask === 'RESUME_TASK' || msg.ask === 'RESUME_COMPLETED_TASK') {
+      return (
+        <div key={key} className="px-1 py-0.5 text-[11px]" style={{ color: 'var(--fg-muted, #888)' }}>
+          {msg.text || 'Session resumed'}
+        </div>
+      );
+    }
 
-          // Plan updates — render inline as a plan summary snapshot so they appear
-          // in chronological order on resume. The global plan widget at the
-          // bottom handles the live interactive approve/revise flow.
-          if (msg.say === 'PLAN_UPDATE' && msg.planData) {
-            const pd = msg.planData;
-            const inlinePlan: Plan = {
-              title: 'Plan',
-              approved: pd.status === 'APPROVED' || pd.status === 'EXECUTING',
-            };
-            return (
-              <ErrorBoundary key={key}>
-                {!inlinePlan.approved && <PlanSummaryCard plan={inlinePlan} />}
-              </ErrorBoundary>
-            );
-          }
+    // Followup — agent asking a follow-up question
+    if (msg.ask === 'FOLLOWUP') {
+      return (
+        <ErrorBoundary key={key}>
+          <AgentMessage message={msg} />
+        </ErrorBoundary>
+      );
+    }
 
-          // User messages and agent text
-          if (msg.say === 'USER_MESSAGE' || msg.say === 'TEXT') {
-            const isLastAgent = msg.say === 'TEXT' && idx === messages.length - 1;
-            const isStreamingMsg = activeStream?.messageTs === msg.ts;
-            return (
-              <ErrorBoundary key={key}>
-                <div
-                  ref={isLastAgent ? lastAgentMsgRef : undefined}
-                  style={{ animationDelay: `${Math.min(idx * 40, 200)}ms` }}
-                >
-                  <AgentMessage message={msg} isStreaming={isStreamingMsg} />
-                </div>
-              </ErrorBoundary>
-            );
-          }
+    // Plan updates — render inline as a plan summary snapshot so they appear
+    // in chronological order on resume. The global plan widget at the
+    // bottom handles the live interactive approve/revise flow.
+    if (msg.say === 'PLAN_UPDATE' && msg.planData) {
+      const pd = msg.planData;
+      const inlinePlan: Plan = {
+        title: 'Plan',
+        approved: pd.status === 'APPROVED' || pd.status === 'EXECUTING',
+      };
+      return (
+        <ErrorBoundary key={key}>
+          {!inlinePlan.approved && <PlanSummaryCard plan={inlinePlan} />}
+        </ErrorBoundary>
+      );
+    }
 
-          // Default: render text content as AgentMessage
-          if (msg.text) {
-            return (
-              <ErrorBoundary key={key}>
-                <AgentMessage message={msg} />
-              </ErrorBoundary>
-            );
-          }
+    // User messages and agent text
+    if (msg.say === 'USER_MESSAGE' || msg.say === 'TEXT') {
+      return (
+        <ErrorBoundary key={key}>
+          <AgentMessage message={msg} />
+        </ErrorBoundary>
+      );
+    }
 
-          return null;
-        })}
+    // Default: render text content as AgentMessage
+    if (msg.text) {
+      return (
+        <ErrorBoundary key={key}>
+          <AgentMessage message={msg} />
+        </ErrorBoundary>
+      );
+    }
 
-        {/* Active tool calls — rendered below the streaming message (which
-            lives in `messages` above) so tool chips always appear after the
-            agent text that introduced them. */}
-        {toolCallsArray.length > 0 && (
-          <ToolCallChain toolCalls={toolCallsArray} />
-        )}
+    return null;
+  }, [renderItems, activeSubAgents]);
 
-        {/* Tool call approval — immediately after tool calls / streaming text */}
-        {pendingApproval && (
-          <div ref={approvalRef}>
-            <ApprovalView
-              toolName={pendingApproval.toolName}
-              riskLevel={pendingApproval.riskLevel}
-              title={pendingApproval.title}
-              description={pendingApproval.description}
-              metadata={pendingApproval.metadata}
-              diffContent={pendingApproval.diffContent}
-              commandPreview={pendingApproval.commandPreview}
-              onApprove={handleApprove}
-              onDeny={handleDeny}
-              onAllowForSession={pendingApproval.allowSessionApproval ? handleAllowForSession : undefined}
-            />
-          </div>
-        )}
+  const messageListRef = useRef<MessageListHandle>(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
 
-        {/* Process input prompt — shown when ask_user_input tool requests user input */}
-        {pendingProcessInput && (
-          <ProcessInputView
-            processId={pendingProcessInput.processId}
-            description={pendingProcessInput.description}
-            prompt={pendingProcessInput.prompt}
-            command={pendingProcessInput.command}
-            onSubmit={resolveProcessInput}
+  const footer = (
+    <div className="px-4 pb-4 flex flex-col gap-3">
+      {/* Streaming bubble lives outside the virtualized list so per-token
+          updates don't touch the message list. */}
+      {streamingText != null && streamingMsgTs != null && (
+        <ErrorBoundary key={`stream-${streamingMsgTs}`}>
+          <AgentMessage
+            message={{ ts: streamingMsgTs, type: 'SAY', say: 'TEXT', text: streamingText, partial: true }}
+            isStreaming
           />
-        )}
+        </ErrorBoundary>
+      )}
 
-        {/* Rollback events */}
-        {rollbackEvents.map(rb => (
-          <ErrorBoundary key={rb.id}>
-            <RollbackCard rollback={rb} />
-          </ErrorBoundary>
-        ))}
+      {toolCallsArray.length > 0 && <ToolCallChain toolCalls={toolCallsArray} />}
 
-        {/* Plan — global widget for live interactive approve/revise flow.
-            On resume, the plan renders inline via PLAN_UPDATE messages above. */}
-        {plan && !plan.approved && <PlanSummaryCard plan={plan} />}
-        <PlanProgressWidget />
+      {pendingApproval && (
+        <div ref={approvalRef}>
+          <ApprovalView
+            toolName={pendingApproval.toolName}
+            riskLevel={pendingApproval.riskLevel}
+            title={pendingApproval.title}
+            description={pendingApproval.description}
+            metadata={pendingApproval.metadata}
+            diffContent={pendingApproval.diffContent}
+            commandPreview={pendingApproval.commandPreview}
+            onApprove={handleApprove}
+            onDeny={handleDeny}
+            onAllowForSession={pendingApproval.allowSessionApproval ? handleAllowForSession : undefined}
+          />
+        </div>
+      )}
 
-        {/* Questions */}
-        {questions && questions.length > 0 && (
-          <div ref={questionsRef}>
-            <QuestionView questions={questions} activeIndex={activeQuestionIndex} />
-          </div>
-        )}
+      {pendingProcessInput && (
+        <ProcessInputView
+          processId={pendingProcessInput.processId}
+          description={pendingProcessInput.description}
+          prompt={pendingProcessInput.prompt}
+          command={pendingProcessInput.command}
+          onSubmit={resolveProcessInput}
+        />
+      )}
 
-        {/* Queued steering messages — shown above the working indicator */}
-        {queuedSteeringMessages.map((msg) => (
+      {rollbackEvents.map(rb => (
+        <ErrorBoundary key={rb.id}>
+          <RollbackCard rollback={rb} />
+        </ErrorBoundary>
+      ))}
+
+      {plan && !plan.approved && <PlanSummaryCard plan={plan} />}
+      <PlanProgressWidget />
+
+      {questions && questions.length > 0 && (
+        <div ref={questionsRef}>
+          <QuestionView questions={questions} activeIndex={activeQuestionIndex} />
+        </div>
+      )}
+
+      {/* Queued steering messages — shown above the working indicator */}
+      {queuedSteeringMessages.map((msg) => (
+        <div
+          key={msg.id}
+          className="mx-3 my-1.5 flex items-start gap-2 animate-[fade-in_200ms_ease-out]"
+        >
           <div
-            key={msg.id}
-            className="mx-3 my-1.5 flex items-start gap-2 animate-[fade-in_200ms_ease-out]"
-          >
-            <div
-              className="flex-1 rounded-xl px-4 py-2.5 text-[13px] border"
-              style={{
-                background: 'color-mix(in srgb, var(--user-bg) 60%, transparent)',
-                borderColor: 'var(--border)',
-                color: 'var(--fg-secondary)',
-              }}
-            >
-              <div className="flex items-center gap-2 mb-1">
-                <span
-                  className="inline-block w-1.5 h-1.5 rounded-full animate-pulse"
-                  style={{ background: 'var(--accent-blue, #60a5fa)' }}
-                />
-                <span className="text-[10px] font-medium" style={{ color: 'var(--accent-blue, #60a5fa)' }}>
-                  Queued
-                </span>
-              </div>
-              <span>{msg.text}</span>
-            </div>
-            <button
-              onClick={() => (window as any)._cancelSteering?.(msg.id)}
-              className="flex-shrink-0 mt-2 p-1 rounded hover:opacity-80 transition-opacity"
-              style={{ color: 'var(--fg-muted)' }}
-              title="Cancel and return to input"
-              aria-label="Cancel queued message and return to input"
-            >
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              </svg>
-            </button>
-          </div>
-        ))}
-
-        {/* Working indicator — always last content item while agent is active */}
-        {showWorkingIndicator && <WorkingIndicator />}
-
-        {/* Retry / Continue button — shown after agent failure */}
-        {retryState && !busy && (
-          <div className="flex items-center gap-2 px-3 py-2 animate-[fade-in_200ms_ease-out]">
-            <button
-              className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors"
-              style={{
-                color: 'var(--accent, #6366f1)',
-                backgroundColor: 'var(--hover-overlay, rgba(255,255,255,0.03))',
-                border: '1px solid var(--border)',
-              }}
-              onClick={() => {
-                // Clear locally first to prevent double-click and avoid a stale pill
-                // if the bridge round-trip is slow.
-                useChatStore.setState({ retryState: null });
-                import('@/bridge/jcef-bridge').then(({ kotlinBridge }) => {
-                  kotlinBridge.retryLastTask();
-                });
-              }}
-            >
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M2 8a6 6 0 0 1 10.5-4M14 8a6 6 0 0 1-10.5 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                <path d="M12 1v3.5h-3.5M4 15v-3.5h3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-              {retryState.kind === 'continue' ? 'Continue' : 'Retry'}
-            </button>
-            <span className="text-[11px] truncate max-w-[300px]" style={{ color: 'var(--fg-muted)' }}>
-              {retryState.caption}
-            </span>
-          </div>
-        )}
-
-        {/* Resume bar — shown when viewing a previous session that can be continued */}
-        {resumeSessionId && !busy && (
-          <div
-            className="mx-3 my-2 flex items-center gap-3 rounded-lg px-4 py-3 animate-[fade-in_200ms_ease-out]"
+            className="flex-1 rounded-xl px-4 py-2.5 text-[13px] border"
             style={{
+              background: 'color-mix(in srgb, var(--user-bg) 60%, transparent)',
+              borderColor: 'var(--border)',
+              color: 'var(--fg-secondary)',
+            }}
+          >
+            <div className="flex items-center gap-2 mb-1">
+              <span
+                className="inline-block w-1.5 h-1.5 rounded-full animate-pulse"
+                style={{ background: 'var(--accent-blue, #60a5fa)' }}
+              />
+              <span className="text-[10px] font-medium" style={{ color: 'var(--accent-blue, #60a5fa)' }}>
+                Queued
+              </span>
+            </div>
+            <span>{msg.text}</span>
+          </div>
+          <button
+            onClick={() => (window as any)._cancelSteering?.(msg.id)}
+            className="flex-shrink-0 mt-2 p-1 rounded hover:opacity-80 transition-opacity"
+            style={{ color: 'var(--fg-muted)' }}
+            title="Cancel and return to input"
+            aria-label="Cancel queued message and return to input"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
+      ))}
+
+      {showWorkingIndicator && <WorkingIndicator />}
+
+      {/* Retry / Continue button — shown after agent failure */}
+      {retryState && !busy && (
+        <div className="flex items-center gap-2 px-3 py-2 animate-[fade-in_200ms_ease-out]">
+          <button
+            className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors"
+            style={{
+              color: 'var(--accent, #6366f1)',
               backgroundColor: 'var(--hover-overlay, rgba(255,255,255,0.03))',
               border: '1px solid var(--border)',
             }}
+            onClick={() => {
+              // Clear locally first to prevent double-click and avoid a stale pill
+              // if the bridge round-trip is slow.
+              useChatStore.setState({ retryState: null });
+              import('@/bridge/jcef-bridge').then(({ kotlinBridge }) => {
+                kotlinBridge.retryLastTask();
+              });
+            }}
           >
-            <span className="text-[12px] flex-1" style={{ color: 'var(--fg-muted)' }}>
-              This session was interrupted. You can continue where it left off.
-            </span>
-            <button
-              className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors"
-              style={{
-                color: '#fff',
-                backgroundColor: 'var(--accent, #6366f1)',
-              }}
-              onClick={() => {
-                import('@/bridge/jcef-bridge').then(({ kotlinBridge }) => {
-                  kotlinBridge.resumeViewedSession();
-                });
-              }}
-            >
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-                <path d="M5 3l8 5-8 5V3z" fill="currentColor" />
-              </svg>
-              Resume
-            </button>
-          </div>
-        )}
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M2 8a6 6 0 0 1 10.5-4M14 8a6 6 0 0 1-10.5 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              <path d="M12 1v3.5h-3.5M4 15v-3.5h3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            {retryState.kind === 'continue' ? 'Continue' : 'Retry'}
+          </button>
+          <span className="text-[11px] truncate max-w-[300px]" style={{ color: 'var(--fg-muted)' }}>
+            {retryState.caption}
+          </span>
+        </div>
+      )}
 
-        <ChatContainerScrollAnchor />
-      </ChatContainerContent>
+      {/* Resume bar — shown when viewing a previous session that can be continued */}
+      {resumeSessionId && !busy && (
+        <div
+          className="mx-3 my-2 flex items-center gap-3 rounded-lg px-4 py-3 animate-[fade-in_200ms_ease-out]"
+          style={{
+            backgroundColor: 'var(--hover-overlay, rgba(255,255,255,0.03))',
+            border: '1px solid var(--border)',
+          }}
+        >
+          <span className="text-[12px] flex-1" style={{ color: 'var(--fg-muted)' }}>
+            This session was interrupted. You can continue where it left off.
+          </span>
+          <button
+            className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors"
+            style={{
+              color: '#fff',
+              backgroundColor: 'var(--accent, #6366f1)',
+            }}
+            onClick={() => {
+              import('@/bridge/jcef-bridge').then(({ kotlinBridge }) => {
+                kotlinBridge.resumeViewedSession();
+              });
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+              <path d="M5 3l8 5-8 5V3z" fill="currentColor" />
+            </svg>
+            Resume
+          </button>
+        </div>
+      )}
+    </div>
+  );
 
-      {/* Scroll-to-bottom button */}
+  return (
+    <div className="relative flex-1 min-h-0">
+      <MessageList
+        ref={messageListRef}
+        count={renderItems.length}
+        renderItem={renderItem}
+        footer={footer}
+        atBottomChange={setIsAtBottom}
+        ariaLabel="Agent chat messages"
+      />
       <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10">
-        <ScrollButton />
+        <ScrollButton
+          atBottom={isAtBottom}
+          onClick={() => messageListRef.current?.scrollToBottom()}
+        />
       </div>
-    </ChatContainerRoot>
+    </div>
   );
 });

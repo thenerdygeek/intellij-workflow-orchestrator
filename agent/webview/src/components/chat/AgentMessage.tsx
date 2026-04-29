@@ -138,13 +138,20 @@ export const AgentMessage = memo(function AgentMessage({
   const isFinalized = !isStreaming && !isUser;
 
   useEffect(() => {
-    if (isFinalized) {
-      const node = contentRef.current;
-      if (!node) return;
-      // Defer one frame so the markdown pipeline has committed its final DOM.
-      const raf = requestAnimationFrame(() => { void scanAndLinkify(node); });
-      return () => cancelAnimationFrame(raf);
+    if (!isFinalized) return;
+    const node = contentRef.current;
+    if (!node) return;
+    // Cooperative scheduling: idle callback if available (Chromium / JCEF),
+    // rAF fallback for jsdom. On a 200-message resume this lets the browser
+    // interleave layout/paint with linkify work instead of queueing 200
+    // back-to-back rAFs.
+    const ric = (window as Window & { requestIdleCallback?: typeof requestIdleCallback }).requestIdleCallback;
+    if (ric) {
+      const handle = ric(() => { void scanAndLinkify(node); }, { timeout: 200 });
+      return () => (window as Window & { cancelIdleCallback?: typeof cancelIdleCallback }).cancelIdleCallback?.(handle);
     }
+    const handle = requestAnimationFrame(() => { void scanAndLinkify(node); });
+    return () => cancelAnimationFrame(handle);
   }, [isFinalized]);
 
   if (message.say === 'PLAN_APPROVED') {
@@ -156,7 +163,8 @@ export const AgentMessage = memo(function AgentMessage({
   return (
     <PkMessage
       className={cn(
-        'group w-full animate-[message-enter_220ms_ease-out_both]',
+        'group w-full',
+        Date.now() - message.ts < 1000 && 'animate-[message-enter_220ms_ease-out_both]',
         isUser ? 'flex-row-reverse' : '',
       )}
     >

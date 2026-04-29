@@ -38,6 +38,11 @@ function safeJsonParse(s: string | undefined): any {
 // ── Monotonic timestamp generator ──
 // Guarantees unique ts values even when multiple UiMessages are created
 // in the same millisecond (e.g., draining tool calls in appendToken).
+//
+// CONTRACT: returns wall-clock-anchored ms (Math.max(Date.now(), _lastTs + 1)).
+// Components rely on wall-clock semantics — e.g., AgentMessage and
+// PlanApprovedBubble gate the message-enter animation on `Date.now() - ts < 1000`.
+// If you ever switch this to a pure logical counter, audit those gate sites.
 let _lastTs = 0;
 function uniqueTs(): number {
   const now = Date.now();
@@ -109,12 +114,19 @@ interface ChatState {
   // State
   messages: UiMessage[];
   /**
-   * Timestamp of the `UiMessage` currently being written by the token stream,
-   * or `null` if no stream is active. The streaming message lives in `messages`
-   * like any other, updated in place via `appendToken`; this field just points
-   * at it so `ChatView` can toggle the caret on the right message.
+   * In-flight streaming text. `null` when no stream is active.
+   * Streaming text is held OUTSIDE the `messages` array so per-token updates
+   * don't bump the array reference and force ChatView to re-walk every message.
+   * On `endStream`, the buffer is committed to `messages` as a finalized
+   * UiMessage and `streamingText` is reset to `null`.
    */
-  activeStream: { messageTs: number } | null;
+  streamingText: string | null;
+  /**
+   * Stable ts used as the React key for the streaming bubble. Set on the first
+   * token, kept until `endStream` flushes the buffer into `messages` with this
+   * same ts so DOM continuity is preserved (no remount flash).
+   */
+  streamingMsgTs: number | null;
   activeToolCalls: Map<string, ToolCall>;  // key = unique tool call ID
   /** Live sub-agent state — accumulates internal messages and tool chains while running.
    *  On completion/kill, the state is frozen into the UiMessage and removed from this map. */
@@ -313,7 +325,8 @@ interface ChatState {
 export const useChatStore = create<ChatState>((set, get) => ({
   // Initial state
   messages: [],
-  activeStream: null,
+  streamingText: null,
+  streamingMsgTs: null,
   activeToolCalls: new Map(),
   activeSubAgents: new Map(),
   plan: null,
@@ -382,7 +395,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     };
     set({
       messages: [firstMessage],
-      activeStream: null,
+      streamingText: null,
+      streamingMsgTs: null,
       activeToolCalls: new Map(),
   activeSubAgents: new Map(),
       // Reset tool output streams alongside activeToolCalls — they are keyed by
@@ -440,14 +454,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
       };
     });
-    const messages = toolMessages.length > 0
-      ? [...state.messages, ...toolMessages]
+    // Flush any in-flight streaming text first (chronology: text → tool calls → session end).
+    const streamFlush: UiMessage[] = (state.streamingText != null && state.streamingMsgTs != null)
+      ? [{ ts: state.streamingMsgTs, type: 'SAY' as const, say: 'TEXT' as const, text: state.streamingText, partial: false }]
+      : [];
+    const messages = (streamFlush.length > 0 || toolMessages.length > 0)
+      ? [...state.messages, ...streamFlush, ...toolMessages]
       : state.messages;
     set({
       session: info,
       busy: false,
       steeringMode: false,
-      activeStream: null,
+      streamingText: null,
+      streamingMsgTs: null,
       activeToolCalls: new Map(),
   activeSubAgents: new Map(),
       // Drop all tool output streams — the map was keyed by the now-cleared
@@ -480,23 +499,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   addAgentText(text: string) {
-    const msg: UiMessage = { ts: uniqueTs(), type: 'SAY', say: 'TEXT', text };
-    set(state => ({ messages: [...state.messages, msg] }));
+    set(state => {
+      const flushed: UiMessage[] = state.streamingText != null && state.streamingMsgTs != null
+        ? [{ ts: state.streamingMsgTs, type: 'SAY', say: 'TEXT', text: state.streamingText, partial: false }]
+        : [];
+      const msg: UiMessage = { ts: uniqueTs(), type: 'SAY', say: 'TEXT', text };
+      return {
+        messages: [...state.messages, ...flushed, msg],
+        streamingText: null,
+        streamingMsgTs: null,
+      };
+    });
   },
 
   appendToken(token: string) {
-    // Defensive no-op: Kotlin StreamBatcher may flush an empty coalesced chunk
-    // on a timer boundary. Returning the same state object avoids thrashing
-    // React.memo on every message for a non-event.
     if (token.length === 0) return;
-
     set(state => {
-      const current = state.activeStream;
-
-      if (current == null) {
-        // First token of a new stream. Drain any leftover active tool calls
-        // into individual UiMessage{say:'TOOL'} entries so the chat flow stays
-        // chronological: prior tools → streaming text → next tool chain.
+      if (state.streamingText == null) {
         let messages = state.messages;
         let activeToolCalls = state.activeToolCalls;
         let toolOutputStreams = state.toolOutputStreams;
@@ -527,48 +546,37 @@ export const useChatStore = create<ChatState>((set, get) => ({
           toolOutputStreams = {};
         }
 
-        const messageTs = uniqueTs();
-        const placeholder: UiMessage = {
-          ts: messageTs,
-          type: 'SAY',
-          say: 'TEXT',
-          text: token,
-          partial: true,
-        };
-
         return {
-          messages: [...messages, placeholder],
-          activeStream: { messageTs },
+          messages,
           activeToolCalls,
           toolOutputStreams,
+          streamingText: token,
+          streamingMsgTs: uniqueTs(),
         };
       }
-
-      // Subsequent tokens update the existing placeholder in place. Keeping
-      // the same message ts lets React.memo skip every other message (we
-      // return `m` by reference for non-matching items) so rendering stays
-      // O(1) in the streaming message per token.
-      return {
-        messages: state.messages.map(m =>
-          m.ts === current.messageTs ? { ...m, text: (m.text || '') + token } : m
-        ),
-      };
+      return { streamingText: state.streamingText + token };
     });
   },
 
   endStream() {
-    const state = get();
-    const shouldClearPlan = state.planCompletedPendingClear;
-    const streamTs = state.activeStream?.messageTs;
-    set({
-      // Flip partial to false on the streaming message
-      ...(streamTs != null ? {
-        messages: state.messages.map(m =>
-          m.ts === streamTs ? { ...m, partial: false } : m
-        ),
-      } : {}),
-      activeStream: null,
-      ...(shouldClearPlan ? { plan: null, planCompletedPendingClear: false } : {}),
+    set(state => {
+      const shouldClearPlan = state.planCompletedPendingClear;
+      if (state.streamingText == null || state.streamingMsgTs == null) {
+        return shouldClearPlan ? { plan: null, planCompletedPendingClear: false } : {};
+      }
+      const finalized: UiMessage = {
+        ts: state.streamingMsgTs,
+        type: 'SAY',
+        say: 'TEXT',
+        text: state.streamingText,
+        partial: false,
+      };
+      return {
+        messages: [...state.messages, finalized],
+        streamingText: null,
+        streamingMsgTs: null,
+        ...(shouldClearPlan ? { plan: null, planCompletedPendingClear: false } : {}),
+      };
     });
   },
 
@@ -596,12 +604,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       newMap.set(id, { id, name, args, status });
 
-      // Clear the streaming caret on any in-flight message so the tool call
-      // below it renders as the next visual item. The message text itself
-      // already lives in `messages` and stays put.
-      if (state.activeStream != null) {
+      // Flush any in-flight streaming buffer into messages so the tool call
+      // below it renders as the next visual item chronologically.
+      if (state.streamingText != null && state.streamingMsgTs != null) {
+        const finalized: UiMessage = {
+          ts: state.streamingMsgTs,
+          type: 'SAY',
+          say: 'TEXT',
+          text: state.streamingText,
+          partial: false,
+        };
         return {
-          activeStream: null,
+          messages: [...state.messages, finalized],
+          streamingText: null,
+          streamingMsgTs: null,
           activeToolCalls: newMap,
         };
       }
@@ -673,16 +689,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   addCompletionCard(data: CompletionData) {
-    const msg: UiMessage = {
-      ts: uniqueTs(),
-      type: 'ASK',
-      ask: 'COMPLETION_RESULT',
-      completionData: data,
-    };
-    set(state => ({
-      messages: [...state.messages, msg],
-      activeStream: null,
-    }));
+    set(state => {
+      const flushed: UiMessage[] = (state.streamingText != null && state.streamingMsgTs != null)
+        ? [{ ts: state.streamingMsgTs, type: 'SAY', say: 'TEXT', text: state.streamingText, partial: false }]
+        : [];
+      const msg: UiMessage = { ts: uniqueTs(), type: 'ASK', ask: 'COMPLETION_RESULT', completionData: data };
+      return {
+        messages: [...state.messages, ...flushed, msg],
+        streamingText: null,
+        streamingMsgTs: null,
+      };
+    });
   },
 
   addStatus(message: string, type: StatusType) {
@@ -745,7 +762,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   clearChat() {
     set({
       messages: [],
-      activeStream: null,
+      streamingText: null,
+      streamingMsgTs: null,
       activeToolCalls: new Map(),
   activeSubAgents: new Map(),
       // Drop tool output streams in lockstep with activeToolCalls.
@@ -1064,11 +1082,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
       };
 
       // Drain any active tool chain into individual UiMessage entries and
-      // clear the streaming caret so the approval card renders below all
-      // prior content.
-      const hadStream = state.activeStream != null;
+      // flush any in-flight streaming buffer so the approval card renders
+      // below all prior content.
+      const hadStream = state.streamingText != null && state.streamingMsgTs != null;
       const tools = Array.from(state.activeToolCalls.values());
-      const newMessages = [...state.messages];
+      let newMessages = [...state.messages];
+
+      if (hadStream) {
+        newMessages.push({
+          ts: state.streamingMsgTs!,
+          type: 'SAY' as const,
+          say: 'TEXT' as const,
+          text: state.streamingText!,
+          partial: false,
+        });
+      }
 
       if (tools.length > 0) {
         const streams = state.toolOutputStreams;
@@ -1095,7 +1123,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       return {
         pendingApproval: approval,
-        ...(hadStream ? { activeStream: null } : {}),
+        ...(hadStream ? { streamingText: null, streamingMsgTs: null } : {}),
         ...(tools.length > 0 ? { activeToolCalls: new Map(), toolOutputStreams: {} } : {}),
         ...(newMessages.length !== state.messages.length ? { messages: newMessages } : {}),
       };
@@ -1678,7 +1706,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     set({
       messages: upgraded,
-      activeStream: null,
+      streamingText: null,
+      streamingMsgTs: null,
       viewMode: 'chat',
       ...(restoredPlan ? { plan: restoredPlan } : {}),
     });

@@ -34,28 +34,31 @@ function App() {
     }
   }, []);
 
-  // Fix Radix Popper positioning: @floating-ui miscalculates the portal position
-  // in our layout (flex + overflow: hidden chain), sending dropdowns off-screen.
-  // We fix Y via CSS (bottom: 60px) and align X to the trigger element here.
+  // Radix renders its popper into a portal inserted at the END of <body>. We
+  // observe ONLY direct children of <body> (no subtree) so the callback fires
+  // when the portal is added/removed, not for every span Streamdown emits
+  // mid-stream.
   useEffect(() => {
+    const fixPopperX = (root: HTMLElement) => {
+      const wrapper = root.matches('[data-radix-popper-content-wrapper]')
+        ? root
+        : root.querySelector?.('[data-radix-popper-content-wrapper]');
+      if (!wrapper) return;
+      const trigger = document.querySelector('[data-slot="dropdown-menu-trigger"][aria-expanded="true"]');
+      if (trigger) {
+        const triggerRect = trigger.getBoundingClientRect();
+        (wrapper as HTMLElement).style.setProperty('--popper-fix-x', `${triggerRect.left}px`);
+      }
+    };
+
     const popperObserver = new MutationObserver((mutations) => {
       for (const m of mutations) {
         for (const node of m.addedNodes) {
-          if (!(node instanceof HTMLElement)) continue;
-          const wrapper = node.matches('[data-radix-popper-content-wrapper]')
-            ? node
-            : node.querySelector?.('[data-radix-popper-content-wrapper]');
-          if (!wrapper) continue;
-
-          const trigger = document.querySelector('[data-slot="dropdown-menu-trigger"][aria-expanded="true"]');
-          if (trigger) {
-            const triggerRect = trigger.getBoundingClientRect();
-            (wrapper as HTMLElement).style.setProperty('--popper-fix-x', `${triggerRect.left}px`);
-          }
+          if (node instanceof HTMLElement) fixPopperX(node);
         }
       }
     });
-    popperObserver.observe(document.body, { childList: true, subtree: true });
+    popperObserver.observe(document.body, { childList: true });  // no subtree
     return () => popperObserver.disconnect();
   }, []);
 
