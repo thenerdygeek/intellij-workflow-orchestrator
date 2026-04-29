@@ -22,7 +22,13 @@ data class StartWorkResult(
     val sourceBranch: String,
     val branchName: String,
     val useExisting: Boolean = false,
-    val selectedRepoIndex: Int = 0
+    val selectedRepoIndex: Int = 0,
+    /**
+     * When true, the user opted out of branch creation. The caller must skip
+     * `BranchingService.startWork` (no branch, no Jira auto-transition) and
+     * route directly to `ActiveTicketService.setActiveTicket(...)`.
+     */
+    val activateOnly: Boolean = false,
 )
 
 /**
