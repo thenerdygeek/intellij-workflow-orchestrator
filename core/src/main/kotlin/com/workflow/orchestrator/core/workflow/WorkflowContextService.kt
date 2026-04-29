@@ -14,6 +14,8 @@ import com.intellij.openapi.module.ModuleUtilCore
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ModuleRootManager
 import com.intellij.openapi.vcs.BranchChangeListener
+import git4idea.repo.GitRepository
+import git4idea.repo.GitRepositoryChangeListener
 import git4idea.repo.GitRepositoryManager
 import com.workflow.orchestrator.core.model.workflow.InteractionMode
 import com.workflow.orchestrator.core.model.workflow.ModuleRef
@@ -98,12 +100,20 @@ class WorkflowContextService(
      * tracked repo, or the module set, so the heavy editor + PSI lookups in
      * [recomputeFromEditor] are wasted work for a branch event.
      *
-     * NOTE: `GitRepositoryChangeListener` intentionally NOT subscribed — git4idea is an
-     * optional dependency. [BranchChangeListener.VCS_BRANCH_CHANGED] is a platform topic
-     * in `com.intellij.openapi.vcs` (no git4idea coupling) and is the same signal that
-     * `PrDashboardPanel` and `BuildDashboardPanel` already subscribe to. The previous
-     * assumption that `VCS_REPOSITORY_MAPPING_UPDATED` covered branch-change is wrong —
-     * that topic only fires on VCS root mapping changes (e.g., adding a submodule).
+     * Two branch-state signals are wired:
+     *
+     *  - [BranchChangeListener.VCS_BRANCH_CHANGED] — platform topic, fires on
+     *    IDE-initiated checkouts (Git tool window, branch widget).
+     *  - [GitRepository.GIT_REPO_CHANGE] — git4idea topic, fires on ANY
+     *    `GitRepository.update()` including external CLI `git checkout`. Without
+     *    this subscription, a user running `git checkout` in their terminal would
+     *    leave `prRepoBranch` stale and the ReadOnly banner would lie until the
+     *    user clicked an editor or switched focus.
+     *
+     * The "git4idea is optional" caveat doesn't apply: `:core` already imports
+     * `git4idea.repo.GitRepositoryManager` directly in [readBranchForPrRepo] and
+     * [BranchSwitchAction], and every product module (`:bamboo`, `:pullrequest`,
+     * `:agent`) declares git4idea as a hard dependency.
      *
      * `ModuleListener` invalidates the [cachedProjectModules] field; the next
      * recompute re-reads from `ModuleManager` under `readAction`.
@@ -137,6 +147,14 @@ class WorkflowContextService(
             }
         )
 
+        // Catches external CLI `git checkout` (and any other state change git4idea
+        // observes via `GitRepository.update()`); the platform topic above misses
+        // those because they bypass IntelliJ's branch-checkout machinery.
+        bus.subscribe(
+            GitRepository.GIT_REPO_CHANGE,
+            GitRepositoryChangeListener { cs.launch { onBranchChanged() } }
+        )
+
         bus.subscribe(
             com.intellij.openapi.project.ModuleListener.TOPIC,
             object : com.intellij.openapi.project.ModuleListener {
@@ -157,32 +175,76 @@ class WorkflowContextService(
     }
 
     /**
-     * Narrow mutator fired by [BranchChangeListener.VCS_BRANCH_CHANGED]. Updates only
-     * `activeBranch` by re-reading the *already-tracked* `activeRepo` — no editor
-     * lookup, no PSI, no module scan. A `git checkout` cannot change the editor,
-     * the tracked repo, or the module set, so calling [recomputeFromEditor] here
-     * would re-introduce the editor-coupling the `refactor/cleanup-perf-caching` sweep
-     * worked to minimize (see `editor-fallback-allowed` marker convention in
-     * `RepoContextResolver`).
+     * Narrow mutator fired by [BranchChangeListener.VCS_BRANCH_CHANGED]. Refreshes the
+     * two VCS-derived branch fields on the snapshot:
      *
-     * If `activeRepo` has not been seeded yet (no editor opened since project start),
-     * this no-ops; the next [recomputeFromEditor] tick will pick up the current branch
-     * along with the rest of the editor slice.
+     * 1. `activeBranch` — editor-derived (re-read from `activeRepo.localVcsRootPath`),
+     *    kept for agent context only.
+     * 2. `prRepoBranch` — the focused PR's OWN repo's `currentBranchName`, looked up
+     *    via `focusPr.repoName` → `PluginSettings.getRepos()` → `localVcsRootPath` →
+     *    `GitRepositoryManager`. This is what drives `interactionMode`. The editor's
+     *    repo is intentionally NOT consulted — the user can have any random file open
+     *    in any submodule and the live/read-only decision must still track the PR's
+     *    actual repo state, the same data IntelliJ's top-bar branch widget reads.
+     *
+     * No editor or module lookup; a `git checkout` cannot change the editor selection
+     * or the module set.
      *
      * Mutex-serialized with the other cascade mutators so an in-flight `focusPr`
-     * cascade observes a coherent `activeBranch` value.
+     * cascade observes a coherent post-checkout snapshot.
      */
     internal suspend fun onBranchChanged() = cascadeMutex.withLock {
         val current = _state.value
-        val rootPath = current.activeRepo?.localVcsRootPath ?: return@withLock
+        var next = current
+
+        // 1. activeBranch (editor-derived agent context).
+        val activeRoot = current.activeRepo?.localVcsRootPath
+        if (activeRoot != null) {
+            val activeRepoGit = GitRepositoryManager.getInstance(project).repositories
+                .firstOrNull { it.root.path == activeRoot }
+            val newActiveBranch = activeRepoGit?.currentBranchName
+            if (newActiveBranch != current.activeBranch) {
+                next = next.copy(activeBranch = newActiveBranch)
+            }
+        }
+
+        // 2. prRepoBranch (PR-repo-derived; drives interactionMode).
+        val pr = current.focusPr
+        if (pr != null) {
+            val newPrBranch = readBranchForPrRepo(pr)
+            if (newPrBranch != current.prRepoBranch) {
+                next = next.copy(prRepoBranch = newPrBranch)
+            }
+        }
+
+        if (next !== current) {
+            _state.value = next
+            log.info(
+                "[Workflow:Context] branch-change → activeBranch=${next.activeBranch ?: "<detached>"}, " +
+                    "prRepoBranch=${next.prRepoBranch ?: "<n/a>"}"
+            )
+        }
+    }
+
+    /**
+     * Resolves [pr]'s OWN git repo — `pr.repoName` → `PluginSettings.getRepos()` →
+     * `localVcsRootPath` → `GitRepositoryManager.repositories` — and returns its
+     * `currentBranchName`. Returns null when the repo can't be matched (stale settings,
+     * unmounted repo, blank repoName) or the repo is detached.
+     *
+     * Single source of truth for "what branch is the PR's repo on" — used by both
+     * [computeFocusForPr] and [onBranchChanged]. Never reads the editor.
+     */
+    private fun readBranchForPrRepo(pr: PrRef): String? {
+        if (pr.repoName.isBlank()) return null
+        val repoConfig = PluginSettings.getInstance(project).getRepos()
+            .firstOrNull { it.name == pr.repoName || it.displayLabel == pr.repoName }
+            ?: return null
+        val rootPath = repoConfig.localVcsRootPath?.takeIf { it.isNotBlank() } ?: return null
         val gitRepo = GitRepositoryManager.getInstance(project).repositories
             .firstOrNull { it.root.path == rootPath }
-            ?: return@withLock
-        val newBranch = gitRepo.currentBranchName
-        if (newBranch != current.activeBranch) {
-            _state.value = current.copy(activeBranch = newBranch)
-            log.info("[Workflow:Context] activeBranch → ${newBranch ?: "<detached>"} (branch-change event)")
-        }
+            ?: return null
+        return gitRepo.currentBranchName
     }
 
     /**
@@ -247,11 +309,19 @@ class WorkflowContextService(
             }
         }.also { cachedProjectModules = it }
 
+        // Refresh `prRepoBranch` here too: VCS-mapping events (mount/unmount of a
+        // submodule's `.git`) and module-set changes can flip whether the focused
+        // PR's repo is resolvable, and `onBranchChanged` doesn't fire for those.
+        // Cheap — settings + manager lookup, no HTTP.
+        val currentPr = _state.value.focusPr
+        val refreshedPrRepoBranch = currentPr?.let { readBranchForPrRepo(it) }
+
         _state.value = _state.value.copy(
             activeRepo = repoRef,
             activeBranch = branch,
             editorModule = editorModuleRef,
             projectModules = projectModulesRef,
+            prRepoBranch = refreshedPrRepoBranch,
         )
     }
 
@@ -302,14 +372,20 @@ class WorkflowContextService(
      */
     suspend fun focusPr(pr: PrRef?) = cascadeMutex.withLock {
         val newCtx = if (pr == null) {
-            _state.value.copy(focusPr = null, focusBuild = null, focusQualityScope = null)
+            _state.value.copy(
+                focusPr = null,
+                focusBuild = null,
+                focusQualityScope = null,
+                prRepoBranch = null,
+            )
         } else {
             computeFocusForPr(_state.value, pr)
         }
         _state.value = newCtx
         log.info(
             "[Workflow:Context] focusPr → ${pr?.prId ?: "<cleared>"}, " +
-                "focusBuild=${newCtx.focusBuild?.buildNumber}"
+                "focusBuild=${newCtx.focusBuild?.buildNumber}, " +
+                "prRepoBranch=${newCtx.prRepoBranch ?: "<n/a>"}"
         )
     }
 
@@ -355,10 +431,21 @@ class WorkflowContextService(
                 focusPr = null,
                 focusBuild = null,
                 focusQualityScope = null,
+                prRepoBranch = null,
             )
             log.info(
                 "[Workflow:Context] focusPr cleared — repo '${pr.repoName}' no longer in PluginSettings"
             )
+            return@withLock
+        }
+
+        // Repo still configured, but `localVcsRootPath` may have been edited (typo
+        // fix, rename) — re-resolve `prRepoBranch` so the banner / live-only gates
+        // don't keep showing the stale checkout state of the old path.
+        val refreshed = readBranchForPrRepo(pr)
+        if (refreshed != _state.value.prRepoBranch) {
+            _state.value = _state.value.copy(prRepoBranch = refreshed)
+            log.info("[Workflow:Context] prRepoBranch refreshed after settings edit → ${refreshed ?: "<n/a>"}")
         }
     }
 
@@ -401,7 +488,17 @@ class WorkflowContextService(
                 moduleKey = null,
             )
         }
-        return base.copy(focusPr = resolvedPr, focusBuild = build, focusQualityScope = quality)
+        // VCS-grounded check that drives interactionMode — read the PR's OWN repo's
+        // branch, never the editor's repo. Same `GitRepositoryManager.repositories`
+        // list IntelliJ's branch widget reads, so user-visible IDE state and our
+        // Live/ReadOnly decision stay in lockstep regardless of which file is open.
+        val prRepoBranch = readBranchForPrRepo(resolvedPr)
+        return base.copy(
+            focusPr = resolvedPr,
+            focusBuild = build,
+            focusQualityScope = quality,
+            prRepoBranch = prRepoBranch,
+        )
     }
 
     private fun resolveBambooPlanKey(repoName: String): String? {

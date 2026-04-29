@@ -14,6 +14,10 @@ import org.junit.jupiter.api.Test
  * (Refresh, Trigger Build, Trigger Manual Stage) — display rows stay visible. The
  * decision lives in [BuildDashboardActionGate] which is a pure object, so this test
  * doesn't need to instantiate the heavyweight `BuildDashboardPanel`.
+ *
+ * After the 2026-04-29 editor-coupling rip-out, the guard reads `prRepoBranch` (the
+ * focused PR's repo's actual checked-out branch, populated by `WorkflowContextService`
+ * from `GitRepositoryManager`) — never `activeBranch` / `activeRepo` (editor-derived).
  */
 class BuildDashboardActionGuardTest {
 
@@ -30,56 +34,49 @@ class BuildDashboardActionGuardTest {
 
     @Test
     fun `Live when no PR focused — actions enabled`() {
-        val ctx = WorkflowContext(focusPr = null, activeBranch = "feat/abc")
+        val ctx = WorkflowContext(focusPr = null)
         assertTrue(BuildDashboardActionGate.isLiveMode(ctx))
     }
 
     @Test
-    fun `Live when focused PR fromBranch matches activeBranch and repo matches — actions enabled`() {
-        val ctx = WorkflowContext(
-            focusPr = pr("feat/abc"),
-            activeBranch = "feat/abc",
-            activeRepo = repo("repo"),
-        )
+    fun `Live when focused PR fromBranch matches prRepoBranch — actions enabled`() {
+        val ctx = WorkflowContext(focusPr = pr("feat/abc"), prRepoBranch = "feat/abc")
         assertTrue(BuildDashboardActionGate.isLiveMode(ctx))
     }
 
     @Test
-    fun `ReadOnly when activeBranch differs from focused PR fromBranch — actions disabled`() {
-        val ctx = WorkflowContext(
-            focusPr = pr("feat/abc"),
-            activeBranch = "main",
-            activeRepo = repo("repo"),
-        )
+    fun `ReadOnly when prRepoBranch differs from focused PR fromBranch — actions disabled`() {
+        val ctx = WorkflowContext(focusPr = pr("feat/abc"), prRepoBranch = "main")
         assertFalse(BuildDashboardActionGate.isLiveMode(ctx))
     }
 
     @Test
-    fun `ReadOnly when activeBranch is null with focused PR — actions disabled`() {
-        val ctx = WorkflowContext(focusPr = pr("feat/abc"), activeBranch = null)
+    fun `ReadOnly when prRepoBranch is null with focused PR — actions disabled`() {
+        val ctx = WorkflowContext(focusPr = pr("feat/abc"), prRepoBranch = null)
         assertFalse(BuildDashboardActionGate.isLiveMode(ctx))
     }
 
     /**
-     * H1 from the 2026-04-27 sweep code review: actions must NOT enable when the editor's
-     * repo differs from the focused PR's repo, even when both share the same branch name.
-     * Common in multi-module setups where two submodules share a `feature/ABC-123-foo`
-     * branch from the same Jira ticket — without this check, Trigger Build would target
-     * the wrong submodule's plan.
+     * Editor-coupling regression guard. Previously the gate also consulted
+     * `activeBranch` / `activeRepo` — opening any random file in the wrong submodule
+     * would silently flip to ReadOnly even when the PR's own repo had the right
+     * branch checked out. Now the editor slice is irrelevant.
      */
     @Test
-    fun `ReadOnly when branch matches but PR repo differs from active repo — actions disabled`() {
+    fun `Live when prRepoBranch matches PR branch even when editor sits in unrelated repo`() {
         val ctx = WorkflowContext(
             focusPr = pr("feat/abc", inRepo = "repo-a"),
-            activeBranch = "feat/abc",
+            prRepoBranch = "feat/abc",
+            // Editor in a totally different submodule on a totally different branch.
             activeRepo = repo("repo-b"),
+            activeBranch = "main",
         )
-        assertFalse(BuildDashboardActionGate.isLiveMode(ctx))
+        assertTrue(BuildDashboardActionGate.isLiveMode(ctx))
     }
 
     @Test
     fun `tooltip names the focused PR's source branch when ReadOnly`() {
-        val ctx = WorkflowContext(focusPr = pr("feat/xyz"), activeBranch = "main")
+        val ctx = WorkflowContext(focusPr = pr("feat/xyz"), prRepoBranch = "main")
         val tip = BuildDashboardActionGate.readOnlyTooltip(ctx)
         assertTrue(tip.contains("feat/xyz"), "Tooltip should name the source branch, was: $tip")
         assertTrue(tip.startsWith("Disabled:"), "Tooltip should start with Disabled, was: $tip")

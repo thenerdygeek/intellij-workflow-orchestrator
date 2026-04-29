@@ -6,6 +6,7 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.workflow.orchestrator.core.model.workflow.PrRef
+import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.workflow.WorkflowContextService
 import git4idea.branch.GitBrancher
 import git4idea.repo.GitRepository
@@ -22,11 +23,12 @@ import kotlinx.coroutines.withContext
  * workspace-wide decision the user should make via the IDE's VCS popup, not a
  * side effect of clicking a banner link.
  *
- * Repo source: `WorkflowContext.activeRepo.localVcsRootPath` is the user-action
- * signal (the focused PR's repo) and is REQUIRED. There is no editor-context
- * fallback — if the focus chain doesn't pin a repo, the action aborts with
- * `NoRepoResolved`. Falling back to the editor's repo would silently switch
- * the wrong submodule's branch in multi-module projects.
+ * Repo source: the focused PR's `repoName` resolved through
+ * `PluginSettings.getRepos()` to a `localVcsRootPath`. The editor is NEVER
+ * consulted — falling back to "whatever file the user has open" would silently
+ * switch the wrong submodule's branch in multi-module projects (the same bug
+ * class that drove the 2026-04-29 editor-coupling rip-out). If the focus chain
+ * doesn't pin a resolvable repo, the action aborts with `NoRepoResolved`.
  *
  * Dirty-tree guard: aborts with a warning notification if the resolved repo has
  * any tracked-but-uncommitted changes OR any untracked files. Saved unsaved
@@ -55,9 +57,12 @@ object BranchSwitchAction {
         val state = service.state.value
         val pr: PrRef = state.focusPr ?: return@withContext Result.NoFocusPr
 
-        val preferredRoot = state.activeRepo?.localVcsRootPath
+        // Resolve the PR's OWN repo from `pr.repoName` via settings — never the
+        // editor's repo. This makes the action correct even when the user has a
+        // random file open in another submodule.
+        val preferredRoot = resolveRepoRootForPr(project, pr)
         if (preferredRoot == null) {
-            log.warn("[Workflow:Banner] Switch branch aborted: no activeRepo pinned in WorkflowContext")
+            log.warn("[Workflow:Banner] Switch branch aborted: cannot resolve repo for PR '${pr.repoName}'")
             return@withContext Result.NoRepoResolved
         }
         val repo = resolveTargetRepo(project, preferredRoot)
@@ -86,10 +91,10 @@ object BranchSwitchAction {
 
     /**
      * Multi-repo entry point used by the active-ticket chip's per-row
-     * "Switch branch" affordance. Unlike [trySwitch] this does NOT depend on
-     * `WorkflowContextService.activeRepo` — the row's repo is the user-action
-     * signal. The dirty-tree guard, threading, and notification semantics are
-     * identical to [trySwitch].
+     * "Switch branch" affordance. Unlike [trySwitch] the caller passes the
+     * target repo root directly (the row is the user-action signal), bypassing
+     * the focused-PR resolution. Dirty-tree guard, threading, and notification
+     * semantics are identical to [trySwitch].
      *
      * Returns [Result.NoRepoResolved] when [repoRoot] does not match any
      * registered `GitRepository` (stale settings or repo unmounted).
@@ -120,13 +125,24 @@ object BranchSwitchAction {
             }
         }
 
+    /**
+     * Maps a focused PR's `repoName` to a `localVcsRootPath` via `PluginSettings`.
+     * Returns null when the repo can't be matched (blank repoName, stale settings).
+     */
+    private fun resolveRepoRootForPr(project: Project, pr: PrRef): String? {
+        if (pr.repoName.isBlank()) return null
+        val match = PluginSettings.getInstance(project).getRepos()
+            .firstOrNull { it.name == pr.repoName || it.displayLabel == pr.repoName }
+            ?: return null
+        return match.localVcsRootPath?.takeIf { it.isNotBlank() }
+    }
+
     private fun resolveTargetRepo(project: Project, preferredRoot: String): GitRepository? {
-        // `preferredRoot` is the contract: it comes from the focused PR's
-        // `RepoRef.localVcsRootPath`. If the manager doesn't know about it
+        // `preferredRoot` is the contract: it comes from the focused PR's repo
+        // (resolved via PluginSettings) or a caller-supplied row root. Editor
+        // state is never consulted. If the manager doesn't know about the path
         // (project re-opened with stale context, repo unmounted, etc.) we
-        // return null so the caller surfaces `NoRepoResolved` — silently
-        // switching the editor's repo's branch would be the wrong submodule
-        // in multi-module projects.
+        // return null so the caller surfaces `NoRepoResolved`.
         val mgr = GitRepositoryManager.getInstance(project)
         return mgr.repositories.firstOrNull { it.root.path == preferredRoot }
     }

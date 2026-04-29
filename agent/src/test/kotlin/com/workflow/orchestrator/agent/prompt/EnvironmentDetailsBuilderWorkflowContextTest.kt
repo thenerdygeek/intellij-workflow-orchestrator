@@ -45,6 +45,7 @@ class EnvironmentDetailsBuilderWorkflowContextTest {
                 activeBranch = "feat/login-fix",
                 activeRepo = RepoRef("repo", "P", "repo", "/p/repo"),
                 focusPr = PrRef(42, "feat/login-fix", "main", "repo", null, null),
+                prRepoBranch = "feat/login-fix",
             )
         )
         every { project.getService(WorkflowContextService::class.java) } returns service
@@ -59,7 +60,7 @@ class EnvironmentDetailsBuilderWorkflowContextTest {
         assertTrue(out.contains("Active ticket: AFTER8TE-912"), "active ticket key must appear")
         assertTrue(out.contains("Active branch: feat/login-fix"), "active branch must appear")
         assertTrue(out.contains("Focused PR: #42"), "focused PR id must appear")
-        // activeBranch == focusPr.fromBranch AND activeRepo.name == focusPr.repoName → InteractionMode.Live
+        // prRepoBranch == focusPr.fromBranch → InteractionMode.Live
         assertTrue(out.contains("Interaction mode: Live"), "interaction mode must reflect derived value")
     }
 
@@ -79,7 +80,7 @@ class EnvironmentDetailsBuilderWorkflowContextTest {
     }
 
     @Test
-    fun `read-only interaction mode rendered when active branch differs from PR source branch`() = runTest {
+    fun `read-only interaction mode rendered when PR repo is on a different branch`() = runTest {
         val project = mockk<Project>(relaxed = true)
         val service = mockk<WorkflowContextService>()
         every { service.state } returns MutableStateFlow(
@@ -87,6 +88,7 @@ class EnvironmentDetailsBuilderWorkflowContextTest {
                 activeTicket = TicketRef("PROJ-1", "Investigate"),
                 activeBranch = "feat/other-branch",
                 focusPr = PrRef(7, "feat/login-fix", "main", "repo", null, null),
+                prRepoBranch = "main",
             )
         )
         every { project.getService(WorkflowContextService::class.java) } returns service
@@ -97,6 +99,6 @@ class EnvironmentDetailsBuilderWorkflowContextTest {
             contextManager = null,
         )
         assertTrue(out.contains("<workflow_context>"))
-        assertTrue(out.contains("Interaction mode: ReadOnly"), "read-only mode must surface when branch != PR.fromBranch")
+        assertTrue(out.contains("Interaction mode: ReadOnly"), "read-only mode must surface when PR repo on different branch")
     }
 }

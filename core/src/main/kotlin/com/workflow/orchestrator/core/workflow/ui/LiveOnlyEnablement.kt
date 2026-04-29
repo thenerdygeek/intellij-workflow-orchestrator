@@ -16,12 +16,13 @@ import javax.swing.JComponent
 
 /**
  * Binds a set of Swing controls' `isEnabled` state to `WorkflowContextService.interactionMode`.
- * Disables the controls when the panel enters `ReadOnly` mode (focused PR's branch differs
- * from the editor's active branch — line numbers don't match, so line-anchored interactions
- * are unsafe).
+ * Disables the controls when the panel enters `ReadOnly` mode (focused PR's source branch
+ * is not the currently checked-out branch on the PR's repo — line numbers don't match, so
+ * line-anchored interactions are unsafe).
  *
  * Each disabled control gets an explanatory tooltip naming the focused PR's source branch
- * so users can switch and re-enable.
+ * so users can switch and re-enable. The check is grounded in the PR's repo's VCS state
+ * (same data IntelliJ's branch widget reads), not the editor's open file.
  *
  * Spec §7.2 + §7.3 (live-only enumeration).
  *
@@ -39,9 +40,9 @@ fun bindLiveOnlyEnablement(
     scope.launch {
         // Combined flow so the tooltip uses the same snapshot as the enablement decision.
         service.state
-            .map { Triple(it.interactionMode, it.activeBranch, it.focusPr?.fromBranch) }
+            .map { Pair(it.interactionMode, it.focusPr?.fromBranch) }
             .distinctUntilChanged()
-            .collect { (mode, _, focusFromBranch) ->
+            .collect { (mode, focusFromBranch) ->
                 val live = (mode == InteractionMode.Live)
                 controls.forEach { ctrl ->
                     ctrl.isEnabled = live

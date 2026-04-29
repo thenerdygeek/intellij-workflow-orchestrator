@@ -59,9 +59,9 @@ class PrBarTest {
 
     @Test
     fun `focusPr null renders empty-state panel`() {
-        val (project, _) = stubService(WorkflowContext(focusPr = null, activeBranch = "main"))
+        val (project, _) = stubService(WorkflowContext(focusPr = null))
         val bar = constructOnEdt { PrBar(project, barScope) }
-        bar.renderFromContextForTest(WorkflowContext(focusPr = null, activeBranch = "main"))
+        bar.renderFromContextForTest(WorkflowContext(focusPr = null))
 
         val rendered = currentRenderedPanel(bar)
         assertTrue(rendered.background == com.workflow.orchestrator.core.ui.StatusColors.INFO_BG,
@@ -72,25 +72,23 @@ class PrBarTest {
     fun `interactionMode ReadOnly renders empty-state panel`() {
         val pr = PrRef(prId = 7, fromBranch = "feat/abc", toBranch = "main",
             repoName = "repo", bambooPlanKey = null, sonarProjectKey = null)
-        // Local branch differs from PR's fromBranch → ReadOnly.
-        val ctx = WorkflowContext(focusPr = pr, activeBranch = "main")
+        // PR's repo is on `main` while PR's source branch is `feat/abc` → ReadOnly.
+        val ctx = WorkflowContext(focusPr = pr, prRepoBranch = "main")
         val (project, _) = stubService(ctx)
         val bar = constructOnEdt { PrBar(project, barScope) }
         bar.renderFromContextForTest(ctx)
 
         val rendered = currentRenderedPanel(bar)
         assertTrue(rendered.background == com.workflow.orchestrator.core.ui.StatusColors.INFO_BG,
-            "Expected empty-state panel under ReadOnly (branch mismatch)")
+            "Expected empty-state panel under ReadOnly (PR repo on different branch)")
     }
 
     @Test
     fun `Live with focusPr renders single-PR panel containing PR-#id`() {
         val pr = PrRef(prId = 42, fromBranch = "feat/abc", toBranch = "main",
             repoName = "repo", bambooPlanKey = null, sonarProjectKey = null)
-        val activeRepo = com.workflow.orchestrator.core.model.workflow.RepoRef(
-            name = "repo", projectKey = "P", repoSlug = "repo", localVcsRootPath = "/p/repo"
-        )
-        val ctx = WorkflowContext(focusPr = pr, activeBranch = "feat/abc", activeRepo = activeRepo)
+        // PR's own repo is on `feat/abc` (matches PR.fromBranch) → Live.
+        val ctx = WorkflowContext(focusPr = pr, prRepoBranch = "feat/abc")
         val (project, _) = stubService(ctx)
         val bar = constructOnEdt { PrBar(project, barScope) }
         bar.renderFromContextForTest(ctx)
@@ -108,24 +106,33 @@ class PrBarTest {
             "Label text should contain fromBranch, was: $labelText")
     }
 
+    /**
+     * Editor-coupling regression guard. The user may have any random file open in any
+     * submodule — that must not affect the bar. Live/empty depends solely on the PR's
+     * own repo's branch (`prRepoBranch`).
+     */
     @Test
-    fun `branch matches but repo differs renders empty-state (multi-module same-branch case)`() {
-        // H1 from the 2026-04-27 sweep code review: two submodules sharing a branch name
-        // (e.g. both branched from the same Jira ticket) should NOT render the focused PR
-        // when the editor's active repo differs from the PR's repo.
+    fun `Live render survives editor sitting in unrelated submodule`() {
         val pr = PrRef(prId = 42, fromBranch = "feat/abc", toBranch = "main",
             repoName = "repo-a", bambooPlanKey = null, sonarProjectKey = null)
-        val activeRepoB = com.workflow.orchestrator.core.model.workflow.RepoRef(
+        val unrelatedRepo = com.workflow.orchestrator.core.model.workflow.RepoRef(
             name = "repo-b", projectKey = "P", repoSlug = "repo-b", localVcsRootPath = "/p/repo-b"
         )
-        val ctx = WorkflowContext(focusPr = pr, activeBranch = "feat/abc", activeRepo = activeRepoB)
+        // Service confirmed PR's OWN repo (repo-a) is on feat/abc → Live, regardless
+        // of which file/repo the editor happens to be sitting in.
+        val ctx = WorkflowContext(
+            focusPr = pr,
+            prRepoBranch = "feat/abc",
+            activeRepo = unrelatedRepo,
+            activeBranch = "main",
+        )
         val (project, _) = stubService(ctx)
         val bar = constructOnEdt { PrBar(project, barScope) }
         bar.renderFromContextForTest(ctx)
 
         val rendered = currentRenderedPanel(bar)
-        assertTrue(rendered.background == com.workflow.orchestrator.core.ui.StatusColors.INFO_BG,
-            "Expected empty-state panel: branch matched but repo differed (multi-module ambiguity)")
+        assertTrue(rendered.background == com.workflow.orchestrator.core.ui.StatusColors.SUCCESS_BG,
+            "Expected Live render — editor's repo/branch must not influence the bar")
     }
 
     // -------------------- helpers --------------------

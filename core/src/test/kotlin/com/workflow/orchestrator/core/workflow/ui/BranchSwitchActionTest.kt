@@ -4,9 +4,9 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.intellij.openapi.vfs.VirtualFile
 import com.workflow.orchestrator.core.model.workflow.PrRef
-import com.workflow.orchestrator.core.model.workflow.RepoRef
 import com.workflow.orchestrator.core.model.workflow.WorkflowContext
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.core.workflow.WorkflowContextService
 import git4idea.repo.GitRepository
@@ -42,11 +42,17 @@ class BranchSwitchActionTest {
 
     @AfterEach fun teardown() = unmockkAll()
 
-    private fun stubProject(state: WorkflowContext): Project {
+    private fun stubProject(
+        state: WorkflowContext,
+        repos: List<RepoConfig> = emptyList(),
+    ): Project {
         val project = mockk<Project>(relaxed = true)
         val settings = mockk<PluginSettings>(relaxed = true)
         every { settings.state.activeTicketId } returns null
+        every { settings.getRepos() } returns repos
         every { project.getService(PluginSettings::class.java) } returns settings
+        mockkStatic(PluginSettings::class)
+        every { PluginSettings.getInstance(project) } returns settings
 
         val service = mockk<WorkflowContextService>(relaxed = true)
         every { service.state } returns MutableStateFlow(state)
@@ -54,6 +60,12 @@ class BranchSwitchActionTest {
         every { WorkflowContextService.getInstance(project) } returns service
         return project
     }
+
+    private fun repoConfig(name: String, rootPath: String): RepoConfig =
+        RepoConfig().apply {
+            this.name = name
+            this.localVcsRootPath = rootPath
+        }
 
     private fun stubRepo(rootPath: String): GitRepository {
         val vf = mockk<VirtualFile>(relaxed = true)
@@ -72,11 +84,8 @@ class BranchSwitchActionTest {
     @Test fun `dirty tracked changes in resolved repo block checkout and surface warning`() = runTest {
         val repoRoot = "/work/multi/serviceA"
         val pr = PrRef(42, "feat/x", "main", "repoA", null, null)
-        val state = WorkflowContext(
-            focusPr = pr,
-            activeRepo = RepoRef("repoA", "P", "s", repoRoot),
-        )
-        val project = stubProject(state)
+        val state = WorkflowContext(focusPr = pr)
+        val project = stubProject(state, repos = listOf(repoConfig("repoA", repoRoot)))
 
         val repo = stubRepo(repoRoot)
         mockkStatic(GitRepositoryManager::class)
@@ -120,16 +129,19 @@ class BranchSwitchActionTest {
 
     @Test fun `change outside resolved repo path is ignored (single-repo guard)`() = runTest {
         val repoRoot = "/work/multi/serviceA"
+        val otherRoot = "/work/multi/serviceB"
         val pr = PrRef(42, "feat/x", "main", "repoA", null, null)
-        val state = WorkflowContext(
-            focusPr = pr,
-            activeRepo = RepoRef("repoA", "P", "s", repoRoot),
+        val state = WorkflowContext(focusPr = pr)
+        val project = stubProject(
+            state,
+            repos = listOf(
+                repoConfig("repoA", repoRoot),
+                repoConfig("repoB", otherRoot),
+            ),
         )
-        val project = stubProject(state)
 
         val repoA = stubRepo(repoRoot)
         // Sibling repo with its OWN dirty change must not block serviceA's checkout.
-        val otherRoot = "/work/multi/serviceB"
         val repoB = stubRepo(otherRoot)
         mockkStatic(GitRepositoryManager::class)
         val mgr = mockk<GitRepositoryManager>(relaxed = true)
@@ -151,24 +163,23 @@ class BranchSwitchActionTest {
         every { repoA.untrackedFilesHolder.retrieveUntrackedFilePaths() } returns emptyList()
         every { repoB.untrackedFilesHolder.retrieveUntrackedFilePaths() } returns emptyList()
 
-        // Stub GitBrancher so checkout doesn't NPE — but we don't strictly verify it
-        // was called (real GitBrancher requires a live platform). Verify dirtyCount=0.
+        // Deterministic success — the stub does nothing on `checkout(...)` and
+        // `relaxed = true` returns `Unit`, so `try { ... }` in `trySwitch` succeeds.
         mockkStatic(git4idea.branch.GitBrancher::class)
         val brancher = mockk<git4idea.branch.GitBrancher>(relaxed = true)
         every { git4idea.branch.GitBrancher.getInstance(project) } returns brancher
 
         val result = BranchSwitchAction.trySwitch(project)
-        assertTrue(
-            result is BranchSwitchAction.Result.Switched ||
-                result is BranchSwitchAction.Result.Failed,
-            "Expected Switched/Failed (clean repo), got: $result",
-        )
-        // Critical assertion: only the resolved repo (serviceA), not serviceB, was passed
-        // to checkout — single-repo blast-radius contract.
-        if (result is BranchSwitchAction.Result.Switched) {
-            verify(exactly = 1) {
-                brancher.checkout(pr.fromBranch, false, listOf(repoA), null)
-            }
+        assertTrue(result is BranchSwitchAction.Result.Switched,
+            "Expected Switched (clean repo, deterministic stub), got: $result")
+        // Critical assertion (single-repo blast-radius): only the resolved repo
+        // (serviceA), not serviceB, is passed to checkout — even though the
+        // dirty change lives in serviceB.
+        verify(exactly = 1) {
+            brancher.checkout(pr.fromBranch, false, listOf(repoA), null)
+        }
+        verify(exactly = 0) {
+            brancher.checkout(any(), any(), match { it.contains(repoB) }, any())
         }
     }
 }

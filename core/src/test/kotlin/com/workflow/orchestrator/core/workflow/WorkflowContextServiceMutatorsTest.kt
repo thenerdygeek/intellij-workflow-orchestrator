@@ -180,6 +180,56 @@ class WorkflowContextServiceMutatorsTest {
         assertEquals(before, service.state.value)
     }
 
+    @Test fun `reconcileFocusPrWithRepos refreshes prRepoBranch when repo is still configured`() = runTest {
+        // After the user edits a repo's `localVcsRootPath` in settings, the PR's repo
+        // is still configured (same `name`) but the underlying git checkout state is
+        // re-read from a different path. The reconcile path must refresh `prRepoBranch`
+        // — without this, the banner / live-only gates keep showing stale state until
+        // the next `git checkout` event.
+        val project = mockk<Project>(relaxed = true)
+        val settings = mockk<PluginSettings>(relaxed = true)
+        every { project.getService(PluginSettings::class.java) } returns settings
+        every { settings.state.activeTicketId } returns null
+
+        val repoRoot = "/repos/r1"
+        every { settings.getRepos() } returns listOf(
+            RepoConfig().apply {
+                name = "R1"
+                bitbucketProjectKey = "P"
+                bitbucketRepoSlug = "r1"
+                localVcsRootPath = repoRoot
+            }
+        )
+        mockkObject(PluginSettings.Companion)
+        every { PluginSettings.getInstance(project) } returns settings
+
+        val gitRepo = mockk<git4idea.repo.GitRepository>(relaxed = true)
+        val vf = mockk<com.intellij.openapi.vfs.VirtualFile>(relaxed = true)
+        every { vf.path } returns repoRoot
+        every { gitRepo.root } returns vf
+        every { gitRepo.currentBranchName } returns "feat/x"
+        io.mockk.mockkStatic(git4idea.repo.GitRepositoryManager::class)
+        val mgr = mockk<git4idea.repo.GitRepositoryManager>(relaxed = true)
+        every { git4idea.repo.GitRepositoryManager.getInstance(project) } returns mgr
+        every { mgr.repositories } returns listOf(gitRepo)
+
+        val pr = PrRef(42, "feat/x", "main", "R1", null, null)
+        val service = makeService(project)
+        service.focusPr(pr)
+        assertEquals("feat/x", service.state.value.prRepoBranch)
+
+        // Simulate the user editing settings — repo still configured, but the
+        // underlying VCS now reports a different branch (typo in path was fixed,
+        // pointing at a repo on a different branch).
+        every { gitRepo.currentBranchName } returns "main"
+        service.reconcileFocusPrWithRepos()
+        assertEquals("main", service.state.value.prRepoBranch,
+            "reconcile must re-read prRepoBranch when repo is still configured")
+
+        unmockkObject(PluginSettings.Companion)
+        io.mockk.unmockkStatic(git4idea.repo.GitRepositoryManager::class)
+    }
+
     @Test fun `reconcileFocusPrWithRepos serializes against focusPr cascade via cascadeMutex`() = runTest {
         val project = mockk<Project>(relaxed = true)
         val settings = mockk<PluginSettings>(relaxed = true)

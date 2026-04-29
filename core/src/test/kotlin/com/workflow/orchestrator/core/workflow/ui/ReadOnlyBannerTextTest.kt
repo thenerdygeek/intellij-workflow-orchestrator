@@ -6,37 +6,53 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.assertTrue
 
 /**
- * Phase B — banner text honesty.
+ * Pins the `ReadOnlyBanner.updateMessage()` rendered string.
  *
- * `ReadOnlyBanner.updateMessage()` previously rendered literal `<none>` when
- * `state.activeBranch` was null (the symptom users reported). Replaced with
- * "branch unknown". This test pins the rendered string by exercising the
- * exact same template used by the banner — no JComponent instantiation needed.
+ * After the 2026-04-29 editor-coupling rip-out, the banner reads `prRepoBranch`
+ * (the focused PR's OWN repo's currently checked-out branch, populated by
+ * `WorkflowContextService` from `GitRepositoryManager`) — never the editor's
+ * `activeBranch`. The phrasing reflects this: "The PR's repo is on X" instead
+ * of "You're on X", because the user might have a random file open in another
+ * submodule and "you're on" would be ambiguous.
  *
- * After Phase A's boot seed runs, `activeBranch == null` should be rare in
- * practice (only when the project has zero git repos). The string still has
- * to be human-readable for that edge case.
+ * `prRepoBranch == null` is rare (only when the PR's repo can't be resolved or
+ * is detached); the literal "branch unknown" fallback keeps the UI readable.
  */
 class ReadOnlyBannerTextTest {
 
-    @Test fun `banner text uses 'branch unknown' instead of literal angle-none when activeBranch is null`() {
+    @Test fun `banner text uses 'branch unknown' instead of literal angle-none when prRepoBranch is null`() {
         val ctx = WorkflowContext(
             focusPr = PrRef(1234, "feat/x", "main", "repo", null, null),
-            activeBranch = null,
+            prRepoBranch = null,
         )
         val rendered = renderBannerText(ctx)
         assertTrue(rendered.contains("branch unknown"), "Expected human-readable fallback, got: $rendered")
         assertTrue(!rendered.contains("<none>"), "Literal <none> must not leak into UI: $rendered")
     }
 
-    @Test fun `banner text uses real branch name when activeBranch is set`() {
+    @Test fun `banner text uses real branch name when prRepoBranch is set`() {
         val ctx = WorkflowContext(
             focusPr = PrRef(1234, "feat/x", "main", "repo", null, null),
-            activeBranch = "main",
+            prRepoBranch = "main",
         )
         val rendered = renderBannerText(ctx)
-        assertTrue(rendered.contains("You're on main"), "Expected branch name in text: $rendered")
+        assertTrue(rendered.contains("PR's repo is on main"), "Expected PR-repo branch name in text: $rendered")
         assertTrue(!rendered.contains("branch unknown"), "Should not fall back when branch known: $rendered")
+    }
+
+    @Test fun `banner text ignores editor-derived activeBranch`() {
+        // The user has a random file open in a totally different submodule on a
+        // totally different branch. The banner must NOT report that branch — it
+        // reports the PR's repo's branch, period.
+        val ctx = WorkflowContext(
+            focusPr = PrRef(1234, "feat/x", "main", "repo", null, null),
+            prRepoBranch = "main",
+            activeBranch = "totally-unrelated-branch",
+        )
+        val rendered = renderBannerText(ctx)
+        assertTrue(rendered.contains("PR's repo is on main"), "Banner must report prRepoBranch, got: $rendered")
+        assertTrue(!rendered.contains("totally-unrelated-branch"),
+            "Editor-derived activeBranch must not leak into the banner: $rendered")
     }
 
     /**
@@ -44,7 +60,7 @@ class ReadOnlyBannerTextTest {
      */
     private fun renderBannerText(ctx: WorkflowContext): String {
         val pr = ctx.focusPr ?: return ""
-        val branch = ctx.activeBranch ?: "branch unknown"
-        return "Viewing PR #${pr.prId} (${pr.fromBranch}). You're on $branch — interactions disabled."
+        val branch = ctx.prRepoBranch ?: "branch unknown"
+        return "Viewing PR #${pr.prId} (${pr.fromBranch}). The PR's repo is on $branch — interactions disabled."
     }
 }

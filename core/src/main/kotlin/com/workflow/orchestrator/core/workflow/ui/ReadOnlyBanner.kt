@@ -87,8 +87,12 @@ class ReadOnlyBanner(private val project: Project) : JPanel(BorderLayout()), Dis
     private fun updateMessage() {
         val s = service.state.value
         val pr = s.focusPr ?: return
-        val branch = s.activeBranch ?: "branch unknown"
-        message.text = "Viewing PR #${pr.prId} (${pr.fromBranch}). You're on $branch — interactions disabled."
+        // The branch shown here is the PR's repo's actual checked-out branch — looked
+        // up via GitRepositoryManager, NOT derived from whichever file the user has
+        // open in the editor. So opening a random .txt file in another submodule
+        // never affects this message.
+        val branch = s.prRepoBranch ?: "branch unknown"
+        message.text = "Viewing PR #${pr.prId} (${pr.fromBranch}). The PR's repo is on $branch — interactions disabled."
     }
 
     override fun dispose() {
