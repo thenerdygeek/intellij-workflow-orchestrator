@@ -10,6 +10,8 @@ import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.core.model.jira.FieldValue
 import com.workflow.orchestrator.core.model.jira.TransitionError
 import com.workflow.orchestrator.core.model.jira.TransitionInput
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -61,6 +63,7 @@ Actions and their parameters:
 - search_tickets(jql, max_results?) → Run raw JQL query
 - get_linked_prs(key) → PRs linked to issue
 - get_dev_branches(key) → Dev branches for issue
+- get_dev_status(key, full?) → Linked dev activity for issue (full=true returns commits, builds, deploys, reviews)
 - start_work(key, branch_name, source_branch) → Create branch and start work
 - download_attachment(key, attachment_id) → Download attachment content
 
@@ -77,7 +80,7 @@ description optional: for approval dialog on write actions.
                     "get_ticket", "get_transitions", "transition", "comment", "get_comments",
                     "log_work", "get_worklogs", "get_sprints", "get_linked_prs", "get_boards",
                     "get_sprint_issues", "get_board_issues", "search_issues", "search_tickets",
-                    "get_dev_branches", "start_work", "download_attachment"
+                    "get_dev_branches", "get_dev_status", "start_work", "download_attachment"
                 )
             ),
             "key" to ParameterProperty(
@@ -156,6 +159,12 @@ description optional: for approval dialog on write actions.
             "description" to ParameterProperty(
                 type = "string",
                 description = "Brief description of this action shown to user in approval dialog — recommended for transition, comment, start_work"
+            ),
+            "full" to ParameterProperty(
+                type = "boolean",
+                description = "When true, returns complete dev status: branches, PRs, commits, builds, deployments, reviews. " +
+                    "When false (default), returns only branches + PRs. " +
+                    "Use full=true for broad questions like 'has this been deployed' or 'what\\'s the status of this ticket'."
             )
         ),
         required = listOf("action")
@@ -410,6 +419,65 @@ description optional: for approval dialog on write actions.
                     ?: return ToolValidation.missingParam("key")
                 ToolValidation.validateNotBlank(issueKey, "key")?.let { return it }
                 service.getDevStatusBranches(issueKey).toAgentToolResult()
+            }
+
+            "get_dev_status" -> {
+                val issueKey = params["key"]?.jsonPrimitive?.content
+                    ?: params["issue_key"]?.jsonPrimitive?.content
+                    ?: params["issue_id"]?.jsonPrimitive?.content
+                    ?: return ToolValidation.missingParam("key")
+                ToolValidation.validateNotBlank(issueKey, "key")?.let { return it }
+                val full = params["full"]?.jsonPrimitive?.content?.lowercase() == "true"
+                if (!full) {
+                    coroutineScope {
+                        val branchesDeferred = async { service.getDevStatusBranches(issueKey) }
+                        val prsDeferred = async { service.getLinkedPullRequests(issueKey) }
+                        val branches = branchesDeferred.await()
+                        val prs = prsDeferred.await()
+                        val content = buildString {
+                            appendLine("Dev status for $issueKey (branches + PRs):")
+                            appendLine("Branches (${branches.data.size}):")
+                            if (branches.data.isEmpty()) appendLine("  none")
+                            else branches.data.forEach { appendLine("  - ${it.name}${if (it.url.isNotBlank()) " (${it.url})" else ""}") }
+                            appendLine("Pull Requests (${prs.data.size}):")
+                            if (prs.data.isEmpty()) appendLine("  none")
+                            else prs.data.forEach { appendLine("  - [${it.status}] ${it.name}${if (it.url.isNotBlank()) " (${it.url})" else ""}") }
+                        }.trim()
+                        ToolResult(content, "Branches and PRs for $issueKey", TokenEstimator.estimate(content))
+                    }
+                } else {
+                    val result = service.getFullDevStatus(issueKey)
+                    val bundle = result.data
+                    val content = buildString {
+                        appendLine("Full dev status for $issueKey: ${bundle.summaryLine()}")
+                        if (bundle.branches.isNotEmpty()) {
+                            appendLine("\nBranches (${bundle.branches.size}):")
+                            bundle.branches.forEach { appendLine("  - ${it.name}${if (it.url.isNotBlank()) " (${it.url})" else ""}") }
+                        }
+                        if (bundle.pullRequests.isNotEmpty()) {
+                            appendLine("\nPull Requests (${bundle.pullRequests.size}):")
+                            bundle.pullRequests.forEach { appendLine("  - [${it.status}] ${it.name}${if (it.url.isNotBlank()) " (${it.url})" else ""}") }
+                        }
+                        if (bundle.commits.isNotEmpty()) {
+                            appendLine("\nCommits (${bundle.commits.size}):")
+                            bundle.commits.take(10).forEach { appendLine("  - ${it.displayId}: ${it.message.take(72)}${if (it.merge) " [merge]" else ""}") }
+                            if (bundle.commits.size > 10) appendLine("  ... and ${bundle.commits.size - 10} more")
+                        }
+                        if (bundle.builds.isNotEmpty()) {
+                            appendLine("\nBuilds (${bundle.builds.size}):")
+                            bundle.builds.forEach { appendLine("  - [${it.state}] ${it.name}${if (!it.description.isNullOrBlank()) ": ${it.description}" else ""}${if (it.url.isNotBlank()) " (${it.url})" else ""}") }
+                        }
+                        if (bundle.deployments.isNotEmpty()) {
+                            appendLine("\nDeployments (${bundle.deployments.size}):")
+                            bundle.deployments.forEach { appendLine("  - [${it.state}] ${it.displayName}${if (!it.environmentName.isNullOrBlank()) " → ${it.environmentName}" else ""}${if (it.url.isNotBlank()) " (${it.url})" else ""}") }
+                        }
+                        if (bundle.reviews.isNotEmpty()) {
+                            appendLine("\nReviews (${bundle.reviews.size}):")
+                            bundle.reviews.forEach { appendLine("  - [${it.state}] ${it.name}${if (it.url.isNotBlank()) " (${it.url})" else ""}") }
+                        }
+                    }.trim()
+                    ToolResult(content, bundle.summaryLine(), TokenEstimator.estimate(content))
+                }
             }
 
             "start_work" -> {
