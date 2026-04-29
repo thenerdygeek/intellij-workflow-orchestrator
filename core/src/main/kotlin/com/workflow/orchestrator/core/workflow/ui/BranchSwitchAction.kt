@@ -38,7 +38,7 @@ import kotlinx.coroutines.withContext
  * Threading: all checks + the actual checkout run off-EDT on the supplied
  * dispatcher; the caller (banner) launches on `WorkflowContextService.serviceCs`.
  */
-internal object BranchSwitchAction {
+object BranchSwitchAction {
 
     private val log = Logger.getInstance(BranchSwitchAction::class.java)
 

@@ -2,7 +2,6 @@ package com.workflow.orchestrator.jira.ui
 
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.invokeLater
-import com.intellij.openapi.application.readAction
 import com.intellij.openapi.application.runReadAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.popup.JBPopupFactory
@@ -11,13 +10,13 @@ import com.intellij.ui.components.JBLabel
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.settings.PluginSettings
-import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.core.util.DefaultBranchResolver
+import com.workflow.orchestrator.core.workflow.TicketBranchLocator
+import com.workflow.orchestrator.core.workflow.ui.BranchSwitchAction
 import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.*
 import java.awt.*
 import java.awt.geom.RoundRectangle2D
-import javax.swing.BorderFactory
 import javax.swing.BoxLayout
 import javax.swing.JPanel
 import javax.swing.ListSelectionModel
@@ -28,10 +27,13 @@ import javax.swing.ListSelectionModel
  */
 class CurrentWorkSection(
     private val project: Project,
-    private val onTicketClicked: ((String) -> Unit)? = null
+    private val onTicketClicked: ((String) -> Unit)? = null,
+    locatorOverride: TicketBranchLocator? = null,
 ) : JPanel(BorderLayout()) {
 
     private val settings get() = PluginSettings.getInstance(project)
+    private val locator: TicketBranchLocator =
+        locatorOverride ?: TicketBranchLocator.getInstance(project)
 
     private val ticketKeyLabel = JBLabel("").apply {
         font = font.deriveFont(Font.BOLD, JBUI.scale(12).toFloat())
@@ -39,14 +41,6 @@ class CurrentWorkSection(
     }
     private val summaryLabel = JBLabel("").apply {
         font = font.deriveFont(JBUI.scale(11).toFloat())
-    }
-    private val branchLabel = JBLabel("").apply {
-        foreground = StatusColors.SECONDARY_TEXT
-        font = font.deriveFont(JBUI.scale(10).toFloat())
-    }
-    private val targetBranchChip = JBLabel("").apply {
-        foreground = StatusColors.SECONDARY_TEXT
-        font = font.deriveFont(JBUI.scale(9).toFloat())
     }
     private val editTargetLabel = JBLabel(AllIcons.Actions.Edit).apply {
         cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
@@ -123,16 +117,6 @@ class CurrentWorkSection(
         inner.add(summaryLabel)
         inner.add(javax.swing.Box.createVerticalStrut(JBUI.scale(4)))
 
-        // Branch row: branch icon + name + target chip
-        val metaRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
-            isOpaque = false
-            alignmentX = Component.LEFT_ALIGNMENT
-        }
-
-        metaRow.add(branchLabel)
-        metaRow.add(targetBranchChip)
-        inner.add(metaRow)
-
         editTargetLabel.mouseListeners.forEach { editTargetLabel.removeMouseListener(it) }
         editTargetLabel.addMouseListener(object : java.awt.event.MouseAdapter() {
             override fun mouseClicked(e: java.awt.event.MouseEvent?) {
@@ -140,32 +124,36 @@ class CurrentWorkSection(
             }
         })
 
-        scope.launch {
-            val resolver = RepoContextResolver.getInstance(project)
-            val targetRepo = readAction {
-                // editor-fallback-allowed: deferred — replace with active-ticket multi-repo chip (memory: project_active_ticket_multi_repo_chip.md)
-                resolver.resolveCurrentEditorRepoOrPrimary()
-            }
-            val currentBranch = targetRepo?.currentBranchName ?: ""
-            val targetBranch = targetRepo?.let {
-                DefaultBranchResolver.getInstance(project).resolve(it)
-            } ?: ""
+        // Branch rows: rendered by CurrentWorkChipRenderer based on the
+        // LocateResult returned by TicketBranchLocator. The renderer is pure
+        // (stateless) so it can be unit-tested without BasePlatformTestCase.
+        val rowsHost = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            alignmentX = Component.LEFT_ALIGNMENT
+        }
+        inner.add(rowsHost)
 
+        scope.launch {
+            val result = locator.locate(ticketId)
             invokeLater {
-                if (currentBranch.isNotBlank()) {
-                    branchLabel.text = currentBranch
-                    branchLabel.icon = AllIcons.Vcs.Branch
-                }
-                if (targetBranch.isNotBlank()) {
-                    targetBranchChip.text = targetBranch
-                    targetBranchChip.border = BorderFactory.createCompoundBorder(
-                        BorderFactory.createLineBorder(StatusColors.BORDER, 1, true),
-                        JBUI.Borders.empty(1, 4)
-                    )
-                    targetBranchChip.isOpaque = false
-                }
-                revalidate()
-                repaint()
+                CurrentWorkChipRenderer.render(
+                    host = rowsHost,
+                    result = result,
+                    ticketId = ticketId,
+                    onSettingsClick = {
+                        com.intellij.openapi.options.ShowSettingsUtil.getInstance()
+                            .showSettingsDialog(project, "Workflow Orchestrator")
+                    },
+                    onSwitchClick = { row ->
+                        val rootPath = row.repo.localVcsRootPath ?: return@render
+                        scope.launch {
+                            BranchSwitchAction.trySwitchTo(project, rootPath, row.branchDisplayId)
+                        }
+                    },
+                )
+                rowsHost.revalidate()
+                rowsHost.repaint()
             }
         }
 
@@ -203,9 +191,10 @@ class CurrentWorkSection(
                 val resolver = DefaultBranchResolver.getInstance(project)
                 val repoPath = repo.root.path
                 resolver.setOverride(repoPath, repo.currentBranchName ?: "", selected)
-                targetBranchChip.text = selected
-                revalidate()
-                repaint()
+                // Invalidate locator cache so the re-render picks up the new target branch.
+                val ticketId = settings.state.activeTicketId.orEmpty()
+                scope.launch { locator.invalidate(ticketId) }
+                refresh()
             }
             .createPopup()
 

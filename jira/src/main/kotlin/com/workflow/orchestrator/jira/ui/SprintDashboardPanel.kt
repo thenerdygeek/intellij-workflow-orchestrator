@@ -324,7 +324,7 @@ class SprintDashboardPanel(
         add(northWrapper, BorderLayout.NORTH)
 
         // -- Center: collapsible sections + detail in splitter --
-        currentWorkSection = CurrentWorkSection(project) { ticketId ->
+        currentWorkSection = CurrentWorkSection(project, onTicketClicked = { ticketId ->
             // Find and select the ticket in the list
             for (i in 0 until listModel.size()) {
                 val issue = listModel.getElementAt(i)
@@ -335,7 +335,7 @@ class SprintDashboardPanel(
                     break
                 }
             }
-        }
+        })
         val currentWorkCollapsible = CollapsibleSection(
             title = "CURRENTLY WORKING ON",
             content = currentWorkSection,
