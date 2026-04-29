@@ -35,6 +35,9 @@ dependencies {
 
     testImplementation(libs.junit5.api)
     testRuntimeOnly(libs.junit5.engine)
+    // JUnit Vintage engine — bridges JUnit 4 tests (BasePlatformTestCase) onto the JUnit 5 platform.
+    // Required by StartWorkDialogActivateOnlyTest which needs a real Project from BasePlatformTestCase.
+    testRuntimeOnly(libs.junit5.vintage.engine)
     testRuntimeOnly(libs.junit5.platform.launcher)
     testImplementation(libs.mockk)
     testImplementation(libs.kotlinx.coroutines.test)

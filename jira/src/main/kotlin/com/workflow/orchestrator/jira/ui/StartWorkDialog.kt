@@ -86,6 +86,11 @@ class StartWorkDialog(
     // Create-mode components
     private var selectedSourceBranch: String = initialDefaultSourceBranch
     private val branchNameField = JBTextField(40)
+    private val activateOnlyCheckbox = JCheckBox("Just set as active ticket — don't create a branch", false).apply {
+        toolTipText = "Track this ticket as your active context without creating or checking out a branch. " +
+            "Use this when you're reviewing or planning, not coding yet."
+        addActionListener { onActivateOnlyToggled() }
+    }
     private var sourceBranchCombo: JComboBox<String>? = null
     private val loadingPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0))
     private val loadingLabel = JBLabel("AI generating branch name\u2026")
@@ -133,6 +138,16 @@ class StartWorkDialog(
         val mainPanel = JPanel()
         mainPanel.layout = BoxLayout(mainPanel, BoxLayout.Y_AXIS)
         mainPanel.border = JBUI.Borders.empty(8)
+
+        // Top: opt-out checkbox. When checked, disables all subsequent widgets and
+        // produces an activateOnly StartWorkResult.
+        val activateOnlyRow = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+            add(activateOnlyCheckbox)
+        }
+        mainPanel.add(activateOnlyRow)
+        mainPanel.add(Box.createVerticalStrut(JBUI.scale(8)))
+        mainPanel.add(JSeparator())
+        mainPanel.add(Box.createVerticalStrut(JBUI.scale(8)))
 
         // Uncommitted changes warning
         if (hasUncommittedChanges) {
@@ -339,7 +354,33 @@ class StartWorkDialog(
         }
     }
 
+    private fun onActivateOnlyToggled() {
+        val activateOnly = activateOnlyCheckbox.isSelected
+        // Disable everything else when active-only is selected. Walk the
+        // contentPane's children and toggle, but skip the checkbox itself.
+        val pane = contentPane ?: return
+        toggleAllExcept(pane, activateOnlyCheckbox, enabled = !activateOnly)
+        setOKButtonText(
+            when {
+                activateOnly -> "Set as Active"
+                isDualMode -> "Start Work"
+                else -> "Create Branch"
+            }
+        )
+        // Force re-validation — activateOnly mode short-circuits doValidate().
+        isOKActionEnabled = true
+    }
+
+    private fun toggleAllExcept(root: java.awt.Container, exclude: java.awt.Component, enabled: Boolean) {
+        for (c in root.components) {
+            if (c === exclude) continue
+            c.isEnabled = enabled
+            if (c is java.awt.Container) toggleAllExcept(c, exclude, enabled)
+        }
+    }
+
     override fun doValidate(): ValidationInfo? {
+        if (activateOnlyCheckbox.isSelected) return null
         if (isDualMode && useExistingRadio?.isSelected == true) {
             if (existingBranches.isEmpty()) {
                 return ValidationInfo("No linked branches for this repo — pick Create new branch instead")
@@ -362,28 +403,52 @@ class StartWorkDialog(
     }
 
     override fun doOKAction() {
+        val computed = computeResult() ?: return   // null means "can't proceed" (no branch selected)
+        result = computed
+        super.doOKAction()
+    }
+
+    /**
+     * Pure business logic: compute the [StartWorkResult] from the current widget
+     * state. Returns null when a required field is absent (e.g. no existing branch
+     * selected in dual-mode). Does NOT call [super.doOKAction] or close the dialog.
+     *
+     * Extracted so [invokeOKActionForTest] can drive the same path without the
+     * [super.doOKAction] / [close] call that disposes the window (unsupported in
+     * headless test contexts).
+     */
+    private fun computeResult(): StartWorkResult? {
+        if (activateOnlyCheckbox.isSelected) {
+            log.info("[Jira:StartWork] User chose activate-only for $ticketKey — no branch will be created")
+            return StartWorkResult(
+                sourceBranch = "",
+                branchName = "",
+                useExisting = false,
+                selectedRepoIndex = selectedRepoIdx,
+                activateOnly = true,
+            )
+        }
         if (isDualMode && useExistingRadio?.isSelected == true) {
             val selectedBranch = existingBranchCombo?.selectedItem as? String
                 ?: existingBranches.firstOrNull()
-                ?: return
+                ?: return null
 
-            result = StartWorkResult(
+            log.info("[Jira:StartWork] User chose existing branch: '$selectedBranch' on repo index $selectedRepoIdx")
+            return StartWorkResult(
                 sourceBranch = "",
                 branchName = selectedBranch,
                 useExisting = true,
                 selectedRepoIndex = selectedRepoIdx
             )
-            log.info("[Jira:StartWork] User chose existing branch: '$selectedBranch' on repo index $selectedRepoIdx")
-        } else {
-            result = StartWorkResult(
-                sourceBranch = selectedSourceBranch,
-                branchName = branchNameField.text.orEmpty().trim(),
-                useExisting = false,
-                selectedRepoIndex = selectedRepoIdx
-            )
-            log.info("[Jira:StartWork] User confirmed new branch: '${result?.branchName}' from '${result?.sourceBranch}' on repo index $selectedRepoIdx")
         }
-        super.doOKAction()
+        val r = StartWorkResult(
+            sourceBranch = selectedSourceBranch,
+            branchName = branchNameField.text.orEmpty().trim(),
+            useExisting = false,
+            selectedRepoIndex = selectedRepoIdx
+        )
+        log.info("[Jira:StartWork] User confirmed new branch: '${r.branchName}' from '${r.sourceBranch}' on repo index $selectedRepoIdx")
+        return r
     }
 
     fun setAiLoading(loading: Boolean) {
@@ -502,4 +567,27 @@ class StartWorkDialog(
             false
         }
     }
+
+    // ── Test seams (internal — for unit tests only) ───────────────────────
+    internal fun setActivateOnlyForTest(value: Boolean) {
+        activateOnlyCheckbox.isSelected = value
+        onActivateOnlyToggled()
+    }
+
+    internal fun isActivateOnlyForTest(): Boolean = activateOnlyCheckbox.isSelected
+
+    /**
+     * Drives only the business-logic portion of [doOKAction] — sets [result]
+     * exactly as production code would, but skips the [super.doOKAction] /
+     * close() call that disposes the dialog window (which is unsafe in a
+     * headless-test context: the `close()` path interacts with the IntelliJ
+     * platform in ways that race with the test harness and silently clear
+     * `result` before the assertion runs).
+     */
+    internal fun invokeOKActionForTest() {
+        result = computeResult()
+    }
+
+    /** Expose the protected [doValidate] for synchronous unit tests. */
+    internal fun doValidateForTest(): ValidationInfo? = doValidate()
 }
