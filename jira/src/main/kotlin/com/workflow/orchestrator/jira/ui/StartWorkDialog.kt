@@ -356,10 +356,16 @@ class StartWorkDialog(
 
     private fun onActivateOnlyToggled() {
         val activateOnly = activateOnlyCheckbox.isSelected
-        // Disable everything else when active-only is selected. Walk the
-        // contentPane's children and toggle, but skip the checkbox itself.
-        val pane = contentPane ?: return
-        toggleAllExcept(pane, activateOnlyCheckbox, enabled = !activateOnly)
+        if (activateOnly) {
+            // Disable every descendant of the content pane EXCEPT the checkbox.
+            val pane = contentPane ?: return
+            disableAllExcept(pane, activateOnlyCheckbox)
+        } else {
+            // Restore the legitimate enabled-state by re-running each subsystem's
+            // existing state-restoration logic. This preserves AI-loading,
+            // dual-mode radio, and branches-loading states.
+            restoreEnabledState()
+        }
         setOKButtonText(
             when {
                 activateOnly -> "Set as Active"
@@ -367,15 +373,63 @@ class StartWorkDialog(
                 else -> "Create Branch"
             }
         )
-        // Force re-validation — activateOnly mode short-circuits doValidate().
-        isOKActionEnabled = true
+        // OK button enabled state is owned by the subsystems above (in
+        // particular, setAiLoading / setBranchesLoading set it false during
+        // async work). Only force it true in activateOnly mode, where
+        // validation is short-circuited.
+        if (activateOnly) {
+            isOKActionEnabled = true
+        }
     }
 
-    private fun toggleAllExcept(root: java.awt.Container, exclude: java.awt.Component, enabled: Boolean) {
+    private fun disableAllExcept(root: java.awt.Container, exclude: java.awt.Component) {
         for (c in root.components) {
             if (c === exclude) continue
-            c.isEnabled = enabled
-            if (c is java.awt.Container) toggleAllExcept(c, exclude, enabled)
+            c.isEnabled = false
+            if (c is java.awt.Container) disableAllExcept(c, exclude)
+        }
+    }
+
+    /**
+     * Re-run the dialog's existing state-restoration entry points so that
+     * widgets disabled by AI loading / dual-mode "Use existing" / branches
+     * loading stay disabled even after a check/uncheck cycle on the
+     * activate-only checkbox.
+     */
+    private fun restoreEnabledState() {
+        // Top-level: every container is enabled by default — `disableAllExcept`
+        // only set isEnabled=false on existing widgets, no new disables to
+        // discover. Re-enable the structural panels first.
+        val pane = contentPane ?: return
+        enableAll(pane)
+
+        // Then re-apply the subsystem-specific disables.
+        if (isDualMode) {
+            // Dual mode: the create panel is enabled only when "Create new" radio is selected.
+            val createNewSelected = createNewRadio?.isSelected == true
+            updateCreatePanelEnabled(createNewSelected)
+            // The "Use existing" radio is itself enabled only when there are linked branches.
+            useExistingRadio?.isEnabled = existingBranches.isNotEmpty()
+        }
+        // AI generation in flight: redo the disable from setAiLoading.
+        if (loadingPanel.isVisible) {
+            branchNameField.isEnabled = false
+            isOKActionEnabled = false
+        }
+        // Repo refetch in flight: redo the disable from setBranchesLoading.
+        if (repoLoadingLabel?.isVisible == true) {
+            sourceBranchCombo?.isEnabled = false
+            existingBranchCombo?.isEnabled = false
+            useExistingRadio?.isEnabled = false
+            createNewRadio?.isEnabled = false
+            isOKActionEnabled = false
+        }
+    }
+
+    private fun enableAll(root: java.awt.Container) {
+        for (c in root.components) {
+            c.isEnabled = true
+            if (c is java.awt.Container) enableAll(c)
         }
     }
 

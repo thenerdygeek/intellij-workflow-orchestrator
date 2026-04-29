@@ -1,6 +1,8 @@
 package com.workflow.orchestrator.jira.ui
 
 import com.intellij.icons.AllIcons
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -58,8 +60,6 @@ import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.awt.event.MouseMotionAdapter
 import javax.swing.*
-import com.intellij.notification.NotificationGroupManager
-import com.intellij.notification.NotificationType
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
 
