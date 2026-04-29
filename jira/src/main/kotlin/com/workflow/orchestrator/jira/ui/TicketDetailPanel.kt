@@ -138,9 +138,9 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         addSubtasks(issue)
         addDependencies(issue)
 
-        // Pull Requests (lazy-loaded via dev-status API)
+        // Dev Status (lazy-loaded via dev-status API)
         addVerticalSpace(12)
-        addSectionHeader("Pull Requests")
+        addSectionHeader("Dev Status")
         val devStatusSection = DevStatusSection(project)
         currentDevStatusSection = devStatusSection
         addFullWidthComponent(devStatusSection)
