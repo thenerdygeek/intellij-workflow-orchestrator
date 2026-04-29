@@ -84,6 +84,42 @@ internal object BranchSwitchAction {
         }
     }
 
+    /**
+     * Multi-repo entry point used by the active-ticket chip's per-row
+     * "Switch branch" affordance. Unlike [trySwitch] this does NOT depend on
+     * `WorkflowContextService.activeRepo` — the row's repo is the user-action
+     * signal. The dirty-tree guard, threading, and notification semantics are
+     * identical to [trySwitch].
+     *
+     * Returns [Result.NoRepoResolved] when [repoRoot] does not match any
+     * registered `GitRepository` (stale settings or repo unmounted).
+     */
+    suspend fun trySwitchTo(project: Project, repoRoot: String, branch: String): Result =
+        withContext(Dispatchers.IO) {
+            val repo = resolveTargetRepo(project, repoRoot)
+                ?: return@withContext Result.NoRepoResolved
+
+            val dirtyCount = countDirtyEntries(project, repo)
+            if (dirtyCount > 0) {
+                notifyDirty(project, branch, repo.root.path, dirtyCount)
+                return@withContext Result.Dirty(branch, repo.root.path, dirtyCount)
+            }
+
+            return@withContext try {
+                GitBrancher.getInstance(project).checkout(
+                    branch,
+                    /* detach = */ false,
+                    listOf(repo),
+                    /* callInAwtLater = */ null,
+                )
+                log.info("[Workflow:CurrentWork] Switched repo '${repo.root.path}' to '$branch'")
+                Result.Switched(branch, repo.root.path)
+            } catch (t: Throwable) {
+                log.warn("[Workflow:CurrentWork] Switch branch failed: ${t.message}", t)
+                Result.Failed(t.message ?: t.javaClass.simpleName)
+            }
+        }
+
     private fun resolveTargetRepo(project: Project, preferredRoot: String): GitRepository? {
         // `preferredRoot` is the contract: it comes from the focused PR's
         // `RepoRef.localVcsRootPath`. If the manager doesn't know about it
