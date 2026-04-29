@@ -58,6 +58,8 @@ import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.awt.event.MouseMotionAdapter
 import javax.swing.*
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
 
@@ -970,6 +972,21 @@ class SprintDashboardPanel(
 
                     if (!dialog.showAndGet()) return@withContext
                     val dialogResult = dialog.result ?: return@withContext
+
+                    if (dialogResult.activateOnly) {
+                        log.info("[Jira:StartWork] activate-only — skipping branch creation and Jira transition for ${selectedIssue.key}")
+                        ActiveTicketService.getInstance(project)
+                            .setActiveTicket(selectedIssue.key, selectedIssue.fields.summary)
+                        NotificationGroupManager.getInstance()
+                            .getNotificationGroup("workflow.autodetect")
+                            .createNotification(
+                                "Active ticket: ${selectedIssue.key}",
+                                "Set as your active ticket. No branch was created — use Start Work again to create one.",
+                                NotificationType.INFORMATION,
+                            )
+                            .notify(project)
+                        return@withContext
+                    }
 
                     // Resolve the selected repo — may differ from initial if user changed it
                     val selectedRepo = allRepos.getOrElse(dialogResult.selectedRepoIndex) { initialRepo }
