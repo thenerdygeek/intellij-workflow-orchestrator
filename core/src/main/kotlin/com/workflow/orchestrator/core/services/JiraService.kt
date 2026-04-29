@@ -3,7 +3,12 @@ package com.workflow.orchestrator.core.services
 import com.workflow.orchestrator.core.model.jira.AttachmentContentData
 import com.workflow.orchestrator.core.model.jira.BoardData
 import com.workflow.orchestrator.core.model.jira.DevStatusBranchData
+import com.workflow.orchestrator.core.model.jira.DevStatusBuildData
+import com.workflow.orchestrator.core.model.jira.DevStatusBundle
+import com.workflow.orchestrator.core.model.jira.DevStatusCommitData
+import com.workflow.orchestrator.core.model.jira.DevStatusDeploymentData
 import com.workflow.orchestrator.core.model.jira.DevStatusPrData
+import com.workflow.orchestrator.core.model.jira.DevStatusReviewData
 import com.workflow.orchestrator.core.model.jira.JiraBoardSummary
 import com.workflow.orchestrator.core.model.jira.JiraCommentData
 import com.workflow.orchestrator.core.model.jira.JiraTicketData
@@ -78,4 +83,19 @@ interface JiraService {
 
     /** Search boards by name fragment. Calls GET /rest/agile/1.0/board?name=<query>. */
     suspend fun searchBoards(query: String): ToolResult<List<JiraBoardSummary>>
+
+    /** Get commits linked to an issue via Jira dev-status API (dataType=repository). */
+    suspend fun getLinkedCommits(issueId: String): ToolResult<List<DevStatusCommitData>>
+
+    /** Get builds linked to an issue via Jira dev-status API. */
+    suspend fun getLinkedBuilds(issueId: String): ToolResult<List<DevStatusBuildData>>
+
+    /** Get deployments linked to an issue via Jira dev-status API. */
+    suspend fun getLinkedDeployments(issueId: String): ToolResult<List<DevStatusDeploymentData>>
+
+    /** Get reviews linked to an issue via Jira dev-status API. */
+    suspend fun getLinkedReviews(issueId: String): ToolResult<List<DevStatusReviewData>>
+
+    /** Fetch all six dev-status categories in parallel and return as a bundle. */
+    suspend fun getFullDevStatus(issueId: String): ToolResult<DevStatusBundle>
 }
