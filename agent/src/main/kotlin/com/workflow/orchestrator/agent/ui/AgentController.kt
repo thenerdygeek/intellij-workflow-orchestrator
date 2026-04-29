@@ -456,7 +456,8 @@ class AgentController(
             onActivateSkill = { skillName -> executeTask("/skill $skillName") },
             onRequestFocusIde = { /* No-op: focus returns to IDE naturally */ },
             onOpenSettings = ::openSettings,
-            onOpenToolsPanel = ::showToolsPanel
+            onOpenToolsPanel = ::showToolsPanel,
+            onRequestModelList = { loadModelList() }
         )
         panel.setCefMentionCallbacks(::executeTaskWithMentions)
         panel.setCefCallbacks(
@@ -984,54 +985,80 @@ class AgentController(
      * (latest Opus) model. Uses ModelCache (24h TTL) to avoid redundant API calls.
      * Runs in background — failure is non-fatal.
      */
-    private fun loadModelList() {
+    private fun loadModelList(force: Boolean = false) {
         val connections = com.workflow.orchestrator.core.settings.ConnectionSettings.getInstance()
         if (connections.state.sourcegraphUrl.isBlank()) return
 
         val credentialStore = com.workflow.orchestrator.core.auth.CredentialStore()
         controllerScope.launch(Dispatchers.IO) {
-            try {
-                val client = com.workflow.orchestrator.core.ai.SourcegraphChatClient(
-                    baseUrl = connections.state.sourcegraphUrl.trimEnd('/'),
-                    tokenProvider = { credentialStore.getToken(com.workflow.orchestrator.core.model.ServiceType.SOURCEGRAPH) },
-                    model = ""
-                )
-                val models = com.workflow.orchestrator.core.ai.ModelCache.getModels(client)
-                if (models.isNotEmpty()) {
-                    // Sort by tier (opus first) then by created date (newest first)
-                    val sorted = models.sortedWith(compareBy<com.workflow.orchestrator.core.ai.dto.ModelInfo> { it.tier }.thenByDescending { it.created })
-
-                    // Build JSON for the dropdown using formatted display names
-                    val modelsJson = sorted.joinToString(",", "[", "]") { m ->
-                        val id = m.id.replace("\"", "\\\"")
-                        val name = m.displayName.replace("\"", "\\\"")
-                        val provider = m.provider.replace("\"", "\\\"")
-                        val thinking = m.isThinkingModel
-                        """{"id":"$id","name":"$name","provider":"$provider","thinking":$thinking}"""
-                    }
-
-                    // Auto-select the best model (latest Opus) if no model is configured
-                    val settings = AgentSettings.getInstance(project)
-                    val best = com.workflow.orchestrator.core.ai.ModelCache.pickBest(models)
-                    if (best != null && settings.state.sourcegraphChatModel.isNullOrBlank()) {
-                        settings.state.sourcegraphChatModel = best.id
-                        LOG.info("AgentController: auto-selected model: ${best.displayName} (${best.id})")
-                    }
-
-                    com.intellij.openapi.application.invokeLater {
-                        dashboard.updateModelList(modelsJson)
-                        // Show the active model's formatted display name
-                        val activeModel = settings.state.sourcegraphChatModel ?: best?.id ?: ""
-                        val displayName = models.find { it.id == activeModel }?.displayName ?: activeModel
-                        if (displayName.isNotBlank()) {
-                            dashboard.setModelName(displayName)
-                        }
-                    }
-                    LOG.info("AgentController: loaded ${models.size} models for dropdown")
+            val client = com.workflow.orchestrator.core.ai.SourcegraphChatClient(
+                baseUrl = connections.state.sourcegraphUrl.trimEnd('/'),
+                tokenProvider = { credentialStore.getToken(com.workflow.orchestrator.core.model.ServiceType.SOURCEGRAPH) },
+                model = ""
+            )
+            // Retry on transient failure with exponential backoff (1s, 3s, 9s).
+            // Fixes the "No models available" dead-end where a single failed startup
+            // fetch (no VPN, blank token, server unreachable) leaves the dropdown empty
+            // until IDE restart.
+            val backoffsMs = longArrayOf(1_000L, 3_000L, 9_000L)
+            var fetched: List<com.workflow.orchestrator.core.ai.dto.ModelInfo>? = null
+            for (attempt in 0..backoffsMs.size) {
+                val result = try {
+                    com.workflow.orchestrator.core.ai.ModelCache.fetchModels(client, force = force && attempt == 0)
+                } catch (e: Exception) {
+                    LOG.debug("AgentController: model fetch threw: ${e.message}")
+                    com.workflow.orchestrator.core.ai.ModelCache.FetchResult.Failed(emptyList(), e.message ?: "exception")
                 }
-            } catch (e: Exception) {
-                LOG.debug("AgentController: failed to load model list: ${e.message}")
+                when (result) {
+                    is com.workflow.orchestrator.core.ai.ModelCache.FetchResult.Fresh -> {
+                        if (result.models.isNotEmpty()) { fetched = result.models; break }
+                    }
+                    is com.workflow.orchestrator.core.ai.ModelCache.FetchResult.Cached -> {
+                        fetched = result.models; break
+                    }
+                    is com.workflow.orchestrator.core.ai.ModelCache.FetchResult.Failed -> {
+                        if (result.cached.isNotEmpty()) { fetched = result.cached; break }
+                    }
+                }
+                if (attempt < backoffsMs.size) {
+                    kotlinx.coroutines.delay(backoffsMs[attempt])
+                }
             }
+            val models = fetched
+            if (models.isNullOrEmpty()) {
+                LOG.warn("AgentController: model list still empty after retries — dropdown will be re-fetched on next remount")
+                return@launch
+            }
+            // Sort by tier (opus first) then by created date (newest first)
+            val sorted = models.sortedWith(compareBy<com.workflow.orchestrator.core.ai.dto.ModelInfo> { it.tier }.thenByDescending { it.created })
+
+            // Build JSON for the dropdown using formatted display names
+            val modelsJson = sorted.joinToString(",", "[", "]") { m ->
+                val id = m.id.replace("\"", "\\\"")
+                val name = m.displayName.replace("\"", "\\\"")
+                val provider = m.provider.replace("\"", "\\\"")
+                val thinking = m.isThinkingModel
+                """{"id":"$id","name":"$name","provider":"$provider","thinking":$thinking}"""
+            }
+
+            // Auto-select the best model (latest Opus) if no model is configured
+            val settings = AgentSettings.getInstance(project)
+            val best = com.workflow.orchestrator.core.ai.ModelCache.pickBest(models)
+            if (best != null && settings.state.sourcegraphChatModel.isNullOrBlank()) {
+                settings.state.sourcegraphChatModel = best.id
+                LOG.info("AgentController: auto-selected model: ${best.displayName} (${best.id})")
+            }
+
+            com.intellij.openapi.application.invokeLater {
+                dashboard.updateModelList(modelsJson)
+                // Show the active model's formatted display name
+                val activeModel = settings.state.sourcegraphChatModel ?: best?.id ?: ""
+                val displayName = models.find { it.id == activeModel }?.displayName ?: activeModel
+                if (displayName.isNotBlank()) {
+                    dashboard.setModelName(displayName)
+                }
+            }
+            LOG.info("AgentController: loaded ${models.size} models for dropdown")
         }
     }
 
@@ -1325,6 +1352,10 @@ class AgentController(
             onModelSwitch = { _, to, reason ->
                 invokeLater {
                     val cached = com.workflow.orchestrator.core.ai.ModelCache.getCached()
+                    // Opportunistic dropdown recovery: a fallback firing means a successful API
+                    // call also just landed on the new model, so the network is reachable.
+                    // If the dropdown is still empty (initial fetch failed at startup), retry now.
+                    if (cached.isEmpty()) loadModelList(force = true)
                     val displayName = cached.find { it.id == to }?.displayName
                         ?: com.workflow.orchestrator.core.ai.dto.ModelInfo.formatModelName(to.substringAfterLast("::"))
                     dashboard.setModelName(displayName)
@@ -2344,6 +2375,10 @@ class AgentController(
             onModelSwitch = { _, to, reason ->
                 invokeLater {
                     val cached = com.workflow.orchestrator.core.ai.ModelCache.getCached()
+                    // Opportunistic dropdown recovery: a fallback firing means a successful API
+                    // call also just landed on the new model, so the network is reachable.
+                    // If the dropdown is still empty (initial fetch failed at startup), retry now.
+                    if (cached.isEmpty()) loadModelList(force = true)
                     val displayName = cached.find { it.id == to }?.displayName
                         ?: com.workflow.orchestrator.core.ai.dto.ModelInfo.formatModelName(to.substringAfterLast("::"))
                     dashboard.setModelName(displayName)

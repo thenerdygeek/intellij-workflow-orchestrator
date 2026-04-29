@@ -21,6 +21,8 @@ declare global {
     _openSettings?: () => void;
     _openToolsPanel?: () => void;
     _changeModel?: (modelId: string) => void;
+    /** Pull the model list from Kotlin (recovers when initial push was lost or returned empty). */
+    _requestModelList?: () => void;
     _togglePlanMode?: (enabled: boolean) => void;
     _compactContext?: (force: boolean) => void;
     _toggleRalphLoop?: (enabled: boolean) => void;

@@ -233,6 +233,11 @@ export function installMockBridge(): void {
     w.setModelName?.(displayName);
   };
 
+  // Mock _requestModelList for dev mode — replays the dev model list (push parity with real bridge)
+  w._requestModelList = () => {
+    console.log('[bridge:dev] requestModelList');
+  };
+
   // Mock _searchMentions — returns files, folders, symbols only (no tools/skills)
   w._searchMentions = (query: string) => {
     const mockItems = [

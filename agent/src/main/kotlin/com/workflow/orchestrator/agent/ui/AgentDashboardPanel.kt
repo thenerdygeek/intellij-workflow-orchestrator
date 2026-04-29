@@ -133,7 +133,8 @@ class AgentDashboardPanel(
         onRequestFocusIde: () -> Unit,
         onOpenSettings: () -> Unit,
         onOpenMemorySettings: () -> Unit = {},
-        onOpenToolsPanel: () -> Unit
+        onOpenToolsPanel: () -> Unit,
+        onRequestModelList: () -> Unit = {}
     ) {
         cefPanel?.onCancelTask = onCancel
         cefPanel?.onNewChat = onNewChat
@@ -146,6 +147,7 @@ class AgentDashboardPanel(
         cefPanel?.onOpenSettings = onOpenSettings
         cefPanel?.onOpenMemorySettings = onOpenMemorySettings
         cefPanel?.onOpenToolsPanel = onOpenToolsPanel
+        cefPanel?.onRequestModelList = onRequestModelList
     }
 
     /** Wire the "View in Editor" toolbar button. */

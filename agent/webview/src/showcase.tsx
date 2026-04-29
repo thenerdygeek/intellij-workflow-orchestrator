@@ -72,6 +72,7 @@ window._requestUndo = window._requestUndo ?? (() => alert('Undo'));
 window._requestViewTrace = window._requestViewTrace ?? (() => alert('View traces'));
 window._openSettings = window._openSettings ?? (() => alert('Settings'));
 window._changeModel = window._changeModel ?? ((id: string) => alert(`Model: ${id}`));
+window._requestModelList = window._requestModelList ?? (() => { /* showcase stub */ });
 window._togglePlanMode = window._togglePlanMode ?? ((v: boolean) => alert(`Plan mode: ${v}`));
 window._activateSkill = window._activateSkill ?? ((name: string) => alert(`Skill: ${name}`));
 window._deactivateSkill = window._deactivateSkill ?? (() => alert('Skill deactivated'));

@@ -23,20 +23,38 @@ object ModelCache {
         client: SourcegraphChatClient,
         force: Boolean = false
     ): List<ModelInfo> {
+        return when (val r = fetchModels(client, force)) {
+            is FetchResult.Fresh -> r.models
+            is FetchResult.Cached -> r.models
+            is FetchResult.Failed -> r.cached
+        }
+    }
+
+    sealed class FetchResult {
+        data class Fresh(val models: List<ModelInfo>) : FetchResult()
+        data class Cached(val models: List<ModelInfo>) : FetchResult()
+        data class Failed(val cached: List<ModelInfo>, val message: String) : FetchResult()
+    }
+
+    suspend fun fetchModels(
+        client: SourcegraphChatClient,
+        force: Boolean = false
+    ): FetchResult {
         lock.withLock {
             val now = System.currentTimeMillis()
             if (!force && models.isNotEmpty() && (now - lastFetchMs) < TTL_MS) {
-                return models
+                return FetchResult.Cached(models)
             }
             val result = client.listModels()
             if (result is ApiResult.Success) {
                 models = result.data.data
                 lastFetchMs = now
                 LOG.info("ModelCache: fetched ${models.size} models")
-            } else {
-                LOG.warn("ModelCache: failed to fetch models, using cached (${models.size})")
+                return FetchResult.Fresh(models)
             }
-            return models
+            val msg = (result as? ApiResult.Error)?.message ?: "unknown error"
+            LOG.warn("ModelCache: failed to fetch models ($msg), using cached (${models.size})")
+            return FetchResult.Failed(models, msg)
         }
     }
 

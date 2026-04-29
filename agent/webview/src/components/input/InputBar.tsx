@@ -70,7 +70,15 @@ const ModelChip = memo(function ModelChip({
     (window as any).updateModelList = (json: string) => {
       try { setItems(JSON.parse(json)); } catch { /* ignore */ }
     };
+    // Pull on mount: if the initial Kotlin push was lost (timing) or returned empty
+    // (network/auth failure at startup), this recovers the dropdown without an IDE restart.
+    window._requestModelList?.();
   }, []);
+
+  // Re-pull when the user opens the dropdown and the list is still empty.
+  const handleOpenChange = useCallback((open: boolean) => {
+    if (open && items.length === 0) window._requestModelList?.();
+  }, [items.length]);
 
   const isFallback = fallbackReason !== null;
   // Subtle amber indicator when in fallback mode: border tint + Zap icon + tooltip.
@@ -87,7 +95,7 @@ const ModelChip = memo(function ModelChip({
     : undefined;
 
   return (
-    <DropdownMenu>
+    <DropdownMenu onOpenChange={handleOpenChange}>
       <DropdownMenuTrigger asChild>
         <Button
           variant="ghost"
