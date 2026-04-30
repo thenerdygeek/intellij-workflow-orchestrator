@@ -41,12 +41,14 @@ dependencies {
     compileOnly(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
 
-    // JDBC drivers — bundled in the plugin so the agent can query databases
-    // without requiring an external DB tool (IntelliJ DataSources, DBeaver, etc.)
-    // PostgreSQL (BSD-2) and SQLite (Apache 2.0) have clean licenses.
-    // MySQL (GPL) and SQL Server are user-supplied via Generic JDBC mode.
+    // JDBC drivers — only PostgreSQL is bundled (BSD-2, ~1.1 MB). SQLite was previously
+    // bundled but its JAR ships native libs for 22 platforms (~13.5 MB compressed) and
+    // most users do not need it; SQLite profiles now expect the user to install the
+    // driver themselves (Generic JDBC mode + sqlite-jdbc on the IDE classpath, or via
+    // IntelliJ's DataSources driver downloader). MySQL/SQL Server already follow this
+    // pattern — see DatabaseConnectionManager's SQLITE branch for the user-facing error.
     implementation(libs.postgresql.jdbc)
-    implementation(libs.sqlite.jdbc)
+    testImplementation(libs.sqlite.jdbc)
 
     testImplementation(libs.junit5.api)
     testImplementation(libs.junit5.params)

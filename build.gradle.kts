@@ -31,6 +31,38 @@ configurations.all {
     exclude(group = "org.slf4j")
 }
 
+// IntelliJ Platform 2025.1+ provides `kotlin-stdlib` at runtime (see `gradle.properties`:
+// `kotlin.stdlib.default.dependency = false`). The Kotlin Gradle plugin honours that flag
+// for direct dependencies, but transitive pulls (notably OkHttp 4.12.0 → kotlin-stdlib-jdk8 →
+// kotlin-stdlib) still drag a redundant ~1.7 MB stdlib JAR into the plugin ZIP and risk a
+// classloader split. Strip kotlin-stdlib + jdk7/jdk8/common variants from the plugin-assembly
+// configurations only — the platform stdlib is visible at compile and runtime, but Kotlin's
+// build-tooling classpaths (`kotlinCompilerClasspath`, `kotlinBuildToolsApiClasspath`, etc.)
+// still need stdlib to instantiate `CompilationServiceProxy`, so they are left untouched.
+val PLUGIN_DIST_CONFIGURATIONS = setOf(
+    "runtimeClasspath",
+    "intellijPlatformRuntimeClasspath",
+    "intellijPlatformComposedJar",
+)
+subprojects {
+    configurations.configureEach {
+        if (name in PLUGIN_DIST_CONFIGURATIONS) {
+            exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
+            exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib-jdk7")
+            exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib-jdk8")
+            exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib-common")
+        }
+    }
+}
+configurations.configureEach {
+    if (name in PLUGIN_DIST_CONFIGURATIONS) {
+        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
+        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib-jdk7")
+        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib-jdk8")
+        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib-common")
+    }
+}
+
 // ---- Dependency Locking (Phase 6 T6) ----
 // Locks every configuration in every module to a deterministic resolution
 // recorded in `<module>/gradle.lockfile`. Combined with
@@ -82,9 +114,11 @@ dependencies {
     // -- External libraries --
     compileOnly(libs.kotlinx.coroutines.core)
     compileOnly(libs.kotlinx.serialization.json)
-    implementation(libs.sqlite.jdbc) {
-        exclude(group = "org.slf4j")
-    }
+    // sqlite-jdbc was previously bundled at the root for the agent's db_query SQLite branch.
+    // It shipped 22-platform native libs (~13.5 MB) for marginal user benefit, so it has been
+    // removed from the plugin distribution. SQLite profiles now rely on the user supplying the
+    // driver via IntelliJ DataSources or Generic JDBC mode — see DatabaseConnectionManager
+    // (`loadSqliteDriverOrThrow`) for the resolution chain and the user-facing error message.
 
     // -- Test --
 }

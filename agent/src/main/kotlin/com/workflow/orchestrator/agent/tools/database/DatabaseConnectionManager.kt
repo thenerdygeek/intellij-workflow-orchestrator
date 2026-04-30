@@ -131,15 +131,10 @@ object DatabaseConnectionManager {
             when (dbType) {
                 DbType.SQLITE -> {
                     if (rawJdbcUrl.isBlank()) error("SQLite requires a JDBC URL")
-                    // Loading via the plugin classloader so the bundled sqlite-jdbc driver is found.
-                    @Suppress("UNCHECKED_CAST")
-                    val driverClass = Class.forName(
-                        DbType.SQLITE.driverClass,
-                        true,
-                        DatabaseConnectionManager::class.java.classLoader
-                    ) as Class<out Driver>
-                    val driver = driverClass.getDeclaredConstructor().newInstance()
-                    val conn = driver.connect(rawJdbcUrl, Properties())
+                    // sqlite-jdbc is no longer bundled; the user must supply the driver themselves
+                    // (IntelliJ DataSources driver download, or a JAR on the IDE classpath).
+                    // Class.forName + JVM-global DriverManager fall-through covers both cases.
+                    val conn = loadSqliteDriverOrThrow().connect(rawJdbcUrl, Properties())
                         ?: error("SQLite driver returned null for URL '$rawJdbcUrl'")
                     try {
                         DiscoveryResult(databases = emptyList(), systemDatabasesFiltered = 0)
@@ -352,20 +347,67 @@ object DatabaseConnectionManager {
             else              -> Unit
         }
 
-        return if (profile.dbType == DbType.GENERIC || profile.dbType.driverClass.isEmpty()) {
-            // Fall back to DriverManager for generic JDBC — user's classpath must have the driver
-            DriverManager.getConnection(jdbcUrl, props)
-        } else {
-            // Load driver via plugin classloader to find bundled JARs
-            @Suppress("UNCHECKED_CAST")
-            val driverClass = Class.forName(
-                profile.dbType.driverClass,
-                true,
-                DatabaseConnectionManager::class.java.classLoader
-            ) as Class<out Driver>
-            val driver = driverClass.getDeclaredConstructor().newInstance()
-            driver.connect(jdbcUrl, props)
-                ?: error("Driver returned null for URL '$jdbcUrl'. Check the JDBC URL format.")
+        return when {
+            profile.dbType == DbType.GENERIC || profile.dbType.driverClass.isEmpty() -> {
+                // Fall back to DriverManager for generic JDBC — user's classpath must have the driver
+                DriverManager.getConnection(jdbcUrl, props)
+            }
+            profile.dbType == DbType.SQLITE -> {
+                // SQLite driver is not bundled — see [loadSqliteDriverOrThrow] for resolution order.
+                loadSqliteDriverOrThrow().connect(jdbcUrl, props)
+                    ?: error("SQLite driver returned null for URL '$jdbcUrl'. Check the JDBC URL format.")
+            }
+            else -> {
+                // Load driver via plugin classloader to find bundled JARs
+                @Suppress("UNCHECKED_CAST")
+                val driverClass = Class.forName(
+                    profile.dbType.driverClass,
+                    true,
+                    DatabaseConnectionManager::class.java.classLoader
+                ) as Class<out Driver>
+                val driver = driverClass.getDeclaredConstructor().newInstance()
+                driver.connect(jdbcUrl, props)
+                    ?: error("Driver returned null for URL '$jdbcUrl'. Check the JDBC URL format.")
+            }
         }
+    }
+
+    /**
+     * Resolves the SQLite JDBC driver from any classloader on the IDE process. SQLite is no
+     * longer bundled with the plugin (the JAR shipped 22 platform-specific native libraries
+     * totalling ~13.5 MB; only a small fraction of users actually use SQLite). Resolution order:
+     *
+     *   1. Plugin classloader — covers the test classpath and any user-installed driver JAR
+     *      placed in this plugin's `lib/` directory.
+     *   2. Thread context classloader — covers drivers loaded by another IntelliJ plugin or
+     *      by IntelliJ's bundled DataSources driver downloader.
+     *   3. JVM-global `DriverManager` — covers drivers already registered via JDBC service
+     *      discovery anywhere on the IDE process.
+     *
+     * Throws a user-actionable error if no SQLite driver is available.
+     */
+    private fun loadSqliteDriverOrThrow(): Driver {
+        val sqliteDriverClass = DbType.SQLITE.driverClass
+        val candidates = listOf(
+            DatabaseConnectionManager::class.java.classLoader,
+            Thread.currentThread().contextClassLoader,
+        )
+        for (cl in candidates) {
+            if (cl == null) continue
+            runCatching {
+                @Suppress("UNCHECKED_CAST")
+                val cls = Class.forName(sqliteDriverClass, true, cl) as Class<out Driver>
+                return cls.getDeclaredConstructor().newInstance()
+            }
+        }
+        // Last resort: a globally-registered SQLite driver that we just can't reflect to.
+        DriverManager.getDrivers().asSequence().firstOrNull { it.javaClass.name == sqliteDriverClass }?.let { return it }
+        error(
+            "SQLite JDBC driver ($sqliteDriverClass) is not on the IDE classpath. " +
+                "SQLite is no longer bundled with this plugin. To enable SQLite profiles, " +
+                "either install the driver via IntelliJ DataSources (Database tool window > " +
+                "Drivers > SQLite > Download), or use Generic JDBC mode and drop a " +
+                "sqlite-jdbc JAR onto the IDE classpath."
+        )
     }
 }

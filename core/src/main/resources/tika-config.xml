@@ -2,8 +2,13 @@
 <properties>
     <parsers>
         <parser class="org.apache.tika.parser.DefaultParser">
+            <!-- ExternalParser shells out to host CLIs (security risk); kept on classpath via
+                 tika-core, so the parser-exclude directive must resolve at TikaConfig load time.
+                 OCR (TesseractOCRParser) is excluded structurally by dropping
+                 `tika-parser-ocr-module` from `document/build.gradle.kts`; do NOT add a
+                 parser-exclude line for it — `loadErrorHandler="THROW"` would fail to resolve
+                 the absent class and abort TikaConfig construction. -->
             <parser-exclude class="org.apache.tika.parser.external.ExternalParser"/>
-            <parser-exclude class="org.apache.tika.parser.ocr.TesseractOCRParser"/>
         </parser>
     </parsers>
     <service-loader dynamic="false" loadErrorHandler="THROW"/>
