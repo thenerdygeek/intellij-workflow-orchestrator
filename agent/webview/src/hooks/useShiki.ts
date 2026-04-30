@@ -1,32 +1,6 @@
 import { useState, useEffect } from 'react';
-import { createHighlighter } from 'shiki';
+import { getSharedHighlighter, isShippedLanguage, DARK_THEME, LIGHT_THEME } from '@/lib/shiki';
 import { useTheme } from './useTheme';
-
-const PRE_LOADED_LANGUAGES = [
-  'kotlin', 'java', 'python', 'typescript', 'javascript',
-  'json', 'yaml', 'xml', 'sql', 'bash',
-  'html', 'css', 'go', 'rust', 'markdown',
-] as const;
-
-const DARK_THEME = 'vitesse-dark';
-const LIGHT_THEME = 'vitesse-light';
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
-let highlighterPromise: Promise<any> | null = null;
-let highlighterInstance: any = null;
-
-function getHighlighter(): Promise<any> {
-  if (!highlighterPromise) {
-    highlighterPromise = createHighlighter({
-      themes: [DARK_THEME, LIGHT_THEME],
-      langs: [...PRE_LOADED_LANGUAGES],
-    }).then((h: any) => {
-      highlighterInstance = h;
-      return h;
-    });
-  }
-  return highlighterPromise;
-}
 
 function escapeHtml(text: string): string {
   return text
@@ -37,35 +11,32 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#039;');
 }
 
+function plainTextFallback(code: string): string {
+  return `<pre style="background:transparent;margin:0;padding:0;"><code>${escapeHtml(code)}</code></pre>`;
+}
+
+/**
+ * Highlight `code` for `language`. If `language` is not in the shipped set
+ * (see `SHIPPED_LANGUAGES` in `lib/shiki.ts`), falls back to plain-text rendering —
+ * we no longer attempt runtime `loadLanguage` because the bundle no longer carries
+ * the 314 stripped grammars.
+ */
 export async function highlight(
   code: string,
   language: string,
   isDark: boolean,
 ): Promise<string> {
   try {
-    const highlighter = await getHighlighter();
-    const theme = isDark ? DARK_THEME : LIGHT_THEME;
-    const loadedLangs: string[] = highlighter.getLoadedLanguages();
-
-    if (language && !loadedLangs.includes(language)) {
-      try {
-        await highlighter.loadLanguage(language as any);
-      } catch {
-        // Language not available — fall back to plain text
-        return `<pre style="background:transparent;margin:0;padding:0;"><code>${escapeHtml(code)}</code></pre>`;
-      }
+    if (!language || !isShippedLanguage(language)) {
+      return plainTextFallback(code);
     }
-
-    const lang = language && highlighter.getLoadedLanguages().includes(language)
-      ? language
-      : 'text';
-
-    return highlighter.codeToHtml(code, { lang, theme });
+    const highlighter = await getSharedHighlighter();
+    const theme = isDark ? DARK_THEME : LIGHT_THEME;
+    return highlighter.codeToHtml(code, { lang: language, theme });
   } catch {
-    return `<pre style="background:transparent;margin:0;padding:0;"><code>${escapeHtml(code)}</code></pre>`;
+    return plainTextFallback(code);
   }
 }
-/* eslint-enable @typescript-eslint/no-explicit-any */
 
 export function useShiki(code: string, language: string) {
   const { isDark } = useTheme();
@@ -88,5 +59,5 @@ export function useShiki(code: string, language: string) {
     };
   }, [code, language, isDark]);
 
-  return { html, isLoading, highlighterInstance };
+  return { html, isLoading };
 }

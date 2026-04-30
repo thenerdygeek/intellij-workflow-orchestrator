@@ -40,9 +40,9 @@ class CefResourceSchemeHandlerTest {
 
     @Test
     fun `URL construction for resources`() {
-        val url = CefResourceSchemeHandler.BASE_URL + "lib/marked.min.js"
+        val url = CefResourceSchemeHandler.BASE_URL + "assets/main.js"
         assertTrue(url.startsWith("http://workflow-agent/"))
-        assertTrue(url.endsWith("marked.min.js"))
+        assertTrue(url.endsWith("main.js"))
     }
 
     // -------------------------------------------------------------------------
@@ -92,10 +92,10 @@ class CefResourceSchemeHandlerTest {
         assertTrue(CefResourceSchemeHandler.isPathSafe("dist/assets/index.js"))
         assertTrue(CefResourceSchemeHandler.isPathSafe("dist/assets/index.css"))
         assertTrue(CefResourceSchemeHandler.isPathSafe("dist/index.html"))
-        assertTrue(CefResourceSchemeHandler.isPathSafe("lib/marked.min.js"))
+        assertTrue(CefResourceSchemeHandler.isPathSafe("assets/main.js"))
         assertTrue(CefResourceSchemeHandler.isPathSafe("index.html"))
         // Path with hyphens, underscores, digits — all fine
-        assertTrue(CefResourceSchemeHandler.isPathSafe("lib/prism-languages/kotlin.min.js"))
+        assertTrue(CefResourceSchemeHandler.isPathSafe("assets/main-Abc123.js"))
     }
 
     // -------------------------------------------------------------------------

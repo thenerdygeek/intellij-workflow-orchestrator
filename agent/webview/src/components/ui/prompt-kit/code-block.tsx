@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils"
 import React, { useEffect, useState } from "react"
-import { codeToHtml } from "shiki"
+import { getSharedHighlighter, isShippedLanguage } from "@/lib/shiki"
 
 export type CodeBlockProps = {
   children?: React.ReactNode
@@ -32,23 +32,37 @@ export type CodeBlockCodeProps = {
 function CodeBlockCode({
   code,
   language = "tsx",
-  theme = "github-dark",
+  theme = "vitesse-dark",
   className,
   ...props
 }: CodeBlockCodeProps) {
   const [highlightedHtml, setHighlightedHtml] = useState<string | null>(null)
 
   useEffect(() => {
+    let cancelled = false
     async function highlight() {
       if (!code) {
-        setHighlightedHtml("<pre><code></code></pre>")
+        if (!cancelled) setHighlightedHtml("<pre><code></code></pre>")
         return
       }
-
-      const html = await codeToHtml(code, { lang: language, theme })
-      setHighlightedHtml(html)
+      // Stripped-language fallback: if the requested grammar isn't bundled, render plain text
+      // so we don't trip the shared highlighter into a "language not loaded" error.
+      if (!isShippedLanguage(language)) {
+        if (!cancelled) {
+          setHighlightedHtml(
+            `<pre><code>${code.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</code></pre>`
+          )
+        }
+        return
+      }
+      const highlighter = await getSharedHighlighter()
+      const html = highlighter.codeToHtml(code, { lang: language, theme })
+      if (!cancelled) setHighlightedHtml(html)
     }
     highlight()
+    return () => {
+      cancelled = true
+    }
   }, [code, language, theme])
 
   const classNames = cn(
