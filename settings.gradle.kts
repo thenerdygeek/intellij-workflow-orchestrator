@@ -8,6 +8,7 @@ plugins {
 // ---- Submodule declarations ----
 include(
     ":core",
+    ":document",
     ":jira",
     ":bamboo",
     ":sonar",

@@ -175,6 +175,43 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
          * Format: "PROJ-PLAN=POSITIVE" or "PROJ-PLAN=NEGATIVE:<expiryEpochMs>"
          */
         var bambooPlanValidationCache by list<String>()
+
+        // ── Document extraction settings (Phase 8) ───────────────────────────────────
+
+        /**
+         * Maximum number of characters extracted from a single document by [TikaDocumentExtractor].
+         *
+         * v1 semantics: a value ≤ 0 means "no cap" (translated to [Int.MAX_VALUE] at the
+         * call site). The default of 200 000 matches the hard-coded fallback used before
+         * Phase 8.
+         */
+        var documentMaxChars by property(200_000)
+
+        /**
+         * Per-call extraction timeout in milliseconds passed to [TikaDocumentExtractor].
+         *
+         * v1: consumed by [DocumentTool] via [ExtractOptions.timeoutMs].
+         * Default of 30 000 ms (30 s) matches the [DocumentTool.timeoutMs] constant.
+         */
+        var documentTimeoutMs by property(30_000L)
+
+        /**
+         * When true, [TikaDocumentExtractor] requests Tabula's stream-mode fallback for
+         * PDF table extraction.
+         *
+         * v1 default: false (lattice mode). Stream mode can improve whitespace-heavy tables
+         * but may introduce phantom table rows on multi-column prose documents.
+         */
+        var documentEnableStreamMode by property(false)
+
+        /**
+         * v2 stub — OCR support for scanned PDFs is not yet implemented.
+         *
+         * When true, the user has opted in to OCR processing. The flag is persisted now so
+         * v2 can honour previously-saved preferences without a migration. The settings UI
+         * renders this control as disabled ("Coming in v2") in v1.
+         */
+        var documentOcrEnabled by property(false)
     }
 
     /**

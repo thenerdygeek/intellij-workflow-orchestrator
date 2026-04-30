@@ -93,6 +93,47 @@ class AgentAdvancedConfigurable(
                 }
             }
 
+            group("Documents") {
+                row("Max characters extracted per document:") {
+                    intTextField(1_000..2_000_000, 10_000)
+                        .bindIntText(pluginSettings.state::documentMaxChars)
+                        .comment(
+                            "Hard cap on characters returned from a single document. " +
+                                "Set to 0 (or below) for no cap. Default: 200 000."
+                        )
+                }
+                row("Extraction timeout (ms):") {
+                    textField()
+                        .columns(12)
+                        .bindText(
+                            { pluginSettings.state.documentTimeoutMs.toString() },
+                            { pluginSettings.state.documentTimeoutMs = it.toLongOrNull() ?: 30_000L }
+                        )
+                        .comment(
+                            "Maximum time allowed for a single document extraction before the " +
+                                "agent receives a timeout error. Range: 5 000–600 000 ms. Default: 30 000 ms."
+                        )
+                }
+                row {
+                    checkBox(
+                        "Enable Tabula stream-mode fallback " +
+                            "(off by default; may produce phantom tables on multi-column prose)"
+                    )
+                        .bindSelected(
+                            { pluginSettings.state.documentEnableStreamMode },
+                            { pluginSettings.state.documentEnableStreamMode = it }
+                        )
+                }
+                row {
+                    checkBox("Enable OCR for scanned PDFs")
+                        .applyToComponent {
+                            isEnabled = false
+                            toolTipText = "Coming in v2"
+                        }
+                        .comment("Coming in v2")
+                }
+            }
+
             group("Background processes") {
                 row("Concurrent processes per session:") {
                     intTextField(1..20)

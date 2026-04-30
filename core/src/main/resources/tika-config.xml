@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<properties>
+    <parsers>
+        <parser class="org.apache.tika.parser.DefaultParser">
+            <parser-exclude class="org.apache.tika.parser.external.ExternalParser"/>
+            <parser-exclude class="org.apache.tika.parser.ocr.TesseractOCRParser"/>
+        </parser>
+    </parsers>
+    <service-loader dynamic="false" loadErrorHandler="THROW"/>
+    <encodingDetectors>
+        <encodingDetector class="org.apache.tika.parser.txt.UniversalEncodingDetector"/>
+    </encodingDetectors>
+</properties>

@@ -34,6 +34,9 @@ dependencies {
     }
 
     implementation(project(":core"))
+    // :agent owns the AgentTool wrapping for every feature module. :document is a
+    // controlled exception to the "no feature-to-feature imports" rule.
+    implementation(project(":document"))
     compileOnly(libs.kotlinx.coroutines.core)
     compileOnly(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
@@ -58,6 +61,9 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    // :document's sandbox must be prepared before :agent tests run because :agent now
+    // depends on :document and the IntelliJ Platform test runner shares the sandbox directory.
+    dependsOn(":document:prepareTestSandbox")
 }
 
 tasks.register<Exec>("npmInstallWebview") {

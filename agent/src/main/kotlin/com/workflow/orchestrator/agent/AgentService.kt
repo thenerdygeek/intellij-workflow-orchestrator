@@ -79,6 +79,7 @@ import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.agent.loop.ModelFallbackManager
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.util.ProjectIdentifier
+import com.workflow.orchestrator.document.service.TikaDocumentExtractor
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import java.io.File
@@ -857,6 +858,28 @@ class AgentService(
         safeRegisterDeferred("Utilities") { ProjectContextTool() }
         safeRegisterDeferred("Utilities") { CurrentTimeTool() }
         safeRegisterDeferred("Utilities") { AskUserInputTool() }
+
+        // File — binary/structured document reading (PDF, DOCX, XLSX, PPTX, RTF, ODT, CSV …)
+        // Falls in the deferred tier so the full Tika + POI dependency is only paid when
+        // the LLM explicitly searches for "document" or "pdf" or "xlsx" tools.
+        //
+        // Phase 8: extractor + tool both read from PluginSettings per-call (mirroring
+        // HttpClientFactory.timeoutsFromSettings). documentMaxChars feeds the extractor's
+        // assembler; documentTimeoutMs feeds the per-extraction timeout. documentEnableStreamMode
+        // is stored on settings but Tabula stream-mode is opt-in via PdfTableExtractor's
+        // constructor — threading per-call would require a pipeline refactor (TODO v2).
+        val docExtractor = TikaDocumentExtractor(
+            maxCharsProvider = {
+                val n = PluginSettings.getInstance(project).state.documentMaxChars
+                if (n <= 0) Int.MAX_VALUE else n
+            },
+        )
+        safeRegisterDeferred("File") {
+            DocumentTool(
+                extractor = docExtractor,
+                timeoutMsProvider = { PluginSettings.getInstance(project).state.documentTimeoutMs },
+            )
+        }
 
         // Debug tools (require AgentDebugController)
         // XDebugger-based tools work for both Java/Kotlin and Python debug sessions.

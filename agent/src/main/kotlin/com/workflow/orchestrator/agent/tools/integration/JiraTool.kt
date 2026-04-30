@@ -465,7 +465,14 @@ description optional: for approval dialog on write actions.
                 val attachmentId = params["attachment_id"]?.jsonPrimitive?.content
                     ?: return ToolValidation.missingParam("attachment_id")
                 ToolValidation.validateJiraKey(key)?.let { return it }
-                service.downloadAttachment(key, attachmentId).toAgentToolResult()
+                val coreResult = service.downloadAttachment(key, attachmentId)
+                val base = coreResult.toAgentToolResult()
+                if (base.isError) return base
+                // Append a read_document hint for document-class files so the LLM
+                // knows it can extract text content without guessing the next step.
+                val hint = buildReadDocumentHint(coreResult.data.mimeType, coreResult.data.filename, coreResult.data.filePath)
+                if (hint == null) base
+                else base.copy(content = base.content + "\n\n" + hint)
             }
 
             else -> ToolResult(
@@ -543,6 +550,23 @@ description optional: for approval dialog on write actions.
     }
 
     /**
+     * Package-private test entry point for download_attachment — bypasses IntelliJ service lookup.
+     * Tests can call this directly with a mocked [JiraService] to verify hint injection
+     * without requiring the IntelliJ platform.
+     */
+    internal suspend fun executeDownloadAttachmentForTest(
+        key: String,
+        attachmentId: String,
+        service: com.workflow.orchestrator.core.services.JiraService
+    ): ToolResult {
+        val coreResult = service.downloadAttachment(key, attachmentId)
+        val base = coreResult.toAgentToolResult()
+        if (base.isError) return base
+        val hint = buildReadDocumentHint(coreResult.data.mimeType, coreResult.data.filename, coreResult.data.filePath)
+        return if (hint == null) base else base.copy(content = base.content + "\n\n" + hint)
+    }
+
+    /**
      * Package-private test entry point — bypasses IntelliJ service lookup.
      * Tests can call this directly after constructing the tool with an injected service.
      */
@@ -563,6 +587,43 @@ description optional: for approval dialog on write actions.
             comment = comment
         )
         return transitionSvc.executeTransition(key, input)
+    }
+
+    /**
+     * Returns a `read_document` hint paragraph when [mimeType] or [filename] extension
+     * indicates a document format that the `read_document` tool can handle.
+     *
+     * Plain text, CSV, and HTML are excluded — those work with `read_file` directly.
+     * Images, archives, and unknown types return null.
+     *
+     * @param mimeType MIME type from the attachment metadata (may be null)
+     * @param filename Original attachment filename (used for extension fallback)
+     * @param filePath Absolute path of the downloaded file on disk
+     */
+    internal fun buildReadDocumentHint(mimeType: String?, filename: String, filePath: String): String? {
+        val documentClass = resolveDocumentClass(mimeType, filename) ?: return null
+        return "Hint: This file is a $documentClass. You can extract its text content by calling " +
+            "`read_document` with path=\"$filePath\"."
+    }
+
+    private fun resolveDocumentClass(mimeType: String?, filename: String): String? {
+        // Prefer MIME type; fall back to extension when MIME is null or generic.
+        val mime = mimeType?.lowercase()?.trim()
+        val ext = filename.substringAfterLast('.', "").lowercase()
+
+        return when {
+            mime == "application/pdf" || ext == "pdf" -> "PDF"
+            mime == "application/msword" || ext == "doc" -> "document"
+            mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || ext == "docx" -> "document"
+            mime == "application/rtf" || ext == "rtf" -> "document"
+            mime == "application/vnd.oasis.opendocument.text" || ext == "odt" -> "document"
+            mime == "application/epub+zip" || ext == "epub" -> "document"
+            mime == "application/vnd.ms-excel" || ext == "xls" -> "spreadsheet"
+            mime == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || ext == "xlsx" -> "spreadsheet"
+            mime == "application/vnd.ms-powerpoint" || ext == "ppt" -> "presentation"
+            mime == "application/vnd.openxmlformats-officedocument.presentationml.presentation" || ext == "pptx" -> "presentation"
+            else -> null
+        }
     }
 
     private fun formatDevStatusBundle(issueKey: String, bundle: com.workflow.orchestrator.core.model.jira.DevStatusBundle): String = buildString {
