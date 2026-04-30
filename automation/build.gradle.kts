@@ -23,6 +23,15 @@ repositories {
 val sqliteJdbcUpstream by configurations.creating {
     isCanBeConsumed = false
     isCanBeResolved = true
+    // CRITICAL: must be non-transitive. The previous `implementation(libs.sqlite.jdbc)
+    // { exclude(group = "org.slf4j") }` excluded SLF4J at the module level. Here we are
+    // building a *fat* JAR via `zipTree(it)` over every artifact in this configuration —
+    // if slf4j-api (a transitive of sqlite-jdbc) were resolved, its classes would land in
+    // the trimmed JAR and collide with IntelliJ's platform SLF4J, producing
+    // `LinkageError: loader constraint violation` for `org.slf4j.LoggerFactory` /
+    // `StaticLoggerBinder` at `Class.forName("org.sqlite.JDBC")` time. sqlite-jdbc has no
+    // required transitive runtime deps, so non-transitive resolution is correct here.
+    isTransitive = false
 }
 dependencies {
     sqliteJdbcUpstream(libs.sqlite.jdbc)
