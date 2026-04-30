@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.document.poi
 
 import com.workflow.orchestrator.core.model.DocumentBlock
+import com.workflow.orchestrator.document.normaliseRow
 import org.apache.poi.xwpf.usermodel.IBodyElement
 import org.apache.poi.xwpf.usermodel.XWPFDocument
 import org.apache.poi.xwpf.usermodel.XWPFParagraph
@@ -114,13 +115,7 @@ class DocxTableExtractor {
         if (headers.isEmpty()) return null
 
         val dataRows = tableRows.drop(1).map { row ->
-            val cells = row.tableCells.map { it.text.trim() }
-            // Pad or truncate to match header count.
-            when {
-                cells.size < headers.size -> cells + List(headers.size - cells.size) { "" }
-                cells.size > headers.size -> cells.take(headers.size)
-                else -> cells
-            }
+            normaliseRow(row.tableCells.map { it.text.trim() }, headers.size)
         }
 
         return DocumentBlock.Table(headers, dataRows)

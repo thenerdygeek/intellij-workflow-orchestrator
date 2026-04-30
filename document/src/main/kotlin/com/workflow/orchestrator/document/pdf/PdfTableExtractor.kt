@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.document.pdf
 
 import com.workflow.orchestrator.core.model.DocumentBlock
+import com.workflow.orchestrator.document.normaliseRow
 import org.apache.pdfbox.Loader
 import technology.tabula.ObjectExtractor
 import technology.tabula.RectangularTextContainer
@@ -120,15 +121,6 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
         }
 
         return DocumentBlock.Table(headers = headers, rows = dataRows, caption = null)
-    }
-
-    /**
-     * Pads or truncates [row] to exactly [targetSize] cells.
-     */
-    private fun normaliseRow(row: List<String>, targetSize: Int): List<String> = when {
-        row.size == targetSize -> row
-        row.size < targetSize -> row + List(targetSize - row.size) { "" }
-        else -> row.take(targetSize)
     }
 
     /**

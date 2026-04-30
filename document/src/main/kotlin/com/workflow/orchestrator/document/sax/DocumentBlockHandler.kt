@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.document.sax
 
 import com.workflow.orchestrator.core.model.DocumentBlock
+import com.workflow.orchestrator.document.normaliseRow
 import org.xml.sax.Attributes
 import org.xml.sax.helpers.DefaultHandler
 
@@ -354,13 +355,7 @@ class DocumentBlockHandler(private val csvDetectionEnabled: Boolean = false) : D
         val headers = tableRows[0]
         if (headers.isEmpty()) return
 
-        val dataRows = tableRows.drop(1).map { row ->
-            when {
-                row.size == headers.size -> row
-                row.size < headers.size -> row + List(headers.size - row.size) { "" }
-                else -> row.take(headers.size)
-            }
-        }
+        val dataRows = tableRows.drop(1).map { row -> normaliseRow(row, headers.size) }
 
         _blocks += DocumentBlock.Table(headers = headers, rows = dataRows, caption = null)
     }
