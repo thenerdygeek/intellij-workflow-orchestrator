@@ -188,3 +188,14 @@ tasks {
         gradleVersion = "9.0"
     }
 }
+
+// TODO(zip-size-budget): a build-time assertion that the produced ZIP stays under a fixed
+// size budget (e.g. 75 MB) is desirable so dependency creep gets caught before a release ships.
+// A first attempt added a `doLast` to `buildPlugin`, but Gradle 9's configuration cache
+// rejects the closure because the IntelliJ Platform plugin's `BuildPluginTask` carries
+// non-serializable script object references that flow into the closure scope. Revisit by
+// either (a) wiring a separate task that only `inputs.files(...)`-references the ZIP path
+// and reads it via `println` instead of `logger`, (b) writing the assertion as a JUnit test
+// in the root project's test source set, or (c) running a small CI script (`du -h` + bash
+// numeric comparison) outside Gradle. For now, the per-build ZIP size is visible in the
+// `gh release create` output and in `ls -la build/distributions/`.

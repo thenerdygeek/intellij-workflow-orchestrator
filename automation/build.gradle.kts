@@ -55,6 +55,11 @@ val trimmedSqliteJar = tasks.register<Jar>("trimmedSqliteJar") {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
+// Invariants on the trimmed JAR (no SLF4J leak; JDBC entrypoint present; only the shipped-
+// platform natives) are enforced by `TrimmedSqliteJarInvariantsTest` in
+// `automation/src/test/kotlin/...`. The test runs as part of `:automation:test` (and therefore
+// `:automation:check`) so a regression fails the normal verification flow.
+
 dependencies {
     intellijPlatform {
         intellijIdea(providers.gradleProperty("platformVersion"))
