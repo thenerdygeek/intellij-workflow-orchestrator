@@ -25,8 +25,10 @@ const typeLabels: Record<string, string> = {
 /**
  * Score a result against a query for relevance ranking.
  * Higher score = more relevant. Name matches always beat path-only matches.
+ * Returns 0 for non-matches; callers must drop zeros when query is non-empty
+ * so stale results from a prior query don't bleed through during the bridge debounce.
  */
-function relevanceScore(label: string | undefined, path: string | undefined, query: string): number {
+export function relevanceScore(label: string | undefined, path: string | undefined, query: string): number {
   if (!query || !label) return 0;
   const q = query.toLowerCase();
   const l = label.toLowerCase();
@@ -78,11 +80,14 @@ export const MentionDropdown = memo(function MentionDropdown({
 
   const maxPerGroup = query ? 5 : 8;
 
-  // Build a flat ordered list of results for keyboard navigation
+  // Build a flat ordered list of results for keyboard navigation.
+  // When the user has typed a query, drop score=0 items: those came from a prior
+  // bridge response (the 200ms debounce window) and don't match what they typed.
   const flatItems = useMemo(() => {
     const scored = mentionResults
       .filter(r => r.type === 'file' || r.type === 'folder' || r.type === 'symbol')
-      .map(r => ({ ...r, score: relevanceScore(r.label, r.path, query) }));
+      .map(r => ({ ...r, score: relevanceScore(r.label, r.path, query) }))
+      .filter(r => !query || r.score > 0);
 
     const grouped: Record<string, typeof scored> = {};
     for (const r of scored) {

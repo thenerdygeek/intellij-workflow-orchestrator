@@ -426,9 +426,10 @@ class MentionSearchProvider(private val project: Project) {
     }
 
     suspend fun searchTickets(query: String): String {
-        // Phase 5 T17 — fallback: empty/active/current query surfaces the canonical
-        // workflow-context active ticket (spec §6.2). Falls through if none.
-        if (query.isBlank() || query.equals("active", ignoreCase = true) || query.equals("current", ignoreCase = true)) {
+        // Explicit `active` / `current` keyword: surface only the workflow-context
+        // active ticket (spec §6.2 single-hit path). Blank query falls through so
+        // the user still sees the full sprint list with the active ticket prepended.
+        if (query.equals("active", ignoreCase = true) || query.equals("current", ignoreCase = true)) {
             val active = try {
                 com.workflow.orchestrator.core.workflow.WorkflowContextService.getInstance(project)
                     .state.value.activeTicket
@@ -446,6 +447,15 @@ class MentionSearchProvider(private val project: Project) {
             }
             // No active ticket — fall through to existing search (sprint cache or empty list).
         }
+
+        // For blank query, pin the active ticket as the first result — but still
+        // return the sprint list so the user can pick anything.
+        val activeTicketForBlank = if (query.isBlank()) {
+            try {
+                com.workflow.orchestrator.core.workflow.WorkflowContextService.getInstance(project)
+                    .state.value.activeTicket
+            } catch (_: Exception) { null }
+        } else null
         return try {
             val jiraService = try {
                 project.getService(JiraService::class.java)
@@ -556,6 +566,17 @@ class MentionSearchProvider(private val project: Project) {
             }.sortedBy { statusOrder[it.status] ?: 2 }.take(8)
 
             buildJsonArray {
+                if (activeTicketForBlank != null &&
+                    filtered.none { it.key.equals(activeTicketForBlank.key, ignoreCase = true) }
+                ) {
+                    add(buildJsonObject {
+                        put("type", JsonPrimitive("ticket"))
+                        put("label", JsonPrimitive(activeTicketForBlank.key))
+                        put("path", JsonPrimitive(activeTicketForBlank.key))
+                        put("description", JsonPrimitive(activeTicketForBlank.summary.take(60)))
+                        put("source", JsonPrimitive("workflow_context_active"))
+                    })
+                }
                 for (ticket in filtered) {
                     add(buildJsonObject {
                         put("type", JsonPrimitive("ticket"))

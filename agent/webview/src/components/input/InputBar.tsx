@@ -13,7 +13,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
-import { MentionDropdown } from './MentionDropdown';
+import { MentionDropdown, relevanceScore } from './MentionDropdown';
 import { SkillDropdown } from './SkillDropdown';
 import { TicketDropdown } from './TicketDropdown';
 import { useDropdownKeyboard } from '@/hooks/useDropdownKeyboard';
@@ -509,17 +509,23 @@ export const InputBar = memo(function InputBar() {
   const mentionResults = useChatStore(s => s.mentionResults);
   const skillsList = useChatStore(s => s.skillsList);
 
-  // Flat mention items in display order (file → folder → symbol, up to 5 per group)
+  // Flat mention items for keyboard navigation. Must mirror MentionDropdown's
+  // visible list (same score/filter/sort) so arrow-key indices line up with what
+  // the user sees — otherwise selection picks a different item than highlighted.
   const flatMentionItems = useMemo(() => {
     const maxPerGroup = mentionQuery ? 5 : 8;
     const scored = mentionResults
       .filter(r => r.type === 'file' || r.type === 'folder' || r.type === 'symbol')
-      .map(r => ({ ...r }));
+      .map(r => ({ ...r, score: relevanceScore(r.label, r.path, mentionQuery) }))
+      .filter(r => !mentionQuery || r.score > 0);
     const grouped: Record<string, typeof scored> = {};
     for (const r of scored) { (grouped[r.type] ??= []).push(r); }
-    return (['file', 'folder', 'symbol'] as const).flatMap(t =>
-      (grouped[t] ?? []).slice(0, maxPerGroup)
-    );
+    for (const type in grouped) {
+      grouped[type] = grouped[type]!
+        .sort((a, b) => b.score - a.score)
+        .slice(0, maxPerGroup);
+    }
+    return (['file', 'folder', 'symbol'] as const).flatMap(t => grouped[t] ?? []);
   }, [mentionResults, mentionQuery]);
 
   // Flat skill items (same order as SkillDropdown renders)
