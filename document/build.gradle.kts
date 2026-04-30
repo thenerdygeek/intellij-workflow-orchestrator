@@ -35,8 +35,13 @@ dependencies {
     // Must be declared explicitly — the slf4j excludes on tika-parsers-standard-package
     // strip transitive dependency resolution from the parent BOM, leaving tika-core absent
     // from the compile classpath without this explicit declaration.
+    //
+    // log4j-api is intentionally NOT excluded — POI 5.x and several Tika parser modules
+    // call `org.apache.logging.log4j.LogManager.getLogger(...)` directly, so the API JAR
+    // must be on the plugin classloader to satisfy bytecode verification at first POI/Tika
+    // class load. We route Log4j 2 → SLF4J via `log4j-to-slf4j` declared at the bottom of
+    // this dependencies block, so no log4j-core implementation is bundled.
     implementation("org.apache.tika:tika-core:3.2.3") {
-        exclude(group = "org.apache.logging.log4j")
         exclude(group = "org.slf4j")
     }
 
@@ -55,8 +60,10 @@ dependencies {
     // META-INF/services/org.apache.tika.parser.Parser entries, AutoDetectParser registry stays
     // non-empty and detection still works for the formats above.
     implementation("org.apache.tika:tika-parsers-standard-package:3.2.3") {
-        // Plugin already manages slf4j; bundling a second one causes LinkageError per existing build.gradle.kts comment.
-        exclude(group = "org.apache.logging.log4j", module = "log4j-api")
+        // SLF4J is provided by IntelliJ Platform; bundling a second copy causes LinkageError.
+        // log4j-api stays IN — POI 5.x and Tika modules below directly reference it for
+        // class-level static `LogManager.getLogger(...)` initialisation. log4j-core is dropped
+        // because we route to SLF4J via `log4j-to-slf4j` (declared below).
         exclude(group = "org.apache.logging.log4j", module = "log4j-core")
         exclude(group = "org.slf4j")
 
@@ -111,7 +118,11 @@ dependencies {
     // OfficeParser which hard-reference poi-scratchpad classes during ServiceLoader registration.
     // Excluding it triggers NoClassDefFoundError at TikaConfig construction (same trap as jackcess).
     implementation("org.apache.poi:poi-ooxml:5.4.1") {
-        exclude(group = "org.apache.logging.log4j")
+        // Keep log4j-api — POI 5.x replaced POILogFactory with direct
+        // `org.apache.logging.log4j.LogManager.getLogger(...)` calls (~599 references in
+        // poi-5.4.1.jar alone). Excluding it produces NoClassDefFoundError at first POI
+        // class load. log4j-core is dropped; routing to SLF4J via `log4j-to-slf4j` below.
+        exclude(group = "org.apache.logging.log4j", module = "log4j-core")
         exclude(group = "org.slf4j")
     }
 
@@ -120,7 +131,19 @@ dependencies {
     // below resolve PDFBox 3.0.5.
     implementation("technology.tabula:tabula:1.0.5") {
         exclude(group = "org.apache.pdfbox")
-        exclude(group = "org.apache.logging.log4j")
+        // log4j-api stays IN (POI/Tika need it). log4j-core dropped; routed via log4j-to-slf4j.
+        exclude(group = "org.apache.logging.log4j", module = "log4j-core")
+        exclude(group = "org.slf4j")
+    }
+
+    // Log4j 2 → SLF4J adapter. Brings `log4j-api` (~310 KB) onto the plugin classloader so
+    // POI 5.x and Tika 3.x (which call `org.apache.logging.log4j.LogManager.getLogger(...)`
+    // directly) can class-verify; routes every Log4j 2 logger call into the SLF4J binding
+    // already provided by IntelliJ Platform. Costs ~25 KB on top of log4j-api. We deliberately
+    // do NOT bundle log4j-core (~1.8 MB) — the adapter replaces it as the SPI provider. SLF4J
+    // is excluded transitively because the IntelliJ Platform already provides it; bundling a
+    // second copy would trigger LinkageError under the plugin classloader.
+    implementation("org.apache.logging.log4j:log4j-to-slf4j:2.24.3") {
         exclude(group = "org.slf4j")
     }
 
@@ -148,10 +171,15 @@ dependencies {
 // duplicate-class hazard — depending on classloader order, encrypted-PDF AES-256 detection can
 // fall through to the older provider and silently fail. Strip the legacy `jdk15on` variants
 // project-wide; the modern `jdk18on` set stays.
+//
+// `bcmail-jdk15on` belongs to the same family — Tika's microsoft-module pulls it transitively
+// alongside the modern `bcjmail-jdk18on`. All 63 of its `org.bouncycastle.mail.smime.*` classes
+// collide with bcjmail-jdk18on, so it must be excluded for the same reason.
 configurations.all {
     exclude(group = "org.bouncycastle", module = "bcprov-jdk15on")
     exclude(group = "org.bouncycastle", module = "bcpkix-jdk15on")
     exclude(group = "org.bouncycastle", module = "bcutil-jdk15on")
+    exclude(group = "org.bouncycastle", module = "bcmail-jdk15on")
 }
 
 tasks.test {
