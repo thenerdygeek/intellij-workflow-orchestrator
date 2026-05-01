@@ -115,6 +115,15 @@ class ContextManager(
         }
     }
 
+    /**
+     * Snapshot of non-deleted tasks for environment_details injection. Empty list if no
+     * store attached or no tasks. Single-coroutine dirty-read (see TaskStore.listTasks).
+     */
+    fun currentTasks(): List<com.workflow.orchestrator.agent.loop.Task> {
+        val store = taskStore ?: return emptyList()
+        return store.listTasks().filter { it.status != com.workflow.orchestrator.agent.loop.TaskStatus.DELETED }
+    }
+
     // ---- Message management ----
 
     fun setSystemPrompt(prompt: String) {

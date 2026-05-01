@@ -60,7 +60,10 @@ object EnvironmentDetailsBuilder {
             sb.appendLine()
         }
 
-        // 8. Workflow Context (Phase 5 T17) — canonical state from WorkflowContextService.
+        // 8. Tasks — current TaskStore snapshot (non-deleted), id + status + subject.
+        sb.appendTasks(contextManager)
+
+        // 9. Workflow Context (Phase 5 T17) — canonical state from WorkflowContextService.
         sb.appendWorkflowContext(project)
 
         // 9. Active Ticket (legacy — passed in by caller from :jira ActiveTicketService;
@@ -100,6 +103,23 @@ object EnvironmentDetailsBuilder {
         s.focusPr?.let { appendLine("Focused PR: #${it.prId} (${it.fromBranch} -> ${it.toBranch})") }
         appendLine("Interaction mode: ${s.interactionMode}")
         appendLine("</workflow_context>")
+        appendLine()
+    }
+
+    private fun StringBuilder.appendTasks(contextManager: ContextManager?) {
+        if (contextManager == null) return
+        val tasks = try { contextManager.currentTasks() } catch (_: Exception) { return }
+        if (tasks.isEmpty()) return
+        appendLine("# Tasks")
+        for (t in tasks) {
+            val status = when (t.status) {
+                com.workflow.orchestrator.agent.loop.TaskStatus.PENDING -> "pending"
+                com.workflow.orchestrator.agent.loop.TaskStatus.IN_PROGRESS -> "in_progress"
+                com.workflow.orchestrator.agent.loop.TaskStatus.COMPLETED -> "completed"
+                com.workflow.orchestrator.agent.loop.TaskStatus.DELETED -> continue
+            }
+            appendLine("- [${t.id}] [$status] ${t.subject}")
+        }
         appendLine()
     }
 
