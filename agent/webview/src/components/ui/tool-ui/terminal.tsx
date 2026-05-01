@@ -126,7 +126,7 @@ export function Terminal({
         )}
       </div>
 
-      {/* Output body — max-height keeps it bounded but lets StickToBottom detect growth */}
+      {/* Output body — max-height keeps it bounded; the inner <pre> handles its own scroll. */}
       {output.length > 0 && (
         <div className="relative">
           <pre

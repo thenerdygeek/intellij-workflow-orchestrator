@@ -8,6 +8,7 @@ import { TextShimmer } from '../ui/prompt-kit/text-shimmer';
 import { CopyButton } from '../ui/copy-button';
 import { Brain } from 'lucide-react';
 import { scanAndLinkify } from '../../util/file-link-scanner';
+import { formatElapsedSeconds } from '@/lib/time';
 
 // ── Thinking Timer ──
 
@@ -29,9 +30,9 @@ function useThinkingTimer(isStreaming: boolean): number {
 
 function formatDuration(ms: number, isStreaming: boolean): string {
   if (isStreaming) return 'Thinking...';
-  const seconds = Math.round(ms / 1000);
-  if (seconds <= 0) return 'Thought for <1s';
-  return `Thought for ${seconds}s`;
+  const totalSec = Math.round(ms / 1000);
+  if (totalSec <= 0) return 'Thought for <1s';
+  return `Thought for ${formatElapsedSeconds(totalSec)}`;
 }
 
 // ── ThinkingView ──

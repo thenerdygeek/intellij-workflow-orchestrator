@@ -8,6 +8,7 @@ import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.security.DefaultCommandFilter
 import com.workflow.orchestrator.agent.security.FilterResult
+import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.tools.process.ManagedProcess
 import com.workflow.orchestrator.agent.tools.process.OutputCollector
 import com.workflow.orchestrator.agent.tools.process.ProcessEnvironment
@@ -43,7 +44,9 @@ class RunCommandTool(
     companion object {
         private val LOG = Logger.getInstance(RunCommandTool::class.java)
         private const val DEFAULT_TIMEOUT_SECONDS = 120L
-        private const val MAX_TIMEOUT_SECONDS = 600L
+        // Max is configurable in settings (Process Tools → "Run-command max
+        // timeout"). Default: 10 minutes. Read at execution time so changes
+        // apply to subsequent tool calls without restarting the session.
         // Idle thresholds are read from AgentSettings.commandIdleThresholdSeconds and
         // AgentSettings.buildCommandIdleThresholdSeconds at execution time. Defaults
         // are 15s / 60s respectively (set in AgentSettings.State).
@@ -111,7 +114,7 @@ class RunCommandTool(
                 ),
                 "timeout" to ParameterProperty(
                     type = "integer",
-                    description = "Timeout in seconds. Default: 120, max: 600."
+                    description = "Timeout in seconds. Default: 120. The hard upper bound is configurable in plugin settings (Process Tools → Run-command max timeout); default ceiling is 600 (10 min). Values exceeding the configured ceiling are clamped."
                 ),
                 "idle_timeout" to ParameterProperty(
                     type = "integer",
@@ -232,8 +235,12 @@ class RunCommandTool(
                 shellConfig.executable, *shellConfig.args.toTypedArray(), command
             )
 
+            val maxTimeoutSeconds = AgentSettings.getInstance(project).state
+                .runCommandMaxTimeoutMinutes
+                .coerceAtLeast(1)
+                .toLong() * 60L
             val timeoutSeconds = (params["timeout"]?.jsonPrimitive?.int?.toLong() ?: DEFAULT_TIMEOUT_SECONDS)
-                .coerceIn(1, MAX_TIMEOUT_SECONDS)
+                .coerceIn(1, maxTimeoutSeconds)
             val timeoutMs = timeoutSeconds * 1000
 
             commandLine.workDirectory = workDir

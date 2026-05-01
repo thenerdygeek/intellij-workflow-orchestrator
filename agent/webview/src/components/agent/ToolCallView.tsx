@@ -6,6 +6,7 @@ import { Terminal } from '@/components/ui/tool-ui/terminal';
 import { useChatStore } from '@/stores/chatStore';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { formatElapsedMs } from '@/lib/time';
 import { Square } from 'lucide-react';
 
 // ── Tool Categories ──
@@ -98,11 +99,7 @@ function useLiveTimer(status: ToolCallStatus): string {
   return formatDuration(elapsed);
 }
 
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  const seconds = (ms / 1000).toFixed(1);
-  return `${seconds}s`;
-}
+const formatDuration = formatElapsedMs;
 
 // ── Target Extraction ──
 

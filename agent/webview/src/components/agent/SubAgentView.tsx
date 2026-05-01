@@ -7,16 +7,11 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { Bot, Loader2, XCircle, AlertCircle, Check, ChevronDown, Square } from 'lucide-react';
 import { useChatStore } from '@/stores/chatStore';
+import { formatElapsedMs } from '@/lib/time';
 
 // ── Helpers ──
 
-function formatElapsed(ms: number): string {
-  const totalSec = Math.floor(ms / 1000);
-  if (totalSec < 60) return `${totalSec}s`;
-  const m = Math.floor(totalSec / 60);
-  const s = totalSec % 60;
-  return `${m}m ${s}s`;
-}
+const formatElapsed = formatElapsedMs;
 
 function extractType(label: string): string | null {
   // Label format from Kotlin: "description (type)"
@@ -85,7 +80,20 @@ interface SubAgentViewProps {
 export const SubAgentView = memo(function SubAgentView({ subAgent }: SubAgentViewProps) {
   const killSubAgent = useChatStore((state) => state.killSubAgent);
   const isRunning = subAgent.status === 'RUNNING';
-  const [isOpen, setIsOpen] = useState(true);
+  // Default-open while running, default-closed on terminal status (so completed
+  // sub-agents — including resume-time ones — don't each occupy ~440px in the chat).
+  const [isOpen, setIsOpen] = useState(isRunning);
+  const userToggledRef = useRef(false);
+  const prevIsRunningRef = useRef(isRunning);
+
+  // On live RUNNING → terminal transition, auto-collapse — unless the user has
+  // manually toggled the card, in which case we respect their choice.
+  useEffect(() => {
+    if (prevIsRunningRef.current && !isRunning && !userToggledRef.current) {
+      setIsOpen(false);
+    }
+    prevIsRunningRef.current = isRunning;
+  }, [isRunning]);
 
   const agentType = extractType(subAgent.label);
   const agentName = extractName(subAgent.label);
@@ -127,6 +135,7 @@ export const SubAgentView = memo(function SubAgentView({ subAgent }: SubAgentVie
   }, [isRunning, killSubAgent, subAgent.agentId]);
 
   const toggleOpen = useCallback(() => {
+    userToggledRef.current = true;
     setIsOpen(prev => !prev);
   }, []);
 

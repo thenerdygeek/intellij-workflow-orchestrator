@@ -750,12 +750,15 @@ class AgentController(
         }
         // Accumulate individual question answers so we can pass them on submit
         val collectedAnswers = mutableMapOf<String, String>()
+        val skippedQuestionIds = mutableSetOf<String>()
         dashboard.setCefQuestionCallbacks(
             onAnswered = { questionId, selectedOptionsJson ->
                 collectedAnswers[questionId] = selectedOptionsJson
+                skippedQuestionIds.remove(questionId)
             },
             onSkipped = { questionId ->
                 collectedAnswers[questionId] = "[]"
+                skippedQuestionIds.add(questionId)
             },
             onChatAbout = { _, _, _ -> /* Chat about option not used for tool flow */ },
             onSubmitted = {
@@ -771,7 +774,7 @@ class AgentController(
                     dashboard.setBusy(true)
                     val snapshot = liveQuestions
                     val enrichedPayload = if (snapshot != null) {
-                        buildEnrichedAnswerPayload(snapshot, collectedAnswers)
+                        buildEnrichedAnswerPayload(snapshot, collectedAnswers, skippedQuestionIds)
                     } else {
                         // Fallback: liveQuestions unexpectedly null — send raw ids
                         collectedAnswers.entries.joinToString(",", "{", "}") { (qid, opts) ->
@@ -782,6 +785,7 @@ class AgentController(
                 }
                 liveQuestions = null
                 collectedAnswers.clear()
+                skippedQuestionIds.clear()
             },
             onCancelled = {
                 liveQuestions = null
@@ -792,10 +796,13 @@ class AgentController(
                     AgentService.planModeActive.set(true)
                     dashboard.setPlanMode(true)
                     collectedAnswers.clear()
+                    skippedQuestionIds.clear()
                     executeTask("The user is still reviewing the plan. Continue in plan mode.")
                 } else {
+                    dashboard.setBusy(true)
                     com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.cancelQuestions()
                     collectedAnswers.clear()
+                    skippedQuestionIds.clear()
                 }
             },
             onEdit = { _ -> /* Re-editing handled by wizard */ }
@@ -911,12 +918,16 @@ class AgentController(
      */
     private fun buildEnrichedAnswerPayload(
         live: LiveQuestions,
-        collectedAnswers: Map<String, String>
+        collectedAnswers: Map<String, String>,
+        skippedIds: Set<String> = emptySet()
     ): String {
         return when (live.mode) {
             QuestionMode.SIMPLE -> {
-                // Single question: resolve ids → labels, pass joined labels to executeSimple
+                // Single question: resolve ids → labels, pass joined labels to executeSimple.
+                // If the user skipped, emit the [SKIPPED] sentinel so the tool can produce a
+                // distinct "User skipped this question." result instead of an empty answer.
                 val q = live.questions.firstOrNull()
+                if (q != null && q.id in skippedIds) return "[SKIPPED]"
                 val idsJson = collectedAnswers["q1"] ?: "[]"
                 val selectedIds = try {
                     lenientJson.decodeFromString<List<String>>(idsJson)
@@ -927,20 +938,26 @@ class AgentController(
                 labels.joinToString(", ")
             }
             QuestionMode.WIZARD -> {
-                // Multi-question wizard: build enriched JSON with question text + selected labels
+                // Multi-question wizard: build enriched JSON with question text + selected labels.
+                // Skipped questions emit "skipped": true instead of "selected": [] so the LLM can
+                // tell the difference between "user actively skipped" and "no options chosen".
                 buildString {
                     append("{")
                     var first = true
                     for (q in live.questions) {
-                        val idsJson = collectedAnswers[q.id] ?: "[]"
-                        val selectedIds = try {
-                            lenientJson.decodeFromString<List<String>>(idsJson)
-                        } catch (_: Exception) { emptyList() }
                         if (!first) append(",")
                         first = false
                         append(JsEscape.toJsonString(q.id))
                         append(":{\"question\":")
                         append(JsEscape.toJsonString(q.question))
+                        if (q.id in skippedIds) {
+                            append(",\"skipped\":true}")
+                            continue
+                        }
+                        val idsJson = collectedAnswers[q.id] ?: "[]"
+                        val selectedIds = try {
+                            lenientJson.decodeFromString<List<String>>(idsJson)
+                        } catch (_: Exception) { emptyList() }
                         append(",\"selected\":[")
                         var firstOpt = true
                         for (id in selectedIds) {

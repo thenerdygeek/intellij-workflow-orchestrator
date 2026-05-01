@@ -229,6 +229,22 @@ class AskQuestionsTool : AgentTool {
             )
         }
 
+        if (answer == "[SKIPPED]") {
+            val content = buildString {
+                appendLine("<question>")
+                appendLine(question)
+                appendLine("</question>")
+                appendLine("<skipped>")
+                appendLine("The user chose to skip this question. Proceed using your best judgement, or ask a different question if you still need clarification.")
+                appendLine("</skipped>")
+            }
+            return ToolResult(
+                content = content,
+                summary = "ask_followup_question: user skipped",
+                tokenEstimate = TokenEstimator.estimate(content)
+            )
+        }
+
         if (answer == "[UI_RENDER_FAILED]") {
             return ToolResult(
                 "Error: The question UI failed to render (JCEF bridge timeout). " +

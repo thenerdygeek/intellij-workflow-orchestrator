@@ -26,6 +26,7 @@ class AgentProcessToolsConfigurable(
     private var buildCommandIdleThresholdSeconds = settings.state.buildCommandIdleThresholdSeconds
     private var maxStdinPerProcess = settings.state.maxStdinPerProcess
     private var askUserInputTimeoutMinutes = settings.state.askUserInputTimeoutMinutes
+    private var runCommandMaxTimeoutMinutes = settings.state.runCommandMaxTimeoutMinutes
 
     override fun getId(): String = "workflow.orchestrator.agent.process_tools"
     override fun getDisplayName(): String = "Process Tools"
@@ -65,6 +66,14 @@ class AgentProcessToolsConfigurable(
                                 "After this many minutes the prompt expires."
                         )
                 }
+                row("Run-command max timeout (minutes):") {
+                    intTextField(1..60)
+                        .bindIntText(::runCommandMaxTimeoutMinutes)
+                        .comment(
+                            "Hard upper bound for run_command. Any per-call timeout the agent " +
+                                "passes is coerced into this ceiling. Default: 10."
+                        )
+                }
                 row {
                     comment(
                         "These settings control how the agent's interactive run_command tool detects " +
@@ -86,6 +95,7 @@ class AgentProcessToolsConfigurable(
         settings.state.buildCommandIdleThresholdSeconds = buildCommandIdleThresholdSeconds
         settings.state.maxStdinPerProcess = maxStdinPerProcess
         settings.state.askUserInputTimeoutMinutes = askUserInputTimeoutMinutes
+        settings.state.runCommandMaxTimeoutMinutes = runCommandMaxTimeoutMinutes
     }
 
     override fun reset() {
@@ -93,6 +103,7 @@ class AgentProcessToolsConfigurable(
         buildCommandIdleThresholdSeconds = settings.state.buildCommandIdleThresholdSeconds
         maxStdinPerProcess = settings.state.maxStdinPerProcess
         askUserInputTimeoutMinutes = settings.state.askUserInputTimeoutMinutes
+        runCommandMaxTimeoutMinutes = settings.state.runCommandMaxTimeoutMinutes
         dialogPanel?.reset()
     }
 

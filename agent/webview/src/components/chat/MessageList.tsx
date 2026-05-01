@@ -1,8 +1,9 @@
-import { forwardRef, useImperativeHandle, useRef, type ReactNode } from 'react';
-import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
+import { forwardRef, useImperativeHandle, useMemo, useRef, type ReactNode } from 'react';
+import { Virtuoso, type ItemProps, type VirtuosoHandle } from 'react-virtuoso';
 
 export interface MessageListHandle {
   scrollToBottom(): void;
+  scrollToIndexStart(index: number): void;
 }
 
 interface MessageListProps {
@@ -14,6 +15,23 @@ interface MessageListProps {
   atBottomChange?: (atBottom: boolean) => void;
   /** aria-label for the scrolling region. */
   ariaLabel?: string;
+}
+
+// Per-item wrapper. Restores the `px-4` horizontal gutter and `gap-3` inter-item
+// spacing that the pre-virtualization `<ChatContainerContent>` provided. Without
+// this, bordered cards (CompletionCard, SubAgentView, etc.) sit flush against
+// the scroller edges.
+function ItemContainer({ children, ...props }: ItemProps<unknown>) {
+  return (
+    <div {...props} className="px-4 pb-3">
+      {children}
+    </div>
+  );
+}
+
+// 12px spacer above the first item — replaces the old `py-3` top padding.
+function HeaderSpacer() {
+  return <div className="h-3" />;
 }
 
 export const MessageList = forwardRef<MessageListHandle, MessageListProps>(function MessageList(
@@ -30,7 +48,20 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
         behavior: 'smooth',
       });
     },
+    scrollToIndexStart(index: number) {
+      virtuosoRef.current?.scrollToIndex({
+        index,
+        align: 'start',
+        behavior: 'smooth',
+      });
+    },
   }), []);
+
+  const components = useMemo(() => {
+    const c: Record<string, unknown> = { Item: ItemContainer, Header: HeaderSpacer };
+    if (footer) c.Footer = () => <>{footer}</>;
+    return c;
+  }, [footer]);
 
   return (
     <Virtuoso
@@ -45,7 +76,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
       atBottomThreshold={120}
       atBottomStateChange={atBottomChange}
       increaseViewportBy={{ top: 400, bottom: 400 }}
-      components={footer ? { Footer: () => <>{footer}</> } : undefined}
+      components={components}
     />
   );
 });

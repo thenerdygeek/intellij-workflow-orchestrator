@@ -318,10 +318,37 @@ export const ChatView = memo(function ChatView() {
 
   const approvalRef = useRef<HTMLDivElement>(null);
   const questionsRef = useRef<HTMLDivElement>(null);
+  const messageListRef = useRef<MessageListHandle>(null);
+  const wasStreamingRef = useRef(false);
 
   const handleApprove = useCallback(() => resolveApproval('approve'), [resolveApproval]);
   const handleDeny = useCallback(() => resolveApproval('deny'), [resolveApproval]);
   const handleAllowForSession = useCallback(() => resolveApproval('allowForSession'), [resolveApproval]);
+
+  // When streaming ends on a tall response, scroll to its TOP so the user can
+  // read from the start instead of landing at the bottom. Mirrors the
+  // pre-virtualization UX. The just-finalized message is at messages.length-1.
+  useEffect(() => {
+    const isStreaming = streamingText != null;
+    const wasStreaming = wasStreamingRef.current;
+    wasStreamingRef.current = isStreaming;
+    if (!wasStreaming || isStreaming) return;
+
+    const lastIndex = useChatStore.getState().messages.length - 1;
+    if (lastIndex < 0) return;
+
+    // Defer one frame so Virtuoso has materialized the now-finalized item.
+    const raf = requestAnimationFrame(() => {
+      const scroller = document.querySelector('[role="log"]');
+      const item = document.querySelector(`[data-item-index="${lastIndex}"]`);
+      if (!scroller || !(item instanceof HTMLElement)) return;
+      const viewportHeight = scroller.clientHeight || window.innerHeight;
+      if (item.offsetHeight > viewportHeight * 0.6) {
+        messageListRef.current?.scrollToIndexStart(lastIndex);
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [streamingText]);
 
   // Auto-scroll to question wizard when it appears
   useEffect(() => {
@@ -555,7 +582,6 @@ export const ChatView = memo(function ChatView() {
     return null;
   }, [renderItems, activeSubAgents]);
 
-  const messageListRef = useRef<MessageListHandle>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
 
   const footer = (

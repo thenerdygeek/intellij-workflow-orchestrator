@@ -10,6 +10,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { CopyButton } from '@/components/ui/copy-button';
 import { cn } from '@/lib/utils';
+import { formatElapsedMs, formatElapsedSeconds } from '@/lib/time';
 import { Loader2, Check, X, Clock } from 'lucide-react';
 import { useChatStore } from '@/stores/chatStore';
 import { useShiki } from '@/hooks/useShiki';
@@ -63,8 +64,26 @@ function extractTarget(args: string): string {
   return '';
 }
 
-function formatDuration(ms: number): string {
-  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
+const formatDuration = formatElapsedMs;
+
+/**
+ * For run_command tool calls, surface the configured timeout (in seconds) as a
+ * "/ Nm Ss" suffix on the running indicator, so users can see how much
+ * headroom the command has before the watchdog fires. Falls back to the
+ * server-side default of 120s when `timeout` is omitted from the LLM call.
+ */
+function extractRunCommandTimeoutLabel(toolCall: ToolCall): string | null {
+  if (toolCall.name !== 'run_command') return null;
+  try {
+    const parsed = JSON.parse(toolCall.args) as Record<string, unknown>;
+    const raw = parsed.timeout;
+    const seconds = typeof raw === 'number' && Number.isFinite(raw) && raw > 0
+      ? raw
+      : 120;
+    return formatElapsedSeconds(seconds);
+  } catch {
+    return formatElapsedSeconds(120);
+  }
 }
 
 // ── Status icon ──
@@ -301,14 +320,33 @@ const ToolCallItem = memo(function ToolCallItem({ tc }: { tc: ToolCall }) {
               </span>
             )}
             <span className="flex-1" />
-            {isRunning && (
-              <span className="shrink-0 text-[10px] font-mono tabular-nums text-[var(--accent)]">running</span>
-            )}
-            {tc.durationMs != null && !isRunning && (
-              <span className="shrink-0 text-[10px] font-mono tabular-nums text-[var(--fg-muted)]">
-                {formatDuration(tc.durationMs)}
-              </span>
-            )}
+            {(() => {
+              const timeoutLabel = extractRunCommandTimeoutLabel(tc);
+              if (isRunning) {
+                return (
+                  <span className="shrink-0 text-[10px] font-mono tabular-nums text-[var(--accent)]">
+                    running{timeoutLabel ? ` / ${timeoutLabel}` : ''}
+                  </span>
+                );
+              }
+              return (
+                <>
+                  {timeoutLabel && (
+                    <span
+                      className="shrink-0 text-[10px] font-mono tabular-nums text-[var(--fg-muted)]"
+                      title="Configured run_command timeout"
+                    >
+                      timeout {timeoutLabel}
+                    </span>
+                  )}
+                  {tc.durationMs != null && (
+                    <span className="shrink-0 text-[10px] font-mono tabular-nums text-[var(--fg-muted)]">
+                      {formatDuration(tc.durationMs)}
+                    </span>
+                  )}
+                </>
+              );
+            })()}
           </span>
         </ChainOfThoughtTrigger>
         <ChainOfThoughtContent>
