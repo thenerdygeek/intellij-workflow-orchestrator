@@ -95,6 +95,12 @@ data class SubagentProgressUpdate(
      */
     val label: String? = null,
     /**
+     * Raw Sourcegraph model ID for the brain backing this sub-agent
+     * (e.g. "anthropic::2024-10-22::claude-sonnet-4-5"). Set on the spawn
+     * event so the UI can render a model badge on the card.
+     */
+    val model: String? = null,
+    /**
      * A raw streaming token/chunk from the sub-agent's LLM output. When non-null, the
      * update carries no other meaningful field — the UI should append this to the
      * sub-agent card's last partial TEXT message. Separate from [result] / [latestToolCall]

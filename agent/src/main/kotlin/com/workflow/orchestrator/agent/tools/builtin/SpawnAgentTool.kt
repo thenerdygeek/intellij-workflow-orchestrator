@@ -21,6 +21,7 @@ import com.workflow.orchestrator.agent.tools.subagent.SubagentRunStatus
 import com.workflow.orchestrator.agent.tools.subagent.SubagentRunner
 import com.workflow.orchestrator.agent.tools.subagent.SubagentStatusItem
 import com.workflow.orchestrator.core.ai.LlmBrain
+import com.workflow.orchestrator.core.ai.ModelCache
 import kotlinx.coroutines.async
 import kotlinx.coroutines.supervisorScope
 import kotlinx.serialization.json.JsonObject
@@ -215,8 +216,10 @@ Tips:
             return errorResult("No valid prompts provided")
         }
 
-        // Effective model: explicit param > YAML frontmatter > default auto-selection
-        val effectiveModelOverride = modelOverride ?: config.modelId
+        // Effective model: explicit param > YAML frontmatter > Sonnet non-thinking (sub-agent default tier)
+        // > orchestrator's auto-selected model (when no Sonnet is available on the instance).
+        val subagentDefaultModel = ModelCache.pickSonnetNonThinking(ModelCache.getCached())?.id
+        val effectiveModelOverride = modelOverride ?: config.modelId ?: subagentDefaultModel
 
         return if (promptPairs.size == 1) {
             executeSingle(description, promptPairs.first().first, config, coreTools, deferredToolsForConfig, isReadOnly, effectiveModelOverride)
@@ -374,7 +377,11 @@ Tips:
             // agentId — the UI dedupes on agentId.
             onSubagentProgress?.invoke(
                 agentId,
-                SubagentProgressUpdate(status = SubagentExecutionStatus.RUNNING, label = uiLabel)
+                SubagentProgressUpdate(
+                    status = SubagentExecutionStatus.RUNNING,
+                    label = uiLabel,
+                    model = brain.modelId,
+                )
             )
             val result = runner.run(prompt) { progress ->
                 // Don't re-emit "running" for per-tool ticks — that would re-spawn
@@ -477,7 +484,11 @@ Tips:
                     // update the existing card instead of spawning new ones.
                     onSubagentProgress?.invoke(
                         childAgentId,
-                        SubagentProgressUpdate(status = SubagentExecutionStatus.RUNNING, label = childLabel)
+                        SubagentProgressUpdate(
+                            status = SubagentExecutionStatus.RUNNING,
+                            label = childLabel,
+                            model = brain.modelId,
+                        )
                     )
                     entries[idx].status = SubagentExecutionStatus.RUNNING
 

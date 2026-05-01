@@ -101,6 +101,17 @@ object ModelCache {
         return null
     }
 
+    /** Pick latest non-thinking Sonnet — used as the sub-agent default tier. */
+    fun pickSonnetNonThinking(models: List<ModelInfo>): ModelInfo? {
+        val anthropic = models.filter { it.provider == "anthropic" }
+        anthropic.filter { it.modelName.lowercase().contains("sonnet") && !it.isThinkingModel }
+            .maxByOrNull { it.created }?.let { return it }
+        // Fall back to any Sonnet (including thinking) so callers still get a Sonnet-class model.
+        anthropic.filter { it.modelName.lowercase().contains("sonnet") }
+            .maxByOrNull { it.created }?.let { return it }
+        return null
+    }
+
     /** Pick the cheapest available model (Haiku > Sonnet > anything) for lightweight tasks. */
     fun pickCheapest(models: List<ModelInfo>): ModelInfo? {
         if (models.isEmpty()) return null

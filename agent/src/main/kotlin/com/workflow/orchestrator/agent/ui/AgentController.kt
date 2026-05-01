@@ -1563,10 +1563,15 @@ class AgentController(
             when (update.status) {
                 SubagentExecutionStatus.RUNNING -> {
                     // SpawnAgentTool emits RUNNING exactly once per child, with the
-                    // human-readable label set on the same update. The webview dedupes
-                    // on agentId, so this call materialises one card per real run.
+                    // human-readable label and chosen model set on the same update.
+                    // The webview dedupes on agentId, so this call materialises one
+                    // card per real run and shows which model the worker is using.
                     val label = update.label ?: update.latestToolCall ?: "Starting..."
-                    dashboard.spawnSubAgent(agentId, label)
+                    val displayModel = update.model?.let { id ->
+                        val modelName = id.substringAfterLast("::", id)
+                        com.workflow.orchestrator.core.ai.dto.ModelInfo.formatModelName(modelName)
+                    }
+                    dashboard.spawnSubAgent(agentId, label, displayModel)
                 }
                 SubagentExecutionStatus.COMPLETED -> {
                     update.stats?.let { s ->

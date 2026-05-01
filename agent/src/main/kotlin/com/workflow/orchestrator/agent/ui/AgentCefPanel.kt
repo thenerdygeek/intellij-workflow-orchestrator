@@ -901,8 +901,12 @@ class AgentCefPanel(
 
     // ── Sub-Agent boundary card bridge methods ──
 
-    fun spawnSubAgent(agentId: String, label: String) {
-        val payload = buildJsonObject { put("agentId", agentId); put("label", label) }.toString()
+    fun spawnSubAgent(agentId: String, label: String, model: String? = null) {
+        val payload = buildJsonObject {
+            put("agentId", agentId)
+            put("label", label)
+            if (model != null) put("model", model)
+        }.toString()
         callJs("spawnSubAgent(${JsEscape.toJsString(payload)})")
     }
 

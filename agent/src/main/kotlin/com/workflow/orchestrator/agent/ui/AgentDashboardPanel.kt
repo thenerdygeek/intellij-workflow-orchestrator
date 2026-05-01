@@ -634,9 +634,9 @@ class AgentDashboardPanel(
 
     // ── Sub-Agent boundary card delegation ──
 
-    fun spawnSubAgent(agentId: String, label: String) {
-        runOnEdt { cefPanel?.spawnSubAgent(agentId, label) }
-        broadcast(replay = false) { it.spawnSubAgent(agentId, label) }
+    fun spawnSubAgent(agentId: String, label: String, model: String? = null) {
+        runOnEdt { cefPanel?.spawnSubAgent(agentId, label, model) }
+        broadcast(replay = false) { it.spawnSubAgent(agentId, label, model) }
     }
 
     fun updateSubAgentIteration(agentId: String, iteration: Int, tokensUsed: Int = 0) {

@@ -1341,6 +1341,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const agentState: SubAgentState = {
         agentId: data.agentId,
         label: data.label || 'general-purpose',
+        model: typeof data.model === 'string' && data.model.length > 0 ? data.model : undefined,
         status: 'RUNNING',
         iteration: 1,
         tokensUsed: 0,

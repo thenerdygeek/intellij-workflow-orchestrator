@@ -105,6 +105,7 @@ class RunCommandToolTest {
             every { state } returns mockk {
                 every { commandIdleThresholdSeconds } returns 15
                 every { buildCommandIdleThresholdSeconds } returns 60
+                every { runCommandMaxTimeoutMinutes } returns 10
             }
         }
     }

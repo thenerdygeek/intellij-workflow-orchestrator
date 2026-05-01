@@ -3,6 +3,8 @@
 export interface SubAgentState {
   agentId: string;
   label: string;
+  /** Display name of the model backing this sub-agent (e.g. "Claude Sonnet 4.5"). */
+  model?: string;
   status: 'RUNNING' | 'COMPLETED' | 'ERROR' | 'KILLED';
   iteration: number;
   tokensUsed: number;

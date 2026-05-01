@@ -199,6 +199,21 @@ export const SubAgentView = memo(function SubAgentView({ subAgent }: SubAgentVie
           </Badge>
         )}
 
+        {/* Model chip — shows which LLM is backing this sub-agent */}
+        {subAgent.model && (
+          <Badge
+            variant="secondary"
+            title={`Model: ${subAgent.model}`}
+            className="rounded px-1.5 py-0 text-[9px] font-medium tracking-wide border-0 shrink-0"
+            style={{
+              backgroundColor: 'color-mix(in srgb, var(--accent, #6366f1) 12%, transparent)',
+              color: 'var(--accent)',
+            }}
+          >
+            {subAgent.model}
+          </Badge>
+        )}
+
         {/* Spacer */}
         <span className="flex-1" />
 
