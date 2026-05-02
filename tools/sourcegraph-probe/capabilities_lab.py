@@ -45,6 +45,23 @@ USAGE
     # Limit to one probe (use --list to see all names):
     python3 capabilities_lab.py --url ... --token ... --only client_config
 
+REDACTION (DEFAULT ON)
+----------------------
+By default, the script REDACTS sensitive fields from every JSON file it writes:
+  • Any *Instruction / *PreInstruction / *PostInstruction field (admin-injected
+    proprietary prompts) — value replaced with "<REDACTED:N chars>"
+  • stopSequences, endOfText, systemPrompt, promptTemplate — same treatment
+  • secret, token (singular), apiKey, password, credential — same treatment
+  • Your Sourcegraph hostname — masked to "***.***.***" anywhere it appears
+    in response bodies (servers often echo their own URL in selfLink-style fields)
+
+Token COUNT fields (maxInputTokens, prompt_tokens, total_tokens, etc.) are
+NOT redacted — they're load-bearing for the routing decision and contain
+no proprietary data.
+
+The redacted output is safe to paste back. To get raw output (e.g. for an
+admin who needs to see the actual chatPreInstruction value), pass --no-redact.
+
 OUTPUT
 ------
   - Per-probe outcome on stdout (PASS/FAIL/INFO + key fields surfaced)
@@ -308,6 +325,88 @@ def _decode_json(resp: requests.Response) -> Any:
     except Exception: return {"raw": resp.text[:1000]}
 
 
+# ─────────────────────────────────────────────────────────────
+# Redaction — applied by default to every JSON artifact written to
+# disk, so the user can paste the output back without manually
+# scrubbing. Disable with --no-redact.
+#
+# What gets redacted:
+#   1. Any field whose key matches a sensitive pattern (admin-injected
+#      prompts, custom instructions). Replaced with a length hint so
+#      the structure stays inspectable.
+#   2. Any string value containing the user's own hostname (server
+#      response bodies often echo their own URL in selfLink-style
+#      fields). The hostname is replaced with `***.***.***`.
+# ─────────────────────────────────────────────────────────────
+
+# Substring matches against lowercased key names. If a key name *contains*
+# any of these tokens, its value is redacted. Conservative by intent —
+# better to over-redact a harmless field than under-redact a proprietary one.
+SENSITIVE_KEY_TOKENS = (
+    "preinstruction",       # chatPreInstruction, editPreInstruction, autocompletePreInstruction
+    "postinstruction",      # editPostInstruction
+    "prompttemplate",       # any future prompt-template field
+    "systemprompt",
+    "stopsequences",        # sometimes used as prompt-engineering signal
+    "endoftext",            # client-side EOT marker; can hint at internal prompting
+    "secret", "token", "apikey", "api_key", "password", "credential",
+)
+
+
+def _is_sensitive_key(key: str) -> bool:
+    k = key.lower().replace("_", "")
+    # False-positive guard: "tokens" (plural) is a COUNT, not a credential.
+    # Sourcegraph schema places: maxInputTokens, maxOutputTokens, prompt_tokens,
+    # completion_tokens, total_tokens, cached_tokens, cache_creation_input_tokens,
+    # cache_read_tokens. All of these contain "token" as a substring but must
+    # pass through unredacted — they're load-bearing for the routing decision.
+    if k.endswith("tokens"):
+        return False
+    return any(tok in k for tok in SENSITIVE_KEY_TOKENS)
+
+
+def _redact_string(value: str, hostname: str | None) -> str:
+    """Replace any occurrence of the user's hostname inside a string value."""
+    if not isinstance(value, str) or not hostname:
+        return value
+    if hostname in value:
+        return value.replace(hostname, "***.***.***")
+    return value
+
+
+def redact(obj: Any, hostname: str | None) -> Any:
+    """Recursively redact sensitive keys + hostname mentions. Returns a new
+    structure; does not mutate the input."""
+    if isinstance(obj, dict):
+        out: dict[str, Any] = {}
+        for k, v in obj.items():
+            if isinstance(k, str) and _is_sensitive_key(k):
+                if isinstance(v, str):
+                    out[k] = f"<REDACTED:{len(v)} chars>"
+                elif isinstance(v, list):
+                    out[k] = f"<REDACTED:{len(v)} items>"
+                elif v is None:
+                    out[k] = None
+                else:
+                    out[k] = "<REDACTED>"
+            else:
+                out[k] = redact(v, hostname)
+        return out
+    if isinstance(obj, list):
+        return [redact(item, hostname) for item in obj]
+    if isinstance(obj, str):
+        return _redact_string(obj, hostname)
+    return obj
+
+
+def hostname_from_url(url: str) -> str | None:
+    try:
+        from urllib.parse import urlparse
+        return urlparse(url).hostname or None
+    except Exception:
+        return None
+
+
 def pick_default_model(client: SourcegraphClient) -> str | None:
     """Pick a vision-capable Claude from the catalog (matches vision_lab default)."""
     try:
@@ -344,7 +443,9 @@ class ProbeOutcome:
 # Probes — one function per
 # ─────────────────────────────────────────────────────────────
 
-def probe_client_config(client: SourcegraphClient, out_dir: Path) -> ProbeOutcome:
+def probe_client_config(client: SourcegraphClient, out_dir: Path,
+                        redact_enabled: bool = True,
+                        hostname: str | None = None) -> ProbeOutcome:
     o = ProbeOutcome(name="client_config",
                      description=f"GET {CLIENT_CONFIG_PATH}")
     t0 = time.time()
@@ -366,7 +467,8 @@ def probe_client_config(client: SourcegraphClient, out_dir: Path) -> ProbeOutcom
         o.fail_reason = "BAD_JSON"
         return o
     sidecar = out_dir / "client_config.json"
-    sidecar.write_text(json.dumps(data, indent=2))
+    to_write = redact(data, hostname) if redact_enabled else data
+    sidecar.write_text(json.dumps(to_write, indent=2))
     o.sidecar_path = str(sidecar)
     o.verdict = "INFO"
     # Surface the most actionable fields right in the report.
@@ -382,7 +484,9 @@ def probe_client_config(client: SourcegraphClient, out_dir: Path) -> ProbeOutcom
     return o
 
 
-def probe_model_catalog(client: SourcegraphClient, out_dir: Path) -> ProbeOutcome:
+def probe_model_catalog(client: SourcegraphClient, out_dir: Path,
+                        redact_enabled: bool = True,
+                        hostname: str | None = None) -> ProbeOutcome:
     o = ProbeOutcome(name="model_catalog",
                      description=f"GET {MODELCONFIG_PATH}")
     t0 = time.time()
@@ -404,7 +508,8 @@ def probe_model_catalog(client: SourcegraphClient, out_dir: Path) -> ProbeOutcom
         o.fail_reason = "BAD_JSON"
         return o
     sidecar = out_dir / "model_catalog.json"
-    sidecar.write_text(json.dumps(data, indent=2))
+    to_write = redact(data, hostname) if redact_enabled else data
+    sidecar.write_text(json.dumps(to_write, indent=2))
     o.sidecar_path = str(sidecar)
     o.verdict = "INFO"
     models = data.get("models") or []
@@ -786,7 +891,13 @@ def main() -> int:
     ap.add_argument("--timeout", type=int, default=60)
     ap.add_argument("--out-dir", default="capabilities_lab_out",
                     help="Directory for sidecar JSON dumps + final results.")
+    ap.add_argument("--no-redact", action="store_true",
+                    help="Disable default redaction of sensitive fields "
+                         "(*Instruction, stopSequences, secrets) and hostname "
+                         "from saved JSON. Default is REDACTION ON.")
     args = ap.parse_args()
+    redact_enabled = not args.no_redact
+    hostname = hostname_from_url(args.url)
 
     all_probe_names = [
         "client_config", "model_catalog",
@@ -824,6 +935,7 @@ def main() -> int:
     print(f"Chat-probe model: {model or '<n/a>'}")
     print(f"Probes to run   : {sorted(wanted)}")
     print(f"Output dir      : {out_dir.resolve()}")
+    print(f"Redaction       : {'ON (default — safe to share)' if redact_enabled else 'OFF (--no-redact passed; raw output may contain proprietary admin prompts and your hostname)'}")
     print()
 
     file_keywords = [k.strip() for k in args.probe_file_keywords.split(",") if k.strip()]
@@ -833,9 +945,13 @@ def main() -> int:
         if name not in wanted:
             continue
         if name == "client_config":
-            outcomes.append(probe_client_config(client, out_dir))
+            outcomes.append(probe_client_config(client, out_dir,
+                                                 redact_enabled=redact_enabled,
+                                                 hostname=hostname))
         elif name == "model_catalog":
-            outcomes.append(probe_model_catalog(client, out_dir))
+            outcomes.append(probe_model_catalog(client, out_dir,
+                                                 redact_enabled=redact_enabled,
+                                                 hostname=hostname))
         elif name == "filepart_with_content":
             outcomes.append(probe_filepart_with_content(client, model))
         elif name == "filepart_uri_only":
@@ -879,11 +995,18 @@ def main() -> int:
         print("→ Mixed signals; review per-probe notes above.")
 
     out_path = out_dir / "capabilities_lab_results.json"
-    out_path.write_text(json.dumps({
+    results_payload = {
         "url": _mask_url(args.url),
         "model": model,
+        "redaction_enabled": redact_enabled,
         "outcomes": [asdict(o) for o in outcomes],
-    }, indent=2))
+    }
+    if redact_enabled:
+        # Even though we never put the raw URL or sensitive keys in outcomes,
+        # response bodies copied into reply_preview / notes may have echoed the
+        # hostname back. Recursively scrub before write.
+        results_payload = redact(results_payload, hostname)
+    out_path.write_text(json.dumps(results_payload, indent=2))
     print(f"\nWrote {out_path}")
     return 0
 
