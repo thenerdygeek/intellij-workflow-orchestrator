@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Multimodal Agent UI Harness</title>
+    <style>
+      :root {
+        --bg: #1e1e1e;
+        --fg: #cccccc;
+        --fg-muted: #9ca3af;
+        --border: #2c2f33;
+        --accent: #60a5fa;
+        --warning: #d97706;
+        --hover-overlay-strong: rgba(255, 255, 255, 0.08);
+      }
+    </style>
+  </head>
+  <body class="bg-[var(--bg,#1e1e1e)] text-[var(--fg,#cccccc)] m-0 p-0">
+    <div id="root"></div>
+    <script type="module" src="/src/main-playwright.tsx"></script>
+  </body>
+</html>

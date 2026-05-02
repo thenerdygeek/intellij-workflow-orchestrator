@@ -26,6 +26,8 @@ export default defineConfig(({ mode }) => ({
         'artifact-sandbox': resolve(__dirname, 'artifact-sandbox.html'),
         // Showcase is dev-only — excluded from production build
         ...(mode === 'development' ? { showcase: resolve(__dirname, 'showcase.html') } : {}),
+        // Playwright harness — dev-only mock-bridge entry for UI smoke tests
+        ...(mode === 'development' ? { playwright: resolve(__dirname, 'playwright.html') } : {}),
       },
       output: {
         manualChunks(id) {
