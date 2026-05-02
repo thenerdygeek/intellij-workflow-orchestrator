@@ -103,4 +103,44 @@ class CodyStreamSseParserTest {
             .joinToString("") { it.text }
         assertEquals("recovered", text)
     }
+
+    /**
+     * F1 followup (Phase 6) — `stopReason` was previously parsed but never
+     * surfaced. Verifies a frame carrying both text + stopReason emits BOTH
+     * results, and the StopReason variant fires last so callers can update
+     * their accumulator before reading the termination cause.
+     */
+    @Test
+    fun `surfaces StopReason when frame carries one`() = runBlocking {
+        val sse = "event: completion\n" +
+            "data: {\"deltaText\":\"final \"}\n\n" +
+            "event: completion\n" +
+            "data: {\"deltaText\":\"chunk\",\"stopReason\":\"end_turn\"}\n\n"
+        val parts = mutableListOf<CodyStreamSseParser.ParseResult>()
+        parser.parse(reader(sse)) { parts.add(it) }
+        val text = parts.filterIsInstance<CodyStreamSseParser.ParseResult.TextDelta>()
+            .joinToString("") { it.text }
+        assertEquals("final chunk", text)
+        val stopReason = parts.filterIsInstance<CodyStreamSseParser.ParseResult.StopReason>()
+        assertEquals(1, stopReason.size)
+        assertEquals("end_turn", stopReason.first().reason)
+        // Order matters: TextDelta before StopReason within the same frame so
+        // the accumulator is up-to-date when termination fires.
+        val textIdx = parts.indexOfLast { it is CodyStreamSseParser.ParseResult.TextDelta }
+        val stopIdx = parts.indexOfLast { it is CodyStreamSseParser.ParseResult.StopReason }
+        assertTrue(textIdx < stopIdx, "StopReason must be emitted AFTER text from the same frame")
+    }
+
+    @Test
+    fun `surfaces StopReason from frames with no text payload`() = runBlocking {
+        val sse = "event: completion\n" +
+            "data: {\"deltaText\":\"hello\"}\n\n" +
+            "event: completion\n" +
+            "data: {\"stopReason\":\"length\"}\n\n"
+        val parts = mutableListOf<CodyStreamSseParser.ParseResult>()
+        parser.parse(reader(sse)) { parts.add(it) }
+        val stopReason = parts.filterIsInstance<CodyStreamSseParser.ParseResult.StopReason>()
+        assertEquals(1, stopReason.size)
+        assertEquals("length", stopReason.first().reason)
+    }
 }

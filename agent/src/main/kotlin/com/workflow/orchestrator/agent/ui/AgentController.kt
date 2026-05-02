@@ -1081,13 +1081,23 @@ class AgentController(
             // Sort by tier (opus first) then by created date (newest first)
             val sorted = models.sortedWith(compareBy<com.workflow.orchestrator.core.ai.dto.ModelInfo> { it.tier }.thenByDescending { it.created })
 
-            // Build JSON for the dropdown using formatted display names
+            // Build JSON for the dropdown using formatted display names.
+            // Multimodal-agent Phase 6 (F-P5-3) — `vision` field tells the JS
+            // chat input whether to block image-bearing turns at Send. Source:
+            // name-heuristic for now (until ModelCatalogService is wired live
+            // into AgentController). Heuristic mirrors the gateway's documented
+            // vision-capable models per Sourcegraph baseline:
+            //   - Anthropic Claude 4/4.5 (Sonnet, Opus, Haiku 4)
+            //   - Anthropic Claude 3.5/3.7 (Sonnet, Haiku, Opus)
+            //   - OpenAI GPT-4o, GPT-4-vision, GPT-4-turbo
+            //   - Google Gemini 1.5/2.0/2.5 Pro/Flash
             val modelsJson = sorted.joinToString(",", "[", "]") { m ->
                 val id = m.id.replace("\"", "\\\"")
                 val name = m.displayName.replace("\"", "\\\"")
                 val provider = m.provider.replace("\"", "\\\"")
                 val thinking = m.isThinkingModel
-                """{"id":"$id","name":"$name","provider":"$provider","thinking":$thinking}"""
+                val vision = isLikelyVisionCapable(m.id)
+                """{"id":"$id","name":"$name","provider":"$provider","thinking":$thinking,"vision":$vision}"""
             }
 
             // Auto-select the best model (latest Opus) if no model is configured
@@ -2959,6 +2969,47 @@ class AgentController(
             val escapedDesc = tool.description.take(200).replace("\"", "\\\"").replace("\n", " ")
             """{"name":"$escapedName","description":"$escapedDesc","enabled":true}"""
         }
+
+    /**
+     * Multimodal-agent Phase 6 (F-P5-3) — name-based heuristic for vision
+     * capability. Used by [loadModelList] to populate the `vision` field on
+     * each entry of the model-list payload pushed to the JS chat input.
+     *
+     * Source: Sourcegraph capabilities baseline (`reference_sourcegraph_image_transport.md`)
+     * — these model families pass the 24/24 vision probe:
+     *   - Anthropic Claude 4 / 4.5 (Sonnet, Opus, Haiku) and 3.5 / 3.7 family
+     *   - OpenAI GPT-4o, GPT-4 Vision, GPT-4 Turbo
+     *   - Google Gemini 1.5 / 2.0 / 2.5 Pro and Flash
+     *
+     * Conservative bias: returns false for unknown/legacy models (e.g.
+     * Anthropic Claude 2, OpenAI GPT-3.5, etc.) so users get a Send-time toast
+     * rather than a confusing "image silently dropped" reply.
+     *
+     * Will be replaced with `ModelCatalogService.supportsVision()` once that
+     * service is wired live into this controller (deferred from Phase 6).
+     */
+    internal fun isLikelyVisionCapable(modelId: String): Boolean {
+        val lower = modelId.lowercase()
+        return when {
+            // Anthropic Claude 4/4.5 family
+            lower.contains("claude-opus-4") -> true
+            lower.contains("claude-sonnet-4") -> true
+            lower.contains("claude-haiku-4") -> true
+            // Anthropic Claude 3.5 / 3.7 family — all vision-capable
+            lower.contains("claude-3-5") || lower.contains("claude-3.5") -> true
+            lower.contains("claude-3-7") || lower.contains("claude-3.7") -> true
+            // OpenAI GPT-4 vision-capable variants
+            lower.contains("gpt-4o") -> true
+            lower.contains("gpt-4-vision") -> true
+            lower.contains("gpt-4-turbo") -> true
+            lower.contains("gpt-4.5") -> true
+            lower.contains("gpt-5") -> true
+            // Google Gemini 1.5+ Pro/Flash
+            lower.contains("gemini-1.5") || lower.contains("gemini-1-5") -> true
+            lower.contains("gemini-2") -> true
+            else -> false
+        }
+    }
 
     /**
      * Format token count for display: "45K" for large counts, exact for small.

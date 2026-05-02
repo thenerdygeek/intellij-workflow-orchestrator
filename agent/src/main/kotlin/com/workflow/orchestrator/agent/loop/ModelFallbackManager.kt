@@ -1,5 +1,7 @@
 package com.workflow.orchestrator.agent.loop
 
+import com.workflow.orchestrator.core.ai.ModelCatalogService
+
 /**
  * Manages smart model fallback during the agent loop.
  *
@@ -71,4 +73,25 @@ class ModelFallbackManager(
         useExtendedThreshold = false
         preEscalationIndex = 0
     }
+
+    /**
+     * Returns the underlying fallback chain. Public read accessor used by
+     * Phase 6 [BrainRouter] / vision filtering paths.
+     */
+    fun fullFallbackChain(): List<String> = fallbackChain.toList()
+
+    /**
+     * Returns the fallback chain restricted to vision-capable models. Phase 6
+     * of multimodal-agent — when the in-flight payload contains image parts,
+     * fallback **must** stay on a vision-capable model. Without this filter,
+     * a fallback to a non-vision model would silently succeed at the wire
+     * level (image content stripped server-side) and produce a confusing
+     * reply with no error.
+     *
+     * Returns an empty list if no model in the chain has the `vision`
+     * capability — caller is responsible for surfacing a user-visible error
+     * rather than silently switching models.
+     */
+    fun fallbackChainForVision(modelCatalog: ModelCatalogService): List<String> =
+        fallbackChain.filter { modelCatalog.supportsVision(it) }
 }

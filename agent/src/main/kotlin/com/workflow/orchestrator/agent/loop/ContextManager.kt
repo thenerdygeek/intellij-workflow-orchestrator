@@ -8,6 +8,8 @@ import com.workflow.orchestrator.agent.hooks.HookType
 import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.ModelCatalogService
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
+import com.workflow.orchestrator.core.ai.dto.ContentPart
+import com.workflow.orchestrator.core.ai.dto.hasImageParts
 import com.workflow.orchestrator.core.model.ApiResult
 
 /**
@@ -407,6 +409,7 @@ class ContextManager(
      */
     fun tokenEstimate(): Int {
         var chars = 0
+        var imageCount = 0
         systemPrompt?.content?.let { chars += it.length }
         for (msg in messages) {
             msg.content?.let { chars += it.length }
@@ -414,11 +417,67 @@ class ContextManager(
                 chars += tc.function.name.length
                 chars += tc.function.arguments.length
             }
+            // Multimodal-agent Phase 6 — image parts cost a fixed estimate per
+            // image (default ~1500 tokens). Authoritative cost is `usage.prompt_tokens`
+            // from the API response; this estimate only pre-trues compaction
+            // gating before the response is in.
+            msg.parts?.forEach { p ->
+                if (p is ContentPart.Image) imageCount++
+                if (p is ContentPart.Text) chars += p.text.length
+            }
         }
         val messageTokens = (chars / 3.5).toInt()
+        val imageTokens = imageCount * IMAGE_TOKEN_ESTIMATE_DEFAULT
         val overheadTokens = (messages.size + 1) * 4 // +1 for system prompt
-        return messageTokens + overheadTokens + toolDefinitionTokens
+        return messageTokens + imageTokens + overheadTokens + toolDefinitionTokens
     }
+
+    /**
+     * Per-message token estimate including image-part cost.
+     *
+     * Multimodal-agent Phase 6 — used by Phase 7's chat-input usage indicator
+     * and any future per-message budget gating. Returns the same value the
+     * aggregate [tokenEstimate] would credit for this message.
+     */
+    fun estimateMessageTokens(msg: ChatMessage): Int {
+        var chars = 0
+        var imageCount = 0
+        msg.content?.let { chars += it.length }
+        msg.toolCalls?.forEach { tc ->
+            chars += tc.function.name.length
+            chars += tc.function.arguments.length
+        }
+        msg.parts?.forEach { p ->
+            if (p is ContentPart.Image) imageCount++
+            if (p is ContentPart.Text) chars += p.text.length
+        }
+        val textTokens = (chars / 3.5).toInt()
+        val imageTokens = imageCount * IMAGE_TOKEN_ESTIMATE_DEFAULT
+        return textTokens + imageTokens + 4 // per-message overhead
+    }
+
+    /**
+     * Returns a compacted copy of [msg] with image parts stripped and a
+     * placeholder appended to the text content. Multimodal-agent Phase 6
+     * (Decision 6 — "Strip during compaction, replace with text placeholder").
+     *
+     * Compaction exists *because* we're over budget — preserving images
+     * defeats the savings goal. Bytes stay on disk under the session's
+     * `attachments/` dir; only the in-context payload loses the image part.
+     *
+     * Idempotent: messages without image parts pass through unchanged.
+     *
+     * Tested by `ContextManagerCatalogIntegrationTest "compaction strips
+     * image parts and substitutes placeholder"`.
+     */
+    fun compactTurn(msg: ChatMessage): ChatMessage =
+        if (msg.hasImageParts()) {
+            val placeholder = " [image attached earlier; bytes preserved on disk]"
+            val newContent = (msg.content ?: "") + placeholder
+            msg.copy(parts = null, content = newContent.trim())
+        } else {
+            msg
+        }
 
     fun messageCount(): Int = messages.size
 
@@ -752,10 +811,39 @@ class ContextManager(
             }
         }
 
+        // After compaction: strip image parts from any remaining messages
+        // (Multimodal-agent Phase 6 — Decision 6). Compaction exists *because*
+        // we're over budget; preserving image bytes in-context defeats the
+        // savings goal. Bytes stay on disk for replay if needed.
+        stripImagePartsFromAllMessages()
+
         // After compaction: re-inject active skill and plan path so LLM retains them
         // (ported from Cline: skill content survives compaction via re-injection)
         reInjectActiveSkill()
         reInjectActivePlan()
+    }
+
+    /**
+     * Walks the in-memory message list and replaces each image-bearing turn
+     * with its [compactTurn] equivalent. Called at the tail of [compact] so
+     * any image part that survived dedup + truncation + summarization is
+     * stripped before the next API request.
+     *
+     * Multimodal-agent Phase 6 (Decision 6).
+     */
+    private fun stripImagePartsFromAllMessages() {
+        var changed = false
+        for (i in messages.indices) {
+            val original = messages[i]
+            if (original.hasImageParts()) {
+                messages[i] = compactTurn(original)
+                changed = true
+            }
+        }
+        if (changed) {
+            invalidateTokens()
+            LOG.info("[Context] Stripped image parts from compacted messages (Decision 6)")
+        }
     }
 
     /**
@@ -1060,6 +1148,23 @@ class ContextManager(
          * Multimodal-agent Phase 2.
          */
         const val FALLBACK_MAX_INPUT_TOKENS = 90_000
+
+        /**
+         * Per-image token estimate used by [tokenEstimate] and [estimateMessageTokens]
+         * when a message carries an image part. Mirrors
+         * `PluginSettings.imageTokenEstimateDefault`.
+         *
+         * The authoritative cost of an image is the API's `usage.prompt_tokens`
+         * field on the response; this constant only pre-trues compaction gating
+         * before the response is in (Multimodal-agent Phase 6).
+         *
+         * Anthropic charges roughly 765 + (W * H / 750) tokens per image — for
+         * common screenshot dimensions (e.g. 1500×1000) that's around 2700; for
+         * smaller stills (~640×480) closer to 1100. 1500 is a defensible mid-band
+         * default. The chat-input usage indicator (Phase 7) will refine after
+         * the first response sets `lastPromptTokens`.
+         */
+        const val IMAGE_TOKEN_ESTIMATE_DEFAULT = 1500
 
         /**
          * Minimum message count for Stage 3 (LLM summarization) to run under force=true.

@@ -592,6 +592,55 @@ class AgentService(
         )
     }
 
+    /**
+     * Wrap a freshly-created [LlmBrain] in a Phase 6 [BrainRouter] so the
+     * agent loop's `brain.chatStream` call site routes through the hybrid
+     * dispatch:
+     *
+     *   - text-only / text+tools     → existing OpenAI-compat path
+     *   - image-only                 → SourcegraphCompletionsStreamClient (`/.api/completions/stream`)
+     *   - image+tools                → two-step workaround
+     *
+     * Per-session isolation: [sessionDir] is the active session's directory
+     * (`{agent}/sessions/{sid}`). The wrapped [com.workflow.orchestrator.agent.session.AttachmentStore]
+     * lives only for the duration of this brain instance — recycle/fallback
+     * brains receive a fresh router pointed at the same session dir, never
+     * a stale store.
+     *
+     * [onBadgeFire] runs on the active [MessageStateHandler] when the
+     * two-step workaround completes successfully — sets `analyzedImageBadge=true`
+     * on the most recent assistant `UiMessage` so the React webview renders
+     * the `📷 image analyzed` strip.
+     */
+    private fun wrapBrainWithRouter(
+        brain: LlmBrain,
+        sessionDir: java.nio.file.Path,
+        sgUrl: String,
+        tokenProvider: () -> String?,
+        onBadgeFire: () -> Unit,
+    ): LlmBrain {
+        val attachmentStore = com.workflow.orchestrator.agent.session.AttachmentStore(sessionDir)
+        // ModelCatalogService is constructed cold — Phase 2 wires it live in
+        // a future plugin-startup task. For now, the stream client falls back
+        // to api-version 8 (the lowest version that accepts `image_url` parts).
+        val catalog = com.workflow.orchestrator.core.ai.ModelCatalogService(
+            baseUrl = sgUrl,
+            tokenProvider = tokenProvider,
+        )
+        val streamClient = com.workflow.orchestrator.core.ai.SourcegraphCompletionsStreamClient(
+            baseUrl = sgUrl,
+            tokenProvider = tokenProvider,
+            modelCatalogService = catalog,
+        )
+        return com.workflow.orchestrator.agent.loop.BrainRouter(
+            openAiCompatBrain = brain,
+            streamClient = streamClient,
+            attachmentStore = attachmentStore,
+            modelRefProvider = { brain.modelId },
+            onAnalyzedImageBadge = onBadgeFire,
+        )
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────
 
     /** Format available models as bullet-point strings for injection into the system prompt. */
@@ -1220,13 +1269,49 @@ class AgentService(
                 }
 
                 // I3: Create a fresh brain each time to pick up settings changes
-                val brain = createBrain()
+                val rawBrain = createBrain()
+                // Wire API debug dumps — save request/response JSON per session
+                val basePath = project.basePath ?: System.getProperty("user.home")
+                // Multimodal-agent Phase 6 — wrap in BrainRouter for hybrid routing
+                // (text-only / image-only / image+tools two-step). The wrapped brain
+                // is what the AgentLoop sees; routing is invisible to text-only
+                // turns, which dominate today's traffic.
+                val sessionDirPath = java.io.File(
+                    ProjectIdentifier.agentDir(basePath),
+                    "sessions/$sid"
+                ).toPath()
+                java.nio.file.Files.createDirectories(sessionDirPath)
+                val sgUrlForRouter = ConnectionSettings.getInstance().state.sourcegraphUrl.trimEnd('/')
+                val routerCredentialStore = CredentialStore()
+                val tokenProviderForRouter: () -> String? =
+                    { routerCredentialStore.getToken(ServiceType.SOURCEGRAPH) }
+                val onBadgeFire: () -> Unit = onBadgeFire@{
+                    // The most recent assistant UiMessage carries the assistant text;
+                    // flag it with analyzedImageBadge=true so the React webview renders
+                    // the `📷 image analyzed` strip. Best-effort: if no assistant
+                    // UiMessage exists yet (rare race), this is a no-op.
+                    val msgs = activeMessageStateHandler?.getClineMessages() ?: return@onBadgeFire
+                    val lastIdx = msgs.indexOfLast { it.say == UiSay.TEXT }
+                    if (lastIdx < 0) return@onBadgeFire
+                    val updated = msgs[lastIdx].copy(analyzedImageBadge = true)
+                    cs.launch(Dispatchers.IO) {
+                        runCatching {
+                            activeMessageStateHandler?.updateClineMessage(lastIdx, updated)
+                        }.onFailure { e ->
+                            log.warn("[Agent:Phase6] failed to flag analyzedImageBadge on UiMessage", e)
+                        }
+                    }
+                }
+                val brain = wrapBrainWithRouter(
+                    brain = rawBrain,
+                    sessionDir = sessionDirPath,
+                    sgUrl = sgUrlForRouter,
+                    tokenProvider = tokenProviderForRouter,
+                    onBadgeFire = onBadgeFire,
+                )
                 brainRef = brain
                 currentBrainModelId = brain.modelId
                 log.info("[Agent] Task started: sessionId=$sid, model=${brain.modelId}")
-
-                // Wire API debug dumps — save request/response JSON per session
-                val basePath = project.basePath ?: System.getProperty("user.home")
                 val sessionDebugDir = java.io.File(
                     ProjectIdentifier.agentDir(basePath),
                     "sessions/$sid"
@@ -1246,9 +1331,13 @@ class AgentService(
                 // Cleared wholesale in [resetForNewChat].
                 val runtime = getOrCreateSessionRuntime(sid)
                 val sharedApiCounter = runtime.apiCallCounter
-                if (brain is OpenAiCompatBrain) {
-                    brain.setApiDebugDir(sessionDebugDir)
-                    brain.setSharedApiCallCounter(sharedApiCounter)
+                // Wire api-debug + shared call counter on the underlying brain.
+                // After Phase 6, `brain` is a BrainRouter wrapping OpenAiCompatBrain,
+                // so we use `rawBrain` here (held above the wrap-call) to reach the
+                // OpenAiCompatBrain instance directly.
+                if (rawBrain is OpenAiCompatBrain) {
+                    rawBrain.setApiDebugDir(sessionDebugDir)
+                    rawBrain.setSharedApiCallCounter(sharedApiCounter)
                     log.debug("[Agent] API debug dir: ${sessionDebugDir.absolutePath}/api-debug/")
                 }
 
@@ -1344,7 +1433,18 @@ class AgentService(
                         log.debug("[Agent] Failed to write recycle marker: ${e.message}")
                     }
 
-                    newBrain
+                    // Multimodal-agent Phase 6 — wrap recycled/fallback brain too,
+                    // so image+tools turns continue to route correctly through the
+                    // hybrid path even after a recycle/fallback. Per-session
+                    // AttachmentStore is reconstructed against the SAME session dir
+                    // (no cross-session leakage).
+                    wrapBrainWithRouter(
+                        brain = newBrain,
+                        sessionDir = sessionDirPath,
+                        sgUrl = fbUrl,
+                        tokenProvider = fbTokenProvider,
+                        onBadgeFire = onBadgeFire,
+                    )
                 }
 
                 // Build context manager
@@ -1787,8 +1887,12 @@ class AgentService(
                 activeTask.set(null)
                 activeMessageStateHandler = null
                 taskStore = null
-                // Clear API debug dir so the brain doesn't dump after task ends
-                (brainRef as? OpenAiCompatBrain)?.setApiDebugDir(null)
+                // Clear API debug dir so the brain doesn't dump after task ends.
+                // BrainRouter wraps OpenAiCompatBrain — unwrap first so the underlying
+                // brain's debug dir gets cleared.
+                val brainToClear = (brainRef as? com.workflow.orchestrator.agent.loop.BrainRouter)?.underlyingOpenAiCompat
+                    ?: brainRef
+                (brainToClear as? OpenAiCompatBrain)?.setApiDebugDir(null)
                 // Clear per-task sub-agent callbacks. Leaving any of these attached
                 // would allow a stale reference to the previous session's AgentController
                 // / loggers / hook manager to handle events for the next spawn call —

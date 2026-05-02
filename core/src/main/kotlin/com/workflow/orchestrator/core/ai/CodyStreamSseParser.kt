@@ -42,6 +42,15 @@ class CodyStreamSseParser {
         /** Cumulative full text (api-version 1) — caller REPLACES accumulated text. */
         data class TextReplacement(val text: String) : ParseResult
 
+        /**
+         * Emitted when a frame carries a non-null `stopReason` field (e.g.
+         * `"end_turn"`, `"stop_sequence"`, `"length"`). Phase 6 BrainRouter
+         * branches on `"length"` for compaction-and-retry; other reasons are
+         * surfaced via [CompletionStreamResult.stopReason] so callers can
+         * distinguish e.g. truncated-completion from natural end-of-turn.
+         */
+        data class StopReason(val reason: String) : ParseResult
+
         /** Emitted exactly once at end-of-stream regardless of which signal triggered termination. */
         data object StreamDone : ParseResult
 
@@ -64,13 +73,12 @@ class CodyStreamSseParser {
         reader: BufferedReader,
         onResult: suspend (ParseResult) -> Unit,
     ) = withContext(Dispatchers.IO) {
-        var lastEvent = ""
         var line = reader.readLine()
         while (line != null) {
             when {
                 line.startsWith("event:") -> {
-                    lastEvent = line.removePrefix("event:").trim()
-                    if (lastEvent == "done") {
+                    val event = line.removePrefix("event:").trim()
+                    if (event == "done") {
                         onResult(ParseResult.StreamDone)
                         return@withContext
                     }
@@ -85,10 +93,17 @@ class CodyStreamSseParser {
                         runCatching {
                             json.decodeFromString(CompletionStreamFrame.serializer(), payload)
                         }.onSuccess { frame ->
+                            // A single frame may carry both a text payload AND a stopReason
+                            // (Anthropic's stream emits stopReason inline on the final
+                            // completion frame). Emit text first so the accumulator is
+                            // up-to-date before the StopReason result fires.
                             when {
                                 frame.deltaText != null -> onResult(ParseResult.TextDelta(frame.deltaText))
                                 frame.completion != null -> onResult(ParseResult.TextReplacement(frame.completion))
-                                // Frame with only stopReason / unknown shape: ignore — no text payload
+                                // Frame with only stopReason / unknown shape: no text payload — fall through
+                            }
+                            if (frame.stopReason != null) {
+                                onResult(ParseResult.StopReason(frame.stopReason))
                             }
                         }
                         // Malformed JSON: ignore (defensive — gateway corruption shouldn't crash agent)

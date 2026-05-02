@@ -111,16 +111,16 @@ open class ModelCatalogService(
             ?: model.contextWindow
     }
 
-    fun supportsVision(modelRef: String): Boolean =
+    open fun supportsVision(modelRef: String): Boolean =
         cachedCatalog?.models?.firstOrNull { it.modelRef == modelRef }
             ?.capabilities?.contains("vision") == true
 
-    fun supportsTools(modelRef: String): Boolean =
+    open fun supportsTools(modelRef: String): Boolean =
         cachedCatalog?.models?.firstOrNull { it.modelRef == modelRef }
             ?.capabilities?.contains("tools") == true
 
     /** Catalog status: "experimental" | "beta" | "stable" | "deprecated", or `null` if model unknown. */
-    fun getStatus(modelRef: String): String? =
+    open fun getStatus(modelRef: String): String? =
         cachedCatalog?.models?.firstOrNull { it.modelRef == modelRef }?.status
 
     /**

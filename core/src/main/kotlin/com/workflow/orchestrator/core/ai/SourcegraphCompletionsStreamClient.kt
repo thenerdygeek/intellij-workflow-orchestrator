@@ -56,7 +56,7 @@ class HttpException(val statusCode: Int, message: String) : RuntimeException(mes
  *
  * Spec: `docs/research/2026-05-02-multimodal-agent-design.md` §Wire formats > Format B
  */
-class SourcegraphCompletionsStreamClient(
+open class SourcegraphCompletionsStreamClient(
     private val baseUrl: String,
     private val tokenProvider: () -> String?,
     private val modelCatalogService: ModelCatalogService,
@@ -106,7 +106,7 @@ class SourcegraphCompletionsStreamClient(
      * @throws HttpException on non-2xx responses
      * @throws IllegalStateException if no Sourcegraph token is configured
      */
-    suspend fun chat(
+    open suspend fun chat(
         request: CompletionStreamRequest,
         onDelta: suspend (String) -> Unit = {},
     ): CompletionStreamResult = withContext(Dispatchers.IO) {
@@ -157,6 +157,11 @@ class SourcegraphCompletionsStreamClient(
                         accumulated.clear()
                         accumulated.append(result.text)
                         if (newTail.isNotEmpty()) onDelta(newTail)
+                    }
+                    is CodyStreamSseParser.ParseResult.StopReason -> {
+                        // Latest stopReason wins — Anthropic streams emit it on the final frame.
+                        // Phase 6 BrainRouter inspects this to branch on "length" (truncation).
+                        stopReason = result.reason
                     }
                     is CodyStreamSseParser.ParseResult.StreamDone -> {
                         // No-op; parser has already returned and the loop will exit.

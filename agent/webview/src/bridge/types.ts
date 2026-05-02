@@ -388,6 +388,13 @@ export interface UiMessage {
   compactionMarker?: UiMessageCompactionMarker;
   /** Mentions attached to a USER_MESSAGE (ticket chips, file refs, etc.) */
   mentions?: Mention[];
+  /**
+   * Multimodal-agent Phase 6 — true when the assistant message is the second
+   * leg of the image+tools two-step workaround. Renders a small `📷 image
+   * analyzed` strip above the content with a tooltip explaining that the
+   * image was analyzed in a separate request to enable tool use.
+   */
+  analyzedImageBadge?: boolean;
 }
 
 /** Mirrors Kotlin HistoryItem from sessions.json */

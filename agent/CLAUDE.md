@@ -18,6 +18,10 @@ Uses Sourcegraph Enterprise's OpenAI-compatible API:
 AgentController (UI entry point, owns AgentCefPanel + JCEF bridges)
   → AgentService (orchestration, tool registration, session management)
     → AgentLoop.run() (ReAct loop, maxIterations=200)
+      → BrainRouter (Phase 6 hybrid router; transparent for text-only)
+        → OpenAiCompatBrain (text-only / text+tools — existing path)
+        → SourcegraphCompletionsStreamClient (image-only)
+        → two-step workaround (image+tools)
       → ContextManager (3-stage compaction: dedup → truncation → LLM summarization)
       → LoopDetector (doom loop detection: 3 soft warning, 5 hard failure)
       → Tool execution with optional approval gate
@@ -35,6 +39,7 @@ AgentController (UI entry point, owns AgentCefPanel + JCEF bridges)
   - Stage 3: LLM summarization (our addition) — summary chaining includes previous summary in next compaction, inserts summary as assistant message.
   - Tracks active skill content, TaskStore reference, file read indices.
 - **LoopDetector** (`loop/LoopDetector.kt`, ~118 lines) — Detects identical consecutive tool calls. 3 identical = soft warning injected as system message. 5 identical = hard failure stops the loop.
+- **BrainRouter** (`loop/BrainRouter.kt`, ~280 lines) — Multimodal-agent Phase 6 hybrid router. Implements `LlmBrain`; the agent loop's `brain.chatStream()` call site routes through it transparently. Routing rule: text-only → existing `OpenAiCompatBrain`; image-only → `SourcegraphCompletionsStreamClient` (`/.api/completions/stream`); image+tools → two-step workaround (vision-summarize on /stream → tools call on /chat/completions). Step-1 abstention or HTTP errors abort before step 2 with a user-visible toast. Successful two-step turns flag the most recent assistant `UiMessage` with `analyzedImageBadge=true` so the React webview renders the `📷 image analyzed` strip. Per-session isolation: `AttachmentStore` constructed per-session in `AgentService.wrapBrainWithRouter()`; recycled/fallback brains receive a fresh router pointed at the SAME session dir, never a stale store. The exact pattern locked in by Phase 5's `AttachmentUploadHandler` for the upload path.
 - **MessageStateHandler** (`session/MessageStateHandler.kt`, ~302 lines) — Two-file JSON persistence (api_conversation_history.json + ui_messages.json). Atomic file writes via write-then-rename, per-session `kotlinx.coroutines.sync.Mutex`.
 - **SessionLock** (`session/SessionLock.kt`) — `java.nio.channels.FileLock` on `.lock` file to prevent dual-instance access.
 - **ToolRegistry** (`tools/ToolRegistry.kt`, ~229 lines) — Three-tier registry: core (always sent to LLM), deferred (available via `tool_search`), active-deferred (loaded during session). Reduces per-call schema tokens from ~10K to ~4K.

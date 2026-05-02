@@ -192,6 +192,26 @@ export const AgentMessage = memo(function AgentMessage({
           </span>
         )}
 
+        {/* Multimodal-agent Phase 6 — image+tools two-step workaround badge.
+            Surfaces the routing detail without visually fragmenting the chat:
+            user sees ONE assistant message, with a small strip noting that
+            the image was analyzed in a separate request to enable tool use. */}
+        {!isUser && message.analyzedImageBadge && (
+          <div
+            className="analyzed-image-badge mb-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px]"
+            title="Image was analyzed in a separate request to enable tool use."
+            style={{
+              color: 'var(--fg-muted)',
+              background: 'var(--chip-bg, rgba(255,255,255,0.06))',
+              border: '1px solid var(--chip-border, rgba(255,255,255,0.1))',
+            }}
+            aria-label="Image was analyzed in a separate request"
+          >
+            <span aria-hidden="true">📷</span>
+            <span>image analyzed</span>
+          </div>
+        )}
+
         {isUser ? (
           <UserContent content={content} mentions={message.mentions} />
         ) : (

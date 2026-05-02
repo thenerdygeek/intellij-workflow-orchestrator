@@ -152,4 +152,11 @@ data class UiMessage(
     val toolCallData: ToolCallData? = null,
     val completionData: CompletionData? = null,
     val planApprovalData: PlanApprovalData? = null,
+    /**
+     * Multimodal-agent Phase 6 — true when the assistant message is the
+     * second leg of the image+tools two-step workaround. The webview renders
+     * a small `📷 image analyzed` strip with a tooltip explaining that the
+     * image was analyzed in a separate request to enable tool use.
+     */
+    val analyzedImageBadge: Boolean = false,
 )

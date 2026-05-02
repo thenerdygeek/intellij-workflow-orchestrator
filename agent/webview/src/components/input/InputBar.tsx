@@ -32,9 +32,22 @@ const IMAGE_DEFAULT_SETTINGS = {
   enabled: true,
 };
 
+// Phase 6 (F-P5-3): the model-list payload pushed by Kotlin's `updateModelList`
+// includes a `vision: boolean` field per model. We cache the most-recent
+// payload in a module-scope singleton so both `<ModelChip>` (which renders
+// the dropdown) and `<InputBar>`'s Send handler (which gates image-bearing
+// turns at Send) can read the same source of truth without lifting state.
+let cachedModelItems: DropdownItem[] = [];
+function rememberModels(items: DropdownItem[]): void {
+  cachedModelItems = items;
+}
+function modelByName(name: string): DropdownItem | undefined {
+  return cachedModelItems.find(m => m.name === name);
+}
+
 // ── Types ──
 
-interface DropdownItem { id: string; name: string; provider?: string; thinking?: boolean; description?: string }
+interface DropdownItem { id: string; name: string; provider?: string; thinking?: boolean; vision?: boolean; description?: string }
 
 // ── Provider logos (inline SVG, 14×14) ──
 
@@ -82,7 +95,13 @@ const ModelChip = memo(function ModelChip({
 
   useEffect(() => {
     (window as any).updateModelList = (json: string) => {
-      try { setItems(JSON.parse(json)); } catch { /* ignore */ }
+      try {
+        const parsed = JSON.parse(json) as DropdownItem[];
+        setItems(parsed);
+        // Phase 6 (F-P5-3): mirror to module-scope cache so the Send handler
+        // can read the active model's vision capability without lifting state.
+        rememberModels(parsed);
+      } catch { /* ignore */ }
     };
     // Pull on mount: if the initial Kotlin push was lost (timing) or returned empty
     // (network/auth failure at startup), this recovers the dropdown without an IDE restart.
@@ -812,6 +831,29 @@ export const InputBar = memo(function InputBar() {
     const state = useChatStore.getState();
     if (state.inputState.locked) return;
     if (state.busy && !state.steeringMode) return;
+    // Phase 6 (F-P5-3): vision-disabled toast at Send (Decision 3 — option C).
+    // If the user has attached images and the active model lacks vision
+    // capability, refuse to send: chip stays in place; user can either remove
+    // the chip or switch to a vision-capable model. Server-side will also
+    // reject (the routing predicate strips images and the gateway returns a
+    // confusing reply), but the toast is faster + clearer.
+    if (pending.length > 0) {
+      const activeModelName = state.inputState.model ?? '';
+      const activeModel = modelByName(activeModelName);
+      // `vision === undefined` (older model-list payloads or unknown model)
+      // is treated as non-vision so we fail-closed; that matches the
+      // catalog-not-loaded safety pattern Phase 6 uses on the Kotlin side.
+      const hasVision = activeModel?.vision === true;
+      if (!hasVision) {
+        const displayName = activeModelName || 'this model';
+        useChatStore.getState().showToast(
+          `${displayName} doesn't support image input. Switch to a vision-capable model.`,
+          'warning',
+          6000,
+        );
+        return;
+      }
+    }
     // Phase 5: kick off the upload(s) before we clear UI state. uploadAll is
     // best-effort on errors — toasts surface failures and pending bytes stay
     // in the chip until explicitly removed. Phase 6 wires the resulting
