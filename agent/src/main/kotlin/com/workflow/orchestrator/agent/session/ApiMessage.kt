@@ -49,11 +49,21 @@ data class ApiMessage(
 /**
  * Lossless conversion from ApiMessage to ChatMessage.
  * Preserves tool_use blocks as ChatMessage.toolCalls and tool_result as role="tool".
+ *
+ * `UnsupportedContentBlock` (forward-compat fallback for unknown polymorphic
+ * discriminators — see Phase 1 of multimodal-agent plan) is rendered as
+ * `[unsupported attachment]` placeholder text so v1 readers degrade gracefully
+ * when loading v2+ session files.
  */
 fun ApiMessage.toChatMessage(): ChatMessage {
-    val textContent = content.filterIsInstance<ContentBlock.Text>()
-        .joinToString("\n") { it.text }
-        .takeIf { it.isNotBlank() }
+    val textPieces = content.mapNotNull { block ->
+        when (block) {
+            is ContentBlock.Text -> block.text
+            is UnsupportedContentBlock -> "[unsupported attachment]"
+            else -> null
+        }
+    }
+    val textContent = textPieces.joinToString("\n").takeIf { it.isNotBlank() }
 
     val toolUses = content.filterIsInstance<ContentBlock.ToolUse>()
     val toolResults = content.filterIsInstance<ContentBlock.ToolResult>()

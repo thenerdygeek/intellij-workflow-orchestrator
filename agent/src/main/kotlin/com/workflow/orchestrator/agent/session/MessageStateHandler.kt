@@ -6,6 +6,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.modules.SerializersModule
+import kotlinx.serialization.modules.polymorphic
 import java.io.File
 
 class MessageStateHandler(
@@ -14,8 +16,11 @@ class MessageStateHandler(
     val taskText: String,
 ) {
     private val mutex = Mutex()
-    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; prettyPrint = false }
-    private val prettyJson = Json { ignoreUnknownKeys = true; encodeDefaults = true; prettyPrint = true }
+    // Delegate to the shared, polymorphic-fallback-enabled Json instance in the
+    // companion object so reads and writes share the same defensive deserialization
+    // contract. See `configuredJson` below for the full configuration.
+    private val json = configuredJson
+    private val prettyJson = configuredPrettyJson
 
     private val uiMessages: MutableList<UiMessage> = mutableListOf()
     private val apiHistory: MutableList<ApiMessage> = mutableListOf()
@@ -229,8 +234,53 @@ class MessageStateHandler(
         /** Separate mutex for sessions.json to prevent races between concurrent sessions (I2 fix). */
         private val globalIndexMutex = Mutex()
 
-        private val compactJson = Json { ignoreUnknownKeys = true }
-        private val prettyJsonStatic = Json { ignoreUnknownKeys = true; encodeDefaults = true; prettyPrint = true }
+        /**
+         * Shared serializers module with a polymorphic fallback for unknown
+         * [ContentBlock] discriminators. Phase 1 of multimodal-agent plan.
+         *
+         * `kotlinx-serialization`'s `ignoreUnknownKeys = true` covers unknown FIELDS
+         * within known classes — it does NOT cover unknown polymorphic discriminators.
+         * A v1 plugin loading a v2 session file (e.g. with `type: "image_url_ref"` from
+         * Phase 4) would otherwise crash with `SerializationException`.
+         */
+        private val contentBlockModule = SerializersModule {
+            polymorphic(ContentBlock::class) {
+                // Existing subclasses (Text/ToolUse/ToolResult/Image) are auto-registered
+                // via their `@SerialName` annotations. Unknown discriminators fall through
+                // to UnsupportedContentBlock so v1 readers degrade gracefully.
+                defaultDeserializer { UnsupportedContentBlockSerializer }
+            }
+        }
+
+        private val configuredJson = Json {
+            ignoreUnknownKeys = true
+            encodeDefaults = true
+            prettyPrint = false
+            serializersModule = contentBlockModule
+        }
+        private val configuredPrettyJson = Json {
+            ignoreUnknownKeys = true
+            encodeDefaults = true
+            prettyPrint = true
+            serializersModule = contentBlockModule
+        }
+        private val compactJson = Json {
+            ignoreUnknownKeys = true
+            serializersModule = contentBlockModule
+        }
+        private val prettyJsonStatic = Json {
+            ignoreUnknownKeys = true
+            encodeDefaults = true
+            prettyPrint = true
+            serializersModule = contentBlockModule
+        }
+
+        /**
+         * Test-only accessor for the configured [Json] instance. Used by
+         * `UnknownContentBlockTest` to verify the polymorphic fallback is wired.
+         * Returns the same instance the production read/write paths use.
+         */
+        internal fun jsonForTesting(): Json = configuredJson
 
         fun loadUiMessages(sessionDir: File): List<UiMessage> {
             val file = File(sessionDir, "ui_messages.json")
