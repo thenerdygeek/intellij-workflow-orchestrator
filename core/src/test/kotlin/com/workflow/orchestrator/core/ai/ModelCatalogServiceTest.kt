@@ -190,6 +190,38 @@ class ModelCatalogServiceTest {
         assertEquals(0, server.requestCount)
     }
 
+    /**
+     * Phase 2 review followup: locks in the production auth-header contract.
+     *
+     * The default `httpClientOverride = null` path constructs an OkHttpClient with
+     * AuthInterceptor(tokenProvider, AuthScheme.TOKEN). This test asserts the actual
+     * `Authorization: token <sgp_...>` header reaches the wire — the other tests
+     * inject a plain OkHttpClient (no AuthInterceptor) and never exercise this path.
+     *
+     * If a future refactor swaps AuthScheme.TOKEN to BEARER, the request would get
+     * `Authorization: Bearer <token>`, which Sourcegraph rejects with 401. Without
+     * this test, that regression would land green and silently break production.
+     */
+    @Test
+    fun `production httpClient default emits Authorization token header per Sourcegraph contract`() = runBlocking {
+        val productionService = ModelCatalogService(
+            baseUrl = server.url("/").toString(),
+            tokenProvider = { "sgp_test_token_for_auth_check" },
+            // httpClientOverride omitted → uses the lazy default construction with AuthInterceptor
+        )
+        server.enqueue(MockResponse().setResponseCode(200).setBody(SAMPLE_MODEL_CATALOG_JSON))
+        productionService.getCatalog()
+        val recorded = server.takeRequest()
+        assertEquals(
+            "token sgp_test_token_for_auth_check",
+            recorded.getHeader("Authorization"),
+            "Production httpClient must emit 'Authorization: token <sgp_...>' (NOT 'Bearer ...'). " +
+            "AuthScheme.TOKEN is the only correct scheme for Sourcegraph endpoints per " +
+            "project_sourcegraph_isolation.md. If this fails, check that ModelCatalogService " +
+            "still uses AuthInterceptor(tokenProvider, AuthScheme.TOKEN) in its default httpClient."
+        )
+    }
+
     companion object {
         const val SAMPLE_MODEL_CATALOG_JSON = """
             {
