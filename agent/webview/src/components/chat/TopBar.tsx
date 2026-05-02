@@ -14,6 +14,7 @@ import { BackgroundIndicator } from './BackgroundIndicator';
 export const TopBar = memo(function TopBar() {
   const tokenBudget = useChatStore(s => s.tokenBudget);
   const busy = useChatStore(s => s.busy);
+  const compacting = useChatStore(s => s.compactionState.active);
   const debugVisible = useChatStore(s => s.debugLogVisible);
   const debugEntries = useChatStore(s => s.debugLogEntries);
   const hasErrors = debugEntries.some(e => e.level === 'error');
@@ -109,10 +110,10 @@ export const TopBar = memo(function TopBar() {
             )}
             <button
               onClick={() => kotlinBridge.compactContext(true)}
-              disabled={busy}
+              disabled={busy || compacting}
               className="flex items-center rounded px-1 py-0.5 transition-colors hover:bg-[var(--hover-overlay)] disabled:opacity-40 disabled:cursor-not-allowed"
               style={{ color: 'var(--fg-muted, #6b7280)' }}
-              title="Compact context — clean up conversation history (deduplicates file reads, drops middle messages). Useful when the agent gets stuck repeating empty responses."
+              title="Compact context — runs the full pipeline (dedup + truncate + LLM summary) for a single-click huge drop. Recent messages, active skill, plan, and tasks are preserved."
               aria-label="Compact context"
             >
               {/* Compress / collapse-vertical SVG icon */}

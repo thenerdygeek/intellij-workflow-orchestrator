@@ -171,6 +171,23 @@ class AgentDashboardPanel(
         broadcast(replay = false) { it.setBusy(busy) }
     }
 
+    fun setCompactionState(active: Boolean, phase: String) {
+        LOG.info("[UI State] setCompactionState(active=$active, phase='$phase')")
+        runOnEdt { cefPanel?.setCompactionState(active, phase) }
+        broadcast(replay = false) { it.setCompactionState(active, phase) }
+    }
+
+    fun insertCompactionMarker(
+        tokensBefore: Int,
+        tokensAfter: Int,
+        messagesBefore: Int,
+        messagesAfter: Int,
+        ranLlmSummary: Boolean,
+    ) {
+        runOnEdt { cefPanel?.insertCompactionMarker(tokensBefore, tokensAfter, messagesBefore, messagesAfter, ranLlmSummary) }
+        broadcast(replay = false) { it.insertCompactionMarker(tokensBefore, tokensAfter, messagesBefore, messagesAfter, ranLlmSummary) }
+    }
+
     fun setSteeringMode(enabled: Boolean) {
         LOG.info("[UI State] setSteeringMode($enabled)")
         runOnEdt { cefPanel?.setSteeringMode(enabled) }

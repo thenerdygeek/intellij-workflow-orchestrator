@@ -614,12 +614,12 @@ class AgentService(
 
     /**
      * Manually compact the conversation context (user-triggered).
-     * Creates a temporary brain for LLM summarization if needed (Stage 3 only).
+     * Creates a temporary brain for LLM summarization (Stage 3) which is unlocked
+     * under `force=true` — see [ContextManager.compact].
      *
-     * @param force when true, bypass the 70% utilization floor so the user can clean up
-     *   context pollution (empty-assistant/nudge chains, redundant tool spam) without
-     *   waiting for utilization to climb. Stage 3 LLM summarization stays gated at >95%
-     *   internally even under force — see [ContextManager.compact].
+     * @param force when true, runs the full 3-stage pipeline (dedup + QUARTER truncation
+     *   + LLM summarization) in a single click for a "huge drop" without waiting for
+     *   utilization to climb. Re-injects active skill, plan, and tasks post-compaction.
      * @return pair of (tokensBefore, tokensAfter), or null if utilization is too low to compact
      *   (only returned when `force=false`)
      */

@@ -1,0 +1,958 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Context Compaction — Architecture & Comparative Analysis</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.0/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #fafafa;
+    --bg-elev: #ffffff;
+    --bg-code: #f3f4f6;
+    --fg: #1f2328;
+    --fg-muted: #57606a;
+    --accent: #6366f1;
+    --accent-soft: #eef2ff;
+    --border: #d0d7de;
+    --warn-bg: #fff8e1;
+    --warn-border: #f59e0b;
+    --good-bg: #ecfdf5;
+    --good-border: #10b981;
+    --bad-bg: #fef2f2;
+    --bad-border: #ef4444;
+    --insight-bg: #f5f3ff;
+    --insight-border: #8b5cf6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117;
+      --bg-elev: #161b22;
+      --bg-code: #1f2937;
+      --fg: #e6edf3;
+      --fg-muted: #8b949e;
+      --accent: #818cf8;
+      --accent-soft: #1e1b4b;
+      --border: #30363d;
+      --warn-bg: #2a2410;
+      --warn-border: #d97706;
+      --good-bg: #14241c;
+      --good-border: #059669;
+      --bad-bg: #2a1414;
+      --bad-border: #dc2626;
+      --insight-bg: #1e1735;
+      --insight-border: #7c3aed;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    line-height: 1.55;
+    font-size: 15px;
+  }
+  .layout { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
+  nav.toc {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    background: var(--bg-elev);
+    border-right: 1px solid var(--border);
+    padding: 24px 16px;
+    font-size: 13px;
+  }
+  nav.toc h2 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-muted);
+    margin: 16px 0 8px;
+    font-weight: 600;
+  }
+  nav.toc h2:first-child { margin-top: 0; }
+  nav.toc a {
+    display: block;
+    padding: 4px 8px;
+    margin: 2px 0;
+    border-radius: 4px;
+    color: var(--fg);
+    text-decoration: none;
+    border-left: 2px solid transparent;
+  }
+  nav.toc a:hover {
+    background: var(--accent-soft);
+    border-left-color: var(--accent);
+  }
+  main { padding: 32px 48px; max-width: 1100px; }
+  h1 {
+    font-size: 28px;
+    margin: 0 0 4px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+  .subtitle {
+    color: var(--fg-muted);
+    font-size: 14px;
+    margin-bottom: 32px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 16px;
+  }
+  h2 {
+    font-size: 22px;
+    margin-top: 48px;
+    margin-bottom: 12px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 6px;
+  }
+  h3 {
+    font-size: 17px;
+    margin-top: 28px;
+    margin-bottom: 8px;
+    font-weight: 600;
+  }
+  h4 { font-size: 14px; margin-top: 20px; margin-bottom: 6px; font-weight: 600; }
+  p { margin: 8px 0; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    background: var(--bg-code);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 0.88em;
+  }
+  pre {
+    background: var(--bg-code);
+    padding: 12px 16px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  pre code { background: transparent; padding: 0; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 13px;
+    margin: 12px 0;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: var(--accent-soft);
+    font-weight: 600;
+    color: var(--fg);
+  }
+  tr:hover td { background: var(--bg-elev); }
+  td.us {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    font-weight: 600;
+  }
+  .mermaid {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin: 16px 0;
+    text-align: center;
+  }
+  .insight {
+    background: var(--insight-bg);
+    border-left: 3px solid var(--insight-border);
+    padding: 12px 16px;
+    border-radius: 4px;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  .insight strong { color: var(--insight-border); }
+  .gap {
+    background: var(--warn-bg);
+    border-left: 3px solid var(--warn-border);
+    padding: 10px 14px;
+    margin: 8px 0;
+    border-radius: 4px;
+    font-size: 14px;
+  }
+  .gap.high { background: var(--bad-bg); border-left-color: var(--bad-border); }
+  .gap.low { background: var(--good-bg); border-left-color: var(--good-border); }
+  .gap-id {
+    display: inline-block;
+    font-weight: 700;
+    font-family: ui-monospace, monospace;
+    margin-right: 8px;
+    padding: 1px 6px;
+    background: var(--bg-elev);
+    border-radius: 3px;
+    font-size: 12px;
+  }
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--fg-muted);
+    margin: 8px 0 16px;
+  }
+  .legend span { display: flex; align-items: center; gap: 6px; }
+  .legend .dot {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+  }
+  .meta-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 16px 0;
+  }
+  .card {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 16px;
+  }
+  .card h4 { margin-top: 0; color: var(--accent); }
+  .pill {
+    display: inline-block;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 12px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+    margin-right: 6px;
+  }
+  .pill.warn { background: var(--warn-bg); color: var(--warn-border); }
+  .pill.good { background: var(--good-bg); color: var(--good-border); }
+  .pill.bad { background: var(--bad-bg); color: var(--bad-border); }
+  details {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 14px;
+    margin: 12px 0;
+  }
+  summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    nav.toc { position: relative; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
+    main { padding: 24px; }
+    .meta-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+<nav class="toc">
+  <h2>Architecture</h2>
+  <a href="#tldr">0. TL;DR</a>
+  <a href="#overview">1. Architecture Overview</a>
+  <a href="#triggers">2. Trigger Surfaces</a>
+  <a href="#pipeline">3. The 3-Stage Pipeline</a>
+  <a href="#tokens">4. Token Math</a>
+  <a href="#survives">5. State That Survives</a>
+  <a href="#persistence">6. Persistence Flow</a>
+  <h2>Comparison</h2>
+  <a href="#matrix">7. Comparison Matrix</a>
+  <a href="#positioning">8. Where We Sit</a>
+  <h2>Action</h2>
+  <a href="#gaps">9. Gaps</a>
+  <a href="#tests">10. Test Coverage</a>
+  <a href="#sources">11. Sources</a>
+</nav>
+
+<main>
+
+<h1>Context Compaction — Architecture &amp; Comparative Analysis</h1>
+<div class="subtitle">
+  Branch: <code>feature/context-compaction</code> · 2026-05-01<br/>
+  Synthesized from full read of <code>ContextManager.kt</code> (891 lines), <code>AgentLoop.kt</code> compaction sites, and source code of 8 open-source coding agents.
+</div>
+
+<h2 id="tldr">0. TL;DR — One Diagram</h2>
+<p>The whole system in one flow:</p>
+<div class="mermaid">
+flowchart TD
+    classDef trigger fill:#eef2ff,stroke:#6366f1,color:#1f2328
+    classDef stage fill:#f5f3ff,stroke:#8b5cf6,color:#1f2328
+    classDef post fill:#ecfdf5,stroke:#10b981,color:#1f2328
+    classDef gate fill:#fff8e1,stroke:#f59e0b,color:#1f2328
+
+    A[AgentLoop iteration N] --> T1{① shouldCompact?<br/>util &gt; 85%}
+    T1 -- yes --> C[ContextManager.compact]
+    T1 -- no --> LLM[brain.chat]
+    LLM --> R{API result?}
+    R -- success --> Done[next iter]
+    R -- error --> T2{② isContextOverflowError?<br/>retries &lt; 2}
+    T2 -- yes --> C
+    T2 -- no --> T3{③ timeout exhausted?<br/>opt-in setting}
+    T3 -- yes --> C
+    T3 -- no --> Fail[surface error]
+
+    C --> H{PRE_COMPACT hook<br/>cancel?}
+    H -- yes --> Skip[return without changes]
+    H -- no --> S1[STAGE 1<br/>deduplicateFileReads]
+    S1 --> G1{saved &ge; 30%?}
+    G1 -- yes --> P[reInject skill+plan<br/>invalidateTokens]
+    G1 -- no --> S2[STAGE 2<br/>truncateConversation<br/>HALF or QUARTER]
+    S2 --> Persist[onHistoryOverwrite<br/>atomic rewrite api_conv_history.json]
+    Persist --> G2{util still &gt; 95%?}
+    G2 -- yes --> S3[STAGE 3<br/>llmSummarize]
+    G2 -- no --> P
+    S3 --> P
+    P --> Done
+
+    class T1,T2,T3 trigger
+    class S1,S2,S3 stage
+    class P,Done post
+    class H,G1,G2,R gate
+</div>
+
+<div class="insight">
+  <strong>★ Mental shortcut.</strong> Three triggers, three stages, three protected anchors (skill, plan, tasks). Stage 1 is free, Stage 2 is bookkeeping, Stage 3 is an LLM call. Each stage has an early-exit gate so the cheapest sufficient strategy wins.
+</div>
+
+<h2 id="overview">1. Architecture Overview</h2>
+
+<h3>1.1 Module layout</h3>
+<div class="mermaid">
+flowchart LR
+    classDef owned fill:#eef2ff,stroke:#6366f1,color:#1f2328
+    classDef delegated fill:#f3f4f6,stroke:#57606a,color:#1f2328
+
+    subgraph CM["agent/loop/ContextManager.kt — 891 lines"]
+        CM_msg[messages: MutableList]
+        CM_idx[fileReadIndices Map]
+        CM_skill[activeSkillContent]
+        CM_plan[activePlanPath]
+        CM_sum[lastSummary]
+        CM_tok[lastPromptTokens]
+    end
+
+    subgraph AL["agent/loop/AgentLoop.kt"]
+        AL_t1[① line 583 preventive]
+        AL_t2[② line 753 overflow]
+        AL_t3[③ line 897 timeout]
+    end
+
+    subgraph EXT[external collaborators]
+        TS[TaskStore<br/>attached for live render]
+        MSH[MessageStateHandler<br/>persistence target]
+        TOS[ToolOutputSpiller<br/>upstream &gt;30K spill]
+        AS[AgentSettings<br/>maxInputTokens]
+    end
+
+    AL_t1 --> CM
+    AL_t2 --> CM
+    AL_t3 --> CM
+    CM -- onHistoryOverwrite --> MSH
+    TS -. read .- CM
+    AS -. configure .- CM
+    TOS -. preempts CM .- CM
+
+    class CM,CM_msg,CM_idx,CM_skill,CM_plan,CM_sum,CM_tok owned
+    class TS,MSH,TOS,AS delegated
+</div>
+
+<h3>1.2 Two layers of defense</h3>
+<div class="meta-grid">
+<div class="card">
+<h4>Layer 1 — ToolOutputSpiller (upstream)</h4>
+<p>Per-tool output cap (50K default, 100K for <code>run_command</code>). Outputs &gt;30K go to disk; only head-20 + tail-10 preview enters the message list. Runs <em>before</em> ContextManager sees anything.</p>
+</div>
+<div class="card">
+<h4>Layer 2 — ContextManager (downstream)</h4>
+<p>Handles accumulated message bloat — many small tool results, repeated file reads, long conversation history. Runs on the message list as a whole.</p>
+</div>
+</div>
+
+<div class="insight">
+  <strong>★ Why two layers?</strong> Layer 1 prevents a single 5MB stack trace from blowing the context in one shot. Layer 2 prevents a thousand 5KB tool results from doing the same thing slowly. Independent state — they don't share counters or caches.
+</div>
+
+<h2 id="triggers">2. Trigger Surfaces — Three Paths In</h2>
+
+<div class="mermaid">
+flowchart TD
+    classDef preventive fill:#ecfdf5,stroke:#10b981,color:#1f2328
+    classDef reactive fill:#fff8e1,stroke:#f59e0b,color:#1f2328
+    classDef desperate fill:#fef2f2,stroke:#ef4444,color:#1f2328
+
+    Top[iteration top] --> T1{shouldCompact<br/>util &gt; 85%?}
+    T1 -- yes --> C1[compact<br/>force=false<br/>preventive]
+    T1 -- no --> Build[build prompt + call LLM]
+    C1 --> Build
+    Build --> Resp{response?}
+    Resp -- success --> Next[next iter]
+    Resp -- error --> ErrType{error type?}
+    ErrType -- overflow patterns --> R{retries &lt; 2?}
+    R -- yes --> C2[compact<br/>iteration--<br/>continue]
+    R -- no --> Surface[surface error]
+    ErrType -- timeout/network --> Opt{compactOnTimeoutExhaustion?}
+    Opt -- yes &amp; retries &lt; 2 --> C3[compact<br/>iteration--<br/>continue]
+    Opt -- no --> Surface
+
+    class C1 preventive
+    class C2 reactive
+    class C3 desperate
+</div>
+
+<h3>2.1 Constants &amp; predicates</h3>
+<table>
+<tr>
+  <th>#</th><th>Site</th><th>Predicate</th><th>Iter cost</th><th>Constant</th><th>Activation</th>
+</tr>
+<tr>
+  <td>①</td>
+  <td><code>AgentLoop.kt:583</code></td>
+  <td><code>utilizationPercent() &gt; 85.0</code></td>
+  <td>normal</td>
+  <td><code>compactionThreshold = 0.85</code></td>
+  <td>always on</td>
+</tr>
+<tr>
+  <td>②</td>
+  <td><code>AgentLoop.kt:753</code></td>
+  <td><code>isContextOverflowError(err) &amp;&amp; retries &lt; 2</code></td>
+  <td><code>iteration--</code></td>
+  <td><code>MAX_CONTEXT_OVERFLOW_RETRIES = 2</code></td>
+  <td>always on</td>
+</tr>
+<tr>
+  <td>③</td>
+  <td><code>AgentLoop.kt:897</code></td>
+  <td><code>compactOnTimeoutExhaustion &amp;&amp; type ∈ TIMEOUT_ERRORS &amp;&amp; retries &lt; 2</code></td>
+  <td><code>iteration--</code></td>
+  <td><code>MAX_COMPACTION_RETRIES = 2</code></td>
+  <td><code>networkErrorStrategy="context_compaction"</code></td>
+</tr>
+</table>
+
+<h3>2.2 What <code>isContextOverflowError</code> matches</h3>
+<pre><code>type == ErrorType.CONTEXT_LENGTH_EXCEEDED
+  OR
+type ∈ {VALIDATION_ERROR, SERVER_ERROR} AND message matches any of:
+  /context.{0,20}(length|window|limit)/i
+  /(maximum|max).{0,20}(token|context)/i
+  /token.{0,20}(limit|exceeded|overflow)/i
+  /(input|prompt).{0,10}too.{0,10}(long|large)/i</code></pre>
+<p>The pattern list is broader than OpenCode's because Sourcegraph's API returns context-overflow as <code>VALIDATION_ERROR</code> instead of a dedicated error type.</p>
+
+<h2 id="pipeline">3. The 3-Stage Pipeline</h2>
+
+<h3>3.1 Stage gating logic</h3>
+<div class="mermaid">
+flowchart TD
+    classDef stage fill:#f5f3ff,stroke:#8b5cf6
+    classDef gate fill:#fff8e1,stroke:#f59e0b
+    classDef terminal fill:#ecfdf5,stroke:#10b981
+
+    A[ENTRY] --> H{PRE_COMPACT hook<br/>cancel?}
+    H -- yes --> END1[return — no changes]
+    H -- no --> G0{force OR util&gt;70%?}
+    G0 -- no --> END2[return — too low]
+    G0 -- yes --> S1[STAGE 1: dedup]
+    S1 --> G1{saved&ge;30% AND not force?}
+    G1 -- yes --> POST
+    G1 -- no --> G2{force OR util&gt;85%?}
+    G2 -- no --> POST
+    G2 -- yes --> S2[STAGE 2: truncate]
+    S2 --> Persist[onHistoryOverwrite]
+    Persist --> G3{util&gt;95%?}
+    G3 -- no --> POST
+    G3 -- yes --> S3[STAGE 3: LLM summarize]
+    S3 --> POST[reInject skill+plan<br/>invalidateTokens]
+    POST --> END3[EXIT]
+
+    class S1,S2,S3 stage
+    class H,G0,G1,G2,G3 gate
+    class END1,END2,END3 terminal
+</div>
+
+<h3>3.2 Stage 1 — Duplicate file-read dedup</h3>
+
+<div class="mermaid">
+flowchart LR
+    classDef before fill:#fef2f2,stroke:#ef4444
+    classDef after fill:#ecfdf5,stroke:#10b981
+    classDef notice fill:#fff8e1,stroke:#f59e0b
+
+    subgraph Before["fileReadIndices: foo.kt → [3, 17, 42]"]
+        M3["msg[3] full file body 8KB"]:::before
+        M17["msg[17] full file body 8KB"]:::before
+        M42["msg[42] full file body 8KB"]:::before
+    end
+
+    Before --> Dedup[deduplicateFileReads]
+
+    subgraph After["after dedup"]
+        N3["msg[3] '[File foo.kt — see latest read below]'"]:::notice
+        N17["msg[17] '[File foo.kt — see latest read below]'"]:::notice
+        N42["msg[42] full file body 8KB UNCHANGED"]:::after
+    end
+
+    Dedup --> After
+</div>
+
+<p><strong>Tracking discipline.</strong> <code>fileReadIndices</code> is populated in <code>addToolResult()</code> by inspecting the prior assistant message's <code>tool_calls</code>, recognizing tools in <code>FILE_READ_TOOLS = {read_file, create_file, edit_file}</code>, and parsing the path from the result body (header-style or tag-style).</p>
+
+<p>If <code>savedChars / totalChars ≥ 30%</code>, the pipeline exits — Stage 2/3 don't run. Most compactions on long sessions stop here.</p>
+
+<h3>3.3 Stage 2 — Conversation truncation (Cline's <code>getNextTruncationRange</code>)</h3>
+
+<div class="mermaid">
+flowchart TD
+    classDef anchor fill:#ecfdf5,stroke:#10b981
+    classDef removed fill:#fef2f2,stroke:#ef4444
+    classDef notice fill:#fff8e1,stroke:#f59e0b
+
+    subgraph BeforeT["BEFORE — 10 messages"]
+        B0["[0] user₀ — original task"]:::anchor
+        B1["[1] asst₀"]:::anchor
+        B2["[2] tool₁"]:::removed
+        B3["[3] user₂"]:::removed
+        B4["[4] asst₂"]:::removed
+        B5["[5] tool₃"]:::removed
+        B6["[6] user₄"]:::removed
+        B7["[7] asst₄"]:::removed
+        B8["[8] user₅ — recent"]:::anchor
+        B9["[9] asst₅ — recent"]:::anchor
+    end
+
+    subgraph AfterT["AFTER — 4 messages"]
+        A0["[0] user₀ — task PRESERVED"]:::anchor
+        A1["[1] '[Context truncated — 6 messages removed.<br/>The conversation continues below.]'<br/>(toolCalls cleared)"]:::notice
+        A8["[2] user₅"]:::anchor
+        A9["[3] asst₅"]:::anchor
+    end
+
+    BeforeT --> AfterT
+</div>
+
+<table>
+<tr><th>Strategy</th><th>Removed</th><th>When chosen</th></tr>
+<tr><td><code>HALF</code></td><td><code>floorDiv(size-2, 4) * 2</code></td><td>Default — <code>tokens/2 ≤ maxInputTokens</code></td></tr>
+<tr><td><code>QUARTER</code></td><td><code>floorDiv((size-2)*3, 4) / 2 * 2</code></td><td>Aggressive — <code>tokens/2 &gt; maxInputTokens</code></td></tr>
+<tr><td><code>LAST_TWO</code></td><td><code>size - 4</code></td><td>Manual / last-resort (not auto-selected)</td></tr>
+<tr><td><code>NONE</code></td><td><code>size - 2</code></td><td>Delete-all-but-task (not auto-selected)</td></tr>
+</table>
+
+<details>
+<summary>Three boundary-correctness rules (load-bearing)</summary>
+<ol>
+  <li><strong>Always end on assistant.</strong> If <code>messages[rangeEnd].role != "assistant"</code>, decrement so user-asst alternation survives the cut.</li>
+  <li><strong>Absorb orphan tool results.</strong> If the next surviving message is <code>tool</code>, walk forward absorbing all consecutive tool messages — otherwise the surviving tool result has no preceding <code>assistant.tool_calls</code> to pair with, breaking OpenAI-format validation.</li>
+  <li><strong>Notice replaces index 1 (not inserted).</strong> Avoids shifting all later indices and preserves the "first user-assistant pair" anchor as exactly indices 0 and 1.</li>
+</ol>
+</details>
+
+<h3>3.4 Stage 3 — LLM summarization (our addition, not in Cline)</h3>
+
+<div class="mermaid">
+sequenceDiagram
+    participant CM as ContextManager
+    participant Brain as LlmBrain
+    participant MSH as MessageStateHandler
+
+    Note over CM: util &gt; 95% after Stage 2
+    CM->>CM: findSafeSplitPoint(0.7 * size)
+    Note right of CM: walks until clean<br/>user→asst boundary<br/>(no broken tool pairs)
+    CM->>CM: build summarization prompt<br/>TASK / FILES / DONE / ERRORS / PENDING<br/>+ lastSummary (chained)
+    CM->>Brain: chat(prompt, maxTokens=1024)
+    alt success
+        Brain-->>CM: structured summary
+        CM->>CM: messages[0..split] = [<br/>  assistant: "[Context Summary]\n..."<br/>]
+        Note right of CM: Role=assistant (NOT user)<br/>fixes consecutive-user bug
+        CM->>CM: lastSummary = summaryContent
+        CM->>MSH: onHistoryOverwrite
+    else error
+        Brain-->>CM: ApiResult.Error
+        CM->>CM: return — no mutation<br/>(silent &amp; safe)
+    end
+</div>
+
+<div class="insight">
+  <strong>★ Three load-bearing decisions.</strong>
+  <ol style="margin: 6px 0 0 0; padding-left: 20px;">
+    <li><strong>Role is <code>assistant</code>, not <code>user</code>.</strong> The next surviving message is also <code>user</code>, so consecutive user roles would break provider validation.</li>
+    <li><strong>Summary chaining</strong> — each successive Stage 3 includes the prior <code>lastSummary</code>, so memory accumulates across compactions.</li>
+    <li><strong>Failure is silent.</strong> If the API errors, no mutation happens. No partial state.</li>
+  </ol>
+</div>
+
+<h2 id="tokens">4. Token Math</h2>
+
+<div class="mermaid">
+flowchart LR
+    classDef formula fill:#eef2ff,stroke:#6366f1
+    classDef state fill:#fff8e1,stroke:#f59e0b
+
+    subgraph U[utilizationPercent]
+        N["lastPromptTokens (API-reported)<br/>OR<br/>tokenEstimate() (heuristic)"]:::state
+        N --> Calc["÷ maxInputTokens × 100"]:::formula
+    end
+
+    subgraph E[tokenEstimate]
+        Chars["sum: systemPrompt.length<br/>+ messages[].content.length<br/>+ messages[].toolCalls.[name+args].length"]
+        Chars --> Div["÷ 3.5 (chars-per-token)"]:::formula
+        Div --> Add["+ messages.size+1 × 4 (overhead)<br/>+ toolDefinitionTokens"]
+    end
+
+    Calc -.uses E when null.-> E
+</div>
+
+<h3>4.1 Constants</h3>
+<table>
+<tr><th>Constant</th><th>Value</th><th>Source</th></tr>
+<tr><td><code>compactionThreshold</code></td><td>0.85</td><td>Hardcoded in constructor</td></tr>
+<tr><td><code>maxInputTokens</code></td><td>190 000</td><td><code>AgentSettings</code> (configurable)</td></tr>
+<tr><td>chars-per-token</td><td>3.5</td><td>Tuned for code-heavy content</td></tr>
+<tr><td>per-message overhead</td><td>4 tokens</td><td>Role + delimiter cost</td></tr>
+</table>
+
+<h3>4.2 <code>lastPromptTokens</code> lifecycle</h3>
+<div class="mermaid">
+sequenceDiagram
+    participant API
+    participant CM as ContextManager
+    participant Loop as AgentLoop
+
+    API-->>CM: success(promptTokens=X)
+    CM->>CM: lastPromptTokens = X
+    Loop->>CM: utilizationPercent
+    CM-->>Loop: X / maxInputTokens
+    Loop->>CM: shouldCompact?
+    CM-->>Loop: true (X &gt; 85%)
+    Loop->>CM: compact(brain)
+    Note over CM: mutates messages[]
+    CM->>CM: invalidateTokens — null
+    Note over CM: forces fresh estimate<br/>on next utilization read
+    Loop->>CM: utilizationPercent
+    CM->>CM: tokenEstimate (fallback)
+    CM-->>Loop: estimated value
+    API-->>CM: next success(promptTokens=Y)
+    CM->>CM: lastPromptTokens = Y (fresh)
+</div>
+
+<div class="insight">
+  <strong>★ The "stale token" bug guard.</strong> Without <code>invalidateTokens()</code>, compaction would mutate the message list but <code>utilizationPercent()</code> would keep returning the pre-compaction API number — masking the freed space. From an expert-review fix.
+</div>
+
+<h2 id="survives">5. State That Survives Compaction</h2>
+
+<div class="mermaid">
+flowchart LR
+    classDef live fill:#ecfdf5,stroke:#10b981
+    classDef reinj fill:#eef2ff,stroke:#6366f1
+    classDef gone fill:#fef2f2,stroke:#ef4444
+
+    subgraph BeforeC[BEFORE compaction]
+        Msgs[messages: task, ..., recent]
+        Skill[activeSkillContent]
+        Plan[activePlanPath]
+        Tasks[TaskStore]
+        Sum[lastSummary]
+        Idx[fileReadIndices]
+        Sys[systemPrompt]
+    end
+
+    Compact[compact]
+
+    subgraph AfterC[AFTER compaction]
+        Msgs2[messages:<br/>  task<br/>  truncation notice OR summary<br/>  recent_tail]:::reinj
+        Append1["+ '[Active Skill] ...' assistant msg"]:::reinj
+        Append2["+ '[Active Plan] use read_file at: ...' msg"]:::reinj
+        Tasks2[TaskStore — RENDERED LIVE in §2]:::live
+        Sys2[systemPrompt — REBUILT each iter]:::live
+        Idx2[fileReadIndices — REBUILT after shifts]:::reinj
+        Sum2[lastSummary — chained into next Stage 3]:::live
+    end
+
+    BeforeC --> Compact --> AfterC
+</div>
+
+<div class="legend">
+  <span><span class="dot" style="background: #10b981"></span>Live (regenerated each iter)</span>
+  <span><span class="dot" style="background: #6366f1"></span>Re-injected explicitly</span>
+  <span><span class="dot" style="background: #ef4444"></span>Lost permanently</span>
+</div>
+
+<h3>5.1 Re-injection mechanics</h3>
+<table>
+<tr><th>What</th><th>Mechanism</th><th>Where</th></tr>
+<tr><td>Active skill</td><td>If skill tag not in last 10 msgs, append <code>[Active Skill] &lt;body&gt;</code> as assistant msg</td><td><code>reInjectActiveSkill()</code> line 915</td></tr>
+<tr><td>Active plan</td><td>Append <code>[Active Plan] Use read_file to review plan at: {path}</code></td><td><code>reInjectActivePlan()</code> line 964</td></tr>
+<tr><td>Task progress</td><td>TaskStore queried at every prompt rebuild — markdown rendered into system prompt §2</td><td><code>renderTaskProgressMarkdown()</code> line 108</td></tr>
+<tr><td>MEMORY.md</td><td>Loaded once at session start, in system prompt §10 — survives because system prompt is rebuilt each iteration</td><td><code>AgentService</code> line 1384</td></tr>
+<tr><td>IDE context</td><td>Same — in system prompt §1, §5, §7</td><td><code>SystemPrompt.build()</code></td></tr>
+</table>
+
+<h2 id="persistence">6. Persistence Flow</h2>
+
+<div class="mermaid">
+sequenceDiagram
+    participant CM as ContextManager
+    participant CB as onHistoryOverwrite callback
+    participant MSH as MessageStateHandler
+    participant Disk as api_conversation_history.json
+    participant UI as ui_messages.json
+
+    CM->>CM: Stage 2/3 mutates messages[]
+    CM->>CB: invoke(messages, removedRange)
+    CB->>MSH: overwriteApiConversationHistory(msgs)
+    MSH->>MSH: acquire Mutex (per-session)
+    MSH->>Disk: write to .tmp file
+    MSH->>Disk: rename .tmp → final (POSIX atomic)
+    MSH->>MSH: release Mutex
+    Note over UI: UNCHANGED — UI still shows<br/>full pre-compaction conversation
+</div>
+
+<div class="insight">
+  <strong>★ Two-file persistence design.</strong> The user keeps seeing the full chat scrollback even after the LLM-facing context has been compacted. This is great UX — but it means there's no audit trail of "what the LLM saw at iteration N" once <code>onHistoryOverwrite</code> runs. Roo Code's <code>condenseParent</code> tag pattern (mark-don't-delete) would solve this.
+</div>
+
+<h2 id="matrix">7. Comparison Matrix — 9 Agents</h2>
+
+<div class="legend">
+  <span><span class="dot" style="background: #6366f1"></span>This plugin</span>
+  <span><span class="pill good">cheap</span>zero LLM cost</span>
+  <span><span class="pill warn">summary</span>LLM call(s) per compaction</span>
+  <span><span class="pill bad">known bug</span>see notes</span>
+</div>
+
+<table>
+<tr>
+  <th>Agent</th>
+  <th>Trigger</th>
+  <th>Strategy</th>
+  <th>Stages</th>
+  <th>LLM cost</th>
+  <th>Survives</th>
+  <th>Configurable</th>
+  <th>Notable issue</th>
+</tr>
+<tr>
+  <td class="us">This plugin</td>
+  <td>85% util · API overflow · timeout (opt-in)</td>
+  <td>dedup → truncate → LLM</td>
+  <td>3</td>
+  <td><span class="pill good">cheap</span> Stage 3 only ≥95%</td>
+  <td>Skill, plan, tasks, MEMORY, sys prompt</td>
+  <td><code>maxInputTokens</code> only</td>
+  <td>Stage 3 prompt unparsed</td>
+</tr>
+<tr>
+  <td>Cline</td>
+  <td>Per-tier reserves (27/30/40K), 3/4 escalation</td>
+  <td>dedup → truncate</td>
+  <td>2</td>
+  <td><span class="pill good">cheap</span> zero</td>
+  <td>First user-asst pair, sys prompt</td>
+  <td>None (model-tier-driven)</td>
+  <td>—</td>
+</tr>
+<tr>
+  <td>Roo Code</td>
+  <td>5–100% configurable %, auto+manual</td>
+  <td>LLM summary, <code>condenseParent</code> tag (non-destructive)</td>
+  <td>1+folded files+command blocks</td>
+  <td><span class="pill warn">summary</span> every</td>
+  <td>Original cmd blocks, folded files, env (auto only)</td>
+  <td>Threshold %, separate summarizer model</td>
+  <td><span class="pill bad">known bug</span> models call tools during summary</td>
+</tr>
+<tr>
+  <td>OpenCode</td>
+  <td>Tool-output &gt;20K (protect 40K), session ≈ ctx-out</td>
+  <td>prune + LLM summary, replay</td>
+  <td>2+</td>
+  <td><span class="pill warn">summary</span> only</td>
+  <td>2 tail turns, 2K-8K recent tokens, <code>["skill"]</code> protected</td>
+  <td>env var, protected-tools list</td>
+  <td><span class="pill bad">known bug</span> #4416 cached tokens double-counted</td>
+</tr>
+<tr>
+  <td>Claude Code</td>
+  <td>~83.5% default, 95% on 1M ctx</td>
+  <td>Client OR server-side <code>compact_20260112</code> (cache-aware)</td>
+  <td>1</td>
+  <td><span class="pill warn">summary</span> cache-friendly</td>
+  <td>Summary block, sys prompt, CLAUDE.md</td>
+  <td><code>CLAUDE_AUTOCOMPACT_PCT_OVERRIDE</code>, <code>/compact &lt;focus&gt;</code></td>
+  <td><span class="pill bad">known bug</span> #11819 mid-task derail</td>
+</tr>
+<tr>
+  <td>Aider</td>
+  <td><code>max_chat_history_tokens</code> per model</td>
+  <td>Recursive chunked summary (depth ≤3)</td>
+  <td>1 (recursive)</td>
+  <td><span class="pill warn">summary</span> each (allows weak_model)</td>
+  <td>Tail under cap, separate repo map</td>
+  <td><code>--max-chat-history-tokens</code>, <code>--weak-model</code></td>
+  <td>—</td>
+</tr>
+<tr>
+  <td>Codex CLI</td>
+  <td>min(user, ctx*90%) · reactive on prompt_too_long · pause after 3 fails</td>
+  <td>LLM summary → head-trim fallback</td>
+  <td>2</td>
+  <td><span class="pill warn">summary</span> each</td>
+  <td>~20K recent user msgs, sys prompt</td>
+  <td>TOML clamped 90%, <code>/compact</code></td>
+  <td><span class="pill bad">known bug</span> #11805, #19842, #13946 (race, no max-attempt)</td>
+</tr>
+<tr>
+  <td>Continue</td>
+  <td>implicit, every request</td>
+  <td>Pure top-down truncation</td>
+  <td>1</td>
+  <td><span class="pill good">cheap</span> zero</td>
+  <td>Last user/tool seq, sys msg</td>
+  <td><code>contextLength</code>, <code>maxTokens</code></td>
+  <td><span class="pill bad">known bug</span> #9231 Anthropic ctx miscalc</td>
+</tr>
+<tr>
+  <td>Plandex</td>
+  <td><code>max-convo-tokens</code></td>
+  <td>LLM summary by dedicated Summarizer role</td>
+  <td>1+</td>
+  <td><span class="pill warn">summary</span> cheaper model OK</td>
+  <td>Sticky Notes (user-controlled), loaded files (separate)</td>
+  <td>Per-role model, sticky Notes</td>
+  <td>—</td>
+</tr>
+</table>
+
+<h2 id="positioning">8. Where We Sit on the Cost ↔ Coherence Spectrum</h2>
+
+<div class="mermaid">
+quadrantChart
+    title Cost vs Coherence — 9 agents
+    x-axis "Low cost (no LLM)" --> "High cost (every compaction = LLM)"
+    y-axis "Low coherence (drop)" --> "High coherence (preserve narrative)"
+    quadrant-1 Best of both
+    quadrant-2 Coherent, expensive
+    quadrant-3 Cheap, lossy
+    quadrant-4 Expensive, lossy
+    Continue: [0.05, 0.15]
+    Cline: [0.1, 0.45]
+    "This plugin": [0.25, 0.6]
+    OpenCode: [0.6, 0.75]
+    "Claude Code": [0.7, 0.85]
+    Aider: [0.65, 0.55]
+    "Codex CLI": [0.7, 0.6]
+    "Roo Code": [0.75, 0.7]
+    Plandex: [0.55, 0.5]
+</div>
+
+<div class="insight">
+  <strong>★ Our design space.</strong> Closest to <strong>OpenCode</strong> in shape (dedup + summary + replay), but sit further left on cost because Stage 3 (LLM summary) only fires above 95% — most compactions stop at Stage 1 or 2 and pay zero LLM cost. The trade-off: we don't have OpenCode's structured Markdown summary template (no schema validation), and our explicit recency-preservation block is implicit in the truncation math rather than a crisp <code>DEFAULT_TAIL_TURNS=2</code> constant.
+</div>
+
+<h2 id="gaps">9. Gaps — Ranked by Impact</h2>
+
+<h3>9.1 High-impact</h3>
+<div class="gap high">
+  <span class="gap-id">G1</span><strong>No semantic dedup beyond <code>read_file</code>.</strong>
+  Stage 1 only catches 3 file-read tools. Identical results from <code>search_code</code>, <code>find_definition</code>, <code>find_references</code>, <code>db_schema</code>, <code>glob_files</code> accumulate as duplicates. Fix: hash-based dedup keyed on <code>(toolName, normalizedArgs)</code> — extends dedup to ~30 tools. <em>OpenCode does this</em> for any deterministic tool.
+</div>
+<div class="gap high">
+  <span class="gap-id">G2</span><strong>Stage 3 prompt produces unparsed string.</strong>
+  TASK/FILES/DONE/ERRORS/PENDING is "trust the LLM" — no validation. <em>OpenCode's <code>SUMMARY_TEMPLATE</code></em> with explicit "every section, even when empty" rule is more robust. Schema-validated tool-call would let us reject malformed summaries.
+</div>
+<div class="gap high">
+  <span class="gap-id">G3</span><strong>No "summaries-of-summaries" depth cap.</strong>
+  <code>lastSummary</code> chains forever. <em>Codex's Rust rewrite</em> explicitly fixed this by using a fresh template each pass. Pathological case: 10+ depth dilutes early information.
+</div>
+<div class="gap high">
+  <span class="gap-id">G4</span><strong>No session-wide circuit breaker.</strong>
+  We have per-iteration retry counters but no kill-switch if compaction repeatedly fails to shrink the prompt enough. <em>Codex bug #13946</em> hit this: infinite loop when summary produced is still too large. Add a session-wide "disable compaction after N consecutive ineffective compactions."
+</div>
+
+<h3>9.2 Medium-impact</h3>
+<div class="gap">
+  <span class="gap-id">G5</span><strong><code>compactionThreshold</code> hardcoded.</strong> Roo: 5–100%. Claude Code: env override. We: 0.85 in constructor. Adding <code>agentSettings.compactionThreshold</code> would help advanced workflows.
+</div>
+<div class="gap">
+  <span class="gap-id">G6</span><strong>No "protected tools" allowlist.</strong> OpenCode protects <code>["skill"]</code> from output pruning. Our skill survives via re-injection (belt-and-suspenders) but mid-conversation skill-load tool result isn't tagged-as-protected.
+</div>
+<div class="gap">
+  <span class="gap-id">G7</span><strong>No cost-aware Stage 3 trigger.</strong> Fires whenever <code>util &gt; 95%</code> regardless of whether convo is mostly tool noise (where summary wastes a call) or substantive turns (where it preserves value). Heuristic: if <code>tool_results_chars / total_chars &gt; 0.7</code>, prefer aggressive truncation.
+</div>
+<div class="gap">
+  <span class="gap-id">G8</span><strong>No audit trail of pre-compaction history.</strong> <code>onHistoryOverwrite</code> is destructive. Roo's <code>condenseParent</code> tag pattern (non-destructive) is better — tag-don't-delete, hide from API view but keep on disk for debugging.
+</div>
+
+<h3>9.3 Low-impact polish</h3>
+<div class="gap low">
+  <span class="gap-id">G9</span><strong>No model-tier-aware reserve buffer.</strong> Cline scales 27K/30K/40K by tier. We use one 190K. On a 1M-context model the same 85% means compacting at 850K — possibly too late if next response wants 32K output.
+</div>
+<div class="gap low">
+  <span class="gap-id">G10</span><strong><code>LAST_TWO</code> and <code>NONE</code> strategies coded but unreachable.</strong> Presumably for the not-yet-wired manual "compact aggressively" UI button.
+</div>
+<div class="gap low">
+  <span class="gap-id">G11</span><strong>PRE_COMPACT hook telemetry sparse.</strong> Currently passes <code>{utilizationPercent, messageCount}</code>. Adding <code>lastPromptTokens, fileReadIndices.size, toolDefinitionTokens</code> would let users write smarter hooks.
+</div>
+
+<h2 id="tests">10. Tests That Pin Current Behavior</h2>
+<table>
+<tr><th>Test</th><th>LOC</th><th>What it pins</th></tr>
+<tr><td><code>ContextManagerTest.kt</code></td><td>1151</td><td>Message ordering, token tracking, all 3 stages, hook dispatch, re-injection, nudge pruning, checkpoint restore</td></tr>
+<tr><td><code>ContextManagerTaskStoreTest.kt</code></td><td>2.3K</td><td>TaskStore wiring, markdown rendering, mutation propagation</td></tr>
+<tr><td><code>AgentLoopTest.kt</code></td><td>—</td><td>Trigger-site integration (line 583, 753, 897 paths)</td></tr>
+<tr><td><code>AgentLoopEmptyResponsePersistenceTest.kt</code></td><td>—</td><td>Empty assistant pruning</td></tr>
+</table>
+<p>Any meaningful design change should grow these test files, not replace them — Cline-port snapshot tests assume the algorithm shape.</p>
+
+<h2 id="sources">11. Sources</h2>
+
+<h3>Internal</h3>
+<ul>
+  <li><code>agent/src/main/kotlin/com/workflow/orchestrator/agent/loop/ContextManager.kt</code></li>
+  <li><code>agent/src/main/kotlin/com/workflow/orchestrator/agent/loop/AgentLoop.kt</code></li>
+  <li><code>agent/src/main/kotlin/com/workflow/orchestrator/agent/AgentService.kt</code></li>
+  <li><code>agent/src/main/kotlin/com/workflow/orchestrator/agent/settings/AgentSettings.kt</code></li>
+  <li><code>agent/src/main/kotlin/com/workflow/orchestrator/agent/session/MessageStateHandler.kt</code></li>
+</ul>
+
+<h3>External</h3>
+<ul>
+  <li><a href="https://github.com/cline/cline/blob/main/src/core/context/context-management/ContextManager.ts">Cline ContextManager.ts</a></li>
+  <li><a href="https://github.com/cline/cline/blob/main/src/core/context/context-management/context-window-utils.ts">Cline context-window-utils.ts</a></li>
+  <li><a href="https://github.com/RooCodeInc/Roo-Code/tree/main/src/core/condense">Roo Code condense module</a></li>
+  <li><a href="https://github.com/sst/opencode/blob/dev/packages/opencode/src/session/compaction.ts">OpenCode compaction.ts</a></li>
+  <li><a href="https://github.com/sst/opencode/issues/4416">OpenCode #4416 cached-tokens bug</a></li>
+  <li><a href="https://platform.claude.com/docs/en/build-with-claude/compaction">Claude Code compaction docs</a></li>
+  <li><a href="https://code.claude.com/docs/en/costs">Claude Code costs</a></li>
+  <li><a href="https://github.com/anthropics/claude-code/issues/11819">Claude Code #11819 mid-task derail</a></li>
+  <li><a href="https://github.com/Aider-AI/aider/blob/main/aider/history.py">Aider history.py</a></li>
+  <li><a href="https://github.com/openai/codex/blob/main/codex-rs/core/src/codex/compact.rs">Codex compact.rs</a></li>
+  <li><a href="https://github.com/openai/codex/issues/11805">Codex #11805 90% clamp regression</a></li>
+  <li><a href="https://github.com/openai/codex/issues/13946">Codex #13946 race condition</a></li>
+  <li><a href="https://github.com/continuedev/continue/blob/main/core/llm/countTokens.ts">Continue countTokens.ts</a></li>
+  <li><a href="https://docs.plandex.ai/core-concepts/context-management/">Plandex docs</a></li>
+</ul>
+
+</main>
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default',
+    flowchart: { curve: 'basis', useMaxWidth: true },
+    sequence: { useMaxWidth: true },
+    quadrantChart: { useMaxWidth: true }
+  });
+</script>
+</body>
+</html>

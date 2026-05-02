@@ -495,7 +495,13 @@ class AgentController(
             return
         }
         val utilBefore = cm.utilizationPercent()
-        invokeLater { dashboard.appendStatus("Compacting context${if (force) " (forced)" else ""}...", RichStreamingPanel.StatusType.INFO) }
+        val msgsBefore = cm.messageCount()
+        val initialPhase =
+            if (force) "Compacting — running full pipeline (dedup + truncate + LLM summary)..."
+            else "Compacting context..."
+        invokeLater {
+            dashboard.setCompactionState(active = true, phase = initialPhase)
+        }
 
         currentJob = controllerScope.launch(Dispatchers.IO) {
             try {
@@ -512,10 +518,21 @@ class AgentController(
                 val (tokensBefore, tokensAfter) = result
                 val utilAfter = cm.utilizationPercent()
                 val saved = tokensBefore - tokensAfter
+                val msgsAfter = cm.messageCount()
+                val ranStage3 = cm.lastCompactionRanStage3
                 invokeLater {
+                    dashboard.insertCompactionMarker(
+                        tokensBefore = tokensBefore,
+                        tokensAfter = tokensAfter,
+                        messagesBefore = msgsBefore,
+                        messagesAfter = msgsAfter,
+                        ranLlmSummary = ranStage3,
+                    )
                     dashboard.appendStatus(
                         "Compacted: ${"%.0f".format(utilBefore)}% → ${"%.0f".format(utilAfter)}% " +
-                            "($tokensBefore → $tokensAfter tokens, saved $saved)",
+                            "($tokensBefore → $tokensAfter tokens, saved $saved · " +
+                            "$msgsBefore → $msgsAfter messages" +
+                            (if (ranStage3) " · LLM summary applied" else "") + ")",
                         RichStreamingPanel.StatusType.INFO
                     )
                 }
@@ -523,6 +540,7 @@ class AgentController(
                 LOG.warn("Manual compaction failed", e)
                 invokeLater { dashboard.appendError("Compaction failed: ${e.message}") }
             } finally {
+                invokeLater { dashboard.setCompactionState(active = false, phase = "") }
                 currentJob = null
             }
         }

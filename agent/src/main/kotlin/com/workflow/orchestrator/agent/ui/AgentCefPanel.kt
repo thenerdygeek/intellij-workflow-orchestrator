@@ -860,6 +860,45 @@ class AgentCefPanel(
         callJs("setBusy(${if (busy) "true" else "false"})")
     }
 
+    /**
+     * Manual compaction lifecycle. The webview shows a top banner with a spinner
+     * and disables chat input + the compact button while [active] is true.
+     * [phase] is a short user-facing label such as "Compacting context..."
+     * or "Summarizing earlier conversation...". Pass empty string when [active]
+     * is false.
+     */
+    fun setCompactionState(active: Boolean, phase: String) {
+        val payload = buildJsonObject {
+            put("active", active)
+            put("phase", phase)
+        }.toString()
+        callJs("setCompactionState(${JsEscape.toJsString(payload)})")
+    }
+
+    /**
+     * Insert a "context compacted" marker message into the chat scrollback so
+     * the user can see the cutoff between pre- and post-compaction history.
+     * Does NOT delete or hide messages above the marker — they stay visible;
+     * the marker just shows "from here on, the LLM is working from a summary".
+     */
+    fun insertCompactionMarker(
+        tokensBefore: Int,
+        tokensAfter: Int,
+        messagesBefore: Int,
+        messagesAfter: Int,
+        ranLlmSummary: Boolean,
+    ) {
+        val payload = buildJsonObject {
+            put("tokensBefore", tokensBefore)
+            put("tokensAfter", tokensAfter)
+            put("messagesBefore", messagesBefore)
+            put("messagesAfter", messagesAfter)
+            put("ranLlmSummary", ranLlmSummary)
+            put("ts", System.currentTimeMillis())
+        }.toString()
+        callJs("insertCompactionMarker(${JsEscape.toJsString(payload)})")
+    }
+
     fun setSteeringMode(enabled: Boolean) {
         callJs("setSteeringMode(${if (enabled) "true" else "false"})")
     }

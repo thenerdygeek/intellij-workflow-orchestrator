@@ -197,6 +197,21 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   setBusy(busy: boolean) {
     stores?.getChatStore().setBusy(busy);
   },
+  setCompactionState(payload: string) {
+    const data = JSON.parse(payload) as { active: boolean; phase: string };
+    stores?.getChatStore().setCompactionState(data.active, data.phase);
+  },
+  insertCompactionMarker(payload: string) {
+    const data = JSON.parse(payload) as {
+      tokensBefore: number;
+      tokensAfter: number;
+      messagesBefore: number;
+      messagesAfter: number;
+      ranLlmSummary: boolean;
+      ts: number;
+    };
+    stores?.getChatStore().insertCompactionMarker(data);
+  },
   showResumeBar(sessionId: string) {
     stores?.getChatStore().setResumeSessionId(sessionId);
   },

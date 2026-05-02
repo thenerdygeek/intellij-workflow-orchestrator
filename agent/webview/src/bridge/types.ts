@@ -281,7 +281,17 @@ export type UiSay =
   | 'TOOL' | 'CHECKPOINT_CREATED' | 'ERROR' | 'PLAN_UPDATE'
   | 'ARTIFACT_RESULT' | 'SUBAGENT_STARTED' | 'SUBAGENT_PROGRESS'
   | 'SUBAGENT_COMPLETED' | 'STEERING_RECEIVED' | 'CONTEXT_COMPRESSED'
-  | 'MEMORY_SAVED' | 'ROLLBACK_PERFORMED' | 'PLAN_APPROVED';
+  | 'MEMORY_SAVED' | 'ROLLBACK_PERFORMED' | 'PLAN_APPROVED'
+  | 'COMPACTION_MARKER';
+
+export interface UiMessageCompactionMarker {
+  tokensBefore: number;
+  tokensAfter: number;
+  messagesBefore: number;
+  messagesAfter: number;
+  ranLlmSummary: boolean;
+  ts: number;
+}
 
 export interface UiMessageModelInfo {
   modelId?: string;
@@ -374,6 +384,8 @@ export interface UiMessage {
   toolCallData?: UiMessageToolCallData;
   completionData?: CompletionData;
   planApprovalData?: UiMessagePlanApprovalData;
+  /** Payload for `say='COMPACTION_MARKER'` divider message. */
+  compactionMarker?: UiMessageCompactionMarker;
   /** Mentions attached to a USER_MESSAGE (ticket chips, file refs, etc.) */
   mentions?: Mention[];
 }

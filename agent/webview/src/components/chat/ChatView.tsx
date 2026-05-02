@@ -4,6 +4,8 @@ import { AgentMessage, AnsweredQuestionsCard } from './AgentMessage';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ToolCallChain } from '@/components/agent/ToolCallChain';
 import { SubAgentView } from '@/components/agent/SubAgentView';
+import { CompactionMarker } from '@/components/agent/CompactionMarker';
+import { CompactionOverlay } from '@/components/agent/CompactionOverlay';
 import { ArtifactRenderer } from '@/components/rich/ArtifactRenderer';
 import { ThinkingView } from '@/components/agent/ThinkingView';
 import { CompletionCard } from '@/components/agent/CompletionCard';
@@ -433,6 +435,15 @@ export const ChatView = memo(function ChatView() {
     const idx = item.idx;
     const key = `msg-${msg.ts}-${idx}`;
 
+    // Manual compaction marker — horizontal divider showing the cutoff
+    if (msg.say === 'COMPACTION_MARKER' && msg.compactionMarker) {
+      return (
+        <ErrorBoundary key={key}>
+          <CompactionMarker payload={msg.compactionMarker} />
+        </ErrorBoundary>
+      );
+    }
+
     // Sub-agent messages — use live state from activeSubAgents for running agents,
     // fall back to flat UiMessage data for completed/resumed agents
     if (msg.say === 'SUBAGENT_STARTED' || msg.say === 'SUBAGENT_PROGRESS' || msg.say === 'SUBAGENT_COMPLETED') {
@@ -748,20 +759,23 @@ export const ChatView = memo(function ChatView() {
   );
 
   return (
-    <div className="relative flex-1 min-h-0">
-      <MessageList
-        ref={messageListRef}
-        count={renderItems.length}
-        renderItem={renderItem}
-        footer={footer}
-        atBottomChange={setIsAtBottom}
-        ariaLabel="Agent chat messages"
-      />
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10">
-        <ScrollButton
-          atBottom={isAtBottom}
-          onClick={() => messageListRef.current?.scrollToBottom()}
+    <div className="relative flex-1 min-h-0 flex flex-col">
+      <CompactionOverlay />
+      <div className="relative flex-1 min-h-0">
+        <MessageList
+          ref={messageListRef}
+          count={renderItems.length}
+          renderItem={renderItem}
+          footer={footer}
+          atBottomChange={setIsAtBottom}
+          ariaLabel="Agent chat messages"
         />
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10">
+          <ScrollButton
+            atBottom={isAtBottom}
+            onClick={() => messageListRef.current?.scrollToBottom()}
+          />
+        </div>
       </div>
     </div>
   );

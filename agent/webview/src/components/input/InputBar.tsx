@@ -337,6 +337,9 @@ function InputBarContent({
 }: InputBarContentProps) {
   // Focus on trigger from store
   const focusTrigger = useChatStore(s => s.focusInputTrigger);
+  // Manual compaction in progress — disable input + send so the user can't
+  // mutate state during the LLM-summary round-trip.
+  const compacting = useChatStore(s => s.compactionState.active);
   useEffect(() => {
     if (focusTrigger > 0) richInputRef.current?.focus();
   }, [focusTrigger, richInputRef]);
@@ -395,8 +398,12 @@ function InputBarContent({
       <div className="px-3 pt-2 pb-1">
         <RichInput
           ref={richInputRef}
-          placeholder={busy && steeringMode ? 'Steer the agent...' : 'Ask anything... (@ context, # ticket, / skill)'}
-          disabled={locked || (busy && !steeringMode)}
+          placeholder={
+            compacting ? 'Compacting context...' :
+            busy && steeringMode ? 'Steer the agent...' :
+            'Ask anything... (@ context, # ticket, / skill)'
+          }
+          disabled={compacting || locked || (busy && !steeringMode)}
           onSubmit={onSend}
           onChange={onRichInputChange}
           onEscape={onDismissMentions}
@@ -492,6 +499,7 @@ function InputBarContent({
 export const InputBar = memo(function InputBar() {
   const inputState = useChatStore(s => s.inputState);
   const busy = useChatStore(s => s.busy);
+  const outerCompacting = useChatStore(s => s.compactionState.active);
   const richInputRef = useRef<RichInputHandle>(null);
 
   const [hasText, setHasText] = useState(false);
@@ -739,7 +747,7 @@ export const InputBar = memo(function InputBar() {
     }
   }, [restoredInputText]);
 
-  const canSend = hasText && !inputState.locked && (!busy || steeringMode);
+  const canSend = hasText && !inputState.locked && !outerCompacting && (!busy || steeringMode);
   const planActive = inputState.mode === 'plan';
   const ralphActive = inputState.ralph ?? false;
 

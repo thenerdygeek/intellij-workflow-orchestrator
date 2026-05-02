@@ -147,6 +147,12 @@ interface ChatState {
     ralph: boolean;
   };
   busy: boolean;
+  /**
+   * Manual compaction lifecycle state. While `active` is true, the chat input,
+   * compact button, and other mutating affordances are disabled and a top
+   * banner with a spinner is shown.
+   */
+  compactionState: { active: boolean; phase: string };
   steeringMode: boolean;
   showingToolsPanel: boolean;
   toolsPanelData: string | null;
@@ -237,6 +243,15 @@ interface ChatState {
   setInputMode(mode: 'agent' | 'plan'): void;
   setRalphLoop(enabled: boolean): void;
   setBusy(busy: boolean): void;
+  setCompactionState(active: boolean, phase: string): void;
+  insertCompactionMarker(payload: {
+    tokensBefore: number;
+    tokensAfter: number;
+    messagesBefore: number;
+    messagesAfter: number;
+    ranLlmSummary: boolean;
+    ts: number;
+  }): void;
   setSteeringMode(enabled: boolean): void;
   setModelName(model: string): void;
   /**
@@ -350,6 +365,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     ralph: false,
   },
   busy: false,
+  compactionState: { active: false, phase: '' },
   steeringMode: false,
   showingToolsPanel: false,
   toolsPanelData: null,
@@ -912,6 +928,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setBusy(busy: boolean) {
     set({ busy, ...(busy ? {} : { smartWorkingPhrase: null }) });
+  },
+
+  setCompactionState(active: boolean, phase: string) {
+    set({ compactionState: { active, phase } });
+  },
+
+  insertCompactionMarker(payload) {
+    const marker: UiMessage = {
+      ts: uniqueTs(),
+      type: 'SAY',
+      say: 'COMPACTION_MARKER',
+      compactionMarker: payload,
+    };
+    set((state) => ({ messages: [...state.messages, marker] }));
   },
 
   setSteeringMode(enabled: boolean) {

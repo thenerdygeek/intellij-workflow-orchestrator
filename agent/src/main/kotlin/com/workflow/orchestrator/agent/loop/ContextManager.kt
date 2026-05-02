@@ -65,6 +65,14 @@ class ContextManager(
     /** Last summary from LLM compaction, used for summary chaining. */
     private var lastSummary: String? = null
 
+    /**
+     * Whether the most recent [compact] call actually ran Stage 3 (LLM summarization).
+     * The UI reads this to label the post-compaction marker correctly
+     * ("Compacted with summary" vs "Compacted (heuristic)").
+     */
+    var lastCompactionRanStage3: Boolean = false
+        private set
+
     /** Token count for tool definitions (schemas sent in API request). Updated by AgentLoop. */
     private var toolDefinitionTokens: Int = 0
 
@@ -605,13 +613,21 @@ class ContextManager(
      *
      * @param brain the LLM brain for Stage 3 summarization
      * @param hookManager optional hook manager for PRE_COMPACT dispatch
-     * @param force when true, bypasses the 70% utilization floor and the Stage 2 (>85%)
-     *   inner gate so the user can manually clean up context pollution (e.g. accumulated
-     *   `[empty-assistant, ERROR-nudge]` pairs from misbehaving turns) without waiting for
-     *   utilization to climb. Stage 3 (LLM summarization) stays gated at >95% even under
-     *   force — running an API call to summarize a sparsely-filled context is net-negative.
+     * @param force when true, bypasses ALL utilization gates so a single user-driven
+     *   click runs the full pipeline:
+     *   - 70% entry floor → bypassed
+     *   - Stage 1 30% savings exit → bypassed (always proceed to Stage 2)
+     *   - Stage 2 85% gate → bypassed, and strategy switches to QUARTER for a bigger
+     *     single-click drop instead of the conservative HALF used by auto-compaction
+     *   - Stage 3 95% gate → bypassed when there are enough messages to summarize
+     *     meaningfully (`> FORCE_STAGE3_MIN_MESSAGES`); the user explicitly authorized
+     *     the LLM call by clicking
+     *   Auto-compaction (force=false) keeps the conservative gating: HALF strategy,
+     *   95% Stage 3 gate, 30% Stage 1 short-circuit — so the loop's preventive
+     *   behavior is unchanged.
      */
     suspend fun compact(brain: LlmBrain, hookManager: HookManager? = null, force: Boolean = false) {
+        lastCompactionRanStage3 = false
         val util = utilizationPercent()
         if (!force && util <= 70.0) return
 
@@ -650,12 +666,15 @@ class ContextManager(
         // Stage 2: Conversation truncation (from Cline). Forced manual compaction
         // bypasses the 85% inner gate — at low utilization there's still value in
         // dropping polluted middle messages (e.g. nudge-pair chains) the user wants gone.
+        // Under force, use QUARTER (drop ~75% of middle) for a bigger single-click drop;
+        // auto-compaction keeps the conservative HALF default.
         if (force || utilizationPercent() > 85.0) {
-            // Match Cline's strategy selection:
-            // If tokens/2 > maxAllowed, use quarter (more aggressive); else half
             val estimatedTokens = lastPromptTokens ?: tokenEstimate()
-            val keep = if (estimatedTokens / 2 > maxInputTokens) TruncationStrategy.QUARTER
-                       else TruncationStrategy.HALF
+            val keep = when {
+                force -> TruncationStrategy.QUARTER
+                estimatedTokens / 2 > maxInputTokens -> TruncationStrategy.QUARTER
+                else -> TruncationStrategy.HALF
+            }
             val countBeforeTruncation = messageCount()
             truncateConversation(keep)
             invalidateTokens()
@@ -667,13 +686,21 @@ class ContextManager(
             }
         }
 
-        // Stage 3: LLM summarization as optional fallback (our addition)
-        if (utilizationPercent() > 95.0) {
+        // Stage 3: LLM summarization. Auto-compaction gates at >95% to avoid wasteful
+        // API calls. Forced manual compaction unlocks Stage 3 whenever there are enough
+        // messages to summarize meaningfully — the user explicitly authorized the LLM
+        // call by clicking the compact button, and Stage 3 is what produces a "huge
+        // drop" (replaces the early conversation with a single TASK/FILES/DONE/ERRORS/
+        // PENDING summary message).
+        val shouldRunStage3 = utilizationPercent() > 95.0 ||
+            (force && messageCount() > FORCE_STAGE3_MIN_MESSAGES)
+        if (shouldRunStage3) {
             val countBeforeSummarization = messageCount()
             llmSummarize(brain)
             invalidateTokens()
             val summarizedCount = countBeforeSummarization - messageCount()
             if (summarizedCount > 0) {
+                lastCompactionRanStage3 = true
                 onHistoryOverwrite?.invoke(messages.toList(), Pair(0, summarizedCount - 1))
             }
         }
@@ -977,6 +1004,14 @@ class ContextManager(
     }
 
     companion object {
+        /**
+         * Minimum message count for Stage 3 (LLM summarization) to run under force=true.
+         * Below this, summarization wastes an API call — there's not enough conversation
+         * to meaningfully summarize. Floor preserves first user-asst pair (2) + at least
+         * one removable user-asst pair (2) + recent tail user-asst pair (2) = 6.
+         */
+        private const val FORCE_STAGE3_MIN_MESSAGES = 6
+
         /** Tools that read/write files and whose results contain file content. */
         private val FILE_READ_TOOLS = setOf(
             "read_file", "create_file", "edit_file"

@@ -786,6 +786,302 @@ class ContextManagerTest {
         }
     }
 
+    // ---- Forced manual compaction (single-click full pipeline) ----
+
+    @Nested
+    inner class ForcedManualCompaction {
+
+        @Test
+        fun `force=true bypasses 70% entry floor at low utilization`() = runTest {
+            val brain = FakeLlmBrain(summaryResponse = "TASK: t\nFILES: f\nDONE: d\nERRORS: -\nPENDING: -")
+            cm = ContextManager(maxInputTokens = 100_000)  // huge ceiling
+            cm.setSystemPrompt("sys")
+            // Add enough messages to trigger Stage 3, but utilization is well under 70%
+            for (i in 1..10) {
+                cm.addUserMessage("u$i")
+                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i"))
+            }
+            cm.updateTokens(promptTokens = 500)  // ~0.5% of maxInputTokens
+
+            val countBefore = cm.messageCount()
+            cm.compact(brain, force = true)
+
+            assertTrue(cm.messageCount() < countBefore, "force=true should compact even at low utilization")
+        }
+
+        @Test
+        fun `force=false returns early at low utilization (auto-compaction unchanged)`() = runTest {
+            val brain = FakeLlmBrain(summaryResponse = "TASK: t")
+            cm = ContextManager(maxInputTokens = 100_000)
+            cm.setSystemPrompt("sys")
+            for (i in 1..10) {
+                cm.addUserMessage("u$i")
+                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i"))
+            }
+            cm.updateTokens(promptTokens = 500)  // <70%
+
+            val countBefore = cm.messageCount()
+            cm.compact(brain, force = false)
+
+            assertEquals(countBefore, cm.messageCount(), "force=false should not compact below 70% utilization")
+            assertFalse(cm.lastCompactionRanStage3, "Stage 3 must not run when entry gate blocks compaction")
+        }
+
+        @Test
+        fun `force=true runs Stage 3 LLM summarization even at low utilization`() = runTest {
+            val brain = FakeLlmBrain(summaryResponse = "TASK: thing\nFILES: foo.kt\nDONE: a\nERRORS: -\nPENDING: -")
+            cm = ContextManager(maxInputTokens = 100_000)
+            cm.setSystemPrompt("sys")
+            // 20 messages: enough that even after Stage 2 QUARTER (~75% drop of middle),
+            // post-Stage-2 message count remains > FORCE_STAGE3_MIN_MESSAGES = 6.
+            // QUARTER on 20 msgs removes ~12 → 8 left; 8 > 6 → Stage 3 fires.
+            for (i in 1..10) {
+                cm.addUserMessage("u$i")
+                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i"))
+            }
+            cm.updateTokens(promptTokens = 200)  // <1% utilization
+
+            cm.compact(brain, force = true)
+
+            assertTrue(cm.lastCompactionRanStage3, "Stage 3 should run under force when messages > 6")
+            val messages = cm.getMessages()
+            val summaryMsg = messages.find { it.content?.contains("[Context Summary]") == true }
+            assertNotNull(summaryMsg, "Summary message should be inserted")
+            assertEquals("assistant", summaryMsg!!.role, "Summary must be assistant role")
+        }
+
+        @Test
+        fun `force=false skips Stage 3 below 95% utilization (auto-compaction unchanged)`() = runTest {
+            val brain = FakeLlmBrain(summaryResponse = "TASK: t")
+            cm = ContextManager(maxInputTokens = 200)
+            cm.setSystemPrompt("sys")
+            // Calibrated: 20 messages × ~18 chars → tokenEstimate ~93% before Stage 2 (gate
+            // passes at >85%), and ~78% after Stage 2 HALF removes ~8 messages (Stage 3
+            // gate at >95% does NOT pass — confirms the old auto-compaction ceiling).
+            val padding = "x".repeat(15)  // each message = "u1 " + 15 = ~18 chars
+            for (i in 1..10) {
+                cm.addUserMessage("u$i $padding")
+                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i $padding"))
+            }
+            cm.updateTokens(promptTokens = 175)  // 87.5% — entry gate passes
+
+            cm.compact(brain, force = false)
+
+            assertFalse(
+                cm.lastCompactionRanStage3,
+                "Stage 3 must remain gated at 95% under auto-compaction (force=false)"
+            )
+        }
+
+        @Test
+        fun `force=true respects 6-message floor and skips Stage 3 on small sessions`() = runTest {
+            val brain = FakeLlmBrain(summaryResponse = "TASK: t")
+            cm = ContextManager(maxInputTokens = 100_000)
+            cm.setSystemPrompt("sys")
+            // Only 4 messages — below FORCE_STAGE3_MIN_MESSAGES = 6
+            cm.addUserMessage("u1")
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a1"))
+            cm.addUserMessage("u2")
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a2"))
+            cm.updateTokens(promptTokens = 100)
+
+            cm.compact(brain, force = true)
+
+            assertFalse(
+                cm.lastCompactionRanStage3,
+                "Stage 3 must skip when message count is at or below the 6-message floor"
+            )
+        }
+
+        @Test
+        fun `force=true uses QUARTER strategy (drops more than HALF)`() = runTest {
+            val brain = FakeLlmBrain(summaryResponse = "TASK: t")
+            // Disable Stage 3 so we can isolate Stage 2 strategy: keep messages below floor
+            // by using small messageCount but force=true still triggers Stage 2
+            cm = ContextManager(maxInputTokens = 100_000)
+            cm.setSystemPrompt("sys")
+            // Build 20 messages so QUARTER vs HALF makes a measurable difference
+            for (i in 1..10) {
+                cm.addUserMessage("u$i")
+                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i"))
+            }
+            cm.updateTokens(promptTokens = 200)
+
+            val countBefore = cm.messageCount()
+            cm.compact(brain, force = true)
+            val countAfter = cm.messageCount()
+            val removed = countBefore - countAfter
+
+            // QUARTER removes ~75% of middle (here ~14 of 18 middle messages)
+            // HALF would remove ~50% (~8 of 18)
+            // Test the boundary: under force we should drop strictly more than HALF would
+            // Because Stage 3 will also run (>6 messages), the *combined* drop is even higher
+            assertTrue(
+                removed >= 10,
+                "force=true with QUARTER + Stage 3 should remove ≥10 of 20 messages, got $removed"
+            )
+        }
+
+        @Test
+        fun `force=false uses HALF strategy when over 85%`() = runTest {
+            val brain = FakeLlmBrain(summaryResponse = "TASK: t")
+            cm = ContextManager(maxInputTokens = 200)
+            cm.setSystemPrompt("sys")
+            // Same calibration as the Stage-3-gate test: messages sized so post-Stage-2
+            // util stays under 95%, isolating HALF's behavior from Stage 3's contribution.
+            val padding = "x".repeat(15)
+            for (i in 1..10) {
+                cm.addUserMessage("u$i $padding")
+                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i $padding"))
+            }
+            cm.updateTokens(promptTokens = 175)
+
+            val countBefore = cm.messageCount()
+            cm.compact(brain, force = false)
+            val countAfter = cm.messageCount()
+            val removed = countBefore - countAfter
+
+            // HALF formula: floor((20-2)/4)*2 = 8 messages removed.
+            // Allow a small fudge for the truncation-notice replacement bookkeeping.
+            assertEquals(8, removed, "force=false at >85% must use HALF (removes 8 of 20)")
+            assertFalse(cm.lastCompactionRanStage3, "Stage 3 must not run alongside HALF in this scenario")
+        }
+
+        @Test
+        fun `lastCompactionRanStage3 resets to false at start of each compact call`() = runTest {
+            val brain = FakeLlmBrain(summaryResponse = "TASK: t\nFILES: f\nDONE: d\nERRORS: -\nPENDING: -")
+            cm = ContextManager(maxInputTokens = 100_000)
+            cm.setSystemPrompt("sys")
+            // 20 messages → after Stage 2 QUARTER, ~8 left, > 6-floor → Stage 3 fires
+            for (i in 1..10) {
+                cm.addUserMessage("u$i")
+                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i"))
+            }
+            cm.updateTokens(promptTokens = 200)
+
+            // First compaction with force=true → Stage 3 runs
+            cm.compact(brain, force = true)
+            assertTrue(cm.lastCompactionRanStage3, "Stage 3 ran on first compaction")
+
+            // Second compaction: now there are very few messages, Stage 3 must NOT run.
+            // Critical: the flag from the first call must not leak into this call.
+            cm.compact(brain, force = true)
+            assertFalse(
+                cm.lastCompactionRanStage3,
+                "Stage 3 flag must reset to false on each compact() entry, not persist from prior call"
+            )
+        }
+
+        @Test
+        fun `force=true preserves system prompt`() = runTest {
+            val brain = FakeLlmBrain(summaryResponse = "TASK: t\nFILES: f\nDONE: d")
+            cm = ContextManager(maxInputTokens = 100_000)
+            cm.setSystemPrompt("important system prompt")
+            for (i in 1..6) {
+                cm.addUserMessage("u$i")
+                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i"))
+            }
+            cm.updateTokens(promptTokens = 200)
+
+            cm.compact(brain, force = true)
+
+            val messages = cm.getMessages()
+            assertEquals("system", messages[0].role, "System prompt must remain at index 0")
+            assertEquals("important system prompt", messages[0].content)
+        }
+
+        @Test
+        fun `force=true preserves first user-assistant pair (the original task)`() = runTest {
+            val brain = FakeLlmBrain(summaryResponse = "TASK: stuff")
+            cm = ContextManager(maxInputTokens = 100_000)
+            cm.setSystemPrompt("sys")
+            cm.addUserMessage("ORIGINAL TASK MESSAGE")
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = "FIRST ASSISTANT REPLY"))
+            for (i in 1..8) {
+                cm.addUserMessage("u$i")
+                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i"))
+            }
+            cm.updateTokens(promptTokens = 200)
+
+            cm.compact(brain, force = true)
+
+            // After force compaction, the original task may be folded into the summary,
+            // OR preserved verbatim depending on whether Stage 3 ran.
+            val messages = cm.getMessages()
+            val foundOriginal = messages.any { it.content?.contains("ORIGINAL TASK MESSAGE") == true }
+            val foundSummary = messages.any { it.content?.contains("[Context Summary]") == true }
+            assertTrue(
+                foundOriginal || foundSummary,
+                "Either the original task message OR a Stage 3 summary that subsumes it must survive"
+            )
+        }
+
+        @Test
+        fun `force=true with Stage 3 LLM failure leaves Stage 1+2 results intact`() = runTest {
+            val errorBrain = ErrorLlmBrain()
+            cm = ContextManager(maxInputTokens = 100_000)
+            cm.setSystemPrompt("sys")
+            for (i in 1..10) {
+                cm.addUserMessage("u$i")
+                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i"))
+            }
+            cm.updateTokens(promptTokens = 200)
+
+            val countBefore = cm.messageCount()
+            cm.compact(errorBrain, force = true)
+            val countAfter = cm.messageCount()
+
+            // Stage 2 (QUARTER) must have run before Stage 3 attempted
+            assertTrue(countAfter < countBefore, "Stage 2 truncation must complete even if Stage 3 fails")
+            assertFalse(cm.lastCompactionRanStage3, "Stage 3 flag stays false when LLM call fails")
+            // No "Compaction failed" placeholder in messages
+            val hasErrorPlaceholder = cm.getMessages().any { it.content?.contains("Compaction failed") == true }
+            assertFalse(hasErrorPlaceholder, "Stage 3 LLM failure must NOT inject error message into context")
+        }
+
+        @Test
+        fun `force=true triggers onHistoryOverwrite for persistence`() = runTest {
+            val brain = FakeLlmBrain(summaryResponse = "TASK: t\nFILES: f\nDONE: d\nERRORS: -\nPENDING: -")
+            cm = ContextManager(maxInputTokens = 100_000)
+            cm.setSystemPrompt("sys")
+            var overwriteCallCount = 0
+            cm.onHistoryOverwrite = { _, _ -> overwriteCallCount++ }
+            for (i in 1..8) {
+                cm.addUserMessage("u$i")
+                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i"))
+            }
+            cm.updateTokens(promptTokens = 200)
+
+            cm.compact(brain, force = true)
+
+            assertTrue(
+                overwriteCallCount >= 1,
+                "onHistoryOverwrite must fire at least once (Stage 2 truncation) under force, got $overwriteCallCount"
+            )
+        }
+
+        @Test
+        fun `force=true invalidates lastPromptTokens after compaction`() = runTest {
+            val brain = FakeLlmBrain(summaryResponse = "TASK: t")
+            cm = ContextManager(maxInputTokens = 100_000)
+            cm.setSystemPrompt("sys")
+            for (i in 1..8) {
+                cm.addUserMessage("u$i")
+                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i"))
+            }
+            cm.updateTokens(promptTokens = 80_000)  // 80% — meaningful tokens
+
+            cm.compact(brain, force = true)
+
+            // After compaction, utilization should fall back to tokenEstimate() — much smaller
+            val utilAfter = cm.utilizationPercent()
+            assertTrue(
+                utilAfter < 80.0,
+                "After force=true compaction, utilization should drop from stale 80%, got ${utilAfter}%"
+            )
+        }
+    }
+
     // ---- Token estimate counts tool_calls ----
 
     @Nested
