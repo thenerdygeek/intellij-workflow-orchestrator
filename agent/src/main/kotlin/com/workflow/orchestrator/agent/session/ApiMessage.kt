@@ -23,9 +23,40 @@ sealed interface ContentBlock {
     @SerialName("tool_result")
     data class ToolResult(val toolUseId: String, val content: String, val isError: Boolean = false) : ContentBlock
 
+    /**
+     * Pre-Phase-4 inline-base64 image variant. Was always dead code (no
+     * production caller ever wrote it; only one stale `else -> false`
+     * reference in `MessageStateHandler.isEmptyAssistant`).
+     *
+     * Kept @Deprecated and still readable so any historical session that
+     * happened to land via this path can be loaded; new writes go through
+     * [ImageRef] instead. Phase 4 of multimodal-agent plan.
+     */
+    @Deprecated(
+        "Use ImageRef. The inline-base64 shape is read-only after Phase 4 of the multimodal-agent plan.",
+        ReplaceWith("ImageRef(sha256, mediaType, data.length.toLong(), null)")
+    )
     @Serializable
     @SerialName("image")
     data class Image(val mediaType: String, val data: String) : ContentBlock
+
+    /**
+     * Content-addressed image reference. Bytes live on disk under
+     * `sessions/{id}/attachments/<sha256>.<ext>` (managed by `AttachmentStore`).
+     * Persisted JSON shape:
+     * ```
+     * {"type":"image_url_ref","sha256":"...","mime":"image/png","size":12345,"originalFilename":"x.png"}
+     * ```
+     * Phase 4 of multimodal-agent plan.
+     */
+    @Serializable
+    @SerialName("image_url_ref")
+    data class ImageRef(
+        val sha256: String,
+        val mime: String,
+        val size: Long,
+        val originalFilename: String? = null,
+    ) : ContentBlock
 }
 
 @Serializable
@@ -55,11 +86,14 @@ data class ApiMessage(
  * `[unsupported attachment]` placeholder text so v1 readers degrade gracefully
  * when loading v2+ session files.
  */
+@Suppress("DEPRECATION")  // we still need to render legacy ContentBlock.Image
 fun ApiMessage.toChatMessage(): ChatMessage {
     val textPieces = content.mapNotNull { block ->
         when (block) {
             is ContentBlock.Text -> block.text
             is UnsupportedContentBlock -> "[unsupported attachment]"
+            is ContentBlock.ImageRef -> "[image: ${block.mime}, ${block.size} bytes]"
+            is ContentBlock.Image -> "[image: ${block.mediaType}]"
             else -> null
         }
     }

@@ -4,11 +4,32 @@ import com.workflow.orchestrator.core.ai.dto.ChatMessage
 import com.workflow.orchestrator.core.util.StringUtils
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.modules.SerializersModule
 import kotlinx.serialization.modules.polymorphic
 import java.io.File
+
+/**
+ * Persisted wrapper around the api_conversation_history.json messages list.
+ *
+ * The pre-Phase-4 on-disk shape was a bare JSON array `[ApiMessage, ...]`.
+ * Phase 4 introduces this wrapper with a [schemaVersion] field so future
+ * schema changes can be detected at read time.
+ *
+ * The reader tries this wrapper first, then falls back to the bare array
+ * for legacy v1 sessions. The writer always emits this wrapper at
+ * `schemaVersion = 2`.
+ *
+ * Phase 4 of multimodal-agent plan.
+ */
+@Serializable
+data class ApiHistoryFile(
+    val schemaVersion: Int = 1,
+    val messages: List<ApiMessage>,
+)
 
 class MessageStateHandler(
     private val baseDir: File,
@@ -91,6 +112,7 @@ class MessageStateHandler(
         removed
     }
 
+    @Suppress("DEPRECATION")  // legacy ContentBlock.Image still has to exhaust the when
     private fun isEmptyAssistant(message: ApiMessage): Boolean {
         if (message.role != ApiRole.ASSISTANT) return false
         if (message.content.isEmpty()) return true
@@ -102,6 +124,7 @@ class MessageStateHandler(
                 is ContentBlock.ToolUse -> false
                 is ContentBlock.ToolResult -> false
                 is ContentBlock.Image -> false
+                is ContentBlock.ImageRef -> false
                 else -> false
             }
         }
@@ -182,7 +205,11 @@ class MessageStateHandler(
 
     private fun saveApiHistoryInternal() {
         sessionDir.mkdirs()
-        AtomicFileWriter.write(apiHistoryFile, json.encodeToString(apiHistory))
+        // Phase 4: emit v2 wrapper { schemaVersion: 2, messages: [...] }.
+        // Reader (loadApiHistory) tries this shape first and falls back to the
+        // bare-array v1 shape for legacy sessions.
+        val payload = ApiHistoryFile(schemaVersion = SCHEMA_VERSION_CURRENT, messages = apiHistory.toList())
+        AtomicFileWriter.write(apiHistoryFile, json.encodeToString(ApiHistoryFile.serializer(), payload))
     }
 
     suspend fun saveBoth() = mutex.withLock {
@@ -231,6 +258,15 @@ class MessageStateHandler(
     }
 
     companion object {
+        /**
+         * Current schema version emitted by the writer. v1 (the pre-Phase-4
+         * bare-array shape) is detected by [loadApiHistory]'s fallback and
+         * normalized into the in-memory model with no version field.
+         *
+         * Phase 4 of multimodal-agent plan.
+         */
+        const val SCHEMA_VERSION_CURRENT: Int = 2
+
         /** Separate mutex for sessions.json to prevent races between concurrent sessions (I2 fix). */
         private val globalIndexMutex = Mutex()
 
@@ -290,12 +326,32 @@ class MessageStateHandler(
             } catch (_: Exception) { emptyList() }
         }
 
+        /**
+         * Loads `api_conversation_history.json` with backward-compat for the
+         * pre-Phase-4 bare-array shape.
+         *
+         * Order:
+         *   1. Try v2 wrapper [ApiHistoryFile] — `{schemaVersion, messages}`.
+         *   2. On failure, fall back to v1 bare array `List<ApiMessage>` and
+         *      synthesize an implicit `schemaVersion = 1`.
+         *   3. On both failing, return [emptyList] (corrupted file — better
+         *      than crashing the session UI).
+         *
+         * Phase 4 of multimodal-agent plan.
+         */
         fun loadApiHistory(sessionDir: File): List<ApiMessage> {
             val file = File(sessionDir, "api_conversation_history.json")
             if (!file.exists()) return emptyList()
-            return try {
-                compactJson.decodeFromString<List<ApiMessage>>(file.readText())
-            } catch (_: Exception) { emptyList() }
+            val text = file.readText()
+            // Try v2 wrapper first
+            return runCatching {
+                compactJson.decodeFromString(ApiHistoryFile.serializer(), text).messages
+            }.recoverCatching {
+                // v1 fallback: bare JSON array
+                compactJson.decodeFromString(ListSerializer(ApiMessage.serializer()), text)
+            }.getOrElse {
+                emptyList()
+            }
         }
 
         fun loadGlobalIndex(baseDir: File): List<HistoryItem> {

@@ -26,7 +26,16 @@ data class ChatMessage(
     val role: String, // "system", "user", "assistant", "tool"
     val content: String? = null,
     @SerialName("tool_calls") val toolCalls: List<ToolCall>? = null,
-    @SerialName("tool_call_id") val toolCallId: String? = null
+    @SerialName("tool_call_id") val toolCallId: String? = null,
+    /**
+     * Multimodal sibling field. Image-bearing turns populate this with one or
+     * more [ContentPart] entries; existing text-only call sites leave it null.
+     * Routing logic (Phase 6) inspects [parts] to decide which "brain" to use.
+     *
+     * Phase 4 of multimodal-agent plan. Default null preserves backward compat
+     * with every current caller and serializer use.
+     */
+    val parts: List<ContentPart>? = null
 )
 
 @Serializable
