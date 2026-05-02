@@ -35,6 +35,19 @@ export interface AttachmentManagerSettings {
 
 export type ToastFn = (message: string, type?: 'info' | 'warning' | 'error') => void;
 
+/**
+ * Confirmation prompt for oversize images before lossy re-encode.
+ * Returns true to proceed with compression, false to cancel the entire attach.
+ *
+ * Falls back to `window.confirm` when not provided so the manager remains
+ * usable in test/harness environments. Production wires a styled modal.
+ */
+export type ConfirmFn = (
+  originalKB: number,
+  capKB: number,
+  filename: string,
+) => Promise<boolean>;
+
 declare global {
   interface Window {
     _attachmentExists?: (sha256: string) => Promise<{ exists: boolean }>;
@@ -46,15 +59,18 @@ export class AttachmentManager {
   private readonly toast: ToastFn;
   private readonly onChange: () => void;
   private settings: AttachmentManagerSettings;
+  private readonly confirmCompress: ConfirmFn;
 
   constructor(
     settings: AttachmentManagerSettings,
     onChange: () => void,
     toast: ToastFn,
+    confirmCompress?: ConfirmFn,
   ) {
     this.settings = settings;
     this.onChange = onChange;
     this.toast = toast;
+    this.confirmCompress = confirmCompress ?? defaultConfirm;
   }
 
   /** Hot-update settings (e.g. after the Settings dialog applies). */
@@ -75,20 +91,47 @@ export class AttachmentManager {
       this.toast(`At most ${this.settings.maxPerTurn} image(s) per turn.`, 'warning');
       return null;
     }
-    if (file.size > this.settings.maxBytes) {
-      const kb = Math.round(file.size / 1024);
-      const cap = Math.round(this.settings.maxBytes / 1024);
-      this.toast(`Image too large: ${kb} KB exceeds ${cap} KB cap.`, 'warning');
-      return null;
-    }
     if (!this.settings.mimeWhitelist.includes(file.type)) {
       this.toast(`Image type "${file.type || 'unknown'}" is not in the allowed list.`, 'warning');
       return null;
     }
 
+    // Oversize → ask the user before lossy re-encode. Cancel = abort the whole
+    // attach (no upload, no chip). Confirm = compress to JPEG-quality-0.85
+    // (with progressive resize) until under cap, then proceed with the result.
+    let workingFile: File = file;
+    let workingMime: string = file.type;
+    if (file.size > this.settings.maxBytes) {
+      const originalKB = Math.round(file.size / 1024);
+      const capKB = Math.round(this.settings.maxBytes / 1024);
+      const proceed = await this.confirmCompress(originalKB, capKB, file.name);
+      if (!proceed) {
+        return null;
+      }
+      try {
+        const compressed = await compressToJpegUnderCap(file, this.settings.maxBytes);
+        if (compressed.size > this.settings.maxBytes) {
+          this.toast(
+            `Could not compress "${file.name}" under ${capKB} KB cap (best effort: ${Math.round(compressed.size / 1024)} KB).`,
+            'error',
+          );
+          return null;
+        }
+        workingFile = compressed;
+        workingMime = 'image/jpeg';
+        this.toast(
+          `Compressed "${file.name}" from ${originalKB} KB to ${Math.round(compressed.size / 1024)} KB.`,
+          'info',
+        );
+      } catch (e) {
+        this.toast(`Could not compress image: ${(e as Error).message}`, 'error');
+        return null;
+      }
+    }
+
     let bytes: Uint8Array;
     try {
-      bytes = new Uint8Array(await file.arrayBuffer());
+      bytes = new Uint8Array(await workingFile.arrayBuffer());
     } catch (e) {
       this.toast(`Could not read image bytes: ${(e as Error).message}`, 'error');
       return null;
@@ -110,11 +153,11 @@ export class AttachmentManager {
       return existing;
     }
 
-    const thumbnailUrl = URL.createObjectURL(new Blob([bytes], { type: file.type }));
+    const thumbnailUrl = URL.createObjectURL(new Blob([bytes], { type: workingMime }));
     const att: PendingAttachment = {
       sha256,
-      mime: file.type,
-      size: file.size,
+      mime: workingMime,
+      size: bytes.byteLength,
       originalFilename: file.name,
       bytes,
       thumbnailUrl,
@@ -211,4 +254,91 @@ export class AttachmentManager {
       .map(b => b.toString(16).padStart(2, '0'))
       .join('');
   }
+}
+
+/**
+ * Default confirmation when the caller doesn't supply one. Production wires a
+ * styled modal; this is a fallback for tests/harness/dev.
+ */
+async function defaultConfirm(originalKB: number, capKB: number, filename: string): Promise<boolean> {
+  if (typeof window === 'undefined' || typeof window.confirm !== 'function') return false;
+  return window.confirm(
+    `"${filename}" is ${originalKB} KB, which exceeds the ${capKB} KB image cap.\n\n` +
+      `Compress it to JPEG so it fits? Compression is lossy — fine details may be reduced.\n\n` +
+      `OK = compress and attach. Cancel = skip this image (no upload).`,
+  );
+}
+
+/**
+ * Best-effort lossy re-encode to JPEG until the result is under `capBytes`.
+ *
+ * Strategy: progressively lower quality first, then progressively halve
+ * dimensions until the encoded result fits or we've exhausted the budget.
+ * Returns the smallest result obtained; the caller compares against the cap
+ * and surfaces an error if even the smallest pass is too large (e.g. an
+ * already-tiny image with absurd metadata bloat — extremely rare).
+ */
+async function compressToJpegUnderCap(file: File, capBytes: number): Promise<File> {
+  const bitmap = await createImageBitmap(file);
+  let { width, height } = bitmap;
+  const qualities = [0.85, 0.75, 0.65, 0.55, 0.45];
+  let best: Blob | null = null;
+
+  // Round 1: quality sweep at full resolution.
+  for (const q of qualities) {
+    const blob = await encodeJpeg(bitmap, width, height, q);
+    if (!best || blob.size < best.size) best = blob;
+    if (blob.size <= capBytes) {
+      bitmap.close?.();
+      return new File([blob], replaceExt(file.name, '.jpg'), { type: 'image/jpeg' });
+    }
+  }
+
+  // Round 2: halve dimensions repeatedly at quality 0.75 until under cap or
+  // dimensions get unreasonably small (≤ 256 px on the long side).
+  while (Math.max(width, height) > 256) {
+    width = Math.max(1, Math.round(width / 2));
+    height = Math.max(1, Math.round(height / 2));
+    const blob = await encodeJpeg(bitmap, width, height, 0.75);
+    if (!best || blob.size < best.size) best = blob;
+    if (blob.size <= capBytes) {
+      bitmap.close?.();
+      return new File([blob], replaceExt(file.name, '.jpg'), { type: 'image/jpeg' });
+    }
+  }
+
+  bitmap.close?.();
+  if (!best) throw new Error('compression produced no output');
+  return new File([best], replaceExt(file.name, '.jpg'), { type: 'image/jpeg' });
+}
+
+async function encodeJpeg(
+  bitmap: ImageBitmap,
+  width: number,
+  height: number,
+  quality: number,
+): Promise<Blob> {
+  const canvas =
+    typeof OffscreenCanvas !== 'undefined'
+      ? new OffscreenCanvas(width, height)
+      : Object.assign(document.createElement('canvas'), { width, height });
+  const ctx = (canvas as any).getContext('2d');
+  if (!ctx) throw new Error('2d canvas context unavailable');
+  ctx.drawImage(bitmap, 0, 0, width, height);
+  if ('convertToBlob' in canvas) {
+    return await (canvas as OffscreenCanvas).convertToBlob({ type: 'image/jpeg', quality });
+  }
+  // HTMLCanvasElement fallback
+  return await new Promise<Blob>((resolve, reject) => {
+    (canvas as HTMLCanvasElement).toBlob(
+      b => (b ? resolve(b) : reject(new Error('toBlob returned null'))),
+      'image/jpeg',
+      quality,
+    );
+  });
+}
+
+function replaceExt(name: string, newExt: string): string {
+  const dot = name.lastIndexOf('.');
+  return dot > 0 ? name.slice(0, dot) + newExt : name + newExt;
 }

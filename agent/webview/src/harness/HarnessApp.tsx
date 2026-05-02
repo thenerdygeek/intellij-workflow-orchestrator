@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { UsageIndicator } from '@/components/input/UsageIndicator';
 import { ModelPickerRow } from '@/components/input/InputBar';
 import { ChipPreview } from '@/components/input/ChipPreview';
-import type { PendingAttachment } from '@/components/input/AttachmentManager';
+import { AttachmentManager, type PendingAttachment } from '@/components/input/AttachmentManager';
 
 /**
  * Playwright harness — renders the three Phase 7 / Phase 5 UI components in
@@ -115,6 +115,15 @@ export function HarnessApp() {
   const [maxK, setMaxK] = useState(132);
   const [chips, setChips] = useState<PendingAttachment[]>(syntheticAttachments());
   const [enableImageInput, setEnableImageInput] = useState(true);
+
+  // §4 — oversize compression flow state
+  const [compressLog, setCompressLog] = useState<string[]>([]);
+  const [pendingPrompt, setPendingPrompt] = useState<{
+    originalKB: number;
+    capKB: number;
+    filename: string;
+    resolve: (proceed: boolean) => void;
+  } | null>(null);
 
   // Sync slider values to the mock bridge so UsageIndicator's polling sees them.
   useEffect(() => {
@@ -241,6 +250,123 @@ export function HarnessApp() {
         <p className="text-[10px]" style={{ color: 'var(--fg-muted, #9ca3af)' }}>
           Hover a chip to reveal the × button. Click × to remove.
         </p>
+      </section>
+
+      {/* ─────────── §4 Oversize compression flow ─────────── */}
+      <section data-testid="section-compress" className="space-y-3">
+        <h2 className="text-sm font-semibold">§4 Oversize image compression (v1.1)</h2>
+        <p className="text-[11px]" style={{ color: 'var(--fg-muted, #9ca3af)' }}>
+          Triggers <code>AttachmentManager.attachFile</code> with a synthetic
+          file 2× the cap. The harness wires a real <code>confirmCompress</code>
+          callback that pops the modal below — Cancel rejects without upload,
+          Compress proceeds (and may fail in jsdom because{' '}
+          <code>OffscreenCanvas</code> isn't available).
+        </p>
+        <button
+          data-testid="trigger-oversize-attach"
+          className="px-3 py-1.5 text-xs rounded border"
+          style={{ borderColor: 'var(--border, #2c2f33)' }}
+          onClick={async () => {
+            const settings = {
+              maxBytes: 1024,
+              mimeWhitelist: ['image/png', 'image/jpeg'],
+              maxPerTurn: 2,
+              enabled: true,
+            };
+            const log = (s: string) => setCompressLog(prev => [...prev, s]);
+            const mgr = new AttachmentManager(
+              settings,
+              () => {},
+              (msg, type) => log(`[${type ?? 'info'}] ${msg}`),
+              (originalKB, capKB, filename) => {
+                log(`prompt: ${filename} ${originalKB}KB > ${capKB}KB cap`);
+                return new Promise<boolean>(resolve => {
+                  setPendingPrompt({ originalKB, capKB, filename, resolve });
+                });
+              },
+            );
+            const oversize = new File(
+              [new Uint8Array(2048)],
+              'huge-screenshot.png',
+              { type: 'image/png' },
+            );
+            const result = await mgr.attachFile(oversize);
+            log(`attachFile returned: ${result === null ? 'null (rejected)' : 'attachment'}`);
+          }}
+        >
+          Trigger oversize attach
+        </button>
+        <div
+          data-testid="compress-log"
+          className="border rounded p-2 text-[11px] font-mono whitespace-pre"
+          style={{ borderColor: 'var(--border, #2c2f33)', minHeight: 80 }}
+        >
+          {compressLog.length === 0 ? '(no events yet)' : compressLog.join('\n')}
+        </div>
+        {pendingPrompt && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="harness-compress-title"
+            data-testid="harness-compress-modal"
+            className="fixed inset-0 z-50 flex items-center justify-center"
+            style={{ background: 'rgba(0,0,0,0.5)' }}
+            onClick={() => {
+              pendingPrompt.resolve(false);
+              setPendingPrompt(null);
+            }}
+          >
+            <div
+              className="rounded-md p-4 max-w-sm w-full mx-4 shadow-lg"
+              style={{
+                background: 'var(--bg, #1e1e1e)',
+                color: 'var(--fg, #cccccc)',
+                border: '1px solid var(--border, #2c2f33)',
+              }}
+              onClick={e => e.stopPropagation()}
+            >
+              <h3 id="harness-compress-title" className="text-sm font-semibold mb-2">
+                Image exceeds size cap
+              </h3>
+              <p className="text-xs mb-2" style={{ color: 'var(--fg-muted, #9ca3af)' }}>
+                <strong>{pendingPrompt.filename}</strong> is{' '}
+                <strong>{pendingPrompt.originalKB.toLocaleString()} KB</strong>, exceeds the{' '}
+                <strong>{pendingPrompt.capKB.toLocaleString()} KB</strong> cap.
+              </p>
+              <p className="text-xs mb-3" style={{ color: 'var(--fg-muted, #9ca3af)' }}>
+                Compress to JPEG so it fits? Compression is <em>lossy</em>.
+              </p>
+              <div className="flex justify-end gap-2 mt-3">
+                <button
+                  data-testid="harness-compress-cancel"
+                  onClick={() => {
+                    pendingPrompt.resolve(false);
+                    setPendingPrompt(null);
+                  }}
+                  className="px-3 py-1.5 text-xs rounded border"
+                  style={{ borderColor: 'var(--border, #2c2f33)' }}
+                >
+                  Cancel (skip image)
+                </button>
+                <button
+                  data-testid="harness-compress-confirm"
+                  onClick={() => {
+                    pendingPrompt.resolve(true);
+                    setPendingPrompt(null);
+                  }}
+                  className="px-3 py-1.5 text-xs rounded font-medium"
+                  style={{
+                    background: 'var(--accent, #60a5fa)',
+                    color: 'var(--bg, #1e1e1e)',
+                    border: '1px solid var(--accent, #60a5fa)',
+                  }}
+                >
+                  Compress &amp; attach
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </section>
     </div>
   );

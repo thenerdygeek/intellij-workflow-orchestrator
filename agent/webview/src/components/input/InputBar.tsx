@@ -609,6 +609,17 @@ export const InputBar = memo(function InputBar() {
   const [ticketQuery, setTicketQuery] = useState('');
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
 
+  // Phase 5/v1.1: oversize-image confirmation modal state. The
+  // AttachmentManager calls `confirmCompress(...)` when a file exceeds the
+  // configured cap; that promise resolves when the user clicks Compress (true)
+  // or Cancel (false). Cancel aborts the entire attach — no upload, no chip.
+  const [compressPrompt, setCompressPrompt] = useState<{
+    originalKB: number;
+    capKB: number;
+    filename: string;
+    resolve: (proceed: boolean) => void;
+  } | null>(null);
+
   // Phase 5: AttachmentManager owns the pending image list. We construct it
   // once per InputBar mount; the manager's `onChange` flips local state so
   // ChipPreview re-renders. `toast` flows into the existing chatStore toast
@@ -623,6 +634,10 @@ export const InputBar = memo(function InputBar() {
         const durationMs = type === 'error' ? 6000 : 3000;
         useChatStore.getState().showToast(msg, type, durationMs);
       },
+      (originalKB, capKB, filename) =>
+        new Promise<boolean>(resolve => {
+          setCompressPrompt({ originalKB, capKB, filename, resolve });
+        }),
     );
   }
 
@@ -1038,6 +1053,105 @@ export const InputBar = memo(function InputBar() {
       </div>
       {/* Phase 7 Task 7.2 — live token usage strip below the input */}
       <UsageIndicator />
+      {/* Phase 5/v1.1 — oversize-image compression confirmation modal */}
+      {compressPrompt && (
+        <CompressConfirmModal
+          originalKB={compressPrompt.originalKB}
+          capKB={compressPrompt.capKB}
+          filename={compressPrompt.filename}
+          onChoose={proceed => {
+            compressPrompt.resolve(proceed);
+            setCompressPrompt(null);
+          }}
+        />
+      )}
     </div>
   );
 });
+
+/**
+ * Compression confirmation dialog. Asks the user to either compress an
+ * oversize image to JPEG (lossy) or skip the attach entirely. There is no
+ * "X to dismiss" — both buttons are explicit so the AttachmentManager's
+ * promise always resolves with a definitive choice. Esc / outside-click =
+ * Cancel (skip).
+ */
+function CompressConfirmModal({
+  originalKB,
+  capKB,
+  filename,
+  onChoose,
+}: {
+  originalKB: number;
+  capKB: number;
+  filename: string;
+  onChoose: (proceed: boolean) => void;
+}) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onChoose(false);
+      if (e.key === 'Enter') onChoose(true);
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [onChoose]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="compress-confirm-title"
+      data-testid="compress-confirm-modal"
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.5)' }}
+      onClick={() => onChoose(false)}
+    >
+      <div
+        className="rounded-md p-4 max-w-sm w-full mx-4 shadow-lg"
+        style={{
+          background: 'var(--bg, #1e1e1e)',
+          color: 'var(--fg, #cccccc)',
+          border: '1px solid var(--border, #2c2f33)',
+        }}
+        onClick={e => e.stopPropagation()}
+      >
+        <h3 id="compress-confirm-title" className="text-sm font-semibold mb-2">
+          Image exceeds size cap
+        </h3>
+        <p className="text-xs mb-2" style={{ color: 'var(--fg-muted, #9ca3af)' }}>
+          <strong style={{ color: 'var(--fg)' }}>{filename}</strong> is{' '}
+          <strong style={{ color: 'var(--fg)' }}>{originalKB.toLocaleString()} KB</strong>, which exceeds the{' '}
+          <strong style={{ color: 'var(--fg)' }}>{capKB.toLocaleString()} KB</strong> cap.
+        </p>
+        <p className="text-xs mb-3" style={{ color: 'var(--fg-muted, #9ca3af)' }}>
+          Compress it to JPEG so it fits? Compression is <em>lossy</em> — fine details may be reduced.
+        </p>
+        <div className="flex justify-end gap-2 mt-3">
+          <button
+            type="button"
+            data-testid="compress-cancel"
+            onClick={() => onChoose(false)}
+            className="px-3 py-1.5 text-xs rounded border"
+            style={{ borderColor: 'var(--border, #2c2f33)' }}
+          >
+            Cancel (skip image)
+          </button>
+          <button
+            type="button"
+            data-testid="compress-confirm"
+            onClick={() => onChoose(true)}
+            className="px-3 py-1.5 text-xs rounded font-medium"
+            style={{
+              background: 'var(--accent, #60a5fa)',
+              color: 'var(--bg, #1e1e1e)',
+              border: '1px solid var(--accent, #60a5fa)',
+            }}
+            autoFocus
+          >
+            Compress &amp; attach
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

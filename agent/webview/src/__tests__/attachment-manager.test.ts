@@ -101,12 +101,15 @@ describe('AttachmentManager — validation', () => {
     expect(mgr.list()).toHaveLength(0);
   });
 
-  it('rejects oversize files', async () => {
+  it('oversize files trigger the confirm prompt; cancel rejects without a toast', async () => {
+    // v1.1: hard-cap rejection replaced by an explicit confirm prompt — see
+    // the "oversize image confirmation" suite below for the full contract.
+    // This case pins the no-confirm-fn fallback (defaults to window.confirm,
+    // which jsdom returns false from by default → rejection).
     const toast = vi.fn();
     const mgr = new AttachmentManager(DEFAULT_SETTINGS, vi.fn(), toast);
     const result = await mgr.attachFile(makeFile('big.png', 'image/png', 2048));
     expect(result).toBeNull();
-    expect(toast).toHaveBeenCalledWith(expect.stringMatching(/too large/i), 'warning');
     expect(mgr.list()).toHaveLength(0);
   });
 
@@ -294,5 +297,48 @@ describe('AttachmentManager — settings hot-update', () => {
     const result = await mgr.attachFile(makeFile('a.png', 'image/png', 100, new Uint8Array([1])));
     expect(result).toBeNull();
     expect(toast).toHaveBeenCalledWith(expect.stringMatching(/disabled/i), 'warning');
+  });
+});
+
+describe('AttachmentManager — oversize image confirmation (v1.1)', () => {
+  it('cancel from confirm prompt aborts the entire attach (no chip, no upload)', async () => {
+    const toast = vi.fn();
+    const onChange = vi.fn();
+    const confirmFn = vi.fn().mockResolvedValue(false);
+    const mgr = new AttachmentManager(DEFAULT_SETTINGS, onChange, toast, confirmFn);
+    // 2048-byte file vs 1024-byte cap — triggers the confirm prompt.
+    const result = await mgr.attachFile(makeFile('big.png', 'image/png', 2048));
+    expect(result).toBeNull();
+    expect(confirmFn).toHaveBeenCalledWith(2, 1, 'big.png');
+    expect(mgr.list()).toHaveLength(0);
+    expect(onChange).not.toHaveBeenCalled();
+    // No "too large" toast either — the confirm modal IS the user surface.
+    expect(toast).not.toHaveBeenCalledWith(expect.stringMatching(/too large/i), expect.anything());
+  });
+
+  it('confirm from prompt invokes the compression path before attaching', async () => {
+    const toast = vi.fn();
+    const confirmFn = vi.fn().mockResolvedValue(true);
+    const mgr = new AttachmentManager(DEFAULT_SETTINGS, vi.fn(), toast, confirmFn);
+    // jsdom lacks createImageBitmap / OffscreenCanvas, so the actual encode
+    // path will throw. We only verify (a) the confirm callback fires with
+    // the right args and (b) the manager surfaces an error toast (not the
+    // hard-cap rejection toast) when re-encode itself fails.
+    const result = await mgr.attachFile(makeFile('big.png', 'image/png', 2048));
+    expect(confirmFn).toHaveBeenCalledWith(2, 1, 'big.png');
+    expect(result).toBeNull();
+    expect(toast).toHaveBeenCalledWith(
+      expect.stringMatching(/could not compress/i),
+      'error',
+    );
+  });
+
+  it('under-cap files skip the confirm prompt entirely', async () => {
+    const toast = vi.fn();
+    const confirmFn = vi.fn();
+    const mgr = new AttachmentManager(DEFAULT_SETTINGS, vi.fn(), toast, confirmFn);
+    const result = await mgr.attachFile(makeFile('small.png', 'image/png', 512));
+    expect(result).not.toBeNull();
+    expect(confirmFn).not.toHaveBeenCalled();
   });
 });
