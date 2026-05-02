@@ -12,6 +12,51 @@
 
 **Phase 1+4 ordering decision:** **Keep separate** (one commit per phase). The forward-compatible read in Phase 1 is small (one polymorphic serializer + tests), but isolating it in its own commit gives a clean git-blame point for future "when did defensive parsing land?" debugging. Single-user soak benefit is negligible, but audit-trail benefit is real for ~40 lines of cost.
 
+## Plan Revision Log (2026-05-02 — Opus plan-review iteration)
+
+The Opus plan-reviewer issued REJECT with detailed findings backed by 74 file reads. All critical + important + test-gap issues are addressed below. Summary of changes by phase:
+
+**Pre-flight:** Added P11 (CSP value verification), P12 (`ModelFallbackManager` location + fallback chain).
+
+**Phase 2:** Replaced phantom `httpClientFactory.client()`/`baseUrl()`/`AuthProvider` with real APIs (`HttpClientFactory.clientFor(ServiceType.SOURCEGRAPH)`, `tokenProvider: () -> String?` lambda, explicit `baseUrl: String` ctor param). Dropped `pluginSettings.getCurrentTier()` — hard-coded `"enterprise"` for v1. Made `maxInputTokensFor(modelRef): Int` public. Added Phase 2 to build-cache trap list.
+
+**Phase 3:** Same factory/auth fixes as Phase 2. Fixed `CodyStreamSseParser` cumulative-`completion` handling (previously appended; now replaces — distinguish by frame shape).
+
+**Phase 4:** Replaced phantom `MessageStateHandler.load()/append()/save()` with real `MessageStateHandler.Companion.loadApiHistory()` (static) + suspend `addToApiConversationHistory()` + `saveBoth()`. Fixed `ApiRole` JSON casing (use uppercase `"USER"` per existing serialization). Created concrete `ApiHistoryFile` data class with v1 fallback. Dropped no-op "migration of dead-code Image variant" test (no v1 sessions on disk have it). Added atomicity section: attachment-first, JSON-second; sweep-on-load for orphans. Added Phase 4 to build-cache trap list.
+
+**Phase 5:**
+  - **CSP fix added as new Task 5.0** (must precede all others): modify `CefResourceSchemeHandler.kt` `connect-src 'none'` → `connect-src 'self' http://workflow-agent`. Without this fix, all subsequent Phase 5 tasks silently fail at smoke test.
+  - Fixed `parentId="workflow.orchestrator"` (not `com.workflow.orchestrator.settings.workflow`).
+  - Fixed PluginSettings property syntax: `by property(5_242_880L)`. List field uses `by stringList()` per existing convention.
+  - Dropped phantom `:agent:webview:build` invocation; verifyPlugin/runIde already chain `buildWebview` via `processResources`.
+  - Paperclip placement: extend the existing `Plus` DropdownMenu in `InputBar.tsx:423` with a new "Image" menu item, NOT a sibling button (matches existing UI pattern for File/Folder/Symbol/Ticket/Skill).
+  - Added explicit Task 5.7a HEIC probe sub-task with PASS/FAIL criterion.
+  - Added unit tests for `AttachmentManager` validation (TS) + `AttachmentUploadHandler` validation (Kotlin).
+  - `AttachmentUploadHandler.runBlocking` retained but documented: per-request bytes bounded by `imageMaxBytes` (5 MB), local disk write — synchronous on CEF I/O thread is acceptable.
+
+**Phase 6:**
+  - **Moved `BrainRouter` from `:core` to `:agent`** — routing is agent-loop-specific; `:core` cannot import `:agent`'s `AttachmentStore` (DAG violation). Path now `agent/src/main/kotlin/com/workflow/orchestrator/agent/loop/BrainRouter.kt`.
+  - **Added `BrainRouter.chatStream(messages, tools, onChunk)`** to mirror the existing `chatStream` signature. `AgentLoop.kt:643` calls `chatStream`, not `chat` — non-streaming was a non-starter. Streaming variant routes the same three branches: text/text+tools to existing `openAiCompatBrain.chatStream`, image-only to `streamClient.chat(req, onDelta = onChunk)`, image+tools to two-step (step 1 streams a synthetic "Analyzing image…" message via `onChunk`, then step 2 streams the real reply).
+  - Fixed tests: `role = "user"` (String), `ToolDefinition(type = "function", function = FunctionDefinition(...))` (real type).
+  - Fixed step-1 logic bug in `replacingLastImageBearingTurnWith`.
+  - Concretely addressed `ModelFallbackManager`: it exists at `agent/src/main/kotlin/com/workflow/orchestrator/agent/loop/ModelFallbackManager.kt`. Added Task 6.3a to add `filterByVisionCapability(payload)` to its chain.
+  - Fixed assistant message component path: `agent/webview/src/components/chat/AgentMessage.tsx` (NOT `messages/AssistantMessage.tsx`).
+
+**Phase 7:**
+  - Added explicit Task 7.0 to add `currentInputTokens(): Int`, `currentModelRef(): String` public methods to `ContextManager` and `AgentCefPanel` respectively.
+  - Replaced 1Hz polling with push: `bridgeDispatcher` calls `window._updateContextUsage(json)` after each turn completes. Eliminates the CEF I/O storm.
+  - Added unit test for indicator color-shift pure function.
+  - Bridge handler thread safety: handlers use `kotlinx.coroutines.runBlocking { mutex.withLock { read state } }` against the existing `ContextManager` mutex (or `@Volatile` on `lastPromptTokens` — pick one during implementation).
+
+**Test coverage gaps:**
+  - Phase 4: dropped the no-op `ContentBlock.Image` migration test (it was always going to assert a tautology).
+  - Phase 5: added 3 unit tests covering paste/drag-drop event handling logic + 1 manual smoke item for HEIC probe.
+  - Phase 7: added unit test for indicator color logic (pure function, easy assert).
+
+**Wire format / SSE parser bug:** `CodyStreamSseParser` previously appended both `deltaText` AND `completion` fields, which would double-count for api-version=1 cumulative responses. Fix: parser tracks the response shape on first frame; if `completion` field present, treat as cumulative (replace each time); if `deltaText` present, treat as incremental (append). Documented in Phase 3 Task 3.3.
+
+If the user wants to challenge any decision, the original (rejected) plan is preserved in commit `e59cd7e6` for reference.
+
 ---
 
 ## Pre-flight checklist (run BEFORE Phase 1 starts)
@@ -90,7 +135,22 @@ cd /Users/subhankarhalder/Desktop/Programs/scripts/IntelijPlugin
 ```
 Expected: PASS. If RED, fix or skip those tests before starting; we don't want to inherit pre-existing failures.
 
-If all 10 steps green, proceed to Phase 1. If any RED, surface to user before dispatching the first implementation subagent.
+- [ ] **Step P11: Verify CSP `connect-src` value in `CefResourceSchemeHandler.kt`.**
+
+```bash
+grep -n "connect-src\|Content-Security-Policy" /Users/subhankarhalder/Desktop/Programs/scripts/IntelijPlugin/agent/src/main/kotlin/com/workflow/orchestrator/agent/ui/CefResourceSchemeHandler.kt
+```
+Expected: a line containing `connect-src 'none'` (or similar restrictive value). Phase 5 Task 5.0 must relax this. If the value is already permissive, Task 5.0 is a no-op confirmation.
+
+- [ ] **Step P12: Verify `ModelFallbackManager` exists; read its fallback chain.**
+
+```bash
+find /Users/subhankarhalder/Desktop/Programs/scripts/IntelijPlugin/agent -name "ModelFallbackManager.kt"
+grep -n "fallbackChain\|fallback\|nextModel" /Users/subhankarhalder/Desktop/Programs/scripts/IntelijPlugin/agent/src/main/kotlin/com/workflow/orchestrator/agent/loop/ModelFallbackManager.kt
+```
+Expected: file exists; chain logic visible. Phase 6 Task 6.3a will add a vision-capability filter to it.
+
+If all 12 steps green, proceed to Phase 1. If any RED, surface to user before dispatching the first implementation subagent.
 
 ---
 
@@ -108,7 +168,9 @@ If all 10 steps green, proceed to Phase 1. If any RED, surface to user before di
 | Two-step workaround step 1 succeeds with abstaining description ("I can't see this image"), step 2 issues garbled tool call based on garbage description | 6 | High | Phase 6's `twoStepWorkaround` runs an explicit abstention check on step-1 output (string match against known phrases); aborts before step 2 with user-visible toast. |
 | `ModelFallbackManager` swaps to non-vision model mid-iteration of an image-bearing turn | 6 | Medium | Phase 6's fallback chain filters to vision-capable models when in-flight payload contains image parts. Failure-fast with same vision-disabled toast from Decision 3. |
 | New session JSON schema (`schemaVersion: 2`) crashes existing v1-aware plugin if user downgrades | 1, 4 | High (mitigated) | Phase 1 ships forward-compatible reader BEFORE Phase 4 writes any v2 data. Single-user threat model means no real soak, but audit trail in git is preserved. |
-| Build cache returns stale `Function0` bytecode for `suspend`-typed lambdas after signature change | 2, 3, 6 | Medium | All three phases run tests with `--no-build-cache --rerun-tasks` per CLAUDE.md "Build-cache trap" note. |
+| Build cache returns stale `Function0` bytecode for `suspend`-typed lambdas after signature change | 2, 3, 4, 6 | Medium | All four phases run tests with `--no-build-cache --rerun-tasks` per CLAUDE.md "Build-cache trap" note. Phase 4 added because `AttachmentStore.store()`/`read()` introduce new suspend signatures. |
+| **Content-Security-Policy `connect-src 'none'` blocks the planned `fetch()` upload** | 5 | **CRITICAL — was missed by initial plan** | Phase 5 Task 5.0 (NEW) relaxes the CSP to allow `connect-src 'self' http://workflow-agent`. Without this fix, all subsequent Phase 5 tasks ship code that silently fails at smoke test (the chip appears, but bytes never reach disk; subsequent Send produces a missing-attachment error). |
+| Cross-file write atomicity: attachment file written but JSON ref insert fails (or vice versa) | 4 | Medium | Order: (1) write attachment to `attachments/<sha256>.<ext>` first via `AttachmentStore.store` (atomic-move pattern); (2) only after success, append JSON ref via `MessageStateHandler.addToApiConversationHistory`. Failure at step 2 leaves an orphan file (benign — sweep on next session load detects unreferenced files in `attachments/` and either logs or deletes per a one-line config). Failure at step 1 leaves no JSON ref (no UI corruption). Tests at Phase 4 Task 4.5 cover both failure paths. |
 
 ---
 
@@ -543,14 +605,15 @@ data class ClientConfig(
 // ModelCatalogService.kt
 class ModelCatalogService(
     private val httpClientFactory: HttpClientFactory,
-    private val authProvider: AuthProvider,
+    private val baseUrl: String,                              // e.g. ConnectionSettings.sourcegraphUrl
+    private val tokenProvider: () -> String?,                 // matches OpenAiCompatBrain pattern
     private val cacheTtl: Duration = Duration.ofHours(1)
 ) {
     suspend fun getCatalog(force: Boolean = false): ModelCatalog?
     suspend fun getClientConfig(force: Boolean = false): ClientConfig?
 
     fun getDefaultChatModel(): String?                    // from cached catalog; null if not loaded
-    fun getContextWindow(modelRef: String, tier: String): ContextWindow?
+    fun getContextWindow(modelRef: String, tier: String = "enterprise"): ContextWindow?
     fun supportsVision(modelRef: String): Boolean
     fun supportsTools(modelRef: String): Boolean
     fun getStatus(modelRef: String): String?
@@ -559,6 +622,10 @@ class ModelCatalogService(
     /** Force-refresh both endpoints in parallel. Used by Settings "Refresh capabilities" button. */
     suspend fun refresh()
 }
+
+// Note: tier defaults to "enterprise" hard-coded for v1. The plan deferred a
+// proper `pluginSettings.getCurrentTier()` setting to v2 — single-user is on
+// enterprise per probe baseline. Add a TODO comment in the service code.
 ```
 
 ### Task 2.1: Create the DTO classes
@@ -606,8 +673,9 @@ class ModelCatalogServiceTest {
     fun setUp() {
         server = MockWebServer().apply { start() }
         service = ModelCatalogService(
-            httpClientFactory = FakeHttpClientFactory(server.url("/").toString()),
-            authProvider = FakeAuthProvider("sgp_test_token")
+            httpClientFactory = FakeHttpClientFactory(),
+            baseUrl = server.url("/").toString(),
+            tokenProvider = { "sgp_test_token" }
         )
     }
 
@@ -736,9 +804,12 @@ class ModelCatalogServiceTest {
 }
 
 // Test fakes — adjust path to wherever test fakes live in this codebase
-class FakeHttpClientFactory(val baseUrl: String) : HttpClientFactory { /* impl */ }
-class FakeAuthProvider(private val token: String) : AuthProvider {
-    override fun getToken(): String = token
+class FakeHttpClientFactory : HttpClientFactory {
+    override fun clientFor(service: ServiceType): OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(5, TimeUnit.SECONDS)
+        .build()
+    // Implement other HttpClientFactory methods as no-ops or delegate as needed
 }
 ```
 
@@ -773,7 +844,8 @@ import java.time.Instant
 
 class ModelCatalogService(
     private val httpClientFactory: HttpClientFactory,
-    private val authProvider: AuthProvider,
+    private val baseUrl: String,
+    private val tokenProvider: () -> String?,
     private val cacheTtl: Duration = Duration.ofHours(1)
 ) {
     private val json = Json { ignoreUnknownKeys = true }
@@ -836,10 +908,11 @@ class ModelCatalogService(
         at != null && Duration.between(at, Instant.now()) < cacheTtl
 
     private suspend fun fetchCatalogFromGateway(): ModelCatalog? = withContext(Dispatchers.IO) {
-        val client = httpClientFactory.client()
+        val client = httpClientFactory.clientFor(ServiceType.SOURCEGRAPH)
+        val token = tokenProvider() ?: return@withContext null
         val req = Request.Builder()
-            .url(httpClientFactory.baseUrl() + "/.api/modelconfig/supported-models.json")
-            .header("Authorization", "token ${authProvider.getToken()}")
+            .url(baseUrl.trimEnd('/') + "/.api/modelconfig/supported-models.json")
+            .header("Authorization", "token $token")
             .build()
         runCatching {
             client.newCall(req).execute().use { resp ->
@@ -851,10 +924,11 @@ class ModelCatalogService(
     }
 
     private suspend fun fetchClientConfigFromGateway(): ClientConfig? = withContext(Dispatchers.IO) {
-        val client = httpClientFactory.client()
+        val client = httpClientFactory.clientFor(ServiceType.SOURCEGRAPH)
+        val token = tokenProvider() ?: return@withContext null
         val req = Request.Builder()
-            .url(httpClientFactory.baseUrl() + "/.api/client-config")
-            .header("Authorization", "token ${authProvider.getToken()}")
+            .url(baseUrl.trimEnd('/') + "/.api/client-config")
+            .header("Authorization", "token $token")
             .build()
         runCatching {
             client.newCall(req).execute().use { resp ->
@@ -1087,7 +1161,8 @@ class CodyStreamSseParser {
 // SourcegraphCompletionsStreamClient.kt
 class SourcegraphCompletionsStreamClient(
     private val httpClientFactory: HttpClientFactory,
-    private val authProvider: AuthProvider,
+    private val baseUrl: String,
+    private val tokenProvider: () -> String?,
     private val modelCatalogService: ModelCatalogService,
 ) {
     /** Returns the assembled assistant text after streaming completes. */
@@ -1188,7 +1263,7 @@ class CodyStreamSseParserTest {
     }
 
     @Test
-    fun `falls back to completion field for api-version 1 cumulative payloads`() = runBlocking {
+    fun `cumulative completion field emits TextReplacement, not TextDelta`() = runBlocking {
         val sse = """
             event: completion
             data: {"completion":"first"}
@@ -1202,9 +1277,11 @@ class CodyStreamSseParserTest {
         """.trimIndent()
         val parts = mutableListOf<CodyStreamSseParser.ParseResult>()
         parser.parse(reader(sse)) { parts.add(it) }
-        // Cumulative — last frame replaces, doesn't append
-        val texts = parts.filterIsInstance<CodyStreamSseParser.ParseResult.TextDelta>()
-        assertEquals("first second", texts.last().text)
+        val replacements = parts.filterIsInstance<CodyStreamSseParser.ParseResult.TextReplacement>()
+        val deltas = parts.filterIsInstance<CodyStreamSseParser.ParseResult.TextDelta>()
+        assertEquals(2, replacements.size)
+        assertEquals(0, deltas.size)
+        assertEquals("first second", replacements.last().text)
     }
 
     @Test
@@ -1255,7 +1332,10 @@ import java.io.BufferedReader
 class CodyStreamSseParser {
 
     sealed interface ParseResult {
+        /** Incremental delta — caller appends to accumulated text. */
         data class TextDelta(val text: String) : ParseResult
+        /** Cumulative full text (api-version 1) — caller REPLACES accumulated text. */
+        data class TextReplacement(val text: String) : ParseResult
         data object StreamDone : ParseResult
         data class Error(val message: String) : ParseResult
     }
@@ -1266,7 +1346,15 @@ class CodyStreamSseParser {
      *   1. event: done
      *   2. data: [DONE]
      *   3. EOF on the reader
-     * Whichever is first wins. Each ParseResult is delivered via [onResult].
+     * Whichever is first wins.
+     *
+     * Frame shape detection:
+     *   - {"deltaText": "..."}   → incremental delta; emit TextDelta(text) (caller appends)
+     *   - {"completion": "..."}  → cumulative full text (api-version 1); emit TextReplacement(text)
+     *                              caller REPLACES accumulated text, doesn't append
+     *
+     * Mixed frames are not expected on a real gateway but the parser handles each
+     * frame on its own merits (no global mode-switch).
      */
     suspend fun parse(
         reader: BufferedReader,
@@ -1295,7 +1383,7 @@ class CodyStreamSseParser {
                         }.onSuccess { frame ->
                             when {
                                 frame.deltaText != null -> onResult(ParseResult.TextDelta(frame.deltaText))
-                                frame.completion != null -> onResult(ParseResult.TextDelta(frame.completion))
+                                frame.completion != null -> onResult(ParseResult.TextReplacement(frame.completion))
                             }
                         }
                         // Malformed JSON: ignore (defensive — gateway corruption shouldn't crash agent)
@@ -1347,8 +1435,9 @@ class SourcegraphCompletionsStreamClientTest {
         server = MockWebServer().apply { start() }
         fakeCatalog = FakeModelCatalogService(latestApiVersion = 8)
         client = SourcegraphCompletionsStreamClient(
-            httpClientFactory = FakeHttpClientFactory(server.url("/").toString()),
-            authProvider = FakeAuthProvider("sgp_test"),
+            httpClientFactory = FakeHttpClientFactory(),
+            baseUrl = server.url("/").toString(),
+            tokenProvider = { "sgp_test" },
             modelCatalogService = fakeCatalog
         )
     }
@@ -1465,7 +1554,8 @@ class HttpException(val statusCode: Int, message: String) : RuntimeException(mes
 
 class SourcegraphCompletionsStreamClient(
     private val httpClientFactory: HttpClientFactory,
-    private val authProvider: AuthProvider,
+    private val baseUrl: String,
+    private val tokenProvider: () -> String?,
     private val modelCatalogService: ModelCatalogService,
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = false }
@@ -1476,19 +1566,20 @@ class SourcegraphCompletionsStreamClient(
         onDelta: suspend (String) -> Unit = {},
     ): CompletionStreamResult = withContext(Dispatchers.IO) {
         val apiVersion = modelCatalogService.getLatestStreamApiVersion()
-        val url = "${httpClientFactory.baseUrl()}/.api/completions/stream?api-version=$apiVersion"
+        val url = "${baseUrl.trimEnd('/')}/.api/completions/stream?api-version=$apiVersion"
         val body = json.encodeToString(CompletionStreamRequest.serializer(), request)
             .toRequestBody("application/json; charset=utf-8".toMediaType())
+        val token = tokenProvider() ?: throw IllegalStateException("no Sourcegraph token configured")
         val req = Request.Builder()
             .url(url)
-            .header("Authorization", "token ${authProvider.getToken()}")
+            .header("Authorization", "token $token")
             .header("Accept", "text/event-stream")
             .header("Content-Type", "application/json; charset=utf-8")
             .post(body)
             .build()
 
         val started = System.currentTimeMillis()
-        httpClientFactory.client().newCall(req).execute().use { resp ->
+        httpClientFactory.clientFor(ServiceType.SOURCEGRAPH).newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) {
                 val errBody = resp.body?.string()?.take(500) ?: ""
                 throw HttpException(resp.code, "stream endpoint returned ${resp.code}: $errBody")
@@ -1501,6 +1592,20 @@ class SourcegraphCompletionsStreamClient(
                     is CodyStreamSseParser.ParseResult.TextDelta -> {
                         accumulated.append(result.text)
                         onDelta(result.text)
+                    }
+                    is CodyStreamSseParser.ParseResult.TextReplacement -> {
+                        // api-version 1 cumulative: compute the diff between previous
+                        // accumulated text and this new full text; emit only the new tail
+                        // via onDelta so callers see incremental updates either way.
+                        val newTail = if (result.text.startsWith(accumulated.toString())) {
+                            result.text.substring(accumulated.length)
+                        } else {
+                            // Defensive: gateway sent non-cumulative replacement — emit full
+                            result.text
+                        }
+                        accumulated.clear()
+                        accumulated.append(result.text)
+                        if (newTail.isNotEmpty()) onDelta(newTail)
                     }
                     is CodyStreamSseParser.ParseResult.StreamDone -> {
                         // No-op; loop will exit naturally
@@ -1942,34 +2047,39 @@ class SchemaMigrationTest {
 
     @TempDir lateinit var tempDir: Path
 
+    // NOTE: The real MessageStateHandler signature is
+    //   MessageStateHandler(baseDir: File, sessionId: String, taskText: String)
+    // and it loads via a static companion: MessageStateHandler.loadApiHistory(sessionDir: File).
+    // Tests use the static path because it doesn't require constructing a full session.
+    // Note: ApiRole is enum {USER, ASSISTANT}; default kotlinx-serialization uses
+    // the constant name (UPPERCASE). Tests use "USER", not "user".
+
     @Test
-    fun `v1 session JSON loads cleanly via v2-aware reader`() {
+    fun `v1 session JSON (List shape) loads cleanly via v2-aware reader`() {
+        // v1 sessions on disk are a bare JSON array (no wrapper object, no schemaVersion)
         val v1Json = """
-            {
-              "messages": [{
-                "role": "user",
-                "content": [
-                  {"type": "text", "text": "hello"}
-                ]
-              }]
-            }
+            [{
+              "role": "USER",
+              "content": [
+                {"type": "text", "text": "hello"}
+              ]
+            }]
         """.trimIndent()
-        val sessionFile = tempDir.resolve("api_conversation_history.json")
-        Files.writeString(sessionFile, v1Json)
-        val handler = MessageStateHandler(sessionDir = tempDir)
-        val msgs = handler.load()
+        val sessionDir = tempDir.resolve("sessions/v1session").also { Files.createDirectories(it) }
+        Files.writeString(sessionDir.resolve("api_conversation_history.json"), v1Json)
+        val msgs = MessageStateHandler.loadApiHistory(sessionDir.toFile())
         assertEquals(1, msgs.size)
         assertEquals(1, msgs[0].content.size)
         assertTrue(msgs[0].content[0] is ContentBlock.Text)
     }
 
     @Test
-    fun `v2 session JSON with ImageRef loads via v2 reader`() {
+    fun `v2 session JSON (wrapper object with schemaVersion) loads with ImageRef intact`() {
         val v2Json = """
             {
               "schemaVersion": 2,
               "messages": [{
-                "role": "user",
+                "role": "USER",
                 "content": [
                   {"type": "image_url_ref", "sha256": "abc", "mime": "image/png", "size": 100, "originalFilename": "x.png"},
                   {"type": "text", "text": "what is this?"}
@@ -1977,10 +2087,9 @@ class SchemaMigrationTest {
               }]
             }
         """.trimIndent()
-        val sessionFile = tempDir.resolve("api_conversation_history.json")
-        Files.writeString(sessionFile, v2Json)
-        val handler = MessageStateHandler(sessionDir = tempDir)
-        val msgs = handler.load()
+        val sessionDir = tempDir.resolve("sessions/v2session").also { Files.createDirectories(it) }
+        Files.writeString(sessionDir.resolve("api_conversation_history.json"), v2Json)
+        val msgs = MessageStateHandler.loadApiHistory(sessionDir.toFile())
         assertEquals(2, msgs[0].content.size)
         assertTrue(msgs[0].content[0] is ContentBlock.ImageRef)
         val ref = msgs[0].content[0] as ContentBlock.ImageRef
@@ -1988,37 +2097,14 @@ class SchemaMigrationTest {
     }
 
     @Test
-    fun `legacy inline-base64 ContentBlock_Image migrates to ImageRef on first read`() {
-        // Simulate a session that was written with the dead-code Image(mediaType, data) variant
-        val legacyJson = """
-            {
-              "messages": [{
-                "role": "user",
-                "content": [
-                  {"type": "image", "mediaType": "image/png", "data": "aGVsbG8="}
-                ]
-              }]
-            }
-        """.trimIndent()
-        Files.writeString(tempDir.resolve("api_conversation_history.json"), legacyJson)
-        val handler = MessageStateHandler(sessionDir = tempDir)
-        val msgs = handler.load()
-        // Either the old Image(...) is read but flagged for migration on next write,
-        // OR the reader actively migrates and writes ImageRef. Choose one path:
-        // Implementation Decision: read-as-deprecated, do NOT auto-write. Migration
-        // happens only when the user touches the session.
-        val block = msgs[0].content[0]
-        assertTrue(
-            block is ContentBlock.Image || block is ContentBlock.ImageRef,
-            "Got ${block::class}"
+    fun `writer emits schemaVersion 2 in new sessions`() = runBlocking {
+        val baseDir = tempDir.resolve("base").toFile().apply { mkdirs() }
+        val handler = MessageStateHandler(baseDir = baseDir, sessionId = "newsession", taskText = "test")
+        handler.addToApiConversationHistory(
+            ApiMessage(role = ApiRole.USER, content = listOf(ContentBlock.Text("hi")))
         )
-    }
-
-    @Test
-    fun `writer emits schemaVersion 2 in new sessions`() {
-        val handler = MessageStateHandler(sessionDir = tempDir)
-        handler.append(ApiMessage(role = "user", content = listOf(ContentBlock.Text("hi"))))
-        val written = Files.readString(tempDir.resolve("api_conversation_history.json"))
+        handler.saveBoth()  // explicit flush
+        val written = Files.readString(handler.apiConversationHistoryPath())
         assertTrue(written.contains("\"schemaVersion\":2"), "Expected schemaVersion field, got: $written")
     }
 }
@@ -2036,38 +2122,58 @@ Expected: at least one test FAIL.
 **Files:**
 - Modify: `agent/src/main/kotlin/com/workflow/orchestrator/agent/session/MessageStateHandler.kt`
 
-- [ ] **Step 1: Add `schemaVersion: Int = 2` field to the on-disk session shape.**
+- [ ] **Step 1: Add the `ApiHistoryFile` wrapper data class.**
 
-Find the data class that wraps the session file (e.g. `SessionState` or similar). Add:
+The existing on-disk format is a bare JSON array `[ApiMessage, ApiMessage, ...]` (no wrapper object). v2 introduces a wrapper. Add at top of `MessageStateHandler.kt`:
 
 ```kotlin
 @Serializable
-data class SessionFile(
-    val schemaVersion: Int = 1,    // default 1 for backward compat reading
+data class ApiHistoryFile(
+    val schemaVersion: Int = 1,
     val messages: List<ApiMessage>
 )
 ```
 
-- [ ] **Step 2: Update `load()` to handle missing schemaVersion**
-
-Since `default = 1`, deserialization of a v1 file without the field assigns 1 automatically. v2 files explicitly set it.
-
-- [ ] **Step 3: Update `save()` to emit `schemaVersion: 2`**
+- [ ] **Step 2: Update `MessageStateHandler.Companion.loadApiHistory(sessionDir: File): List<ApiMessage>` to handle both shapes.**
 
 ```kotlin
-fun save() {
-    val payload = SessionFile(schemaVersion = 2, messages = currentMessages)
-    val jsonString = json.encodeToString(SessionFile.serializer(), payload)
-    AtomicFileWriter.write(sessionFile, jsonString)
+companion object {
+    @JvmStatic
+    fun loadApiHistory(sessionDir: File): List<ApiMessage> {
+        val file = File(sessionDir, "api_conversation_history.json")
+        if (!file.exists()) return emptyList()
+        val text = file.readText()
+        // Try v2 wrapper first; fall back to v1 bare array
+        return runCatching {
+            compactJson.decodeFromString(ApiHistoryFile.serializer(), text).messages
+        }.recoverCatching {
+            compactJson.decodeFromString(ListSerializer(ApiMessage.serializer()), text)
+        }.getOrElse { e ->
+            log.warn("Failed to load api_conversation_history.json: ${e.message}")
+            emptyList()
+        }
+    }
+}
+```
+
+- [ ] **Step 3: Update the writer (`saveApiHistoryInternal()` or wherever the JSON is serialized) to emit the v2 wrapper.**
+
+Replace the existing array-write call site with:
+
+```kotlin
+private fun saveApiHistoryInternal() {
+    val payload = ApiHistoryFile(schemaVersion = 2, messages = apiConversationHistory.toList())
+    val text = compactJson.encodeToString(ApiHistoryFile.serializer(), payload)
+    AtomicFileWriter.write(apiConversationHistoryPath().toFile(), text)
 }
 ```
 
 - [ ] **Step 4: Run tests**
 
 ```bash
-./gradlew :agent:test --tests "*SchemaMigrationTest*"
+./gradlew :agent:test --tests "*SchemaMigrationTest*" --no-build-cache --rerun-tasks
 ```
-Expected: all 4 tests PASS.
+Expected: all 3 tests PASS (the no-op migration test was dropped during plan revision per Opus reviewer feedback).
 
 ### Task 4.7: Commit Phase 4
 
@@ -2150,15 +2256,27 @@ Expected: green.
 
 ```kotlin
 // PluginSettings.State additions (mirrors existing documentMaxChars pattern)
+// Real syntax uses `by property(...)` (BaseState delegate); the plan's previous
+// `by 5_242_880L` form was invalid Kotlin per Opus reviewer.
 class State : BaseState() {
     // ... existing fields ...
-    var imageMimeWhitelist: MutableList<String> by listOf(
-        "image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"
-    )
-    var imageMaxBytes: Long by 5_242_880L                // 5 MB
-    var imagesPerTurnCap: Int by 2
-    var enableImageInput: Boolean by true
-    var imageTokenEstimateDefault: Int by 1500
+    var imageMaxBytes by property(5_242_880L)            // 5 MB
+    var imagesPerTurnCap by property(2)
+    var enableImageInput by property(true)
+    var imageTokenEstimateDefault by property(1500)
+
+    // List-typed property: BaseState's `stringList()` delegate auto-persists.
+    // Default cannot be passed to stringList() directly; populate in init or via
+    // a getter that lazy-defaults if empty. Verify the pattern by grep'ing for
+    // existing list-typed BaseState properties in PluginSettings.kt before code lands.
+    var imageMimeWhitelist by stringList()
+    init {
+        if (imageMimeWhitelist.isEmpty()) {
+            imageMimeWhitelist.addAll(listOf(
+                "image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"
+            ))
+        }
+    }
 }
 
 // AttachmentUploadHandler.kt — serves the http://workflow-agent/upload/<sha256> POST endpoint
@@ -2198,6 +2316,47 @@ export class AttachmentManager {
   list(): PendingAttachment[];
   clear(): void;
 }
+```
+
+### Task 5.0: Relax CSP for the workflow-agent upload endpoint (CRITICAL — must precede all Phase 5 tasks)
+
+**Files:**
+- Modify: `agent/src/main/kotlin/com/workflow/orchestrator/agent/ui/CefResourceSchemeHandler.kt` (line ~139, the `Content-Security-Policy` header)
+
+The existing header is `Content-Security-Policy: default-src 'self'; ...; connect-src 'none'; ...`. The `'none'` value forbids `fetch()`/XHR/WebSocket from the webview. Phase 5's chunked-by-sha256 upload pattern (`fetch('http://workflow-agent/upload/<sha256>')`) cannot run under that CSP — the browser blocks it before it reaches CEF.
+
+- [ ] **Step 1: Read current CSP**
+
+```bash
+grep -B 2 -A 5 "connect-src" /Users/subhankarhalder/Desktop/Programs/scripts/IntelijPlugin/agent/src/main/kotlin/com/workflow/orchestrator/agent/ui/CefResourceSchemeHandler.kt
+```
+
+- [ ] **Step 2: Modify the CSP value**
+
+Change `connect-src 'none'` to `connect-src 'self' http://workflow-agent`.
+
+- [ ] **Step 3: Verify with a manual smoke test**
+
+```bash
+./gradlew runIde
+```
+Open agent panel → DevTools (right-click → Inspect) → Console. Try `fetch('http://workflow-agent/upload/test', {method: 'POST', body: 'x'}).then(r => console.log(r.status))`. Expected: not blocked by CSP (will return some HTTP status, possibly 404 since the handler isn't wired yet — that comes in Task 5.4. The point is no CSP error in console).
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add agent/src/main/kotlin/com/workflow/orchestrator/agent/ui/CefResourceSchemeHandler.kt
+git commit -m "fix(agent): relax CSP connect-src for workflow-agent upload — Phase 5 prerequisite
+
+Phase 5's chunked-by-sha256 image upload uses fetch() to
+http://workflow-agent/upload/<sha256> served by AttachmentUploadHandler
+(coming in Task 5.4). The existing CSP forbids fetch entirely
+(connect-src 'none'). This relaxes it to allow only the workflow-agent
+scheme, preserving security against arbitrary external network calls
+from the webview.
+
+Spec: docs/research/2026-05-02-multimodal-agent-design.md §UI surface
+> IPC payload across the JCEF bridge"
 ```
 
 ### Task 5.1: Add settings fields + test
@@ -2347,13 +2506,13 @@ Find the `<extensions defaultExtensionNs="com.intellij">` section and add:
 
 ```xml
 <projectConfigurable
-    parentId="com.workflow.orchestrator.settings.workflow"
+    parentId="workflow.orchestrator"
     instance="com.workflow.orchestrator.core.settings.MultimodalSettingsConfigurable"
-    id="com.workflow.orchestrator.settings.multimodal"
+    id="workflow.orchestrator.multimodal"
     displayName="Multimodal"/>
 ```
 
-(Adjust `parentId` to match the existing Workflow Orchestrator settings parent.)
+The real top-level parent ID is `workflow.orchestrator` (verified in `src/main/resources/META-INF/plugin.xml`); the agent-specific child parent is `workflow.orchestrator.agent`. Multimodal is a project-wide concern, so attach to the top-level parent.
 
 - [ ] **Step 3: Manual verify in `runIde`**
 
@@ -2908,11 +3067,11 @@ git push
 **Why this order:** All wire layers + persistence + UI are in place by Phase 5. Phase 6 is the integration layer that ties them together. After Phase 6, a user attaching an image and sending will see a real assistant reply.
 
 **Files:**
-- Create: `core/src/main/kotlin/com/workflow/orchestrator/core/ai/BrainRouter.kt`
+- Create: `agent/src/main/kotlin/com/workflow/orchestrator/agent/loop/BrainRouter.kt` (NOT `:core` — DAG violation; routing imports `:agent`'s `AttachmentStore`)
 - Modify: `agent/src/main/kotlin/com/workflow/orchestrator/agent/loop/ContextManager.kt` (image-token estimation)
-- Modify: assistant message rendering (find the React component) — add badge
-- Modify: agent loop's brain caller — replace direct `openAiCompatBrain.chat()` with `brainRouter.chat()`
-- Create test: `core/src/test/kotlin/com/workflow/orchestrator/core/ai/BrainRouterTest.kt`
+- Modify: `agent/webview/src/components/chat/AgentMessage.tsx` (assistant message badge — NOT `messages/AssistantMessage.tsx` which doesn't exist)
+- Modify: `agent/src/main/kotlin/com/workflow/orchestrator/agent/loop/AgentLoop.kt:643` — the existing call is `brain.chatStream(messages, tools, maxTokens, onChunk)`. Replace with `brainRouter.chatStream(...)` (NOT `chat()`).
+- Create test: `agent/src/test/kotlin/com/workflow/orchestrator/agent/loop/BrainRouterTest.kt`
 
 **Cross-phase dependencies:**
 - Phase 2's `ModelCatalogService.supportsVision()`
@@ -2925,10 +3084,21 @@ git push
 class BrainRouter(
     private val openAiCompatBrain: OpenAiCompatBrain,
     private val streamClient: SourcegraphCompletionsStreamClient,
-    private val attachmentStore: AttachmentStore,
+    private val attachmentStore: AttachmentStore,                  // direct import OK now (router lives in :agent)
+    private val modelRefProvider: () -> String,                    // explicit, NOT a free function
     private val onAnalyzedImageBadge: (() -> Unit)?,
 ) {
-    suspend fun chat(messages: List<ChatMessage>, tools: List<Tool>): AssistantResponse
+    /** Streaming variant — mirrors OpenAiCompatBrain.chatStream signature.
+     *  This is the ONE the agent loop calls (AgentLoop.kt:643). */
+    suspend fun chatStream(
+        messages: List<ChatMessage>,
+        tools: List<ToolDefinition>,
+        maxTokens: Int,
+        onChunk: (String) -> Unit,
+    ): AssistantResponse
+
+    /** Non-streaming convenience for tests + edge cases. */
+    suspend fun chat(messages: List<ChatMessage>, tools: List<ToolDefinition>): AssistantResponse
 }
 
 data class AssistantResponse(
@@ -2936,6 +3106,67 @@ data class AssistantResponse(
     val toolCalls: List<ToolCall>,
     val analyzedImageBadge: Boolean = false,
 )
+```
+
+**Streaming routing logic (the call site `AgentLoop:643` actually uses):**
+
+```kotlin
+override suspend fun chatStream(
+    messages: List<ChatMessage>,
+    tools: List<ToolDefinition>,
+    maxTokens: Int,
+    onChunk: (String) -> Unit,
+): AssistantResponse {
+    val needsTools = tools.isNotEmpty()
+    val hasImage = messages.any { it.hasImageParts() }
+
+    return when {
+        !hasImage -> {
+            val resp = openAiCompatBrain.chatStream(messages, tools, maxTokens, onChunk)
+            AssistantResponse(text = resp.content ?: "", toolCalls = resp.toolCalls)
+        }
+        !needsTools -> {
+            val req = buildStreamRequest(messages, maxTokens)
+            val r = streamClient.chat(req, onDelta = { delta -> onChunk(delta) })
+            AssistantResponse(text = r.text, toolCalls = emptyList())
+        }
+        else -> twoStepWorkaroundStreaming(messages, tools, maxTokens, onChunk)
+    }
+}
+
+private suspend fun twoStepWorkaroundStreaming(
+    messages: List<ChatMessage>,
+    tools: List<ToolDefinition>,
+    maxTokens: Int,
+    onChunk: (String) -> Unit,
+): AssistantResponse {
+    // Emit a synthetic "Analyzing image..." chunk so user sees activity
+    onChunk("Analyzing image…\n\n")
+    val descriptionResult = runCatching {
+        streamClient.chat(buildStreamRequest(visionPromptOnly(messages), maxTokens))
+    }
+    if (descriptionResult.isFailure) {
+        return AssistantResponse(
+            text = "Image analysis failed: ${descriptionResult.exceptionOrNull()?.message}.",
+            toolCalls = emptyList()
+        )
+    }
+    val description = descriptionResult.getOrThrow().text
+    if (ABSTENTION_PHRASES.any { description.contains(it, ignoreCase = true) }) {
+        return AssistantResponse(
+            text = "The model couldn't analyze the attached image.",
+            toolCalls = emptyList()
+        )
+    }
+    val rebuilt = messages.replacingImagePartsWithText("[image description: $description]")
+    val resp = openAiCompatBrain.chatStream(rebuilt, tools, maxTokens, onChunk)
+    onAnalyzedImageBadge?.invoke()
+    return AssistantResponse(
+        text = resp.content ?: "",
+        toolCalls = resp.toolCalls,
+        analyzedImageBadge = true
+    )
+}
 ```
 
 ### Task 6.1: BrainRouter test — text-only path
@@ -2955,13 +3186,27 @@ import org.junit.jupiter.api.Test
 
 class BrainRouterTest {
 
+    // NOTE: ChatMessage.role is `String` (no Role enum exists in this codebase).
+    // Tools use `ToolDefinition(type = "function", function = FunctionDefinition(...))`.
+    // Per Opus plan-reviewer: previously-shown `Role.USER` and `Tool(...)` types do
+    // not exist; tests must use the real shapes or fail to compile.
+
+    private val fooTool = ToolDefinition(
+        type = "function",
+        function = FunctionDefinition(
+            name = "foo",
+            description = "test tool",
+            parameters = FunctionParameters(properties = emptyMap())
+        )
+    )
+
     @Test
     fun `text-only turn routes to OpenAiCompatBrain`() = runBlocking {
         val openAi = FakeOpenAiCompatBrain(responseText = "hi")
         val stream = FakeStreamClient()
-        val router = BrainRouter(openAi, stream, FakeAttachmentStore(), null)
+        val router = BrainRouter(openAi, stream, FakeAttachmentStore(), { "test::model" }, null)
         val resp = router.chat(
-            messages = listOf(ChatMessage(role = Role.USER, content = "hello")),
+            messages = listOf(ChatMessage(role = "user", content = "hello")),
             tools = emptyList()
         )
         assertEquals("hi", resp.text)
@@ -2973,10 +3218,10 @@ class BrainRouterTest {
     fun `text+tools routes to OpenAiCompatBrain`() = runBlocking {
         val openAi = FakeOpenAiCompatBrain(responseText = "ok", toolCalls = listOf(ToolCall("foo", "{}")))
         val stream = FakeStreamClient()
-        val router = BrainRouter(openAi, stream, FakeAttachmentStore(), null)
+        val router = BrainRouter(openAi, stream, FakeAttachmentStore(), { "test::model" }, null)
         val resp = router.chat(
-            messages = listOf(ChatMessage(role = Role.USER, content = "use foo")),
-            tools = listOf(Tool("foo", "...", "{}"))
+            messages = listOf(ChatMessage(role = "user", content = "use foo")),
+            tools = listOf(fooTool)
         )
         assertEquals(1, resp.toolCalls.size)
         assertEquals(1, openAi.callCount)
@@ -2987,10 +3232,10 @@ class BrainRouterTest {
     fun `image-only turn routes to SourcegraphCompletionsStreamClient`() = runBlocking {
         val openAi = FakeOpenAiCompatBrain()
         val stream = FakeStreamClient(responseText = "red")
-        val router = BrainRouter(openAi, stream, FakeAttachmentStore(addBytes = "fake"), null)
+        val router = BrainRouter(openAi, stream, FakeAttachmentStore(addBytes = "fake"), { "test::model" }, null)
         val resp = router.chat(
             messages = listOf(ChatMessage(
-                role = Role.USER,
+                role = "user",
                 content = null,
                 parts = listOf(
                     ContentPart.Image(sha256 = "abc", mime = "image/png", originalFilename = "x.png"),
@@ -3009,16 +3254,16 @@ class BrainRouterTest {
         val openAi = FakeOpenAiCompatBrain(responseText = "tool result", toolCalls = listOf(ToolCall("foo", "{}")))
         val stream = FakeStreamClient(responseText = "image shows a red circle")
         var badgeFired = false
-        val router = BrainRouter(openAi, stream, FakeAttachmentStore(addBytes = "fake")) { badgeFired = true }
+        val router = BrainRouter(openAi, stream, FakeAttachmentStore(addBytes = "fake"), { "test::model" }) { badgeFired = true }
         val resp = router.chat(
             messages = listOf(ChatMessage(
-                role = Role.USER,
+                role = "user",
                 parts = listOf(
                     ContentPart.Image(sha256 = "abc", mime = "image/png", originalFilename = null),
                     ContentPart.Text("call the tool")
                 )
             )),
-            tools = listOf(Tool("foo", "...", "{}"))
+            tools = listOf(fooTool)
         )
         assertEquals(1, stream.callCount)     // step 1
         assertEquals(1, openAi.callCount)     // step 2
@@ -3030,16 +3275,16 @@ class BrainRouterTest {
     fun `image+tools with abstaining step-1 description aborts before step 2`() = runBlocking {
         val openAi = FakeOpenAiCompatBrain()
         val stream = FakeStreamClient(responseText = "I cannot see this image clearly.")
-        val router = BrainRouter(openAi, stream, FakeAttachmentStore(addBytes = "fake"), null)
+        val router = BrainRouter(openAi, stream, FakeAttachmentStore(addBytes = "fake"), { "test::model" }, null)
         val resp = router.chat(
             messages = listOf(ChatMessage(
-                role = Role.USER,
+                role = "user",
                 parts = listOf(
                     ContentPart.Image(sha256 = "abc", mime = "image/png", originalFilename = null),
                     ContentPart.Text("call the tool")
                 )
             )),
-            tools = listOf(Tool("foo", "...", "{}"))
+            tools = listOf(fooTool)
         )
         // Step 1 ran; step 2 did NOT
         assertEquals(1, stream.callCount)
@@ -3052,13 +3297,13 @@ class BrainRouterTest {
     fun `image+tools with step-1 failure surfaces error toast`() = runBlocking {
         val openAi = FakeOpenAiCompatBrain()
         val stream = FakeStreamClient(throwException = HttpException(500, "server error"))
-        val router = BrainRouter(openAi, stream, FakeAttachmentStore(addBytes = "fake"), null)
+        val router = BrainRouter(openAi, stream, FakeAttachmentStore(addBytes = "fake"), { "test::model" }, null)
         val resp = router.chat(
             messages = listOf(ChatMessage(
-                role = Role.USER,
+                role = "user",
                 parts = listOf(ContentPart.Image("abc", "image/png", null), ContentPart.Text("x"))
             )),
-            tools = listOf(Tool("foo", "...", "{}"))
+            tools = listOf(fooTool)
         )
         assertEquals(0, openAi.callCount)
         assertTrue(resp.text.contains("Image analysis failed", ignoreCase = true))
@@ -3214,6 +3459,49 @@ grep -rn "openAiCompatBrain\.chat\|openAiCompatBrain\.send" /Users/subhankarhald
 ```
 
 - [ ] **Step 2: Replace each call with `brainRouter.chat(...)`** and inject `BrainRouter` into the relevant constructor.
+
+### Task 6.3a: ModelFallbackManager — vision-capability filter
+
+**Files:**
+- Modify: `agent/src/main/kotlin/com/workflow/orchestrator/agent/loop/ModelFallbackManager.kt`
+- Add test: `agent/src/test/kotlin/com/workflow/orchestrator/agent/loop/ModelFallbackVisionFilterTest.kt`
+
+When a turn contains image parts, `ModelFallbackManager`'s fallback chain MUST exclude any model whose `capabilities` does not include `"vision"`. Without this filter, a fallback to a non-vision model would silently succeed at the wire level (image content stripped server-side) and produce a confusing reply with no error.
+
+- [ ] **Step 1: Read existing fallback chain**
+
+```bash
+grep -B 2 -A 30 "class ModelFallbackManager\|fun.*next\|fallbackChain" /Users/subhankarhalder/Desktop/Programs/scripts/IntelijPlugin/agent/src/main/kotlin/com/workflow/orchestrator/agent/loop/ModelFallbackManager.kt
+```
+
+- [ ] **Step 2: Add filter method**
+
+```kotlin
+/**
+ * Returns the fallback chain restricted to vision-capable models.
+ * Use when the in-flight payload contains image parts.
+ */
+fun fallbackChainForVision(modelCatalog: ModelCatalogService): List<String> =
+    fullFallbackChain().filter { modelCatalog.supportsVision(it) }
+```
+
+- [ ] **Step 3: BrainRouter calls the filtered version when payload has images**
+
+In `BrainRouter.kt`, when constructing the fallback chain (or asking `ModelFallbackManager` for the next model), pass `payload.any { it.hasImageParts() }` to choose between `fullFallbackChain()` and `fallbackChainForVision(catalog)`.
+
+- [ ] **Step 4: Test**
+
+```kotlin
+@Test
+fun `fallbackChainForVision excludes non-vision models`() {
+    val mgr = ModelFallbackManager(...)
+    val catalog = FakeModelCatalogService(
+        visionSupport = mapOf("a::vision" to true, "b::no-vision" to false, "c::vision" to true)
+    )
+    val chain = mgr.fallbackChainForVision(catalog)
+    assertEquals(listOf("a::vision", "c::vision"), chain)
+}
+```
 
 ### Task 6.4: Image-token estimation in ContextManager
 
