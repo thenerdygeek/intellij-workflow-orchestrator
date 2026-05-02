@@ -41,11 +41,32 @@ data class UnsupportedContentBlock(
  * `type` field dynamically from the JSON (rather than from a fixed `@SerialName`)
  * so that the unknown discriminator is preserved verbatim for debugging.
  *
- * Serialize path: writes a minimal stub. We do NOT round-trip the unknown block back
- * onto the wire — write paths in [MessageStateHandler] only persist messages that
- * the running plugin understands, so this serializer is rarely (if ever) invoked
- * for output. The implementation is included for symmetry; the meaningful path is
- * `deserialize`.
+ * Serialize path: writes a minimal stub `{type:"UnsupportedContentBlock", originalType, rawJson}`.
+ *
+ * **IMPORTANT — this serializer IS invoked on every session save** (`addToApiConversationHistory`,
+ * `pruneTrailingEmptyAssistants`, `overwriteApiConversationHistory`, `rewriteMostRecentToolResult`,
+ * `saveBoth`). Whenever a v1 plugin loads a v2 session and then mutates the in-memory
+ * `apiHistory`, every `UnsupportedContentBlock` in that history gets re-serialized through
+ * this method.
+ *
+ * The current implementation is **intentionally lossy** for v1's local needs:
+ *   - On the first round-trip, `type` becomes `"UnsupportedContentBlock"` (not the original
+ *     v2 discriminator like `"image_url_ref"`).
+ *   - On the second read, the polymorphic fallback fires AGAIN because
+ *     `"UnsupportedContentBlock"` is not in the registered subclass set, producing a
+ *     doubly-wrapped block whose `originalType` field is now `"UnsupportedContentBlock"`
+ *     and whose `rawJson` contains the wrapper.
+ *
+ * **Implication for downgrade-then-upgrade scenarios:** if the user runs v2 → writes a
+ * v2 session → downgrades to v1 → mutates the session → upgrades back to v2, the v2
+ * reader will NOT see the original `image_url_ref` discriminator on the mutated turns;
+ * it will see a doubly-wrapped `UnsupportedContentBlock` with no way to recover the
+ * original payload.
+ *
+ * For the project's single-user threat model (one user upgrades both versions on the
+ * same machine), this is acceptable — there is no realistic downgrade-then-mutate path.
+ * If we ever need full lossless round-trip, change `serialize` to write the verbatim
+ * `rawJson` via `encoder.asJsonEncoder().encodeJsonElement(Json.parseToJsonElement(value.rawJson))`.
  */
 object UnsupportedContentBlockSerializer : KSerializer<UnsupportedContentBlock> {
     override val descriptor: SerialDescriptor =
