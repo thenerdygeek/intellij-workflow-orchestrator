@@ -160,6 +160,28 @@ class ContextManager(
         messages.add(ChatMessage(role = "user", content = content))
     }
 
+    /**
+     * Multimodal-agent Phase 7 followup F-P6FU-5 — add a user message with
+     * structured [ContentPart] entries (image and/or text). Required so test
+     * fixtures and tool-call code paths don't have to round-trip through
+     * `addAssistantMessage(ChatMessage(role="user", parts=...))` — which works
+     * but obscures intent.
+     *
+     * Sets `content` to a flat-text mirror of the [parts] (concatenated
+     * `Text` values) for backward compatibility with consumers that still
+     * read `ChatMessage.content` directly.
+     */
+    fun addUserMessageWithParts(parts: List<ContentPart>) {
+        val flatText = parts.filterIsInstance<ContentPart.Text>().joinToString(" ") { it.text }
+        messages.add(
+            ChatMessage(
+                role = "user",
+                content = flatText.ifEmpty { null },
+                parts = parts,
+            ),
+        )
+    }
+
     fun addAssistantMessage(message: ChatMessage) {
         messages.add(message)
     }
@@ -340,6 +362,20 @@ class ContextManager(
         val tokens = lastPromptTokens ?: tokenEstimate()
         return (tokens.toDouble() / maxInputTokens) * 100.0
     }
+
+    /**
+     * Multimodal-agent Phase 7 — current authoritative input-token count for
+     * the live conversation. Used by the chat input usage indicator
+     * (`window.workflowAgent.getContextUsage()`); paired with
+     * [maxInputTokensFor] for the percentage display.
+     *
+     * Resolution order matches [utilizationPercent]:
+     *   1. `lastPromptTokens` (set by the most recent API response — this is
+     *      the authoritative number reported by the gateway)
+     *   2. `tokenEstimate()` chars/3.5 fallback (used during the first turn
+     *      before the API has reported back)
+     */
+    fun currentInputTokens(): Int = lastPromptTokens ?: tokenEstimate()
 
     /**
      * Per-model context budget read live from [ModelCatalogService].

@@ -932,7 +932,44 @@ class AgentLoop(
                         l2TierIdx >= 0 &&
                         l2TierIdx + 1 < cachedFallbackChain.size
                     ) {
-                        l2TierIdx++
+                        // Phase 7 followup F-P6FU-3 — apply the same vision filter to L2
+                        // tier escalation that L1 fallback already applies. Without this,
+                        // when the in-flight payload contains image parts AND L1 is
+                        // disabled (no fallbackManager), L2 silently advances to the next
+                        // chain entry even if it lacks the `vision` capability — same
+                        // confusing-reply risk as the original Phase 6 finding.
+                        val payloadHasImage = contextManager.getMessages().any { it.hasImageParts() }
+                        val visionFilterActive = payloadHasImage && modelCatalogService != null
+                        // Find the next vision-capable index; if none, surface the same
+                        // user-visible exhaustion message as L1 and abort.
+                        val nextIdx = if (visionFilterActive) {
+                            var idx = l2TierIdx + 1
+                            while (idx < cachedFallbackChain.size &&
+                                modelCatalogService!!.supportsVision(cachedFallbackChain[idx]) != true
+                            ) {
+                                LOG.info("[Loop] L2 vision filter — skipping non-vision tier candidate: ${cachedFallbackChain[idx]}")
+                                idx++
+                            }
+                            if (idx >= cachedFallbackChain.size) -1 else idx
+                        } else {
+                            l2TierIdx + 1
+                        }
+                        if (visionFilterActive && nextIdx < 0) {
+                            val msg = "no vision-capable fallback available, retry on primary or remove image"
+                            val oldModel = brain.modelId
+                            LOG.warn("[Loop] L2 vision filter — $msg (image payload, no vision-capable model in chain after $oldModel)")
+                            onDebugLog?.invoke("warn", "vision_fallback_exhausted", msg, mapOf(
+                                "oldModel" to oldModel,
+                                "errorType" to apiResult.type.name,
+                                "path" to "L2",
+                            ))
+                            return LoopResult.Failed(
+                                error = msg,
+                                reason = FailureReason.API_ERROR,
+                                iterations = iteration,
+                            )
+                        }
+                        l2TierIdx = nextIdx
                         val oldModel = brain.modelId
                         val newTierModel = cachedFallbackChain[l2TierIdx]
                         val reason = "L2 tier escalation: $MAX_SAME_TIER_RECYCLES same-tier recycles exhausted on ${apiResult.type.name}; advancing $oldModel → $newTierModel"

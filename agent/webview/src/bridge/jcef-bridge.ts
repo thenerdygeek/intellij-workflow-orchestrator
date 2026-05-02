@@ -812,4 +812,46 @@ export function initBridge(storeAccessors: StoreAccessors): void {
     }
   }
   pendingCalls.length = 0;
+
+  // ═══ Multimodal-agent Phase 7 ═══
+  // `window.workflowAgent` namespace for the new Phase 7 + Phase 5/6 follow-up
+  // bridges. The picker / usage indicator / image-settings push all live here.
+  // Kept distinct from the legacy `window._xxx` flat namespace so future
+  // additions don't pollute the global object.
+  (window as any).workflowAgent = (window as any).workflowAgent || {};
+
+  // Phase 7 Task 7.2 — chat input usage indicator. Returns Promise<{used, max}>.
+  // Falls back to {0, 132000} when the Kotlin bridge `_getContextUsage` is not
+  // yet wired (page-load race) so the indicator never crashes.
+  (window as any).workflowAgent.getContextUsage = async function (): Promise<{ used: number; max: number }> {
+    const fn = (window as any)._getContextUsage;
+    if (typeof fn !== 'function') {
+      return { used: 0, max: 132_000 };
+    }
+    try { return await fn(); } catch { return { used: 0, max: 132_000 }; }
+  };
+
+  // Phase 7 followup F-P5-2 / F-P6-1 — pull current image settings from Kotlin
+  // and rebind the AttachmentManager singleton if it's already constructed.
+  // The `__applyImageSettings` global is set up by InputBar when it instantiates
+  // AttachmentManager; before that, this is a no-op (the InputBar mount will
+  // pull fresh settings via _getImageSettings).
+  (window as any).workflowAgent.refreshImageSettings = async function (): Promise<void> {
+    const fn = (window as any)._getImageSettings;
+    if (typeof fn !== 'function') return;
+    try {
+      const settings = await fn();
+      const apply = (window as any).__applyImageSettings;
+      if (typeof apply === 'function' && settings) {
+        apply(JSON.stringify(settings));
+      }
+    } catch {
+      // best-effort refresh; silent fallback
+    }
+  };
+
+  // On page-ready, pull settings once so the InputBar's AttachmentManager picks
+  // up the user's current limits even if it was constructed with the static
+  // defaults from `IMAGE_DEFAULT_SETTINGS`.
+  (window as any).workflowAgent.refreshImageSettings();
 }

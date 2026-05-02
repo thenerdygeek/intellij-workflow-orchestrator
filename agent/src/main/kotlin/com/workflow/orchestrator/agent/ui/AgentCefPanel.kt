@@ -125,6 +125,8 @@ class AgentCefPanel(
     private var openInsightsTabQuery: JBCefJSQuery? = null
     private var loadBackgroundSnapshotQuery: JBCefJSQuery? = null
     private var attachmentExistsQuery: JBCefJSQuery? = null
+    private var contextUsageQuery: JBCefJSQuery? = null
+    private var imageSettingsQuery: JBCefJSQuery? = null
     var mentionSearchProvider: MentionSearchProvider? = null
     var onSendMessageWithMentions: ((String, String) -> Unit)? = null  // (text, mentionsJson)
 
@@ -137,6 +139,23 @@ class AgentCefPanel(
      * upload yet possible).
      */
     var currentSessionDirProvider: (() -> java.nio.file.Path?)? = null
+
+    /**
+     * Multimodal-agent Phase 7 — chat input usage indicator. Returns the live
+     * `(used, max)` token pair for the active session's [ContextManager],
+     * keyed against the live model. Wired by [AgentController]; null when no
+     * session is active (the indicator renders `0 / 132K` until first turn).
+     */
+    var contextUsageProvider: (() -> Pair<Int, Int>?)? = null
+
+    /**
+     * Multimodal-agent Phase 7 followup F-P5-2 / F-P6-1 — pushes the current
+     * [PluginSettings] image-input fields to the JS layer at page-load and
+     * after every Settings.apply(). Returns a JSON string with shape
+     * `{maxBytes, maxPerTurn, mimeWhitelist, enabled}` matching the JS-side
+     * `IMAGE_DEFAULT_SETTINGS` literal. Wired by [AgentController].
+     */
+    var imageSettingsProvider: (() -> String)? = null
 
     /**
      * Bridge dispatcher: manages the pageLoaded/pendingCalls state machine.
@@ -593,6 +612,28 @@ class AgentCefPanel(
             JBCefJSQuery.Response("""{"exists":$exists}""")
         }
 
+        // Multimodal-agent Phase 7 — chat input usage indicator. JS calls
+        // `window.workflowAgent.getContextUsage()` which dispatches into this
+        // query; the React `<InputBar>` polls every 1s while the input is
+        // mounted. Returns JSON: {"used": N, "max": M}. When no session is
+        // active or the provider isn't wired, returns 0/132K so the indicator
+        // doesn't crash.
+        contextUsageQuery = registerQuery(b) { _ ->
+            val (used, max) = contextUsageProvider?.invoke() ?: (0 to 132_000)
+            JBCefJSQuery.Response("""{"used":$used,"max":$max}""")
+        }
+
+        // Multimodal-agent Phase 7 followup F-P5-2 / F-P6-1 — push the live
+        // PluginSettings image-input fields to JS. Called once on page-ready
+        // and again after Settings.apply() (the AgentController invokes
+        // `pushImageSettings()` from its settings-change listener). Returns a
+        // raw JSON string that JS sets onto the AttachmentManager singleton
+        // directly.
+        imageSettingsQuery = registerQuery(b) { _ ->
+            val payload = imageSettingsProvider?.invoke() ?: """{"maxBytes":5242880,"mimeWhitelist":["image/png","image/jpeg","image/webp","image/heic","image/heif"],"maxPerTurn":2,"enabled":true}"""
+            JBCefJSQuery.Response(payload)
+        }
+
         // Wait for page load before executing JS
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
             override fun onLoadingStateChange(
@@ -691,6 +732,31 @@ class AgentCefPanel(
                                 "window._loadBackgroundSnapshot = function(sessionId) {" +
                                     " return new Promise(function(resolve, reject) {" +
                                     " ${q.inject("sessionId", "function(r) { resolve(JSON.parse(r || '[]')); }", "function(err) { resolve([]); }")}" +
+                                    " }); };"
+                            )
+                        }
+                    }
+                    // Multimodal-agent Phase 7 — chat input usage indicator.
+                    // JS bridge returns a Promise resolving to {used, max}.
+                    injectBridge("_getContextUsage") {
+                        contextUsageQuery?.let { q ->
+                            js(
+                                "window._getContextUsage = function() {" +
+                                    " return new Promise(function(resolve) {" +
+                                    " ${q.inject("'pull'", "function(r) { try { resolve(JSON.parse(r)); } catch(e) { resolve({used:0,max:132000}); } }", "function(_) { resolve({used:0,max:132000}); }")}" +
+                                    " }); };"
+                            )
+                        }
+                    }
+                    // Multimodal-agent Phase 7 followup F-P5-2 / F-P6-1 — push
+                    // current image settings to JS. JS calls this once on
+                    // page-ready and again after Settings.apply().
+                    injectBridge("_getImageSettings") {
+                        imageSettingsQuery?.let { q ->
+                            js(
+                                "window._getImageSettings = function() {" +
+                                    " return new Promise(function(resolve) {" +
+                                    " ${q.inject("'pull'", "function(r) { try { resolve(JSON.parse(r)); } catch(e) { resolve(null); } }", "function(_) { resolve(null); }")}" +
                                     " }); };"
                             )
                         }
@@ -1433,6 +1499,22 @@ class AgentCefPanel(
     /** Execute JavaScript in the browser, queuing if page hasn't loaded yet. */
     internal fun callJs(code: String) {
         bridgeDispatcher?.dispatch(code)
+    }
+
+    /**
+     * Multimodal-agent Phase 7 followup F-P5-2 / F-P6-1 — push the current
+     * image settings JSON to the React webview. Called by [AgentController]
+     * after `MultimodalSettingsConfigurable.apply()` fires; the React
+     * `<InputBar>`'s `AttachmentManager` rebinds against the new payload, so
+     * the user's setting changes take effect without a plugin restart.
+     */
+    fun pushImageSettings() {
+        val payload = imageSettingsProvider?.invoke() ?: return
+        // The webview side defines `window.__applyImageSettings(json)`; the
+        // function rebinds the AttachmentManager singleton. Safe to call before
+        // page-load — `callJs` queues until the dispatcher marks loaded.
+        val escaped = payload.replace("\\", "\\\\").replace("'", "\\'")
+        callJs("if (window.__applyImageSettings) { window.__applyImageSettings('$escaped'); }")
     }
 
     /**

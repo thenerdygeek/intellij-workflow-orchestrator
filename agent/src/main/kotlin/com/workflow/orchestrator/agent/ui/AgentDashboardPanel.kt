@@ -867,6 +867,34 @@ class AgentDashboardPanel(
         cefPanel?.currentSessionDirProvider = provider
     }
 
+    /**
+     * Multimodal-agent Phase 7 — wire the chat input usage indicator's data
+     * source. Provider returns `(used, max)` from the active session's
+     * [com.workflow.orchestrator.agent.loop.ContextManager], or null when no
+     * session is live.
+     */
+    fun setContextUsageProvider(provider: () -> Pair<Int, Int>?) {
+        cefPanel?.contextUsageProvider = provider
+    }
+
+    /**
+     * Multimodal-agent Phase 7 followup F-P5-2 / F-P6-1 — wire the image
+     * settings JSON provider. Returned JSON: `{maxBytes, maxPerTurn,
+     * mimeWhitelist, enabled}`.
+     */
+    fun setImageSettingsProvider(provider: () -> String) {
+        cefPanel?.imageSettingsProvider = provider
+    }
+
+    /**
+     * Multimodal-agent Phase 7 followup F-P5-2 / F-P6-1 — push current image
+     * settings to JS now (used by Settings.apply() so user changes take
+     * effect without an IDE restart).
+     */
+    fun pushImageSettings() {
+        cefPanel?.pushImageSettings()
+    }
+
     fun setCefCancelSteeringCallback(onCancel: (String) -> Unit) {
         cefPanel?.onCancelSteering = onCancel
     }

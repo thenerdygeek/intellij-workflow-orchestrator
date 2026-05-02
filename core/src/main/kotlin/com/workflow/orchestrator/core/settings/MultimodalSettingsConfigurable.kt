@@ -98,6 +98,38 @@ class MultimodalSettingsConfigurable(private val project: Project) : SearchableC
 
     override fun apply() {
         dialogPanel?.apply()
+        // Multimodal-agent Phase 7 followup F-P5-2 / F-P6-1 — push fresh
+        // settings into the running JCEF webview so the React `<InputBar>`
+        // sees the new limits without a plugin restart. Reflective lookup
+        // keeps `:core` from depending on `:agent` (cycle-free).
+        notifyAgentControllerOfChange()
+    }
+
+    /**
+     * Reflective notification: looks up `AgentControllerRegistry` (a project
+     * service) and calls the controller's `pushImageSettingsToWebview()`.
+     * Reflective so `:core` doesn't import `:agent` (`:agent → :core` is the
+     * canonical direction; reversing would create a module cycle).
+     *
+     * Best-effort: silent failure when the agent tab isn't loaded or the
+     * controller isn't yet wired (no-op is correct in that case — the user's
+     * setting persists, and the next session pulls it via the page-ready
+     * `_getImageSettings` query).
+     */
+    private fun notifyAgentControllerOfChange() {
+        try {
+            val registryClass = Class.forName("com.workflow.orchestrator.agent.ui.AgentControllerRegistry")
+            val companion = registryClass.getField("Companion").get(null)
+            val getInstance = companion.javaClass.getMethod("getInstance", com.intellij.openapi.project.Project::class.java)
+            val registry = getInstance.invoke(companion, project) ?: return
+            val getController = registry.javaClass.getMethod("getController")
+            val controller = getController.invoke(registry) ?: return
+            val pushMethod = controller.javaClass.getMethod("pushImageSettingsToWebview")
+            pushMethod.invoke(controller)
+        } catch (_: Throwable) {
+            // Silent fallback — agent tab may not be loaded; the next page
+            // load will pull fresh settings via `_getImageSettings`.
+        }
     }
 
     override fun reset() {

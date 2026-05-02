@@ -307,7 +307,7 @@ class BrainRouter(
                     is ContentPart.Text -> StreamContentPart.Text(part.text)
                     is ContentPart.Image -> {
                         val bytes = attachmentStore.read(part.sha256)
-                            ?: error("attachment ${part.sha256} not found on disk for session")
+                            ?: throw AttachmentMissingException(part.sha256)
                         val b64 = Base64.getEncoder().encodeToString(bytes)
                         StreamContentPart.Image(ImageUrl("data:${part.mime};base64,$b64"))
                     }
@@ -329,9 +329,19 @@ class BrainRouter(
         "user", "human" -> "human"
         "assistant" -> "assistant"
         "system" -> "system"
-        // Tool-result turns aren't expected on image-bearing turns, but stream
-        // schema rejects unknown speakers — coerce to human so the request
-        // doesn't bounce. Caller is responsible for content sanity.
+        // Phase 7 followup F-P6-5 (intentional behavior — do NOT "fix" without
+        // understanding the constraint): tool-role messages get coerced to
+        // "human" because the Sourcegraph completions stream schema only
+        // accepts the three Cody speakers (`human`, `assistant`, `system`).
+        // Tool-result turns are rare on image-bearing turns (vision-summarize
+        // is step 1; tools call happens on step 2 against the OpenAI-compat
+        // backend which retains the `tool` role natively). When a stray tool
+        // turn does land here — typically a stale tool result preceding a
+        // fresh image-bearing user turn — emitting it as `human` keeps the
+        // request well-formed; the gateway sees what looks like the user
+        // narrating a prior result, which is harmless. Caller is responsible
+        // for content sanity (i.e., the text body still reads as a tool result
+        // because BrainRouter doesn't rewrite content).
         else -> "human"
     }
 
@@ -357,6 +367,11 @@ class BrainRouter(
 
     private fun errorFromThrowable(e: Throwable): ApiResult<ChatCompletionResponse> {
         val type = when (e) {
+            // Phase 7 followup F-P6-4 — map missing-attachment to VALIDATION_ERROR
+            // (the closest non-retryable terminal type in the existing taxonomy
+            // — retrying would fail again because the bytes are not on disk).
+            // The user message surfaces the actual cause.
+            is AttachmentMissingException -> com.workflow.orchestrator.core.model.ErrorType.VALIDATION_ERROR
             is HttpException -> when (e.statusCode) {
                 401, 403 -> com.workflow.orchestrator.core.model.ErrorType.AUTH_FAILED
                 413 -> com.workflow.orchestrator.core.model.ErrorType.CONTEXT_LENGTH_EXCEEDED
@@ -366,7 +381,13 @@ class BrainRouter(
             }
             else -> com.workflow.orchestrator.core.model.ErrorType.NETWORK_ERROR
         }
-        return ApiResult.Error(type = type, message = e.message ?: "unknown error", cause = e)
+        val msg = if (e is AttachmentMissingException) {
+            "Image attachment ${e.sha256.take(8)}… is missing from this session's disk store. " +
+                "Re-upload the image or remove it from the message and try again."
+        } else {
+            e.message ?: "unknown error"
+        }
+        return ApiResult.Error(type = type, message = msg, cause = e)
     }
 
     private fun asStreamChunk(deltaText: String): StreamChunk = StreamChunk(
@@ -376,6 +397,19 @@ class BrainRouter(
         ),
     )
 }
+
+/**
+ * Phase 7 followup F-P6-4 — typed exception for the "attachment bytes not on
+ * disk" case. Distinct from generic IO/network failure so the loop's error
+ * handler can map it to a user-visible "session attachment missing" message
+ * instead of the confusing `NETWORK_ERROR` it was getting under the prior
+ * bare `error()` call.
+ *
+ * Surfaces in [BrainRouter.errorFromThrowable] as `INTERNAL_ERROR` so the
+ * caller's retry policy treats it as non-retryable.
+ */
+class AttachmentMissingException(val sha256: String) :
+    IllegalStateException("attachment $sha256 not found on disk for session")
 
 // ---- Extension helpers ----
 

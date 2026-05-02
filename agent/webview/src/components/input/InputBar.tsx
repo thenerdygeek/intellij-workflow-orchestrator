@@ -19,6 +19,7 @@ import { TicketDropdown } from './TicketDropdown';
 import { useDropdownKeyboard } from '@/hooks/useDropdownKeyboard';
 import { AttachmentManager, type PendingAttachment } from './AttachmentManager';
 import { ChipPreview } from './ChipPreview';
+import { UsageIndicator } from './UsageIndicator';
 
 // Phase 5: image-attachment defaults. These mirror the Kotlin
 // PluginSettings.State defaults; eventually a settings bridge will push live
@@ -47,7 +48,59 @@ function modelByName(name: string): DropdownItem | undefined {
 
 // ── Types ──
 
-interface DropdownItem { id: string; name: string; provider?: string; thinking?: boolean; vision?: boolean; description?: string }
+/**
+ * Multimodal-agent Phase 7 — extends the original 5-field dropdown payload with
+ * `contextWindow` (per-model capacity), `capabilities` (icon strip source), and
+ * `status` (drives the deprecated badge). All new fields are optional so older
+ * Kotlin builds (or stale cached payloads) still render without crashing —
+ * `<ModelPickerRow>` defends against undefined for each.
+ */
+interface DropdownItem {
+  id: string;
+  name: string;
+  provider?: string;
+  thinking?: boolean;
+  vision?: boolean;
+  description?: string;
+  // Phase 7 enrichments — optional so legacy payloads still render.
+  contextWindow?: { maxInputTokens: number; maxUserInputTokens?: number };
+  capabilities?: string[];
+  status?: 'experimental' | 'beta' | 'stable' | 'deprecated' | string;
+}
+
+/**
+ * Multimodal-agent Phase 7 — single picker row with capacity strip + capability
+ * badges (👁 vision · 🔧 tools · 🧠 reasoning · ⚠ deprecated). Exported so the
+ * vitest suite can render it without going through Radix's portal-mounted
+ * `<DropdownMenuContent>` (which jsdom doesn't fully support).
+ */
+export function ModelPickerRow({ model }: { model: DropdownItem }) {
+  const cap = model.contextWindow;
+  const caps = model.capabilities ?? [];
+  const isDeprecated = model.status === 'deprecated';
+  return (
+    <div className="flex flex-col flex-1 min-w-0">
+      <span className="text-[12px]">{model.name}</span>
+      {model.provider && <span className="text-[10px] capitalize" style={{ color: 'var(--fg-muted)' }}>{model.provider}</span>}
+      {cap && (
+        <span className="text-[10px]" style={{ color: 'var(--fg-muted)' }}>
+          {Math.round(cap.maxInputTokens / 1000)}K context
+          {typeof cap.maxUserInputTokens === 'number'
+            ? ` · ${Math.round(cap.maxUserInputTokens / 1000)}K per-message`
+            : ''}
+        </span>
+      )}
+      {(caps.length > 0 || isDeprecated) && (
+        <span className="text-[10px] flex items-center gap-1 mt-0.5" style={{ color: 'var(--fg-muted)' }}>
+          {caps.includes('vision') && <span title="vision" aria-label="vision">{'\u{1F441}'}</span>}
+          {caps.includes('tools') && <span title="tools" aria-label="tools">{'\u{1F527}'}</span>}
+          {caps.includes('reasoning') && <span title="reasoning" aria-label="reasoning">{'\u{1F9E0}'}</span>}
+          {isDeprecated && <span title="deprecated" aria-label="deprecated" style={{ color: 'var(--warning, #d97706)' }}>{'⚠'}</span>}
+        </span>
+      )}
+    </div>
+  );
+}
 
 // ── Provider logos (inline SVG, 14×14) ──
 
@@ -158,10 +211,7 @@ const ModelChip = memo(function ModelChip({
                 className="gap-2"
                 style={m.name === model ? { backgroundColor: 'var(--hover-overlay-strong, rgba(255,255,255,0.08))' } : undefined}>
                 <ProviderLogo provider={m.provider} />
-                <div className="flex flex-col flex-1 min-w-0">
-                  <span className="text-[12px]">{m.name}</span>
-                  {m.provider && <span className="text-[10px] capitalize" style={{ color: 'var(--fg-muted)' }}>{m.provider}</span>}
-                </div>
+                <ModelPickerRow model={m} />
                 {m.thinking && <Brain className="h-3.5 w-3.5 shrink-0 ml-auto" style={{ color: 'var(--accent, #60a5fa)' }} />}
               </DropdownMenuItem>
             ))
@@ -576,6 +626,30 @@ export const InputBar = memo(function InputBar() {
     );
   }
 
+  // Phase 7 followup F-P5-2 / F-P6-1 — wire the global hook the bridge uses
+  // to push fresh PluginSettings into the AttachmentManager singleton when the
+  // user clicks Apply on the Settings dialog. Mounted once per InputBar
+  // (component re-mounts only on full page reload).
+  useEffect(() => {
+    (window as any).__applyImageSettings = (json: string) => {
+      try {
+        const parsed = JSON.parse(json);
+        attachmentManagerRef.current?.updateSettings({
+          maxBytes: typeof parsed.maxBytes === 'number' ? parsed.maxBytes : IMAGE_DEFAULT_SETTINGS.maxBytes,
+          mimeWhitelist: Array.isArray(parsed.mimeWhitelist) ? parsed.mimeWhitelist : IMAGE_DEFAULT_SETTINGS.mimeWhitelist,
+          maxPerTurn: typeof parsed.maxPerTurn === 'number' ? parsed.maxPerTurn : IMAGE_DEFAULT_SETTINGS.maxPerTurn,
+          enabled: typeof parsed.enabled === 'boolean' ? parsed.enabled : IMAGE_DEFAULT_SETTINGS.enabled,
+        });
+      } catch (e) {
+        console.warn('[multimodal] __applyImageSettings: malformed JSON', e);
+      }
+    };
+    // Trigger an initial pull on mount in case Kotlin already has fresher
+    // values than the static defaults the manager was constructed with.
+    (window as any).workflowAgent?.refreshImageSettings?.();
+    return () => { delete (window as any).__applyImageSettings; };
+  }, []);
+
   const handleAttachFile = useCallback(async (file: File | null | undefined) => {
     if (!file || !attachmentManagerRef.current) return;
     await attachmentManagerRef.current.attachFile(file);
@@ -962,6 +1036,8 @@ export const InputBar = memo(function InputBar() {
           onPasteImage={handlePasteImage}
         />
       </div>
+      {/* Phase 7 Task 7.2 — live token usage strip below the input */}
+      <UsageIndicator />
     </div>
   );
 });

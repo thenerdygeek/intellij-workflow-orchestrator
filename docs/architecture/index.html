@@ -1291,6 +1291,30 @@ graph TD
         <h3>Worker Delegation</h3>
         <p>The <code>delegate_task</code> tool spawns a <code>WorkerSession</code> with fresh context, a scoped tool subset, and its own budget. Workers cannot delegate further (single-depth). Results are summarized and returned to the parent session.</p>
 
+        <h3>Multimodal Routing &mdash; BrainRouter (Phase 6)</h3>
+        <p>The agent loop routes the LLM call through <code>BrainRouter</code>, which implements <code>LlmBrain</code> and dispatches per turn:</p>
+        <table>
+            <tr><th>Condition</th><th>Backend</th></tr>
+            <tr><td>No image parts</td><td><code>OpenAiCompatBrain</code> &mdash; existing path, fully transparent</td></tr>
+            <tr><td>Image parts AND no tools</td><td><code>SourcegraphCompletionsStreamClient</code> on <code>/.api/completions/stream</code></td></tr>
+            <tr><td>Image parts AND tools</td><td>Two-step workaround (vision-summarize on /stream &rarr; tools call on /chat/completions)</td></tr>
+        </table>
+        <p>The gateway silently drops the <code>tools</code> field on <code>/.api/completions/stream</code>, so we cannot just migrate everything to the stream endpoint. Conversely, <code>/.api/llm/chat/completions</code> doesn't accept <code>image_url</code> content parts &mdash; hence the routing rule.</p>
+        <p>Successful two-step turns flag the most recent assistant <code>UiMessage</code> with <code>analyzedImageBadge=true</code> so the React webview renders the &ldquo;&#x1F4F7; image analyzed&rdquo; strip. Phase 7 followup F-P6-3 added a <code>turnStartTs</code> recency guard so the badge never lands on a previous turn's text. Per-session isolation: <code>AttachmentStore</code> is constructed per-session in <code>AgentService.wrapBrainWithRouter()</code>; recycled/fallback brains receive a fresh router pointed at the SAME session dir.</p>
+
+        <h3>ModelCatalogService &amp; Vision-Aware Fallback</h3>
+        <p>The shared <code>ModelCatalogService</code> (in <code>:core</code>) reads <code>/.api/modelconfig/supported-models.json</code> at session start and exposes <code>getContextWindow()</code>, <code>supportsVision()</code>, <code>supportsTools()</code>, <code>getStatus()</code>. <code>SharedCatalogHolder</code> caches it keyed on <code>sgUrl</code> (Phase 7 followup F-P6FU-2 dropped the dead <code>tokenProvider</code> half of the original cache key); a warm-up coroutine fetches the catalog as soon as the holder constructs.</p>
+        <p>When the in-flight payload has image parts, both fallback paths skip non-vision-capable models in the chain:</p>
+        <ul>
+            <li><strong>L1 fallback</strong> (when <code>ModelFallbackManager</code> is non-null) calls <code>fallbackChainForVision(catalog)</code> and advances past any non-vision candidates.</li>
+            <li><strong>L2 tier escalation</strong> (Phase 7 followup F-P6FU-3, when <code>fallbackManager == null</code> and same-tier recycles &ge; MAX) applies the same filter using <code>catalog.supportsVision()</code> directly.</li>
+        </ul>
+        <p>Cold-catalog safety: L1 falls back to the unfiltered chain with a warning so the loop keeps making progress; L2 surfaces a user-visible &ldquo;no vision-capable fallback available, retry on primary or remove image&rdquo; error and aborts. Pinned by <code>AgentLoopVisionFallbackTest</code>.</p>
+
+        <h3>Phase 7 Picker &amp; Usage Indicator</h3>
+        <p>The model picker dropdown gains a per-row capacity strip (<code>132K context &middot; 18K per-message</code>) and a capability badge strip (&#x1F441; vision &middot; &#x1F527; tools &middot; &#x1F9E0; reasoning &middot; &#x26A0; deprecated). Data flows from <code>ModelCatalogService</code> through <code>AgentController.loadModelList</code> into the Kotlin&rarr;JS <code>updateModelList</code> bridge call. <code>&lt;ModelPickerRow&gt;</code> defends against undefined for each new field so legacy payloads still render.</p>
+        <p>The chat input's <code>&lt;UsageIndicator&gt;</code> polls <code>window.workflowAgent.getContextUsage()</code> every 1s and renders <code>context: 23K / 132K used (17%)</code> with color thresholds (gray <50%, amber 50-80%, red &gt;80%). The bridge query reads <code>(used, max)</code> from the active <code>ContextManager.currentInputTokens()</code> + <code>maxInputTokensFor(modelRef)</code>.</p>
+
     </div>
 </details>
 

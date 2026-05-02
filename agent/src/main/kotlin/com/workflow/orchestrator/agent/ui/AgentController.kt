@@ -483,6 +483,49 @@ class AgentController(
                 sid,
             )
         }
+        // Multimodal-agent Phase 7 — chat input usage indicator. Reads (used,
+        // max) from the active ContextManager, paired with the live model id
+        // for per-model max-input-token lookup against ModelCatalogService.
+        panel.setContextUsageProvider {
+            val cm = contextManager ?: return@setContextUsageProvider null
+            val modelId = AgentSettings.getInstance(project).state.sourcegraphChatModel ?: ""
+            val used = cm.currentInputTokens()
+            val max = if (modelId.isNotBlank()) {
+                cm.maxInputTokensFor(modelId)
+            } else {
+                cm.maxInputTokens
+            }
+            used to max
+        }
+        // Phase 7 followup F-P5-2 / F-P6-1 — JS pulls current image settings
+        // on page-ready; Kotlin pushes via `pushImageSettings()` after
+        // Settings.apply().
+        panel.setImageSettingsProvider {
+            buildImageSettingsJson()
+        }
+    }
+
+    /**
+     * Multimodal-agent Phase 7 followup F-P5-2 / F-P6-1 — serialize the
+     * current [com.workflow.orchestrator.core.settings.PluginSettings] image
+     * fields into the JSON shape the React `<InputBar>` expects (mirrors the
+     * client-side `IMAGE_DEFAULT_SETTINGS` literal).
+     */
+    private fun buildImageSettingsJson(): String {
+        val state = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).state
+        val mimes = state.imageMimeWhitelist.joinToString(",", "[", "]") { "\"$it\"" }
+        return """{"maxBytes":${state.imageMaxBytes},"mimeWhitelist":$mimes,"maxPerTurn":${state.imagesPerTurnCap},"enabled":${state.enableImageInput}}"""
+    }
+
+    /**
+     * Multimodal-agent Phase 7 followup F-P5-2 / F-P6-1 — entry point for the
+     * Settings page to push fresh image settings into the running webview
+     * after the user clicks Apply. Public so
+     * [com.workflow.orchestrator.core.settings.MultimodalSettingsConfigurable]
+     * can call it through the dashboard reference held by `AgentTabProvider`.
+     */
+    fun pushImageSettingsToWebview() {
+        dashboard.pushImageSettings()
     }
 
     /**
@@ -1083,21 +1126,45 @@ class AgentController(
 
             // Build JSON for the dropdown using formatted display names.
             // Multimodal-agent Phase 6 (F-P5-3) — `vision` field tells the JS
-            // chat input whether to block image-bearing turns at Send. Source:
-            // name-heuristic for now (until ModelCatalogService is wired live
-            // into AgentController). Heuristic mirrors the gateway's documented
-            // vision-capable models per Sourcegraph baseline:
-            //   - Anthropic Claude 4/4.5 (Sonnet, Opus, Haiku 4)
-            //   - Anthropic Claude 3.5/3.7 (Sonnet, Haiku, Opus)
-            //   - OpenAI GPT-4o, GPT-4-vision, GPT-4-turbo
-            //   - Google Gemini 1.5/2.0/2.5 Pro/Flash
+            // chat input whether to block image-bearing turns at Send.
+            //
+            // Phase 7 — pull capacity / capabilities / status from the live
+            // [com.workflow.orchestrator.core.ai.ModelCatalogService] when
+            // available. Falls back to the name-heuristic for `vision` and
+            // omits the new fields if the catalog hasn't loaded yet — the
+            // ModelPickerRow guards against undefined for each.
+            val catalog = try {
+                project.getService(com.workflow.orchestrator.agent.AgentService::class.java)?.getSharedModelCatalog()
+            } catch (_: Throwable) { null }
             val modelsJson = sorted.joinToString(",", "[", "]") { m ->
                 val id = m.id.replace("\"", "\\\"")
                 val name = m.displayName.replace("\"", "\\\"")
                 val provider = m.provider.replace("\"", "\\\"")
                 val thinking = m.isThinkingModel
-                val vision = isLikelyVisionCapable(m.id)
-                """{"id":"$id","name":"$name","provider":"$provider","thinking":$thinking,"vision":$vision}"""
+                // Catalog-backed when available, name-heuristic fallback so the
+                // dropdown is never empty on cold catalog.
+                val vision = catalog?.supportsVision(m.id) ?: isLikelyVisionCapable(m.id)
+                val cw = catalog?.getContextWindow(m.id, tier = "enterprise")
+                val cwField = if (cw != null) {
+                    val core = """{"maxInputTokens":${cw.maxInputTokens}"""
+                    val withCap = if (cw.maxUserInputTokens != null) {
+                        """$core,"maxUserInputTokens":${cw.maxUserInputTokens}}"""
+                    } else "$core}"
+                    ""","contextWindow":$withCap"""
+                } else ""
+                val capsField = if (catalog != null) {
+                    // Compose a small capabilities array — `vision` if catalog
+                    // says so, `tools` from `supportsTools()`, `reasoning` for
+                    // thinking models. The picker uses these to render the
+                    // 👁🔧🧠 badge strip.
+                    val parts = mutableListOf<String>()
+                    if (catalog.supportsVision(m.id)) parts += "\"vision\""
+                    if (catalog.supportsTools(m.id)) parts += "\"tools\""
+                    if (m.isThinkingModel) parts += "\"reasoning\""
+                    if (parts.isNotEmpty()) ""","capabilities":[${parts.joinToString(",")}]""" else ""
+                } else ""
+                val statusField = catalog?.getStatus(m.id)?.let { ""","status":"$it"""" } ?: ""
+                """{"id":"$id","name":"$name","provider":"$provider","thinking":$thinking,"vision":$vision$cwField$capsField$statusField}"""
             }
 
             // Auto-select the best model (latest Opus) if no model is configured

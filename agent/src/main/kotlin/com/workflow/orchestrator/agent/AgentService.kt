@@ -631,38 +631,51 @@ class AgentService(
      * change across sessions when the user reconfigures Sourcegraph credentials;
      * to avoid stale binding, we re-key the lazy holder when those change.
      */
-    private val sharedCatalogLock = Any()
-    @Volatile private var sharedCatalogKey: Pair<String, () -> String?>? = null
-    @Volatile private var sharedCatalog: com.workflow.orchestrator.core.ai.ModelCatalogService? = null
+    /**
+     * Phase 7 followup F-P6FU-2 — keyed solely on `sgUrl`. The `tokenProvider`
+     * lambda is no longer part of the key (the original design's `Pair<String,
+     * () -> String?>` had a dead lambda half; the lookup only ever compared the
+     * URL). Token rotation is covered by the catalog's own 1-hour TTL plus
+     * `getCatalog(force = true)`. Tested by [SharedCatalogHolderTest].
+     */
+    private val sharedCatalogHolder by lazy {
+        SharedCatalogHolder(
+            scope = cs,
+            factory = { sgUrl, tokenProvider ->
+                com.workflow.orchestrator.core.ai.ModelCatalogService(
+                    baseUrl = sgUrl,
+                    tokenProvider = tokenProvider,
+                )
+            },
+            warmUp = { service ->
+                // Warm-up fetch: the first image-bearing fallback would otherwise
+                // see a cold catalog (`supportsVision()` returning false for every
+                // model) and skip the vision filter. runCatching inside the holder
+                // swallows propagation; pinned by `SharedCatalogHolderTest`.
+                service.getCatalog()
+            },
+        )
+    }
 
     private fun getOrCreateSharedCatalog(
         sgUrl: String,
         tokenProvider: () -> String?,
-    ): com.workflow.orchestrator.core.ai.ModelCatalogService = synchronized(sharedCatalogLock) {
-        // tokenProvider lambdas are reference-compared; we treat (sgUrl, current-token)
-        // as the cache key proxy. A token rotation results in a new closure on the
-        // CredentialStore, so we rebuild when the URL changes — the token rotation
-        // case is uncommon enough that catalog re-fetch on next use is fine.
-        val key = sgUrl to tokenProvider
-        val existing = sharedCatalog
-        if (existing != null && sharedCatalogKey?.first == sgUrl) {
-            return existing
-        }
-        val fresh = com.workflow.orchestrator.core.ai.ModelCatalogService(
-            baseUrl = sgUrl,
-            tokenProvider = tokenProvider,
-        )
-        sharedCatalog = fresh
-        sharedCatalogKey = key
-        // Kick off a warm-up fetch in the injected coroutine scope so the catalog
-        // is loaded by the time AgentLoop's first fallback decision needs it. This
-        // closes the "cold catalog" Phase 6 followup so vision-aware fallback works
-        // on the FIRST image-bearing fallback, not just the second one onwards.
-        cs.launch(Dispatchers.IO) {
-            runCatching { fresh.getCatalog() }
-                .onFailure { e -> log.debug("[Agent:Catalog] warm-up fetch failed: ${e.message}") }
-        }
-        fresh
+    ): com.workflow.orchestrator.core.ai.ModelCatalogService =
+        sharedCatalogHolder.get(sgUrl, tokenProvider)
+
+    /**
+     * Multimodal-agent Phase 7 — public accessor for the shared catalog. Used
+     * by [com.workflow.orchestrator.agent.ui.AgentController.loadModelList] to
+     * enrich the dropdown payload (capacity strip, capability badges,
+     * deprecated marker). Re-uses the same warm-up infrastructure as the
+     * routing layer so the catalog is populated by the time the picker opens.
+     */
+    fun getSharedModelCatalog(): com.workflow.orchestrator.core.ai.ModelCatalogService? {
+        val sgUrl = ConnectionSettings.getInstance().state.sourcegraphUrl.trimEnd('/')
+        if (sgUrl.isBlank()) return null
+        val store = CredentialStore()
+        val tokenProvider: () -> String? = { store.getToken(ServiceType.SOURCEGRAPH) }
+        return getOrCreateSharedCatalog(sgUrl, tokenProvider)
     }
 
     private fun wrapBrainWithRouter(
@@ -1337,13 +1350,21 @@ class AgentService(
                 // sees authoritative supportsVision values on the first
                 // image-bearing fallback, not always-false from cold cache.
                 val sharedCatalog = getOrCreateSharedCatalog(sgUrlForRouter, tokenProviderForRouter)
+                // Phase 7 followup F-P6-3 — recency guard for the analyzedImageBadge
+                // flag. `indexOfLast { it.say == UiSay.TEXT }` alone has no recency
+                // floor: if the badge fires AFTER `BrainRouter` step-2 completes but
+                // BEFORE the new turn's assistant UiMessage has been written, it can
+                // (rarely) flag the PREVIOUS turn's assistant text. We snapshot the
+                // turn-start timestamp here and use it as a floor — only flag a
+                // message whose `ts >= turnStartTs`.
+                val turnStartTs = System.currentTimeMillis()
                 val onBadgeFire: () -> Unit = onBadgeFire@{
                     // The most recent assistant UiMessage carries the assistant text;
                     // flag it with analyzedImageBadge=true so the React webview renders
                     // the `📷 image analyzed` strip. Best-effort: if no assistant
                     // UiMessage exists yet (rare race), this is a no-op.
                     val msgs = activeMessageStateHandler?.getClineMessages() ?: return@onBadgeFire
-                    val lastIdx = msgs.indexOfLast { it.say == UiSay.TEXT }
+                    val lastIdx = msgs.indexOfLast { it.say == UiSay.TEXT && it.ts >= turnStartTs }
                     if (lastIdx < 0) return@onBadgeFire
                     val updated = msgs[lastIdx].copy(analyzedImageBadge = true)
                     cs.launch(Dispatchers.IO) {

@@ -72,5 +72,23 @@ declare global {
     _openApprovedPlan?: () => void;
     _receiveSessionStats?: (json: string) => void;
     _openInsightsTab?: () => void;
+    // Multimodal-agent Phase 7 — chat input usage indicator + Phase 5/6 followups
+    _getContextUsage?: () => Promise<{ used: number; max: number }>;
+    _getImageSettings?: () => Promise<{ maxBytes: number; mimeWhitelist: string[]; maxPerTurn: number; enabled: boolean } | null>;
+    /**
+     * Phase 7 — namespace for new bridges. Distinct from the legacy `window._xxx`
+     * flat namespace; the picker / usage indicator / image-settings push live
+     * here so future additions don't pollute the global object.
+     */
+    workflowAgent?: {
+      getContextUsage?: () => Promise<{ used: number; max: number }>;
+      refreshImageSettings?: () => Promise<void>;
+    };
+    /**
+     * Phase 7 followup F-P5-2 / F-P6-1 — global hook the bridge uses to push
+     * fresh image settings into the AttachmentManager singleton. Defined by
+     * `<InputBar>` at mount; the bridge calls it after Settings.apply.
+     */
+    __applyImageSettings?: (json: string) => void;
   }
 }
