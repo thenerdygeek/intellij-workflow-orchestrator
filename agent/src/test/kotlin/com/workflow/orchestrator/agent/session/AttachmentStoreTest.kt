@@ -150,4 +150,47 @@ class AttachmentStoreTest {
         // No store() called — attachments/ exists (created in init) but is empty
         assertNull(store.read("0".repeat(64)))
     }
+
+    /**
+     * Phase 4 review followup — locks in spec Decision 5 contract.
+     *
+     * Per-session isolation is structurally guaranteed by `AttachmentStore(sessionDir)`
+     * taking the dir as a constructor param (no global state, no shared pool), but the
+     * spec calls out explicitly that "the same image attached to 5 different sessions
+     * results in 5 copies on disk" — this test asserts that contract.
+     *
+     * If a future refactor adds a global pool / cross-session dedup without a refcount
+     * index, `MessageStateHandler.deleteSession()` would orphan attachments shared with
+     * other sessions. This test breaks RED if that happens.
+     */
+    @Test
+    fun `same image attached to two different sessions creates two separate copies on disk`() = runBlocking {
+        val sessionAdir = tempDir.resolve("sessionA").also { Files.createDirectories(it) }
+        val sessionBdir = tempDir.resolve("sessionB").also { Files.createDirectories(it) }
+        val storeA = AttachmentStore(sessionAdir)
+        val storeB = AttachmentStore(sessionBdir)
+
+        val sharedBytes = "identical content across sessions".toByteArray()
+        val refA = storeA.store(sharedBytes, "image/png", "shared.png")
+        val refB = storeB.store(sharedBytes, "image/png", "shared.png")
+
+        // Same content → same sha256
+        assertEquals(refA.sha256, refB.sha256, "sha256 must collide on identical content")
+
+        // But different on-disk paths (per-session, NOT cross-session dedup)
+        assertNotEquals(
+            refA.onDiskPath, refB.onDiskPath,
+            "Per-session contract violated: both sessions point at same file. " +
+            "If a global pool was introduced, MessageStateHandler.deleteSession() would " +
+            "orphan attachments shared with other sessions. See spec §Decision 5."
+        )
+
+        // Both files exist independently
+        assertTrue(Files.exists(refA.onDiskPath))
+        assertTrue(Files.exists(refB.onDiskPath))
+
+        // Deleting session A's file leaves session B's file intact
+        Files.delete(refA.onDiskPath)
+        assertTrue(Files.exists(refB.onDiskPath), "Session B's copy must survive session A's deletion")
+    }
 }
