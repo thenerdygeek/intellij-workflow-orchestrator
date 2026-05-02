@@ -1,0 +1,406 @@
+{
+  "url": "https://***.***.***.com/",
+  "models": [
+    "anthropic::2024-10-22::claude-sonnet-4-5-latest",
+    "anthropic::2024-10-22::claude-sonnet-4-5-thinking-latest",
+    "anthropic::2024-10-22::claude-opus-4-5-latest",
+    "anthropic::2024-10-22::claude-opus-4-5-thinking-latest",
+    "anthropic::2024-10-22::claude-haiku-4-5-latest",
+    "anthropic::2024-10-22::claude-haiku-4-5-thinking-latest"
+  ],
+  "cases": [
+    {
+      "name": "cody_stream_v8_image_first",
+      "description": "Cody canonical: /.api/completions/stream?api-version=8, speaker=human, content=[image_url, text]",
+      "needs_url": false,
+      "notes": "Mirrors completions-converter.ts canonical example exactly.",
+      "expected_any": ["red", "crimson", "scarlet", "ruby", "maroon"],
+      "expected_all": []
+    },
+    {
+      "name": "cody_stream_v8_text_first",
+      "description": "Cody stream v8, content=[text, image_url] (reverse order)",
+      "needs_url": false,
+      "notes": "",
+      "expected_any": ["red", "crimson", "scarlet", "ruby", "maroon"],
+      "expected_all": []
+    },
+    {
+      "name": "cody_stream_v2_text_first",
+      "description": "Cody stream api-version=2 (Sourcegraph 5.8.0+ minimum)",
+      "needs_url": false,
+      "notes": "Fallback for instances older than Sourcegraph 6.2.0.",
+      "expected_any": ["red", "crimson", "scarlet", "ruby", "maroon"],
+      "expected_all": []
+    },
+    {
+      "name": "cody_stream_v8_no_stream",
+      "description": "Cody stream endpoint with stream=false (non-SSE response)",
+      "needs_url": false,
+      "notes": "Some forks accept stream=false on this endpoint; most do not.",
+      "expected_any": ["red", "crimson", "scarlet", "ruby", "maroon"],
+      "expected_all": []
+    }
+  ],
+  "remote_image_url": "https://upload.wikimedia.org/wikipedia/commons/4/4d/Cat_November_2010-1a.jpg",
+  "remote_keywords": ["cat", "kitten", "feline", "tabby"],
+  "outcomes": [
+    {
+      "model": "anthropic::2024-10-22::claude-sonnet-4-5-latest",
+      "case_name": "cody_stream_v8_image_first",
+      "status": 200,
+      "elapsed_ms": 1033,
+      "verdict": "PASS",
+      "fail_reason": "",
+      "reply_preview": "Red",
+      "error": "",
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-sonnet-4-5-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4IyJCEmIY1TCqYfhqAAACcQQQFd0BdQAAAABJRU5ErkJggg==\"}}, {\"type\": \"text\", \"text\": \"What is the dominant color of this image? Reply with just one word.\"}]}], \"maxTokensToSample\": 10000, \"temperature\": 0, \"stream\": true, \"topK\": -1, \"topP\": -1}",
+      "finish_reason": null,
+      "usage": null
+    },
+    {
+      "model": "anthropic::2024-10-22::claude-sonnet-4-5-latest",
+      "case_name": "cody_stream_v8_text_first",
+      "status": 200,
+      "elapsed_ms": 1066,
+      "verdict": "PASS",
+      "fail_reason": "",
+      "reply_preview": "Red",
+      "error": "",
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-sonnet-4-5-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"text\", \"text\": \"What is the dominant color of this image? Reply with just one word.\"}, {\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4IyJCEmIY1TCqYfhqAAACcQQQFd0BdQAAAABJRU5ErkJggg==\"}}]}], \"maxTokensToSample\": 10000, \"temperature\": 0, \"stream\": true, \"topK\": -1, \"topP\": -1}",
+      "finish_reason": null,
+      "usage": null
+    },
+    {
+      "model": "anthropic::2024-10-22::claude-sonnet-4-5-latest",
+      "case_name": "cody_stream_v2_text_first",
+      "status": 200,
+      "elapsed_ms": 1162,
+      "verdict": "PASS",
+      "fail_reason": "",
+      "reply_preview": "Red",
+      "error": "",
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-sonnet-4-5-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"text\", \"text\": \"What is the dominant color of this image? Reply with just one word.\"}, {\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4IyJCEmIY1TCqYfhqAAACcQQQFd0BdQAAAABJRU5ErkJggg==\"}}]}], \"maxTokensToSample\": 10000, \"temperature\": 0, \"stream\": true, \"topK\": -1, \"topP\": -1}",
+      "finish_reason": null,
+      "usage": null
+    },
+    {
+      "model": "anthropic::2024-10-22::claude-sonnet-4-5-latest",
+      "case_name": "cody_stream_v8_no_stream",
+      "status": 200,
+      "elapsed_ms": 1378,
+      "verdict": "PASS",
+      "fail_reason": "",
+      "reply_preview": "Red",
+      "error": "",
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-sonnet-4-5-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"text\", \"text\": \"What is the dominant color of this image? Reply with just one word.\"}, {\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4IyJCEmIY1TCqYfhqAAACcQQQFd0BdQAAAABJRU5ErkJggg==\"}}]}], \"maxTokensToSample\": 10000, \"temperature\": 0, \"stream\": false, \"topK\": -1, \"topP\": -1}",
+      "finish_reason": "end_turn",
+      "usage": {
+        "completion_tokens": 4,
+        "prompt_tokens": 26,
+        "total_tokens": 30,
+        "credits": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      }
+    },
+    {
+      "model": "anthropic::2024-10-22::claude-sonnet-4-5-thinking-latest",
+      "case_name": "cody_stream_v8_image_first",
+      "status": 200,
+      "elapsed_ms": 1125,
+      "verdict": "PASS",
+      "fail_reason": "",
+      "reply_preview": "Red",
+      "error": "",
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-sonnet-4-5-thinking-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4IyJCEmIY1TCqYfhqAAACcQQQFd0BdQAAAABJRU5ErkJggg==\"}}, {\"type\": \"text\", \"text\": \"What is the dominant color of this image? Reply with just one word.\"}]}], \"maxTokensToSample\": 10000, \"temperature\": 0, \"stream\": true, \"topK\": -1, \"topP\": -1}",
+      "finish_reason": null,
+      "usage": null
+    },
+    {
+      "model": "anthropic::2024-10-22::claude-sonnet-4-5-thinking-latest",
+      "case_name": "cody_stream_v8_text_first",
+      "status": 200,
+      "elapsed_ms": 995,
+      "verdict": "PASS",
+      "fail_reason": "",
+      "reply_preview": "Red",
+      "error": "",
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-sonnet-4-5-thinking-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"text\", \"text\": \"What is the dominant color of this image? Reply with just one word.\"}, {\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4IyJCEmIY1TCqYfhqAAACcQQQFd0BdQAAAABJRU5ErkJggg==\"}}]}], \"maxTokensToSample\": 10000, \"temperature\": 0, \"stream\": true, \"topK\": -1, \"topP\": -1}",
+      "finish_reason": null,
+      "usage": null
+    },
+    {
+      "model": "anthropic::2024-10-22::claude-sonnet-4-5-thinking-latest",
+      "case_name": "cody_stream_v2_text_first",
+      "status": 200,
+      "elapsed_ms": 1073,
+      "verdict": "PASS",
+      "fail_reason": "",
+      "reply_preview": "Red",
+      "error": "",
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-sonnet-4-5-thinking-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"text\", \"text\": \"What is the dominant color of this image? Reply with just one word.\"}, {\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4IyJCEmIY1TCqYfhqAAACcQQQFd0BdQAAAABJRU5ErkJggg==\"}}]}], \"maxTokensToSample\": 10000, \"temperature\": 0, \"stream\": true, \"topK\": -1, \"topP\": -1}",
+      "finish_reason": null,
+      "usage": null
+    },
+    {
+      "model": "anthropic::2024-10-22::claude-sonnet-4-5-thinking-latest",
+      "case_name": "cody_stream_v8_no_stream",
+      "status": 200,
+      "elapsed_ms": 1945,
+      "verdict": "PASS",
+      "fail_reason": "",
+      "reply_preview": "Red",
+      "error": "",
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-sonnet-4-5-thinking-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"text\", \"text\": \"What is the dominant color of this image? Reply with just one word.\"}, {\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4IyJCEmIY1TCqYfhqAAACcQQQFd0BdQAAAABJRU5ErkJggg==\"}}]}], \"maxTokensToSample\": 10000, \"temperature\": 0, \"stream\": false, \"topK\": -1, \"topP\": -1}",
+      "finish_reason": "end_turn",
+      "usage": {
+        "completion_tokens": 52,
+        "prompt_tokens": 55,
+        "total_tokens": 107,
+        "credits": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      }
+    },
+    {
+      "model": "anthropic::2024-10-22::claude-opus-4-5-latest",
+      "case_name": "cody_stream_v8_image_first",
+      "status": 200,
+      "elapsed_ms": 957,
+      "verdict": "PASS",
+      "fail_reason": "",
+      "reply_preview": "Red",
+      "error": "",
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-opus-4-5-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4IyJCEmIY1TCqYfhqAAACcQQQFd0BdQAAAABJRU5ErkJggg==\"}}, {\"type\": \"text\", \"text\": \"What is the dominant color of this image? Reply with just one word.\"}]}], \"maxTokensToSample\": 10000, \"temperature\": 0, \"stream\": true, \"topK\": -1, \"topP\": -1}",
+      "finish_reason": null,
+      "usage": null
+    },
+    {
+      "model": "anthropic::2024-10-22::claude-opus-4-5-latest",
+      "case_name": "cody_stream_v8_text_first",
+      "status": 200,
+      "elapsed_ms": 835,
+      "verdict": "PASS",
+      "fail_reason": "",
+      "reply_preview": "Red",
+      "error": "",
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-opus-4-5-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"text\", \"text\": \"What is the dominant color of this image? Reply with just one word.\"}, {\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4IyJCEmIY1TCqYfhqAAACcQQQFd0BdQAAAABJRU5ErkJggg==\"}}]}], \"maxTokensToSample\": 10000, \"temperature\": 0, \"stream\": true, \"topK\": -1, \"topP\": -1}",
+      "finish_reason": null,
+      "usage": null
+    },
+    {
+      "model": "anthropic::2024-10-22::claude-opus-4-5-latest",
+      "case_name": "cody_stream_v2_text_first",
+      "status": 200,
+      "elapsed_ms": 846,
+      "verdict": "PASS",
+      "fail_reason": "",
+      "reply_preview": "Red",
+      "error": "",
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-opus-4-5-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"text\", \"text\": \"What is the dominant color of this image? Reply with just one word.\"}, {\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4IyJCEmIY1TCqYfhqAAACcQQQFd0BdQAAAABJRU5ErkJggg==\"}}]}], \"maxTokensToSample\": 10000, \"temperature\": 0, \"stream\": true, \"topK\": -1, \"topP\": -1}",
+      "finish_reason": null,
+      "usage": null
+    },
+    {
+      "model": "anthropic::2024-10-22::claude-opus-4-5-latest",
+      "case_name": "cody_stream_v8_no_stream",
+      "status": 200,
+      "elapsed_ms": 1183,
+      "verdict": "PASS",
+      "fail_reason": "",
+      "reply_preview": "Red",
+      "error": "",
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-opus-4-5-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"text\", \"text\": \"What is the dominant color of this image? Reply with just one word.\"}, {\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4IyJCEmIY1TCqYfhqAAACcQQQFd0BdQAAAABJRU5ErkJggg==\"}}]}], \"maxTokensToSample\": 10000, \"temperature\": 0, \"stream\": false, \"topK\": -1, \"topP\": -1}",
+      "finish_reason": "end_turn",
+      "usage": {
+        "completion_tokens": 4,
+        "prompt_tokens": 26,
+        "total_tokens": 30,
+        "credits": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      }
+    },
+    {
+      "model": "anthropic::2024-10-22::claude-opus-4-5-thinking-latest",
+      "case_name": "cody_stream_v8_image_first",
+      "status": 200,
+      "elapsed_ms": 1123,
+      "verdict": "PASS",
+      "fail_reason": "",
+      "reply_preview": "Red",
+      "error": "",
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-opus-4-5-thinking-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4IyJCEmIY1TCqYfhqAAACcQQQFd0BdQAAAABJRU5ErkJggg==\"}}, {\"type\": \"text\", \"text\": \"What is the dominant color of this image? Reply with just one word.\"}]}], \"maxTokensToSample\": 10000, \"temperature\": 0, \"stream\": true, \"topK\": -1, \"topP\": -1}",
+      "finish_reason": null,
+      "usage": null
+    },
+    {
+      "model": "anthropic::2024-10-22::claude-opus-4-5-thinking-latest",
+      "case_name": "cody_stream_v8_text_first",
+      "status": 200,
+      "elapsed_ms": 1198,
+      "verdict": "PASS",
+      "fail_reason": "",
+      "reply_preview": "Red",
+      "error": "",
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-opus-4-5-thinking-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"text\", \"text\": \"What is the dominant color of this image? Reply with just one word.\"}, {\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4IyJCEmIY1TCqYfhqAAACcQQQFd0BdQAAAABJRU5ErkJggg==\"}}]}], \"maxTokensToSample\": 10000, \"temperature\": 0, \"stream\": true, \"topK\": -1, \"topP\": -1}",
+      "finish_reason": null,
+      "usage": null
+    },
+    {
+      "model": "anthropic::2024-10-22::claude-opus-4-5-thinking-latest",
+      "case_name": "cody_stream_v2_text_first",
+      "status": 200,
+      "elapsed_ms": 941,
+      "verdict": "PASS",
+      "fail_reason": "",
+      "reply_preview": "Red",
+      "error": "",
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-opus-4-5-thinking-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"text\", \"text\": \"What is the dominant color of this image? Reply with just one word.\"}, {\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4IyJCEmIY1TCqYfhqAAACcQQQFd0BdQAAAABJRU5ErkJggg==\"}}]}], \"maxTokensToSample\": 10000, \"temperature\": 0, \"stream\": true, \"topK\": -1, \"topP\": -1}",
+      "finish_reason": null,
+      "usage": null
+    },
+    {
+      "model": "anthropic::2024-10-22::claude-opus-4-5-thinking-latest",
+      "case_name": "cody_stream_v8_no_stream",
+      "status": 200,
+      "elapsed_ms": 1841,
+      "verdict": "PASS",
+      "fail_reason": "",
+      "reply_preview": "Red",
+      "error": "",
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-opus-4-5-thinking-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"text\", \"text\": \"What is the dominant color of this image? Reply with just one word.\"}, {\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4IyJCEmIY1TCqYfhqAAACcQQQFd0BdQAAAABJRU5ErkJggg==\"}}]}], \"maxTokensToSample\": 10000, \"temperature\": 0, \"stream\": false, \"topK\": -1, \"topP\": -1}",
+      "finish_reason": "end_turn",
+      "usage": {
+        "completion_tokens": 31,
+        "prompt_tokens": 55,
+        "total_tokens": 86,
+        "credits": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      }
+    },
+    {
+      "model": "anthropic::2024-10-22::claude-haiku-4-5-latest",
+      "case_name": "cody_stream_v8_image_first",
+      "status": 200,
+      "elapsed_ms": 885,
+      "verdict": "PASS",
+      "fail_reason": "",
+      "reply_preview": "Red",
+      "error": "",
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-haiku-4-5-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4IyJCEmIY1TCqYfhqAAACcQQQFd0BdQAAAABJRU5ErkJggg==\"}}, {\"type\": \"text\", \"text\": \"What is the dominant color of this image? Reply with just one word.\"}]}], \"maxTokensToSample\": 10000, \"temperature\": 0, \"stream\": true, \"topK\": -1, \"topP\": -1}",
+      "finish_reason": null,
+      "usage": null
+    },
+    {
+      "model": "anthropic::2024-10-22::claude-haiku-4-5-latest",
+      "case_name": "cody_stream_v8_text_first",
+      "status": 200,
+      "elapsed_ms": 620,
+      "verdict": "PASS",
+      "fail_reason": "",
+      "reply_preview": "Red",
+      "error": "",
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-haiku-4-5-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"text\", \"text\": \"What is the dominant color of this image? Reply with just one word.\"}, {\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4IyJCEmIY1TCqYfhqAAACcQQQFd0BdQAAAABJRU5ErkJggg==\"}}]}], \"maxTokensToSample\": 10000, \"temperature\": 0, \"stream\": true, \"topK\": -1, \"topP\": -1}",
+      "finish_reason": null,
+      "usage": null
+    },
+    {
+      "model": "anthropic::2024-10-22::claude-haiku-4-5-latest",
+      "case_name": "cody_stream_v2_text_first",
+      "status": 200,
+      "elapsed_ms": 840,
+      "verdict": "PASS",
+      "fail_reason": "",
+      "reply_preview": "Red",
+      "error": "",
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-haiku-4-5-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"text\", \"text\": \"What is the dominant color of this image? Reply with just one word.\"}, {\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4IyJCEmIY1TCqYfhqAAACcQQQFd0BdQAAAABJRU5ErkJggg==\"}}]}], \"maxTokensToSample\": 10000, \"temperature\": 0, \"stream\": true, \"topK\": -1, \"topP\": -1}",
+      "finish_reason": null,
+      "usage": null
+    },
+    {
+      "model": "anthropic::2024-10-22::claude-haiku-4-5-latest",
+      "case_name": "cody_stream_v8_no_stream",
+      "status": 200,
+      "elapsed_ms": 740,
+      "verdict": "PASS",
+      "fail_reason": "",
+      "reply_preview": "Red",
+      "error": "",
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-haiku-4-5-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"text\", \"text\": \"What is the dominant color of this image? Reply with just one word.\"}, {\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4IyJCEmIY1TCqYfhqAAACcQQQFd0BdQAAAABJRU5ErkJggg==\"}}]}], \"maxTokensToSample\": 10000, \"temperature\": 0, \"stream\": false, \"topK\": -1, \"topP\": -1}",
+      "finish_reason": "end_turn",
+      "usage": {
+        "completion_tokens": 4,
+        "prompt_tokens": 26,
+        "total_tokens": 30,
+        "credits": 1,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_creation_input_tokens": 0
+        }
+      }
+    },
+    {
+      "model": "anthropic::2024-10-22::claude-haiku-4-5-thinking-latest",
+      "case_name": "cody_stream_v8_image_first",
+      "status": 200,
+      "elapsed_ms": 830,
+      "verdict": "PASS",
+      "fail_reason": "",
+      "reply_preview": "Red",
+      "error": "",
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-haiku-4-5-thinking-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4IyJCEmIY1TCqYfhqAAACcQQQFd0BdQAAAABJRU5ErkJggg==\"}}, {\"type\": \"text\", \"text\": \"What is the dominant color of this image? Reply with just one word.\"}]}], \"maxTokensToSample\": 10000, \"temperature\": 0, \"stream\": true, \"topK\": -1, \"topP\": -1}",
+      "finish_reason": null,
+      "usage": null
+    },
+    {
+      "model": "anthropic::2024-10-22::claude-haiku-4-5-thinking-latest",
+      "case_name": "cody_stream_v8_text_first",
+      "status": 200,
+      "elapsed_ms": 746,
+      "verdict": "PASS",
+      "fail_reason": "",
+      "reply_preview": "Red",
+      "error": "",
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-haiku-4-5-thinking-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"text\", \"text\": \"What is the dominant color of this image? Reply with just one word.\"}, {\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4IyJCEmIY1TCqYfhqAAACcQQQFd0BdQAAAABJRU5ErkJggg==\"}}]}], \"maxTokensToSample\": 10000, \"temperature\": 0, \"stream\": true, \"topK\": -1, \"topP\": -1}",
+      "finish_reason": null,
+      "usage": null
+    },
+    {
+      "model": "anthropic::2024-10-22::claude-haiku-4-5-thinking-latest",
+      "case_name": "cody_stream_v2_text_first",
+      "status": 200,
+      "elapsed_ms": 881,
+      "verdict": "PASS",
+      "fail_reason": "",
+      "reply_preview": "Red",
+      "error": "",
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-haiku-4-5-thinking-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"text\", \"text\": \"What is the dominant color of this image? Reply with just one word.\"}, {\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4IyJCEmIY1TCqYfhqAAACcQQQFd0BdQAAAABJRU5ErkJggg==\"}}]}], \"maxTokensToSample\": 10000, \"temperature\": 0, \"stream\": true, \"topK\": -1, \"topP\": -1}",
+      "finish_reason": null,
+      "usage": null
+    },
+    {
+      "model": "anthropic::2024-10-22::claude-haiku-4-5-thinking-latest",
+      "case_name": "cody_stream_v8_no_stream",
+      "status": 200,
+      "elapsed_ms": 953,
+      "verdict": "PASS",
+      "fail_reason": "",
+      "reply_preview": "Red",
+      "error": "",
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-haiku-4-5-thinking-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"text\", \"text\": \"What is the dominant color of this image? Reply with just one word.\"}, {\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4IyJCEmIY1TCqYfhqAAACcQQQFd0BdQAAAABJRU5ErkJggg==\"}}]}], \"maxTokensToSample\": 10000, \"temperature\": 0, \"stream\": false, \"topK\": -1, \"topP\": -1}",
+      "finish_reason": null,
+      "usage": null
+    }
+  ]
+}

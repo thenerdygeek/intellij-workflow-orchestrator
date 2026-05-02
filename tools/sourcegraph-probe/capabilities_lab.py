@@ -407,18 +407,66 @@ def hostname_from_url(url: str) -> str | None:
         return None
 
 
-def pick_default_model(client: SourcegraphClient) -> str | None:
-    """Pick a vision-capable Claude from the catalog (matches vision_lab default)."""
+def pick_default_model(client: SourcegraphClient, base_url: str) -> str | None:
+    """Pick a vision-capable Claude from the catalog (matches vision_lab default).
+    Prints loud, actionable diagnostics on every failure mode — never swallows
+    silently. Caller treats `None` as "model discovery failed; see stderr"."""
     try:
         r = client.get(PUBLIC_MODELS_PATH)
-        models = [m["id"] for m in r.json().get("data", [])]
-    except Exception:
+    except requests.RequestException as e:
+        print(f"ERROR: model discovery network failure on {PUBLIC_MODELS_PATH}: {e}",
+              file=sys.stderr)
+        return None
+    if r.status_code != 200:
+        print(f"ERROR: model discovery returned HTTP {r.status_code}",
+              file=sys.stderr)
+        print(f"       URL hit       : {base_url.rstrip('/')}{PUBLIC_MODELS_PATH}",
+              file=sys.stderr)
+        print(f"       Auth header   : 'Authorization: token {client._mask_token() if hasattr(client, '_mask_token') else '<token>'}'",
+              file=sys.stderr)
+        print(f"       Response body : {_short(r.text, 400)}", file=sys.stderr)
+        if r.status_code == 401:
+            print("       → token rejected. Same token works for vision_lab? Try:",
+                  file=sys.stderr)
+            print(f"         curl -H \"Authorization: token sgp_...\" {base_url.rstrip('/')}{PUBLIC_MODELS_PATH}",
+                  file=sys.stderr)
+        elif r.status_code == 404:
+            print(f"       → endpoint not found. Your Sourcegraph instance may be older than 5.4.",
+                  file=sys.stderr)
+            print(f"       Workaround: pass --model 'anthropic::2024-10-22::claude-sonnet-4-5-latest' explicitly.",
+                  file=sys.stderr)
+        return None
+    try:
+        body = r.json()
+    except Exception as e:
+        print(f"ERROR: model discovery returned non-JSON response: {e}", file=sys.stderr)
+        print(f"       Body: {_short(r.text, 400)}", file=sys.stderr)
+        return None
+    models = [m.get("id") for m in body.get("data", []) if isinstance(m, dict) and m.get("id")]
+    if not models:
+        print(f"ERROR: model discovery returned 0 models from {PUBLIC_MODELS_PATH}",
+              file=sys.stderr)
+        print(f"       Response body keys: {list(body.keys()) if isinstance(body, dict) else type(body).__name__}",
+              file=sys.stderr)
+        print(f"       Workaround: pass --model 'anthropic::2024-10-22::claude-sonnet-4-5-latest' explicitly.",
+              file=sys.stderr)
         return None
     for hint in DEFAULT_MODEL_HINT_ORDER:
         for m in models:
-            if hint in m and "thinking" not in m:  # avoid thinking models — they're slower
+            if hint in m and "thinking" not in m:
                 return m
-    return models[0] if models else None
+    # No hint matched — print what we did get so the user can pass --model explicitly.
+    print(f"WARN: no model matched preferred hints {DEFAULT_MODEL_HINT_ORDER}.",
+          file=sys.stderr)
+    print(f"      Discovered ({len(models)}): {models[:15]}{'  ...' if len(models) > 15 else ''}",
+          file=sys.stderr)
+    print(f"      Falling back to first non-thinking model.", file=sys.stderr)
+    for m in models:
+        if "thinking" not in m:
+            return m
+    print(f"      No non-thinking model available; using first: {models[0]}",
+          file=sys.stderr)
+    return models[0]
 
 
 # ─────────────────────────────────────────────────────────────
@@ -922,9 +970,12 @@ def main() -> int:
     # Pick a model if needed (chat probes 3-7 + 8 need one).
     model = args.model
     if not model and (wanted - {"client_config", "model_catalog"}):
-        model = pick_default_model(client)
+        model = pick_default_model(client, args.url)
         if not model:
-            print("ERROR: failed to discover a model from /.api/llm/models. Pass --model.",
+            # pick_default_model already printed the diagnostic; just exit cleanly.
+            print("\n→ Re-run with --model <id> to skip auto-discovery, e.g.:",
+                  file=sys.stderr)
+            print("    --model 'anthropic::2024-10-22::claude-sonnet-4-5-latest'",
                   file=sys.stderr)
             return 3
 
