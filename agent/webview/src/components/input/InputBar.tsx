@@ -1,5 +1,5 @@
 import { memo, useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { Plus, ArrowUp, Square, ChevronDown, Sparkles, Brain, ListChecks, File, Folder, Hash, SquareKanban, Zap } from 'lucide-react';
+import { Plus, ArrowUp, Square, ChevronDown, Sparkles, Brain, ListChecks, File, Folder, Hash, SquareKanban, Zap, Image as ImageIcon } from 'lucide-react';
 import { useChatStore } from '@/stores/chatStore';
 import type { Mention, MentionSearchResult } from '@/bridge/types';
 import {
@@ -17,6 +17,20 @@ import { MentionDropdown, relevanceScore } from './MentionDropdown';
 import { SkillDropdown } from './SkillDropdown';
 import { TicketDropdown } from './TicketDropdown';
 import { useDropdownKeyboard } from '@/hooks/useDropdownKeyboard';
+import { AttachmentManager, type PendingAttachment } from './AttachmentManager';
+import { ChipPreview } from './ChipPreview';
+
+// Phase 5: image-attachment defaults. These mirror the Kotlin
+// PluginSettings.State defaults; eventually a settings bridge will push live
+// values, but the user's settings UI only changes them rarely so the static
+// defaults are correct for the first cut. Kotlin runs the same checks
+// server-side, so user customizations still take effect end-to-end.
+const IMAGE_DEFAULT_SETTINGS = {
+  maxBytes: 5_242_880,
+  mimeWhitelist: ['image/png', 'image/jpeg', 'image/webp', 'image/heic', 'image/heif'],
+  maxPerTurn: 2,
+  enabled: true,
+};
 
 // ── Types ──
 
@@ -296,6 +310,9 @@ interface InputBarContentProps {
   skillSelectedIndex: number;
   setSkillSelectedIndex: (i: number) => void;
   skillListRef: React.RefObject<HTMLDivElement>;
+  // Phase 5: image-attachment props (only those InputBarContent itself uses)
+  onPickImage: () => void;
+  onPasteImage: (file: File) => Promise<boolean>;
 }
 
 function InputBarContent({
@@ -334,6 +351,8 @@ function InputBarContent({
   skillSelectedIndex,
   setSkillSelectedIndex,
   skillListRef,
+  onPickImage,
+  onPasteImage,
 }: InputBarContentProps) {
   // Focus on trigger from store
   const focusTrigger = useChatStore(s => s.focusInputTrigger);
@@ -409,6 +428,7 @@ function InputBarContent({
           onEscape={onDismissMentions}
           onDropdownKeyDown={dropdownKeyDown}
           onPastedTickets={onPastedTickets}
+          onPasteImage={onPasteImage}
         />
       </div>
 
@@ -448,6 +468,14 @@ function InputBarContent({
                 <Sparkles className="size-3.5" style={{ color: 'var(--accent-edit, #f59e0b)' }} />
                 <span>Skill</span>
                 <span className="ml-auto text-[10px]" style={{ color: 'var(--fg-muted)' }}>/</span>
+              </DropdownMenuItem>
+              {/* Phase 5: image attachment via file picker. Paste + drag-drop
+                  are wired separately (RichInput.handlePaste + the wrapping
+                  div's onDrop). */}
+              <DropdownMenuItem onClick={onPickImage}>
+                <ImageIcon className="size-3.5" style={{ color: 'var(--accent-edit, #f59e0b)' }} />
+                <span>Image</span>
+                <span className="ml-auto text-[10px]" style={{ color: 'var(--fg-muted)' }}>file</span>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -501,6 +529,7 @@ export const InputBar = memo(function InputBar() {
   const busy = useChatStore(s => s.busy);
   const outerCompacting = useChatStore(s => s.compactionState.active);
   const richInputRef = useRef<RichInputHandle>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [hasText, setHasText] = useState(false);
   const [showMentions, setShowMentions] = useState(false);
@@ -509,6 +538,72 @@ export const InputBar = memo(function InputBar() {
   const [mentionQuery, setMentionQuery] = useState('');
   const [skillQuery, setSkillQuery] = useState('');
   const [ticketQuery, setTicketQuery] = useState('');
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+
+  // Phase 5: AttachmentManager owns the pending image list. We construct it
+  // once per InputBar mount; the manager's `onChange` flips local state so
+  // ChipPreview re-renders. `toast` flows into the existing chatStore toast
+  // surface so attach/upload errors share visual treatment with everything
+  // else.
+  const attachmentManagerRef = useRef<AttachmentManager | null>(null);
+  if (attachmentManagerRef.current === null) {
+    attachmentManagerRef.current = new AttachmentManager(
+      IMAGE_DEFAULT_SETTINGS,
+      () => setAttachments(attachmentManagerRef.current!.list()),
+      (msg, type = 'info') => {
+        const durationMs = type === 'error' ? 6000 : 3000;
+        useChatStore.getState().showToast(msg, type, durationMs);
+      },
+    );
+  }
+
+  const handleAttachFile = useCallback(async (file: File | null | undefined) => {
+    if (!file || !attachmentManagerRef.current) return;
+    await attachmentManagerRef.current.attachFile(file);
+  }, []);
+
+  const handleRemoveAttachment = useCallback((sha256: string) => {
+    attachmentManagerRef.current?.remove(sha256);
+  }, []);
+
+  const handlePickImage = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleFilePicked = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    await handleAttachFile(file);
+    // Reset value so the same file can be picked again later.
+    e.target.value = '';
+  }, [handleAttachFile]);
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    if (!e.dataTransfer) return;
+    // Only intercept image drops — let other drops (e.g. text) fall through to
+    // the contenteditable's native handler.
+    const files = Array.from(e.dataTransfer.files ?? []).filter(f =>
+      f.type.startsWith('image/'),
+    );
+    if (files.length === 0) return;
+    e.preventDefault();
+    for (const file of files) {
+      await handleAttachFile(file);
+    }
+  }, [handleAttachFile]);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer) return;
+    const hasImage = Array.from(e.dataTransfer.items ?? []).some(item =>
+      item.kind === 'file' && item.type.startsWith('image/'),
+    );
+    if (hasImage) e.preventDefault();
+  }, []);
+
+  const handlePasteImage = useCallback(async (file: File): Promise<boolean> => {
+    if (!attachmentManagerRef.current) return false;
+    const result = await attachmentManagerRef.current.attachFile(file);
+    return result !== null;
+  }, []);
 
   // ── Flat item lists for keyboard navigation ──
   // MentionDropdown manages its own filtered list internally, so we keep a
@@ -706,18 +801,33 @@ export const InputBar = memo(function InputBar() {
     setShowSkills(false); setSkillQuery('');
   }, []);
 
-  const handleSend = useCallback(() => {
+  const handleSend = useCallback(async () => {
     const ri = richInputRef.current;
     if (!ri) return;
     const text = ri.getText();
     const mentions = ri.getMentions();
-    console.log('[Mention] handleSend: text=', JSON.stringify(text.slice(0, 80)), 'mentions=', JSON.stringify(mentions));
-    if (!text.trim() && mentions.length === 0) return;
+    const pending = attachmentManagerRef.current?.list() ?? [];
+    console.log('[Mention] handleSend: text=', JSON.stringify(text.slice(0, 80)), 'mentions=', JSON.stringify(mentions), 'attachments=', pending.length);
+    if (!text.trim() && mentions.length === 0 && pending.length === 0) return;
     const state = useChatStore.getState();
     if (state.inputState.locked) return;
     if (state.busy && !state.steeringMode) return;
+    // Phase 5: kick off the upload(s) before we clear UI state. uploadAll is
+    // best-effort on errors — toasts surface failures and pending bytes stay
+    // in the chip until explicitly removed. Phase 6 wires the resulting
+    // sha256s into the message body via parts; Phase 5 keeps the surface UI
+    // working without changing the wire shape, so chips clear after upload
+    // and the existing send path runs unchanged.
+    if (pending.length > 0 && attachmentManagerRef.current) {
+      try {
+        await attachmentManagerRef.current.uploadAll();
+      } catch (e) {
+        console.warn('[multimodal] uploadAll threw', e);
+      }
+    }
     useChatStore.getState().sendMessage(text.trim(), mentions);
     ri.clear();
+    attachmentManagerRef.current?.clear();
     setHasText(false);
     setShowMentions(false); setShowSkills(false); setShowTickets(false);
   }, []);
@@ -757,7 +867,19 @@ export const InputBar = memo(function InputBar() {
         className="relative rounded-xl border p-2 cursor-text"
         style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--input-border)' }}
         onClick={() => richInputRef.current?.focus()}
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
       >
+        <ChipPreview attachments={attachments} onRemove={handleRemoveAttachment} />
+        {/* Hidden picker — opened by the "Image" dropdown item */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
+          onChange={handleFilePicked}
+          style={{ display: 'none' }}
+          aria-hidden="true"
+        />
         <InputBarContent
           showMentions={showMentions}
           showSkills={showSkills}
@@ -794,6 +916,8 @@ export const InputBar = memo(function InputBar() {
           skillSelectedIndex={skillKbd.selectedIndex}
           setSkillSelectedIndex={skillKbd.setSelectedIndex}
           skillListRef={skillKbd.listRef}
+          onPickImage={handlePickImage}
+          onPasteImage={handlePasteImage}
         />
       </div>
     </div>

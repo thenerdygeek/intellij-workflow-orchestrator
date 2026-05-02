@@ -124,8 +124,19 @@ class AgentCefPanel(
     private var copyToClipboardQuery: JBCefJSQuery? = null
     private var openInsightsTabQuery: JBCefJSQuery? = null
     private var loadBackgroundSnapshotQuery: JBCefJSQuery? = null
+    private var attachmentExistsQuery: JBCefJSQuery? = null
     var mentionSearchProvider: MentionSearchProvider? = null
     var onSendMessageWithMentions: ((String, String) -> Unit)? = null  // (text, mentionsJson)
+
+    /**
+     * Resolves the directory for the *currently active* session — used by the
+     * Phase 5 image-attachment upload path to construct an [AttachmentStore]
+     * fresh per request (never cached, per Phase 4's per-session-isolation
+     * contract). Set by [AgentController] when a session starts/resumes,
+     * cleared on new chat. May return null when no session is active (no
+     * upload yet possible).
+     */
+    var currentSessionDirProvider: (() -> java.nio.file.Path?)? = null
 
     /**
      * Bridge dispatcher: manages the pageLoaded/pendingCalls state machine.
@@ -315,13 +326,33 @@ class AgentCefPanel(
             }
         )
 
-        // Register scheme handler factory for serving resources from JAR.
+        // Register scheme handler factory for serving resources from JAR plus
+        // the Phase 5 image-attachment upload endpoint. The factory dispatches
+        // by URL: `/upload/<sha256>` POSTs go to AttachmentUploadHandler (which
+        // writes to the active session's AttachmentStore), everything else
+        // serves bundled webview assets via CefResourceSchemeHandler.
+        //
         // NOTE: loadURL is called AFTER all query registration + load handler setup
         // (see end of this method) to avoid a race where the page finishes loading
         // before onLoadingStateChange is registered, leaving pageLoaded=false forever.
         try {
-            val factory = org.cef.callback.CefSchemeHandlerFactory { _, _, _, _ ->
-                CefResourceSchemeHandler()
+            val settings = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(
+                com.intellij.openapi.project.ProjectManager.getInstance().openProjects.firstOrNull()
+                    ?: com.intellij.openapi.project.ProjectManager.getInstance().defaultProject
+            )
+            val factory = org.cef.callback.CefSchemeHandlerFactory { _, _, _, request ->
+                val url = request?.url
+                if (url != null && AttachmentUploadHandler.matches(url)) {
+                    AttachmentUploadHandler(
+                        attachmentStoreProvider = {
+                            val dir = currentSessionDirProvider?.invoke()
+                            if (dir != null) com.workflow.orchestrator.agent.session.AttachmentStore(dir) else null
+                        },
+                        settings = settings,
+                    )
+                } else {
+                    CefResourceSchemeHandler()
+                }
             }
             org.cef.CefApp.getInstance().registerSchemeHandlerFactory(
                 CefResourceSchemeHandler.SCHEME,
@@ -538,6 +569,29 @@ class AgentCefPanel(
             val json = onLoadBackgroundSnapshot?.invoke(sessionId) ?: "[]"
             JBCefJSQuery.Response(json)
         }
+        // Phase 5: chunked-by-sha256 upload pre-flight. The webview's
+        // AttachmentManager calls this BEFORE shipping bytes so we can skip
+        // the upload entirely on a hash collision (within-session dedup).
+        // Returns JSON: {"exists": true|false}. The query is text-only — the
+        // multi-MB upload itself goes through AttachmentUploadHandler via
+        // fetch('http://workflow-agent/upload/<sha256>').
+        attachmentExistsQuery = registerQuery(b) { sha256 ->
+            val dir = currentSessionDirProvider?.invoke()
+            val exists = if (dir != null) {
+                try {
+                    val store = com.workflow.orchestrator.agent.session.AttachmentStore(dir)
+                    com.intellij.openapi.progress.runBlockingCancellable {
+                        store.read(sha256) != null
+                    }
+                } catch (e: Exception) {
+                    LOG.warn("attachmentExistsQuery: read failed for $sha256", e)
+                    false
+                }
+            } else {
+                false
+            }
+            JBCefJSQuery.Response("""{"exists":$exists}""")
+        }
 
         // Wait for page load before executing JS
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
@@ -637,6 +691,20 @@ class AgentCefPanel(
                                 "window._loadBackgroundSnapshot = function(sessionId) {" +
                                     " return new Promise(function(resolve, reject) {" +
                                     " ${q.inject("sessionId", "function(r) { resolve(JSON.parse(r || '[]')); }", "function(err) { resolve([]); }")}" +
+                                    " }); };"
+                            )
+                        }
+                    }
+                    // Phase 5: image-attachment pre-flight. JS asks Kotlin
+                    // whether bytes for a given sha256 already exist in the
+                    // active session's attachments/ dir, so we can skip the
+                    // upload on a hash collision.
+                    injectBridge("_attachmentExists") {
+                        attachmentExistsQuery?.let { q ->
+                            js(
+                                "window._attachmentExists = function(sha256) {" +
+                                    " return new Promise(function(resolve) {" +
+                                    " ${q.inject("sha256", "function(r) { try { resolve(JSON.parse(r)); } catch(e) { resolve({exists:false}); } }", "function(err) { resolve({exists:false}); }")}" +
                                     " }); };"
                             )
                         }

@@ -74,6 +74,14 @@ interface RichInputProps {
   onDropdownKeyDown?: (e: React.KeyboardEvent) => boolean;
   /** Called when pasted text contains ticket keys (e.g. #PROJ-123) that need async validation */
   onPastedTickets?: (ticketKeys: string[]) => void;
+  /**
+   * Phase 5: invoked when an image file is pasted (e.g. "paste error
+   * screenshot from Snipping Tool"). Returning true means the handler
+   * accepted the image — RichInput then suppresses the existing text path
+   * for this paste event. Returning false (or absent) lets the regular
+   * text/plain path run unchanged.
+   */
+  onPasteImage?: (file: File) => Promise<boolean>;
 }
 
 /**
@@ -82,7 +90,7 @@ interface RichInputProps {
  * Text and chips flow naturally together on the same line.
  */
 export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function RichInput(
-  { placeholder, disabled, className, onSubmit, onChange, onEscape, onDropdownKeyDown, onPastedTickets },
+  { placeholder, disabled, className, onSubmit, onChange, onEscape, onDropdownKeyDown, onPastedTickets, onPasteImage },
   ref
 ) {
   const editorRef = useRef<HTMLDivElement>(null);
@@ -430,6 +438,28 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
   // Prevent pasting rich HTML — paste as plain text, auto-chip any #TICKET-123 patterns
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     e.preventDefault();
+
+    // Phase 5: image paste detection — runs BEFORE the text/plain path so
+    // a clipboard with both text and image (some screenshot tools emit
+    // both) prefers the image. The handler must run inside this same
+    // handlePaste — preventDefault has already fired above so a sibling
+    // listener would never see the event.
+    if (onPasteImage) {
+      const items = Array.from(e.clipboardData.items ?? []);
+      const imageItem = items.find(i => i.kind === 'file' && i.type.startsWith('image/'));
+      if (imageItem) {
+        const file = imageItem.getAsFile();
+        if (file) {
+          // Fire-and-forget — onPasteImage manages its own toast/error path.
+          // We intentionally do NOT fall through to the text path, even if
+          // attachFile rejects, because falling through would paste image
+          // metadata or empty text in confusing ways.
+          void onPasteImage(file);
+          return;
+        }
+      }
+    }
+
     const text = e.clipboardData.getData('text/plain');
 
     // Fast path: no ticket patterns, just insert plain text
@@ -512,7 +542,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     if (ticketKeys.length > 0) {
       onPastedTickets?.(ticketKeys);
     }
-  }, [fireChange, onPastedTickets]);
+  }, [fireChange, onPastedTickets, onPasteImage]);
 
   return (
     <div

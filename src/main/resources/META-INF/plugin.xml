@@ -120,6 +120,13 @@
             displayName="Automation"
             nonDefaultProject="true"/>
 
+        <projectConfigurable
+            parentId="workflow.orchestrator"
+            instance="com.workflow.orchestrator.core.settings.MultimodalSettingsConfigurable"
+            id="workflow.orchestrator.multimodal"
+            displayName="Multimodal"
+            nonDefaultProject="true"/>
+
         <!-- Tool Window -->
         <toolWindow
             id="Workflow"

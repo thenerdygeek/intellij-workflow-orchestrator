@@ -117,4 +117,60 @@ class CefResourceSchemeHandlerTest {
         // intentionally empty — exists only so the @Disabled annotation
         // surfaces in test reports as a known-skipped contract.
     }
+
+    // -------------------------------------------------------------------------
+    // Phase 5 — CSP source-text pin
+    //
+    // The webview's image-attachment upload (Phase 5) uses
+    // fetch('http://workflow-agent/upload/<sha256>') which is blocked by the
+    // pre-Phase-5 `connect-src 'none'` directive. Phase 5 Task 5.0 relaxed
+    // the directive to `connect-src 'self' http://workflow-agent`. These
+    // tests pin that contract by reading the handler source verbatim — a
+    // future regression that re-introduces `connect-src 'none'` will fail
+    // here loud-and-early.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `CSP allows connect-src for the workflow-agent scheme — Phase 5 pin`() {
+        val src = readHandlerSource()
+        // Must not regress to the pre-Phase-5 lockout.
+        assertFalse(
+            src.contains("connect-src 'none'"),
+            "Regression: Phase 5 relaxation was undone (connect-src 'none' is back). " +
+                "The fetch-based image upload at http://workflow-agent/upload/<sha256> " +
+                "will silently fail at runtime if this directive returns.",
+        )
+        // Must still positively allow the workflow-agent scheme.
+        assertTrue(
+            src.contains("connect-src 'self'"),
+            "Phase 5 CSP must contain `connect-src 'self'` (with workflow-agent allowed)",
+        )
+    }
+
+    @Test
+    fun `CSP only allows connect-src to self — no external endpoints — Phase 5 pin`() {
+        // The Phase 5 relaxation must remain narrow. If a future patch widens
+        // connect-src to include `*` or `https:` or a third-party host, the
+        // webview would gain the ability to exfiltrate user content via
+        // fetch() to any URL — the explicit point of the original `'none'`
+        // directive. We pin the narrow allow-list verbatim.
+        val src = readHandlerSource()
+        assertFalse(src.contains("connect-src *"), "connect-src must not be wildcarded")
+        assertFalse(
+            src.contains("connect-src 'self' https:"),
+            "connect-src must not allow arbitrary HTTPS",
+        )
+    }
+
+    private fun readHandlerSource(): String {
+        // Source path resolved relative to the working directory of test
+        // execution. `:agent:test` runs from `/agent/`, so the source lives
+        // at `src/main/kotlin/.../CefResourceSchemeHandler.kt`.
+        val candidate = java.io.File("src/main/kotlin/com/workflow/orchestrator/agent/ui/CefResourceSchemeHandler.kt")
+        if (candidate.exists()) return candidate.readText()
+        // Fallback for invocations from the repo root (some IDEs).
+        val rooted = java.io.File("agent/src/main/kotlin/com/workflow/orchestrator/agent/ui/CefResourceSchemeHandler.kt")
+        if (rooted.exists()) return rooted.readText()
+        throw AssertionError("CefResourceSchemeHandler.kt not found at either ${candidate.absolutePath} or ${rooted.absolutePath}")
+    }
 }

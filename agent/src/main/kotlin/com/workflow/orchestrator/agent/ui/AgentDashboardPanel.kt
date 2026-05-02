@@ -857,6 +857,16 @@ class AgentDashboardPanel(
         cefPanel?.onPageReady = onReady
     }
 
+    /**
+     * Phase 5: wires the current-session-directory resolver used by the
+     * image-attachment upload path. Each upload constructs a fresh
+     * [com.workflow.orchestrator.agent.session.AttachmentStore] from this
+     * provider so per-session isolation is preserved (Phase 4 contract).
+     */
+    fun setCurrentSessionDirProvider(provider: () -> java.nio.file.Path?) {
+        cefPanel?.currentSessionDirProvider = provider
+    }
+
     fun setCefCancelSteeringCallback(onCancel: (String) -> Unit) {
         cefPanel?.onCancelSteering = onCancel
     }

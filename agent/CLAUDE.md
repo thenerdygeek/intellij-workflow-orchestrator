@@ -744,7 +744,13 @@ JCEF-based (Chromium) rendering with bundled libraries (zero CDN dependency):
 
 **IDE-native features:** click-to-navigate file paths, Jira card embeds, Sonar badges, @ mention autocomplete (files, folders, symbols, tools, skills), toast notifications
 
-**Resource serving:** `CefResourceSchemeHandler` serves from plugin JAR via `http://workflow-agent/` scheme. CSP: `connect-src: 'none'`.
+**Resource serving:** `CefResourceSchemeHandler` serves from plugin JAR via `http://workflow-agent/` scheme. CSP: `connect-src 'self' http://workflow-agent` (Phase 5 — relaxed from `'none'` to allow the chunked-by-sha256 image upload at `/upload/<sha256>`; still narrow enough that arbitrary external fetches remain blocked).
+
+**Image upload (Phase 5 of multimodal-agent work):**
+- `AttachmentUploadHandler` is wired alongside `CefResourceSchemeHandler` in `AgentCefPanel.createBrowser()` via the same `CefSchemeHandlerFactory`. The factory dispatches by URL: `/upload/<sha256>` POSTs go to `AttachmentUploadHandler`, everything else falls through to the static-asset handler.
+- The webview's `AttachmentManager` (`agent/webview/src/components/input/AttachmentManager.ts`) computes a sha256 client-side, asks the `_attachmentExists` JCEF bridge whether bytes already live in the active session's `attachments/` dir, and uploads via plain `fetch('http://workflow-agent/upload/<sha256>')` only when needed. Bridge IPC stays text-only — multi-MB binary bytes never go through `JBCefJSQuery`.
+- `AttachmentUploadHandler.attachmentStoreProvider` is invoked **per request** so each upload resolves to the *currently active* session's `AttachmentStore` (per-session isolation contract from Phase 4). `AgentCefPanel.currentSessionDirProvider` is the wire that `AgentController` uses to push the active session directory.
+- Validation runs on both sides: `AttachmentManager.attachFile` checks size + MIME + per-turn cap client-side (so the user gets an immediate toast with no bridge round-trip); `AttachmentUploadHandler.validate` checks the same again server-side as defense-in-depth. Validation outcome strings (`disabled`, `size_exceeded`, `mime_not_allowed`) are pinned by `AttachmentUploadHandlerTest` because the JS layer branches on them.
 
 ## React Webview Architecture
 

@@ -469,6 +469,20 @@ class AgentController(
         panel.onValidatePaths = ::handleValidatePaths
         panel.onSendMessage = ::executeTask
         panel.setOnCompactContext(::compactContext)
+        // Phase 5: image-attachment upload path resolves the active session
+        // dir on every request (never cached). Returns null when no session
+        // is active — AttachmentUploadHandler responds 400 "no_active_session"
+        // so the JS toast surfaces a clear error instead of silently writing
+        // to a stale session.
+        panel.setCurrentSessionDirProvider {
+            val sid = currentSessionId ?: return@setCurrentSessionDirProvider null
+            val basePath = project.basePath ?: return@setCurrentSessionDirProvider null
+            java.nio.file.Paths.get(
+                ProjectIdentifier.agentDir(basePath).absolutePath,
+                "sessions",
+                sid,
+            )
+        }
     }
 
     /**

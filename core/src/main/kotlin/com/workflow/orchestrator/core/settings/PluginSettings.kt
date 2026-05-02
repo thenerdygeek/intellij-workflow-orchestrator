@@ -212,6 +212,61 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
          * renders this control as disabled ("Coming in v2") in v1.
          */
         var documentOcrEnabled by property(false)
+
+        // ── Multimodal image-attachment settings (Phase 5) ────────────────────────────
+        //
+        // User-visible controls for image input. UI lives at
+        // Tools > Workflow Orchestrator > Multimodal (MultimodalSettingsConfigurable).
+        // Defaults mirror the gateway's vision-capable model whitelist.
+
+        /**
+         * Per-attachment maximum size in bytes. Validated client-side in the
+         * webview before any bridge round-trip and again server-side by
+         * AttachmentUploadHandler. Default: 5 MB.
+         */
+        var imageMaxBytes by property(5_242_880L)
+
+        /**
+         * Maximum number of images attachable in a single user turn (mirrors
+         * Cody's per-turn cap). Default: 2.
+         */
+        var imagesPerTurnCap by property(2)
+
+        /**
+         * Kill switch. When false, the paperclip menu hides the image action
+         * and paste/drag-drop reject image content. Default: true.
+         */
+        var enableImageInput by property(true)
+
+        /**
+         * Token-cost estimate per image used for pre-send budget warnings.
+         * Authoritative cost is `usage.prompt_tokens` from the response after
+         * the call returns; this estimate is only consulted before the request.
+         * Default: 1500 (Anthropic vision pricing model approximation).
+         */
+        var imageTokenEstimateDefault by property(1500)
+
+        /**
+         * MIME types accepted for image attachments. Default mirrors the
+         * gateway-confirmed Cody whitelist:
+         *   image/png · image/jpeg · image/webp · image/heic · image/heif.
+         *
+         * Populated in the `init` block below on first instantiation. The
+         * `by list<String>()` delegate matches the existing list-typed
+         * `bambooPlanValidationCache` pattern in this file.
+         */
+        var imageMimeWhitelist by list<String>()
+
+        init {
+            // Populate default whitelist on first instantiation. Persisted lists
+            // round-trip independently — if the user clears the list it stays
+            // empty (which the UI surfaces as "no MIME types accepted").
+            if (imageMimeWhitelist.isEmpty()) {
+                imageMimeWhitelist.addAll(
+                    listOf("image/png", "image/jpeg", "image/webp", "image/heic", "image/heif")
+                )
+            }
+        }
     }
 
     /**
