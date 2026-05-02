@@ -612,21 +612,68 @@ class AgentService(
      * on the most recent assistant `UiMessage` so the React webview renders
      * the `📷 image analyzed` strip.
      */
+    /**
+     * Lazily-constructed, session-scoped [com.workflow.orchestrator.core.ai.ModelCatalogService].
+     *
+     * Phase 6 review followup — promoted from per-`wrapBrainWithRouter` cold
+     * instances (Phase 6 first cut) to a single shared instance kicked off
+     * once per executeTask boundary so the catalog warms up and subsequent
+     * `supportsVision()` lookups by [com.workflow.orchestrator.agent.loop.AgentLoop]'s
+     * vision-aware fallback path return authoritative values rather than
+     * always-false (the cold-cache result).
+     *
+     * Lifetime: lives as long as the [AgentService] itself. Multiple
+     * `wrapBrainWithRouter` calls within a single session AND across sessions
+     * share the same instance. The catalog has its own 1-hour TTL + per-call
+     * mutex so re-warm is automatic.
+     *
+     * Construction is parameterized on [sgUrl] / [tokenProvider] which can
+     * change across sessions when the user reconfigures Sourcegraph credentials;
+     * to avoid stale binding, we re-key the lazy holder when those change.
+     */
+    private val sharedCatalogLock = Any()
+    @Volatile private var sharedCatalogKey: Pair<String, () -> String?>? = null
+    @Volatile private var sharedCatalog: com.workflow.orchestrator.core.ai.ModelCatalogService? = null
+
+    private fun getOrCreateSharedCatalog(
+        sgUrl: String,
+        tokenProvider: () -> String?,
+    ): com.workflow.orchestrator.core.ai.ModelCatalogService = synchronized(sharedCatalogLock) {
+        // tokenProvider lambdas are reference-compared; we treat (sgUrl, current-token)
+        // as the cache key proxy. A token rotation results in a new closure on the
+        // CredentialStore, so we rebuild when the URL changes — the token rotation
+        // case is uncommon enough that catalog re-fetch on next use is fine.
+        val key = sgUrl to tokenProvider
+        val existing = sharedCatalog
+        if (existing != null && sharedCatalogKey?.first == sgUrl) {
+            return existing
+        }
+        val fresh = com.workflow.orchestrator.core.ai.ModelCatalogService(
+            baseUrl = sgUrl,
+            tokenProvider = tokenProvider,
+        )
+        sharedCatalog = fresh
+        sharedCatalogKey = key
+        // Kick off a warm-up fetch in the injected coroutine scope so the catalog
+        // is loaded by the time AgentLoop's first fallback decision needs it. This
+        // closes the "cold catalog" Phase 6 followup so vision-aware fallback works
+        // on the FIRST image-bearing fallback, not just the second one onwards.
+        cs.launch(Dispatchers.IO) {
+            runCatching { fresh.getCatalog() }
+                .onFailure { e -> log.debug("[Agent:Catalog] warm-up fetch failed: ${e.message}") }
+        }
+        fresh
+    }
+
     private fun wrapBrainWithRouter(
         brain: LlmBrain,
         sessionDir: java.nio.file.Path,
         sgUrl: String,
         tokenProvider: () -> String?,
         onBadgeFire: () -> Unit,
+        catalog: com.workflow.orchestrator.core.ai.ModelCatalogService,
     ): LlmBrain {
         val attachmentStore = com.workflow.orchestrator.agent.session.AttachmentStore(sessionDir)
-        // ModelCatalogService is constructed cold — Phase 2 wires it live in
-        // a future plugin-startup task. For now, the stream client falls back
-        // to api-version 8 (the lowest version that accepts `image_url` parts).
-        val catalog = com.workflow.orchestrator.core.ai.ModelCatalogService(
-            baseUrl = sgUrl,
-            tokenProvider = tokenProvider,
-        )
         val streamClient = com.workflow.orchestrator.core.ai.SourcegraphCompletionsStreamClient(
             baseUrl = sgUrl,
             tokenProvider = tokenProvider,
@@ -1285,6 +1332,11 @@ class AgentService(
                 val routerCredentialStore = CredentialStore()
                 val tokenProviderForRouter: () -> String? =
                     { routerCredentialStore.getToken(ServiceType.SOURCEGRAPH) }
+                // Phase 6 review followup — single shared catalog, warmed up at
+                // construction so AgentLoop's vision-aware fallback (Task 6.3a)
+                // sees authoritative supportsVision values on the first
+                // image-bearing fallback, not always-false from cold cache.
+                val sharedCatalog = getOrCreateSharedCatalog(sgUrlForRouter, tokenProviderForRouter)
                 val onBadgeFire: () -> Unit = onBadgeFire@{
                     // The most recent assistant UiMessage carries the assistant text;
                     // flag it with analyzedImageBadge=true so the React webview renders
@@ -1308,6 +1360,7 @@ class AgentService(
                     sgUrl = sgUrlForRouter,
                     tokenProvider = tokenProviderForRouter,
                     onBadgeFire = onBadgeFire,
+                    catalog = sharedCatalog,
                 )
                 brainRef = brain
                 currentBrainModelId = brain.modelId
@@ -1437,13 +1490,16 @@ class AgentService(
                     // so image+tools turns continue to route correctly through the
                     // hybrid path even after a recycle/fallback. Per-session
                     // AttachmentStore is reconstructed against the SAME session dir
-                    // (no cross-session leakage).
+                    // (no cross-session leakage). Shared catalog ensures the
+                    // recycled brain reads the SAME warmed-up vision-capability data
+                    // (no per-recycle cold-fetch cost).
                     wrapBrainWithRouter(
                         brain = newBrain,
                         sessionDir = sessionDirPath,
                         sgUrl = fbUrl,
                         tokenProvider = fbTokenProvider,
                         onBadgeFire = onBadgeFire,
+                        catalog = sharedCatalog,
                     )
                 }
 
@@ -1775,6 +1831,13 @@ class AgentService(
                     fallbackManager = fallbackManager,
                     brainFactory = brainFactory,
                     cachedFallbackChain = cachedFallbackChain,
+                    // Phase 6 review followup — when the in-flight payload contains
+                    // image parts, the loop's L1-fallback branch filters the chain to
+                    // vision-capable models via ModelFallbackManager.fallbackChainForVision.
+                    // sharedCatalog is warmed up at session start so the first
+                    // image-bearing fallback decision sees authoritative data, not
+                    // always-false from cold cache.
+                    modelCatalogService = sharedCatalog,
                     onModelSwitch = onModelSwitch,
                     compactOnTimeoutExhaustion = compactOnTimeoutExhaustion,
                     onCheckpoint = {

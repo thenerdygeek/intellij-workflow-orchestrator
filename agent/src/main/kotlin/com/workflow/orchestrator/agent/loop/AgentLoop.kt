@@ -27,8 +27,10 @@ import com.workflow.orchestrator.agent.tools.ToolResultType
 import com.workflow.orchestrator.agent.tools.estimateTokens
 import com.workflow.orchestrator.agent.tools.truncateOutput
 import com.workflow.orchestrator.core.ai.LlmBrain
+import com.workflow.orchestrator.core.ai.ModelCatalogService
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
+import com.workflow.orchestrator.core.ai.dto.hasImageParts
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
 import com.workflow.orchestrator.core.model.ModelPricingRegistry
@@ -295,6 +297,33 @@ class AgentLoop(
     private val sessionApprovalStore: SessionApprovalStore = SessionApprovalStore(),
     /** Tool execution mode: "accumulate" (default) or "stream_interrupt" (Cline-style). */
     private val toolExecutionMode: String = "accumulate",
+    /**
+     * Optional [ModelCatalogService] used by the multimodal-agent Phase 6 review
+     * followup to filter the fallback chain to vision-capable models when the
+     * in-flight payload contains image parts.
+     *
+     * **Why this lives at the loop layer:** the fallback decision happens here
+     * (line ~771 in `apiResult.type in TIMEOUT_ERRORS`). Without the filter,
+     * a fallback to a non-vision model would silently strip image content at
+     * the gateway and produce a confusing reply with no error. With the
+     * filter, the loop advances PAST non-vision models in the chain to the
+     * next vision-capable model; if no vision-capable fallback exists, the
+     * loop fails with a user-visible message instead of degrading silently.
+     *
+     * **Behavior when null** (legacy/test/sub-agent path): vision filter
+     * never engages — fallback uses the unfiltered chain. Backward compatible
+     * with every existing call site that doesn't construct a router.
+     *
+     * **Behavior when catalog has not loaded yet** (cold cache, e.g. no token
+     * configured at startup): `supportsVision` returns false for every model,
+     * so the filter would produce an empty list. We treat the empty list as
+     * "no filter information available" and fall back to the unfiltered chain
+     * with a `WARN` log line, so the loop keeps making progress even when the
+     * catalog is unreachable. Trade-off: first image-bearing fallback may
+     * still hit a non-vision model, but the user gets a confusing reply
+     * (not a silent hang). Documented as a Phase 7 followup.
+     */
+    private val modelCatalogService: ModelCatalogService? = null,
     /** Dynamic provider for known tool names (re-read from registry each iteration for deferred tools). */
     private val toolNameProvider: (() -> Set<String>)? = null,
     /** Dynamic provider for known param names (re-read from registry each iteration for deferred tools). */
@@ -783,8 +812,58 @@ class AgentLoop(
                             sameTierRecycles = 0
                             brainSwapAttempted = true
                         } else {
-                            // Normal fallback — advance down the chain if possible
-                            val nextModel = fallbackManager.onNetworkError()
+                            // Normal fallback — advance down the chain if possible.
+                            //
+                            // Multimodal-agent Phase 6 review followup — when the in-flight
+                            // payload contains image parts, advance PAST any non-vision-capable
+                            // model in the chain. Without this, fallback could silently land
+                            // on a model that strips images server-side, producing a
+                            // confusing reply with no error.
+                            val payloadHasImage = contextManager.getMessages().any { it.hasImageParts() }
+                            val visionFilterActive = payloadHasImage && modelCatalogService != null
+                            val visionChain: List<String>? = if (visionFilterActive) {
+                                val filtered = fallbackManager.fallbackChainForVision(modelCatalogService!!)
+                                if (filtered.isEmpty() && fallbackManager.fullFallbackChain().isNotEmpty()) {
+                                    // Cold catalog (no model has supportsVision=true because the
+                                    // catalog hasn't loaded) → fall back to the unfiltered chain
+                                    // with a warning so the loop keeps making progress. The
+                                    // alternative (hard-fail every image-bearing fallback) is
+                                    // worse than the confusing-reply risk on a single fallback.
+                                    LOG.warn("[Loop] vision filter produced empty chain — catalog likely not loaded; using unfiltered chain")
+                                    null
+                                } else {
+                                    filtered
+                                }
+                            } else {
+                                null
+                            }
+                            // Advance the fallback manager to the next model. When the vision
+                            // filter is active, keep advancing while the candidate is not in
+                            // the filtered chain (i.e. is non-vision-capable).
+                            var nextModel = fallbackManager.onNetworkError()
+                            if (visionChain != null && nextModel != null) {
+                                while (nextModel != null && nextModel !in visionChain) {
+                                    LOG.info("[Loop] Vision filter — skipping non-vision fallback candidate: $nextModel")
+                                    nextModel = fallbackManager.onNetworkError()
+                                }
+                                if (nextModel == null) {
+                                    // Chain exhausted with no vision-capable fallback. Surface a
+                                    // user-visible message so the chat doesn't end on a generic
+                                    // network error — the user needs to either retry on the
+                                    // primary model or remove the image to proceed.
+                                    val msg = "no vision-capable fallback available, retry on primary or remove image"
+                                    LOG.warn("[Loop] Vision filter — $msg (image payload, no vision-capable model in chain after $oldModel)")
+                                    onDebugLog?.invoke("warn", "vision_fallback_exhausted", msg, mapOf(
+                                        "oldModel" to oldModel,
+                                        "errorType" to apiResult.type.name,
+                                    ))
+                                    return LoopResult.Failed(
+                                        error = msg,
+                                        reason = FailureReason.API_ERROR,
+                                        iterations = iteration,
+                                    )
+                                }
+                            }
                             if (nextModel != null) {
                                 brain = brainFactory.invoke(nextModel, "Network error on $oldModel: ${apiResult.type.name} — falling back to $nextModel")
                                 onModelSwitch?.invoke(oldModel, nextModel, "Network error — falling back")
