@@ -6,6 +6,7 @@ import com.workflow.orchestrator.agent.hooks.HookManager
 import com.workflow.orchestrator.agent.hooks.HookResult
 import com.workflow.orchestrator.agent.hooks.HookType
 import com.workflow.orchestrator.core.ai.LlmBrain
+import com.workflow.orchestrator.core.ai.ModelCatalogService
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
 import com.workflow.orchestrator.core.model.ApiResult
 
@@ -52,7 +53,21 @@ class ContextManager(
      * @param messages the current conversation messages after compaction
      * @param deletedRange the (startIdx, endIdx) range that was removed
      */
-    var onHistoryOverwrite: (suspend (List<ChatMessage>, deletedRange: Pair<Int, Int>) -> Unit)? = null
+    var onHistoryOverwrite: (suspend (List<ChatMessage>, deletedRange: Pair<Int, Int>) -> Unit)? = null,
+    /**
+     * Optional [ModelCatalogService] for per-model context-budget lookup.
+     *
+     * Multimodal-agent Phase 2 — when present, [maxInputTokensFor] reads the
+     * per-tier `modelConfigAllTiers.<tier>.contextWindow.maxInputTokens` from the
+     * Sourcegraph catalog (the REAL value — e.g. enterprise → 132K non-thinking,
+     * 93K thinking) instead of relying on the legacy `maxInputTokens` constructor
+     * default (150K). When `null` or the catalog has not loaded, callers fall
+     * back to [FALLBACK_MAX_INPUT_TOKENS] (90K).
+     *
+     * Optional + nullable for backward compatibility with existing call sites
+     * (AgentService, AgentController, SubagentRunner, tests).
+     */
+    private val modelCatalogService: ModelCatalogService? = null
 ) {
     private val LOG = Logger.getInstance(ContextManager::class.java)
 
@@ -323,6 +338,38 @@ class ContextManager(
         val tokens = lastPromptTokens ?: tokenEstimate()
         return (tokens.toDouble() / maxInputTokens) * 100.0
     }
+
+    /**
+     * Per-model context budget read live from [ModelCatalogService].
+     *
+     * Multimodal-agent Phase 2 — replaces hard-coded model assumptions with the
+     * per-tier `modelConfigAllTiers.<tier>.contextWindow.maxInputTokens` from
+     * `/.api/modelconfig/supported-models.json`. Tier is hard-coded to
+     * `enterprise` for v1 (the user's instance is enterprise per probe baseline);
+     * a proper `pluginSettings.getCurrentTier()` setting is deferred to v2.
+     *
+     * Returns [FALLBACK_MAX_INPUT_TOKENS] (90K) when:
+     * - No [modelCatalogService] is wired (legacy/test call sites)
+     * - The catalog has not been loaded yet
+     * - The model is unknown to the catalog
+     *
+     * Note: this is a read-only lookup. The legacy [maxInputTokens] constructor
+     * field is unchanged so utilization/compaction remain stable; callers that
+     * want per-model budgets (e.g. upcoming Phase 6 image-token estimation,
+     * Phase 7 chat-input usage indicator) call this method directly.
+     */
+    fun maxInputTokensFor(modelRef: String): Int {
+        val window = modelCatalogService?.getContextWindow(modelRef, tier = currentTier())
+        return window?.maxInputTokens ?: FALLBACK_MAX_INPUT_TOKENS
+    }
+
+    /**
+     * The current Sourcegraph tier. Hard-coded to "enterprise" for v1 — the user's
+     * instance is enterprise per probe baseline. A proper
+     * `pluginSettings.getCurrentTier()` setting is deferred to v2 (the plan
+     * called this out as a phantom API).
+     */
+    private fun currentTier(): String = "enterprise"
 
     /**
      * True if utilization exceeds the compaction threshold.
@@ -1004,6 +1051,16 @@ class ContextManager(
     }
 
     companion object {
+        /**
+         * Conservative fallback for [maxInputTokensFor] when the catalog is unreachable
+         * or the model is unknown. 90K covers all known non-thinking enterprise tiers
+         * (Sonnet 4.5 = 132K, Opus 4 = 200K, Gemini 2.5 = 1M, etc.) without overshooting
+         * thinking-variant budgets (~93K) where the lower cap matters for compaction.
+         *
+         * Multimodal-agent Phase 2.
+         */
+        const val FALLBACK_MAX_INPUT_TOKENS = 90_000
+
         /**
          * Minimum message count for Stage 3 (LLM summarization) to run under force=true.
          * Below this, summarization wastes an API call — there's not enough conversation
