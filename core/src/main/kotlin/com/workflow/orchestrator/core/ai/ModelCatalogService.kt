@@ -45,7 +45,7 @@ import java.util.concurrent.TimeUnit
  * Spec: `docs/research/2026-05-02-multimodal-agent-design.md` §Architecture > ModelCatalogService
  * Plan: `docs/research/2026-05-02-multimodal-agent-plan.md` §Phase 2
  */
-class ModelCatalogService(
+open class ModelCatalogService(
     private val baseUrl: String,
     private val tokenProvider: () -> String?,
     private val cacheTtl: Duration = Duration.ofHours(1),
@@ -128,7 +128,7 @@ class ModelCatalogService(
      * Defaults to 8 (the lowest version known to support image content parts) when
      * client-config has not been fetched.
      */
-    fun getLatestStreamApiVersion(): Int =
+    open fun getLatestStreamApiVersion(): Int =
         cachedConfig?.latestSupportedCompletionsStreamAPIVersion ?: DEFAULT_STREAM_API_VERSION
 
     /** Force-refresh both endpoints in parallel. Used by Settings "Refresh capabilities" button. */
