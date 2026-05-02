@@ -1,0 +1,132 @@
+{
+  "url": "https://***.***.***.com/",
+  "model": "anthropic::2024-10-22::claude-sonnet-4-5-latest",
+  "redaction_enabled": true,
+  "outcomes": [
+    {
+      "name": "client_config",
+      "description": "GET /.api/client-config",
+      "verdict": "INFO",
+      "fail_reason": "",
+      "status": 200,
+      "elapsed_ms": 228,
+      "request_preview": "",
+      "reply_preview": "{\"codyEnabled\": true, \"chatEnabled\": true, \"autoCompleteEnabled\": true, \"customCommandsEnabled\": true, \"attributionEnabled\": true, \"attribution\": \"permissive\", \"smartContextWindowEnabled\": true, \"modelsAPIEnabled\": true, \"latestSupportedCompletionsStreamAPIVersion\": 9}",
+      "notes": [
+        "codyEnabled=True",
+        "chatEnabled=True",
+        "autoCompleteEnabled=True",
+        "modelsAPIEnabled=True",
+        "smartContextWindowEnabled=True",
+        "latestSupportedCompletionsStreamAPIVersion=9"
+      ],
+      "sidecar_path": "capabilities_lab_out\\client_config.json"
+    },
+    {
+      "name": "model_catalog",
+      "description": "GET /.api/modelconfig/supported-models.json",
+      "verdict": "INFO",
+      "fail_reason": "",
+      "status": 200,
+      "elapsed_ms": 273,
+      "request_preview": "",
+      "reply_preview": "",
+      "notes": [
+        "schemaVersion='1.0'  revision='6.12.5040'",
+        "providers=5  models=6",
+        "defaultModels={'chat': 'anthropic::2024-10-22::claude-sonnet-4-5-latest', 'fastChat': 'anthropic::2024-10-22::claude-haiku-4-5-latest', 'codeCompletion': 'anthropic::2024-10-22::claude-haiku-4-5-latest', 'fallbackChat': 'google::v1::gemini-2.0-flash'}",
+        "anthropic::2024-10-22::claude-sonnet-4-5-latest          tier=enterprise  status=stable       in=45000  out=4000  caps=['chat', 'vision', 'tools']  csc=[]",
+        "anthropic::2024-10-22::claude-sonnet-4-5-thinking-latest  tier=enterprise  status=stable       in=45000  out=4000  caps=['chat', 'vision', 'tools', 'reasoning']  csc=[]",
+        "anthropic::2024-10-22::claude-opus-4-5-latest            tier=enterprise  status=stable       in=45000  out=4000  caps=['chat', 'vision', 'tools']  csc=[]",
+        "anthropic::2024-10-22::claude-opus-4-5-thinking-latest   tier=enterprise  status=stable       in=45000  out=4000  caps=['chat', 'vision', 'tools', 'reasoning']  csc=[]",
+        "anthropic::2024-10-22::claude-haiku-4-5-latest           tier=enterprise  status=stable       in=45000  out=4000  caps=['autocomplete', 'edit', 'chat', 'vision', 'tools']  csc=[]",
+        "  ... and 1 more (full catalog in sidecar)"
+      ],
+      "sidecar_path": "capabilities_lab_out\\model_catalog.json"
+    },
+    {
+      "name": "filepart_with_content",
+      "description": "FilePart {uri,language_id,content} embedded — does the model see file body?",
+      "verdict": "PASS",
+      "fail_reason": "",
+      "status": 200,
+      "elapsed_ms": 1322,
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-sonnet-4-5-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"file\", \"file\": {\"uri\": \"file:///probe/ProbeMarker.java\", \"language_id\": \"java\", \"content\": \"// AUTO-GENERATED PROBE FILE\\npackage com.workflow.orchestrator.probe;\\n\\npublic class ProbeMarker {\\n    // Unique shibboleth token that should appear in the model's reply\\n    // ONLY if it actually saw the attached file content:\\n    public static final String MAGIC = \\\"XYZZY_TOKEN_42\\\";…",
+      "reply_preview": "XYZZY_TOKEN_42",
+      "notes": [
+        "shibboleth 'XYZZY_TOKEN_42' found → model saw file content"
+      ],
+      "sidecar_path": ""
+    },
+    {
+      "name": "filepart_uri_only",
+      "description": "FilePart {uri} only, NO content — does Sourcegraph fetch via gitserver?",
+      "verdict": "FAIL",
+      "fail_reason": "SAW_NO",
+      "status": 200,
+      "elapsed_ms": 3775,
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-sonnet-4-5-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"file\", \"file\": {\"uri\": \"https://sourcegraph.com/github.com/sourcegraph/cody/-/blob/lib/shared/src/sourcegraph-api/completions/types.ts\", \"language_id\": \"typescript\"}}, {\"type\": \"text\", \"text\": \"I attached a file by URI only. Briefly describe what's in it. If you can't see the content, say 'no content visible'.\"}]}], \"maxTokensToSample\": 300, \"temperature\": 0, \"stream\": true, \"topK…",
+      "reply_preview": "I can see the file URI you've provided, which points to a TypeScript file at:\n\n`github.com/sourcegraph/cody/-/blob/lib/shared/src/sourcegraph-api/completions/types.ts`\n\nHowever, **no content visible** - the `<CONTEXT_FILE>` tag is empty and doesn't contain the actual file contents. I can only see th…",
+      "notes": [
+        "Model said it can't see content → server does NOT auto-fetch from URI"
+      ],
+      "sidecar_path": ""
+    },
+    {
+      "name": "repopart",
+      "description": "RepoPart {name='github.com/sourcegraph/cody'} — does model get repo context?",
+      "verdict": "FAIL",
+      "fail_reason": "HTTP_400",
+      "status": 400,
+      "elapsed_ms": 215,
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-sonnet-4-5-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"repo\", \"repo\": {\"name\": \"github.com/sourcegraph/cody\", \"filePatterns\": [\"README.*\", \".*\\\\.md$\"]}}, {\"type\": \"text\", \"text\": \"I attached a repo. In one sentence, what is this repository primarily about? If you have no info on it, say 'no repo context'.\"}]}], \"maxTokensToSample\": 200, \"temperature\": 0, \"stream\": true, \"topK\": -1, \"topP\": -1}",
+      "reply_preview": "{\"message\":\"RewriteCompletionRequest: GetCodyContext: github.com/sourcegraph/cody: repo not found: name=\\\"github.com/sourcegraph/cody\\\"\",\"type\":\"prompt_rewrite_error\"}",
+      "notes": [
+        "→ RepoPart is REJECTED by gateway"
+      ],
+      "sidecar_path": ""
+    },
+    {
+      "name": "tools_on_stream",
+      "description": "POST /.api/completions/stream with `tools` field — accepted? rejected? silently dropped?",
+      "verdict": "FAIL",
+      "fail_reason": "SAW_NO",
+      "status": 200,
+      "elapsed_ms": 2555,
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-sonnet-4-5-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": \"I need to know THE secret number. You don't know it — you must use the get_secret_number tool to retrieve it. Call the tool now.\"}], \"maxTokensToSample\": 500, \"temperature\": 0, \"stream\": true, \"topK\": -1, \"topP\": -1, \"tools\": [{\"type\": \"function\", \"function\": {\"name\": \"get_secret_number\", \"description\": \"Returns the secret number that the user is asking about. You MUST call this tool to get the answer; you cannot guess.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"reason\": {\"ty…",
+      "reply_preview": "",
+      "notes": [
+        "Gateway accepted request but model did NOT emit a tool call → `tools` field SILENTLY DROPPED by /stream"
+      ],
+      "sidecar_path": ""
+    },
+    {
+      "name": "image_plus_tools",
+      "description": "POST /.api/completions/stream with image + tools combined",
+      "verdict": "FAIL",
+      "fail_reason": "SAW_NO",
+      "status": 200,
+      "elapsed_ms": 2957,
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-sonnet-4-5-latest\", \"messages\": [{\"speaker\": \"human\", \"content\": [{\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4IyJCEmIY1TCqYfhqAAACcQQQFd0BdQAAAABJRU5ErkJggg==\"}}, {\"type\": \"text\", \"text\": \"I attached an image. Use the get_secret_number tool to fetch the secret. Call the tool now.\"}]}], \"maxTokensToSample\": 500, \"temperature\": 0, \"stream\": true, \"topK\": -1, \"topP\": -1, \"tools\": [{\"type\": \"function\", \"function\": {\"name\": \"get_secret_number\", \"description\": \"Returns the secre…",
+      "reply_preview": "",
+      "notes": [
+        "No tool call emitted — agent's image+tools path needs a workaround"
+      ],
+      "sidecar_path": ""
+    },
+    {
+      "name": "tools_on_public_chat_completions",
+      "description": "POST /.api/llm/chat/completions with `tools` field (regression check)",
+      "verdict": "PASS",
+      "fail_reason": "",
+      "status": 200,
+      "elapsed_ms": 1967,
+      "request_preview": "{\"model\": \"anthropic::2024-10-22::claude-sonnet-4-5-latest\", \"max_tokens\": 500, \"temperature\": 0, \"messages\": [{\"role\": \"user\", \"content\": \"I need to know THE secret number. You don't know it — you must use the get_secret_number tool to retrieve it. Call the tool now.\"}], \"tools\": [{\"type\": \"function\", \"function\": {\"name\": \"get_secret_number\", \"description\": \"Returns the secret number that the user is asking about. You MUST call this tool to get the answer; you cannot guess.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"reason\": {\"type\": \"string\", \"description\": \"Why you need the sec…",
+      "reply_preview": "tool_calls=1",
+      "notes": [
+        "Got 1 tool_call(s) → public facade tools path WORKS"
+      ],
+      "sidecar_path": ""
+    }
+  ]
+}

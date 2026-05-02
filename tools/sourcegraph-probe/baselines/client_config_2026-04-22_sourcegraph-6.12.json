@@ -1,0 +1,11 @@
+{
+  "codyEnabled": true,
+  "chatEnabled": true,
+  "autoCompleteEnabled": true,
+  "customCommandsEnabled": true,
+  "attributionEnabled": true,
+  "attribution": "permissive",
+  "smartContextWindowEnabled": true,
+  "modelsAPIEnabled": true,
+  "latestSupportedCompletionsStreamAPIVersion": 9
+}
