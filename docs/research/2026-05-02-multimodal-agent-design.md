@@ -113,36 +113,113 @@ Each decision uses the format: **question → options considered → recommendat
 
 ### Hybrid routing rule
 
-```kotlin
-val needsTools = turn.tools.isNotEmpty()
-val hasImage   = turn.content.any { it is ImagePart }
+See §"Type model evolution" for the routing rule against the actual type shapes (`ChatMessage.parts: List<ContentPart>?`). High-level summary repeated here for convenience:
 
-when {
-    !hasImage              -> openAiCompatBrain.send(turn)        // existing
-    hasImage && !needsTools -> codyStreamBrain.send(turn)         // new
-    hasImage && needsTools -> twoStepWorkaround(turn)             // new
-}
-```
+- `messages` has no image parts → `openAiCompatBrain.chat(messages, tools)` (existing path; no behavior change)
+- `messages` has image parts AND `tools.isEmpty()` → `codyStreamBrain.chat(messages)` (new client; SSE)
+- `messages` has image parts AND `tools.isNotEmpty()` → `twoStepWorkaround(messages, tools)` (described below)
 
-### Two-step workaround
+### Two-step workaround (with explicit failure handling)
 
 ```kotlin
-fun twoStepWorkaround(turn: Turn): AssistantMessage {
-    val description = codyStreamBrain.send(
-        turn.replacingContent(
-            "Describe this image in detail for a follow-up tool call. " +
-            "Be precise; the description will be the only signal a downstream agent has."
+suspend fun twoStepWorkaround(messages: List<ChatMessage>, tools: List<Tool>): AssistantMessage {
+    // Step 1: vision-summarize on /stream
+    val descriptionResult = runCatching {
+        codyStreamBrain.chat(
+            messages.lastImageBearingTurnReplacedWith(
+                "Describe this image in detail for a follow-up tool call. " +
+                "Be precise; the description will be the only signal a downstream agent has."
+            )
         )
-    )
-    val rebuiltTurn = turn.replacingImagesWithText(
-        "[image description: $description]"
-    )
-    val finalAnswer = openAiCompatBrain.send(rebuiltTurn)
+    }
+    when {
+        descriptionResult.isFailure -> {
+            // timeout, HTTP error, malformed SSE — surface to user, no step 2
+            return AssistantMessage.error(
+                "Image analysis failed: ${descriptionResult.exceptionOrNull()?.message}. " +
+                "Try again, or remove the image and describe it in text."
+            )
+        }
+        descriptionResult.getOrNull()?.text?.matchesAbstention() == true -> {
+            // model said "I cannot see this image clearly" or similar — operationally a failure
+            return AssistantMessage.error(
+                "The model couldn't analyze the attached image. " +
+                "Try a clearer image, or describe it in text."
+            )
+        }
+    }
+    val description = descriptionResult.getOrThrow().text
+
+    // Step 2: tools call on /chat/completions with image replaced by text description
+    val rebuiltMessages = messages.replacingImagesWithText("[image description: $description]")
+    val finalAnswer = openAiCompatBrain.chat(rebuiltMessages, tools)
+
+    // Badge fires only when step 1 actually executed and produced a non-abstaining description
     return finalAnswer.copy(badges = finalAnswer.badges + AnalyzedImageBadge)
 }
+
+private fun String.matchesAbstention(): Boolean = listOf(
+    "i cannot see", "i can't see", "i don't see", "no image", "unable to view",
+    "cannot view", "can't view", "i'm unable to process"
+).any { contains(it, ignoreCase = true) }
 ```
 
+The badge fires only when step 1 actually executed and the model actually described the image. Abstention or wire-level failure produces a user-visible error toast; no badge, no garbled tool call.
+
 The badge propagates to the JCEF chat which renders the `📷 image analyzed` strip above the assistant content.
+
+**Model-downgrade race (Decision 3 corner case):** if `ModelFallbackManager` swaps the active model mid-iteration (between attach and Send, or between Step 1 and Step 2), the fallback chain MUST be filtered to vision-capable models when the in-flight payload contains image parts. If no vision-capable fallback exists, the chain fails fast and the user sees the same vision-disabled toast from Decision 3. The chip stays in the input area; the user can switch model and re-Send. No automatic resend.
+
+## Type model evolution (CRITICAL — added during spec review)
+
+Image content crosses three distinct types in the codebase, with existing structural mismatches that this work must reconcile. Spec review caught that the original spec only modeled the on-disk shape and missed the in-process types entirely.
+
+**The three types involved:**
+
+| Type | File | Current shape | Currently supports image? |
+|---|---|---|---|
+| `ChatMessage` (in-process LLM-facing) | `core/src/main/kotlin/com/workflow/orchestrator/core/ai/dto/ChatCompletionModels.kt` | `data class ChatMessage(val role: Role, val content: String?, ...)` — flat `String?` | **No** — flat `content: String?` |
+| `ApiMessage` + `ContentBlock` (on-disk) | `agent/src/main/kotlin/com/workflow/orchestrator/agent/session/ApiMessage.kt` | `data class ApiMessage(..., val content: List<ContentBlock>)` with `sealed interface ContentBlock` having `Text(text)`, `ToolUse(...)`, `ToolResult(...)`, **and `Image(mediaType, data)`** | **Partial** — `ContentBlock.Image` already exists but is **unused dead code** (only one reference: `else -> false` in `MessageStateHandler.isEmptyAssistant`) |
+| Wire body to `OpenAiCompatBrain.chat()` | same file as `ChatMessage` | derives directly from `ChatMessage.content: String?` | **No** |
+
+**Required type-model changes:**
+
+1. **`ChatMessage`** gains an optional sibling field `parts: List<ContentPart>?` (sealed interface mirroring the wire-format shape). When `parts` is non-null, it takes precedence over `content` for body construction. This preserves backward compat for every existing call site.
+2. **`ContentBlock.Image`** in `ApiMessage.kt` is **repurposed** (not replaced). The existing `Image(mediaType, data)` shape — where `data` is base64 bytes inline — is deprecated in favor of the new schema: `Image(sha256: String, mime: String, size: Long, originalFilename: String?)`. A migration path in `ApiMessage` deserializer detects the old inline-base64 shape, writes it to `attachments/<sha256>.<ext>`, and rewrites the in-memory representation to the new ref shape. Since the existing `Image` variant has zero non-test references, no production code breaks.
+3. **`ApiMessage.toChatMessage()`** (currently flattens `List<ContentBlock>` to text and silently drops `Image`) is updated: when an `Image` block is present, it builds a `ChatMessage` with both the text-flattened `content` (for code paths that don't yet read `parts`) and a populated `parts: List<ContentPart>?` for the new path.
+4. **`OpenAiCompatBrain.chat()`** keeps its existing signature; the routing rule reads `message.parts` (not `turn.content` — there is no `turn` type in this codebase). When `parts` is null or contains only text, traffic flows through the existing path unchanged. When `parts` contains any `ImagePart`, the routing rule from §Architecture engages.
+
+**Routing rule (corrected to match real types):**
+
+```kotlin
+val needsTools = tools.isNotEmpty()
+val hasImage   = messages.any { it.parts?.any { p -> p is ContentPart.Image } == true }
+
+when {
+    !hasImage              -> openAiCompatBrain.chat(messages, tools)        // existing
+    hasImage && !needsTools -> codyStreamBrain.chat(messages)                 // new
+    hasImage && needsTools -> twoStepWorkaround(messages, tools)              // new
+}
+```
+
+**Sealed-interface forward-compat (CRITICAL — Phase 1's actual mechanism):**
+
+`@Serializable sealed interface ContentBlock` discriminates on `type` field. The existing `Json { ignoreUnknownKeys = true }` setting in `MessageStateHandler` does NOT cover unknown polymorphic discriminators — it only covers unknown *fields within* known classes. An unknown `type` value throws `SerializationException: Serializer for subclass 'X' is not found in the polymorphic scope of 'ContentBlock'`.
+
+Phase 1 must explicitly install one of:
+- A `JsonContentPolymorphicSerializer<ContentBlock>` that returns `ContentBlock.Text("[unsupported attachment]")` when the discriminator is unknown, OR
+- `serializersModule { polymorphic(ContentBlock::class) { defaultDeserializer { UnknownContentBlockSerializer } } }`
+
+Either way, the Phase 1 commit must ship a regression test: hand-roll a JSON snippet with `{"type":"some_future_type",...}` inside a content array, deserialize with the existing reader, assert no exception + assert it round-trips through `ApiMessage.toChatMessage()` to placeholder text.
+
+**Implication for Phase 1+4 ordering:**
+
+The original spec defended Phase-1-then-Phase-4 ordering as "bakes for one release cycle." For a **single-user plugin** (you are the only installer), there is no soak window: you control both the v1 and v2 install on the same machine. Phase 1's protection is still correct in principle (defensive parsing is good engineering) but the rationale for separating it from Phase 4 is weak. Two valid options:
+
+- **Keep Phase 1 separate** as documented audit trail of when defensive parsing landed; ship same-week as Phase 4.
+- **Merge Phases 1+4** into one defensive-parser-plus-write commit. Acceptable for single-user.
+
+User to choose during plan-writing review.
 
 ## Wire formats
 
@@ -190,7 +267,14 @@ Accept: text/event-stream
   "topP": -1
 }
 ```
-Response: SSE; `event: completion\ndata: {"deltaText":"..."}` per chunk. End-of-stream = connection close.
+Response: SSE; `event: completion\ndata: {"deltaText":"..."}` per chunk.
+
+**End-of-stream signal: whichever comes first of three signals.** The original spec said "rely on connection close" — spec review caught that this is unsafe under HTTP/1.1 keepalive (connection stays open after response) and behind buffering proxies (close detection delayed by minutes). Correct termination logic:
+1. `event: done` (Cody emits as courtesy; not in spec but observed)
+2. `data: [DONE]` (OpenAI sentinel; not observed on this endpoint but defensive)
+3. Connection close
+
+Whichever is first wins. Phase 3's E2E scenario must include a fake-server test that asserts the parser terminates within bounded time when `event: done` is sent before the connection closes.
 
 ## Persistence schema
 
@@ -238,10 +322,19 @@ Response: SSE; `event: completion\ndata: {"deltaText":"..."}` per chunk. End-of-
 6. Append the JSON ref to `api_conversation_history.json`
 7. JCEF chat updates the chip
 
-### GC of orphaned attachments
+### GC of orphaned attachments — REVISED for safe v1
 
-- v1 (Phase 4): no auto-GC. User can manually delete `attachments/` if needed. Precedent: existing 7-day log retention requires no plumbing.
-- v2 (deferred): refcount index in `attachments/refcount.json`; deleted sessions decrement; files at refcount=0 are removed.
+The original spec proposed cross-session content-addressed dedup with no auto-GC. Spec review caught the footgun: `MessageStateHandler.deleteSession()` recursively deletes the session dir, so if `attachments/<sha256>.png` is *shared* across 3 sessions and any one is deleted, the others break. Two safe options:
+
+**Option A (chosen for v1 — simpler):** **per-session attachments, no cross-session dedup.**
+- Files live at `sessions/{sessionId}/attachments/<sha256>.<ext>`, NOT a global pool.
+- Same image attached in 5 different sessions = 5 copies on disk. Acceptable cost: at 5MB max per image, even 50 sessions × 10 images = 2.5 GB worst case (most users will be far below).
+- `deleteSession()` semantics unchanged — recursive delete just works; no orphan risk.
+- Future: option B can be added later as an optimization without breaking v1 sessions.
+
+**Option B (deferred — would need refcount):** global pool at `~/.workflow-orchestrator/{dirName}-{hash}/agent/attachments-pool/<sha256>.<ext>` with a refcount index. NOT in v1 scope; documented here only so we don't accidentally land it.
+
+**Within a single session, dedup IS preserved:** if the user pastes the same screenshot twice in one session, sha256 collides, file is written once, both content blocks reference the same path. Disk savings within sessions; not across. Good enough for v1.
 
 ## Context management + token accounting
 
@@ -265,9 +358,10 @@ Response: SSE; `event: completion\ndata: {"deltaText":"..."}` per chunk. End-of-
 
 ### Compaction trigger (existing logic; new behavior on images)
 
-- Existing 3-stage compaction trigger (50% / 75% / 90% of context) unchanged.
-- When compaction strips a turn containing image parts: refs are replaced with `[image: 145 KB PNG, attached 2 turns ago, see attachments/<sha256>]`.
-- On-disk JSON keeps refs; only in-context payload is stripped. Historical chat UI still renders the chip.
+- Existing compaction trigger thresholds: entry floor at **70%** util (Stage 0 returns early below this), Stage 2 at **85%**, Stage 3 at **95%** (per `ContextManager.kt`). Auto-compaction default `compactionThreshold = 0.85`. Unchanged by this work.
+- When compaction strips a turn containing image parts: image-content blocks are removed from the in-context payload and a sibling `ContentBlock.Text` is inserted in their place with text like `[image attached earlier; bytes preserved on disk]`.
+- The placeholder text is deliberately written to NOT match `extractFilePathFromToolResult`'s regex (`^\[(\S+) for '([^']+)'] Result:` or `<file_content path="...">`), so it doesn't get caught by Stage 1 file-read dedup or Stage 2 truncation heuristics.
+- On-disk JSON keeps the original `ContentBlock.Image` references (with `sha256`/`mime`/`size`/`originalFilename` fields); only the in-context payload sent to the model is stripped. Historical chat UI still renders the chip from the on-disk reference.
 
 ## UI surface
 
@@ -275,14 +369,33 @@ Response: SSE; `event: completion\ndata: {"deltaText":"..."}` per chunk. End-of-
 
 Three entry points, all surface a `<ChipPreview>` component above the input area.
 
-- **Paperclip button:** in input toolbar (left side, before model picker badge). Click → native file picker filtered to MIME whitelist.
-- **Paste handler:** `paste` event on the input; if `event.clipboardData.items[].type` matches whitelist, attaches.
-- **Drag-drop handler:** `drop` event on the chat panel; same MIME validation; supports multi-file drop up to 2-image cap.
+- **Paperclip button:** in input toolbar — repurpose the existing `Plus` icon in `agent/webview/src/components/input/InputBar.tsx`, OR add a sibling button. Click → native file picker filtered to MIME whitelist.
+- **Paste handler:** must integrate with `agent/webview/src/components/input/RichInput.tsx::handlePaste` (line ~431) which already calls `e.preventDefault()` and reads `text/plain` only. Image-paste handling is added INSIDE that same handler (NOT a sibling listener) — otherwise the existing `preventDefault` swallows the event before our handler runs. Detection: `e.clipboardData.items[i].kind === 'file' && imageMimeWhitelist.includes(items[i].type)`.
+- **Drag-drop handler:** `drop` event on the chat panel; detection: `event.dataTransfer.items[i].kind === 'file'` AND `event.dataTransfer.files` fallback. Supports multi-file drop up to 2-image cap.
+
+**MIME quirks to verify in Phase 5:**
+- macOS HEIC paste arrives as `public.heic` not `image/heic` — JBCef Chromium build (CEF 122-ish) MIME mapping is unverified for HEIC/WebP. Phase 5 includes a probe sub-task to confirm. If JBCef doesn't surface HEIC, decide: drop HEIC from whitelist OR client-side re-encode to JPEG (which makes `originalFilename` and `sha256` diverge from user's source file — must be documented in tooltip).
+- Drag-drop from Finder may arrive as `text/uri-list` first; the handler must check both `dataTransfer.items` (file kind) and `dataTransfer.files`.
+
+### IPC payload across the JCEF bridge
+
+`JBCefJSQuery` is **string-only** (Java string ↔ JS string). For a 5MB image, base64-encoded that's ~6.6 MB of JSON-safe characters per attach event. The existing `AgentCefPanel.kt` carries small text payloads in its ~30 query handlers; multi-MB IPC has not been proven on this codebase.
+
+**Decision: chunked-by-sha256 path.**
+1. JS computes file size client-side. If `> imageMaxBytes`, reject locally with toast — no bridge call.
+2. JS computes sha256 client-side (subtle.crypto). Sends ONLY `{sha256, mime, size, originalFilename}` to Kotlin via bridge.
+3. Kotlin checks `attachments/<sha256>.<ext>` on disk. If exists → respond with `{exists: true}`; chip created from existing file. If absent → respond with `{exists: false, uploadUrl: "/upload/<sha256>"}`.
+4. JS uploads bytes via `CefResourceSchemeHandler` (HTTP-style endpoint served by the plugin) at `http://workflow-agent/upload/<sha256>` — bypasses bridge IPC entirely.
+5. Kotlin handler validates MIME at upload time, writes to disk, responds 200.
+
+This keeps bridge IPC tiny (just the metadata) and offloads the multi-MB transfer to a path that doesn't pin EDT.
+
+**Threading:** All disk writes happen on `Dispatchers.IO`. The bridge handler responds immediately after dispatching; no EDT pinning during sha256 lookup or upload.
 
 ### `<ChipPreview>` component
 
 - 64×64 px thumbnail (rendered from in-memory bytes; no disk round-trip needed for unsent attachments).
-- × icon top-right; click removes from queue (no disk write yet — bytes live in JS memory until Send).
+- × icon top-right; click removes from queue (bytes are abandoned in JS memory; nothing to clean up since uploaded files are content-addressed and only get GC'd at session delete).
 - Hover shows filename + KB.
 - Stacks horizontally for multiple images (cap at 2).
 
@@ -312,13 +425,17 @@ Three entry points, all surface a `<ChipPreview>` component above the input area
 
 ### `PluginSettings` additions
 
+**Scope:** project-level `PluginSettings.State` (not application-level). Mirrors existing `documentMaxChars`/`documentTimeoutMs`/etc. patterns in the same file.
+
 | Field | Default | Description |
 |---|---|---|
 | `imageMimeWhitelist` | `["image/png","image/jpeg","image/webp","image/heic","image/heif"]` | Mirrors Cody's whitelist. Editable list. |
 | `imageMaxBytes` | `5242880` (5 MB) | Per-attachment cap. Editable. |
 | `imagesPerTurnCap` | `2` | Mirrors Cody's per-turn cap. Editable. |
 | `enableImageInput` | `true` | Kill switch. Disabling hides paperclip + rejects paste/drag-drop. |
-| `imageTokenEstimateDefault` | `1500` | For pre-send budget warnings. |
+| `imageTokenEstimateDefault` | `1500` | For pre-send budget warnings. Authoritative cost is `usage.prompt_tokens` from response. |
+
+**Test convention:** add `core/src/test/kotlin/.../PluginSettingsImageFieldsTest.kt` mirroring the existing `PluginSettingsDocumentFieldsTest.kt` pattern (round-trip serialization + default values + edit-and-persist).
 
 **Settings UI page:** new page under existing Tools > Workflow Orchestrator > Multimodal.
 
@@ -344,13 +461,42 @@ Per `feedback_real_tdd.md`: tests derived from spec scenarios, not from code.
 
 ### E2E scenarios per phase
 
-- **Phase 1:** "v1 session JSON is loaded by v2 reader without throwing; unknown content parts render as `[unsupported attachment]` placeholder."
-- **Phase 2:** "On startup, ModelCatalogService caches the catalog; `getContextWindow('claude-sonnet-4-5-latest', 'enterprise')` returns 132000."
-- **Phase 3:** "POST to `/.api/completions/stream?api-version=8` with the canonical Cody body returns SSE; parser accumulates `deltaText` from N completion frames; end-of-stream detected on connection close."
-- **Phase 4:** "User attaches image; file lands at `attachments/<sha256>.png`; identical re-attach in different session reuses the same file."
-- **Phase 5:** "User pastes image into chat input; chip appears; × removes; Send rejects with toast if vision-incapable model selected."
-- **Phase 6:** "User sends image+tools turn; routing branch picks two-step; assistant message renders with 📷 badge; ContextManager budget reflects the image token cost."
-- **Phase 7:** "Model picker shows 132K capacity for Sonnet, 93K for Sonnet-Thinking; chat input indicator updates after each turn; deprecated model shows warning badge."
+- **Phase 1 (defensive parser):**
+  - "v1 session JSON loaded by v2 reader without throwing; unknown content-block discriminator deserializes to `ContentBlock.Text('[unsupported attachment]')`."
+  - "Hand-rolled `{\"type\":\"some_future_type\",...}` snippet inside a content array round-trips through `ApiMessage.toChatMessage()` to placeholder text without exception."
+- **Phase 2 (ModelCatalogService):**
+  - "On startup, ModelCatalogService caches the catalog; `getContextWindow('claude-sonnet-4-5-latest', 'enterprise')` returns 132000 (NOT 45000)."
+  - "Plugin starts, gateway is unreachable, model picker shows empty + retry affordance (no hard-coded fallback)."
+  - "ModelCatalogService refreshes after TTL expiry; deprecated status surfaces in next picker open."
+- **Phase 3 (SSE client):**
+  - "POST to `/.api/completions/stream?api-version=8` with canonical Cody body returns SSE; parser accumulates `deltaText` from N completion frames."
+  - "End-of-stream: parser terminates within bounded time when `event: done` is sent BEFORE connection close (fake-server test)."
+  - "End-of-stream: parser terminates on `data: [DONE]` if Cody ever sends it."
+  - "End-of-stream: parser terminates on connection close as final fallback."
+- **Phase 4 (persistence + per-session attachments):**
+  - "User attaches image in session A; file lands at `sessions/A/attachments/<sha256>.png`."
+  - "Same image re-attached in same session A: sha256 collides; only one file on disk; both content blocks reference same path."
+  - "Same image attached in session B: separate file at `sessions/B/attachments/<sha256>.png` (per-session, no cross-session dedup in v1)."
+  - "`MessageStateHandler.deleteSession(A)` removes `sessions/A/` recursively including attachments; session B intact."
+  - "Old `ContentBlock.Image(mediaType, data)` inline-base64 shape on disk migrates to ref shape on first read; no data loss."
+- **Phase 5 (UI):**
+  - "User pastes image into RichInput; chip appears in input area."
+  - "User pastes image > imageMaxBytes; client-side rejection toast fires immediately, no bridge round-trip."
+  - "User attaches image to non-vision model, Send fails with toast, user removes chip and re-Sends successfully (chip persists across rejection)."
+  - "User attaches image to vision model, model is downgraded mid-iteration, Send fails fast with vision-disabled toast (no garbled request)."
+  - "User attaches HEIC on macOS; verify JBCef Chromium presents correct MIME (probe sub-task within Phase 5 — may force re-encode to JPEG)."
+- **Phase 6 (routing + workaround):**
+  - "User sends text-only turn: routes to `/.api/llm/chat/completions` (existing path; no behavior change)."
+  - "User sends image-only turn: routes to `/.api/completions/stream`; assistant reply renders normally."
+  - "User sends image + tools turn: two-step workaround engages; step 1 succeeds; step 2 emits tool_calls; assistant message renders with 📷 badge."
+  - "User sends image + tools turn; step 1 times out: error toast, no step 2, no badge, no garbled tool call."
+  - "User sends image + tools turn; step 1 succeeds but model abstains ('I cannot see this image'): error toast, no step 2."
+  - "Session has 50 turns, 25 with images; ContextManager triggers compaction at 85%; in-context payload sent to model has 0 image bytes (all replaced with placeholder text); on-disk JSON unchanged."
+- **Phase 7 (UI polish):**
+  - "Model picker shows '132K context · 18K per-message' for Sonnet, '93K' for Sonnet-Thinking."
+  - "Chat input indicator pulls value from `ContextManager.utilizationPercent()` (single source of truth — not a parallel calculation)."
+  - "Indicator color shifts: gray <50%, amber 50-80%, red >80%."
+  - "Model with `status: deprecated` shows ⚠ badge in picker."
 
 ### Code review per phase
 
@@ -358,7 +504,7 @@ Dispatch Opus code-reviewer subagent on each phase's commits. Block next phase u
 
 ### Build-cache trap (per CLAUDE.md)
 
-Phases 3 (SSE parser) and 6 (BrainRouter) touch coroutine code with `suspend`-typed lambdas. Run tests with `--no-build-cache --rerun-tasks` to avoid stale `Function0` bytecode against new test compile (per the documented Phase 4 D8b incident in CLAUDE.md).
+Phases 2 (ModelCatalogService — coroutine-based HTTP fetcher), 3 (SSE parser), and 6 (BrainRouter) all touch coroutine code with `suspend`-typed lambdas. Run tests with `--no-build-cache --rerun-tasks` to avoid stale `Function0` bytecode against new test compile (per the documented Phase 4 D8b incident in CLAUDE.md).
 
 ## What's NOT in scope
 
@@ -370,6 +516,34 @@ Phases 3 (SSE parser) and 6 (BrainRouter) touch coroutine code with `suspend`-ty
 - **`api-version=9` upgrade** — defer until a v9-only feature is needed.
 - **Tools support on `/.api/completions/stream`** — silently dropped per probe (P6 SAW_NO); cannot be made to work client-side.
 
+## Spec review iteration log
+
+This spec was reviewed by an Opus sub-agent against the actual codebase (not just the spec text). The review caught several issues that have been folded into the spec above. Recording for posterity:
+
+**Critical issues addressed (would have broken implementation):**
+1. **Type model split** — original spec only modeled the on-disk `ContentBlock` shape and missed the in-process `ChatMessage.content: String?` flat type. Fix: added §"Type model evolution" section spelling out the three types (`ChatMessage`, `ApiMessage`/`ContentBlock`, wire body) and how `ChatMessage.parts: List<ContentPart>?` lets routing read image presence without breaking call sites. Also caught that `ContentBlock.Image(mediaType, data)` already exists as dead code — Phase 4 repurposes (not replaces) it.
+2. **Sealed-interface forward-compat** — original spec assumed `Json { ignoreUnknownKeys = true }` would let v1 readers handle v2 polymorphic discriminators. It does NOT — that setting only covers unknown *fields within* known classes, not unknown subclass discriminators. Fix: Phase 1 explicitly ships `JsonContentPolymorphicSerializer` returning `Text("[unsupported attachment]")` for unknown discriminators.
+3. **Compaction thresholds** — original spec said 50/75/90; actual code is 70/85/95. Fixed.
+
+**Important issues addressed:**
+- Model-downgrade race (Decision 3 corner case): added explicit handling in §Two-step workaround.
+- Two-step workaround failure modes: added explicit `runCatching` + abstention detection + error toasts.
+- Phase 1+4 ordering: reframed for single-user threat model; user picks during plan-writing whether to merge.
+- GC + dedup: dropped cross-session content-addressing for v1; per-session attachments only. No orphan risk.
+- JCEF bridge IPC: chunked-by-sha256 with `CefResourceSchemeHandler`-served upload endpoint; bridge stays text-only.
+- RichInput paste: must integrate INSIDE existing `handlePaste` (not sibling listener), since existing handler calls `preventDefault`.
+- Validation timing: client-side size check before bridge call (no IPC for oversize).
+- PluginSettings: scope clarified to `PluginSettings.State`; test convention specified.
+- SSE termination: three signals (event:done OR [DONE] OR connection close), whichever first.
+
+**Minor issues deferred to plan-writing:**
+- Wire chat-input indicator to `ContextManager.utilizationPercent()` (single source of truth), not parallel calculation.
+- Refactor immutable `data class ChatMessage` with `.copy()` in two-step workaround pseudocode (not invented `Turn` API).
+- Phase 4 acceptance test must be runnable without UI (inject bytes via test harness).
+- `EnvironmentDetailsBuilder` and tool-result context: image presence is NOT surfaced to other tools — explicit no.
+- Cody parity: input doesn't need to be focused for paste (paste anywhere in chat panel).
+- Wire `?api-version=N` from `ModelCatalogService.getLatestStreamApiVersion()` from day 1 instead of hard-coding `=8`.
+
 ## Open questions for user review
 
-None at brainstorming completion. All 8 design decisions + bonus locked. Awaiting user review of this doc before invoking writing-plans skill.
+None unresolved. All 8 design decisions + bonus + 11 spec-review fixes incorporated. Awaiting user review of this doc before invoking writing-plans skill.
