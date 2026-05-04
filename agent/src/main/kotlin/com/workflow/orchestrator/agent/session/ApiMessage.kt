@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.session
 
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
+import com.workflow.orchestrator.core.ai.dto.ContentPart
 import com.workflow.orchestrator.core.ai.dto.FunctionCall
 import com.workflow.orchestrator.core.ai.dto.ToolCall as CoreToolCall
 import kotlinx.serialization.SerialName
@@ -88,19 +89,36 @@ data class ApiMessage(
  */
 @Suppress("DEPRECATION")  // we still need to render legacy ContentBlock.Image
 fun ApiMessage.toChatMessage(): ChatMessage {
+    val toolUses = content.filterIsInstance<ContentBlock.ToolUse>()
+    val toolResults = content.filterIsInstance<ContentBlock.ToolResult>()
+    val imageRefs = content.filterIsInstance<ContentBlock.ImageRef>()
+
     val textPieces = content.mapNotNull { block ->
         when (block) {
             is ContentBlock.Text -> block.text
             is UnsupportedContentBlock -> "[unsupported attachment]"
-            is ContentBlock.ImageRef -> "[image: ${block.mime}, ${block.size} bytes]"
             is ContentBlock.Image -> "[image: ${block.mediaType}]"
+            // ImageRef is now carried structurally on `parts`; do not stringify here.
+            is ContentBlock.ImageRef -> null
             else -> null
         }
     }
     val textContent = textPieces.joinToString("\n").takeIf { it.isNotBlank() }
 
-    val toolUses = content.filterIsInstance<ContentBlock.ToolUse>()
-    val toolResults = content.filterIsInstance<ContentBlock.ToolResult>()
+    // Build structured parts list whenever ImageRef is present. This is the signal
+    // BrainRouter.hasImageParts() looks for; without it the request goes to the
+    // text-only OpenAI-compat endpoint and the model sees nothing.
+    val parts: List<ContentPart>? = if (imageRefs.isNotEmpty()) {
+        buildList {
+            if (!textContent.isNullOrBlank()) add(ContentPart.Text(textContent))
+            // For tool_result + ImageRef, surface the tool result text inside parts too,
+            // so the human-coerced Cody stream payload still carries the result content.
+            if (textContent.isNullOrBlank() && toolResults.isNotEmpty()) {
+                add(ContentPart.Text(toolResults.first().content))
+            }
+            imageRefs.forEach { add(ContentPart.Image(sha256 = it.sha256, mime = it.mime)) }
+        }
+    } else null
 
     return when {
         // Assistant message with tool calls
@@ -109,18 +127,21 @@ fun ApiMessage.toChatMessage(): ChatMessage {
             content = textContent,
             toolCalls = toolUses.map { tu ->
                 CoreToolCall(id = tu.id, function = FunctionCall(name = tu.name, arguments = tu.input))
-            }
+            },
+            parts = parts
         )
         // Tool result message (role="tool" in OpenAI format)
         toolResults.isNotEmpty() -> ChatMessage(
             role = "tool",
             content = toolResults.first().content,
-            toolCallId = toolResults.first().toolUseId
+            toolCallId = toolResults.first().toolUseId,
+            parts = parts
         )
         // Plain text message
         else -> ChatMessage(
             role = role.name.lowercase(),
-            content = textContent ?: ""
+            content = textContent ?: "",
+            parts = parts
         )
     }
 }
