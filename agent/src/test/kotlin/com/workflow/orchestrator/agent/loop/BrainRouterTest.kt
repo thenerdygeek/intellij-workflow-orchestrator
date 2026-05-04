@@ -14,6 +14,7 @@ import com.workflow.orchestrator.core.ai.dto.FunctionCall
 import com.workflow.orchestrator.core.ai.dto.FunctionDefinition
 import com.workflow.orchestrator.core.ai.dto.FunctionParameters
 import com.workflow.orchestrator.core.ai.dto.StreamChunk
+import com.workflow.orchestrator.core.ai.dto.StreamContentPart
 import com.workflow.orchestrator.core.ai.dto.hasImageParts
 import com.workflow.orchestrator.core.ai.dto.ToolCall
 import com.workflow.orchestrator.core.ai.dto.ToolDefinition
@@ -222,6 +223,84 @@ class BrainRouterTest {
         )
         // Badge must fire after a successful two-step regardless of image origin.
         assertTrue(badgeFired, "onAnalyzedImageBadge should fire after a successful tool-origin two-step")
+    }
+
+    @Test
+    fun `step-2 framing of vision description is authoritative not weak metadata`() = runBlocking {
+        // Regression guard: the original framing was `[image description: …]` which
+        // is weak enough that the step-2 model still triggered its trained
+        // "I can't analyze image files directly" tool-use refusal (Windows logs
+        // 2026-05-04). The framing must establish the description IS the model's
+        // perception of the image, not metadata about it. This test pins the
+        // load-bearing phrases — anyone weakening them will break this test.
+        val openAi = FakeOpenAiCompatBrain(response = makeOk("ok", toolCalls = listOf(fooToolCall())))
+        val visionDescription = "A flowchart showing three boxes labeled A, B, C with arrows."
+        val stream = FakeStreamClient(text = visionDescription)
+        val store = AttachmentStore(tempDir)
+        val ref = store.store("fake".toByteArray(), "image/png", null)
+        val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
+        router.chat(
+            messages = listOf(
+                ChatMessage(
+                    role = "user",
+                    parts = listOf(
+                        ContentPart.Image(sha256 = ref.sha256, mime = "image/png", originalFilename = null),
+                        ContentPart.Text("describe and call foo"),
+                    ),
+                ),
+            ),
+            tools = listOf(fooTool),
+        )
+        val step2Messages = openAi.lastMessages ?: error("OpenAiCompat received no messages")
+        val combined = step2Messages.joinToString("\n") { it.content ?: "" }
+        // Authoritative framing — must establish the description as authoritative perception.
+        assertTrue(
+            combined.contains("VISION ANALYSIS", ignoreCase = false),
+            "step-2 framing must label the vision output as VISION ANALYSIS to discourage refusal; got: $combined"
+        )
+        assertTrue(
+            combined.contains("actual content of the attached image", ignoreCase = false),
+            "step-2 framing must say the description IS the image content, not just metadata"
+        )
+        assertTrue(
+            combined.contains("Do NOT say you cannot view or analyze images"),
+            "step-2 framing must explicitly forbid the canned refusal"
+        )
+        // The actual description must still be embedded.
+        assertTrue(combined.contains(visionDescription), "step-2 must carry the verbatim description")
+    }
+
+    @Test
+    fun `step-1 vision prompt forbids refusal`() = runBlocking {
+        // Regression guard: the original step-1 prompt only said "be precise"; the
+        // model could still hedge or refuse, producing weak descriptions that gave
+        // step 2 nothing to work with. The hardened prompt must explicitly forbid
+        // refusal.
+        val openAi = FakeOpenAiCompatBrain(response = makeOk("ok", toolCalls = listOf(fooToolCall())))
+        val stream = FakeStreamClient(text = "a screenshot of an error dialog")
+        val store = AttachmentStore(tempDir)
+        val ref = store.store("fake".toByteArray(), "image/png", null)
+        val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
+        router.chat(
+            messages = listOf(
+                ChatMessage(
+                    role = "user",
+                    parts = listOf(
+                        ContentPart.Image(sha256 = ref.sha256, mime = "image/png", originalFilename = null),
+                        ContentPart.Text("call foo"),
+                    ),
+                ),
+            ),
+            tools = listOf(fooTool),
+        )
+        val step1Request = stream.lastRequest ?: error("stream client received no request")
+        val step1Prompt = step1Request.messages.flatMap { it.content }
+            .filterIsInstance<StreamContentPart.Text>()
+            .joinToString("\n") { it.text }
+        assertTrue(
+            step1Prompt.contains("Do NOT refuse", ignoreCase = false),
+            "step-1 prompt must explicitly forbid refusal; got: $step1Prompt"
+        )
     }
 
     @Test

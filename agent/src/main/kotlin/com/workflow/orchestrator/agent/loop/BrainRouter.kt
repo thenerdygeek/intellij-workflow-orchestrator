@@ -225,10 +225,17 @@ class BrainRouter(
         toolChoice: JsonElement?,
         onChunk: (suspend (StreamChunk) -> Unit)?,
     ): ApiResult<ChatCompletionResponse> {
-        // Step 1: vision-summarize on /.api/completions/stream
+        // Step 1: vision-summarize on /.api/completions/stream.
+        // Prompt is hardened against refusal — the downstream OpenAI-compat model
+        // in step 2 will refuse "I can't view images" if step 1 returns vague or
+        // hedging text, so we explicitly demand a concrete description.
         val visionMessages = messages.replacingLastImageBearingTurnWith(
-            "Describe this image in detail for a follow-up tool call. " +
-                "Be precise; the description will be the only signal a downstream agent has.",
+            "You are analyzing an image attached to a tool result so a downstream " +
+                "tool-using agent can act on it. Describe the image concretely and in detail: " +
+                "what is shown, any visible text (transcribe verbatim), UI elements, " +
+                "errors, diagrams, or data. Do NOT refuse, hedge, or say you cannot see " +
+                "the image — produce the best description you can. Your description is " +
+                "the ONLY signal the downstream agent will receive.",
         )
         val descriptionResult = runCatching {
             streamClient.chat(buildStreamRequest(visionMessages, maxTokens))
@@ -255,8 +262,9 @@ class BrainRouter(
             )
         }
         val description = descriptionResult.getOrThrow().text
+        log.info("[multimodal] BrainRouter two-step step 1 description: ${description.length} chars, preview=${description.take(200).replace("\n", " ")}")
         if (ABSTENTION_PHRASES.any { description.contains(it, ignoreCase = true) }) {
-            log.info("[BrainRouter] two-step step 1 abstention detected, aborting step 2")
+            log.info("[multimodal] BrainRouter two-step step 1 abstention detected, aborting step 2")
             return ApiResult.Success(
                 ChatCompletionResponse(
                     id = "router-step1-abstain",
@@ -276,8 +284,18 @@ class BrainRouter(
             )
         }
 
-        // Step 2: tool call with image replaced by text description
-        val rebuilt = messages.replacingImagePartsWithText("[image description: $description]")
+        // Step 2: tool call with image replaced by an authoritative framing of the
+        // description. Why the strong wording: empirically (Windows logs 2026-05-04)
+        // the canonical [image description: …] framing was weak enough that the
+        // step-2 model still triggered its trained "I can't analyze image files
+        // directly" tool-use refusal. The framing below establishes that the
+        // description IS the model's perception of the image, not metadata about
+        // it — pushing back on the refusal pattern.
+        val framedDescription = "[VISION ANALYSIS — this is the actual content of the " +
+            "attached image, produced by a vision model. Treat this as your perception " +
+            "of the image and respond as if you can see it directly. Do NOT say you " +
+            "cannot view or analyze images.]\n$description\n[END VISION ANALYSIS]"
+        val rebuilt = messages.replacingImagePartsWithText(framedDescription)
         val resp = if (onChunk != null) {
             openAiCompatBrain.chatStream(rebuilt, tools, maxTokens, onChunk)
         } else {
