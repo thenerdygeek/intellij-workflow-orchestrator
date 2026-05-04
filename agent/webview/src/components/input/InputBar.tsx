@@ -145,6 +145,12 @@ const ModelChip = memo(function ModelChip({
 }) {
   const [items, setItems] = useState<DropdownItem[]>([]);
   const activeItem = useMemo(() => items.find(m => m.name === model), [items, model]);
+  // Tracks when the menu most-recently opened. Radix opens on `pointerdown`
+  // and items select on `pointerup` — a single mouse click fires both, and
+  // when the menu pops up under the cursor the second event lands on a
+  // menu item, accidentally selecting it. We swallow any onSelect that
+  // fires within a short grace period after open. (Radix issue #1658.)
+  const openedAtRef = useRef(0);
 
   useEffect(() => {
     (window as any).updateModelList = (json: string) => {
@@ -163,7 +169,10 @@ const ModelChip = memo(function ModelChip({
 
   // Re-pull when the user opens the dropdown and the list is still empty.
   const handleOpenChange = useCallback((open: boolean) => {
-    if (open && items.length === 0) window._requestModelList?.();
+    if (open) {
+      openedAtRef.current = Date.now();
+      if (items.length === 0) window._requestModelList?.();
+    }
   }, [items.length]);
 
   const isFallback = fallbackReason !== null;
@@ -207,7 +216,18 @@ const ModelChip = memo(function ModelChip({
         {items.length === 0
           ? <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--fg-muted)' }}>No models available</div>
           : items.map(m => (
-              <DropdownMenuItem key={m.id} onClick={() => window._changeModel?.(m.id)}
+              <DropdownMenuItem
+                key={m.id}
+                onSelect={(e) => {
+                  // Radix click-through guard: ignore selections that fire within
+                  // the open-grace period (the same mouse click that opened the
+                  // menu would otherwise auto-select the item under the cursor).
+                  if (Date.now() - openedAtRef.current < 250) {
+                    e.preventDefault();
+                    return;
+                  }
+                  window._changeModel?.(m.id);
+                }}
                 className="gap-2"
                 style={m.name === model ? { backgroundColor: 'var(--hover-overlay-strong, rgba(255,255,255,0.08))' } : undefined}>
                 <ProviderLogo provider={m.provider} />
@@ -286,11 +306,16 @@ const SkillsChip = memo(function SkillsChip() {
   // DO NOT override window.updateSkillsList here — that would break the
   // bridge function which updates chatStore.skillsList for SkillDropdown
   const items = useChatStore(s => s.skillsList);
+  // Same Radix click-through guard as ModelChip — see Radix-ui issue #1658.
+  const openedAtRef = useRef(0);
+  const handleOpenChange = useCallback((open: boolean) => {
+    if (open) openedAtRef.current = Date.now();
+  }, []);
 
   if (items.length === 0) return null;
 
   return (
-    <DropdownMenu>
+    <DropdownMenu onOpenChange={handleOpenChange}>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="sm" className="h-7 gap-1 px-1.5 text-[12px] font-medium">
           <Sparkles className="h-2.5 w-2.5" />
@@ -300,7 +325,16 @@ const SkillsChip = memo(function SkillsChip() {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="min-w-[240px]">
         {items.map(s => (
-          <DropdownMenuItem key={s.name} onClick={() => window._activateSkill?.(s.name)}>
+          <DropdownMenuItem
+            key={s.name}
+            onSelect={(e) => {
+              if (Date.now() - openedAtRef.current < 250) {
+                e.preventDefault();
+                return;
+              }
+              window._activateSkill?.(s.name);
+            }}
+          >
             <div className="flex flex-col">
               <span className="text-[12px]">/{s.name}</span>
               {s.description && <span className="text-[11px]" style={{ color: 'var(--fg-muted)' }}>{s.description}</span>}
@@ -321,9 +355,14 @@ const MoreChip = memo(function MoreChip() {
     { label: 'View traces', action: () => window._requestViewTrace?.() },
     { label: 'Settings', action: () => window._openSettings?.() },
   ];
+  // Same Radix click-through guard as ModelChip / SkillsChip.
+  const openedAtRef = useRef(0);
+  const handleOpenChange = useCallback((open: boolean) => {
+    if (open) openedAtRef.current = Date.now();
+  }, []);
 
   return (
-    <DropdownMenu>
+    <DropdownMenu onOpenChange={handleOpenChange}>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="sm" className="h-7 px-1.5 text-[12px] font-medium">
           <span className="text-[15px] leading-none tracking-[2px]">&middot;&middot;&middot;</span>
@@ -331,7 +370,16 @@ const MoreChip = memo(function MoreChip() {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="min-w-[180px]">
         {actions.map(item => (
-          <DropdownMenuItem key={item.label} onClick={item.action}>
+          <DropdownMenuItem
+            key={item.label}
+            onSelect={(e) => {
+              if (Date.now() - openedAtRef.current < 250) {
+                e.preventDefault();
+                return;
+              }
+              item.action();
+            }}
+          >
             {item.label}
           </DropdownMenuItem>
         ))}
@@ -428,6 +476,19 @@ function InputBarContent({
   // Manual compaction in progress — disable input + send so the user can't
   // mutate state during the LLM-summary round-trip.
   const compacting = useChatStore(s => s.compactionState.active);
+  // Same Radix click-through guard as the standalone chips. Used by the +
+  // (Plus) menu below.
+  const plusOpenedAtRef = useRef(0);
+  const handlePlusOpenChange = useCallback((open: boolean) => {
+    if (open) plusOpenedAtRef.current = Date.now();
+  }, []);
+  const guardedSelect = useCallback((action: () => void) => (e: Event) => {
+    if (Date.now() - plusOpenedAtRef.current < 250) {
+      e.preventDefault();
+      return;
+    }
+    action();
+  }, []);
   useEffect(() => {
     if (focusTrigger > 0) richInputRef.current?.focus();
   }, [focusTrigger, richInputRef]);
@@ -506,34 +567,34 @@ function InputBarContent({
         {/* Left: + · Model · Plan · ··· */}
         <div className="flex items-center gap-0.5">
           {/* + button: picker for File, Folder, Symbol, Skill */}
-          <DropdownMenu>
+          <DropdownMenu onOpenChange={handlePlusOpenChange}>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" className="h-7 w-7" title="Add context or skill" aria-label="Add context or skill">
                 <Plus className="h-3.5 w-3.5" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" side="top" className="min-w-[180px]">
-              <DropdownMenuItem onClick={() => onTriggerInsert('@')}>
+              <DropdownMenuItem onSelect={guardedSelect(() => onTriggerInsert('@'))}>
                 <File className="size-3.5" style={{ color: 'var(--accent-read, #3b82f6)' }} />
                 <span>File</span>
                 <span className="ml-auto text-[10px]" style={{ color: 'var(--fg-muted)' }}>@</span>
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onTriggerInsert('@')}>
+              <DropdownMenuItem onSelect={guardedSelect(() => onTriggerInsert('@'))}>
                 <Folder className="size-3.5" style={{ color: 'var(--accent-read, #3b82f6)' }} />
                 <span>Folder</span>
                 <span className="ml-auto text-[10px]" style={{ color: 'var(--fg-muted)' }}>@</span>
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onTriggerInsert('@')}>
+              <DropdownMenuItem onSelect={guardedSelect(() => onTriggerInsert('@'))}>
                 <Hash className="size-3.5" style={{ color: 'var(--accent-search, #a78bfa)' }} />
                 <span>Symbol</span>
                 <span className="ml-auto text-[10px]" style={{ color: 'var(--fg-muted)' }}>@</span>
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onTriggerInsert('#')}>
+              <DropdownMenuItem onSelect={guardedSelect(() => onTriggerInsert('#'))}>
                 <SquareKanban className="size-3.5" style={{ color: 'var(--accent-read, #3b82f6)' }} />
                 <span>Ticket</span>
                 <span className="ml-auto text-[10px]" style={{ color: 'var(--fg-muted)' }}>#</span>
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onTriggerInsert('/')}>
+              <DropdownMenuItem onSelect={guardedSelect(() => onTriggerInsert('/'))}>
                 <Sparkles className="size-3.5" style={{ color: 'var(--accent-edit, #f59e0b)' }} />
                 <span>Skill</span>
                 <span className="ml-auto text-[10px]" style={{ color: 'var(--fg-muted)' }}>/</span>
@@ -541,7 +602,7 @@ function InputBarContent({
               {/* Phase 5: image attachment via file picker. Paste + drag-drop
                   are wired separately (RichInput.handlePaste + the wrapping
                   div's onDrop). */}
-              <DropdownMenuItem onClick={onPickImage}>
+              <DropdownMenuItem onSelect={guardedSelect(onPickImage)}>
                 <ImageIcon className="size-3.5" style={{ color: 'var(--accent-edit, #f59e0b)' }} />
                 <span>Image</span>
                 <span className="ml-auto text-[10px]" style={{ color: 'var(--fg-muted)' }}>file</span>
