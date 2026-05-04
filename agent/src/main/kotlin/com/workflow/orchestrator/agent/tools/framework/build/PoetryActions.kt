@@ -256,12 +256,8 @@ private fun runPoetryCommand(args: List<String>, project: Project): String? {
     val basePath = project.basePath ?: return null
 
     try {
-        val isWindows = System.getProperty("os.name").lowercase().contains("win")
-        val command = if (isWindows) {
-            listOf("cmd.exe", "/c", "poetry") + args
-        } else {
-            listOf("poetry") + args
-        }
+        val command = com.workflow.orchestrator.agent.tools.process.PlatformCommandWrapper
+            .cmdWrap(listOf("poetry") + args)
 
         val process = ProcessBuilder(command)
             .directory(File(basePath))

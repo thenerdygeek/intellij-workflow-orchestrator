@@ -224,12 +224,8 @@ private fun runPipCommand(args: List<String>, project: Project): String? {
     // Try pip, then pip3
     for (cmd in listOf("pip", "pip3")) {
         try {
-            val isWindows = System.getProperty("os.name").lowercase().contains("win")
-            val command = if (isWindows) {
-                listOf("cmd.exe", "/c", cmd) + args
-            } else {
-                listOf(cmd) + args
-            }
+            val command = com.workflow.orchestrator.agent.tools.process.PlatformCommandWrapper
+                .cmdWrap(listOf(cmd) + args)
 
             val process = ProcessBuilder(command)
                 .directory(File(basePath))

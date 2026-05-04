@@ -443,12 +443,8 @@ private fun runPytestCommand(args: List<String>, project: Project, timeout: Long
 
     for (cmdArgs in commands) {
         try {
-            val isWindows = System.getProperty("os.name").lowercase().contains("win")
-            val command = if (isWindows) {
-                listOf("cmd.exe", "/c") + cmdArgs
-            } else {
-                cmdArgs
-            }
+            val command = com.workflow.orchestrator.agent.tools.process.PlatformCommandWrapper
+                .cmdWrap(cmdArgs)
 
             val process = ProcessBuilder(command)
                 .directory(File(basePath))

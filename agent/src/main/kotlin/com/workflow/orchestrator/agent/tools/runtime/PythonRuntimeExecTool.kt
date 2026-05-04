@@ -502,21 +502,12 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
 
     private fun runPyCompile(pyFiles: List<File>, baseDir: File): PyCompileOutput? {
         val interpreters = listOf("python3", "python")
-        val isWindows = System.getProperty("os.name").lowercase().contains("win")
-
         val relPaths = pyFiles.map { it.relativeTo(baseDir).path }
 
         for (interpreter in interpreters) {
             try {
-                val cmd = mutableListOf<String>()
-                if (isWindows) {
-                    cmd.add("cmd.exe")
-                    cmd.add("/c")
-                }
-                cmd.add(interpreter)
-                cmd.add("-m")
-                cmd.add("py_compile")
-                cmd.addAll(relPaths)
+                val cmd = com.workflow.orchestrator.agent.tools.process.PlatformCommandWrapper
+                    .cmdWrap(listOf(interpreter, "-m", "py_compile") + relPaths)
 
                 val pb = ProcessBuilder(cmd)
                     .directory(baseDir)
