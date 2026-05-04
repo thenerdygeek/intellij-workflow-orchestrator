@@ -111,6 +111,7 @@ fun <T> com.workflow.orchestrator.core.services.ToolResult<T>.toAgentToolResult(
         content = content,
         summary = summary.lines().firstOrNull() ?: "",
         tokenEstimate = TokenEstimator.estimate(content),
+        imageRefs = imageRefs,
         isError = isError
     )
 }
