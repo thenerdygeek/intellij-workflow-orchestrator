@@ -159,4 +159,11 @@ data class UiMessage(
      * image was analyzed in a separate request to enable tool use.
      */
     val analyzedImageBadge: Boolean = false,
+    /**
+     * Multimodal-agent — image attachments the user added to this turn. The
+     * webview renders thumbnails inside the USER_MESSAGE bubble; the actual
+     * bytes are served from disk via the `http://workflow-agent/attachments/<sha256>`
+     * resource handler (read-only). Null/empty for text-only turns.
+     */
+    val attachments: List<ContentBlock.ImageRef>? = null,
 )

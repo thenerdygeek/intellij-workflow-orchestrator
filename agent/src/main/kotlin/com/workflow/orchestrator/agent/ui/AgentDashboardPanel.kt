@@ -366,7 +366,7 @@ class AgentDashboardPanel(
         broadcast(replay = false) { it.showToast(message, type, durationMs) }
     }
 
-    fun setCefMentionCallbacks(onSendWithMentions: (String, String) -> Unit) {
+    fun setCefMentionCallbacks(onSendWithMentions: (String, String, String?) -> Unit) {
         cefPanel?.onSendMessageWithMentions = onSendWithMentions
     }
 
@@ -490,24 +490,24 @@ class AgentDashboardPanel(
     //  Delegate API — routes to JCEF or fallback
     // ═══════════════════════════════════════════════════
 
-    fun startSession(task: String) {
-        cefPanel?.startSession(task) ?: fallbackPanel?.startSession(task)
+    fun startSession(task: String, attachmentsJson: String? = null) {
+        cefPanel?.startSession(task, attachmentsJson) ?: fallbackPanel?.startSession(task)
         broadcast { it.startSession(task) }
     }
 
-    fun startSessionWithMentions(task: String, mentionsJson: String) {
-        cefPanel?.startSessionWithMentions(task, mentionsJson)
+    fun startSessionWithMentions(task: String, mentionsJson: String, attachmentsJson: String? = null) {
+        cefPanel?.startSessionWithMentions(task, mentionsJson, attachmentsJson)
             ?: fallbackPanel?.startSession(task)
         broadcast { it.startSession(task) }
     }
 
-    fun appendUserMessage(text: String) {
-        cefPanel?.appendUserMessage(text) ?: fallbackPanel?.appendUserMessage(text)
+    fun appendUserMessage(text: String, attachmentsJson: String? = null) {
+        cefPanel?.appendUserMessage(text, attachmentsJson) ?: fallbackPanel?.appendUserMessage(text)
         broadcast { it.appendUserMessage(text) }
     }
 
-    fun appendUserMessageWithMentions(text: String, mentionsJson: String) {
-        cefPanel?.appendUserMessageWithMentions(text, mentionsJson)
+    fun appendUserMessageWithMentions(text: String, mentionsJson: String, attachmentsJson: String? = null) {
+        cefPanel?.appendUserMessageWithMentions(text, mentionsJson, attachmentsJson)
             ?: fallbackPanel?.appendUserMessage(text)
         broadcast { it.appendUserMessage(text) }
     }

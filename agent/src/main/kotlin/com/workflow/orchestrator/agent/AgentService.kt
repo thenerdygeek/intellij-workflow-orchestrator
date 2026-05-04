@@ -1205,6 +1205,17 @@ class AgentService(
     fun executeTask(
         task: String,
         sessionId: String? = null,
+        /**
+         * Multimodal-agent: image attachments uploaded for this turn. Each ref
+         * is appended to the user [ApiMessage] as a [ContentBlock.ImageRef]
+         * block. [BrainRouter] detects the resulting image-bearing message and
+         * routes through `/.api/completions/stream` (vision-capable path).
+         * Bytes for each sha256 must already be on disk under
+         * `sessions/{sessionId}/attachments/<sha256>.<ext>` (written by
+         * [com.workflow.orchestrator.agent.ui.AttachmentUploadHandler]).
+         * Empty list = text-only turn.
+         */
+        attachments: List<ContentBlock.ImageRef> = emptyList(),
         contextManager: ContextManager? = null,
         onStreamChunk: (String) -> Unit = {},
         onToolCall: (ToolCallProgress) -> Unit = {},
@@ -1740,16 +1751,28 @@ class AgentService(
 
                     // Add user message for this turn to both persistence files.
                     // Skipped when messageStateHandler is pre-built (resume path adds its own).
+                    // Multimodal: prepend Text(task), then append one ImageRef per attachment.
+                    // BrainRouter.hasImageParts() iterates content blocks looking for
+                    // ContentBlock.ImageRef and routes the call to the vision endpoint.
+                    val userContent = buildList<ContentBlock> {
+                        add(ContentBlock.Text(task))
+                        addAll(attachments)
+                    }
+                    if (attachments.isNotEmpty()) {
+                        log.info("[Agent] User turn carries ${attachments.size} image attachment(s): " +
+                            attachments.joinToString(",") { "${it.sha256.take(12)}…/${it.mime}/${it.size}B" })
+                    }
                     handler.addToApiConversationHistory(ApiMessage(
                         role = ApiRole.USER,
-                        content = listOf(ContentBlock.Text(task)),
+                        content = userContent,
                         ts = System.currentTimeMillis()
                     ))
                     val uiMsg = uiMessageOverride ?: UiMessage(
                         ts = System.currentTimeMillis(),
                         type = UiMessageType.SAY,
                         say = UiSay.USER_MESSAGE,
-                        text = task
+                        text = task,
+                        attachments = attachments.takeIf { it.isNotEmpty() },
                     )
                     handler.addToClineMessages(uiMsg)
                     handler

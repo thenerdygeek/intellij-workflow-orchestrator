@@ -207,9 +207,9 @@ interface ChatState {
   backgroundProcesses: BackgroundProcessSnapshot[];
 
   // Actions
-  startSession(task: string, mentions?: Mention[]): void;
+  startSession(task: string, mentions?: Mention[], attachments?: ImageRef[]): void;
   completeSession(info: SessionInfo): void;
-  addUserMessage(text: string, mentions?: Mention[]): void;
+  addUserMessage(text: string, mentions?: Mention[], attachments?: ImageRef[]): void;
   addPlanApprovedMessage(planMarkdown: string): void;
   addAgentText(text: string): void;
   appendToken(token: string): void;
@@ -286,7 +286,7 @@ interface ChatState {
   resolveApproval(decision: 'approve' | 'deny' | 'allowForSession'): void;
   showProcessInput(processId: string, description: string, prompt: string, command: string): void;
   resolveProcessInput(input: string): void;
-  sendMessage(text: string, mentions: Mention[]): void;
+  sendMessage(text: string, mentions: Mention[], attachments?: Array<{ sha256: string; mime: string; size: number; originalFilename: string }>): void;
   setDebugLogVisible(visible: boolean): void;
   addDebugLogEntry(entry: DebugLogEntry): void;
   clearDebugLog(): void;
@@ -402,13 +402,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
   backgroundProcesses: [],
 
   // Actions
-  startSession(task: string, mentions?: Mention[]) {
+  startSession(task: string, mentions?: Mention[], attachments?: ImageRef[]) {
     const firstMessage: UiMessage = {
       ts: uniqueTs(),
       type: 'SAY',
       say: 'USER_MESSAGE',
       text: task,
       ...(mentions && mentions.length > 0 ? { mentions } : {}),
+      ...(attachments && attachments.length > 0 ? { attachments } : {}),
     };
     set({
       messages: [firstMessage],
@@ -499,10 +500,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  addUserMessage(text: string, mentions?: Mention[]) {
+  addUserMessage(text: string, mentions?: Mention[], attachments?: ImageRef[]) {
     const msg: UiMessage = {
       ts: uniqueTs(), type: 'SAY', say: 'USER_MESSAGE', text,
       ...(mentions && mentions.length > 0 ? { mentions } : {}),
+      ...(attachments && attachments.length > 0 ? { attachments } : {}),
     };
     set(state => ({ messages: [...state.messages, msg] }));
   },
@@ -1204,15 +1206,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  sendMessage(text: string, mentions: Mention[]) {
+  sendMessage(text: string, mentions: Mention[], attachments?: Array<{ sha256: string; mime: string; size: number; originalFilename: string }>) {
     // Do NOT add the user message here — Kotlin is authoritative.
     // For first messages: startSession() adds it atomically.
     // For subsequent messages: appendUserMessage() adds it from Kotlin.
     // Clear the retry pill immediately so it doesn't persist into the new turn.
     set({ retryState: null });
+    const hasAttachments = attachments && attachments.length > 0;
     import('../bridge/jcef-bridge').then(({ kotlinBridge }) => {
-      if (mentions.length > 0) {
-        kotlinBridge.sendMessageWithMentions(text, JSON.stringify(mentions));
+      // Route through sendMessageWithMentions whenever there are mentions OR
+      // attachments — that's the single Kotlin path that carries structured
+      // payloads. Plain sendMessage is text-only and would lose attachments.
+      if (mentions.length > 0 || hasAttachments) {
+        kotlinBridge.sendMessageWithMentions(text, JSON.stringify(mentions), hasAttachments ? JSON.stringify(attachments) : undefined);
       } else {
         kotlinBridge.sendMessage(text);
       }

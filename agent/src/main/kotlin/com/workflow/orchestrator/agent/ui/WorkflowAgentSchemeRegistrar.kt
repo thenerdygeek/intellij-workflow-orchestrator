@@ -40,6 +40,7 @@ object WorkflowAgentSchemeRegistrar {
 
     private val registered = AtomicBoolean(false)
     private val uploadHandlerFactoryRef = AtomicReference<(() -> CefResourceHandler)?>()
+    private val readHandlerFactoryRef = AtomicReference<(() -> CefResourceHandler)?>()
 
     /**
      * Idempotent. First call registers the dispatching factory with [CefApp];
@@ -68,6 +69,16 @@ object WorkflowAgentSchemeRegistrar {
         uploadHandlerFactoryRef.set(factory)
     }
 
+    /**
+     * Install the read-handler factory that produces a fresh handler per
+     * `GET /attachments/<sha256>` request. The chat panel calls this with a
+     * closure that captures its session-bound `attachmentStoreProvider`.
+     * Pass `null` to detach.
+     */
+    fun setReadHandlerFactory(factory: (() -> CefResourceHandler)?) {
+        readHandlerFactoryRef.set(factory)
+    }
+
     @org.jetbrains.annotations.VisibleForTesting
     internal object DispatchingFactory : CefSchemeHandlerFactory {
         override fun create(
@@ -86,10 +97,12 @@ object WorkflowAgentSchemeRegistrar {
         @org.jetbrains.annotations.VisibleForTesting
         internal fun dispatch(url: String?): CefResourceHandler {
             if (url == null) return CefResourceSchemeHandler()
-            return if (AttachmentUploadHandler.matches(url)) {
-                uploadHandlerFactoryRef.get()?.invoke() ?: CefResourceSchemeHandler()
-            } else {
-                CefResourceSchemeHandler()
+            return when {
+                AttachmentUploadHandler.matches(url) ->
+                    uploadHandlerFactoryRef.get()?.invoke() ?: CefResourceSchemeHandler()
+                AttachmentReadHandler.matches(url) ->
+                    readHandlerFactoryRef.get()?.invoke() ?: CefResourceSchemeHandler()
+                else -> CefResourceSchemeHandler()
             }
         }
     }

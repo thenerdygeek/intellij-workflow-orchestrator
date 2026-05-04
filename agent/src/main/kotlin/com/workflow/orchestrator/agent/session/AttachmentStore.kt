@@ -125,6 +125,22 @@ class AttachmentStore(private val sessionDir: Path) {
     /** Returns the absolute path where an attachment with [sha256] and [ext] would (or does) live. */
     fun pathFor(sha256: String, ext: String): Path = attachmentsDir.resolve("$sha256.$ext")
 
+    /**
+     * Returns the on-disk extension for [sha256] (e.g. "png", "jpg") or null
+     * if no file with that prefix exists. Used by [com.workflow.orchestrator.agent.ui.AttachmentReadHandler]
+     * to set Content-Type on `<img src="…/attachments/<sha>">` responses.
+     * Synchronous JDK file ops — caller must already be off-EDT.
+     */
+    fun findExtensionForBlocking(sha256: String): String? {
+        if (!Files.exists(attachmentsDir)) return null
+        return Files.list(attachmentsDir).use { stream ->
+            stream
+                .filter { it.fileName.toString().startsWith("$sha256.") }
+                .findFirst()
+                .orElse(null)
+        }?.fileName?.toString()?.substringAfterLast(".", missingDelimiterValue = "")?.takeIf { it.isNotBlank() }
+    }
+
     private fun sha256(bytes: ByteArray): String {
         val md = MessageDigest.getInstance("SHA-256")
         return md.digest(bytes).joinToString("") { "%02x".format(it) }

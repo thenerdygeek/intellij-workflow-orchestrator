@@ -54,8 +54,45 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
       stores?.getChatStore().startSession(task);
     }
   },
+  // Multimodal-agent — first-message paths that carry image attachments.
+  // Kotlin AgentCefPanel.startSession routes to one of these when
+  // attachmentsJson is non-empty so the USER_MESSAGE bubble renders thumbnails.
+  startSessionWithAttachments(task: string, attachmentsJson: string) {
+    try {
+      const attachments = JSON.parse(attachmentsJson) as ImageRef[];
+      stores?.getChatStore().startSession(task, undefined, attachments);
+    } catch {
+      stores?.getChatStore().startSession(task);
+    }
+  },
+  startSessionWithMentionsAndAttachments(task: string, mentionsJson: string, attachmentsJson: string) {
+    try {
+      const mentions = JSON.parse(mentionsJson);
+      const attachments = JSON.parse(attachmentsJson) as ImageRef[];
+      stores?.getChatStore().startSession(task, mentions, attachments);
+    } catch {
+      stores?.getChatStore().startSession(task);
+    }
+  },
   appendUserMessage(text: string) {
     stores?.getChatStore().addUserMessage(text);
+  },
+  appendUserMessageWithAttachments(text: string, attachmentsJson: string) {
+    try {
+      const attachments = JSON.parse(attachmentsJson) as ImageRef[];
+      stores?.getChatStore().addUserMessage(text, undefined, attachments);
+    } catch {
+      stores?.getChatStore().addUserMessage(text);
+    }
+  },
+  appendUserMessageWithMentionsAndAttachments(text: string, mentionsJson: string, attachmentsJson: string) {
+    try {
+      const mentions = JSON.parse(mentionsJson);
+      const attachments = JSON.parse(attachmentsJson) as ImageRef[];
+      stores?.getChatStore().addUserMessage(text, mentions, attachments);
+    } catch {
+      stores?.getChatStore().addUserMessage(text);
+    }
   },
   appendPlanApprovedMessage(planMarkdown: string) {
     stores?.getChatStore().addPlanApprovedMessage(planMarkdown);
@@ -617,9 +654,16 @@ export const kotlinBridge = {
   killSubAgent(agentId: string): void { callKotlin('_killSubAgent', agentId); },
   resolveProcessInput(input: string): void { callKotlin('_resolveProcessInput', input); },
   searchMentions(type: string, query: string): void { callKotlin('_searchMentions', `${type}:${query}`); },
-  sendMessageWithMentions(text: string, mentionsJson: string): void {
-    const payload = JSON.stringify({ text, mentions: JSON.parse(mentionsJson) });
-    callKotlin('_sendMessageWithMentions', payload);
+  sendMessageWithMentions(text: string, mentionsJson: string, attachmentsJson?: string): void {
+    const payload: any = { text, mentions: JSON.parse(mentionsJson) };
+    if (attachmentsJson) {
+      try {
+        payload.attachments = JSON.parse(attachmentsJson);
+      } catch (e) {
+        console.warn('[bridge] sendMessageWithMentions: malformed attachmentsJson, dropping', e);
+      }
+    }
+    callKotlin('_sendMessageWithMentions', JSON.stringify(payload));
   },
   retryLastTask(): void { callKotlin('_retryLastTask'); },
 

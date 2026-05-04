@@ -128,7 +128,7 @@ class AgentCefPanel(
     private var contextUsageQuery: JBCefJSQuery? = null
     private var imageSettingsQuery: JBCefJSQuery? = null
     var mentionSearchProvider: MentionSearchProvider? = null
-    var onSendMessageWithMentions: ((String, String) -> Unit)? = null  // (text, mentionsJson)
+    var onSendMessageWithMentions: ((String, String, String?) -> Unit)? = null  // (text, mentionsJson, attachmentsJson?)
 
     /**
      * Resolves the directory for the *currently active* session — used by the
@@ -376,6 +376,18 @@ class AgentCefPanel(
                     settings = settings,
                 )
             }
+            // Read handler: serves <img src="http://workflow-agent/attachments/<sha>">
+            // for thumbnails inside USER_MESSAGE bubbles. Same per-request session
+            // resolution as the upload handler — bytes always come from the
+            // active session's attachments/ dir.
+            WorkflowAgentSchemeRegistrar.setReadHandlerFactory {
+                AttachmentReadHandler(
+                    attachmentStoreProvider = {
+                        val dir = currentSessionDirProvider?.invoke()
+                        if (dir != null) com.workflow.orchestrator.agent.session.AttachmentStore(dir) else null
+                    },
+                )
+            }
             // Detach our session-bound factory when this panel disposes so a
             // stale closure can't outlive the panel's lifecycle. Safe even if
             // another chat panel has already overwritten the reference — set is
@@ -384,6 +396,7 @@ class AgentCefPanel(
             // so we accept the rare race where two panels race-dispose).
             Disposer.register(parentDisposable) {
                 WorkflowAgentSchemeRegistrar.setUploadHandlerFactory(null)
+                WorkflowAgentSchemeRegistrar.setReadHandlerFactory(null)
             }
         } catch (e: Exception) {
             LOG.warn("AgentCefPanel: scheme handler registration failed", e)
@@ -515,9 +528,14 @@ class AgentCefPanel(
                 val json = Json.parseToJsonElement(payload).jsonObject
                 val text = json["text"]?.jsonPrimitive?.content ?: ""
                 val mentionsJson = json["mentions"]?.toString() ?: "[]"
+                // Multimodal-agent: attachments uploaded for this turn. Each entry
+                // carries sha256/mime/size/originalFilename so AgentService can
+                // build ContentBlock.ImageRef parts on the user ApiMessage.
+                // Absent for non-image turns.
+                val attachmentsJson = json["attachments"]?.toString()
                 val handler = onSendMessageWithMentions
                 if (handler != null) {
-                    handler.invoke(text, mentionsJson)
+                    handler.invoke(text, mentionsJson, attachmentsJson)
                 } else {
                     // Fallback: no mention handler wired — send plain text
                     onSendMessage?.invoke(text)
@@ -842,15 +860,27 @@ class AgentCefPanel(
     //  Public API — mirrors RichStreamingPanel
     // ═══════════════════════════════════════════════════
 
-    fun startSession(task: String) {
+    fun startSession(task: String, attachmentsJson: String? = null) {
+        if (!attachmentsJson.isNullOrBlank() && attachmentsJson != "[]") {
+            callJs("startSessionWithAttachments(${JsEscape.toJsString(task)}, ${JsEscape.toJsString(attachmentsJson)})")
+            return
+        }
         callJs("startSession(${JsEscape.toJsString(task)})")
     }
 
-    fun startSessionWithMentions(task: String, mentionsJson: String) {
+    fun startSessionWithMentions(task: String, mentionsJson: String, attachmentsJson: String? = null) {
+        if (!attachmentsJson.isNullOrBlank() && attachmentsJson != "[]") {
+            callJs("startSessionWithMentionsAndAttachments(${JsEscape.toJsString(task)}, ${JsEscape.toJsString(mentionsJson)}, ${JsEscape.toJsString(attachmentsJson)})")
+            return
+        }
         callJs("startSessionWithMentions(${JsEscape.toJsString(task)}, ${JsEscape.toJsString(mentionsJson)})")
     }
 
-    fun appendUserMessage(text: String) {
+    fun appendUserMessage(text: String, attachmentsJson: String? = null) {
+        if (!attachmentsJson.isNullOrBlank() && attachmentsJson != "[]") {
+            callJs("appendUserMessageWithAttachments(${JsEscape.toJsString(text)}, ${JsEscape.toJsString(attachmentsJson)})")
+            return
+        }
         callJs("appendUserMessage(${JsEscape.toJsString(text)})")
     }
 
@@ -858,7 +888,11 @@ class AgentCefPanel(
         callJs("appendPlanApprovedMessage(${JsEscape.toJsString(planMarkdown)})")
     }
 
-    fun appendUserMessageWithMentions(text: String, mentionsJson: String) {
+    fun appendUserMessageWithMentions(text: String, mentionsJson: String, attachmentsJson: String? = null) {
+        if (!attachmentsJson.isNullOrBlank() && attachmentsJson != "[]") {
+            callJs("appendUserMessageWithMentionsAndAttachments(${JsEscape.toJsString(text)}, ${JsEscape.toJsString(mentionsJson)}, ${JsEscape.toJsString(attachmentsJson)})")
+            return
+        }
         callJs("appendUserMessageWithMentions(${JsEscape.toJsString(text)}, ${JsEscape.toJsString(mentionsJson)})")
     }
 

@@ -1026,7 +1026,18 @@ export const InputBar = memo(function InputBar() {
         console.warn('[multimodal] uploadAll threw', e);
       }
     }
-    useChatStore.getState().sendMessage(text.trim(), mentions);
+    // Snapshot the attachment metadata BEFORE clear() — the Kotlin side needs
+    // sha/mime/size/filename to build ContentBlock.ImageRef parts on the user
+    // ApiMessage. Without this, BrainRouter sees no image parts and routes
+    // through the text-only completions endpoint.
+    const attachmentsForTurn = (attachmentManagerRef.current?.list() ?? []).map(a => ({
+      sha256: a.sha256,
+      mime: a.mime,
+      size: a.size,
+      originalFilename: a.originalFilename,
+    }));
+    console.log('[multimodal:attach] handleSend: passing', attachmentsForTurn.length, 'attachments to sendMessage');
+    useChatStore.getState().sendMessage(text.trim(), mentions, attachmentsForTurn);
     ri.clear();
     attachmentManagerRef.current?.clear();
     setHasText(false);

@@ -213,7 +213,26 @@ export const AgentMessage = memo(function AgentMessage({
         )}
 
         {isUser ? (
-          <UserContent content={content} mentions={message.mentions} />
+          <>
+            {/* Multimodal-agent — image attachments uploaded with this turn.
+                Bytes are served from disk by the Kotlin AttachmentReadHandler
+                via http://workflow-agent/attachments/{sha256}. */}
+            {message.attachments && message.attachments.length > 0 && (
+              <div className="mb-2 flex flex-wrap gap-2">
+                {message.attachments.map(att => (
+                  <img
+                    key={att.sha256}
+                    src={`http://workflow-agent/attachments/${att.sha256}`}
+                    alt={att.originalFilename ?? att.sha256.slice(0, 8)}
+                    title={att.originalFilename ?? `${att.mime} · ${Math.round(att.size / 1024)}KB`}
+                    className="rounded border max-h-40 max-w-full object-contain"
+                    style={{ borderColor: 'var(--input-border, rgba(255,255,255,0.1))' }}
+                  />
+                ))}
+              </div>
+            )}
+            <UserContent content={content} mentions={message.mentions} />
+          </>
         ) : (
           <MarkdownRenderer content={content} isStreaming={isStreaming} />
         )}

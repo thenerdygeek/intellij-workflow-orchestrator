@@ -420,6 +420,13 @@ export interface UiMessage {
    * image was analyzed in a separate request to enable tool use.
    */
   analyzedImageBadge?: boolean;
+  /**
+   * Multimodal-agent — image attachments the user added to this turn. The
+   * USER_MESSAGE bubble renders these as thumbnails via
+   * `<img src="http://workflow-agent/attachments/{sha256}">` (served by the
+   * Kotlin AttachmentReadHandler from disk).
+   */
+  attachments?: ImageRef[];
 }
 
 /** Mirrors Kotlin HistoryItem from sessions.json */

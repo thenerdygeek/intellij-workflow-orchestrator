@@ -459,7 +459,9 @@ class AgentController(
             onOpenToolsPanel = ::showToolsPanel,
             onRequestModelList = { loadModelList() }
         )
-        panel.setCefMentionCallbacks(::executeTaskWithMentions)
+        panel.setCefMentionCallbacks { text, mentionsJson, attachmentsJson ->
+            executeTaskWithMentions(text, mentionsJson, attachmentsJson)
+        }
         panel.setCefCallbacks(
             onUndo = { LOG.info("Undo requested — not implemented in lean rewrite") },
             onViewTrace = { LOG.info("View trace requested — not implemented in lean rewrite") },
@@ -798,6 +800,14 @@ class AgentController(
                         LOG.info("ask_followup_question: no options — showing as plain text (question=${question.length} chars)")
                         dashboard.appendStreamToken(question)
                         dashboard.flushStreamBuffer()
+                        // The no-options path renders via the streaming-token bridge,
+                        // NOT via dashboard.showQuestions. Only showQuestions has a JS
+                        // round-trip that calls _reportInteractiveRender (which flips
+                        // uiRenderConfirmed). Without this manual confirm, the tool's
+                        // 10s watchdog fires [UI_RENDER_FAILED] even though the user
+                        // sees the question fine. The streaming-token path doesn't
+                        // fail silently, so confirming inline is safe.
+                        com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.uiRenderConfirmed = true
                     }
                     dashboard.focusInput()
                 } catch (e: Exception) {
@@ -809,6 +819,10 @@ class AgentController(
                     dashboard.setSteeringMode(true)
                     dashboard.appendStreamToken(question)
                     dashboard.flushStreamBuffer()
+                    // Same reason as the no-options branch above — the streaming-token
+                    // path bypasses showQuestions, so the watchdog never sees the
+                    // _reportInteractiveRender confirmation otherwise.
+                    com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.uiRenderConfirmed = true
                     dashboard.focusInput()
                 }
             }
@@ -1248,16 +1262,40 @@ class AgentController(
      * [appendPlanApprovedMessage] bubble (with icon + "View implementation plan" link)
      * instead of a plain user message, so the live session matches what is restored from disk.
      */
-    private fun displayUserMessage(text: String, mentionsJson: String?, uiMessageOverride: com.workflow.orchestrator.agent.session.UiMessage? = null) {
+    private fun displayUserMessage(
+        text: String,
+        mentionsJson: String?,
+        uiMessageOverride: com.workflow.orchestrator.agent.session.UiMessage? = null,
+        attachments: List<com.workflow.orchestrator.agent.session.ContentBlock.ImageRef> = emptyList(),
+    ) {
         if (uiMessageOverride?.say == UiSay.PLAN_APPROVED) {
             val markdown = uiMessageOverride.planApprovalData?.planMarkdown.orEmpty()
             dashboard.appendPlanApprovedMessage(markdown)
-        } else if (mentionsJson != null) {
-            dashboard.appendUserMessageWithMentions(text, mentionsJson)
+            return
+        }
+        val attachmentsJson = if (attachments.isNotEmpty()) attachmentsToJson(attachments) else null
+        if (mentionsJson != null) {
+            dashboard.appendUserMessageWithMentions(text, mentionsJson, attachmentsJson)
         } else {
-            dashboard.appendUserMessage(text)
+            dashboard.appendUserMessage(text, attachmentsJson)
         }
     }
+
+    /** Serialize attachments back to wire JSON for the UI bridge. */
+    private fun attachmentsToJson(attachments: List<com.workflow.orchestrator.agent.session.ContentBlock.ImageRef>): String =
+        buildString {
+            append("[")
+            attachments.forEachIndexed { i, ref ->
+                if (i > 0) append(",")
+                append("""{"sha256":"${ref.sha256}","mime":"${ref.mime}","size":${ref.size}""")
+                ref.originalFilename?.let {
+                    append(""","originalFilename":""")
+                    append(JsEscape.toJsonString(it))
+                }
+                append("}")
+            }
+            append("]")
+        }
 
     /**
      * Execute a user task with resolved mention context.
@@ -1267,8 +1305,10 @@ class AgentController(
      * Resolves mentions into rich context (file contents, ticket details, etc.) on a background
      * thread, then prepends the context to the task and delegates to [executeTask].
      */
-    private fun executeTaskWithMentions(text: String, mentionsJson: String) {
-        if (text.isBlank() && mentionsJson == "[]") return
+    private fun executeTaskWithMentions(text: String, mentionsJson: String, attachmentsJson: String? = null) {
+        if (text.isBlank() && mentionsJson == "[]" && attachmentsJson.isNullOrBlank()) return
+
+        val attachments = parseAttachments(attachmentsJson)
 
         val mentions = try {
             val arr = Json.parseToJsonElement(mentionsJson).jsonArray
@@ -1282,12 +1322,12 @@ class AgentController(
             }
         } catch (e: Exception) {
             LOG.warn("AgentController: failed to parse mentions JSON, falling back to plain text", e)
-            executeTask(text)
+            executeTask(text, attachments = attachments)
             return
         }
 
         if (mentions.isEmpty()) {
-            executeTask(text)
+            executeTask(text, attachments = attachments)
             return
         }
 
@@ -1309,8 +1349,38 @@ class AgentController(
 
             invokeLater {
                 // Display clean text with chips in UI; pass XML-enriched text to LLM
-                executeTask(taskWithContext, displayText = text, displayMentionsJson = mentionsJson)
+                executeTask(taskWithContext, displayText = text, displayMentionsJson = mentionsJson, attachments = attachments)
             }
+        }
+    }
+
+    /**
+     * Multimodal-agent: parse the attachments JSON payload from the JS bridge
+     * into ContentBlock.ImageRef list. The wire shape is
+     * `[{sha256, mime, size, originalFilename}, ...]`. Returns empty list on
+     * any parse error so an attachment-payload bug never blocks a turn from
+     * being sent — the LLM just won't see the image.
+     */
+    private fun parseAttachments(attachmentsJson: String?): List<com.workflow.orchestrator.agent.session.ContentBlock.ImageRef> {
+        if (attachmentsJson.isNullOrBlank()) return emptyList()
+        return try {
+            val arr = Json.parseToJsonElement(attachmentsJson).jsonArray
+            arr.mapNotNull { elem ->
+                val obj = elem.jsonObject
+                val sha = obj["sha256"]?.jsonPrimitive?.content ?: return@mapNotNull null
+                val mime = obj["mime"]?.jsonPrimitive?.content ?: return@mapNotNull null
+                val size = obj["size"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
+                val name = obj["originalFilename"]?.jsonPrimitive?.content
+                com.workflow.orchestrator.agent.session.ContentBlock.ImageRef(
+                    sha256 = sha,
+                    mime = mime,
+                    size = size,
+                    originalFilename = name,
+                )
+            }
+        } catch (e: Exception) {
+            LOG.warn("AgentController: failed to parse attachments JSON: ${e.message}, raw='${attachmentsJson.take(200)}'")
+            emptyList()
         }
     }
 
@@ -1329,10 +1399,16 @@ class AgentController(
      *        chat bubble still shows [displayText] (or [task] if null). Passed through to
      *        [AgentService.executeTask]. Only meaningful when this call starts a new loop.
      */
-    fun executeTask(task: String, displayText: String? = null, displayMentionsJson: String? = null, uiMessageOverride: UiMessage? = null) {
-        if (task.isBlank()) return
+    fun executeTask(
+        task: String,
+        displayText: String? = null,
+        displayMentionsJson: String? = null,
+        uiMessageOverride: UiMessage? = null,
+        attachments: List<com.workflow.orchestrator.agent.session.ContentBlock.ImageRef> = emptyList(),
+    ) {
+        if (task.isBlank() && attachments.isEmpty()) return
 
-        LOG.info("AgentController.executeTask: ${task.take(80)}")
+        LOG.info("AgentController.executeTask: ${task.take(80)} (attachments=${attachments.size})")
 
         // Phase 4 Prong A: the body was previously executed inline on the JCEF bridge
         // callback thread (EDT), with `runBlocking` around `hookManager.dispatch` and
@@ -1341,7 +1417,7 @@ class AgentController(
         // `Dispatchers.EDT` preserves the "UI mutations run on EDT" invariant while
         // letting the suspend calls park the coroutine instead of the event thread.
         controllerScope.launch(Dispatchers.EDT + CoroutineName("AgentController.executeTask")) {
-            executeTaskInternal(task, displayText, displayMentionsJson, uiMessageOverride)
+            executeTaskInternal(task, displayText, displayMentionsJson, uiMessageOverride, attachments)
         }
     }
 
@@ -1350,6 +1426,7 @@ class AgentController(
         displayText: String?,
         displayMentionsJson: String?,
         uiMessageOverride: UiMessage?,
+        attachments: List<com.workflow.orchestrator.agent.session.ContentBlock.ImageRef> = emptyList(),
     ) {
         // The text shown in the UI — clean text without mention XML
         val uiText = displayText ?: task
@@ -1382,7 +1459,14 @@ class AgentController(
         val pending = com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.pendingQuestions
         if (pending != null && !pending.isCompleted && currentJob?.isActive == true) {
             LOG.info("AgentController: resolving pending question with user answer — setting busy=true, steeringMode=true")
-            displayUserMessage(uiText, displayMentionsJson)
+            if (attachments.isNotEmpty()) {
+                // Known limitation: attachments on a question-reply path render in
+                // the bubble but are NOT delivered to the LLM (the question
+                // completion channel only carries the typed answer). The image
+                // bytes are stored on disk so a follow-up turn could attach them.
+                LOG.warn("AgentController: ${attachments.size} attachment(s) on pending-question reply will not reach the LLM (rendered in bubble only)")
+            }
+            displayUserMessage(uiText, displayMentionsJson, attachments = attachments)
             dashboard.setBusy(true)
             dashboard.setSteeringMode(true)
             pending.complete(task)
@@ -1393,7 +1477,12 @@ class AgentController(
         val channel = userInputChannel
         if (loopWaitingForInput && channel != null && currentJob?.isActive == true) {
             LOG.info("AgentController: feeding user message into existing loop via channel — setting busy=true, steeringMode=true")
-            displayUserMessage(uiText, displayMentionsJson, uiMessageOverride)
+            if (attachments.isNotEmpty()) {
+                // Same limitation as the pending-question path — channel.send
+                // is text-only. Bytes remain on disk for a future turn.
+                LOG.warn("AgentController: ${attachments.size} attachment(s) on plan-mode reply will not reach the LLM (rendered in bubble only)")
+            }
+            displayUserMessage(uiText, displayMentionsJson, uiMessageOverride, attachments)
             dashboard.setBusy(true)
             dashboard.setSteeringMode(true)
             // Input is NOT locked — user can always type freely (Cline behavior)
@@ -1435,7 +1524,7 @@ class AgentController(
         }
 
         // Show user message in the chat UI
-        displayUserMessage(uiText, displayMentionsJson, uiMessageOverride)
+        displayUserMessage(uiText, displayMentionsJson, uiMessageOverride, attachments)
         LOG.info("executeTask: setting busy=true, steeringMode=true (turn start)")
         dashboard.setBusy(true)
         dashboard.setSteeringMode(true)
@@ -1451,10 +1540,11 @@ class AgentController(
         val isFirstMessage = contextManager == null
         if (isFirstMessage) {
             contextManager = service.newContextManager()
+            val attachmentsJson = if (attachments.isNotEmpty()) attachmentsToJson(attachments) else null
             if (displayMentionsJson != null) {
-                dashboard.startSessionWithMentions(uiText, displayMentionsJson)
+                dashboard.startSessionWithMentions(uiText, displayMentionsJson, attachmentsJson)
             } else {
-                dashboard.startSession(uiText)
+                dashboard.startSession(uiText, attachmentsJson)
             }
             // "First message wins" — capture the original task once, never overwrite
             if (originalTaskText == null) {
@@ -1476,6 +1566,7 @@ class AgentController(
         currentJob = service.executeTask(
             task = task,
             sessionId = currentSessionId,
+            attachments = attachments,
             contextManager = contextManager,
             onStreamChunk = ::onStreamChunk,
             onToolCall = ::onToolCall,
