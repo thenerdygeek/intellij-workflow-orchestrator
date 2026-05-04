@@ -1256,7 +1256,20 @@ class AgentLoop(
                 // Exception: plan-mode conversational turns (see inner branch below) are genuine user
                 // exchanges; both counters are reset there.
                 // Only a real tool call (Case A) resets both counters in act mode.
+                //
+                // Synthetic-abort exemption: BrainRouter aborts (image-pipeline failures) return a
+                // synthetic ChatCompletionResponse with id starting with "router-step1-" to surface
+                // a user-visible message via the assistant turn. The model never actually replied,
+                // so it isn't a "mistake" — counting it would trip the consecutive-mistakes nudge
+                // after 3 image-bearing iterations whose vision step kept aborting (Windows logs
+                // 2026-05-05). Treat synthetic aborts as a non-mistake informational turn that
+                // still gets persisted so the user sees the explanation.
                 hasContent -> {
+                    val isSyntheticAbort = response.id.startsWith("router-step1-")
+                    if (isSyntheticAbort) {
+                        LOG.info("[Loop] Synthetic router abort (id=${response.id}) — not counting as mistake; loop continues so the model can react")
+                        continue
+                    }
                     consecutiveMistakes++
                     LOG.info("[Loop] Text-only response (no tool calls) — mistake $consecutiveMistakes/$maxConsecutiveMistakes")
 

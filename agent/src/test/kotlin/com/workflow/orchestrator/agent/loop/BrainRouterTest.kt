@@ -402,6 +402,11 @@ class BrainRouterTest {
         val ok = resp as? ApiResult.Success<ChatCompletionResponse>
             ?: error("expected Success, got: $resp")
         assertTrue(ok.data.choices.first().message.content!!.contains("couldn't analyze", ignoreCase = true))
+        // Pin the abort id — AgentLoop uses the "router-step1-" prefix to skip the
+        // consecutive-mistakes counter for synthetic aborts. Renaming this id
+        // without updating AgentLoop's exemption would silently re-introduce the
+        // "model keeps replying without a tool" nudge regression (Windows logs 2026-05-05).
+        assertEquals("router-step1-abstain", ok.data.id)
     }
 
     @Test
@@ -424,6 +429,63 @@ class BrainRouterTest {
         val ok = resp as? ApiResult.Success<ChatCompletionResponse>
             ?: error("expected Success, got: $resp")
         assertTrue(ok.data.choices.first().message.content!!.contains("Image analysis failed", ignoreCase = true))
+        // Pin the abort id — see "abstaining step-1 description aborts" test.
+        assertEquals("router-step1-fail", ok.data.id)
+    }
+
+    @Test
+    fun `all step-1 abort response ids share the router-step1- prefix that AgentLoop exempts`() = runBlocking {
+        // Cross-cutting invariant test: AgentLoop checks `response.id.startsWith("router-step1-")`
+        // to skip the consecutive-mistakes counter for synthetic aborts. If a future commit
+        // adds a new VisionResult variant with a different id prefix, that variant's synthetic
+        // text-only response would erroneously be counted as an LLM "mistake" and trip the
+        // "model keeps replying without using a tool" nudge after 3 image-bearing iterations
+        // (regression shipped in v0.83.59, fixed in v0.83.60).
+        //
+        // This test pins the prefix invariant by exhaustively running each abort path and
+        // asserting all ids share the "router-step1-" prefix. The list MUST cover every
+        // synthesizeAbortResponse call site in BrainRouter.
+        val store = AttachmentStore(tempDir)
+        val ref = store.store("fake".toByteArray(), "image/png", null)
+        val msgsWithImage = listOf(
+            ChatMessage(
+                role = "user",
+                parts = listOf(ContentPart.Image(ref.sha256, "image/png", null), ContentPart.Text("x")),
+            ),
+        )
+
+        // Failed (HTTP error)
+        val failedResp = BrainRouter(
+            FakeOpenAiCompatBrain(response = makeOk("unused")),
+            FakeStreamClient(throwOnCall = HttpException(500, "x")),
+            store, { "m" }, null,
+        ).chat(msgsWithImage, listOf(fooTool)) as ApiResult.Success<ChatCompletionResponse>
+        assertTrue(
+            failedResp.data.id.startsWith("router-step1-"),
+            "Failed-path id must start with router-step1- (got '${failedResp.data.id}')"
+        )
+
+        // Abstained (model said "I cannot see this image…")
+        val abstainResp = BrainRouter(
+            FakeOpenAiCompatBrain(response = makeOk("unused")),
+            FakeStreamClient(text = "I cannot see this image clearly."),
+            store, { "m" }, null,
+        ).chat(msgsWithImage, listOf(fooTool)) as ApiResult.Success<ChatCompletionResponse>
+        assertTrue(
+            abstainResp.data.id.startsWith("router-step1-"),
+            "Abstained-path id must start with router-step1- (got '${abstainResp.data.id}')"
+        )
+
+        // Empty (0-char description)
+        val emptyResp = BrainRouter(
+            FakeOpenAiCompatBrain(response = makeOk("unused")),
+            FakeStreamClient(text = ""),
+            store, { "m" }, null,
+        ).chat(msgsWithImage, listOf(fooTool)) as ApiResult.Success<ChatCompletionResponse>
+        assertTrue(
+            emptyResp.data.id.startsWith("router-step1-"),
+            "Empty-path id must start with router-step1- (got '${emptyResp.data.id}')"
+        )
     }
 
     @Test
