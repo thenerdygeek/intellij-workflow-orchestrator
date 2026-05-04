@@ -5,6 +5,8 @@ import com.workflow.orchestrator.agent.hooks.HookEvent
 import com.workflow.orchestrator.agent.hooks.HookManager
 import com.workflow.orchestrator.agent.hooks.HookResult
 import com.workflow.orchestrator.agent.hooks.HookType
+import com.workflow.orchestrator.agent.session.ApiMessage
+import com.workflow.orchestrator.agent.session.ContentBlock
 import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.ModelCatalogService
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
@@ -1222,6 +1224,32 @@ class ContextManager(
     }
 
     companion object {
+        /**
+         * Cline-style pinning rule (tool-produced-images Phase 5).
+         *
+         * Any USER [ApiMessage] whose [ApiMessage.content] list contains a
+         * [ContentBlock.ImageRef] is exempt from Stage 1 (duplicate file-read
+         * dedup) and Stage 2 (middle-block truncation) of the compaction
+         * pipeline. Vision tokens are expensive — re-sending the same
+         * screenshot every turn is worse than keeping it pinned, and dropping
+         * it mid-conversation strands tool outputs the LLM may need to refer
+         * back to.
+         *
+         * NB: this only protects the message slot. If the user explicitly
+         * runs a "compact conversation" command, Stage 3 LLM summarization
+         * may still consolidate the slot — by that point the model has
+         * already produced text describing the image, so loss is acceptable.
+         *
+         * The internal `messages` list is `ChatMessage`-typed (post-conversion
+         * via `ApiMessage.toChatMessage()`); Stage 1 and Stage 2 use the
+         * sibling `ChatMessage.hasImageParts()` helper to make the same
+         * decision at that layer. This [ApiMessage]-level overload is the
+         * canonical contract and is also useful for future callers (e.g. an
+         * "Active Image" status indicator) that operate on ApiMessage.
+         */
+        fun isImageBearingMessage(message: ApiMessage): Boolean =
+            message.content.any { it is ContentBlock.ImageRef }
+
         /**
          * Conservative fallback for [maxInputTokensFor] when the catalog is unreachable
          * or the model is unknown. 90K covers all known non-thinking enterprise tiers
