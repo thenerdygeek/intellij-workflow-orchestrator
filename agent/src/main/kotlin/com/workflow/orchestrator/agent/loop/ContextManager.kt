@@ -43,6 +43,19 @@ import com.workflow.orchestrator.core.model.ApiResult
  * @see <a href="https://github.com/cline/cline/blob/main/src/core/context/context-management/ContextManager.ts">Cline source</a>
  */
 class ContextManager(
+    /**
+     * Fallback budget used by [effectiveMaxInputTokens] when:
+     *   - no [modelCatalogService] is wired (tests, sub-agent budgets), OR
+     *   - the catalog is unreachable, OR
+     *   - [currentModelRef] returns null
+     *
+     * Production sites should wire [modelCatalogService] + [currentModelRef]
+     * so this constructor field is never the authoritative number — the
+     * Sourcegraph catalog is. v0.83.44+ removed the `AgentSettings.maxInputTokens`
+     * user setting; this field now exists ONLY for tests that need a
+     * deterministic budget and for sub-agent budgets where the parent's
+     * per-model number isn't the right unit.
+     */
     val maxInputTokens: Int = 150_000,
     private val compactionThreshold: Double = 0.85,
     /**
@@ -69,7 +82,18 @@ class ContextManager(
      * Optional + nullable for backward compatibility with existing call sites
      * (AgentService, AgentController, SubagentRunner, tests).
      */
-    private val modelCatalogService: ModelCatalogService? = null
+    private val modelCatalogService: ModelCatalogService? = null,
+    /**
+     * Provider for the live, currently-active model ref.
+     *
+     * v0.83.44 — paired with [modelCatalogService] this lets [effectiveMaxInputTokens]
+     * follow the active model. The provider is invoked on every read so a
+     * mid-session model fallback (NETWORK_ERROR → cheaper tier) instantly
+     * recomputes the budget against the new model's catalog entry. Null in
+     * tests and sub-agent contexts where the per-model number is not the
+     * right authority.
+     */
+    private val currentModelRef: (() -> String?)? = null
 ) {
     private val LOG = Logger.getInstance(ContextManager::class.java)
 
@@ -351,16 +375,39 @@ class ContextManager(
      */
     fun updateTokens(promptTokens: Int) {
         lastPromptTokens = promptTokens
-        LOG.debug("[Context] Token update: $promptTokens prompt tokens (${"%.1f".format(utilizationPercent())}% of $maxInputTokens)")
+        LOG.debug("[Context] Token update: $promptTokens prompt tokens (${"%.1f".format(utilizationPercent())}% of ${effectiveMaxInputTokens()})")
+    }
+
+    /**
+     * Returns the live max-input-token budget. v0.83.44+ — when the catalog +
+     * currentModelRef are wired, this reads from `ModelCatalogService` so
+     * compaction follows whatever Sourcegraph reports for the active model
+     * (e.g. Sonnet → 132K, Sonnet-thinking → 93K, Opus-thinking → varies).
+     * Falls back to [maxInputTokens] (the constructor field) when:
+     *   - catalog or provider not wired, OR
+     *   - currentModelRef returns null, OR
+     *   - the catalog has no entry for that model (cold-cache or unknown model)
+     *
+     * Invoked on every [utilizationPercent] / [shouldCompact] / [compact] call,
+     * so a mid-session model fallback recomputes the budget instantly.
+     */
+    fun effectiveMaxInputTokens(): Int {
+        val ref = currentModelRef?.invoke() ?: return maxInputTokens
+        val catalog = modelCatalogService ?: return maxInputTokens
+        val window = catalog.getContextWindow(ref) ?: return maxInputTokens
+        return window.maxInputTokens
     }
 
     /**
      * Returns utilization as a percentage (0-100+).
      * Uses API-reported tokens if available, otherwise falls back to bytes/4 estimate.
+     * Denominator is [effectiveMaxInputTokens] so the percentage tracks the
+     * live per-model budget, not the constructor fallback.
      */
     fun utilizationPercent(): Double {
         val tokens = lastPromptTokens ?: tokenEstimate()
-        return (tokens.toDouble() / maxInputTokens) * 100.0
+        val max = effectiveMaxInputTokens()
+        return (tokens.toDouble() / max) * 100.0
     }
 
     /**
@@ -814,7 +861,7 @@ class ContextManager(
             val estimatedTokens = lastPromptTokens ?: tokenEstimate()
             val keep = when {
                 force -> TruncationStrategy.QUARTER
-                estimatedTokens / 2 > maxInputTokens -> TruncationStrategy.QUARTER
+                estimatedTokens / 2 > effectiveMaxInputTokens() -> TruncationStrategy.QUARTER
                 else -> TruncationStrategy.HALF
             }
             val countBeforeTruncation = messageCount()

@@ -19,7 +19,6 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
         var sourcegraphChatModel by string(null)
         /** Tracks whether the user has manually selected a model (prevents auto-upgrade). */
         var userManuallySelectedModel by property(false)
-        var maxInputTokens by property(190000)
         /** Max output tokens per LLM response. Limit varies per model — no hardcoded cap. */
         var maxOutputTokens by property(64000)
         var showDebugLog by property(false)

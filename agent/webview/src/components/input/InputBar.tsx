@@ -19,7 +19,6 @@ import { TicketDropdown } from './TicketDropdown';
 import { useDropdownKeyboard } from '@/hooks/useDropdownKeyboard';
 import { AttachmentManager, type PendingAttachment } from './AttachmentManager';
 import { ChipPreview } from './ChipPreview';
-import { UsageIndicator } from './UsageIndicator';
 
 // Phase 5: image-attachment defaults. These mirror the Kotlin
 // PluginSettings.State defaults; eventually a settings bridge will push live
@@ -1112,8 +1111,6 @@ export const InputBar = memo(function InputBar() {
           onPasteImage={handlePasteImage}
         />
       </div>
-      {/* Phase 7 Task 7.2 — live token usage strip below the input */}
-      <UsageIndicator />
       {/* Phase 5/v1.1 — oversize-image compression confirmation modal */}
       {compressPrompt && (
         <CompressConfirmModal

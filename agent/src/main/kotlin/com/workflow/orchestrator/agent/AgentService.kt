@@ -678,6 +678,27 @@ class AgentService(
         return getOrCreateSharedCatalog(sgUrl, tokenProvider)
     }
 
+    /**
+     * v0.83.44 — factory for an AgentController-side [ContextManager] that
+     * is correctly wired to the shared model catalog so compaction and
+     * utilization track the active model's per-tier `maxInputTokens` from
+     * Sourcegraph (e.g. Sonnet → 132K, Sonnet-thinking → 93K). Replaces the
+     * pre-v0.83.44 path where AgentController constructed a `ContextManager`
+     * with the now-removed `AgentSettings.maxInputTokens` field.
+     */
+    fun newContextManager(): ContextManager = ContextManager(
+        maxInputTokens = ContextManager.FALLBACK_MAX_INPUT_TOKENS,
+        modelCatalogService = getSharedModelCatalog(),
+        currentModelRef = { currentBrainModelId },
+    )
+
+    /**
+     * v0.83.44 — exposes the live `currentBrainModelId` so AgentController's
+     * progress-bar callback can read the active model's `maxInputTokens`
+     * from the catalog after every API turn, including model fallback swaps.
+     */
+    fun getCurrentBrainModelId(): String? = currentBrainModelId
+
     private fun wrapBrainWithRouter(
         brain: LlmBrain,
         sessionDir: java.nio.file.Path,
@@ -1524,9 +1545,13 @@ class AgentService(
                     )
                 }
 
-                // Build context manager
+                // Build context manager — v0.83.44: catalog-driven max-input-tokens.
+                // The legacy `agentSettings.state.maxInputTokens` field was removed;
+                // budget now follows the active model via Sourcegraph's catalog.
                 val ctx = contextManager ?: ContextManager(
-                    maxInputTokens = agentSettings.state.maxInputTokens
+                    maxInputTokens = ContextManager.FALLBACK_MAX_INPUT_TOKENS,
+                    modelCatalogService = sharedCatalogHolder.peek(),
+                    currentModelRef = { currentBrainModelId },
                 )
 
                 // I7: Always re-set system prompt (plan mode may have changed between turns)
@@ -1627,7 +1652,10 @@ class AgentService(
                 // PRE/POST_TOOL_USE hooks silent and its timings off the scorecard.
                 val spawnAgentTool = registry.get("agent") as? com.workflow.orchestrator.agent.tools.builtin.SpawnAgentTool
                 if (spawnAgentTool != null) {
-                    spawnAgentTool.contextBudget = agentSettings.state.maxInputTokens
+                    // v0.83.44 — sub-agent context budget follows the parent's
+                    // active model via the catalog; falls back to the same
+                    // FALLBACK_MAX_INPUT_TOKENS the orchestrator uses on cold cache.
+                    spawnAgentTool.contextBudget = ctx.effectiveMaxInputTokens()
                     spawnAgentTool.maxOutputTokens = agentSettings.state.maxOutputTokens
                     spawnAgentTool.sessionDebugDir = sessionDebugDir
                     spawnAgentTool.toolExecutionMode = agentSettings.state.toolExecutionMode ?: "accumulate"
@@ -2199,9 +2227,12 @@ class AgentService(
                 ts = System.currentTimeMillis()
             ))
 
-            // Rebuild ContextManager from api history using lossless conversion
-            val agentSettings = AgentSettings.getInstance(project)
-            val ctx = ContextManager(maxInputTokens = agentSettings.state.maxInputTokens)
+            // Rebuild ContextManager from api history — v0.83.44 catalog-driven budget.
+            val ctx = ContextManager(
+                maxInputTokens = ContextManager.FALLBACK_MAX_INPUT_TOKENS,
+                modelCatalogService = sharedCatalogHolder.peek(),
+                currentModelRef = { currentBrainModelId },
+            )
             val systemPrompt = SystemPrompt.build(
                 projectName = project.name,
                 projectPath = project.basePath ?: "",
@@ -2296,9 +2327,12 @@ class AgentService(
             return null
         }
 
-        // Rebuild ContextManager from checkpoint
-        val agentSettings = AgentSettings.getInstance(project)
-        val ctx = ContextManager(maxInputTokens = agentSettings.state.maxInputTokens)
+        // Rebuild ContextManager from checkpoint — v0.83.44 catalog-driven budget.
+        val ctx = ContextManager(
+            maxInputTokens = ContextManager.FALLBACK_MAX_INPUT_TOKENS,
+            modelCatalogService = sharedCatalogHolder.peek(),
+            currentModelRef = { currentBrainModelId },
+        )
 
         ctx.restoreMessages(checkpointMessages)
 

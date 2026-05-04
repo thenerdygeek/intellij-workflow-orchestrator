@@ -48,6 +48,16 @@ internal class SharedCatalogHolder(
      * (or any other consumer) will retry on demand, gated by the catalog's
      * own internal mutex.
      */
+    /**
+     * Returns the most-recently-cached catalog without constructing a fresh
+     * one. Used by [com.workflow.orchestrator.agent.loop.ContextManager] which
+     * needs the catalog reference at session start but doesn't have the
+     * `(sgUrl, tokenProvider)` pair handy. Returns `null` until [get] has
+     * been called at least once with valid args (which `wrapBrainWithRouter`
+     * does early in [com.workflow.orchestrator.agent.AgentService.executeTask]).
+     */
+    fun peek(): ModelCatalogService? = cached
+
     fun get(sgUrl: String, tokenProvider: () -> String?): ModelCatalogService = synchronized(lock) {
         val existing = cached
         if (existing != null && cachedKey == sgUrl) {

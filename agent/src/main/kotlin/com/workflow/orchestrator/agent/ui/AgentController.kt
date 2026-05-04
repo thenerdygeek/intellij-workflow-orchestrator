@@ -1421,11 +1421,15 @@ class AgentController(
         // Input is NOT locked — user can always type (Cline behavior)
         taskStartTime = System.currentTimeMillis()
 
-        // Create context manager on first message, reuse on subsequent turns
+        // Create context manager on first message, reuse on subsequent turns.
+        // v0.83.44 — budget now follows the active model via the Sourcegraph
+        // catalog (the legacy `AgentSettings.maxInputTokens` setting was
+        // removed). AgentService.newContextManager wires the shared catalog +
+        // a `currentModelRef` provider so utilization + compaction recompute
+        // instantly on model fallback.
         val isFirstMessage = contextManager == null
         if (isFirstMessage) {
-            val settings = AgentSettings.getInstance(project)
-            contextManager = ContextManager(maxInputTokens = settings.state.maxInputTokens)
+            contextManager = service.newContextManager()
             if (displayMentionsJson != null) {
                 dashboard.startSessionWithMentions(uiText, displayMentionsJson)
             } else {
@@ -1760,8 +1764,14 @@ class AgentController(
      */
     private fun onTokenUpdate(promptTokens: Int, completionTokens: Int) {
         invokeLater {
-            val maxTokens = AgentSettings.getInstance(project).state.maxInputTokens
-            // promptTokens = current context window usage (what matters for the progress bar)
+            // v0.83.44 — budget follows the live per-model number from the
+            // Sourcegraph catalog (e.g. Sonnet → 132K, Sonnet-thinking → 93K),
+            // not the static `AgentSettings.maxInputTokens` setting (removed).
+            // ContextManager.effectiveMaxInputTokens() is the single source of
+            // truth that compaction also uses, so the TopBar progress bar can
+            // never disagree with the live compaction trigger.
+            val maxTokens = contextManager?.effectiveMaxInputTokens()
+                ?: ContextManager.FALLBACK_MAX_INPUT_TOKENS
             dashboard.updateProgress("", promptTokens, maxTokens)
         }
     }

@@ -53,7 +53,6 @@ class AgentParentConfigurable(
     // Mutable copies for the UI — written to settings.state only on apply()
     private var agentEnabled = settings.state.agentEnabled
     private var sourcegraphChatModel = settings.state.sourcegraphChatModel ?: ""
-    private var maxInputTokens = settings.state.maxInputTokens
     private var maxOutputTokens = settings.state.maxOutputTokens
     private var networkErrorStrategy = settings.state.networkErrorStrategy ?: "none"
 
@@ -130,11 +129,11 @@ class AgentParentConfigurable(
                     cell(statusLbl)
                 }.comment("Fetches available models from your Sourcegraph instance")
 
-                row("Max input tokens:") {
-                    intTextField(1000..1000000, 1000)
-                        .bindIntText(::maxInputTokens)
-                        .comment("Maximum tokens for LLM input context (probe your instance with tools/probe-model-limits.py)")
-                }
+                // v0.83.44 — `Max input tokens` removed. Budget now follows
+                // the active model via Sourcegraph's per-model `contextWindow`
+                // (e.g. Sonnet → 132K, Sonnet-thinking → 93K). Compaction,
+                // utilization, and the TopBar progress bar all read the live
+                // catalog value via ContextManager.effectiveMaxInputTokens().
                 row("Max output tokens:") {
                     intTextField(1000..10000, 500)
                         .bindIntText(::maxOutputTokens)
@@ -334,7 +333,6 @@ class AgentParentConfigurable(
 
         settings.state.agentEnabled = agentEnabled
         settings.state.sourcegraphChatModel = sourcegraphChatModel
-        settings.state.maxInputTokens = maxInputTokens
         settings.state.maxOutputTokens = maxOutputTokens
         settings.state.networkErrorStrategy = networkErrorStrategy
     }
@@ -342,7 +340,6 @@ class AgentParentConfigurable(
     override fun reset() {
         agentEnabled = settings.state.agentEnabled
         sourcegraphChatModel = settings.state.sourcegraphChatModel ?: ""
-        maxInputTokens = settings.state.maxInputTokens
         maxOutputTokens = settings.state.maxOutputTokens
         networkErrorStrategy = settings.state.networkErrorStrategy ?: "none"
         dialogPanel?.reset()
