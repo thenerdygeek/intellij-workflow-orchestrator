@@ -362,7 +362,7 @@ class BrainRouter(
         messages: List<ChatMessage>,
         maxTokens: Int?,
     ): VisionResult {
-        val visionMessages = messages.replacingLastImageBearingTurnWith(VISION_PROMPT)
+        val visionMessages = messages.buildStep1VisionPayload(VISION_PROMPT)
         val result = runCatching {
             streamClient.chat(buildStreamRequest(visionMessages, maxTokens))
         }
@@ -555,23 +555,38 @@ class AttachmentMissingException(val sha256: String) :
 // ---- Extension helpers ----
 
 /**
- * Returns a copy of the message list where the **last** image-bearing turn
- * has its parts replaced with `[image, prompt-text]` so the vision step has a
- * focused prompt rather than the full conversation's mixed text. Earlier
- * image-bearing turns (rare in practice — usually only the latest user turn
- * carries the image) keep their original parts.
+ * Builds a clean single-message payload for the step-1 vision call.
+ *
+ * Why a single message: empirically (Windows logs 2026-05-05) the vision
+ * endpoint silently bails out and returns 0 chars when handed a multi-turn
+ * agent conversation with the image buried in turn 8 of 8. The exact same
+ * image + prompt + endpoint produces a 1558-char description in 15.5s when
+ * sent as a clean single-turn payload (path A — user-attached image), but
+ * fails with 0 chars in 0.2–1.4s when sent with full conversation context
+ * (path B — image arrived via tool_result on turn 8). Size is comparable
+ * (188KB vs 200KB) — the difference is structural: multiple consecutive
+ * `human`-coerced tool turns and JSON-shaped surrounding content cause the
+ * vision model to short-circuit instead of engaging with the image.
+ *
+ * The vision step has exactly one job: describe the image. It does not need
+ * the system prompt, prior tool calls, prior tool results, or the agent's
+ * IDE context. We extract the image parts from the last image-bearing turn
+ * and wrap them with [text] in a single user message — the same shape that
+ * works for direct attachment.
+ *
+ * Returns an empty list if no image-bearing turn is found (defensive — the
+ * caller should have routed by [hasImageParts] check before reaching here).
  */
-internal fun List<ChatMessage>.replacingLastImageBearingTurnWith(text: String): List<ChatMessage> {
-    val idx = indexOfLast { it.hasImageParts() }
-    if (idx < 0) return this
-    return mapIndexed { i, m ->
-        if (i == idx) {
-            val imagesOnly = m.parts.orEmpty().filterIsInstance<ContentPart.Image>()
-            m.copy(parts = imagesOnly + ContentPart.Text(text), content = null)
-        } else {
-            m
-        }
-    }
+internal fun List<ChatMessage>.buildStep1VisionPayload(text: String): List<ChatMessage> {
+    val imageBearing = lastOrNull { it.hasImageParts() } ?: return emptyList()
+    val imagesOnly = imageBearing.parts.orEmpty().filterIsInstance<ContentPart.Image>()
+    return listOf(
+        ChatMessage(
+            role = "user",
+            content = null,
+            parts = imagesOnly + ContentPart.Text(text),
+        ),
+    )
 }
 
 /**

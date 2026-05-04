@@ -378,6 +378,81 @@ class BrainRouterTest {
     }
 
     @Test
+    fun `step-1 vision payload is a single message regardless of conversation length`() = runBlocking {
+        // Regression guard: when the image arrives via tool_result on turn 8 of a
+        // multi-turn agent conversation (system + user + assistant_tool_call +
+        // tool_result × 3 + image-bearing tool_result), step 1 was previously
+        // forwarding the full conversation to /completions/stream. Empirically
+        // (Windows logs 2026-05-05) the vision endpoint silently bailed out and
+        // returned 0 chars on multi-turn payloads — the same image+prompt produced
+        // a 1558-char description in 15.5s when sent as a single-turn payload, but
+        // failed with 0 chars in <1.5s when sent with full agent context.
+        //
+        // The fix builds a clean single-turn vision payload (image + prompt) so
+        // path B (image-via-tool-result) sends the same shape as path A
+        // (image-via-+button). This test pins that contract.
+        val openAi = FakeOpenAiCompatBrain(response = makeOk("ok", toolCalls = listOf(fooToolCall())))
+        val stream = FakeStreamClient(text = "this is a description of the image")
+        val store = AttachmentStore(tempDir)
+        val ref = store.store("fake".toByteArray(), "image/png", null)
+        val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
+        // Realistic 8-message multi-turn agent context with image arriving on the last turn
+        // (mirrors the production shape where the LLM did tool_search → get_ticket →
+        // download_attachment, accumulating 6 prior turns before the image showed up).
+        router.chat(
+            messages = listOf(
+                ChatMessage(role = "system", content = "You are an agent with 76 tools. ".repeat(100)),
+                ChatMessage(role = "user", content = "Check the attachment image of TICKET-1234"),
+                ChatMessage(
+                    role = "assistant",
+                    content = null,
+                    toolCalls = listOf(ToolCall("c1", "function", FunctionCall("tool_search", "{}"))),
+                ),
+                ChatMessage(role = "tool", content = "Loaded jira tool", toolCallId = "c1"),
+                ChatMessage(
+                    role = "assistant",
+                    content = null,
+                    toolCalls = listOf(ToolCall("c2", "function", FunctionCall("jira", "{}"))),
+                ),
+                ChatMessage(role = "tool", content = "Ticket details: ...".repeat(50), toolCallId = "c2"),
+                ChatMessage(
+                    role = "assistant",
+                    content = null,
+                    toolCalls = listOf(ToolCall("c3", "function", FunctionCall("jira", "{}"))),
+                ),
+                ChatMessage(
+                    role = "tool",
+                    content = "Downloaded image-x.png (56485 bytes)",
+                    toolCallId = "c3",
+                    parts = listOf(
+                        ContentPart.Text("Downloaded image-x.png (56485 bytes)"),
+                        ContentPart.Image(sha256 = ref.sha256, mime = "image/png", originalFilename = "image-x.png"),
+                    ),
+                ),
+            ),
+            tools = listOf(fooTool),
+        )
+        val step1Request = stream.lastRequest ?: error("stream client received no request")
+        // Critical assertion: step 1 must send EXACTLY ONE message — not the full 8-message
+        // agent conversation. The prior 7 turns (system, user, tool calls, tool results)
+        // are NOT useful to the vision model and empirically cause it to short-circuit.
+        assertEquals(
+            1,
+            step1Request.messages.size,
+            "step-1 vision payload must be a single message; got ${step1Request.messages.size} messages " +
+                "(speakers: ${step1Request.messages.map { it.speaker }})",
+        )
+        // The single message must carry the image AND the vision prompt.
+        val theMessage = step1Request.messages.single()
+        val parts = theMessage.content
+        val hasImage = parts.any { it is StreamContentPart.Image }
+        val hasPrompt = parts.filterIsInstance<StreamContentPart.Text>()
+            .any { it.text.contains("Describe what you see") }
+        assertTrue(hasImage, "step-1 single message must carry the image")
+        assertTrue(hasPrompt, "step-1 single message must carry the vision prompt")
+    }
+
+    @Test
     fun `image+tools with abstaining step-1 description aborts before step 2`() = runBlocking {
         val openAi = FakeOpenAiCompatBrain(response = makeOk("should not be used"))
         val stream = FakeStreamClient(text = "I cannot see this image clearly.")
