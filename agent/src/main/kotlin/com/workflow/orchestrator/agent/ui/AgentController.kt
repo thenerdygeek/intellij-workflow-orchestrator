@@ -475,13 +475,34 @@ class AgentController(
         // so the JS toast surfaces a clear error instead of silently writing
         // to a stale session.
         panel.setCurrentSessionDirProvider {
-            val sid = currentSessionId ?: return@setCurrentSessionDirProvider null
             val basePath = project.basePath ?: return@setCurrentSessionDirProvider null
-            java.nio.file.Paths.get(
+            // Lazily allocate a session ID + directory the first time something
+            // needs them (e.g. an image upload that arrives before the user
+            // sends their first message). executeTask passes sessionId =
+            // currentSessionId, so AgentService reuses this same ID when the
+            // session actually starts — uploads land in the right directory
+            // and ImageRefs hydrate from the same place. Synchronized so two
+            // concurrent uploads can't allocate two different UUIDs.
+            val sid = synchronized(this) {
+                currentSessionId ?: java.util.UUID.randomUUID().toString().also {
+                    currentSessionId = it
+                    LOG.info("AgentController: pre-allocated sessionId=$it for early upload")
+                }
+            }
+            val dir = java.nio.file.Paths.get(
                 ProjectIdentifier.agentDir(basePath).absolutePath,
                 "sessions",
                 sid,
             )
+            // Eagerly create the directory; AttachmentStore will create
+            // attachments/ inside on first store. Idempotent.
+            try {
+                java.nio.file.Files.createDirectories(dir)
+            } catch (e: Exception) {
+                LOG.warn("AgentController: failed to create session dir $dir", e)
+                return@setCurrentSessionDirProvider null
+            }
+            dir
         }
         // Multimodal-agent Phase 7 — chat input usage indicator. Reads (used,
         // max) from the active ContextManager, paired with the live model id
