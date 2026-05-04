@@ -1630,15 +1630,23 @@ class AgentLoop(
             )
 
             // Persist tool result to both files (Cline pattern — awaited inline).
-            messageStateHandler?.addToApiConversationHistory(ApiMessage(
-                role = ApiRole.USER,
-                content = listOf(ContentBlock.ToolResult(
-                    toolUseId = toolCallId,
-                    content = truncatedContent,
-                    isError = toolResult.isError
-                )),
-                ts = System.currentTimeMillis()
-            ))
+            // Routes through the AgentLoopTestSupport seam so the emission shape is
+            // pinned by AgentLoopToolImageEmissionTest. The local `toolResult` is the
+            // agent-internal `agent.tools.ToolResult` (no imageRefs field today), so we
+            // adapt it to a `core.services.ToolResult<*>` with empty imageRefs. Phase 4
+            // (Jira download_attachment auto-load) extends this to surface populated
+            // imageRefs through the seam.
+            val coreResultForSeam = com.workflow.orchestrator.core.services.ToolResult<Unit>(
+                data = Unit,
+                summary = toolResult.summary,
+                isError = toolResult.isError
+            )
+            val historyMessage = AgentLoopTestSupport.buildToolResultApiMessage(
+                toolUseId = toolCallId,
+                toolResult = coreResultForSeam,
+                truncatedContent = truncatedContent
+            ).copy(ts = System.currentTimeMillis())
+            messageStateHandler?.addToApiConversationHistory(historyMessage)
             // Persist UI message — communication tools get semantic types instead of TOOL
             val uiMsg = when (toolName) {
                 // plan_mode_respond: persist as PLAN_UPDATE so it renders inline as a plan card on resume.
