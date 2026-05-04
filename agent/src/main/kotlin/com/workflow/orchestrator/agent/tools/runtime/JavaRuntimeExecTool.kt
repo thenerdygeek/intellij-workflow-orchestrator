@@ -34,6 +34,7 @@ import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
 import com.workflow.orchestrator.core.ai.TokenEstimator
+import com.workflow.orchestrator.core.util.BuildToolExecutableResolver
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -1052,8 +1053,9 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                     else -> "#${methods.joinToString("+")}"
                 }
                 val dTestArg = "-Dtest=${className}${methodPart}"
-                // Resolve mvnw → absolute path; fall back to `mvn` on PATH.
-                val mvnExec = File(baseDir, "mvnw").takeIf { it.canExecute() }?.absolutePath ?: "mvn"
+                // Resolve wrapper → absolute path; fall back to PATH executable
+                // (`mvn.cmd` on Windows, `mvn` on Unix). See BuildToolExecutableResolver.
+                val mvnExec = BuildToolExecutableResolver.resolveMaven(baseDir)
                 if (effectiveMavenDir != null && effectiveMavenDir != baseDir) {
                     // Run only the submodule to avoid rebuilding unrelated modules.
                     // workDir is already set to effectiveMavenDir above so Maven's pom.xml
@@ -1065,9 +1067,9 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                 }
             }
             hasGradle -> {
-                // Resolve gradlew → absolute path; fall back to `gradle` on PATH.
-                val gradlewFile = File(baseDir, "gradlew").takeIf { it.canExecute() }
-                val gradleExec = gradlewFile?.absolutePath ?: "gradle"
+                // Resolve wrapper → absolute path; fall back to PATH executable
+                // (`gradle.bat` on Windows, `gradle` on Unix). See BuildToolExecutableResolver.
+                val gradleExec = BuildToolExecutableResolver.resolveGradle(baseDir)
                 val taskPrefix = if (effectiveGradlePath != null) "${effectiveGradlePath}:test" else "test"
                 // Gradle multi-method: repeat the `--tests` flag once per selector.
                 // Each selector is 'ClassName.methodName' (Gradle uses `.` not `#`).

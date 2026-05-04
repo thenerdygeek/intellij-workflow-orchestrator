@@ -11,6 +11,7 @@ import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoContextResolver
+import com.workflow.orchestrator.core.util.BuildToolExecutableResolver
 import com.workflow.orchestrator.core.workflow.WorkflowContextService
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -969,8 +970,9 @@ Common optional: repo_name for multi-repo projects.
         val isMaven = buildTool.startsWith("M", ignoreCase = true)
 
         val argv: MutableList<String> = if (isMaven) {
-            // Resolve mvnw → absolute path; fall back to `mvn` on PATH.
-            val mvnExec = File(workingDir, "mvnw").takeIf { it.canExecute() }?.absolutePath ?: "mvn"
+            // Resolve wrapper → absolute path; fall back to PATH executable
+            // (`mvn.cmd` on Windows, `mvn` on Unix). See BuildToolExecutableResolver.
+            val mvnExec = BuildToolExecutableResolver.resolveMaven(workingDir)
             mutableListOf(mvnExec, "sonar:sonar").apply {
                 if (projectsFlag != null) {
                     add("-pl")
@@ -981,8 +983,9 @@ Common optional: repo_name for multi-repo projects.
                 add("-Dsonar.inclusions=$scannerInclusions")
             }
         } else {
-            // Resolve gradlew → absolute path; fall back to `gradle` on PATH.
-            val gradleExec = File(workingDir, "gradlew").takeIf { it.canExecute() }?.absolutePath ?: "gradle"
+            // Resolve wrapper → absolute path; fall back to PATH executable
+            // (`gradle.bat` on Windows, `gradle` on Unix). See BuildToolExecutableResolver.
+            val gradleExec = BuildToolExecutableResolver.resolveGradle(workingDir)
             mutableListOf(gradleExec, "sonar", "-Dsonar.host.url=$sonarUrl", "-Dsonar.inclusions=$scannerInclusions")
         }
 

@@ -9,6 +9,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Key
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.util.BuildToolExecutableResolver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -78,9 +79,8 @@ class MavenBuildService(private val project: Project) {
     internal fun detectMavenExecutable(): String {
         val basePath = project.basePath
         if (basePath != null) {
-            val isWindows = System.getProperty("os.name").lowercase().contains("win")
-            val wrapperName = if (isWindows) "mvnw.cmd" else "mvnw"
-            val wrapper = File(basePath, wrapperName)
+            val baseDir = File(basePath)
+            val wrapper = File(baseDir, BuildToolExecutableResolver.mavenWrapperName())
             if (wrapper.exists() && wrapper.canExecute()) {
                 return wrapper.absolutePath
             }
@@ -88,13 +88,11 @@ class MavenBuildService(private val project: Project) {
 
         val mavenHome = System.getenv("MAVEN_HOME") ?: System.getenv("M2_HOME")
         if (mavenHome != null) {
-            val isWindows = System.getProperty("os.name").lowercase().contains("win")
-            val mvnName = if (isWindows) "mvn.cmd" else "mvn"
-            val mvnBin = File(File(mavenHome, "bin"), mvnName)
+            val mvnBin = File(File(mavenHome, "bin"), BuildToolExecutableResolver.mavenExecutableName())
             if (mvnBin.exists()) return mvnBin.absolutePath
         }
 
-        return if (System.getProperty("os.name").lowercase().contains("win")) "mvn.cmd" else "mvn"
+        return BuildToolExecutableResolver.mavenExecutableName()
     }
 
     companion object {
