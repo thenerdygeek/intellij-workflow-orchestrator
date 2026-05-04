@@ -48,17 +48,19 @@ internal val ABSTENTION_PHRASES = listOf(
 
 /**
  * Step 1 prompt — replaces the image-bearing turn for the vision call.
- * Hardened against refusal: empirically the OpenAI-compat model in step 2 will
- * refuse "I can't view images" if step 1 returns vague or hedging text, so the
- * vision model is explicitly forbidden from refusing.
+ *
+ * Phrased POSITIVELY (no "Do NOT refuse" double-negatives). Empirically
+ * (Windows logs 2026-05-05) a heavier directive prompt with "Do NOT refuse,
+ * hedge, or say you cannot see the image" produced 0-char responses from the
+ * Cody stream endpoint — likely a safety/content-filter path that silently
+ * suppressed output instead of returning text we could classify as abstention.
+ * Positive framing avoids the trigger and gets useful descriptions back.
  */
 internal const val VISION_PROMPT: String =
-    "You are analyzing an image attached to a tool result so a downstream " +
-        "tool-using agent can act on it. Describe the image concretely and in detail: " +
-        "what is shown, any visible text (transcribe verbatim), UI elements, " +
-        "errors, diagrams, or data. Do NOT refuse, hedge, or say you cannot see " +
-        "the image — produce the best description you can. Your description is " +
-        "the ONLY signal the downstream agent will receive."
+    "Describe what you see in this image clearly and concretely. " +
+        "Include any visible text (transcribe verbatim), UI elements, " +
+        "errors, diagrams, charts, or data. Be specific and complete — " +
+        "your description is the only signal a downstream agent will receive."
 
 /**
  * Step 2 framing wraps the vision description so the OpenAI-compat model treats
@@ -82,6 +84,18 @@ internal const val STEP1_RETRY_HINT: String =
 /** User-visible message when step 1 abstained — step 2 was aborted to avoid a garbled tool call. */
 internal const val STEP1_ABSTAIN_USER_MESSAGE: String =
     "The model couldn't analyze the attached image. Try a clearer image, or describe it in text."
+
+/**
+ * User-visible message when step 1 returned empty text. Distinct from abstention
+ * because the model didn't produce any output at all (likely safety-filtered);
+ * letting the empty string flow into step 2's framing would produce
+ * "[VISION ANALYSIS]\n\n[END]" — and the step-2 model honestly reports it
+ * came back empty (Windows logs 2026-05-05).
+ */
+internal const val STEP1_EMPTY_USER_MESSAGE: String =
+    "The vision model returned no description for the attached image. " +
+        "This usually means the image was filtered or unreadable. Try a different " +
+        "image, or describe what's in it as text."
 
 /**
  * Phase 6 of multimodal-agent plan — hybrid routing across two Sourcegraph
@@ -284,6 +298,19 @@ class BrainRouter(
          */
         data class Abstained(val description: String) : VisionResult
 
+        /**
+         * Step 1's HTTP call succeeded (200) but the parsed description was
+         * empty/blank. Distinct from [Failed] (HTTP error) and [Abstained]
+         * (model produced text saying it couldn't see the image). Empty output
+         * usually means the model's response was safety-filtered server-side
+         * — no text events were emitted at all. Pinned by Windows logs
+         * 2026-05-05 where heavy directive prompting on /completions/stream
+         * silently produced 0-char responses. Step 2 MUST NOT proceed —
+         * letting empty text flow into the framing wraps nothing and the
+         * step-2 model honestly reports it came back empty.
+         */
+        object Empty : VisionResult
+
         /** Step 1's HTTP call failed. Step 2 must NOT proceed. */
         data class Failed(val reason: String) : VisionResult
     }
@@ -305,6 +332,11 @@ class BrainRouter(
                 synthesizeAbortResponse(
                     id = "router-step1-abstain",
                     content = STEP1_ABSTAIN_USER_MESSAGE,
+                )
+            is VisionResult.Empty ->
+                synthesizeAbortResponse(
+                    id = "router-step1-empty",
+                    content = STEP1_EMPTY_USER_MESSAGE,
                 )
             is VisionResult.Description -> {
                 val rebuilt = buildStep2Messages(messages, vision.text)
@@ -344,6 +376,10 @@ class BrainRouter(
             "[multimodal] BrainRouter two-step step 1 description: " +
                 "${description.length} chars, preview=${description.take(200).replace("\n", " ")}",
         )
+        if (description.isBlank()) {
+            log.warn("[multimodal] BrainRouter two-step step 1 returned empty/blank text — likely safety-filtered, aborting step 2")
+            return VisionResult.Empty
+        }
         if (ABSTENTION_PHRASES.any { description.contains(it, ignoreCase = true) }) {
             log.info("[multimodal] BrainRouter two-step step 1 abstention detected, aborting step 2")
             return VisionResult.Abstained(description)

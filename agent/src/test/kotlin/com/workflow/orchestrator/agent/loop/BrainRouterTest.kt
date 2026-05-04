@@ -271,11 +271,15 @@ class BrainRouterTest {
     }
 
     @Test
-    fun `step-1 vision prompt forbids refusal`() = runBlocking {
-        // Regression guard: the original step-1 prompt only said "be precise"; the
-        // model could still hedge or refuse, producing weak descriptions that gave
-        // step 2 nothing to work with. The hardened prompt must explicitly forbid
-        // refusal.
+    fun `step-1 vision prompt is positive framing not double-negative`() = runBlocking {
+        // Regression guard: the v0.83.57 prompt used "Do NOT refuse, hedge, or
+        // say you cannot see the image" double-negatives that empirically
+        // (Windows logs 2026-05-05) caused the Cody endpoint to return 0-char
+        // responses — likely a safety/content-filter path that suppresses
+        // output rather than emitting an explicit refusal we could classify.
+        // Positive framing avoids the trigger. This test pins both the new
+        // positive directive AND the absence of "Do NOT refuse" so a future
+        // commit reverting to the heavier wording fails this test.
         val openAi = FakeOpenAiCompatBrain(response = makeOk("ok", toolCalls = listOf(fooToolCall())))
         val stream = FakeStreamClient(text = "a screenshot of an error dialog")
         val store = AttachmentStore(tempDir)
@@ -298,9 +302,79 @@ class BrainRouterTest {
             .filterIsInstance<StreamContentPart.Text>()
             .joinToString("\n") { it.text }
         assertTrue(
-            step1Prompt.contains("Do NOT refuse", ignoreCase = false),
-            "step-1 prompt must explicitly forbid refusal; got: $step1Prompt"
+            step1Prompt.contains("Describe what you see in this image", ignoreCase = false),
+            "step-1 prompt must use positive framing; got: $step1Prompt"
         )
+        assertFalse(
+            step1Prompt.contains("Do NOT refuse", ignoreCase = false),
+            "step-1 prompt must NOT use 'Do NOT refuse' double-negative — empirically caused 0-char responses"
+        )
+    }
+
+    @Test
+    fun `image+tools with empty step-1 description aborts before step 2`() = runBlocking {
+        // Regression guard: when the Cody endpoint returns 200 OK but no text
+        // events (silent safety-filter), step 1's parsed description is "".
+        // Pre-fix, this empty string flowed into step 2's framing as
+        // [VISION ANALYSIS]\n\n[END VISION ANALYSIS] and the step-2 model
+        // honestly reported "vision analysis came back empty" — exactly what
+        // Windows users saw 2026-05-05. Post-fix, empty/blank step-1 output
+        // is treated as a distinct VisionResult.Empty and aborts step 2 with
+        // a user-visible message.
+        val openAi = FakeOpenAiCompatBrain(response = makeOk("should not be used"))
+        val stream = FakeStreamClient(text = "")  // <-- the smoking-gun condition
+        val store = AttachmentStore(tempDir)
+        val ref = store.store("fake".toByteArray(), "image/png", null)
+        val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
+        val resp = router.chat(
+            messages = listOf(
+                ChatMessage(
+                    role = "user",
+                    parts = listOf(
+                        ContentPart.Image(sha256 = ref.sha256, mime = "image/png", originalFilename = null),
+                        ContentPart.Text("call the tool"),
+                    ),
+                ),
+            ),
+            tools = listOf(fooTool),
+        )
+        // Step 1 ran; step 2 must NOT have fired.
+        assertEquals(1, stream.callCount, "step 1 must have been called once")
+        assertEquals(0, openAi.chatCallCount, "step 2 must NOT fire when step 1 returned empty")
+        val ok = resp as? ApiResult.Success<ChatCompletionResponse>
+            ?: error("expected Success synthetic response, got: $resp")
+        val msg = ok.data.choices.first().message.content ?: ""
+        assertTrue(
+            msg.contains("returned no description") || msg.contains("filtered or unreadable"),
+            "synthetic abort message must explain the empty-output cause; got: $msg"
+        )
+        // Pin the abort id so observability tooling can distinguish empty from abstain/fail.
+        assertEquals("router-step1-empty", ok.data.id)
+    }
+
+    @Test
+    fun `image+tools with whitespace-only step-1 description also aborts before step 2`() = runBlocking {
+        // Whitespace-only output is functionally equivalent to empty — step 2's
+        // framing would be [VISION ANALYSIS]\n   \n[END] which is just as useless.
+        // isBlank() catches both cases.
+        val openAi = FakeOpenAiCompatBrain(response = makeOk("should not be used"))
+        val stream = FakeStreamClient(text = "   \n  \t  ")
+        val store = AttachmentStore(tempDir)
+        val ref = store.store("fake".toByteArray(), "image/png", null)
+        val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
+        router.chat(
+            messages = listOf(
+                ChatMessage(
+                    role = "user",
+                    parts = listOf(
+                        ContentPart.Image(sha256 = ref.sha256, mime = "image/png", originalFilename = null),
+                        ContentPart.Text("call foo"),
+                    ),
+                ),
+            ),
+            tools = listOf(fooTool),
+        )
+        assertEquals(0, openAi.chatCallCount, "whitespace-only description must also abort step 2")
     }
 
     @Test
