@@ -6,6 +6,7 @@ import type {
   HistoryItem,
   Task,
   CompletionData,
+  ImageRef,
 } from './types';
 import { preloadDiff2Html } from '../components/rich/DiffHtml';
 import { updateChartById } from '../components/rich/chartUtils';
@@ -85,9 +86,40 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   appendToolCall(toolCallId: string, toolName: string, args: string, status: string) {
     stores?.getChatStore().addToolCall(toolCallId, toolName, args, status as ToolCallStatus);
   },
-  updateToolResult(result: string, durationMs: number, toolName: string, status?: string, output?: string | null, diff?: string | null, toolCallId?: string) {
+  updateToolResult(
+    result: string,
+    durationMs: number,
+    toolName: string,
+    status?: string,
+    output?: string | null,
+    diff?: string | null,
+    toolCallId?: string,
+    // Multimodal-agent Phase 6 — JSON string of ImageRef[] when the tool
+    // produced images (e.g. Jira download_attachment of a PNG); null/absent
+    // for text-only tools. Parsed defensively — malformed payloads degrade
+    // gracefully to no badge instead of crashing the bridge.
+    imageRefsJson?: string | null,
+  ) {
     const resolvedStatus = (status === 'ERROR' ? 'ERROR' : 'COMPLETED') as ToolCallStatus;
-    stores?.getChatStore().updateToolCall(toolName, resolvedStatus, result, durationMs, output ?? undefined, diff ?? undefined, toolCallId ?? undefined);
+    let imageRefs: ImageRef[] | undefined;
+    if (imageRefsJson) {
+      try {
+        const parsed = JSON.parse(imageRefsJson) as ImageRef[];
+        if (Array.isArray(parsed) && parsed.length > 0) imageRefs = parsed;
+      } catch {
+        imageRefs = undefined;
+      }
+    }
+    stores?.getChatStore().updateToolCall(
+      toolName,
+      resolvedStatus,
+      result,
+      durationMs,
+      output ?? undefined,
+      diff ?? undefined,
+      toolCallId ?? undefined,
+      imageRefs,
+    );
   },
   finalizeToolChain() {
     stores?.getChatStore().finalizeToolChain();

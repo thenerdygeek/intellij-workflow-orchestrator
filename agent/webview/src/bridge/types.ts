@@ -18,6 +18,19 @@ export interface SubAgentState {
 
 export type ToolCallStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'ERROR';
 
+/**
+ * Metadata for a tool-produced image. Mirrors `ToolResult.ImageRefData` in
+ * `:core` — sha256/size identifies the bytes in the active session's
+ * AttachmentStore so the next LLM turn can route through the vision path.
+ * Bytes themselves never travel through this bridge; only metadata.
+ */
+export interface ImageRef {
+  sha256: string;
+  mime: string;
+  size: number;
+  originalFilename?: string;
+}
+
 export interface ToolCall {
   id: string;
   name: string;
@@ -30,6 +43,12 @@ export interface ToolCall {
   diff?: string;
   /** True if this tool call's changes have been rolled back */
   rolledBack?: boolean;
+  /**
+   * Tool-produced image attachments. When present and non-empty, the
+   * tool-result row renders a small "N images attached from tool" badge
+   * below the text output. Multimodal-agent Phase 6.
+   */
+  imageRefs?: ImageRef[];
 }
 
 // ── Plan types ──
@@ -347,6 +366,12 @@ export interface UiMessageToolCallData {
   durationMs?: number;
   diff?: string;
   isError?: boolean;
+  /**
+   * Tool-produced image metadata. When present and non-empty, the persisted
+   * tool-result row renders the "N images attached from tool" badge.
+   * Multimodal-agent Phase 6.
+   */
+  imageRefs?: ImageRef[];
 }
 
 export type CompletionKind = 'done' | 'review' | 'heads_up';

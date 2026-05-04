@@ -565,12 +565,17 @@ class AgentDashboardPanel(
     fun updateLastToolCall(
         status: RichStreamingPanel.ToolCallStatus, result: String = "", durationMs: Long = 0,
         toolName: String = "", output: String? = null, diff: String? = null,
-        toolCallId: String = ""
+        toolCallId: String = "",
+        // Multimodal-agent Phase 6 — pass tool-produced image metadata through
+        // to the CEF panel so the webview can render the badge. Empty default
+        // keeps every existing call site (and the fallback Swing panel, which
+        // doesn't surface images) source-compatible.
+        imageRefs: List<com.workflow.orchestrator.core.services.ToolResult.ImageRefData> = emptyList()
     ) {
         val displayName = resolveToolDisplayName(toolName)
-        cefPanel?.updateLastToolCall(status, result, durationMs, displayName, output, diff, toolCallId)
+        cefPanel?.updateLastToolCall(status, result, durationMs, displayName, output, diff, toolCallId, imageRefs)
             ?: fallbackPanel?.updateLastToolCall(status, result, durationMs)
-        broadcast { it.updateLastToolCall(status, result, durationMs, displayName, output, diff, toolCallId) }
+        broadcast { it.updateLastToolCall(status, result, durationMs, displayName, output, diff, toolCallId, imageRefs) }
     }
 
     /**
@@ -674,11 +679,15 @@ class AgentDashboardPanel(
         output: String?,
         diff: String?,
         durationMs: Long,
-        isError: Boolean
+        isError: Boolean,
+        // Multimodal-agent Phase 6 — tool-produced image metadata; passed
+        // through to the CEF panel so the sub-agent tool-result row renders
+        // the badge identically to the main agent path.
+        imageRefs: List<com.workflow.orchestrator.core.services.ToolResult.ImageRefData> = emptyList()
     ) {
-        runOnEdt { cefPanel?.updateSubAgentToolCall(agentId, toolCallId, toolName, result, output, diff, durationMs, isError) }
+        runOnEdt { cefPanel?.updateSubAgentToolCall(agentId, toolCallId, toolName, result, output, diff, durationMs, isError, imageRefs) }
         broadcast(replay = false) {
-            it.updateSubAgentToolCall(agentId, toolCallId, toolName, result, output, diff, durationMs, isError)
+            it.updateSubAgentToolCall(agentId, toolCallId, toolName, result, output, diff, durationMs, isError, imageRefs)
         }
     }
 

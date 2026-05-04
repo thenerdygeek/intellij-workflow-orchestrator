@@ -1789,7 +1789,11 @@ class AgentLoop(
                     durationMs = durationMs,
                     isError = toolResult.isError,
                     toolCallId = toolCallId,
-                    editDiff = toolResult.diff
+                    editDiff = toolResult.diff,
+                    // Multimodal-agent Phase 6 — surface tool-produced image
+                    // metadata to the UI so the tool-result row renders the
+                    // "N images attached from tool" badge.
+                    imageRefs = toolResult.imageRefs
                 )
             )
 

@@ -243,6 +243,10 @@ class SubagentRunner(
                                 toolCompleteDiff = progress.editDiff,
                                 toolCompleteDurationMs = progress.durationMs,
                                 toolCompleteIsError = progress.isError,
+                                // Multimodal-agent Phase 6 — propagate tool-produced
+                                // image metadata so the sub-agent UI mirrors the
+                                // main agent's badge behaviour.
+                                toolCompleteImageRefs = progress.imageRefs,
                                 toolCallId = progress.toolCallId,
                                 stats = stats.snapshot()
                             ))

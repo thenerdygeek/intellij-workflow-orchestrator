@@ -423,6 +423,9 @@ export const ChatView = memo(function ChatView() {
         output: t.toolCallData!.output,
         durationMs: t.toolCallData!.durationMs,
         diff: t.toolCallData!.diff,
+        // Multimodal-agent Phase 6 — surface tool-produced image metadata
+        // through to ToolCallView so it can render the badge.
+        imageRefs: t.toolCallData!.imageRefs,
       }));
       return (
         <ErrorBoundary key={`toolgroup-${item.tools[0]!.ts}-${item.idx}`}>

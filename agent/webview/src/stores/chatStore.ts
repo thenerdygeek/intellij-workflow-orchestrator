@@ -21,6 +21,7 @@ import type {
   HistoryItem,
   CompletionData,
   CompletionKind,
+  ImageRef,
 } from '../bridge/types';
 
 // ── Internal ID generator ──
@@ -214,7 +215,7 @@ interface ChatState {
   appendToken(token: string): void;
   endStream(): void;
   addToolCall(toolCallId: string, name: string, args: string, status: ToolCallStatus): void;
-  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string, diff?: string, toolCallId?: string): void;
+  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string, diff?: string, toolCallId?: string, imageRefs?: ImageRef[]): void;
   finalizeToolChain(): void;
   addDiff(diff: EditDiff): void;
   addDiffExplanation(title: string, diffSource: string): void;
@@ -467,6 +468,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           output,
           durationMs: tc.durationMs,
           diff: tc.diff,
+          // Multimodal-agent Phase 6 — preserve tool-produced image metadata
+          // when the active tool chain is drained on session-complete.
+          imageRefs: tc.imageRefs,
         },
       };
     });
@@ -554,6 +558,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 output,
                 durationMs: tc.durationMs,
                 diff: tc.diff,
+                // Multimodal-agent Phase 6 — preserve tool-produced image
+                // metadata across this drain path too.
+                imageRefs: tc.imageRefs,
               },
             };
           });
@@ -642,7 +649,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string, diff?: string, toolCallId?: string) {
+  updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string, diff?: string, toolCallId?: string, imageRefs?: ImageRef[]) {
     set(state => {
       const newMap = new Map(state.activeToolCalls);
       // Prefer exact ID match — this is the only reliable way to target a
@@ -667,12 +674,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
           }
         }
       }
+      // Multimodal-agent Phase 6 — only attach `imageRefs` when non-empty so
+      // the property doesn't appear on the common no-image case (keeps the
+      // ToolCall payload compact + matches the Kotlin contract that an empty
+      // list maps to absent).
+      const imageRefsPatch = imageRefs && imageRefs.length > 0 ? { imageRefs } : {};
       if (targetKey) {
         const existing = newMap.get(targetKey)!;
-        newMap.set(targetKey, { ...existing, status, result, output, durationMs, ...(diff ? { diff } : {}) });
+        newMap.set(targetKey, { ...existing, status, result, output, durationMs, ...(diff ? { diff } : {}), ...imageRefsPatch });
       } else {
         const id = toolCallId || nextId('tc');
-        newMap.set(id, { id, name, args: '', status, result, output, durationMs, ...(diff ? { diff } : {}) });
+        newMap.set(id, { id, name, args: '', status, result, output, durationMs, ...(diff ? { diff } : {}), ...imageRefsPatch });
       }
       return { activeToolCalls: newMap };
     });
@@ -764,6 +776,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
           output,
           durationMs: tc.durationMs,
           diff: tc.diff,
+          // Multimodal-agent Phase 6 — carry tool-produced image metadata
+          // through into the persisted UiMessage so reloading a session
+          // shows the badge.
+          imageRefs: tc.imageRefs,
         },
       };
     });
@@ -1146,6 +1162,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
               output,
               durationMs: tc.durationMs,
               diff: tc.diff,
+              // Multimodal-agent Phase 6 — preserve tool-produced image
+              // metadata across this drain path too.
+              imageRefs: tc.imageRefs,
             },
           });
         }
@@ -1486,6 +1505,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const streamOutput = state.toolOutputStreams[finalizedId];
         const mergedOutput = data.toolOutput || streamOutput || undefined;
 
+        // Multimodal-agent Phase 6 — accept tool-produced image metadata from
+        // the sub-agent JSON payload. Defensive: tolerate missing/non-array
+        // values without breaking the rest of the message build.
+        const subagentImageRefs = Array.isArray(data.imageRefs) && data.imageRefs.length > 0
+          ? (data.imageRefs as ImageRef[])
+          : undefined;
         const toolMsg: UiMessage = {
           ts: uniqueTs(),
           type: 'SAY',
@@ -1499,6 +1524,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             output: mergedOutput,
             diff: data.toolDiff,
             durationMs: data.toolDurationMs || 0,
+            imageRefs: subagentImageRefs,
           },
         };
 

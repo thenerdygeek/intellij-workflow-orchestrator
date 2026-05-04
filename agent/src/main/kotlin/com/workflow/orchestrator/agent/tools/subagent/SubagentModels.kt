@@ -80,6 +80,12 @@ data class SubagentProgressUpdate(
     val toolCompleteDurationMs: Long = 0L,
     val toolCompleteIsError: Boolean = false,
     /**
+     * Tool-produced image metadata. Mirrors [ToolCallProgress.imageRefs] so the
+     * sub-agent's tool-result row can render the "N images attached from tool"
+     * badge alongside the text output. Empty for the no-image case.
+     */
+    val toolCompleteImageRefs: List<com.workflow.orchestrator.core.services.ToolResult.ImageRefData> = emptyList(),
+    /**
      * Unique tool-call ID (from [com.workflow.orchestrator.agent.loop.ToolCallProgress.toolCallId]).
      * Threaded through to the webview so parallel tool calls to the same tool
      * (e.g. two concurrent `read_file`s) can be updated by exact ID rather than

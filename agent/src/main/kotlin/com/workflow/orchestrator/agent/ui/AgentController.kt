@@ -1740,7 +1740,10 @@ class AgentController(
                             update.toolCompleteOutput,
                             update.toolCompleteDiff,
                             update.toolCompleteDurationMs,
-                            update.toolCompleteIsError
+                            update.toolCompleteIsError,
+                            // Multimodal-agent Phase 6 — pass tool-produced
+                            // image metadata to the sub-agent UI for badge.
+                            update.toolCompleteImageRefs
                         )
                     }
                     // Stream delta — raw LLM token to append to the sub-agent card's last
@@ -1848,7 +1851,11 @@ class AgentController(
                     toolName = progress.toolName,
                     output = progress.output ?: progress.result.takeIf { it.isNotBlank() },
                     diff = progress.editDiff,
-                    toolCallId = progress.toolCallId
+                    toolCallId = progress.toolCallId,
+                    // Multimodal-agent Phase 6 — tool-produced image metadata
+                    // surfaced to the webview for the "N images attached from
+                    // tool" badge. Empty for tools that don't produce images.
+                    imageRefs = progress.imageRefs
                 )
 
                 // Show skill banner when use_skill activates a skill

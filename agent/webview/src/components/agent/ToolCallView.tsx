@@ -344,6 +344,17 @@ export function ToolCallView({ toolCall, isLatest, rolledBack }: ToolCallViewPro
           />
         </div>
       )}
+      {toolCall.imageRefs && toolCall.imageRefs.length > 0 && (
+        <div
+          className="mt-1 flex items-center gap-1 px-3 pb-1 text-[11px] font-mono"
+          style={{ color: 'var(--fg-muted)' }}
+        >
+          <span>🖼</span>
+          <span>
+            {toolCall.imageRefs.length} image{toolCall.imageRefs.length === 1 ? '' : 's'} attached from tool
+          </span>
+        </div>
+      )}
     </div>
   );
 }

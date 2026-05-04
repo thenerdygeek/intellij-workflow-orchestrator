@@ -895,12 +895,29 @@ class AgentCefPanel(
         result: String = "", durationMs: Long = 0,
         toolName: String = "", output: String? = null,
         diff: String? = null,
-        toolCallId: String = ""
+        toolCallId: String = "",
+        // Multimodal-agent Phase 6 — tool-produced image metadata. Serialized as
+        // a JSON array (sha256, mime, size, originalFilename) so the webview
+        // can render the "N images attached from tool" badge. Empty for the
+        // common no-image case; the JS side treats absent/empty identically.
+        imageRefs: List<com.workflow.orchestrator.core.services.ToolResult.ImageRefData> = emptyList()
     ) {
         val statusStr = if (status == RichStreamingPanel.ToolCallStatus.FAILED) "ERROR" else "COMPLETED"
         val outputArg = if (output != null) JsEscape.toJsString(output) else "null"
         val diffArg = if (diff != null) JsEscape.toJsString(diff) else "null"
-        callJs("updateToolResult(${JsEscape.toJsString(result)},$durationMs,${JsEscape.toJsString(toolName)},${JsEscape.toJsString(statusStr)},$outputArg,$diffArg,${JsEscape.toJsString(toolCallId)})")
+        val imageRefsJson = if (imageRefs.isEmpty()) "null" else JsEscape.toJsString(
+            buildJsonArray {
+                imageRefs.forEach { ref ->
+                    add(buildJsonObject {
+                        put("sha256", ref.sha256)
+                        put("mime", ref.mime)
+                        put("size", ref.size)
+                        if (ref.originalFilename != null) put("originalFilename", ref.originalFilename)
+                    })
+                }
+            }.toString()
+        )
+        callJs("updateToolResult(${JsEscape.toJsString(result)},$durationMs,${JsEscape.toJsString(toolName)},${JsEscape.toJsString(statusStr)},$outputArg,$diffArg,${JsEscape.toJsString(toolCallId)},$imageRefsJson)")
     }
 
     fun appendToolOutput(toolCallId: String, chunk: String) {
@@ -1105,7 +1122,11 @@ class AgentCefPanel(
     fun updateSubAgentToolCall(
         agentId: String, toolCallId: String, toolName: String, result: String,
         output: String?, diff: String?,
-        durationMs: Long, isError: Boolean
+        durationMs: Long, isError: Boolean,
+        // Multimodal-agent Phase 6 — tool-produced image metadata, threaded
+        // into the JSON payload so the React sub-agent view can render the
+        // "N images attached from tool" badge.
+        imageRefs: List<com.workflow.orchestrator.core.services.ToolResult.ImageRefData> = emptyList()
     ) {
         val payload = buildJsonObject {
             put("agentId", agentId)
@@ -1120,6 +1141,18 @@ class AgentCefPanel(
             if (diff != null) put("toolDiff", diff)
             put("toolDurationMs", durationMs)
             put("isError", isError)
+            if (imageRefs.isNotEmpty()) {
+                put("imageRefs", buildJsonArray {
+                    imageRefs.forEach { ref ->
+                        add(buildJsonObject {
+                            put("sha256", ref.sha256)
+                            put("mime", ref.mime)
+                            put("size", ref.size)
+                            if (ref.originalFilename != null) put("originalFilename", ref.originalFilename)
+                        })
+                    }
+                })
+            }
         }.toString()
         callJs("updateSubAgentToolCall(${JsEscape.toJsString(payload)})")
     }

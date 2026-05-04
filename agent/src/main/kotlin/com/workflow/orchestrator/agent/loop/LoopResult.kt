@@ -87,5 +87,15 @@ data class ToolCallProgress(
     val isError: Boolean = false,
     val toolCallId: String = "",
     /** Unified diff for file edits (edit_file, create_file). Sent to UI for diff display. */
-    val editDiff: String? = null
+    val editDiff: String? = null,
+    /**
+     * Tool-produced images attached to this tool result. Multimodal-agent
+     * Phase 6 — surfaced to the webview so the tool-result row can render a
+     * small "N images attached from tool" badge alongside the text output.
+     * Bytes themselves are not threaded here — only metadata; the bytes live
+     * in the session's `AttachmentStore` and are delivered to the model via
+     * `ContentBlock.ImageRef` on the next turn. Empty for tools that do not
+     * produce images (the common case).
+     */
+    val imageRefs: List<com.workflow.orchestrator.core.services.ToolResult.ImageRefData> = emptyList()
 )
