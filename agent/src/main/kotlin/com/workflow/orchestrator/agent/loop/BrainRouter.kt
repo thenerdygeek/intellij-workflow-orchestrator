@@ -156,6 +156,8 @@ class BrainRouter(
     ): ApiResult<ChatCompletionResponse> {
         val needsTools = !tools.isNullOrEmpty()
         val hasImage = messages.any { it.hasImageParts() }
+        val route = when { !hasImage -> "text-only"; !needsTools -> "image-only"; else -> "two-step" }
+        log.info("[multimodal] BrainRouter.chat decision: hasImage=$hasImage hasTools=$needsTools → route=$route")
         return when {
             !hasImage -> openAiCompatBrain.chat(messages, tools, maxTokens, toolChoice)
             !needsTools -> imageOnlyNonStreaming(messages)
@@ -171,6 +173,8 @@ class BrainRouter(
     ): ApiResult<ChatCompletionResponse> {
         val needsTools = !tools.isNullOrEmpty()
         val hasImage = messages.any { it.hasImageParts() }
+        val route = when { !hasImage -> "text-only"; !needsTools -> "image-only-stream"; else -> "two-step" }
+        log.info("[multimodal] BrainRouter.chatStream decision: hasImage=$hasImage hasTools=$needsTools → route=$route")
         return when {
             !hasImage -> openAiCompatBrain.chatStream(messages, tools, maxTokens, onChunk)
             !needsTools -> imageOnlyStreaming(messages, maxTokens, onChunk)
@@ -307,8 +311,12 @@ class BrainRouter(
                     is ContentPart.Text -> StreamContentPart.Text(part.text)
                     is ContentPart.Image -> {
                         val bytes = attachmentStore.read(part.sha256)
-                            ?: throw AttachmentMissingException(part.sha256)
+                        if (bytes == null) {
+                            log.warn("[multimodal] BrainRouter.buildStreamRequest MISS: sha256=${part.sha256.take(12)}… not found in AttachmentStore")
+                            throw AttachmentMissingException(part.sha256)
+                        }
                         val b64 = Base64.getEncoder().encodeToString(bytes)
+                        log.info("[multimodal] BrainRouter.buildStreamRequest hydrated sha256=${part.sha256.take(12)}… ${bytes.size}B → ${b64.length}B base64 mime=${part.mime}")
                         StreamContentPart.Image(ImageUrl("data:${part.mime};base64,$b64"))
                     }
                 }

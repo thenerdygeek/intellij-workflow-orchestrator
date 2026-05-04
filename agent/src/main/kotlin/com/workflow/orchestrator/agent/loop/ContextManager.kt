@@ -199,6 +199,7 @@ class ContextManager(
      */
     fun addUserMessageWithParts(parts: List<ContentPart>) {
         val flatText = parts.filterIsInstance<ContentPart.Text>().joinToString(" ") { it.text }
+        val images = parts.filterIsInstance<ContentPart.Image>()
         messages.add(
             ChatMessage(
                 role = "user",
@@ -206,6 +207,10 @@ class ContextManager(
                 parts = parts,
             ),
         )
+        if (images.isNotEmpty()) {
+            LOG.info("[multimodal] ContextManager seeded user turn with ${images.size} image part(s): " +
+                images.joinToString(",") { "${it.sha256.take(12)}…/${it.mime}" })
+        }
     }
 
     fun addAssistantMessage(message: ChatMessage) {

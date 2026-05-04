@@ -1960,7 +1960,7 @@ class AgentService(
                 // I4: Set activeTask atomically after both loop and job are available
                 activeTask.set(ActiveTask(sessionId = sid, loop = loop, job = coroutineContext.job))
 
-                val result = loop.run(task)
+                val result = loop.run(task, attachments)
 
                 // I5: Update session via .copy() (Session is now fully immutable)
                 // Extract token counts from result (ported from Cline's tokensIn/tokensOut)

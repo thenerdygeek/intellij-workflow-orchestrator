@@ -30,6 +30,7 @@ import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.ModelCatalogService
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
+import com.workflow.orchestrator.core.ai.dto.ContentPart
 import com.workflow.orchestrator.core.ai.dto.hasImageParts
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
@@ -566,7 +567,7 @@ class AgentLoop(
      * - The loop is cancelled (Cancelled)
      * - Max iterations exceeded (Failed)
      */
-    suspend fun run(task: String): LoopResult {
+    suspend fun run(task: String, attachments: List<ContentBlock.ImageRef> = emptyList()): LoopResult {
         if (cancelled.get()) {
             onDebugLog?.invoke("info", "loop_exit", "Exit: cancelled_before_start", null)
             return makeCancelled(0)
@@ -581,7 +582,20 @@ class AgentLoop(
             TokenEstimator.estimateToolDefinitions(toolDefinitions)
         )
 
-        contextManager.addUserMessage(withEnvDetails(task))
+        // Multimodal: when this turn carries image attachments, seed the in-memory
+        // ChatMessage list with structured `parts` so BrainRouter.hasImageParts() fires
+        // and the request routes to the vision endpoint. Without this the persisted
+        // ApiMessage carries ImageRef blocks but the LLM-side context is text-only —
+        // request goes to /.api/llm/chat/completions and the model sees nothing.
+        if (attachments.isEmpty()) {
+            contextManager.addUserMessage(withEnvDetails(task))
+        } else {
+            val parts = buildList<ContentPart> {
+                add(ContentPart.Text(withEnvDetails(task)))
+                attachments.forEach { add(ContentPart.Image(sha256 = it.sha256, mime = it.mime)) }
+            }
+            contextManager.addUserMessageWithParts(parts)
+        }
         sessionMetrics?.initTimers()
         sessionMetrics?.recordUserTurn()
 
@@ -683,8 +697,13 @@ class AgentLoop(
             val apiReqStartedIdx = messageStateHandler?.getClineMessages()?.lastIndex ?: -1
             var isFirstStreamChunk = true
 
+            val msgsForSend = contextManager.getMessages()
+            val imagePartsThisCall = msgsForSend.sumOf { it.parts?.count { p -> p is ContentPart.Image } ?: 0 }
+            if (imagePartsThisCall > 0) {
+                LOG.info("[multimodal] AgentLoop iteration $iteration sending payload with $imagePartsThisCall image part(s) across ${msgsForSend.size} message(s)")
+            }
             val apiResult = brain.chatStream(
-                messages = contextManager.getMessages(),
+                messages = msgsForSend,
                 tools = currentToolDefs,
                 maxTokens = maxOutputTokens,
                 onChunk = { chunk ->
