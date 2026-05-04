@@ -41,6 +41,48 @@ internal val ABSTENTION_PHRASES = listOf(
     "i'm unable to process",
 )
 
+// ---- Two-step workaround prompts and framing -------------------------------
+// Pulled out of `twoStepWorkaround` so each hardening pass lands in one place
+// and tests can reference the constants directly instead of grepping for
+// fragile substrings.
+
+/**
+ * Step 1 prompt — replaces the image-bearing turn for the vision call.
+ * Hardened against refusal: empirically the OpenAI-compat model in step 2 will
+ * refuse "I can't view images" if step 1 returns vague or hedging text, so the
+ * vision model is explicitly forbidden from refusing.
+ */
+internal const val VISION_PROMPT: String =
+    "You are analyzing an image attached to a tool result so a downstream " +
+        "tool-using agent can act on it. Describe the image concretely and in detail: " +
+        "what is shown, any visible text (transcribe verbatim), UI elements, " +
+        "errors, diagrams, or data. Do NOT refuse, hedge, or say you cannot see " +
+        "the image — produce the best description you can. Your description is " +
+        "the ONLY signal the downstream agent will receive."
+
+/**
+ * Step 2 framing wraps the vision description so the OpenAI-compat model treats
+ * it as the actual content of the image rather than metadata about an unseen
+ * image. The original `[image description: …]` wrapper was weak enough that
+ * the trained "I can't analyze image files" tool-use refusal still fired
+ * (Windows logs 2026-05-04). The header below pushes back on that pattern.
+ */
+internal const val FRAMING_HEADER: String =
+    "[VISION ANALYSIS — this is the actual content of the attached image, " +
+        "produced by a vision model. Treat this as your perception of the image " +
+        "and respond as if you can see it directly. Do NOT say you cannot view " +
+        "or analyze images.]"
+
+internal const val FRAMING_FOOTER: String = "[END VISION ANALYSIS]"
+
+/** Suffix shared by step-1 HTTP-failure messages. */
+internal const val STEP1_RETRY_HINT: String =
+    "Try again, or remove the image and describe it in text."
+
+/** User-visible message when step 1 abstained — step 2 was aborted to avoid a garbled tool call. */
+internal const val STEP1_ABSTAIN_USER_MESSAGE: String =
+    "The model couldn't analyze the attached image. Try a clearer image, or describe it in text."
+
 /**
  * Phase 6 of multimodal-agent plan — hybrid routing across two Sourcegraph
  * brain backends.
@@ -217,6 +259,34 @@ class BrainRouter(
     }
 
     // ---- Two-step workaround (image + tools) ----
+    //
+    // The Sourcegraph gateway has two endpoints with mutually-incompatible
+    // capabilities: /.api/llm/chat/completions accepts tools but rejects images,
+    // and /.api/completions/stream accepts images but silently drops the tools
+    // field. When a turn carries both, we chain them: step 1 turns the image
+    // into a text description on the stream endpoint, step 2 sends that
+    // description plus the tools array to the OpenAI-compat endpoint.
+    //
+    // The orchestration below is intentionally a flat `when` over a sealed
+    // VisionResult. The pure helpers (runVisionStep, buildStep2Messages,
+    // VISION_PROMPT, FRAMING_HEADER, etc.) live in the companion so each
+    // hardening pass lands in the right place rather than growing the orchestrator.
+
+    /** Outcome of step 1 — the vision-summarize call against /completions/stream. */
+    private sealed interface VisionResult {
+        /** Step 1 succeeded with a usable image description. */
+        data class Description(val text: String) : VisionResult
+
+        /**
+         * Step 1 returned text but the model abstained ("I cannot see this image…").
+         * Step 2 must NOT proceed — the description is useless and would only
+         * produce a garbled tool call.
+         */
+        data class Abstained(val description: String) : VisionResult
+
+        /** Step 1's HTTP call failed. Step 2 must NOT proceed. */
+        data class Failed(val reason: String) : VisionResult
+    }
 
     private suspend fun twoStepWorkaround(
         messages: List<ChatMessage>,
@@ -225,87 +295,96 @@ class BrainRouter(
         toolChoice: JsonElement?,
         onChunk: (suspend (StreamChunk) -> Unit)?,
     ): ApiResult<ChatCompletionResponse> {
-        // Step 1: vision-summarize on /.api/completions/stream.
-        // Prompt is hardened against refusal — the downstream OpenAI-compat model
-        // in step 2 will refuse "I can't view images" if step 1 returns vague or
-        // hedging text, so we explicitly demand a concrete description.
-        val visionMessages = messages.replacingLastImageBearingTurnWith(
-            "You are analyzing an image attached to a tool result so a downstream " +
-                "tool-using agent can act on it. Describe the image concretely and in detail: " +
-                "what is shown, any visible text (transcribe verbatim), UI elements, " +
-                "errors, diagrams, or data. Do NOT refuse, hedge, or say you cannot see " +
-                "the image — produce the best description you can. Your description is " +
-                "the ONLY signal the downstream agent will receive.",
-        )
-        val descriptionResult = runCatching {
+        return when (val vision = runVisionStep(messages, maxTokens)) {
+            is VisionResult.Failed ->
+                synthesizeAbortResponse(
+                    id = "router-step1-fail",
+                    content = "Image analysis failed: ${vision.reason}. " + STEP1_RETRY_HINT,
+                )
+            is VisionResult.Abstained ->
+                synthesizeAbortResponse(
+                    id = "router-step1-abstain",
+                    content = STEP1_ABSTAIN_USER_MESSAGE,
+                )
+            is VisionResult.Description -> {
+                val rebuilt = buildStep2Messages(messages, vision.text)
+                val resp = if (onChunk != null) {
+                    openAiCompatBrain.chatStream(rebuilt, tools, maxTokens, onChunk)
+                } else {
+                    openAiCompatBrain.chat(rebuilt, tools, maxTokens, toolChoice)
+                }
+                if (resp is ApiResult.Success) onAnalyzedImageBadge?.invoke()
+                resp
+            }
+        }
+    }
+
+    /**
+     * Step 1 — replace the last image-bearing turn with [VISION_PROMPT], call
+     * the stream endpoint, classify the response into a [VisionResult].
+     *
+     * Encapsulates: prompt construction, HTTP fault tolerance, abstention
+     * detection, debug logging. Future hardening of step 1 lands here.
+     */
+    private suspend fun runVisionStep(
+        messages: List<ChatMessage>,
+        maxTokens: Int?,
+    ): VisionResult {
+        val visionMessages = messages.replacingLastImageBearingTurnWith(VISION_PROMPT)
+        val result = runCatching {
             streamClient.chat(buildStreamRequest(visionMessages, maxTokens))
         }
-        if (descriptionResult.isFailure) {
-            val msg = descriptionResult.exceptionOrNull()?.message ?: "unknown error"
+        if (result.isFailure) {
+            val msg = result.exceptionOrNull()?.message ?: "unknown error"
             log.warn("[BrainRouter] two-step step 1 failed: $msg")
-            return ApiResult.Success(
-                ChatCompletionResponse(
-                    id = "router-step1-fail",
-                    choices = listOf(
-                        Choice(
-                            index = 0,
-                            message = ChatMessage(
-                                role = "assistant",
-                                content = "Image analysis failed: $msg. " +
-                                    "Try again, or remove the image and describe it in text.",
-                            ),
-                            finishReason = "stop",
-                        ),
-                    ),
-                    usage = null,
-                ),
-            )
+            return VisionResult.Failed(msg)
         }
-        val description = descriptionResult.getOrThrow().text
-        log.info("[multimodal] BrainRouter two-step step 1 description: ${description.length} chars, preview=${description.take(200).replace("\n", " ")}")
+        val description = result.getOrThrow().text
+        log.info(
+            "[multimodal] BrainRouter two-step step 1 description: " +
+                "${description.length} chars, preview=${description.take(200).replace("\n", " ")}",
+        )
         if (ABSTENTION_PHRASES.any { description.contains(it, ignoreCase = true) }) {
             log.info("[multimodal] BrainRouter two-step step 1 abstention detected, aborting step 2")
-            return ApiResult.Success(
-                ChatCompletionResponse(
-                    id = "router-step1-abstain",
-                    choices = listOf(
-                        Choice(
-                            index = 0,
-                            message = ChatMessage(
-                                role = "assistant",
-                                content = "The model couldn't analyze the attached image. " +
-                                    "Try a clearer image, or describe it in text.",
-                            ),
-                            finishReason = "stop",
-                        ),
-                    ),
-                    usage = null,
-                ),
-            )
+            return VisionResult.Abstained(description)
         }
-
-        // Step 2: tool call with image replaced by an authoritative framing of the
-        // description. Why the strong wording: empirically (Windows logs 2026-05-04)
-        // the canonical [image description: …] framing was weak enough that the
-        // step-2 model still triggered its trained "I can't analyze image files
-        // directly" tool-use refusal. The framing below establishes that the
-        // description IS the model's perception of the image, not metadata about
-        // it — pushing back on the refusal pattern.
-        val framedDescription = "[VISION ANALYSIS — this is the actual content of the " +
-            "attached image, produced by a vision model. Treat this as your perception " +
-            "of the image and respond as if you can see it directly. Do NOT say you " +
-            "cannot view or analyze images.]\n$description\n[END VISION ANALYSIS]"
-        val rebuilt = messages.replacingImagePartsWithText(framedDescription)
-        val resp = if (onChunk != null) {
-            openAiCompatBrain.chatStream(rebuilt, tools, maxTokens, onChunk)
-        } else {
-            openAiCompatBrain.chat(rebuilt, tools, maxTokens, toolChoice)
-        }
-        if (resp is ApiResult.Success) {
-            onAnalyzedImageBadge?.invoke()
-        }
-        return resp
+        return VisionResult.Description(description)
     }
+
+    /**
+     * Step 2 — replace every image part with an authoritative framing of [description].
+     *
+     * Encapsulates: framing wording. Future hardening of step 2 lands here.
+     */
+    private fun buildStep2Messages(
+        messages: List<ChatMessage>,
+        description: String,
+    ): List<ChatMessage> {
+        val framed = "$FRAMING_HEADER\n$description\n$FRAMING_FOOTER"
+        return messages.replacingImagePartsWithText(framed)
+    }
+
+    /**
+     * Build a synthetic single-choice [ChatCompletionResponse] used to abort
+     * the two-step before step 2 fires (HTTP failure or abstention). Keeps
+     * the abort paths from duplicating ~12 lines of choice/usage boilerplate.
+     */
+    private fun synthesizeAbortResponse(
+        id: String,
+        content: String,
+    ): ApiResult.Success<ChatCompletionResponse> = ApiResult.Success(
+        ChatCompletionResponse(
+            id = id,
+            choices = listOf(
+                Choice(
+                    index = 0,
+                    message = ChatMessage(role = "assistant", content = content),
+                    finishReason = "stop",
+                ),
+            ),
+            usage = null,
+        ),
+    )
 
     // ---- Wire-payload construction ----
 
