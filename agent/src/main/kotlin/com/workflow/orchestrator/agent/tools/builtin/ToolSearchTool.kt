@@ -136,8 +136,12 @@ Query forms:
                 name == "build" -> related.addAll(listOf("coverage", "runtime_exec"))
                 name.startsWith("debug") -> related.addAll(listOf("diagnostics", "runtime_exec"))
                 name == "coverage" -> related.add("runtime_exec")
-                name.startsWith("bitbucket") -> related.addAll(listOf("git"))
-                name.startsWith("jira") -> related.addAll(listOf("git"))
+                // bitbucket / jira intentionally have no related-tools hint:
+                // there is no native `git` meta-tool in this codebase; native git
+                // operations go through the always-available `run_command` core tool,
+                // and suggesting a non-existent "git" tool sent the LLM into a
+                // dead-end tool_search that returned bitbucket/bamboo/sonar (false
+                // positives matched on the substring "git" in their descriptions).
                 name.startsWith("sonar") -> related.addAll(listOf("diagnostics", "coverage"))
             }
         }

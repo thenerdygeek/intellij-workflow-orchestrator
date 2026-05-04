@@ -101,14 +101,16 @@ data class JiraTicketData(
             linkedIssues.forEach { li -> appendLine("  ${li.key} [${li.status}] ${li.summary} (${li.relationship})") }
         }
 
-        // Attachments
+        // Attachments — hint mirrors the comments line so the LLM sees a parallel
+        // "use X to view" cue for attachments. Same toString() backs the
+        // #mention block and the jira.get_ticket tool result, so both surfaces get it.
         if (attachments.isNotEmpty()) {
             appendLine()
-            appendLine("Attachments ($attachmentCount):")
+            appendLine("Attachments ($attachmentCount, use download_attachment with the id to view):")
             attachments.forEach { att -> appendLine("  ${att.filename} (id: ${att.id}, ${formatSize(att.sizeBytes)})") }
         } else if (attachmentCount > 0) {
             appendLine()
-            appendLine("Attachments: $attachmentCount")
+            appendLine("Attachments: $attachmentCount (use download_attachment to view)")
         }
 
         // Comments count
