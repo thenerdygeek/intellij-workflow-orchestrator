@@ -707,16 +707,19 @@ export const InputBar = memo(function InputBar() {
   // (component re-mounts only on full page reload).
   useEffect(() => {
     (window as any).__applyImageSettings = (json: string) => {
+      console.log('[multimodal:attach] __applyImageSettings: received payload from Kotlin:', json);
       try {
         const parsed = JSON.parse(json);
-        attachmentManagerRef.current?.updateSettings({
+        const next = {
           maxBytes: typeof parsed.maxBytes === 'number' ? parsed.maxBytes : IMAGE_DEFAULT_SETTINGS.maxBytes,
           mimeWhitelist: Array.isArray(parsed.mimeWhitelist) ? parsed.mimeWhitelist : IMAGE_DEFAULT_SETTINGS.mimeWhitelist,
           maxPerTurn: typeof parsed.maxPerTurn === 'number' ? parsed.maxPerTurn : IMAGE_DEFAULT_SETTINGS.maxPerTurn,
           enabled: typeof parsed.enabled === 'boolean' ? parsed.enabled : IMAGE_DEFAULT_SETTINGS.enabled,
-        });
+        };
+        console.log('[multimodal:attach] __applyImageSettings: applying', next);
+        attachmentManagerRef.current?.updateSettings(next);
       } catch (e) {
-        console.warn('[multimodal] __applyImageSettings: malformed JSON', e);
+        console.warn('[multimodal:attach] __applyImageSettings: malformed JSON', e);
       }
     };
     // Trigger an initial pull on mount in case Kotlin already has fresher
@@ -726,8 +729,13 @@ export const InputBar = memo(function InputBar() {
   }, []);
 
   const handleAttachFile = useCallback(async (file: File | null | undefined) => {
-    if (!file || !attachmentManagerRef.current) return;
-    await attachmentManagerRef.current.attachFile(file);
+    console.log('[multimodal:attach] handleAttachFile: file=', file && { name: file.name, type: file.type, size: file.size }, 'managerReady=', !!attachmentManagerRef.current);
+    if (!file || !attachmentManagerRef.current) {
+      console.warn('[multimodal:attach] handleAttachFile: bailing — file or manager missing');
+      return;
+    }
+    const result = await attachmentManagerRef.current.attachFile(file);
+    console.log('[multimodal:attach] handleAttachFile: attachFile returned', result ? `OK (sha256=${result.sha256.slice(0, 12)}…)` : 'NULL (rejected — see prior log line)');
   }, []);
 
   const handleRemoveAttachment = useCallback((sha256: string) => {
@@ -735,11 +743,13 @@ export const InputBar = memo(function InputBar() {
   }, []);
 
   const handlePickImage = useCallback(() => {
+    console.log('[multimodal:attach] handlePickImage: triggering file picker, refReady=', !!fileInputRef.current);
     fileInputRef.current?.click();
   }, []);
 
   const handleFilePicked = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    console.log('[multimodal:attach] handleFilePicked: change event fired, files.length=', e.target.files?.length ?? 0, 'first=', file && { name: file.name, type: file.type, size: file.size });
     await handleAttachFile(file);
     // Reset value so the same file can be picked again later.
     e.target.value = '';

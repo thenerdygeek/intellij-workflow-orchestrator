@@ -91,10 +91,12 @@ class AttachmentUploadHandler(
     override fun processRequest(request: CefRequest, callback: CefCallback): Boolean {
         try {
             val url = request.url ?: run {
+                LOG.warn("AttachmentUploadHandler: rejected request with null URL")
                 respondError("missing_url", 400)
                 callback.Continue()
                 return true
             }
+            LOG.info("AttachmentUploadHandler: processRequest url=$url method=${request.method}")
             val sha256FromUrl = url
                 .substringAfterLast("/upload/")
                 .substringBefore("?")
@@ -139,15 +141,18 @@ class AttachmentUploadHandler(
             val bytes = ByteArray(byteCount)
             element.getBytes(bytes.size, bytes)
 
+            LOG.info("AttachmentUploadHandler: received ${bytes.size} bytes, mime=$mime, sha256FromUrl=${sha256FromUrl.take(12)}…, filename=$originalFilename")
             // Defense-in-depth validation (UI does this client-side too).
             when (val v = validate(bytes, mime, settings)) {
                 is ValidationResult.Ok -> {
                     val store = attachmentStoreProvider() ?: run {
+                        LOG.warn("AttachmentUploadHandler: no active session — rejecting upload")
                         respondError("no_active_session", 400)
                         callback.Continue()
                         return true
                     }
                     val ref = runBlockingCancellable { store.store(bytes, mime, originalFilename) }
+                    LOG.info("AttachmentUploadHandler: stored sha256=${ref.sha256.take(12)}… size=${ref.size}")
                     // Best-effort sanity-check: client-computed sha256 should match
                     // server-computed. A mismatch typically means the bytes were
                     // corrupted in transit or the JS hasher is buggy. We log but
@@ -163,7 +168,10 @@ class AttachmentUploadHandler(
                     responseBody = body.toByteArray()
                     responseStatus = 200
                 }
-                else -> respondError(v.errorCode!!, 200)
+                else -> {
+                    LOG.warn("AttachmentUploadHandler: validation REJECTED — code=${v.errorCode} bytes=${bytes.size} mime=$mime")
+                    respondError(v.errorCode!!, 200)
+                }
             }
         } catch (e: Exception) {
             LOG.warn("AttachmentUploadHandler: processRequest failed", e)

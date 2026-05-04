@@ -83,15 +83,19 @@ export class AttachmentManager {
    * attachment ref on success, or null when rejected (toast already fired).
    */
   async attachFile(file: File): Promise<PendingAttachment | null> {
+    console.log('[multimodal:attach] AttachmentManager.attachFile: entry', { name: file.name, type: file.type, size: file.size }, 'currentSettings=', this.settings, 'pendingCount=', this.attachments.length);
     if (!this.settings.enabled) {
+      console.warn('[multimodal:attach] AttachmentManager.attachFile: REJECTED — image input disabled in settings');
       this.toast('Image input is disabled in settings.', 'warning');
       return null;
     }
     if (this.attachments.length >= this.settings.maxPerTurn) {
+      console.warn('[multimodal:attach] AttachmentManager.attachFile: REJECTED — per-turn cap reached', this.attachments.length, '>=', this.settings.maxPerTurn);
       this.toast(`At most ${this.settings.maxPerTurn} image(s) per turn.`, 'warning');
       return null;
     }
     if (!this.settings.mimeWhitelist.includes(file.type)) {
+      console.warn('[multimodal:attach] AttachmentManager.attachFile: REJECTED — MIME', file.type, 'not in whitelist', this.settings.mimeWhitelist);
       this.toast(`Image type "${file.type || 'unknown'}" is not in the allowed list.`, 'warning');
       return null;
     }
@@ -104,7 +108,9 @@ export class AttachmentManager {
     if (file.size > this.settings.maxBytes) {
       const originalKB = Math.round(file.size / 1024);
       const capKB = Math.round(this.settings.maxBytes / 1024);
+      console.log('[multimodal:attach] AttachmentManager.attachFile: oversize — prompting compress', { originalKB, capKB });
       const proceed = await this.confirmCompress(originalKB, capKB, file.name);
+      console.log('[multimodal:attach] AttachmentManager.attachFile: compress prompt resolved with proceed=', proceed);
       if (!proceed) {
         return null;
       }
@@ -132,7 +138,9 @@ export class AttachmentManager {
     let bytes: Uint8Array;
     try {
       bytes = new Uint8Array(await workingFile.arrayBuffer());
+      console.log('[multimodal:attach] AttachmentManager.attachFile: read', bytes.byteLength, 'bytes from file');
     } catch (e) {
+      console.error('[multimodal:attach] AttachmentManager.attachFile: arrayBuffer threw', e);
       this.toast(`Could not read image bytes: ${(e as Error).message}`, 'error');
       return null;
     }
@@ -140,7 +148,12 @@ export class AttachmentManager {
     let sha256: string;
     try {
       sha256 = await AttachmentManager.sha256Hex(bytes);
+      console.log('[multimodal:attach] AttachmentManager.attachFile: sha256=', sha256.slice(0, 12) + '…');
     } catch (e) {
+      // SubtleCrypto requires a "secure context" (https/localhost/file:). The plugin
+      // serves the webview from http://workflow-agent which some Chromium builds may
+      // refuse — surface that explicitly so the next debugging round can confirm.
+      console.error('[multimodal:attach] AttachmentManager.attachFile: sha256 threw — likely SubtleCrypto unavailable on http://workflow-agent (insecure context). origin=', typeof window !== 'undefined' ? window.location.origin : 'n/a', 'isSecureContext=', typeof window !== 'undefined' ? (window as any).isSecureContext : 'n/a', 'err=', e);
       this.toast(`sha256 unavailable in this browser: ${(e as Error).message}`, 'error');
       return null;
     }
@@ -149,6 +162,7 @@ export class AttachmentManager {
     // one turn, just bump the existing chip — don't show two identical chips.
     const existing = this.attachments.find(a => a.sha256 === sha256);
     if (existing) {
+      console.log('[multimodal:attach] AttachmentManager.attachFile: deduped — sha256 already pending');
       this.toast('That image is already attached.', 'info');
       return existing;
     }
@@ -164,6 +178,7 @@ export class AttachmentManager {
     };
     this.attachments.push(att);
     this.onChange();
+    console.log('[multimodal:attach] AttachmentManager.attachFile: SUCCESS — added chip, pendingCount=', this.attachments.length);
     return att;
   }
 
