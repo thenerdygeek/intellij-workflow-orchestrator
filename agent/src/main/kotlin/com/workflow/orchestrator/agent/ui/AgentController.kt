@@ -236,8 +236,24 @@ class AgentController(
     )
     private val firstFlushSeen = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
-    /** Resolves @file, @folder, @symbol, @tool, /skill, #ticket mentions into rich context for the LLM. */
-    private val mentionContextBuilder = MentionContextBuilder(project)
+    /**
+     * Resolves @file, @folder, @symbol, @tool, /skill, #ticket mentions into rich context for the LLM.
+     *
+     * Auto-activation: when a mention implies a deferred tool (e.g. `#TICKET-123`
+     * implies `jira`), the builder fires `onActivateTool` so the tool's schema
+     * is part of the next API call without forcing the LLM into a discovery
+     * `tool_search` round-trip first. Registry's `activateDeferred` is
+     * `@Synchronized` and idempotent — safe to call repeatedly.
+     */
+    private val mentionContextBuilder = MentionContextBuilder(
+        project = project,
+        onActivateTool = { toolName ->
+            val activated = service.registry.activateDeferred(toolName)
+            if (activated != null) {
+                LOG.info("AgentController: auto-activated deferred tool '$toolName' from mention context")
+            }
+        }
+    )
 
     /** Shared provider — set once from AgentTabProvider, reused for mirrors. */
     private var sharedMentionSearchProvider: MentionSearchProvider? = null

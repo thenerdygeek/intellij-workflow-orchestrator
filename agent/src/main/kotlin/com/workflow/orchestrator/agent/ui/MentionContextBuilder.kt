@@ -20,7 +20,28 @@ import java.io.File
 class MentionContextBuilder(
     private val project: Project,
     /** Optional reference to the search provider for consuming pre-fetched ticket data. */
-    var mentionSearchProvider: MentionSearchProvider? = null
+    var mentionSearchProvider: MentionSearchProvider? = null,
+    /**
+     * Optional callback invoked once per unique deferred tool that this turn's
+     * mentions imply the LLM will need. Hook to `ToolRegistry.activateDeferred(name)`
+     * so the tool's schema is part of the next API call without forcing the LLM
+     * to do a discovery `tool_search` round-trip first.
+     *
+     * Activation map (only types that imply a deferred tool):
+     *   - "ticket" → activates `jira` (mention block already fetched the ticket;
+     *     LLM almost always wants follow-ups via get_ticket / transition / comment / download_attachment)
+     *   - "tool"   → activates the named tool itself (the user is directly
+     *     pointing the LLM at a specific tool; if it's deferred, load it)
+     *   - "file" / "folder" / "symbol" / "skill" → no activation (relevant
+     *     follow-up tools — read_file, glob_files, find_definition,
+     *     find_references, use_skill — are core and always available).
+     *
+     * Callback is called outside the per-mention rendering loop with a
+     * deduplicated set of names; callers should keep it cheap (the registry's
+     * `activateDeferred` is `@Synchronized` and idempotent, which is exactly
+     * what's expected here).
+     */
+    var onActivateTool: (String) -> Unit = {}
 ) {
 
     companion object {
@@ -49,6 +70,7 @@ class MentionContextBuilder(
         val sb = StringBuilder()
         var totalChars = 0
         val seen = mutableSetOf<String>()  // Deduplicate by type+value
+        val toolsToActivate = mutableSetOf<String>()  // Deferred tools implied by mentions
 
         for (mention in mentions) {
             if (!seen.add("${mention.type}:${mention.value}")) continue
@@ -67,6 +89,14 @@ class MentionContextBuilder(
                 else -> null
             } ?: continue
 
+            // Collect deferred tool names this mention implies. See `onActivateTool`
+            // KDoc on the constructor for the full activation map and rationale.
+            when (mention.type) {
+                "ticket" -> toolsToActivate.add("jira")
+                "tool" -> toolsToActivate.add(mention.value)
+                // file / folder / symbol / skill rely on core tools — no activation
+            }
+
             val remaining = MAX_TOTAL_CHARS - totalChars
             val truncated = if (section.length > remaining) {
                 section.take(remaining) + "\n[truncated]"
@@ -74,6 +104,16 @@ class MentionContextBuilder(
 
             sb.append(truncated)
             totalChars += truncated.length
+        }
+
+        // Fire activations once each — callback owns idempotency (registry is @Synchronized)
+        // but the dedup here keeps tests crisp and avoids surprising the callback with N copies.
+        for (toolName in toolsToActivate) {
+            try {
+                onActivateTool(toolName)
+            } catch (e: Exception) {
+                LOG.debug("MentionContextBuilder: onActivateTool('$toolName') threw, ignoring: ${e.message}")
+            }
         }
 
         return if (sb.isNotBlank()) sb.toString() else null
