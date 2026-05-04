@@ -346,6 +346,19 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                 // (e.g. findModuleForClass returned null for a sibling module's class,
                 // createJUnitRunSettings bailed, the dispatcher fell back without telling anyone).
                 val reason = reasonOut.toString().ifBlank { "setup returned null without a specific reason" }
+
+                // Exception: MULTI_METHOD_PATTERNS_UNAVAILABLE is a known capability
+                // gap, not a real configuration error. The shell fallback supports
+                // multi-method on every build tool, so auto-route there with a
+                // breadcrumb (mirrors the TestNG handling at line 332-335).
+                if (reason.startsWith("MULTI_METHOD_PATTERNS_UNAVAILABLE")) {
+                    val shellResult = executeWithShell(project, className, methods, timeoutSeconds, module, authoritativeBuildPath)
+                    val info = "[INFO] Multi-method native run requires the JUnit PATTERNS reflection trick, " +
+                        "which is unavailable on this platform ($reason). Routed through Maven/Gradle shell, " +
+                        "which supports multi-method on every JUnit version.\n\n"
+                    return prependBreadcrumb(shellResult.copy(content = info + shellResult.content))
+                }
+
                 return ToolResult(
                     content = "Native IntelliJ test runner could not be set up for '$className': $reason.\n\n" +
                         "Not falling back to Maven/Gradle shell because use_native_runner=true.\n" +
@@ -854,10 +867,15 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                                 patterns.add("$className,${methods.joinToString("|")}")
                                 patternsField.set(data, patterns)
                             } catch (e: Exception) {
+                                // Sentinel prefix MULTI_METHOD_PATTERNS_UNAVAILABLE lets the
+                                // dispatcher (executeRunTests) recognize this as a known
+                                // capability gap and auto-route to the shell fallback,
+                                // which handles multi-method on every build tool. Class
+                                // name is reported verbatim so future failures on unusual
+                                // platform builds are debuggable without reflection guesswork.
                                 return fail(
-                                    "multi-method native run requires JUnit 5 PATTERNS field " +
-                                        "(${e.javaClass.simpleName}: ${e.message}); pass use_native_runner=false " +
-                                        "to route through Maven/Gradle shell, which supports multi-method on JUnit 4 too"
+                                    "MULTI_METHOD_PATTERNS_UNAVAILABLE: PATTERNS field not found on " +
+                                        "${data.javaClass.name} (${e.javaClass.simpleName}: ${e.message})"
                                 )
                             }
                         }
