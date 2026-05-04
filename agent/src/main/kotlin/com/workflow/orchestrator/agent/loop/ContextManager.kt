@@ -595,6 +595,11 @@ class ContextManager(
             for (idx in toReplace) {
                 if (idx < messages.size) {
                     val old = messages[idx]
+                    // Cline pinning (tool-produced-images Phase 5): skip image-bearing
+                    // messages — they're load-bearing context. Replacing the text
+                    // content with a dedup notice strands the image part because
+                    // the LLM can no longer see what the image refers to.
+                    if (old.hasImageParts()) continue
                     val oldContent = old.content ?: continue
                     val oldLength = oldContent.length
                     totalChars += oldLength
@@ -692,6 +697,26 @@ class ContextManager(
         }
 
         if (rangeEnd < rangeStart) return
+
+        // Cline pinning (tool-produced-images Phase 5): if the candidate
+        // truncation range contains any image-bearing message, skip the
+        // truncation pass entirely. Re-sending the same screenshot every
+        // turn is more expensive than keeping it pinned, and dropping it
+        // mid-conversation strands tool outputs the LLM may need to refer
+        // back to. Stage 3 (LLM summarization) is the escape hatch when
+        // Stage 2 can't make progress.
+        //
+        // Approach (b) per the plan: skip-truncation. Approach (a)
+        // (split-range around pinned indices) is correct but materially more
+        // complex; conservative skip preserves byte-identical behavior for
+        // non-image scenarios.
+        val containsPinned = (rangeStart..rangeEnd).any { idx ->
+            idx < messages.size && messages[idx].hasImageParts()
+        }
+        if (containsPinned) {
+            LOG.info("[Context] Skipping Stage 2 truncation: candidate range [$rangeStart..$rangeEnd] contains image-bearing message(s) (Cline pinning rule)")
+            return
+        }
 
         // Insert a truncation notice as the first assistant message (index 1)
         // Cline does this via applyStandardContextTruncationNoticeChange

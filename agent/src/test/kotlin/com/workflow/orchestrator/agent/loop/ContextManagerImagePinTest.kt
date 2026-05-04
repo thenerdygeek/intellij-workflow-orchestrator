@@ -3,7 +3,13 @@ package com.workflow.orchestrator.agent.loop
 import com.workflow.orchestrator.agent.session.ApiMessage
 import com.workflow.orchestrator.agent.session.ApiRole
 import com.workflow.orchestrator.agent.session.ContentBlock
+import com.workflow.orchestrator.core.ai.dto.ChatMessage
+import com.workflow.orchestrator.core.ai.dto.ContentPart
+import com.workflow.orchestrator.core.ai.dto.FunctionCall
+import com.workflow.orchestrator.core.ai.dto.ToolCall
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -50,5 +56,126 @@ class ContextManagerImagePinTest {
             )
         )
         assertTrue(ContextManager.isImageBearingMessage(mixed))
+    }
+
+    // ---- Stage 1 pin: dedup never replaces an image-bearing tool result ----
+
+    @Test
+    fun `Stage 1 dedup never replaces a tool_result that has an ImageRef sibling`() {
+        val cm = ContextManager(maxInputTokens = 1000)
+        cm.setSystemPrompt("sys")
+
+        // First read of foo.kt — but this slot ALSO carries an image part
+        // (e.g. a screenshot the LLM took alongside the file content).
+        cm.addAssistantMessage(
+            ChatMessage(
+                role = "assistant", content = null,
+                toolCalls = listOf(
+                    ToolCall(id = "c1", type = "function", function = FunctionCall("read_file", """{"path":"foo.kt"}"""))
+                )
+            )
+        )
+        // Manually inject the image-bearing tool result (the public addToolResult API
+        // doesn't accept parts; cf. ContextManager addToolResult signature).
+        cm.addAssistantMessage(
+            ChatMessage(
+                role = "tool",
+                content = "[read_file for 'foo.kt'] Result:\nversion 1 (with screenshot)",
+                toolCallId = "c1",
+                parts = listOf(
+                    ContentPart.Text("[read_file for 'foo.kt'] Result:\nversion 1 (with screenshot)"),
+                    ContentPart.Image(sha256 = "sha-pinned", mime = "image/png")
+                )
+            )
+        )
+
+        // Second read of the same file — text-only.
+        cm.addAssistantMessage(
+            ChatMessage(
+                role = "assistant", content = null,
+                toolCalls = listOf(
+                    ToolCall(id = "c2", type = "function", function = FunctionCall("read_file", """{"path":"foo.kt"}"""))
+                )
+            )
+        )
+        cm.addToolResult(
+            toolCallId = "c2",
+            content = "[read_file for 'foo.kt'] Result:\nversion 2",
+            isError = false,
+            toolName = "read_file"
+        )
+
+        // Re-bootstrap fileReadIndices: the manual addAssistantMessage path bypasses
+        // the dedup tracking that addToolResult does, so we trigger a rebuild via
+        // restoreMessages with the same content.
+        cm.restoreMessages(cm.exportMessages())
+
+        cm.deduplicateFileReads()
+
+        // The image-bearing tool result must NOT have been replaced with the
+        // dedup notice — its image part is load-bearing context.
+        val toolResults = cm.getMessages().filter { it.role == "tool" }
+        assertEquals(2, toolResults.size, "Expected both tool results to be present")
+
+        val pinned = toolResults.firstOrNull { msg ->
+            msg.parts?.any { it is ContentPart.Image } == true
+        }
+        assertNotNull(pinned, "Image-bearing tool result should still be present")
+        assertTrue(
+            pinned!!.content!!.contains("version 1 (with screenshot)"),
+            "Pinned image-bearing tool result content must NOT have been replaced with a dedup notice; got: ${pinned.content}"
+        )
+        assertFalse(
+            pinned.content!!.contains("previously read"),
+            "Pinned image-bearing tool result must not contain dedup notice phrasing"
+        )
+    }
+
+    // ---- Stage 2 pin: truncation must not drop an image-bearing message ----
+
+    @Test
+    fun `Stage 2 truncation preserves image-bearing tool_result in the middle`() {
+        val cm = ContextManager(maxInputTokens = 1000)
+        // First task pair (always preserved by Stage 2 — Cline keeps the task description).
+        cm.addUserMessage("Initial task")
+        cm.addAssistantMessage(ChatMessage(role = "assistant", content = "starting"))
+
+        // Filler turns 1..2 — first half of the candidate truncation range.
+        for (i in 1..2) {
+            cm.addUserMessage("filler q$i")
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = "filler a$i"))
+        }
+
+        // Inject an image-bearing user-side turn squarely inside the candidate
+        // truncation range. addUserMessageWithParts populates ChatMessage.parts
+        // with a ContentPart.Image, which `hasImageParts()` detects.
+        // With messages.size=20 and HALF strategy, Cline computes range [2, 9]
+        // (rangeStart=2, messagesToRemove=floorDiv(18,4)*2=8). The image-bearing
+        // user message lands at index 6 — inside the range — so without pinning
+        // it would be dropped.
+        cm.addUserMessageWithParts(
+            parts = listOf(
+                ContentPart.Text("here is a screenshot mid-conversation"),
+                ContentPart.Image(sha256 = "sha-mid", mime = "image/png")
+            )
+        )
+        cm.addAssistantMessage(ChatMessage(role = "assistant", content = "noted the image"))
+
+        // More filler turns 3..8 (six more pairs to reach messages.size = 20).
+        for (i in 3..8) {
+            cm.addUserMessage("filler q$i")
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = "filler a$i"))
+        }
+
+        // Sanity check the fixture matches the math the assertion relies on.
+        assertEquals(20, cm.messageCount(), "fixture: messages.size must be 20 to land HALF range at [2,9]")
+
+        cm.truncateConversation(TruncationStrategy.HALF)
+
+        // After truncation, the image-bearing message must still be present.
+        val survived = cm.getMessages().any { msg ->
+            msg.parts?.any { it is ContentPart.Image && it.sha256 == "sha-mid" } == true
+        }
+        assertTrue(survived, "Image-bearing message must survive Stage 2 truncation (Cline pinning rule)")
     }
 }
