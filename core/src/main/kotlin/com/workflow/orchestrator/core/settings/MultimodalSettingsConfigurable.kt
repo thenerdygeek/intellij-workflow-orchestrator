@@ -44,6 +44,21 @@ class MultimodalSettingsConfigurable(private val project: Project) : SearchableC
                             "paste/drag-drop reject image content."
                     )
                 }
+                row {
+                    checkBox("Auto-load images from tool results")
+                        .bindSelected(
+                            { settings.state.enableToolImageAutoload },
+                            { settings.state.enableToolImageAutoload = it }
+                        )
+                    cell()
+                }
+                row {
+                    comment(
+                        "When a tool (e.g. Jira download_attachment) returns an image, " +
+                            "send it to the model as vision input — same path as paste/upload. " +
+                            "Disable to keep tool images as opaque file references."
+                    )
+                }
             }
 
             group("Limits") {
