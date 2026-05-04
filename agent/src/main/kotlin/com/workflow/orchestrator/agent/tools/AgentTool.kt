@@ -210,6 +210,16 @@ data class ToolResult(
     val content: String,
     val summary: String,
     val tokenEstimate: Int,
+    /**
+     * Image attachments produced by this tool and stored in the active session's
+     * AttachmentStore. Phase 4 of the multimodal-agent plan: tools (e.g. Jira
+     * download_attachment) populate this list so AgentLoop emits one
+     * `ContentBlock.ImageRef` per ref alongside the `ContentBlock.ToolResult` —
+     * the next LLM turn's BrainRouter then routes through the vision path.
+     *
+     * Default empty list keeps every existing tool unchanged.
+     */
+    val imageRefs: List<com.workflow.orchestrator.core.services.ToolResult.ImageRefData> = emptyList(),
     val artifacts: List<String> = emptyList(),
     val isError: Boolean = false,
     @Deprecated("Use ToolResult.type instead") val isCompletion: Boolean = false,
