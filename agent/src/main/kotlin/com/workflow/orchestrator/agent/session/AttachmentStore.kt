@@ -52,6 +52,21 @@ class AttachmentStore(private val sessionDir: Path) {
         mime: String,
         originalFilename: String?,
     ): AttachmentRef = withContext(Dispatchers.IO) {
+        storeBlocking(bytes, mime, originalFilename)
+    }
+
+    /**
+     * Synchronous variant of [store] for callers running on threads that
+     * have no coroutine context (e.g. CEF's network thread inside
+     * [com.workflow.orchestrator.agent.ui.AttachmentUploadHandler]).
+     * The work is pure JDK file I/O so a thread switch isn't required —
+     * the caller must already be off-EDT.
+     */
+    fun storeBlocking(
+        bytes: ByteArray,
+        mime: String,
+        originalFilename: String?,
+    ): AttachmentRef {
         val sha = sha256(bytes)
         val ext = mimeToExtension(mime)
         val finalPath = pathFor(sha, ext)
@@ -75,7 +90,7 @@ class AttachmentStore(private val sessionDir: Path) {
                 throw e
             }
         }
-        AttachmentRef(
+        return AttachmentRef(
             sha256 = sha,
             mime = mime,
             size = bytes.size.toLong(),
@@ -89,14 +104,22 @@ class AttachmentStore(private val sessionDir: Path) {
      * exists in this session's `attachments/` dir.
      */
     suspend fun read(sha256: String): ByteArray? = withContext(Dispatchers.IO) {
-        if (!Files.exists(attachmentsDir)) return@withContext null
+        readBlocking(sha256)
+    }
+
+    /**
+     * Synchronous variant of [read] — see [storeBlocking] for rationale.
+     * Caller must be off-EDT.
+     */
+    fun readBlocking(sha256: String): ByteArray? {
+        if (!Files.exists(attachmentsDir)) return null
         val match = Files.list(attachmentsDir).use { stream ->
             stream
                 .filter { it.fileName.toString().startsWith("$sha256.") }
                 .findFirst()
                 .orElse(null)
         }
-        match?.let { Files.readAllBytes(it) }
+        return match?.let { Files.readAllBytes(it) }
     }
 
     /** Returns the absolute path where an attachment with [sha256] and [ext] would (or does) live. */

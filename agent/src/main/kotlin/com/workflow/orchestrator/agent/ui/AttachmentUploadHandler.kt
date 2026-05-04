@@ -1,7 +1,6 @@
 package com.workflow.orchestrator.agent.ui
 
 import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.progress.runBlockingCancellable
 import com.workflow.orchestrator.agent.session.AttachmentStore
 import com.workflow.orchestrator.core.settings.PluginSettings
 import org.cef.callback.CefCallback
@@ -30,9 +29,11 @@ import org.cef.network.CefResponse
  * active session's directory or images would land in another session's
  * `attachments/` folder.
  *
- * **Threading.** Runs on the CEF network thread (NOT EDT).
- * [runBlockingCancellable] around [AttachmentStore.store] keeps coroutine
- * cancellation propagating through any IDE-level progress indicator.
+ * **Threading.** Runs on the CEF network thread (NOT EDT). Calls
+ * [AttachmentStore.storeBlocking] (synchronous JDK file I/O) — coroutine
+ * machinery is intentionally avoided because the CEF network thread has
+ * no ambient IDE Job/ProgressIndicator and `runBlockingCancellable`
+ * throws `IllegalStateException` there.
  *
  * **Validation.** Size and MIME validation run twice — once client-side in
  * `AttachmentManager.attachFile` (so the user gets an immediate toast and we
@@ -151,7 +152,12 @@ class AttachmentUploadHandler(
                         callback.Continue()
                         return true
                     }
-                    val ref = runBlockingCancellable { store.store(bytes, mime, originalFilename) }
+                    // Synchronous storeBlocking — CEF's network thread has no
+                    // IDE ProgressIndicator/Job, so runBlockingCancellable
+                    // throws "There is no ProgressIndicator or Job in this
+                    // thread". storeBlocking is pure JDK file I/O on this
+                    // off-EDT thread, so no coroutine machinery is needed.
+                    val ref = store.storeBlocking(bytes, mime, originalFilename)
                     LOG.info("AttachmentUploadHandler: stored sha256=${ref.sha256.take(12)}… size=${ref.size}")
                     // Best-effort sanity-check: client-computed sha256 should match
                     // server-computed. A mismatch typically means the bytes were

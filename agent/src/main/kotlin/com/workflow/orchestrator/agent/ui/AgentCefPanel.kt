@@ -606,9 +606,11 @@ class AgentCefPanel(
             val exists = if (dir != null) {
                 try {
                     val store = com.workflow.orchestrator.agent.session.AttachmentStore(dir)
-                    com.intellij.openapi.progress.runBlockingCancellable {
-                        store.read(sha256) != null
-                    }
+                    // Synchronous readBlocking — JBCefJSQuery handlers run off
+                    // the IDE's coroutine context so runBlockingCancellable
+                    // throws "There is no ProgressIndicator or Job". The op is
+                    // pure JDK file I/O (single directory scan + small read).
+                    store.readBlocking(sha256) != null
                 } catch (e: Exception) {
                     LOG.warn("attachmentExistsQuery: read failed for $sha256", e)
                     false
