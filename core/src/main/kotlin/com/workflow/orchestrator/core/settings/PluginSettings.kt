@@ -257,6 +257,30 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
          */
         var imageMimeWhitelist by list<String>()
 
+        // ── Tool-produced image auto-load (Phase 4 of multimodal-agent plan) ─────
+        //
+        // Controls whether tool results that produce image bytes (e.g. Jira
+        // download_attachment of a PNG) automatically materialize into the
+        // active session's AttachmentStore so the next LLM turn routes through
+        // the vision path.
+
+        /**
+         * Master toggle for tool-produced image auto-loading. When false, tool
+         * results are emitted text-only and image bytes never reach the
+         * AttachmentStore even if a tool would otherwise auto-load them.
+         */
+        var enableToolImageAutoload: Boolean = true
+
+        /**
+         * MIME types eligible for tool-produced image auto-load. Default mirrors
+         * the user-paste whitelist surface (PNG, JPEG, WebP, GIF) — the user-paste
+         * path uses [imageMimeWhitelist] for input validation, this mirror is the
+         * dual filter for tool output.
+         */
+        var toolImageAutoloadMimeWhitelist: MutableSet<String> = mutableSetOf(
+            "image/png", "image/jpeg", "image/webp", "image/gif"
+        )
+
         init {
             // Populate default whitelist on first instantiation. Persisted lists
             // round-trip independently — if the user clears the list it stays
