@@ -35,7 +35,7 @@ class RunCommandTool(
     allowedShells: List<String> = listOf("bash", "cmd", "powershell")
 ) : AgentTool {
     override val name = "run_command"
-    override val description = "Execute a CLI command on the system. Use this when you need to perform system operations or run specific commands to accomplish any step in the user's task. You must tailor your command to the user's system and provide a clear explanation of what the command does via the description parameter. For command chaining, use the appropriate chaining syntax for the shell (e.g., '&&' for bash). Prefer to execute complex CLI commands over creating executable scripts, as they are more flexible and easier to run. Commands will be executed in the project directory by default. You MUST specify the shell type matching the available shells listed in your environment. If the process goes idle (no output for the idle timeout period), an inline classification note is emitted and the tool keeps waiting (on_idle=notify, default) — or idle detection is skipped entirely (on_idle=wait). Dangerous commands are blocked by the safety analyzer."
+    override val description = "Execute a CLI command on the system. Use this when you need to perform system operations or run specific commands to accomplish any step in the user's task. You must tailor your command to the user's system and provide a clear explanation of what the command does via the description parameter. For command chaining, use the appropriate chaining syntax for the shell (e.g., '&&' for bash). Prefer to execute complex CLI commands over creating executable scripts, as they are more flexible and easier to run. Commands will be executed in the project directory by default. You MUST specify the shell type matching the available shells listed in your environment. DO NOT prefix the command with a shell wrapper yourself (e.g. 'cmd /c ...', 'bash -c ...', 'powershell -Command ...') — the tool already wraps the command in the shell selected by the `shell` parameter. Pre-wrapping creates double-shell nesting that breaks quoting on Windows. Idle detection: if the process goes idle (no output for the idle timeout period), the tail is classified as PASSWORD_PROMPT / STDIN_PROMPT / GENERIC_IDLE. PASSWORD_PROMPT terminates immediately (use ask_user_input). STDIN_PROMPT terminates after a second consecutive idle window with the same prompt-shape (use background=true + send_stdin for interactive flows). GENERIC_IDLE notifies and keeps waiting. Set on_idle=wait to disable all idle handling. Dangerous commands are blocked by the safety analyzer."
     override val parameters: FunctionParameters = buildShellParameters(allowedShells)
     override val allowedWorkers = setOf(WorkerType.CODER)
     override val timeoutMs: Long get() = AgentTool.LONG_TOOL_TIMEOUT_MS
@@ -173,8 +173,19 @@ class RunCommandTool(
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         // 1. Parse params
-        val command = params["command"]?.jsonPrimitive?.content
+        val rawCommand = params["command"]?.jsonPrimitive?.content
             ?: return ToolResult("Error: 'command' parameter required", "Error: missing command", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+
+        // Defense-in-depth: strip a redundant leading shell prefix (cmd /c, bash -c,
+        // powershell -Command). The tool already wraps in a ShellResolver-selected
+        // shell, so an inner shell layer creates double-wrapping that mangles
+        // quoting on Windows (cmd-on-cmd) and adds no value on Unix.
+        val stripped = com.workflow.orchestrator.agent.tools.process.CommandPrefixStripper.strip(rawCommand)
+        val command = stripped.command
+        val prefixWarning: String? = stripped.strippedPrefix?.let { prefix ->
+            "[NOTE] Stripped redundant shell prefix '$prefix' — run_command already wraps your command in a shell. " +
+                "Pass the bare command next time."
+        }
 
         val shell = params["shell"]?.jsonPrimitive?.content?.lowercase()
         val separateStderr = params["separate_stderr"]?.jsonPrimitive?.boolean ?: false
@@ -350,6 +361,13 @@ class RunCommandTool(
             } else null
 
             // 11. Monitor loop
+            // Tracks consecutive LIKELY_STDIN_PROMPT classifications across idle
+            // windows so a transient prompt-shaped tail (e.g. JSON closing `>`)
+            // gets one notify before we kill — but a sustained interactive prompt
+            // (cmd.exe banner, REPL waiting for input) terminates fast instead of
+            // burning the full timeout.
+            var consecutiveStdinPrompts = 0
+            var outputSizeAtLastClassification = 0
             while (true) {
                 coroutineContext.ensureActive()
                 delay(500)
@@ -360,7 +378,7 @@ class RunCommandTool(
                     readerThread.join(IO_DRAIN_TIMEOUT_MS)
                     stderrReaderThread?.join(IO_DRAIN_TIMEOUT_MS)
                     ProcessRegistry.unregister(toolCallId)
-                    return buildExitResult(managed, command, params, stderrLines)
+                    return buildExitResult(managed, command, params, stderrLines, prefixWarning)
                 }
 
                 // Priority 2: total timeout
@@ -368,7 +386,7 @@ class RunCommandTool(
                     ProcessRegistry.kill(toolCallId)
                     readerThread.join(IO_DRAIN_TIMEOUT_MS)
                     stderrReaderThread?.join(IO_DRAIN_TIMEOUT_MS)
-                    return buildTimeoutResult(managed, timeoutSeconds)
+                    return buildTimeoutResult(managed, timeoutSeconds, prefixWarning)
                 }
 
                 // Priority 3: idle classification per on_idle policy
@@ -385,9 +403,58 @@ class RunCommandTool(
                         .lines().takeLast(40).joinToString("\n")
                     val classification = com.workflow.orchestrator.agent.tools.process
                         .PromptHeuristics.classify(tail)
+
+                    // Reset the consecutive-prompt counter if real output appeared
+                    // since the previous classification — the prompt was transient.
+                    val currentSize = managed.outputLines.size
+                    if (currentSize != outputSizeAtLastClassification) {
+                        consecutiveStdinPrompts = 0
+                    }
+                    outputSizeAtLastClassification = currentSize
+
                     val note = buildIdleNote(classification, idleThresholdMs / 1000)
                     activeStreamCallback?.invoke(toolCallId, note)
-                    // NOTE: on_idle=notify keeps the loop going — do NOT return here.
+
+                    when (classification) {
+                        is com.workflow.orchestrator.agent.tools.process.IdleClassification.LikelyPasswordPrompt -> {
+                            // No recovery path without user input — terminate now and route
+                            // the LLM to ask_user_input.
+                            ProcessRegistry.kill(toolCallId)
+                            readerThread.join(IO_DRAIN_TIMEOUT_MS)
+                            stderrReaderThread?.join(IO_DRAIN_TIMEOUT_MS)
+                            return buildPromptStuckResult(
+                                managed,
+                                "PASSWORD_PROMPT",
+                                classification.promptText,
+                                "Process was waiting for a password. Use ask_user_input to obtain credentials, " +
+                                    "then re-run with the secret in the env parameter (never inline in command).",
+                                prefixWarning,
+                            )
+                        }
+                        is com.workflow.orchestrator.agent.tools.process.IdleClassification.LikelyStdinPrompt -> {
+                            consecutiveStdinPrompts++
+                            if (consecutiveStdinPrompts >= 2) {
+                                // Two consecutive idle windows ending in a prompt-shaped
+                                // tail with no output between them — process is genuinely
+                                // stuck waiting on stdin. Kill instead of burning timeout.
+                                ProcessRegistry.kill(toolCallId)
+                                readerThread.join(IO_DRAIN_TIMEOUT_MS)
+                                stderrReaderThread?.join(IO_DRAIN_TIMEOUT_MS)
+                                return buildPromptStuckResult(
+                                    managed,
+                                    "STDIN_PROMPT",
+                                    classification.promptText,
+                                    "Process appeared stuck at an interactive prompt for two idle windows. " +
+                                        "Use background=true with send_stdin/background_process for interactive flows, " +
+                                        "or set on_idle=wait if the prompt-shape is expected.",
+                                    prefixWarning,
+                                )
+                            }
+                        }
+                        is com.workflow.orchestrator.agent.tools.process.IdleClassification.GenericIdle -> {
+                            consecutiveStdinPrompts = 0
+                        }
+                    }
                 }
             }
             @Suppress("UNREACHABLE_CODE")
@@ -521,7 +588,8 @@ class RunCommandTool(
         managed: ManagedProcess,
         command: String,
         params: JsonObject,
-        stderrLines: List<String>?
+        stderrLines: List<String>?,
+        prefixWarning: String? = null,
     ): ToolResult {
         val rawOutput = collectOutput(managed)
         val processed = OutputCollector.processOutputTailBiased(
@@ -534,6 +602,7 @@ class RunCommandTool(
         val exitCode = managed.process.exitValue()
 
         val contentBuilder = StringBuilder()
+        if (prefixWarning != null) contentBuilder.append(prefixWarning).append("\n\n")
         contentBuilder.append("Exit code: $exitCode\n")
         contentBuilder.append(processed.content)
 
@@ -565,7 +634,11 @@ class RunCommandTool(
         )
     }
 
-    private fun buildTimeoutResult(managed: ManagedProcess, timeoutSeconds: Long): ToolResult {
+    private fun buildTimeoutResult(
+        managed: ManagedProcess,
+        timeoutSeconds: Long,
+        prefixWarning: String? = null,
+    ): ToolResult {
         val rawOutput = collectOutput(managed)
         val processed = OutputCollector.processOutputTailBiased(
             rawOutput = rawOutput,
@@ -573,12 +646,44 @@ class RunCommandTool(
             spillDir = null,
             toolCallId = currentToolCallId.get()
         )
-        val content = "[TIMEOUT] Command timed out after ${timeoutSeconds}s.\nPartial output:\n${processed.content}"
+        val prefixSection = if (prefixWarning != null) "$prefixWarning\n\n" else ""
+        val content = "${prefixSection}[TIMEOUT] Command timed out after ${timeoutSeconds}s.\nPartial output:\n${processed.content}"
         return ToolResult(
             content = content,
             summary = "Error: command timed out",
             tokenEstimate = TokenEstimator.estimate(content),
             isError = true
+        )
+    }
+
+    private fun buildPromptStuckResult(
+        managed: ManagedProcess,
+        category: String,
+        promptText: String,
+        recoveryHint: String,
+        prefixWarning: String? = null,
+    ): ToolResult {
+        val rawOutput = collectOutput(managed)
+        val processed = OutputCollector.processOutputTailBiased(
+            rawOutput = rawOutput,
+            maxResultChars = outputConfig.maxChars,
+            spillDir = null,
+            toolCallId = currentToolCallId.get()
+        )
+        val prefixSection = if (prefixWarning != null) "$prefixWarning\n\n" else ""
+        val content = buildString {
+            append(prefixSection)
+            append("[$category] Process killed: it appeared to be waiting for interactive input.\n")
+            append("Detected prompt: \"$promptText\"\n")
+            append(recoveryHint)
+            append("\n\nPartial output:\n")
+            append(processed.content)
+        }
+        return ToolResult(
+            content = content,
+            summary = "Error: $category — process killed waiting on input",
+            tokenEstimate = TokenEstimator.estimate(content),
+            isError = true,
         )
     }
 
