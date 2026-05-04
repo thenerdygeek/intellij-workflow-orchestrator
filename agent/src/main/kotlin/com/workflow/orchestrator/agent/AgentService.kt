@@ -497,6 +497,26 @@ class AgentService(
     /** Provider for the task-system tools — returns null when no session is active. */
     fun currentTaskStore(): TaskStore? = taskStore
 
+    /**
+     * Session-scoped [com.workflow.orchestrator.agent.session.AttachmentStore].
+     *
+     * Multimodal-agent Phase 3 — hoisted out of the per-`wrapBrainWithRouter`
+     * local so the agent loop's tool-invocation wrapper can install a
+     * [com.workflow.orchestrator.agent.tool.SessionAttachmentAccess] coroutine
+     * element pointing at the SAME instance the [BrainRouter] holds. Without
+     * this single-instance contract, paste-image (BrainRouter side) and
+     * tool-image (tool side) would write to different `AttachmentStore`
+     * objects — and although both point at the same on-disk directory, the
+     * single-instance invariant keeps the "exactly one store per session"
+     * design unambiguous and protects against future caching layers.
+     *
+     * Initialised on the first [wrapBrainWithRouter] call within a task,
+     * reused by subsequent recycle/fallback wraps for the same session,
+     * cleared in [resetForNewChat] so each chat gets a fresh store.
+     */
+    @Volatile private var activeAttachmentStore:
+        com.workflow.orchestrator.agent.session.AttachmentStore? = null
+
     /** Model ID of the currently active parent brain. Subagents inherit this as their default model. */
     @Volatile private var currentBrainModelId: String? = null
 
@@ -707,7 +727,13 @@ class AgentService(
         onBadgeFire: () -> Unit,
         catalog: com.workflow.orchestrator.core.ai.ModelCatalogService,
     ): LlmBrain {
-        val attachmentStore = com.workflow.orchestrator.agent.session.AttachmentStore(sessionDir)
+        // Multimodal-agent Phase 3 — hoist the AttachmentStore so AgentLoop's
+        // tool-invocation wrapper sees the SAME instance the BrainRouter
+        // routes through. Reused across recycle/fallback wraps within a
+        // session; first call initialises, [resetForNewChat] clears.
+        val attachmentStore = activeAttachmentStore
+            ?: com.workflow.orchestrator.agent.session.AttachmentStore(sessionDir)
+                .also { activeAttachmentStore = it }
         val streamClient = com.workflow.orchestrator.core.ai.SourcegraphCompletionsStreamClient(
             baseUrl = sgUrl,
             tokenProvider = tokenProvider,
@@ -1900,6 +1926,12 @@ class AgentService(
                     paramNameProvider = { registry.allParamNames() },
                     outputSpiller = _outputSpiller,
                     onUserInputReceived = onUserInputReceived,
+                    // Multimodal-agent Phase 3 — provide the session-scoped
+                    // AttachmentStore so AgentLoop wraps every tool invocation
+                    // in a SessionAttachmentAccess coroutine element. Tools
+                    // resolving via :core/AttachmentSink see the SAME store
+                    // BrainRouter routes through.
+                    attachmentStoreProvider = { activeAttachmentStore },
                 )
 
                 // I4: Set activeTask atomically after both loop and job are available
@@ -2514,6 +2546,9 @@ class AgentService(
         activeTask.set(null)
         _outputSpiller = null  // Clear session-scoped spiller so the next session gets a fresh one
         taskStore = null       // Clear session-scoped task store
+        // Multimodal-agent Phase 3 — clear hoisted AttachmentStore so the
+        // next session constructs a fresh one against its own session dir.
+        activeAttachmentStore = null
         sessionRuntime.clear() // Drop per-conversation counters + token/cost running totals
         sessionDisposableHolder.resetSession()
     }

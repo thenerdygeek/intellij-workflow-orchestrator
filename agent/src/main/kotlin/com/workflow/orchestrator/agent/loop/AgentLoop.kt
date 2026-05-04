@@ -390,6 +390,20 @@ class AgentLoop(
     initialInputTokens: Int = 0,
     initialOutputTokens: Int = 0,
     initialCostUsd: Double? = null,
+    /**
+     * Provider that returns the active session's [AttachmentStore]. When non-null
+     * and the call returns a non-null store, every tool invocation is wrapped in
+     * an [AgentLoopAttachmentScope.runWithStore] block so feature-module tools can
+     * resolve the store via [com.workflow.orchestrator.agent.tool.SessionAttachmentAccess].
+     *
+     * Default returns null (no store installed) — preserves backward compatibility
+     * for tests and sub-agent loops where no per-session attachment store has
+     * been provisioned. Multimodal-agent Phase 3 wires this from
+     * [com.workflow.orchestrator.agent.AgentService] using the SAME instance the
+     * BrainRouter holds, so paste-image and tool-image flows share the
+     * content-addressed store.
+     */
+    private val attachmentStoreProvider: () -> AttachmentStore? = { null },
 ) {
     private val cancelled = AtomicBoolean(false)
     private var totalTokensUsed = 0
@@ -1532,11 +1546,24 @@ class AgentLoop(
             if (toolName in STREAMING_TOOLS) RunCommandTool.currentSessionId.set(sessionId)
             val toolResult = try {
                 val timeout = tool.timeoutMs
-                if (timeout == Long.MAX_VALUE) {
+                val attachmentStore = attachmentStoreProvider()
+                // Multimodal-agent Phase 3 — install SessionAttachmentAccess around
+                // the tool invocation so feature-module tools (e.g. JiraTool) can
+                // deposit image bytes via :core/AttachmentSink without taking a
+                // direct dependency on :agent. Skipped when no store is provisioned
+                // (sub-agents, tests) — preserves prior behavior bit-for-bit.
+                suspend fun executeOnce(): ToolResult = if (attachmentStore != null) {
+                    AgentLoopAttachmentScope.runWithStore(attachmentStore) {
+                        tool.execute(params, project)
+                    }
+                } else {
                     tool.execute(params, project)
+                }
+                if (timeout == Long.MAX_VALUE) {
+                    executeOnce()
                 } else {
                     withTimeoutOrNull(timeout) {
-                        tool.execute(params, project)
+                        executeOnce()
                     } ?: ToolResult(
                         content = "Error: Tool '$toolName' timed out after ${timeout / 1000}s. " +
                             "The operation took too long. Try a more specific query or smaller scope.",
