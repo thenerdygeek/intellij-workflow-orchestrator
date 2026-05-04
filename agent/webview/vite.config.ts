@@ -63,7 +63,10 @@ export default defineConfig(({ mode }) => ({
     assetsInlineLimit: 8192,
     minify: 'terser',
     terserOptions: {
-      compress: { drop_console: true, drop_debugger: true },
+      // drop_console stripped multimodal:attach diagnostic logs from production
+      // builds, making attach-flow bugs invisible. Preserve console.* but keep
+      // debugger-statement removal.
+      compress: { drop_console: false, drop_debugger: true },
     },
   },
 }))
