@@ -1267,8 +1267,39 @@ class AgentLoop(
                 hasContent -> {
                     val isSyntheticAbort = response.id.startsWith("router-step1-")
                     if (isSyntheticAbort) {
-                        LOG.info("[Loop] Synthetic router abort (id=${response.id}) — not counting as mistake; loop continues so the model can react")
-                        continue
+                        // BrainRouter aborted step 1 (HTTP failure / abstention / empty response).
+                        // The synthetic assistant turn carrying the user-visible abort message has
+                        // already been persisted at Stage 4 above. Terminate the task cleanly so
+                        // the user sees the explanation as the agent's final response.
+                        //
+                        // Why NOT just `continue`: the image is still in conversation context and
+                        // the next iteration would re-route to two-step → step 1 returns empty
+                        // again → infinite loop until maxIterations=200. Terminating here breaks
+                        // the cycle and surfaces the abort message immediately.
+                        //
+                        // Why NOT count as a mistake: the model never actually replied — the
+                        // router synthesized this response on its own. Counting would trip the
+                        // consecutive-mistakes nudge after 3 image-bearing iterations even though
+                        // the model is innocent of any "text-only" behavior.
+                        LOG.warn("[Loop] Synthetic router abort (id=${response.id}) — terminating task; vision pipeline failed")
+                        onDebugLog?.invoke(
+                            "warn",
+                            "loop_exit",
+                            "Exit: synthetic_router_abort",
+                            mapOf("id" to response.id, "iteration" to iteration),
+                        )
+                        sessionMetrics?.recordIterationEnd()
+                        return LoopResult.Completed(
+                            summary = assistantMessage.content ?: "",
+                            iterations = iteration,
+                            tokensUsed = totalTokensUsed,
+                            completionData = null,
+                            inputTokens = totalInputTokens,
+                            outputTokens = totalOutputTokens,
+                            filesModified = filesModifiedList(),
+                            linesAdded = totalLinesAdded,
+                            linesRemoved = totalLinesRemoved,
+                        )
                     }
                     consecutiveMistakes++
                     LOG.info("[Loop] Text-only response (no tool calls) — mistake $consecutiveMistakes/$maxConsecutiveMistakes")
