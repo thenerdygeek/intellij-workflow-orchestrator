@@ -1659,14 +1659,16 @@ class AgentLoop(
             // Persist tool result to both files (Cline pattern — awaited inline).
             // Routes through the AgentLoopTestSupport seam so the emission shape is
             // pinned by AgentLoopToolImageEmissionTest. The local `toolResult` is the
-            // agent-internal `agent.tools.ToolResult` (no imageRefs field today), so we
-            // adapt it to a `core.services.ToolResult<*>` with empty imageRefs. Phase 4
-            // (Jira download_attachment auto-load) extends this to surface populated
-            // imageRefs through the seam.
+            // agent-internal `agent.tools.ToolResult` which carries `imageRefs` for
+            // tool-produced images (Phase 4 of multimodal-agent plan); we forward
+            // them into the core seam so the seam emits one ContentBlock.ImageRef per
+            // attachment alongside the ContentBlock.ToolResult — the next LLM turn's
+            // BrainRouter then routes through the vision path.
             val coreResultForSeam = com.workflow.orchestrator.core.services.ToolResult<Unit>(
                 data = Unit,
                 summary = toolResult.summary,
-                isError = toolResult.isError
+                isError = toolResult.isError,
+                imageRefs = toolResult.imageRefs
             )
             val historyMessage = AgentLoopTestSupport.buildToolResultApiMessage(
                 toolUseId = toolCallId,
