@@ -468,11 +468,13 @@ description optional: for approval dialog on write actions.
                 val coreResult = service.downloadAttachment(key, attachmentId)
                 val base = coreResult.toAgentToolResult()
                 if (base.isError) return base
+                val policy = resolveAutoLoadPolicy(project)
+                val withImages = autoLoadImageIfApplicable(coreResult.data, base, policy)
                 // Append a read_document hint for document-class files so the LLM
                 // knows it can extract text content without guessing the next step.
                 val hint = buildReadDocumentHint(coreResult.data.mimeType, coreResult.data.filename, coreResult.data.filePath)
-                if (hint == null) base
-                else base.copy(content = base.content + "\n\n" + hint)
+                if (hint == null) withImages
+                else withImages.copy(content = withImages.content + "\n\n" + hint)
             }
 
             else -> ToolResult(
@@ -553,17 +555,101 @@ description optional: for approval dialog on write actions.
      * Package-private test entry point for download_attachment — bypasses IntelliJ service lookup.
      * Tests can call this directly with a mocked [JiraService] to verify hint injection
      * without requiring the IntelliJ platform.
+     *
+     * Auto-load policy defaults to disabled so existing hint-only tests stay green;
+     * the [policy] parameter overload exercises the Phase 4 auto-load path.
      */
     internal suspend fun executeDownloadAttachmentForTest(
         key: String,
         attachmentId: String,
-        service: com.workflow.orchestrator.core.services.JiraService
+        service: com.workflow.orchestrator.core.services.JiraService,
+        policy: AutoLoadPolicy = AutoLoadPolicy.DISABLED,
     ): ToolResult {
         val coreResult = service.downloadAttachment(key, attachmentId)
         val base = coreResult.toAgentToolResult()
         if (base.isError) return base
+        val withImages = autoLoadImageIfApplicable(coreResult.data, base, policy)
         val hint = buildReadDocumentHint(coreResult.data.mimeType, coreResult.data.filename, coreResult.data.filePath)
-        return if (hint == null) base else base.copy(content = base.content + "\n\n" + hint)
+        return if (hint == null) withImages else withImages.copy(content = withImages.content + "\n\n" + hint)
+    }
+
+    /**
+     * Auto-load policy for tool-produced image attachments. Constructed from
+     * [com.workflow.orchestrator.core.settings.PluginSettings] in production
+     * via [resolveAutoLoadPolicy]; tests pass it directly so they don't have
+     * to mock IntelliJ's project-scoped service lookup.
+     */
+    internal data class AutoLoadPolicy(
+        val enabled: Boolean,
+        val mimeWhitelist: Set<String>,
+    ) {
+        companion object {
+            /** Policy used when auto-load must not engage (test default + IntelliJ-services-unavailable fallback). */
+            val DISABLED = AutoLoadPolicy(enabled = false, mimeWhitelist = emptySet())
+        }
+    }
+
+    /**
+     * Reads the per-project auto-load policy from [PluginSettings]. Wrapped in a
+     * try/catch because tools may run outside the IntelliJ runtime in some test
+     * paths; in that case auto-load is silently disabled (best-effort).
+     */
+    private fun resolveAutoLoadPolicy(project: Project): AutoLoadPolicy {
+        return try {
+            val state = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).state
+            AutoLoadPolicy(
+                enabled = state.enableToolImageAutoload,
+                mimeWhitelist = state.toolImageAutoloadMimeWhitelist.toSet()
+            )
+        } catch (_: Exception) {
+            AutoLoadPolicy.DISABLED
+        }
+    }
+
+    /**
+     * If [data] is an image whose MIME passes [policy], read the bytes from
+     * [com.workflow.orchestrator.core.model.jira.AttachmentContentData.filePath]
+     * and store them in the active session's [com.workflow.orchestrator.agent.session.AttachmentStore].
+     * Returns [base] augmented with an `imageRefs` entry so the AgentLoop emits
+     * `ContentBlock.ImageRef` blocks alongside the text result.
+     *
+     * Best-effort: any failure (settings off, MIME not whitelisted, file
+     * unreadable, no session store on coroutine context) falls back to [base]
+     * unchanged so the LLM still sees the text-only download confirmation.
+     */
+    private suspend fun autoLoadImageIfApplicable(
+        data: com.workflow.orchestrator.core.model.jira.AttachmentContentData,
+        base: ToolResult,
+        policy: AutoLoadPolicy,
+    ): ToolResult {
+        if (!policy.enabled) return base
+        val mime = data.mimeType.orEmpty()
+        if (!mime.startsWith("image/")) return base
+        if (mime !in policy.mimeWhitelist) return base
+        if (data.filePath.isEmpty()) return base
+
+        val bytes = try {
+            java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(data.filePath))
+        } catch (_: Exception) {
+            return base
+        }
+        if (bytes.isEmpty()) return base
+
+        val store = com.workflow.orchestrator.agent.tool.SessionAttachmentAccess.current()
+            ?: return base
+        val ref = try {
+            store.store(bytes, mime, data.filename)
+        } catch (_: Exception) {
+            return base
+        }
+        return base.copy(
+            imageRefs = base.imageRefs + com.workflow.orchestrator.core.services.ToolResult.ImageRefData(
+                sha256 = ref.sha256,
+                mime = ref.mime,
+                size = ref.size,
+                originalFilename = ref.originalFilename,
+            )
+        )
     }
 
     /**
