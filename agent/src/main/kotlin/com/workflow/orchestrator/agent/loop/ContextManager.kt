@@ -350,11 +350,36 @@ class ContextManager(
      * and at which message index. This enables Stage 1 (duplicate file read
      * detection) during compaction.
      */
-    fun addToolResult(toolCallId: String, content: String, isError: Boolean, toolName: String? = null) {
+    fun addToolResult(
+        toolCallId: String,
+        content: String,
+        isError: Boolean,
+        toolName: String? = null,
+        imageRefs: List<ContentBlock.ImageRef> = emptyList(),
+    ) {
         val body = if (isError) "[ERROR] $content" else content
         val idx = messages.size
-        messages.add(ChatMessage(role = "tool", content = body, toolCallId = toolCallId))
-        LOG.debug("[Context] Tool result added: $toolCallId (${content.length} chars)")
+        // Multimodal: when the tool produced image attachments (e.g. jira.download_attachment
+        // on a PNG), seed the in-memory ChatMessage with structured `parts` so
+        // BrainRouter.hasImageParts() fires on the next turn. Without this the persisted
+        // ApiMessage carries ContentBlock.ImageRef alongside ToolResult, but the LLM-side
+        // context is text-only and the model genuinely cannot see the bytes.
+        val msg = if (imageRefs.isEmpty()) {
+            ChatMessage(role = "tool", content = body, toolCallId = toolCallId)
+        } else {
+            val parts = buildList<ContentPart> {
+                add(ContentPart.Text(body))
+                imageRefs.forEach { add(ContentPart.Image(sha256 = it.sha256, mime = it.mime)) }
+            }
+            ChatMessage(role = "tool", content = body, toolCallId = toolCallId, parts = parts)
+        }
+        messages.add(msg)
+        if (imageRefs.isNotEmpty()) {
+            LOG.info("[multimodal] ContextManager seeded tool-result turn with ${imageRefs.size} image part(s) (toolName=$toolName): " +
+                imageRefs.joinToString(",") { "${it.sha256.take(12)}…/${it.mime}" })
+        } else {
+            LOG.debug("[Context] Tool result added: $toolCallId (${content.length} chars)")
+        }
 
         // Track file reads for dedup (Cline pattern)
         if (!isError && toolName != null) {

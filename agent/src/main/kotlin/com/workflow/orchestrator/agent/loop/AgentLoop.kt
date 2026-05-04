@@ -1667,12 +1667,26 @@ class AgentLoop(
                 mapOf("tool" to toolName, "duration" to durationMs, "tokens" to actualTokenEstimate)
             )
 
-            // Add result to context
+            // Add result to context. When the tool produced image bytes
+            // (jira.download_attachment on a PNG, etc.), forward the imageRefs to
+            // ContextManager so the in-memory ChatMessage carries `parts` with
+            // ContentPart.Image — without this, BrainRouter.hasImageParts() returns
+            // false on the next iteration and the request goes to the text-only
+            // endpoint, so the LLM literally never sees the bytes the tool fetched.
+            val toolImageRefs = toolResult.imageRefs.map { ref ->
+                ContentBlock.ImageRef(
+                    sha256 = ref.sha256,
+                    mime = ref.mime,
+                    size = ref.size,
+                    originalFilename = ref.originalFilename,
+                )
+            }
             contextManager.addToolResult(
                 toolCallId = toolCallId,
                 content = truncatedContent,
                 isError = toolResult.isError,
-                toolName = toolName
+                toolName = toolName,
+                imageRefs = toolImageRefs,
             )
 
             // Persist tool result to both files (Cline pattern — awaited inline).
