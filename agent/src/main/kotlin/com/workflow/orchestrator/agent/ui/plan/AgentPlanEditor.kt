@@ -90,14 +90,12 @@ class AgentPlanEditor(
             null
         }
 
-        try {
-            org.cef.CefApp.getInstance().registerSchemeHandlerFactory(
-                CefResourceSchemeHandler.SCHEME,
-                CefResourceSchemeHandler.AUTHORITY
-            ) { _, _, _, _ -> CefResourceSchemeHandler() }
-        } catch (_: Exception) {
-            // Already registered — OK
-        }
+        // Use the shared registrar so we don't stomp on AgentCefPanel's
+        // upload-aware factory. The registrar's dispatching factory routes
+        // /upload/* to whatever handler factory the active chat panel has
+        // installed and falls through to CefResourceSchemeHandler for static
+        // assets (which is all this editor needs).
+        com.workflow.orchestrator.agent.ui.WorkflowAgentSchemeRegistrar.ensureRegistered()
         browser.loadURL(CefResourceSchemeHandler.BASE_URL + "plan-editor.html")
 
         browser.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {

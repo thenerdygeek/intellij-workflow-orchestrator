@@ -56,15 +56,13 @@ class AgentVisualizationEditor(
         .build()
 
     init {
-        // Load the React app via scheme handler (same as main chat panel)
-        try {
-            org.cef.CefApp.getInstance().registerSchemeHandlerFactory(
-                CefResourceSchemeHandler.SCHEME,
-                CefResourceSchemeHandler.AUTHORITY
-            ) { _, _, _, _ -> CefResourceSchemeHandler() }
-        } catch (_: Exception) {
-            // Already registered — OK
-        }
+        // Load the React app via scheme handler (same as main chat panel).
+        // Use the shared registrar so we don't stomp on AgentCefPanel's
+        // upload-aware factory. The registrar's dispatching factory routes
+        // /upload/* to whatever handler factory the active chat panel has
+        // installed and falls through to CefResourceSchemeHandler for static
+        // assets (which is all this editor needs).
+        WorkflowAgentSchemeRegistrar.ensureRegistered()
         browser.loadURL(CefResourceSchemeHandler.BASE_URL + "index.html")
 
         browser.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {

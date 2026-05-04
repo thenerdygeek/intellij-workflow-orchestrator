@@ -345,11 +345,18 @@ class AgentCefPanel(
             }
         )
 
-        // Register scheme handler factory for serving resources from JAR plus
-        // the Phase 5 image-attachment upload endpoint. The factory dispatches
-        // by URL: `/upload/<sha256>` POSTs go to AttachmentUploadHandler (which
-        // writes to the active session's AttachmentStore), everything else
-        // serves bundled webview assets via CefResourceSchemeHandler.
+        // Register the JVM-global `http://workflow-agent` scheme handler via the
+        // shared registrar (idempotent), then install our session-bound upload
+        // handler factory. The factory dispatches by URL: `/upload/<sha256>`
+        // POSTs go to a fresh AttachmentUploadHandler (which writes to the
+        // active session's AttachmentStore), everything else serves bundled
+        // webview assets via CefResourceSchemeHandler.
+        //
+        // The registrar exists because CefApp.registerSchemeHandlerFactory is a
+        // single-slot global — pre-registrar, AgentPlanEditor and
+        // AgentVisualizationEditor each registered their own static-asset-only
+        // factory and silently stomped on this panel's upload-aware factory,
+        // breaking image attachment. See WorkflowAgentSchemeRegistrar's KDoc.
         //
         // NOTE: loadURL is called AFTER all query registration + load handler setup
         // (see end of this method) to avoid a race where the page finishes loading
@@ -359,25 +366,25 @@ class AgentCefPanel(
                 com.intellij.openapi.project.ProjectManager.getInstance().openProjects.firstOrNull()
                     ?: com.intellij.openapi.project.ProjectManager.getInstance().defaultProject
             )
-            val factory = org.cef.callback.CefSchemeHandlerFactory { _, _, _, request ->
-                val url = request?.url
-                if (url != null && AttachmentUploadHandler.matches(url)) {
-                    AttachmentUploadHandler(
-                        attachmentStoreProvider = {
-                            val dir = currentSessionDirProvider?.invoke()
-                            if (dir != null) com.workflow.orchestrator.agent.session.AttachmentStore(dir) else null
-                        },
-                        settings = settings,
-                    )
-                } else {
-                    CefResourceSchemeHandler()
-                }
+            WorkflowAgentSchemeRegistrar.ensureRegistered()
+            WorkflowAgentSchemeRegistrar.setUploadHandlerFactory {
+                AttachmentUploadHandler(
+                    attachmentStoreProvider = {
+                        val dir = currentSessionDirProvider?.invoke()
+                        if (dir != null) com.workflow.orchestrator.agent.session.AttachmentStore(dir) else null
+                    },
+                    settings = settings,
+                )
             }
-            org.cef.CefApp.getInstance().registerSchemeHandlerFactory(
-                CefResourceSchemeHandler.SCHEME,
-                CefResourceSchemeHandler.AUTHORITY,
-                factory
-            )
+            // Detach our session-bound factory when this panel disposes so a
+            // stale closure can't outlive the panel's lifecycle. Safe even if
+            // another chat panel has already overwritten the reference — set is
+            // last-write-wins and we only clear when our reference is current
+            // (best effort: the JVM-global slot has no read-modify-write API,
+            // so we accept the rare race where two panels race-dispose).
+            Disposer.register(parentDisposable) {
+                WorkflowAgentSchemeRegistrar.setUploadHandlerFactory(null)
+            }
         } catch (e: Exception) {
             LOG.warn("AgentCefPanel: scheme handler registration failed", e)
         }
