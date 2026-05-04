@@ -14,6 +14,7 @@ import com.workflow.orchestrator.core.ai.dto.FunctionCall
 import com.workflow.orchestrator.core.ai.dto.FunctionDefinition
 import com.workflow.orchestrator.core.ai.dto.FunctionParameters
 import com.workflow.orchestrator.core.ai.dto.StreamChunk
+import com.workflow.orchestrator.core.ai.dto.hasImageParts
 import com.workflow.orchestrator.core.ai.dto.ToolCall
 import com.workflow.orchestrator.core.ai.dto.ToolDefinition
 import com.workflow.orchestrator.core.model.ApiResult
@@ -164,6 +165,63 @@ class BrainRouterTest {
         assertEquals(1, stream.callCount) // step 1: vision-summarize
         assertEquals(1, openAi.chatCallCount) // step 2: tools call
         assertTrue(badgeFired, "onAnalyzedImageBadge should fire after a successful two-step")
+    }
+
+    @Test
+    fun `two-step workaround triggers when image arrives via tool result, not user message`() = runBlocking {
+        // Phase 7 Task 7.2 — tool-origin images must follow the same two-step path
+        // as user-pasted images. BrainRouter routes via `messages.any { it.hasImageParts() }`
+        // (position-independent), so a `role="tool"` message carrying ContentPart.Image
+        // (the shape produced by Phase 1's ApiMessage.toChatMessage()) must trigger
+        // step 1 on the stream client and step 2 on OpenAiCompat with the image
+        // already swapped to a text description.
+        val openAi = FakeOpenAiCompatBrain(response = makeOk("invoking foo", toolCalls = listOf(fooToolCall())))
+        val stream = FakeStreamClient(text = "image shows a red error dialog")
+        val store = AttachmentStore(tempDir)
+        val ref = store.store("fake".toByteArray(), "image/png", null)
+        var badgeFired = false
+        val router = BrainRouter(openAi, stream, store, { "test::model" }) { badgeFired = true }
+        val resp = router.chat(
+            messages = listOf(
+                ChatMessage(role = "user", content = "investigate JIRA-1"),
+                ChatMessage(
+                    role = "assistant",
+                    content = null,
+                    toolCalls = listOf(
+                        ToolCall(
+                            id = "c1",
+                            type = "function",
+                            function = FunctionCall(name = "download_attachment", arguments = "{}"),
+                        ),
+                    ),
+                ),
+                ChatMessage(
+                    role = "tool",
+                    content = "downloaded ss.png",
+                    toolCallId = "c1",
+                    parts = listOf(
+                        ContentPart.Text("downloaded ss.png"),
+                        ContentPart.Image(sha256 = ref.sha256, mime = "image/png", originalFilename = "ss.png"),
+                    ),
+                ),
+            ),
+            tools = listOf(fooTool),
+        )
+        assertTrue(resp is ApiResult.Success, "expected Success, got: $resp")
+        // Step 1: vision-summarize ran on the stream client.
+        assertEquals(1, stream.callCount, "step 1 must hit stream client for tool-origin image")
+        // Step 2: tools call ran on OpenAiCompat.
+        assertEquals(1, openAi.chatCallCount, "step 2 must hit OpenAiCompat after vision-summarize")
+        // Step 2 must have received the image already swapped to a text description —
+        // no message in the rebuilt list still carries a ContentPart.Image.
+        val step2Messages = openAi.lastMessages
+            ?: error("OpenAiCompat received no messages")
+        assertTrue(
+            step2Messages.none { it.hasImageParts() },
+            "step 2 messages must have all images stripped to text descriptions; got: $step2Messages",
+        )
+        // Badge must fire after a successful two-step regardless of image origin.
+        assertTrue(badgeFired, "onAnalyzedImageBadge should fire after a successful tool-origin two-step")
     }
 
     @Test
