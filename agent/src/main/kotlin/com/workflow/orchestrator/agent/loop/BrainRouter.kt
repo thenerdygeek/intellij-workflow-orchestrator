@@ -253,7 +253,7 @@ class BrainRouter(
             val r = streamClient.chat(req) { delta ->
                 onChunk(asStreamChunk(delta))
             }
-            successResponse(text = r.text, stopReason = r.stopReason)
+            buildRouterResponse(r)
         }.getOrElse { e ->
             log.warn("[BrainRouter] image-only stream failed: ${e.message}")
             errorFromThrowable(e)
@@ -265,11 +265,33 @@ class BrainRouter(
     ): ApiResult<ChatCompletionResponse> {
         return runCatching {
             val r = streamClient.chat(buildStreamRequest(messages, maxTokens = null))
-            successResponse(text = r.text, stopReason = r.stopReason)
+            buildRouterResponse(r)
         }.getOrElse { e ->
             log.warn("[BrainRouter] image-only chat failed: ${e.message}")
             errorFromThrowable(e)
         }
+    }
+
+    /**
+     * Build the assistant response. When the gateway emitted an SSE error
+     * frame (Sourcegraph signals "this attachment is unsupported" in-band on
+     * HTTP 200), surface the rejection as a user-visible assistant message
+     * instead of letting an empty bubble render. format_lab probe (2026-05-05)
+     * found 58 of 96 cells produce this pattern for HEIC/HEIF/BMP/TIFF/AVIF/
+     * SVG and unsupported document shapes — all dead ends previously rendered
+     * as empty replies.
+     */
+    private fun buildRouterResponse(
+        r: com.workflow.orchestrator.core.ai.dto.CompletionStreamResult,
+    ): ApiResult<ChatCompletionResponse> {
+        val rejection = r.rejectionReason
+        val finalText = if (!rejection.isNullOrBlank() && r.text.isBlank()) {
+            "Sourcegraph rejected this attachment: $rejection. " +
+                "Supported image formats: PNG, JPEG, WebP."
+        } else {
+            r.text
+        }
+        return successResponse(text = finalText, stopReason = r.stopReason)
     }
 
     // ---- Two-step workaround (image + tools) ----

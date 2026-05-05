@@ -143,6 +143,72 @@ class BrainRouterTest {
     }
 
     @Test
+    fun `image-only turn renders gateway rejection as user-facing assistant message`() = runBlocking {
+        // format_lab probe (2026-05-05) found Sourcegraph emits HTTP 200 +
+        // event: error for HEIC/HEIF/BMP/TIFF/AVIF/SVG. CompletionStreamResult
+        // now carries rejectionReason; BrainRouter must surface it as visible
+        // text instead of letting an empty assistant bubble render.
+        val openAi = FakeOpenAiCompatBrain(response = makeOk(""))
+        val stream = FakeStreamClient(
+            text = "",
+            rejectionReason = "media type image/heic not supported",
+        )
+        val store = AttachmentStore(tempDir)
+        val ref = store.store("fake".toByteArray(), "image/heic", null)
+        val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
+        val resp = router.chat(
+            messages = listOf(
+                ChatMessage(
+                    role = "user",
+                    content = null,
+                    parts = listOf(
+                        ContentPart.Image(sha256 = ref.sha256, mime = "image/heic", originalFilename = "x.heic"),
+                        ContentPart.Text("what color?"),
+                    ),
+                ),
+            ),
+            tools = emptyList(),
+        )
+        val ok = resp as? ApiResult.Success<ChatCompletionResponse>
+            ?: error("expected Success, got: $resp")
+        val content = ok.data.choices.first().message.content!!
+        assertTrue(content.contains("Sourcegraph rejected"),
+            "Expected rejection prefix, got: $content")
+        assertTrue(content.contains("media type image/heic not supported"),
+            "Expected gateway reason in message, got: $content")
+        assertTrue(content.contains("PNG, JPEG, WebP"),
+            "Expected supported-formats hint, got: $content")
+    }
+
+    @Test
+    fun `image-only turn passes through normal text when gateway accepted`() = runBlocking {
+        // Negative control for the rejection test above — when the gateway
+        // succeeds normally, no rejection fabrication should happen even
+        // though the stream client supports the field.
+        val openAi = FakeOpenAiCompatBrain(response = makeOk(""))
+        val stream = FakeStreamClient(text = "Red", rejectionReason = null)
+        val store = AttachmentStore(tempDir)
+        val ref = store.store("fake".toByteArray(), "image/png", null)
+        val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
+        val resp = router.chat(
+            messages = listOf(
+                ChatMessage(
+                    role = "user",
+                    content = null,
+                    parts = listOf(
+                        ContentPart.Image(sha256 = ref.sha256, mime = "image/png", originalFilename = "x.png"),
+                        ContentPart.Text("what color?"),
+                    ),
+                ),
+            ),
+            tools = emptyList(),
+        )
+        val ok = resp as? ApiResult.Success<ChatCompletionResponse>
+            ?: error("expected Success, got: $resp")
+        assertEquals("Red", ok.data.choices.first().message.content)
+    }
+
+    @Test
     fun `image+tools triggers two-step workaround and badge`() = runBlocking {
         val openAi = FakeOpenAiCompatBrain(response = makeOk("tool result", toolCalls = listOf(fooToolCall())))
         val stream = FakeStreamClient(text = "image shows a red circle")
@@ -773,6 +839,7 @@ internal class FakeStreamClient(
     private val text: String = "",
     private val deltas: List<String> = emptyList(),
     private val throwOnCall: Throwable? = null,
+    private val rejectionReason: String? = null,
 ) : SourcegraphCompletionsStreamClient(
     baseUrl = "http://stub",
     tokenProvider = { "stub_token" },
@@ -792,7 +859,12 @@ internal class FakeStreamClient(
         lastRequest = request
         throwOnCall?.let { throw it }
         for (d in deltas) onDelta(d)
-        return CompletionStreamResult(text = text, stopReason = null, durationMs = 1L)
+        return CompletionStreamResult(
+            text = text,
+            stopReason = null,
+            durationMs = 1L,
+            rejectionReason = rejectionReason,
+        )
     }
 }
 
