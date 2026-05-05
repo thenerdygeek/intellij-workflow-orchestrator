@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FileText, Check, RotateCcw, Loader2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter } from '@/components/ui/card';
@@ -6,45 +6,91 @@ import type { Plan } from '@/bridge/types';
 import { Badge } from '@/components/ui/badge';
 import { useChatStore } from '@/stores/chatStore';
 import { kotlinBridge } from '@/bridge/jcef-bridge';
+import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 
 interface PlanSummaryCardProps {
   plan: Plan;
 }
 
-/** Typewriter effect — reveals text character by character. */
-function TypewriterText({ text, speed = 12 }: { text: string; speed?: number }) {
-  const [displayed, setDisplayed] = useState('');
-  const indexRef = useRef(0);
-  const prevTextRef = useRef('');
+/**
+ * Bug 8 — Typewriter that reveals text character-by-character ONCE per plan
+ * identity. Subsequent remounts of the card with the same identity render the
+ * full text immediately (no animation). The "have I typed this before" state
+ * lives in the chatStore so it survives parent reconciliation that drops and
+ * remounts the card. Calls `onComplete` exactly when the text is fully revealed.
+ */
+function TypewriterReveal({
+  text,
+  speed = 12,
+  skipAnimation,
+  onComplete,
+}: {
+  text: string;
+  speed?: number;
+  skipAnimation: boolean;
+  onComplete: () => void;
+}) {
+  const [displayed, setDisplayed] = useState(skipAnimation ? text : '');
+  const indexRef = useRef(skipAnimation ? text.length : 0);
 
   useEffect(() => {
-    // Reset when summary text changes (new plan)
-    if (text !== prevTextRef.current) {
-      prevTextRef.current = text;
-      indexRef.current = 0;
-      setDisplayed('');
+    if (skipAnimation) {
+      setDisplayed(text);
+      indexRef.current = text.length;
+      return;
     }
-
     const timer = setInterval(() => {
       if (indexRef.current < text.length) {
         indexRef.current++;
         setDisplayed(text.slice(0, indexRef.current));
       } else {
         clearInterval(timer);
+        onComplete();
       }
     }, speed);
-
     return () => clearInterval(timer);
-  }, [text, speed]);
+  }, [text, speed, skipAnimation, onComplete]);
 
+  const isStreaming = displayed.length < text.length;
   return (
     <>
-      {displayed}
-      {displayed.length < text.length && (
+      <MarkdownRenderer content={displayed} isStreaming={isStreaming} />
+      {isStreaming && (
         <span className="inline-block w-[2px] h-[13px] align-middle ml-[1px] animate-pulse"
           style={{ backgroundColor: 'var(--accent)' }} />
       )}
     </>
+  );
+}
+
+/**
+ * Bug 8 — extracted to its own component so the typewriter "skipAnimation"
+ * decision is taken on mount (deterministic, no flashing). The seen-set is
+ * read once and the result is memoized for the lifetime of the mount.
+ */
+function PlanSummaryContent({ plan }: { plan: Plan }) {
+  const text = plan.summary ?? (plan.markdown ? plan.markdown.slice(0, 300) + (plan.markdown.length > 300 ? '...' : '') : '');
+  const identity = useMemo(() => `${plan.title}::${text}`, [plan.title, text]);
+  const seenRef = useRef<boolean>(useChatStore.getState().seenPlanSummaries.has(identity));
+  const markPlanSummarySeen = useChatStore(s => s.markPlanSummarySeen);
+
+  const handleComplete = useCallback(() => {
+    markPlanSummarySeen(identity);
+  }, [markPlanSummarySeen, identity]);
+
+  return (
+    <CardContent className="px-4 py-3">
+      <div
+        className="text-[12px] leading-relaxed line-clamp-4"
+        style={{ color: 'var(--fg-secondary)' }}
+      >
+        <TypewriterReveal
+          text={text}
+          skipAnimation={seenRef.current}
+          onComplete={handleComplete}
+        />
+      </div>
+    </CardContent>
   );
 }
 
@@ -123,26 +169,9 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
         </Badge>
       </div>
 
-      {/* Content preview — typewriter summary or markdown snippet */}
+      {/* Content preview — markdown-rendered summary with one-shot typewriter reveal */}
       {(plan.summary || plan.markdown) && (
-        <CardContent className="px-4 py-3">
-          {plan.summary ? (
-            <div
-              className="text-[12px] leading-relaxed line-clamp-4 whitespace-pre-wrap"
-              style={{ color: 'var(--fg-secondary)' }}
-            >
-              <TypewriterText text={plan.summary} />
-            </div>
-          ) : plan.markdown ? (
-            <div
-              className="text-[12px] leading-relaxed line-clamp-4 whitespace-pre-wrap"
-              style={{ color: 'var(--fg-secondary)' }}
-            >
-              {plan.markdown.slice(0, 300)}
-              {plan.markdown.length > 300 && '...'}
-            </div>
-          ) : null}
-        </CardContent>
+        <PlanSummaryContent plan={plan} />
       )}
 
       {/* Actions */}

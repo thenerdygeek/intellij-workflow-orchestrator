@@ -134,6 +134,14 @@ interface ChatState {
   activeSubAgents: Map<string, SubAgentState>;
   plan: Plan | null;
   planCommentCount: number;
+  /**
+   * Bug 8 — identities of plan summaries the user has already seen the typewriter
+   * animation for. Persists across remounts so React reconciliation that drops and
+   * re-mounts <PlanSummaryCard> doesn't re-run the type-out from scratch.
+   * Identity = `${plan.title}::${plan.summary ?? plan.markdown ?? ''}`. Cleared on
+   * new chat / session reset along with the rest of the store.
+   */
+  seenPlanSummaries: Set<string>;
   questions: Question[] | null;
   activeQuestionIndex: number;
   questionSummary: any | null;
@@ -236,6 +244,8 @@ interface ChatState {
   clearPlan(): void;
   approvePlan(): void;
   setPlanPending(state: 'approve' | 'revise' | null): void;
+  /** Bug 8 — record that the typewriter for a given plan-summary identity has played. */
+  markPlanSummarySeen(identity: string): void;
 
   // Task actions (task system port — Phase 5)
   setTasks(tasks: Task[]): void;
@@ -356,6 +366,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activeSubAgents: new Map(),
   plan: null,
   planCommentCount: 0,
+  seenPlanSummaries: new Set<string>(),
   questions: null,
   activeQuestionIndex: 0,
   questionSummary: null,
@@ -432,6 +443,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       toolOutputStreams: {},
       plan: null,
       planCompletedPendingClear: false,
+      seenPlanSummaries: new Set<string>(),
       questions: null,
       questionSummary: null,
       busy: true,
@@ -821,6 +833,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       toolOutputStreams: {},
       plan: null,
       planCompletedPendingClear: false,
+      seenPlanSummaries: new Set<string>(),
       questions: null,
       questionSummary: null,
       retryState: null,
@@ -855,6 +868,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set(state => {
       if (!state.plan) return {};
       return { plan: { ...state.plan, approved: true } };
+    });
+  },
+
+  markPlanSummarySeen(identity: string) {
+    set(state => {
+      if (state.seenPlanSummaries.has(identity)) return {};
+      const next = new Set(state.seenPlanSummaries);
+      next.add(identity);
+      return { seenPlanSummaries: next };
     });
   },
 
