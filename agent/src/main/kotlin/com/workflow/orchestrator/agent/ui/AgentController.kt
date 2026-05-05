@@ -1607,6 +1607,11 @@ class AgentController(
                     )
                 }
             },
+            onCompactionState = { active, phase ->
+                // Bug 5 — surface auto-compaction to the webview so input locks +
+                // overlay shows during the LLM-summary round-trip.
+                invokeLater { dashboard.setCompactionState(active, phase) }
+            },
             onModelSwitch = { _, to, reason ->
                 invokeLater {
                     val cached = com.workflow.orchestrator.core.ai.ModelCache.getCached()
@@ -2647,6 +2652,11 @@ class AgentController(
                         RichStreamingPanel.StatusType.WARNING
                     )
                 }
+            },
+            onCompactionState = { active, phase ->
+                // Bug 5 — surface auto-compaction to the webview so input locks +
+                // overlay shows during the LLM-summary round-trip.
+                invokeLater { dashboard.setCompactionState(active, phase) }
             },
             onModelSwitch = { _, to, reason ->
                 invokeLater {

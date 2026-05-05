@@ -290,6 +290,14 @@ class AgentLoop(
      */
     private val compactOnTimeoutExhaustion: Boolean = false,
     /**
+     * Bug 5 — UI signal fired when auto-compaction begins/ends. Mirrors the
+     * existing manual-compaction flow in [com.workflow.orchestrator.agent.ui.AgentController.compactContext]
+     * so the webview shows its overlay + locks input during the LLM-summary
+     * round-trip. `phase` is a short human-readable string ("Compacting context — Stage 2…");
+     * empty string when `active = false`. Always pair active=true with active=false in finally.
+     */
+    private val onCompactionState: ((active: Boolean, phase: String) -> Unit)? = null,
+    /**
      * Session-scoped approval store. Tracks which tools the user has approved
      * for the current session. Injected from the controller/session level so
      * approvals persist across follow-up messages (multiple loop runs).
@@ -641,7 +649,12 @@ class AgentLoop(
                 val utilBefore = contextManager.utilizationPercent()
                 val tokensBefore = contextManager.tokenEstimate()
                 LOG.info("[Loop] Context compaction triggered at ${"%.1f".format(utilBefore)}%")
-                contextManager.compact(brain)
+                onCompactionState?.invoke(true, "Compacting context — utilization ${"%.0f".format(utilBefore)}%…")
+                try {
+                    contextManager.compact(brain)
+                } finally {
+                    onCompactionState?.invoke(false, "")
+                }
                 val tokensAfter = contextManager.tokenEstimate()
                 fileLogger?.logCompaction(sessionId ?: "", "utilization_${"%d".format(utilBefore.toInt())}pct", tokensBefore, tokensAfter)
                 sessionMetrics?.recordCompaction(tokensBefore, tokensAfter)
@@ -819,7 +832,12 @@ class AgentLoop(
                     fileLogger?.logRetry(sessionId ?: "", "context_overflow", iteration)
                     onDebugLog?.invoke("warn", "retry", "Context overflow, compacting ($contextOverflowRetries/$MAX_CONTEXT_OVERFLOW_RETRIES)", null)
                     // Force aggressive compaction
-                    contextManager.compact(brain)
+                    onCompactionState?.invoke(true, "Compacting context after overflow…")
+                    try {
+                        contextManager.compact(brain)
+                    } finally {
+                        onCompactionState?.invoke(false, "")
+                    }
                     iteration-- // Don't count overflow retries as iterations
                     continue
                 }
@@ -1050,7 +1068,12 @@ class AgentLoop(
                     compactionRetries++
                     LOG.warn("[Loop] Timeout retries exhausted, compacting context and retrying ($compactionRetries/$MAX_COMPACTION_RETRIES)")
                     onRetry?.invoke(compactionRetries, MAX_COMPACTION_RETRIES, "Compacting context and retrying", 0)
-                    contextManager.compact(brain)
+                    onCompactionState?.invoke(true, "Compacting context after repeated timeouts…")
+                    try {
+                        contextManager.compact(brain)
+                    } finally {
+                        onCompactionState?.invoke(false, "")
+                    }
                     apiRetryCount = 0 // Reset retry count for the fresh attempt
                     iteration-- // Don't count as iteration
                     continue

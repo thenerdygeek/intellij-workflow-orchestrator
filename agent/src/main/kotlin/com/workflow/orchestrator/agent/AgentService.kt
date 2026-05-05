@@ -1287,6 +1287,12 @@ class AgentService(
          */
         onRetry: ((attempt: Int, maxAttempts: Int, reason: String, delayMs: Long) -> Unit)? = null,
         /**
+         * Bug 5 — UI signal fired when auto-compaction starts and ends. Mirrors the
+         * existing manual-compaction UX: webview locks input + shows overlay so the
+         * user knows why the loop is paused for the LLM-summary round-trip.
+         */
+        onCompactionState: ((active: Boolean, phase: String) -> Unit)? = null,
+        /**
          * Callback fired when the loop switches to a different model via fallback.
          * Used by the UI to update the model chip and show a status message.
          */
@@ -1889,6 +1895,7 @@ class AgentService(
                     },
                     onDebugLog = onDebugLog,
                     onRetry = onRetry,
+                    onCompactionState = onCompactionState,
                     fileLogger = fileLogger,
                     sessionMetrics = sessionMetrics,
                     environmentDetailsProvider = {
@@ -2112,6 +2119,7 @@ class AgentService(
         onComplete: (LoopResult) -> Unit = {},
         onUiMessagesLoaded: ((List<UiMessage>) -> Unit)? = null,
         onRetry: ((attempt: Int, maxAttempts: Int, reason: String, delayMs: Long) -> Unit)? = null,
+        onCompactionState: ((active: Boolean, phase: String) -> Unit)? = null,
         onModelSwitch: ((fromModel: String, toModel: String, reason: String) -> Unit)? = null,
         onPlanResponse: ((planText: String, needsMoreExploration: Boolean) -> Unit)? = null,
         onPlanModeToggled: ((Boolean) -> Unit)? = null,
@@ -2326,6 +2334,7 @@ class AgentService(
                     onComplete(result)
                 },
                 onRetry = onRetry,
+                onCompactionState = onCompactionState,
                 onModelSwitch = onModelSwitch,
                 onPlanResponse = onPlanResponse,
                 onPlanModeToggled = onPlanModeToggled,
