@@ -910,6 +910,11 @@ class RunOutcome:
     request_preview: str = ""
     fixture_source: str = ""
     stop_reason: str | None = None
+    # Raw concatenated SSE data: payloads, captured ONLY for tools-group cases
+    # (where the verdict matches substring markers in the blob, not the visible
+    # text). Lets a human audit whether each PASS came from a real tool_call
+    # frame or a substring trap. Truncated to 2 KB to keep the JSON dump small.
+    raw_blob_preview: str = ""
 
 
 def _short(s: str, n: int = 240) -> str:
@@ -1035,6 +1040,10 @@ def run_case(client: SourcegraphClient, model: str, case: FormatCase,
                         "tool_calls", '"toolCalls"', '"toolUse"')
         saw_tool = any(m in raw_blob for m in tool_markers)
         out.reply_preview = _short(text or raw_blob[:400], 400)
+        # Preserve a chunk of the raw blob so a human can audit which
+        # marker matched. Truncate aggressively — we don't need the full
+        # streaming response, just enough to see the tool_call frame shape.
+        out.raw_blob_preview = redact_payload(_short(raw_blob, 2000))
         if saw_tool:
             out.verdict = "PASS"
         else:
@@ -1175,6 +1184,32 @@ def print_recommendation(outcomes: list[RunOutcome], cases: list[FormatCase]) ->
     if confirmed:
         print("\nSuggested PluginSettings.imageMimeWhitelist:")
         print(f"     listOf({', '.join(repr(m) for m in confirmed)})")
+
+
+def print_tools_audit(outcomes: list[RunOutcome]) -> None:
+    """For every tools-group cell, print which marker substring fired so the
+    user can visually distinguish real tool_call frames from substring traps.
+    Critical pre-flight check before deleting BrainRouter.twoStepWorkaround."""
+    tool_outcomes = [o for o in outcomes if o.case_name.startswith("tools_")]
+    if not tool_outcomes:
+        return
+    print("\nTOOLS-ON-STREAM AUDIT (pre-rework verification)")
+    print("-" * 80)
+    print("Each PASS must have at least one marker firing. If a row shows '<NONE>',")
+    print("the verdict is a false positive and the workaround must stay for that model.")
+    print()
+    markers = ("tool_use", "tool_call", "function_call",
+               "tool_calls", '"toolCalls"', '"toolUse"',
+               "delta_tool_calls")    # extra: confirmed Haiku frame shape
+    for o in tool_outcomes:
+        blob = o.raw_blob_preview or ""
+        hits = [m for m in markers if m in blob]
+        model_tail = o.model.split("::")[-1] if "::" in o.model else o.model
+        flag = "✅" if (o.verdict == "PASS" and hits) else \
+               "⚠ " if (o.verdict == "PASS" and not hits) else "❌"
+        hits_str = ", ".join(hits) if hits else "<NONE — SUSPECT>"
+        print(f"  {flag} {model_tail:42s}  {o.case_name:30s}  markers=[{hits_str}]")
+    print()
 
 
 def print_grand_totals(outcomes: list[RunOutcome]) -> None:
@@ -1394,6 +1429,7 @@ def main() -> int:
 
     print_matrix(outcomes, cases, models)
     print_grand_totals(outcomes)
+    print_tools_audit(outcomes)
     print_recommendation(outcomes, cases)
 
     payload = {

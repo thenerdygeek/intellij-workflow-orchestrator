@@ -507,6 +507,42 @@ _check("tools_with_image body carries image_url part",
        any(p.get("type") == "image_url"
            for p in body["messages"][0]["content"]))
 
+# Raw-blob preview captured + redacted for tools-group cells (pre-rework audit)
+out = fl.run_case(
+    _FakeClient(_FakeHttpResp(200, sse_lines=[
+        "event: completion",
+        'data: {"deltaText":"x"}',
+        "",
+        "event: completion",
+        'data: {"tool_calls":[{"id":"call-1","function":{"name":"f","arguments":"{}"}}]}',
+        "",
+    ])),
+    "model-A", tools_only, 100,
+)
+_check("tools-group raw_blob_preview captured",
+       "tool_calls" in out.raw_blob_preview,
+       out.raw_blob_preview[:120])
+
+# Audit printer classifies markers per cell + flags rows without any
+import io as _io
+from contextlib import redirect_stdout as _redirect_stdout
+buf = _io.StringIO()
+audit_outcomes = [
+    fl.RunOutcome(model="m1", case_name="tools_only_on_stream",
+                  api_version=9, status=200, elapsed_ms=10, verdict="PASS",
+                  reply_preview="", raw_blob_preview='{"tool_calls":[]}'),
+    fl.RunOutcome(model="m2", case_name="tools_only_on_stream",
+                  api_version=9, status=200, elapsed_ms=10, verdict="PASS",
+                  reply_preview="", raw_blob_preview="not_a_marker"),
+]
+with _redirect_stdout(buf):
+    fl.print_tools_audit(audit_outcomes)
+audit_text = buf.getvalue()
+_check("audit shows ✅ for cell with marker present",
+       "✅" in audit_text and "tool_calls" in audit_text)
+_check("audit shows ⚠ for cell with PASS but no marker (suspect)",
+       "⚠" in audit_text and "<NONE — SUSPECT>" in audit_text)
+
 
 # ─── 5. Redaction ───────────────────────────────────────────────────────
 section("redact_payload + URL/token masking")
