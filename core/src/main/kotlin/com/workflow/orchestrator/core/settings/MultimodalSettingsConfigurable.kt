@@ -88,8 +88,10 @@ class MultimodalSettingsConfigurable(private val project: Project) : SearchableC
                             }
                         )
                     comment(
-                        "Comma-separated. Default: image/png, image/jpeg, image/webp, " +
-                            "image/heic, image/heif."
+                        "Comma-separated. Default: image/png, image/jpeg, image/webp. " +
+                            "These are the formats verified to round-trip through Sourcegraph's " +
+                            "vision endpoint; other formats (HEIC, HEIF, GIF, BMP, TIFF, AVIF, SVG) " +
+                            "are rejected by the gateway."
                     )
                 }
             }

@@ -81,13 +81,30 @@ class AttachmentUploadHandlerTest {
 
     @Test
     fun `validate accepts whitelisted MIMEs from default whitelist`() {
+        // Default whitelist is gateway-verified (format_lab 2026-05-05): only
+        // PNG/JPEG/WebP round-trip through every vision-capable model. HEIC
+        // and HEIF were dropped after the probe because the gateway rejects
+        // them with event: error frames despite being in Cody's UI list.
         val settings = PluginSettings()
         val bytes = ByteArray(10)
-        for (mime in listOf("image/png", "image/jpeg", "image/webp", "image/heic", "image/heif")) {
+        for (mime in listOf("image/png", "image/jpeg", "image/webp")) {
             assertSame(
                 AttachmentUploadHandler.ValidationResult.Ok,
                 AttachmentUploadHandler.validate(bytes, mime, settings),
                 "Expected $mime to be accepted by default",
+            )
+        }
+    }
+
+    @Test
+    fun `validate rejects HEIC and HEIF by default after format_lab finding`() {
+        val settings = PluginSettings()
+        val bytes = ByteArray(10)
+        for (mime in listOf("image/heic", "image/heif")) {
+            assertSame(
+                AttachmentUploadHandler.ValidationResult.MimeNotAllowed,
+                AttachmentUploadHandler.validate(bytes, mime, settings),
+                "Expected $mime to be REJECTED by default — gateway rejects these.",
             )
         }
     }

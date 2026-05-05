@@ -48,11 +48,19 @@ class PluginSettingsImageFieldsTest {
     }
 
     @Test
-    fun `default imageMimeWhitelist matches Cody whitelist`() {
+    fun `default imageMimeWhitelist matches gateway-verified set from format_lab probe`() {
+        // format_lab probe (2026-05-05, api-version=9) found PNG/JPEG/WebP
+        // round-trip through every vision-capable Claude 4.5 model. HEIC and
+        // HEIF appeared in Cody's UI whitelist but the upstream provider
+        // rejects them with event: error frames (0/6 models). GIF is partial
+        // (3/6) and lives only on the tool-output autoload path.
         val state = PluginSettings.State()
         assertEquals(
-            listOf("image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"),
-            state.imageMimeWhitelist.toList()
+            listOf("image/png", "image/jpeg", "image/webp"),
+            state.imageMimeWhitelist.toList(),
+            "Default whitelist must match format_lab 2026-05-05 evidence: " +
+                "PNG/JPEG/WebP only — HEIC/HEIF were dropped because the gateway " +
+                "rejects them despite Cody's UI advertising support."
         )
     }
 
@@ -92,8 +100,8 @@ class PluginSettingsImageFieldsTest {
         state.imageMimeWhitelist.add("image/gif")
         assertTrue(state.imageMimeWhitelist.contains("image/gif"))
 
-        state.imageMimeWhitelist.remove("image/heic")
-        assertFalse(state.imageMimeWhitelist.contains("image/heic"))
+        state.imageMimeWhitelist.remove("image/png")
+        assertFalse(state.imageMimeWhitelist.contains("image/png"))
     }
 
     @Test

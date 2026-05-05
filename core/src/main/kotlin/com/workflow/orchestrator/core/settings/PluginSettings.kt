@@ -247,13 +247,20 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var imageTokenEstimateDefault by property(1500)
 
         /**
-         * MIME types accepted for image attachments. Default mirrors the
-         * gateway-confirmed Cody whitelist:
-         *   image/png · image/jpeg · image/webp · image/heic · image/heif.
+         * MIME types accepted for image attachments. Default reflects the
+         * gateway-verified set probed by `tools/sourcegraph-probe/format_lab.py`
+         * on 2026-05-05 (api-version=9): only PNG, JPEG, and WebP round-trip
+         * cleanly through every vision-capable Claude 4.5 model.
          *
-         * Populated in the `init` block below on first instantiation. The
-         * `by list<String>()` delegate matches the existing list-typed
-         * `bambooPlanValidationCache` pattern in this file.
+         * HEIC and HEIF were previously in this list because they appear in
+         * Cody's web UI whitelist (`MediaUploadButton.tsx`), but the upstream
+         * provider on this Sourcegraph instance rejects them with an SSE
+         * `event: error` frame for 6/6 models — they look advertised but die
+         * on the wire. GIF works on 3/6 models inconsistently and is therefore
+         * not in the user-paste whitelist either (the tool-output autoload
+         * path retains GIF separately via [toolImageAutoloadMimeWhitelist]).
+         *
+         * Populated in the `init` block below on first instantiation.
          */
         var imageMimeWhitelist by list<String>()
 
@@ -287,7 +294,7 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
             // empty (which the UI surfaces as "no MIME types accepted").
             if (imageMimeWhitelist.isEmpty()) {
                 imageMimeWhitelist.addAll(
-                    listOf("image/png", "image/jpeg", "image/webp", "image/heic", "image/heif")
+                    listOf("image/png", "image/jpeg", "image/webp")
                 )
             }
         }
