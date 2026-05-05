@@ -40,6 +40,8 @@ Build variables include `dockerTagsAsJson` — JSON payload of service-to-docker
 
 - `BambooApiClient` — HTTP client for all Bamboo REST calls
 - `BambooServiceImpl` — implements `BambooService` (in :core), returns `ToolResult<T>`
+- `BambooServiceImpl` returns `BuildResultData.stages[].jobs[]` populated from `?expand=stages.stage.results.result` responses. Each `BuildJobData.resultKey` (e.g. `PROJ-PLAN138-UNIT-4`) is what the agent passes to `bamboo_builds.get_build_log` for per-job logs.
+- `BuildPlanResolutionPolicy` (in `:bamboo/ui/`) is a pure object encapsulating the Build dashboard's "use detected plan / use configured master / show hint" decision, so the resolution matrix is testable without IntelliJ infrastructure. The dashboard delegates to it after every `BambooService.autoDetectPlan` call.
 - `BuildMonitorService` — background polling via SmartPoller, emits `BuildFinished`/`BuildLogReady` events. Uses platform-injected `cs: CoroutineScope` (see `:core` "Service & threading conventions"). `PrBar` git reads use `readAction { }`.
 - `BuildLogParser` — extracts errors, test failures, CVE warnings from build logs
 - `CveRemediationService` — parses CVE data, provides version bump suggestions
