@@ -33,9 +33,9 @@ Do NOT use for: local IDE Maven/Gradle reload errors, 'why did my IDE build fail
 
 Actions and their parameters:
 - build_status(plan_key, branch?, repo_name?) → Latest build status for plan
-- get_build(build_key) → Detailed build info
+- get_build(build_key) → Detailed build info. Returns BuildResultData with stages[].jobs[].resultKey usable as the build_key parameter for get_build_log/get_test_results.
 - trigger_build(plan_key, variables?) → Trigger new build (variables: JSON {"key":"value"})
-- get_build_log(build_key) → Build log output
+- get_build_log(build_key) → Build log output. Accepts a build key (e.g. PROJ-PLAN138-4) for the whole-build log, OR a job-level resultKey from get_build's stages[].jobs[].resultKey (e.g. PROJ-PLAN138-UNIT-4) for just that job's log. Prefer per-job logs when triaging a single failing job.
 - get_test_results(build_key) → Test results for build
 - stop_build(build_key) → Stop running build
 - cancel_build(build_key) → Cancel queued build
