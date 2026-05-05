@@ -7,6 +7,7 @@ import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
 import com.workflow.orchestrator.core.model.ServiceType
+import com.workflow.orchestrator.core.model.bamboo.BuildJobData
 import com.workflow.orchestrator.core.model.bamboo.BuildResultData
 import com.workflow.orchestrator.core.model.bamboo.BuildStageData
 import com.workflow.orchestrator.core.model.bamboo.BuildTriggerData
@@ -23,6 +24,7 @@ import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.ui.TimeFormatter
 import com.workflow.orchestrator.bamboo.api.BambooApiClient
 import com.workflow.orchestrator.bamboo.api.dto.BambooResultDto
+import com.workflow.orchestrator.bamboo.api.dto.BambooStageDto
 
 /**
  * Unified Bamboo service implementation used by both UI panels and AI agent.
@@ -504,13 +506,7 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                         durationSeconds = dto.buildDurationInSeconds,
                         buildResultKey = dto.buildResultKey.ifBlank { dto.key },
                         buildRelativeTime = dto.buildRelativeTime,
-                        stages = dto.stages.stage.map { stage ->
-                            BuildStageData(
-                                name = stage.name,
-                                state = stage.state.ifBlank { stage.lifeCycleState },
-                                durationSeconds = stage.buildDurationInSeconds
-                            )
-                        }
+                        stages = dto.stages.stage.map { it.toBuildStageData() }
                     )
                 }
                 ToolResult.success(
@@ -698,13 +694,7 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                         durationSeconds = dto.buildDurationInSeconds,
                         buildResultKey = dto.buildResultKey.ifBlank { dto.key },
                         buildRelativeTime = dto.buildRelativeTime,
-                        stages = dto.stages.stage.map { stage ->
-                            BuildStageData(
-                                name = stage.name,
-                                state = stage.state.ifBlank { stage.lifeCycleState },
-                                durationSeconds = stage.buildDurationInSeconds
-                            )
-                        }
+                        stages = dto.stages.stage.map { it.toBuildStageData() }
                     )
                 }
                 ToolResult.success(
@@ -869,14 +859,29 @@ class BambooServiceImpl(private val project: Project) : BambooService {
 
     // --- Private helpers ---
 
+    /**
+     * Map a raw [BambooStageDto] (from `?expand=stages.stage.results.result` responses)
+     * to the `:core` model. Populates [BuildStageData.jobs] when the stage has expanded
+     * job results — the `resultKey` carried per job is what the agent uses to fetch
+     * per-job logs (see [BuildJobData] kdoc).
+     */
+    private fun BambooStageDto.toBuildStageData(): BuildStageData =
+        BuildStageData(
+            name = name,
+            state = state.ifBlank { lifeCycleState },
+            durationSeconds = buildDurationInSeconds,
+            jobs = results.result.map { job ->
+                BuildJobData(
+                    name = job.plan?.shortName ?: job.buildResultKey,
+                    state = job.state.ifBlank { job.lifeCycleState },
+                    durationSeconds = job.buildDurationInSeconds,
+                    resultKey = job.buildResultKey.ifBlank { job.key }
+                )
+            }
+        )
+
     private fun mapBuildResult(dto: BambooResultDto): ToolResult<BuildResultData> {
-        val stages = dto.stages.stage.map { stage ->
-            BuildStageData(
-                name = stage.name,
-                state = stage.state.ifBlank { stage.lifeCycleState },
-                durationSeconds = stage.buildDurationInSeconds
-            )
-        }
+        val stages = dto.stages.stage.map { it.toBuildStageData() }
 
         // Aggregate test counts from stages (Bamboo doesn't always include them at top level)
         val data = BuildResultData(
@@ -884,7 +889,9 @@ class BambooServiceImpl(private val project: Project) : BambooService {
             buildNumber = dto.buildNumber,
             state = dto.state.ifBlank { dto.lifeCycleState },
             durationSeconds = dto.buildDurationInSeconds,
-            stages = stages
+            stages = stages,
+            buildResultKey = dto.buildResultKey.ifBlank { dto.key },
+            buildRelativeTime = dto.buildRelativeTime
         )
 
         val durationFormatted = TimeFormatter.formatDurationSeconds(data.durationSeconds)

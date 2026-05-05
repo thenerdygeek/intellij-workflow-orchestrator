@@ -20,13 +20,37 @@ data class BuildResultData(
 )
 
 /**
- * A single stage within a Bamboo build.
+ * A single stage within a Bamboo build. Carries its constituent jobs when the build
+ * was fetched with `?expand=stages.stage.results.result` (default for live fetches
+ * across `BambooApiClient.getLatestResult`, `getBuildResult`, and `getRecentResults`).
+ *
+ * `jobs` defaults to an empty list to preserve source-compatibility for any out-of-tree
+ * caller that constructs `BuildStageData` by name. In production the field is populated
+ * from `BambooStageDto.results.result[]` via `BambooServiceImpl.toBuildStageData()`.
  */
 @Serializable
 data class BuildStageData(
     val name: String,
     val state: String,
-    val durationSeconds: Long
+    val durationSeconds: Long,
+    val jobs: List<BuildJobData> = emptyList()
+)
+
+/**
+ * A single job (Bamboo's REST vocabulary calls these "results") within a stage.
+ *
+ * `resultKey` is the build-result key of the job — e.g. `PROJ-PLAN138-COMPILE-4`.
+ * It is what the agent should pass to `bamboo_builds.get_build_log` to fetch just
+ * this job's log, or to `bamboo_builds.get_test_results` for just this job's tests.
+ * Bamboo's `/download/{key}/build_logs/{key}.log` and `/result/{key}?expand=...`
+ * endpoints accept build-level OR job-level keys uniformly.
+ */
+@Serializable
+data class BuildJobData(
+    val name: String,
+    val state: String,
+    val durationSeconds: Long,
+    val resultKey: String
 )
 
 /**

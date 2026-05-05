@@ -195,6 +195,10 @@ class BuildMonitorService {
         }
     }
 
+    // Maps from BambooResultDto directly (not via BambooServiceImpl.toBuildStageData):
+    // UI rendering needs `manual` and `lifeCycleState` per stage which BuildStageData
+    // doesn't carry — adding them would be a UI-only requirement bleeding into the
+    // cross-module model. Kept narrow on purpose.
     private fun mapToBuildState(dto: BambooResultDto, planKey: String, branch: String): BuildState {
         // Flatten stages into jobs — each job is a StageState with its parent stage name
         val jobs = mutableListOf<StageState>()
