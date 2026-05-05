@@ -1,18 +1,32 @@
 package com.workflow.orchestrator.agent.tools.runtime
 
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.testutil.installSmartModeShim
 import com.workflow.orchestrator.agent.tools.WorkerType
 import io.mockk.mockk
+import io.mockk.unmockkAll
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.io.File
 
 class CoverageToolTest {
     private val project = mockk<Project>(relaxed = true)
     private val tool = CoverageTool()
+
+    @BeforeEach
+    fun installPlatformShims() {
+        installSmartModeShim(project)
+    }
+
+    @AfterEach
+    fun teardownPlatformShims() {
+        unmockkAll()
+    }
 
     // ═══════════════════════════════════════════════════
     // Test helpers

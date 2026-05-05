@@ -5,6 +5,7 @@ import com.intellij.execution.testframework.sm.runner.states.TestStateInfo
 import com.intellij.execution.ui.RunContentDescriptor
 import com.intellij.execution.ui.RunContentManager
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.testutil.installSmartModeShim
 import com.workflow.orchestrator.agent.tools.TestConsoleUtils
 import com.workflow.orchestrator.agent.tools.WorkerType
 import io.mockk.every
@@ -27,6 +28,16 @@ import java.nio.file.Path
 class JavaRuntimeExecToolTest {
     private val project = mockk<Project>(relaxed = true)
     private val tool = JavaRuntimeExecTool()
+
+    @BeforeEach
+    fun installPlatformShims() {
+        installSmartModeShim(project)
+    }
+
+    @AfterEach
+    fun teardownPlatformShims() {
+        unmockkAll()
+    }
 
     @Test
     fun `tool name is java_runtime_exec`() {
@@ -156,6 +167,7 @@ class JavaRuntimeExecToolTest {
     fun `run_tests shell path — multi-method Maven emits plus-joined -Dtest`(@TempDir tempDir: Path) = runTest {
         File(tempDir.toFile(), "pom.xml").writeText("<project/>")
         val mavenProject = mockk<Project>(relaxed = true)
+        installSmartModeShim(mavenProject)
         every { mavenProject.basePath } returns tempDir.toFile().absolutePath
         // Trigger the Maven shell path with 3 comma-separated methods. The process will
         // fail to actually run `mvn` (not installed in the test JVM), but the command
@@ -189,6 +201,7 @@ class JavaRuntimeExecToolTest {
         // We can't cheaply assert the downstream JUnit reflection without a real Project,
         // but we CAN assert that input parsing passes (no validation error).
         val tempProject = mockk<Project>(relaxed = true)
+        installSmartModeShim(tempProject)
         every { tempProject.basePath } returns null  // forces early "no basePath" error from shell path
         val result = tool.execute(
             buildJsonObject {
@@ -523,6 +536,7 @@ class JavaRuntimeExecToolTest {
     @Test
     fun `run_tests shell path — returns error when project has no build file`(@TempDir tempDir: Path) = runTest {
         val emptyProject = mockk<Project>(relaxed = true)
+        installSmartModeShim(emptyProject)
         every { emptyProject.basePath } returns tempDir.toFile().absolutePath
         // tempDir has no pom.xml, build.gradle, or build.gradle.kts → "No build tool found"
         val result = tool.execute(
@@ -543,6 +557,7 @@ class JavaRuntimeExecToolTest {
     @Test
     fun `run_tests shell path — returns error when project basePath is null`() = runTest {
         val noPathProject = mockk<Project>(relaxed = true)
+        installSmartModeShim(noPathProject)
         every { noPathProject.basePath } returns null
         val result = tool.execute(
             buildJsonObject {
@@ -563,6 +578,7 @@ class JavaRuntimeExecToolTest {
     fun `run_tests shell path — finds Maven pom and builds correct command`(@TempDir tempDir: Path) = runTest {
         File(tempDir.toFile(), "pom.xml").writeText("<project/>")
         val mavenProject = mockk<Project>(relaxed = true)
+        installSmartModeShim(mavenProject)
         every { mavenProject.basePath } returns tempDir.toFile().absolutePath
         // The process will fail to run mvn (not installed in test), but the fact that it
         // attempts to and doesn't return "No build tool found" confirms the Maven path.
@@ -916,6 +932,7 @@ class JavaRuntimeExecToolTest {
     ) = runTest {
         File(tempDir.toFile(), "pom.xml").writeText("<project/>")
         val mavenProject = mockk<Project>(relaxed = true)
+        installSmartModeShim(mavenProject)
         every { mavenProject.basePath } returns tempDir.toFile().absolutePath
 
         val result = tool.execute(
@@ -957,6 +974,7 @@ class JavaRuntimeExecToolTest {
     ) = runTest {
         File(tempDir.toFile(), "build.gradle").writeText("// gradle build")
         val gradleProject = mockk<Project>(relaxed = true)
+        installSmartModeShim(gradleProject)
         every { gradleProject.basePath } returns tempDir.toFile().absolutePath
 
         val result = tool.execute(

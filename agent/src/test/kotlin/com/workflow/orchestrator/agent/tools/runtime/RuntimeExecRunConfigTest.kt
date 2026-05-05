@@ -19,6 +19,7 @@ import com.intellij.execution.ui.RunContentDescriptor
 import com.intellij.execution.ui.RunContentManager
 import com.intellij.openapi.Disposable
 import com.workflow.orchestrator.agent.testutil.installReadActionInlineShim
+import com.workflow.orchestrator.agent.testutil.installSmartModeShim
 import com.intellij.openapi.compiler.CompilationStatusListener
 import com.intellij.openapi.compiler.CompileContext
 import com.intellij.openapi.compiler.CompilerMessage
@@ -139,7 +140,6 @@ class RuntimeExecRunConfigTest {
         runManager = mockk(relaxed = true)
         messageBus = mockk(relaxed = true)
         messageBusConnection = mockk(relaxed = true)
-        dumbService = mockk(relaxed = true)
         runContentManager = mockk(relaxed = true)
 
         // Fix 1: stub AgentService.newRunInvocation via project.getService(AgentService)
@@ -153,7 +153,11 @@ class RuntimeExecRunConfigTest {
 
         // Static mocks for service-level APIs used in the production launch path.
         mockkStatic(RunManager::class)
-        mockkStatic(DumbService::class)
+        // installSmartModeShim() stubs project.getService(DumbService::class.java) to a
+        // mock with isDumb=false. Production reaches `DumbService.getInstance(project).isDumb`
+        // via PostMutationRefresh.waitForSmartModeOrTimeout (Bug 4 Layer C). Captures the
+        // underlying DumbService mock so Scenario 10 can flip isDumb=true.
+        dumbService = installSmartModeShim(project)
         mockkStatic(ProgramRunnerUtil::class)
         mockkStatic(RunContentManager::class)
         // ExecutionManager is used by stopProcessesForConfig (idempotent pre-launch stop).
@@ -175,7 +179,6 @@ class RuntimeExecRunConfigTest {
         installReadActionInlineShim()
 
         every { RunManager.getInstance(project) } returns runManager
-        every { DumbService.isDumb(project) } returns false
         every { RunContentManager.getInstance(project) } returns runContentManager
         every { runContentManager.removeRunContent(any(), any()) } returns true
 
@@ -588,7 +591,18 @@ class RuntimeExecRunConfigTest {
 
     @Test
     fun `run_config returns DUMB_MODE error when IDE is indexing`() = runTest {
-        every { DumbService.isDumb(project) } returns true
+        // Bug 4 — Layer C: production now reads `DumbService.getInstance(project).isDumb`
+        // (via PostMutationRefresh.waitForSmartModeOrTimeout), not `DumbService.isDumb(project)`.
+        // Flip the isDumb on the shim's DumbService mock so the new path returns true.
+        every { dumbService.isDumb } returns true
+        // installReadActionInlineShim() (called above) makes smartReadAction(project) {…}
+        // return inline, which would let the 60s withTimeoutOrNull in
+        // waitForSmartModeOrTimeout complete normally and skip the DUMB_MODE error.
+        // Override it here to suspend until cancellation, so the virtual-time 60s
+        // timeout fires and waitForSmartModeOrTimeout returns false.
+        coEvery {
+            com.intellij.openapi.application.smartReadAction<Any?>(any(), any())
+        } coAnswers { kotlinx.coroutines.awaitCancellation() }
 
         val settings = buildSettings("SpringBootServer")
         every { runManager.allSettings } returns listOf(settings)

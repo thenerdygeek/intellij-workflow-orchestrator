@@ -1,13 +1,17 @@
 package com.workflow.orchestrator.agent.tools.runtime
 
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.testutil.installSmartModeShim
 import com.workflow.orchestrator.agent.tools.WorkerType
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.unmockkAll
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
@@ -15,6 +19,16 @@ import java.nio.file.Path
 class PythonRuntimeExecToolTest {
     private val project = mockk<Project>(relaxed = true)
     private val tool = PythonRuntimeExecTool()
+
+    @BeforeEach
+    fun installPlatformShims() {
+        installSmartModeShim(project)
+    }
+
+    @AfterEach
+    fun teardownPlatformShims() {
+        unmockkAll()
+    }
 
     @Test
     fun `tool name is python_runtime_exec`() {
