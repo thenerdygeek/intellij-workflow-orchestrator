@@ -34,7 +34,14 @@ export const PlanProgressWidget = memo(function PlanProgressWidget() {
     })),
     [visible],
   );
-  if (todos.length === 0) return null;
+  // Bug 10 — hide the widget once nothing is pending or in_progress.
+  // "Task progress" has nothing to show when every task is completed (or deleted),
+  // so the card was sticking around as visual noise after the work was done.
+  const hasActiveWork = useMemo(
+    () => visible.some((t: Task) => t.status === 'pending' || t.status === 'in_progress'),
+    [visible],
+  );
+  if (todos.length === 0 || !hasActiveWork) return null;
 
   return (
     <div className="my-3" role="region" aria-label="Task progress">
