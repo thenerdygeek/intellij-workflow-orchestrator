@@ -411,6 +411,11 @@ class SourcegraphChatClient(
                 var finishReason = "stop"
                 var streamUsage: UsageInfo? = null
                 val rawSseBuf = if (apiDebugSessionDir != null) StringBuilder() else null
+                // Tracks whether Sourcegraph's Cody Gateway injected a mid-stream
+                // "context deadline exceeded" error frame. When true, we stop
+                // treating the response as a clean completion and let AgentLoop
+                // synthesize a tool-result error (Continue.dev pattern).
+                var upstreamTimeout = false
 
                 // Read SSE lines with cancellation check on every line.
                 // When cancelActiveRequest() is called, call.cancel() closes the socket,
@@ -426,7 +431,13 @@ class SourcegraphChatClient(
 
                     rawSseBuf?.appendLine(line)
 
-                    if (line.startsWith("data: ") && line != "data: [DONE]") {
+                    if (GatewayErrorDetector.isUpstreamTimeoutFrame(line)) {
+                        log.warn("[Agent:API] Sourcegraph gateway emitted mid-stream timeout frame; will surface as upstream_timeout")
+                        upstreamTimeout = true
+                        // Keep reading until EOF — the gateway closes the socket
+                        // right after, but we want any tail bytes captured in
+                        // rawSseBuf for the api-debug dump.
+                    } else if (line.startsWith("data: ") && line != "data: [DONE]") {
                         val chunkJson = line.removePrefix("data: ")
                         try {
                             val chunk = json.decodeFromString<StreamChunk>(chunkJson)
@@ -539,22 +550,34 @@ class SourcegraphChatClient(
                     rawText.ifBlank { null }
                 }
 
-                val finalFinishReason = if (finalToolCalls != null && finishReason == "stop") {
-                    "tool_calls"
-                } else {
-                    finishReason
+                // Order of precedence: a confirmed gateway timeout overrides any
+                // other finish reason. We trust the gateway's own signal more than
+                // a heuristic on partial XML, because it is observable on the wire.
+                val finalFinishReason = when {
+                    upstreamTimeout -> "upstream_timeout"
+                    finalToolCalls != null && finishReason == "stop" -> "tool_calls"
+                    else -> finishReason
                 }
 
-                // Signal truncation for partial tool calls
-                var finalContent = textOnlyContent
-                if (parsedBlocks?.any { it is ToolUseContent && it.partial } == true && finalToolCalls.isNullOrEmpty()) {
-                    log.warn("[Agent:API] XML tool call truncated — signaling for retry")
-                    finalContent = (finalContent ?: "") + "\n\n[TOOL_CALL_TRUNCATED]"
-                }
+                // Partial XML tool call without the gateway frame — still a strong
+                // signal of truncation. Promote to upstream_timeout so AgentLoop
+                // routes both cases through the same recovery branch (Continue
+                // pattern: synthesize a tool-result error and let the model retry
+                // with smaller chunks).
+                val finishReasonWithPartialXmlPromotion =
+                    if (finalFinishReason != "upstream_timeout"
+                        && parsedBlocks?.any { it is ToolUseContent && it.partial } == true
+                        && finalToolCalls.isNullOrEmpty()
+                    ) {
+                        log.warn("[Agent:API] XML tool call truncated mid-stream; promoting to upstream_timeout")
+                        "upstream_timeout"
+                    } else {
+                        finalFinishReason
+                    }
 
                 val finalMessage = ChatMessage(
                     role = role,
-                    content = finalContent,
+                    content = textOnlyContent,
                     toolCalls = finalToolCalls
                 )
 
@@ -562,7 +585,7 @@ class SourcegraphChatClient(
 
                 val streamResponse = ChatCompletionResponse(
                     id = "stream-${System.nanoTime()}",
-                    choices = listOf(Choice(index = 0, message = finalMessage, finishReason = finalFinishReason)),
+                    choices = listOf(Choice(index = 0, message = finalMessage, finishReason = finishReasonWithPartialXmlPromotion)),
                     usage = streamUsage
                 )
                 dumpApiResponse(streamResponse, rawSseBuf?.toString())

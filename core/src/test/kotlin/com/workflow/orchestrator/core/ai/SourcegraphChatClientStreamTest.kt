@@ -267,4 +267,36 @@ class SourcegraphChatClientStreamTest {
         assertEquals(1, toolCalls!!.size)
         assertEquals("run_command", toolCalls[0].function.name)
     }
+
+    @Test
+    fun `gateway context-deadline error frame yields finishReason=upstream_timeout`() = runTest {
+        // Realistic SSE prefix: a couple of valid chunks, then the gateway error frame
+        // (verbatim shape captured from production api-debug response.json), then EOF
+        // without a [DONE] marker. Mirrors the actual failure mode for long
+        // plan_mode_respond responses.
+        val sseBody = buildString {
+            append("data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n")
+            append("data: {\"choices\":[{\"delta\":{\"content\":\"<plan_mode_respond>\\n<response>Step 1...\"}}]}\n\n")
+            append("data: {\"choices\":[{\"delta\":{\"content\":\" Step 2...\"}}]}\n\n")
+            append("{\"message\":\"context deadline exceeded\",\"type\":\"completion.process_completion\"}\n\n")
+        }
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "text/event-stream")
+                .setBody(sseBody)
+        )
+
+        val result = client.sendMessageStream(
+            messages = listOf(ChatMessage(role = "user", content = "write a long plan")),
+            tools = null,
+            onChunk = {}
+        )
+
+        require(result is ApiResult.Success) { "Expected Success, got $result" }
+        val choice = result.data.choices.single()
+        assertEquals("upstream_timeout", choice.finishReason)
+        // Partial assistant text is preserved as-is (no [TOOL_CALL_TRUNCATED] sentinel).
+        assertNotNull(choice.message.content)
+        assertFalse(choice.message.content!!.contains("[TOOL_CALL_TRUNCATED]"))
+    }
 }
