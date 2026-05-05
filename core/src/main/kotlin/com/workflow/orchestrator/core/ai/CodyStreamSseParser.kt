@@ -4,6 +4,9 @@ import com.workflow.orchestrator.core.ai.dto.CompletionStreamFrame
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import java.io.BufferedReader
 
 /**
@@ -54,7 +57,19 @@ class CodyStreamSseParser {
         /** Emitted exactly once at end-of-stream regardless of which signal triggered termination. */
         data object StreamDone : ParseResult
 
-        /** Reserved for future use (e.g. surfacing gateway error frames). */
+        /**
+         * A gateway-emitted `event: error` frame. Sourcegraph returns HTTP 200
+         * even for unsupported request shapes — the failure is signalled inside
+         * the SSE stream as `event: error` followed by a `data:` payload that
+         * may be a JSON `{"error": "..."}` object or a free-form string.
+         *
+         * format_lab probe (2026-05-05) found 58/96 cells return this pattern
+         * for unsupported MIMEs (HEIC/HEIF/BMP/TIFF/AVIF/SVG) and unsupported
+         * document shapes. Without this signal, the agent's chat panel renders
+         * an empty assistant bubble and the user has no idea Sourcegraph
+         * rejected the attachment. Callers (BrainRouter / agent loop) should
+         * surface [message] to the user as an assistant message.
+         */
         data class Error(val message: String) : ParseResult
     }
 
@@ -73,6 +88,12 @@ class CodyStreamSseParser {
         reader: BufferedReader,
         onResult: suspend (ParseResult) -> Unit,
     ) = withContext(Dispatchers.IO) {
+        // Sticky one-shot state: when the previous event line was `event: error`,
+        // the next data: payload is the error body (NOT a CompletionStreamFrame).
+        // Cleared after consuming the next data: line so subsequent frames parse
+        // normally (gateway sometimes streams an error then continues with done).
+        var nextDataIsError = false
+
         var line = reader.readLine()
         while (line != null) {
             when {
@@ -82,6 +103,9 @@ class CodyStreamSseParser {
                         onResult(ParseResult.StreamDone)
                         return@withContext
                     }
+                    if (event == "error") {
+                        nextDataIsError = true
+                    }
                 }
                 line.startsWith("data:") -> {
                     val payload = line.removePrefix("data:").trim()
@@ -89,7 +113,12 @@ class CodyStreamSseParser {
                         onResult(ParseResult.StreamDone)
                         return@withContext
                     }
-                    if (payload.isNotEmpty()) {
+                    if (nextDataIsError) {
+                        nextDataIsError = false
+                        onResult(ParseResult.Error(extractErrorMessage(payload)))
+                        // Don't return — gateway typically follows the error frame
+                        // with `event: done`, which we still want to surface.
+                    } else if (payload.isNotEmpty()) {
                         runCatching {
                             json.decodeFromString(CompletionStreamFrame.serializer(), payload)
                         }.onSuccess { frame ->
@@ -116,5 +145,25 @@ class CodyStreamSseParser {
         }
         // Reader exhausted (EOF): implicit done — no extra StreamDone emit (caller's
         // accumulated text is already complete from the last delta/replacement frame).
+    }
+
+    /**
+     * Best-effort extraction of a human-readable message from an error-frame
+     * data: payload. Sourcegraph emits two shapes observed in practice:
+     *   - `{"error": "media type not supported"}` (typed envelope)
+     *   - `{"message": "..."}` (alternate envelope)
+     *   - free-form text (older gateway versions)
+     * Falls back to the raw payload when neither key is present so we never
+     * lose the gateway's diagnostic.
+     */
+    private fun extractErrorMessage(payload: String): String {
+        if (payload.isEmpty()) return "Sourcegraph emitted an empty error frame"
+        return runCatching {
+            json.parseToJsonElement(payload).let { el ->
+                val obj = el as? JsonObject ?: return@let null
+                val msg = (obj["error"] ?: obj["message"]) as? JsonPrimitive
+                msg?.contentOrNull
+            }
+        }.getOrNull() ?: payload
     }
 }

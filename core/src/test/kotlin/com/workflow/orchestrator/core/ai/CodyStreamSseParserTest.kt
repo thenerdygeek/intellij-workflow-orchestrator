@@ -143,4 +143,66 @@ class CodyStreamSseParserTest {
         assertEquals(1, stopReason.size)
         assertEquals("length", stopReason.first().reason)
     }
+
+    // --- event: error frames (gateway rejection visibility) ----------------
+    // format_lab probe (2026-05-05) showed Sourcegraph emits HTTP 200 + an SSE
+    // `event: error` frame for unsupported MIMEs (HEIC/HEIF/BMP/TIFF/AVIF/SVG)
+    // and unsupported document shapes — 58 of 96 cells in that pattern. Without
+    // the parser surfacing this, callers see an empty assistant bubble.
+
+    @Test
+    fun `surfaces gateway error frame as ParseResult Error with structured message`() = runBlocking {
+        val sse = "event: error\n" +
+            "data: {\"error\":\"media type image/heic not supported\"}\n\n" +
+            "event: done\n" +
+            "data: {}\n\n"
+        val parts = mutableListOf<CodyStreamSseParser.ParseResult>()
+        parser.parse(reader(sse)) { parts.add(it) }
+        val errors = parts.filterIsInstance<CodyStreamSseParser.ParseResult.Error>()
+        assertEquals(1, errors.size)
+        assertEquals("media type image/heic not supported", errors.first().message)
+        assertTrue(parts.any { it is CodyStreamSseParser.ParseResult.StreamDone },
+            "Stream must still terminate via done event after an error frame")
+    }
+
+    @Test
+    fun `extracts message field as fallback when error envelope uses message instead of error`() = runBlocking {
+        val sse = "event: error\n" +
+            "data: {\"message\":\"unsupported document type\"}\n\n"
+        val parts = mutableListOf<CodyStreamSseParser.ParseResult>()
+        parser.parse(reader(sse)) { parts.add(it) }
+        val errors = parts.filterIsInstance<CodyStreamSseParser.ParseResult.Error>()
+        assertEquals(1, errors.size)
+        assertEquals("unsupported document type", errors.first().message)
+    }
+
+    @Test
+    fun `falls back to raw payload when error data is free-form text`() = runBlocking {
+        val sse = "event: error\n" +
+            "data: rate limit exceeded\n\n"
+        val parts = mutableListOf<CodyStreamSseParser.ParseResult>()
+        parser.parse(reader(sse)) { parts.add(it) }
+        val errors = parts.filterIsInstance<CodyStreamSseParser.ParseResult.Error>()
+        assertEquals(1, errors.size)
+        assertEquals("rate limit exceeded", errors.first().message)
+    }
+
+    @Test
+    fun `error frame state does not leak into subsequent normal frames`() = runBlocking {
+        // Hypothetical: gateway emits an error then continues with normal text
+        // (we haven't observed this in practice but the parser must not
+        // mis-classify the next data: as another error).
+        val sse = "event: error\n" +
+            "data: {\"error\":\"transient\"}\n\n" +
+            "event: completion\n" +
+            "data: {\"deltaText\":\"recovered\"}\n\n" +
+            "event: done\n" +
+            "data: {}\n\n"
+        val parts = mutableListOf<CodyStreamSseParser.ParseResult>()
+        parser.parse(reader(sse)) { parts.add(it) }
+        assertEquals(1, parts.filterIsInstance<CodyStreamSseParser.ParseResult.Error>().size)
+        val text = parts.filterIsInstance<CodyStreamSseParser.ParseResult.TextDelta>()
+            .joinToString("") { it.text }
+        assertEquals("recovered", text)
+    }
 }
