@@ -189,7 +189,12 @@ Format for new titles:
             val cleaned = text.removeSurrounding("\"").removeSurrounding("'").trim().take(80)
             // Bug 9 — empty / "no change" → suppress the update so the displayed
             // phrase stays put. This is the whole point of Haiku self-gating.
-            if (cleaned.isBlank() || cleaned.equals(EMPTY_RESPONSE, ignoreCase = true)) {
+            //
+            // startsWith (not equals) handles Haiku's tendency to occasionally
+            // append a justification to the sentinel even when instructed not to,
+            // e.g. "(no change) — context looks the same". Anything starting with
+            // "(no change)" is treated as a no-update signal.
+            if (cleaned.isBlank() || cleaned.startsWith(EMPTY_RESPONSE, ignoreCase = true)) {
                 LOG.info("[HaikuPhrase] Haiku decided no change is needed — suppressing update")
                 return null
             }
