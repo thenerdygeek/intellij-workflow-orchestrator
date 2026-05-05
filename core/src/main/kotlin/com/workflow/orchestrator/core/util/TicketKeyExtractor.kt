@@ -17,6 +17,17 @@ object TicketKeyExtractor {
     fun extractFromBranch(branchName: String): String? =
         PATTERN.find(branchName)?.groupValues?.get(1)
 
+    /**
+     * Returns all distinct ticket keys found anywhere in [text], preserving the order
+     * of first occurrence. Use this to scan free-form text like commit-message bodies
+     * or PR descriptions where multiple tickets may be referenced.
+     */
+    fun extractAllFromText(text: String): List<String> =
+        PATTERN.findAll(text)
+            .map { it.groupValues[1] }
+            .toMutableSet()
+            .toList()
+
     /** Validates the exact key format (no surrounding text). */
     fun isValidKey(key: String): Boolean =
         PATTERN.matches(key)

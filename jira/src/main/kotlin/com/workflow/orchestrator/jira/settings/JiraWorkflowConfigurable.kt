@@ -224,10 +224,6 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
                         .columns(COLUMNS_LARGE)
                         .comment("Placeholders: {ticketId}, {summary}, {type}, {ai-summary}")
                 }
-                row {
-                    checkBox("Use conventional commits (feat:, fix:, etc.)")
-                        .bindSelected(settings.state::useConventionalCommits)
-                }
             }
 
             // === 5. Pull Requests ===

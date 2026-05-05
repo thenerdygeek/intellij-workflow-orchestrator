@@ -6,6 +6,7 @@ import com.workflow.orchestrator.core.ai.dto.ChatMessage
 import com.workflow.orchestrator.core.ai.prompts.PrDescriptionPromptBuilder
 import com.workflow.orchestrator.core.ai.prompts.PrTitlePromptBuilder
 import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.model.ErrorType
 import com.workflow.orchestrator.core.workflow.TicketContext
 import java.io.File
 
@@ -57,9 +58,30 @@ class SourcegraphTextGenerationService : TextGenerationService {
         contextFilePaths: List<String>,
         tickets: List<TicketContext>,
         sourceBranch: String,
-        targetBranch: String
-    ): String? {
-        if (!LlmBrainFactory.isAvailable()) return null
+        targetBranch: String,
+        diffStat: String,
+        onPartial: (suspend (String) -> Unit)?
+    ): String? = when (val outcome = generatePrDescriptionTyped(
+        project, diff, commitMessages, contextFilePaths, tickets,
+        sourceBranch, targetBranch, diffStat, diffCap = null, onPartial = onPartial
+    )) {
+        is TextGenerationOutcome.Success -> outcome.text
+        else -> null
+    }
+
+    override suspend fun generatePrDescriptionTyped(
+        project: Project,
+        diff: String,
+        commitMessages: List<String>,
+        contextFilePaths: List<String>,
+        tickets: List<TicketContext>,
+        sourceBranch: String,
+        targetBranch: String,
+        diffStat: String,
+        diffCap: Int?,
+        onPartial: (suspend (String) -> Unit)?
+    ): TextGenerationOutcome {
+        if (!LlmBrainFactory.isAvailable()) return TextGenerationOutcome.Other(null, "LLM not configured")
         val brain = LlmBrainFactory.create(project)
         val maxTokens = AiSettings.getInstance(project).state.maxOutputTokens
 
@@ -68,20 +90,36 @@ class SourcegraphTextGenerationService : TextGenerationService {
             commitMessages = commitMessages,
             tickets = tickets,
             sourceBranch = sourceBranch,
-            targetBranch = targetBranch
+            targetBranch = targetBranch,
+            diffStat = diffStat,
+            diffCap = diffCap ?: PrDescriptionPromptBuilder.DEFAULT_DIFF_CAP
         )
         val messages = listOf(ChatMessage(role = "user", content = prompt))
 
-        return when (val result = brain.chat(messages, tools = null, maxTokens = maxTokens)) {
+        val accumulated = StringBuilder()
+        val result = brain.chatStream(messages, tools = null, maxTokens = maxTokens) { chunk ->
+            val delta = chunk.choices.firstOrNull()?.delta?.content
+            if (delta != null) {
+                accumulated.append(delta)
+                onPartial?.invoke(accumulated.toString())
+            }
+        }
+        return when (result) {
             is ApiResult.Success -> {
-                result.data.choices.firstOrNull()?.message?.content
-                    ?.replace(Regex("^```[a-z]*\\n?"), "")
-                    ?.replace(Regex("\\n?```$"), "")
-                    ?.trim()
+                val text = accumulated.toString()
+                    .replace(Regex("^```[a-z]*\\n?"), "")
+                    .replace(Regex("\\n?```$"), "")
+                    .trim()
+                if (text.isBlank()) TextGenerationOutcome.Other(null, "empty response")
+                else TextGenerationOutcome.Success(text)
             }
             is ApiResult.Error -> {
-                log.warn("[AI:PrDesc] Failed: ${result.message}")
-                null
+                log.warn("[AI:PrDesc] Failed: type=${result.type} ${result.message}")
+                if (result.type == ErrorType.CONTEXT_LENGTH_EXCEEDED) {
+                    TextGenerationOutcome.ContextOverflow
+                } else {
+                    TextGenerationOutcome.Other(result.type, result.message)
+                }
             }
         }
     }
@@ -89,7 +127,8 @@ class SourcegraphTextGenerationService : TextGenerationService {
     override suspend fun generatePrTitle(
         project: Project,
         ticket: TicketContext,
-        commitMessages: List<String>
+        commitMessages: List<String>,
+        onPartial: (suspend (String) -> Unit)?
     ): String? {
         if (!LlmBrainFactory.isAvailable()) return null
         val brain = LlmBrainFactory.create(project)
@@ -98,18 +137,29 @@ class SourcegraphTextGenerationService : TextGenerationService {
         val prompt = PrTitlePromptBuilder.build(ticket, commitMessages)
         val messages = listOf(ChatMessage(role = "user", content = prompt))
 
-        return when (val result = brain.chat(messages, tools = null, maxTokens = maxTokens)) {
-            is ApiResult.Success -> {
-                result.data.choices.firstOrNull()?.message?.content
-                    ?.replace(Regex("^```[a-z]*\\n?"), "")
-                    ?.replace(Regex("\\n?```$"), "")
+        val accumulated = StringBuilder()
+        val result = brain.chatStream(messages, tools = null, maxTokens = maxTokens) { chunk ->
+            val delta = chunk.choices.firstOrNull()?.delta?.content
+            if (delta != null) {
+                accumulated.append(delta)
+                // Title must be a single line — surface the first non-blank line of the
+                // accumulated text so the partial UI never shows mid-stream junk.
+                val partial = accumulated.toString()
+                    .lines()
+                    .firstOrNull { it.isNotBlank() }
                     ?.trim()
-                    // Title must be a single line — take the first non-blank line in case the model
-                    // returns a preamble or trailing explanation despite the prompt's "output only" rule.
-                    ?.lines()
-                    ?.firstOrNull { it.isNotBlank() }
-                    ?.trim()
+                    .orEmpty()
+                if (partial.isNotEmpty()) onPartial?.invoke(partial)
             }
+        }
+        return when (result) {
+            is ApiResult.Success -> accumulated.toString()
+                .replace(Regex("^```[a-z]*\\n?"), "")
+                .replace(Regex("\\n?```$"), "")
+                .trim()
+                .lines()
+                .firstOrNull { it.isNotBlank() }
+                ?.trim()
             is ApiResult.Error -> {
                 log.warn("[AI:PrTitle] Failed: ${result.message}")
                 null

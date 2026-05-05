@@ -26,9 +26,6 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         // SonarQube project key (auto-detected or user-configured)
         var sonarProjectKey by string("")
 
-        // Commit message format
-        var useConventionalCommits by property(false)
-
         // Branch naming pattern
         var branchPattern by string("feature/{ticketId}-{summary}")
 

@@ -1966,22 +1966,27 @@ class PrDetailPanel(
                         return@launch
                     }
 
-                    val truncatedDiff = if (diff.length > 10000) {
-                        diff.take(10000) + "\n... (truncated)"
-                    } else diff
-
                     val ticketId = com.workflow.orchestrator.core.settings.PluginSettings
                         .getInstance(project).state.activeTicketId.orEmpty()
 
-                    log.info("[PR:AI] Calling generatePrDescription: diff=${truncatedDiff.length} chars, ticketId=$ticketId, title=${pr.title}, from=${pr.fromRef?.displayId}, to=${pr.toRef?.displayId}")
+                    log.info("[PR:AI] Calling generatePrDescription: diff=${diff.length} chars, ticketId=$ticketId, title=${pr.title}, from=${pr.fromRef?.displayId}, to=${pr.toRef?.displayId}")
+                    // Send the full diff — the prompt builder owns smart selection within its
+                    // 60K cap. Stream tokens into the edit area so the user sees progress.
                     val enhanced = textGen.generatePrDescription(
                         project = project,
-                        diff = truncatedDiff,
+                        diff = diff,
                         commitMessages = emptyList(),
                         tickets = emptyList(), // View-side AI assist; no Jira ticket binding available at this call site.
                         sourceBranch = pr.fromRef?.displayId ?: "",
-                        targetBranch = pr.toRef?.displayId ?: ""
-                    )
+                        targetBranch = pr.toRef?.displayId ?: "",
+                        diffStat = ""
+                    ) { partial ->
+                        invokeLater {
+                            // First partial flips us into edit mode and primes the area.
+                            if (!editArea.isVisible || editArea.text.isBlank()) enterEditMode()
+                            editArea.text = partial
+                        }
+                    }
 
                     log.info("[PR:AI] generatePrDescription result: ${if (enhanced == null) "NULL" else "${enhanced.length} chars"}")
                     invokeLater {

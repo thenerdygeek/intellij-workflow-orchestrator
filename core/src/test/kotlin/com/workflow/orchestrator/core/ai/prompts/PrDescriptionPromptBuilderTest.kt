@@ -402,10 +402,21 @@ class PrDescriptionPromptBuilderTest {
     }
 
     @Test
-    fun `diff longer than 10000 chars is truncated`() {
-        val bigDiff = "X".repeat(12000)
+    fun `diff longer than DEFAULT_DIFF_CAP is truncated`() {
+        // Single unstructured diff (no per-file headers) → smart selection falls back to
+        // raw `take(cap)` plus a "diff truncated" trailer.
+        val cap = PrDescriptionPromptBuilder.DEFAULT_DIFF_CAP
+        val bigDiff = "X".repeat(cap + 10_000)
         val result = PrDescriptionPromptBuilder.build(diff = bigDiff, tickets = emptyList())
-        assertFalse(result.contains("X".repeat(10001)), "Diff should be capped at 10000 chars")
+        assertFalse(result.contains("X".repeat(cap + 1)), "Diff should be capped at DEFAULT_DIFF_CAP")
+        assertTrue(result.contains("diff truncated"), "Should note truncation")
+    }
+
+    @Test
+    fun `caller-supplied diffCap overrides default`() {
+        val bigDiff = "X".repeat(20_000)
+        val result = PrDescriptionPromptBuilder.build(diff = bigDiff, tickets = emptyList(), diffCap = 5_000)
+        assertFalse(result.contains("X".repeat(5_001)), "Diff should respect the caller-supplied cap")
         assertTrue(result.contains("diff truncated"), "Should note truncation")
     }
 

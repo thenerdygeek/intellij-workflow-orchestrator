@@ -53,10 +53,12 @@ object LlmBrainFactory {
     }
 
     /**
-     * Create an LlmBrain using Sonnet thinking model — for text generation tasks
-     * (commit messages, PR descriptions) where thinking improves quality but
-     * Opus is overkill. Falls back to the user's configured model if Sonnet
-     * thinking is not available.
+     * Create an LlmBrain using the latest non-thinking Sonnet — for text generation tasks
+     * (commit messages, PR descriptions). Non-thinking Sonnet keeps the same 200K input
+     * window as the thinking variant but skips the reserved thinking-token budget, leaving
+     * the full window available for prompt data. Single-shot generation doesn't need the
+     * deliberation thinking provides. Falls back to the user's configured model if Sonnet
+     * is not available at all.
      */
     suspend fun createForTextGeneration(project: Project): LlmBrain {
         val connections = ConnectionSettings.getInstance()
@@ -70,9 +72,9 @@ object LlmBrainFactory {
             model = ""
         )
         val models = ModelCache.getModels(client)
-        val sonnet = ModelCache.pickSonnetThinking(models)
+        val sonnet = ModelCache.pickSonnetNonThinking(models)
         if (sonnet != null) {
-            LOG.info("LlmBrainFactory: using ${sonnet.id} for text generation")
+            LOG.info("LlmBrainFactory: using ${sonnet.id} (non-thinking) for text generation")
             return OpenAiCompatBrain(
                 sourcegraphUrl = sgUrl,
                 tokenProvider = tokenProvider,
@@ -80,7 +82,7 @@ object LlmBrainFactory {
             )
         }
         // Fall back to the user's configured model
-        LOG.info("LlmBrainFactory: Sonnet thinking not available, falling back to configured model")
+        LOG.info("LlmBrainFactory: Sonnet not available, falling back to configured model")
         return create(project)
     }
 

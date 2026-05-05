@@ -32,7 +32,6 @@ import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.core.ui.CommitMessageFlash
 import com.workflow.orchestrator.core.ui.CommitMessageStreamBatcher
 import com.workflow.orchestrator.core.workflow.JiraTicketProvider
-import com.workflow.orchestrator.core.workflow.TicketDetails
 import git4idea.commands.Git
 import git4idea.commands.GitCommand
 import git4idea.commands.GitLineHandler
@@ -255,104 +254,114 @@ class GenerateCommitMessageAction : AnAction(
                 buildCodeContext(project, selectedAbsPaths)
             }
 
-            // Ticket resolution — settings first, then branch-name extraction.
-            // Reading from PluginSettings (not ActiveTicketService) matches how the rest
-            // of the plugin persists the active ticket; clearing in the UI writes "" here.
-            val ticketId = settings.state.activeTicketId.orEmpty().takeIf { it.isNotBlank() }
-                ?: targetRepo?.currentBranch?.name?.let { extractTicketIdFromBranch(it) }
-                ?: ""
+            // Ticket resolution — collect BOTH the active ticket AND the branch-name
+            // ticket as candidates. When they differ, both are sent to the LLM and it
+            // picks whichever best matches the diff. When they coincide, only one is
+            // shown (tagged BOTH).
+            val activeTicketId = settings.state.activeTicketId.orEmpty().takeIf { it.isNotBlank() }
+            val branchTicketId = targetRepo?.currentBranch?.name?.let { extractTicketIdFromBranch(it) }
 
-            // Phase 3 — Jira ticket (only if relevant)
-            val ticketDetails = if (ticketId.isNotBlank()) {
-                withPhase(indicator, renderer, "Fetching Jira ticket...") {
-                    fetchTicketDetails(ticketId)
-                }
-            } else null
+            // Primary key used for the FORMAT line when only one candidate exists.
+            val ticketId = activeTicketId ?: branchTicketId.orEmpty()
+
+            // Phase 3 — Jira ticket(s). Fetch both candidates in parallel; deduplicate
+            // when the active and branch IDs match.
+            val candidateTickets = withPhase(indicator, renderer, "Fetching Jira ticket(s)...") {
+                fetchCandidateTickets(activeTicketId, branchTicketId)
+            }
 
             // Phase 4 — recent commits
             val recentCommits = withPhase(indicator, renderer, "Reading recent commits...") {
                 getRecentCommits(project, targetRepo)
             }
 
-            log.info("[AI:CommitMsg] Generating: ${diff.length} char diff, ticket='$ticketId' details=${ticketDetails != null}, ${recentCommits.size} recent commits, codeContext=${codeContext.length} chars")
+            log.info("[AI:CommitMsg] Generating: ${diff.length} char diff, active='${activeTicketId ?: "<none>"}' branch='${branchTicketId ?: "<none>"}' candidates=${candidateTickets.size} (${candidateTickets.joinToString(",") { "${it.details.key}/${it.source}" }}), ${recentCommits.size} recent commits, codeContext=${codeContext.length} chars")
             log.info("[AI:CommitMsg] Branch='${targetRepo?.currentBranch?.name ?: "<none>"}' upstream='${targetRepo?.currentBranch?.findTrackedBranch(targetRepo)?.nameForRemoteOperations ?: "<none>"}'")
             log.info("[AI:CommitMsg] Files in scope (${scopedChanges.size}): ${filesSummary.ifBlank { "<none>" }}")
             recentCommits.forEachIndexed { i, c -> log.info("[AI:CommitMsg]   recentCommit[$i] = $c") }
             val diffPreview = diff.lineSequence().take(40).joinToString("\n")
             log.info("[AI:CommitMsg] Diff preview (first 40 lines, full length=${diff.length}):\n$diffPreview${if (diff.length > diffPreview.length) "\n...<truncated>" else ""}")
 
-            // Phase 5 — AI generation (streaming)
-            // Stream tokens live into the commit field so the user sees the message
-            // being written character-by-character. Partial writes are undo-transparent;
-            // the final renderer.success() write participates in undo.
+            // Phase 5 — AI generation (streaming) with context-overflow retry ladder.
+            // First attempt sends the full diff. If Sourcegraph rejects with
+            // CONTEXT_LENGTH_EXCEEDED, the diff is halved and the prompt rebuilt; up to 3
+            // shrinkages before giving up. Truncated diffs get a "(diff truncated)" trailer
+            // so the model knows the input is incomplete.
             withPhase(indicator, renderer, "Generating with AI...") {
                 val brain = LlmBrainFactory.createForTextGeneration(project)
-                val messages = CommitMessagePromptBuilder.buildMessages(
-                    diff = diff,
-                    ticketId = ticketId,
-                    filesSummary = filesSummary,
-                    recentCommits = recentCommits,
-                    codeContext = codeContext,
-                    ticketDetails = ticketDetails
-                )
+                val diffLadder = listOf(diff, halve(diff), halve(halve(diff)), halve(halve(halve(diff))))
+                var lastResult: ApiResult<*>? = null
+                var producedText: String? = null
 
-                val accumulated = StringBuilder()
-
-                // Set up the 16ms EDT coalescing batcher only when we have a live
-                // commit field to write to (null during unit tests without a UI).
-                // Partial writes are wrapped in runUndoTransparentAction so each streaming
-                // token does NOT pollute IntelliJ's undo stack. Only the final
-                // renderer.success(finalText) write participates in undo.
-                val batcher: CommitMessageStreamBatcher? = if (commitMessage != null && modalityState != null) {
-                    CommitMessageStreamBatcher(modalityState) { partial ->
-                        CommandProcessor.getInstance().runUndoTransparentAction {
-                            commitMessage.setCommitMessage(partial)
-                        }
-                    }.also { it.start() }
-                } else null
-
-                try {
-                    // maxTokens MUST be set explicitly — omitting it causes Sourcegraph to
-                    // return HTTP 500 for thinking models (the thinking budget needs to be
-                    // allocated up front). 8000 gives thinking models ~7500 tokens for
-                    // reasoning plus ~500 for the commit message itself.
-                    val result = brain.chatStream(messages, tools = null, maxTokens = 8000) { chunk ->
-                        // StreamChunk → choices[0].delta.content carries the partial text delta.
-                        // Append each delta to the accumulator, then push the full accumulated
-                        // text to the batcher (so the field always shows accumulated state,
-                        // never a raw delta fragment).
-                        val delta = chunk.choices.firstOrNull()?.delta?.content
-                        if (delta != null) {
-                            accumulated.append(delta)
-                            batcher?.submit(accumulated.toString())
-                        }
-
-                        // Cooperative cancellation — stop streaming immediately if the
-                        // user cancels the progress indicator.
-                        if (indicator.isCanceled) {
-                            brain.interruptStream()
-                            brain.cancelActiveRequest()
-                        }
+                attempt@ for ((attemptIndex, attemptDiff) in diffLadder.withIndex()) {
+                    if (attemptIndex > 0) {
+                        log.warn("[AI:CommitMsg] Context overflow — retrying with diff length=${attemptDiff.length} (attempt ${attemptIndex + 1}/${diffLadder.size})")
                     }
+                    val messages = CommitMessagePromptBuilder.buildMessages(
+                        diff = attemptDiff,
+                        ticketId = ticketId,
+                        filesSummary = filesSummary,
+                        recentCommits = recentCommits,
+                        codeContext = codeContext,
+                        candidateTickets = candidateTickets
+                    )
 
-                    // Flush any last partial token that arrived between timer ticks
-                    batcher?.flush()
+                    val accumulated = StringBuilder()
 
-                    when (result) {
-                        is ApiResult.Success -> {
-                            // Code-fence stripping is deferred to the final text — partial
-                            // fences look ugly mid-stream. Strip once on the complete output.
-                            accumulated.toString()
-                                .replace(Regex("^```[a-z]*\\n?"), "")
-                                .replace(Regex("\\n?```$"), "")
-                                .trim()
-                                .takeIf { it.isNotBlank() }
+                    // Set up the 16ms EDT coalescing batcher only when we have a live
+                    // commit field to write to (null during unit tests without a UI).
+                    // Partial writes are wrapped in runUndoTransparentAction so each streaming
+                    // token does NOT pollute IntelliJ's undo stack. Only the final
+                    // renderer.success(finalText) write participates in undo.
+                    val batcher: CommitMessageStreamBatcher? = if (commitMessage != null && modalityState != null) {
+                        CommitMessageStreamBatcher(modalityState) { partial ->
+                            CommandProcessor.getInstance().runUndoTransparentAction {
+                                commitMessage.setCommitMessage(partial)
+                            }
+                        }.also { it.start() }
+                    } else null
+
+                    try {
+                        // maxTokens MUST be set explicitly — omitting it causes Sourcegraph to
+                        // return HTTP 500 for some models. 8000 leaves ~7500 tokens of headroom
+                        // beyond the typical commit message length.
+                        val result = brain.chatStream(messages, tools = null, maxTokens = 8000) { chunk ->
+                            val delta = chunk.choices.firstOrNull()?.delta?.content
+                            if (delta != null) {
+                                accumulated.append(delta)
+                                batcher?.submit(accumulated.toString())
+                            }
+                            if (indicator.isCanceled) {
+                                brain.interruptStream()
+                                brain.cancelActiveRequest()
+                            }
                         }
-                        is ApiResult.Error -> null
+                        batcher?.flush()
+                        lastResult = result
+
+                        when (result) {
+                            is ApiResult.Success -> {
+                                producedText = accumulated.toString()
+                                    .replace(Regex("^```[a-z]*\\n?"), "")
+                                    .replace(Regex("\\n?```$"), "")
+                                    .trim()
+                                    .takeIf { it.isNotBlank() }
+                                break@attempt
+                            }
+                            is ApiResult.Error -> {
+                                if (result.type != com.workflow.orchestrator.core.model.ErrorType.CONTEXT_LENGTH_EXCEEDED) {
+                                    // Non-overflow failures aren't fixable by shrinking the diff.
+                                    break@attempt
+                                }
+                                // Loop with next, halved diff. If this is the last entry the
+                                // for-loop exits naturally and producedText remains null.
+                            }
+                        }
+                    } finally {
+                        batcher?.dispose()
                     }
-                } finally {
-                    batcher?.dispose()
                 }
+                producedText
             }
         } catch (ex: ProcessCanceledException) {
             throw ex
@@ -598,15 +607,61 @@ class GenerateCommitMessageAction : AnAction(
         TICKET_PATTERN.find(branchName)?.groupValues?.get(1)
 
     /**
-     * Fetch ticket summary/description via the JiraTicketProvider extension point.
-     * Returns null if the :jira module is not loaded or the lookup fails — the prompt
-     * still generates, it just omits the TICKET CONTEXT section.
+     * Halve a diff for the context-overflow retry ladder. Strings shorter than ~200 chars
+     * are returned as-is — anything smaller usually carries no useful diff content for
+     * commit-message generation, and continuing to shrink would just remove the trailer.
      */
-    private suspend fun fetchTicketDetails(ticketId: String): TicketDetails? = try {
-        JiraTicketProvider.getInstance()?.getTicketDetails(ticketId)
+    private fun halve(diff: String): String {
+        if (diff.length < 200) return diff
+        val cut = diff.length / 2
+        return diff.take(cut) + "\n... (diff truncated to fit context)"
+    }
+
+    /**
+     * Fetch the candidate-ticket list for the prompt builder. Resolves the active ticket
+     * and the branch-name ticket in parallel and dedupes when they refer to the same key.
+     *
+     * Returns an empty list if the :jira EP is unavailable, both lookups fail, or both
+     * inputs are null/blank — the prompt still generates without a TICKET CONTEXT section.
+     */
+    private suspend fun fetchCandidateTickets(
+        activeTicketId: String?,
+        branchTicketId: String?
+    ): List<CommitMessagePromptBuilder.TicketCandidate> = try {
+        val provider = JiraTicketProvider.getInstance() ?: return emptyList()
+        coroutineScope {
+            val activeDeferred = activeTicketId
+                ?.takeIf { it.isNotBlank() }
+                ?.let { id -> async { runCatching { provider.getTicketDetails(id) }.getOrNull() } }
+            val branchDeferred = branchTicketId
+                ?.takeIf { it.isNotBlank() && it != activeTicketId }
+                ?.let { id -> async { runCatching { provider.getTicketDetails(id) }.getOrNull() } }
+
+            val active = activeDeferred?.await()
+            val branch = branchDeferred?.await()
+
+            buildList {
+                when {
+                    active != null && branch != null && active.key == branch.key ->
+                        add(CommitMessagePromptBuilder.TicketCandidate(CommitMessagePromptBuilder.TicketSource.BOTH, active))
+                    active != null && branch != null -> {
+                        add(CommitMessagePromptBuilder.TicketCandidate(CommitMessagePromptBuilder.TicketSource.ACTIVE, active))
+                        add(CommitMessagePromptBuilder.TicketCandidate(CommitMessagePromptBuilder.TicketSource.BRANCH, branch))
+                    }
+                    active != null ->
+                        add(CommitMessagePromptBuilder.TicketCandidate(
+                            if (activeTicketId == branchTicketId) CommitMessagePromptBuilder.TicketSource.BOTH
+                            else CommitMessagePromptBuilder.TicketSource.ACTIVE,
+                            active
+                        ))
+                    branch != null ->
+                        add(CommitMessagePromptBuilder.TicketCandidate(CommitMessagePromptBuilder.TicketSource.BRANCH, branch))
+                }
+            }
+        }
     } catch (ex: Exception) {
-        log.warn("[AI:CommitMsg] Ticket details fetch failed for $ticketId: ${ex.message}")
-        null
+        log.warn("[AI:CommitMsg] Candidate ticket fetch failed: ${ex.message}")
+        emptyList()
     }
 
     /**

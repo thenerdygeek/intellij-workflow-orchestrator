@@ -850,7 +850,23 @@ class CreatePrDialog(
                 }
 
                 val description = withTimeoutOrNull(120_000) {
-                    PrDescriptionGenerator.generate(project, gitRepo, tickets, repoAtGenTime.sourceBranch, targetBranch)
+                    PrDescriptionGenerator.generate(
+                        project,
+                        gitRepo,
+                        tickets,
+                        repoAtGenTime.sourceBranch,
+                        targetBranch
+                    ) { partial ->
+                        // Stream tokens into the description area as they arrive. Marshal to
+                        // EDT under the modal dialog's modality state so writes happen while
+                        // the dialog is open. Bail when this generation is superseded.
+                        ApplicationManager.getApplication().invokeLater({
+                            if (myId != descriptionGenerationId) return@invokeLater
+                            descriptionArea.text = partial
+                            // Show the edit tab so the user can see the live text.
+                            showDescriptionTab("edit")
+                        }, ModalityState.stateForComponent(descriptionArea))
+                    }
                 }
                 if (description == null) {
                     log.warn("[Pr:CreateDialog] generate description timed out")
@@ -927,7 +943,14 @@ class CreatePrDialog(
             try {
                 val result: String? = withTimeoutOrNull(120_000) {
                     try {
-                        textGen?.generatePrTitle(project, primary, emptyList())
+                        textGen?.generatePrTitle(project, primary, emptyList()) { partial ->
+                            // Stream the in-progress title into the field so the user sees
+                            // tokens land live. The implementation only emits non-blank
+                            // first-line content, so we can write it directly.
+                            ApplicationManager.getApplication().invokeLater({
+                                titleField.text = partial
+                            }, ModalityState.stateForComponent(titleField))
+                        }
                     } catch (e: Exception) {
                         log.warn("[PR:Create] AI title generation failed: ${e.message}")
                         null

@@ -3,7 +3,7 @@ package com.workflow.orchestrator.pullrequest.service
 import com.intellij.openapi.application.readAction
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.vcs.changes.ChangeListManager
+import com.workflow.orchestrator.core.ai.TextGenerationOutcome
 import com.workflow.orchestrator.core.ai.TextGenerationService
 import com.workflow.orchestrator.core.ai.prompts.PrDescriptionPromptBuilder
 import com.workflow.orchestrator.core.bitbucket.PrService
@@ -27,6 +27,18 @@ object PrDescriptionGenerator {
     private const val MAX_CONTEXT_FILES = 20
 
     /**
+     * Diff-cap fallback ladder used by [generate] on context-overflow retry. Starts at the
+     * default (full Sonnet window), halves on each retry. After the ladder is exhausted the
+     * pipeline falls through to Tier 2 (no-diff prompt).
+     */
+    private val DIFF_CAP_LADDER = intArrayOf(
+        PrDescriptionPromptBuilder.DEFAULT_DIFF_CAP,        // 150K
+        PrDescriptionPromptBuilder.DEFAULT_DIFF_CAP / 2,    // 75K
+        PrDescriptionPromptBuilder.DEFAULT_DIFF_CAP / 4,    // 37.5K
+        PrDescriptionPromptBuilder.DEFAULT_DIFF_CAP / 8     // ~18K
+    )
+
+    /**
      * Generate a PR description using a 3-tier cascade.
      * Tries AI with diff first, then AI without diff, then commit-message fallback.
      *
@@ -39,39 +51,61 @@ object PrDescriptionGenerator {
         repo: GitRepository,
         tickets: List<TicketContext>,
         sourceBranch: String,
-        targetBranch: String
+        targetBranch: String,
+        onPartial: (suspend (String) -> Unit)? = null
     ): String {
         val commitMessages = getCommitMessages(project, repo, sourceBranch, targetBranch)
-        val changedFilePaths = getChangedFilePaths(project)
+        // Use files actually changed between source and target — NOT ChangeListManager.allChanges,
+        // which reflects uncommitted local edits and is empty for a clean working tree.
+        val changedFilePaths = getChangedFilePathsBetweenBranches(project, repo, sourceBranch, targetBranch)
 
         val textGen = TextGenerationService.getInstance()
         if (textGen != null) {
             log.info("[Build:PrDesc] Using AI for PR description generation (chained)")
 
-            // Tier 1: AI with diff
+            // Tier 1: AI with diff. The prompt builder now owns the cap and applies smart
+            // selection (component/label-matching files first), so we send the FULL diff
+            // and let the builder decide which files survive.
             val diff = getDiffBetweenBranches(project, repo, sourceBranch, targetBranch)
-            val truncatedDiff = if (diff != null && diff.length > 10000) {
-                diff.take(10000) + "\n... (diff truncated)"
-            } else diff
+            val diffStat = getDiffStatBetweenBranches(project, repo, sourceBranch, targetBranch)
 
-            if (truncatedDiff != null) {
-                val chainedResult = try {
-                    textGen.generatePrDescription(
-                        project = project,
-                        diff = truncatedDiff,
-                        commitMessages = commitMessages,
-                        contextFilePaths = changedFilePaths.take(MAX_CONTEXT_FILES),
-                        tickets = tickets,
-                        sourceBranch = sourceBranch,
-                        targetBranch = targetBranch
-                    )
-                } catch (e: Exception) {
-                    log.warn("[Build:PrDesc] Chained generation failed: ${e.message}")
-                    null
-                }
-                if (!chainedResult.isNullOrBlank()) {
-                    log.info("[Build:PrDesc] Chained generation produced ${chainedResult.length} chars")
-                    return chainedResult
+            if (diff != null) {
+                // Tier 1 with retry ladder: send the full diff first; on CONTEXT_LENGTH_EXCEEDED
+                // halve the diff cap and retry, until the ladder is exhausted or any non-overflow
+                // failure ends the loop. The prompt builder owns the smart-selection step within
+                // each cap so component/label-matching files always survive.
+                for (cap in DIFF_CAP_LADDER) {
+                    val outcome = try {
+                        textGen.generatePrDescriptionTyped(
+                            project = project,
+                            diff = diff,
+                            commitMessages = commitMessages,
+                            contextFilePaths = changedFilePaths.take(MAX_CONTEXT_FILES),
+                            tickets = tickets,
+                            sourceBranch = sourceBranch,
+                            targetBranch = targetBranch,
+                            diffStat = diffStat,
+                            diffCap = cap,
+                            onPartial = onPartial
+                        )
+                    } catch (e: Exception) {
+                        log.warn("[Build:PrDesc] Chained generation threw at cap=$cap: ${e.message}")
+                        TextGenerationOutcome.Other(null, e.message ?: "exception")
+                    }
+                    when (outcome) {
+                        is TextGenerationOutcome.Success -> {
+                            log.info("[Build:PrDesc] Chained generation produced ${outcome.text.length} chars at cap=$cap")
+                            return outcome.text
+                        }
+                        TextGenerationOutcome.ContextOverflow -> {
+                            log.warn("[Build:PrDesc] Context overflow at cap=$cap; halving and retrying")
+                            // continue loop with next (smaller) cap
+                        }
+                        is TextGenerationOutcome.Other -> {
+                            log.warn("[Build:PrDesc] Non-overflow failure at cap=$cap: ${outcome.message}")
+                            break // any other failure is not retry-able by shrinking the diff
+                        }
+                    }
                 }
             }
 
@@ -82,7 +116,8 @@ object PrDescriptionGenerator {
                 commitMessages = commitMessages,
                 tickets = tickets,
                 sourceBranch = sourceBranch,
-                targetBranch = targetBranch
+                targetBranch = targetBranch,
+                diffStat = diffStat
             )
             val aiResult = try {
                 textGen.generateText(project, prompt, changedFilePaths.take(MAX_CONTEXT_FILES))
@@ -208,6 +243,27 @@ object PrDescriptionGenerator {
         }
     }
 
+    /**
+     * Returns `git diff --stat target...source` so the LLM sees the full file list and
+     * insertion/deletion counts even when the body diff is truncated by the prompt builder's
+     * smart-selection budget.
+     */
+    private suspend fun getDiffStatBetweenBranches(project: Project, repo: GitRepository, source: String, target: String): String {
+        return try {
+            readAction {
+                val handler = git4idea.commands.GitLineHandler(project, repo.root, git4idea.commands.GitCommand.DIFF)
+                handler.addParameters("--stat", "$target...$source", "--no-color")
+                val result = Git.getInstance().runCommand(handler)
+                if (result.success() && result.output.isNotEmpty()) {
+                    result.output.joinToString("\n")
+                } else ""
+            }
+        } catch (e: Exception) {
+            log.warn("[Build:PrDesc] Failed to get diff stat: ${e.message}")
+            ""
+        }
+    }
+
     private suspend fun getDiffBetweenBranches(project: Project, repo: GitRepository, source: String, target: String): String? {
         return try {
             readAction {
@@ -224,16 +280,35 @@ object PrDescriptionGenerator {
         }
     }
 
-    private suspend fun getChangedFilePaths(project: Project): List<String> {
-        return try {
-            readAction {
-                ChangeListManager.getInstance(project).allChanges
-                    .mapNotNull { it.virtualFile?.path }
+    /**
+     * Files actually changed between [target] and [source] (`git diff --name-only target...source`),
+     * resolved to absolute paths under the repo root. This is the correct list to send as
+     * [TextGenerationService] context: it reflects what's in the PR, not what the user
+     * happens to have uncommitted on disk. Capped at [MAX_CONTEXT_FILES].
+     */
+    private suspend fun getChangedFilePathsBetweenBranches(
+        project: Project,
+        repo: GitRepository,
+        source: String,
+        target: String
+    ): List<String> = try {
+        readAction {
+            val handler = git4idea.commands.GitLineHandler(project, repo.root, git4idea.commands.GitCommand.DIFF)
+            handler.addParameters("--name-only", "$target...$source")
+            val result = Git.getInstance().runCommand(handler)
+            if (!result.success()) {
+                log.warn("[Build:PrDesc] git diff --name-only failed exit=${result.exitCode}")
+                emptyList()
+            } else {
+                val rootPath = repo.root.path
+                result.output
+                    .filter { it.isNotBlank() }
+                    .map { rel -> "$rootPath/$rel" }
                     .take(MAX_CONTEXT_FILES)
             }
-        } catch (e: Exception) {
-            log.warn("[Build:PrDesc] Failed to get changed files: ${e.message}")
-            emptyList()
         }
+    } catch (e: Exception) {
+        log.warn("[Build:PrDesc] Failed to compute branch-diff file list: ${e.message}")
+        emptyList()
     }
 }

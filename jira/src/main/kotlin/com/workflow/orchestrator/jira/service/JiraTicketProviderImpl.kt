@@ -46,14 +46,21 @@ class JiraTicketProviderImpl : JiraTicketProvider {
 
     override suspend fun getTicketDetails(ticketId: String): TicketDetails? {
         val client = createClient() ?: return null
-        return when (val result = client.getIssue(ticketId)) {
+        // Use the rich endpoint so we get renderedFields.description (Jira-Server-rendered,
+        // free of wiki markup) and the structured type/labels/components needed for accurate
+        // commit-type and scope inference.
+        return when (val result = client.getIssueWithContext(ticketId)) {
             is ApiResult.Success -> {
                 val issue = result.data
+                val description = (issue.renderedFields?.description?.ifBlank { null }
+                    ?: issue.fields.description)?.ifBlank { null }
                 TicketDetails(
                     key = issue.key,
                     summary = issue.fields.summary,
-                    description = issue.fields.description,
-                    type = issue.fields.issuetype?.name
+                    description = description,
+                    type = issue.fields.issuetype?.name,
+                    labels = issue.fields.labels,
+                    components = issue.fields.components.map { it.name }
                 )
             }
             is ApiResult.Error -> {

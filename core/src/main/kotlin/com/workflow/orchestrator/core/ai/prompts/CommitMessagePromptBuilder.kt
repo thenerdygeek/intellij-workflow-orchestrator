@@ -10,11 +10,19 @@ import com.workflow.orchestrator.core.workflow.TicketDetails
  * - System message frames the role (consistent formatting, no hallucination)
  * - User message provides diff + context (code intelligence, recent history)
  * - "Why not what" emphasis in body bullets (enterprise traceability)
- * - Ticket ID prefix for Jira integration
- * - Recent commits for style matching (matches project conventions automatically)
+ * - Issue-type-driven commit type (Bug → fix, Story/Task/New Feature → feat)
+ * - Multi-candidate ticket selection — when the active ticket and the branch ticket
+ *   differ, both are sent and the LLM picks the one that best matches the diff
+ * - Recent commits as a soft style reference (NOT format authority)
  * - No diff truncation — Sourcegraph supports 150K input tokens
  */
 object CommitMessagePromptBuilder {
+
+    /** Source label for a candidate ticket — tells the LLM where each candidate came from. */
+    enum class TicketSource { ACTIVE, BRANCH, BOTH }
+
+    /** A candidate ticket plus where it was discovered. */
+    data class TicketCandidate(val source: TicketSource, val details: TicketDetails)
 
     /** System message — role framing for consistent, parseable output. */
     private const val SYSTEM_MESSAGE = """You are an expert at writing git commit messages following the Conventional Commits specification. You analyze diffs and produce clear, accurate commit messages that help teams understand what changed and why.
@@ -27,9 +35,9 @@ Output ONLY the raw commit message. No commentary, no markdown code blocks, no e
         filesSummary: String = "",
         recentCommits: List<String> = emptyList(),
         codeContext: String = "",
-        ticketDetails: TicketDetails? = null
+        candidateTickets: List<TicketCandidate> = emptyList()
     ): List<ChatMessage> {
-        val userMessage = buildUserMessage(diff, ticketId, filesSummary, recentCommits, codeContext, ticketDetails)
+        val userMessage = buildUserMessage(diff, ticketId, filesSummary, recentCommits, codeContext, candidateTickets)
         return listOf(
             ChatMessage(role = "system", content = SYSTEM_MESSAGE),
             ChatMessage(role = "user", content = userMessage)
@@ -42,17 +50,30 @@ Output ONLY the raw commit message. No commentary, no markdown code blocks, no e
         filesSummary: String,
         recentCommits: List<String>,
         codeContext: String,
-        ticketDetails: TicketDetails?
+        candidateTickets: List<TicketCandidate>
     ): String = buildString {
         appendLine("Generate a commit message for these changes.")
         appendLine()
 
+        val hasMultipleCandidates = candidateTickets.size > 1
+        val hasAnyCandidate = candidateTickets.isNotEmpty()
+
         // ── Format ──
         appendLine("FORMAT:")
-        if (ticketId.isNotBlank()) {
-            appendLine("$ticketId type(scope): imperative summary (max 72 chars total)")
-        } else {
-            appendLine("type(scope): imperative summary (max 72 chars)")
+        when {
+            hasMultipleCandidates -> {
+                appendLine("<CHOSEN-TICKET-ID> type(scope): imperative summary (max 72 chars total)")
+                appendLine("(Pick exactly ONE ticket from CANDIDATE TICKETS — see SELECT TICKET below.)")
+            }
+            hasAnyCandidate -> {
+                appendLine("${candidateTickets.first().details.key} type(scope): imperative summary (max 72 chars total)")
+            }
+            ticketId.isNotBlank() -> {
+                appendLine("$ticketId type(scope): imperative summary (max 72 chars total)")
+            }
+            else -> {
+                appendLine("type(scope): imperative summary (max 72 chars)")
+            }
         }
         appendLine()
         appendLine("- Body bullet per logical change, explaining WHAT changed and WHY")
@@ -65,34 +86,50 @@ Output ONLY the raw commit message. No commentary, no markdown code blocks, no e
         appendLine("BREAKING CHANGE in footer → MAJOR version bump")
         appendLine()
 
+        // ── Issue-type → commit-type mapping ──
+        // This is the deterministic signal that prevents the LLM from defaulting to `feat`
+        // for everything. Issue type comes from Jira and overrides any guesswork.
+        appendLine("ISSUE TYPE → COMMIT TYPE (use the chosen ticket's Type field):")
+        appendLine("- Bug, Defect, Incident → fix")
+        appendLine("- Story, New Feature, Improvement, Epic → feat")
+        appendLine("- Task, Sub-task → infer from the diff (fix if it's repairing broken behavior, feat if it's new behavior, refactor/perf/test/docs/chore otherwise)")
+        appendLine("- Spike, Investigation → chore or docs")
+        appendLine("- If no ticket type is available, infer purely from the diff.")
+        appendLine()
+
         // ── Rules ──
         appendLine("RULES:")
-        appendLine("- scope = domain area (auth, billing, pr-list), NOT file paths")
+        appendLine("- scope = domain area (auth, billing, pr-list); prefer the chosen ticket's component or label if it matches; NEVER use file paths")
         appendLine("- Imperative mood: 'add' not 'added', 'fix' not 'fixed'")
         appendLine("- Body bullets explain WHY the change was made, not just what lines changed")
         appendLine("- AVOID: passive voice, 'This commit/change' phrasing, repeating type in summary")
-        if (ticketId.isBlank()) {
+        if (!hasAnyCandidate) {
             appendLine("- No ticket is active; do NOT prepend any ticket ID to the summary, even if RECENT COMMITS show one.")
         } else {
-            appendLine("- Use ONLY the ticket ID from TICKET CONTEXT. Do NOT copy ticket IDs from RECENT COMMITS — those are style/tone references, not content.")
+            appendLine("- Use ONLY the ticket ID you select from CANDIDATE TICKETS. Do NOT copy ticket IDs from RECENT COMMITS — those are style/tone references only.")
         }
         appendLine()
 
-        // ── Ticket context (authoritative ticket — overrides any ID in RECENT COMMITS) ──
-        if (ticketDetails != null) {
-            appendLine("TICKET CONTEXT:")
-            appendLine("  ${ticketDetails.key} — ${ticketDetails.summary}")
-            val desc = ticketDetails.description?.trim()
-            if (!desc.isNullOrBlank()) {
-                val truncated = if (desc.length > 500) desc.take(500) + "…" else desc
-                appendLine("  $truncated")
+        // ── Candidate tickets ──
+        if (hasMultipleCandidates) {
+            appendLine("CANDIDATE TICKETS (pick the one whose summary/description/type best matches the DIFF):")
+            candidateTickets.forEach { candidate ->
+                appendCandidate(candidate)
             }
+            appendLine("SELECT TICKET:")
+            appendLine("- Choose the candidate whose summary/description/components best describes the DIFF.")
+            appendLine("- If both seem to fit equally, prefer the ACTIVE ticket.")
+            appendLine("- If neither fits the DIFF (the diff is unrelated to either ticket), still use ACTIVE — but reflect the actual change in the body, not the ticket title.")
+            appendLine("- Use the chosen ticket's Type field to set the commit type per the mapping above.")
             appendLine()
+        } else if (hasAnyCandidate) {
+            appendLine("TICKET CONTEXT:")
+            appendCandidate(candidateTickets.first())
         }
 
-        // ── Recent commits (style reference) ──
+        // ── Recent commits (soft style reference, not format authority) ──
         if (recentCommits.isNotEmpty()) {
-            appendLine("RECENT COMMITS (match this project's style):")
+            appendLine("RECENT COMMITS (for tone and vocabulary only — the FORMAT and TYPES sections above are authoritative):")
             recentCommits.forEach { appendLine("  $it") }
             appendLine()
         }
@@ -113,5 +150,32 @@ Output ONLY the raw commit message. No commentary, no markdown code blocks, no e
         // ── Diff (no truncation — Sourcegraph supports 150K input) ──
         appendLine("DIFF:")
         append(diff)
+    }
+
+    private fun StringBuilder.appendCandidate(candidate: TicketCandidate) {
+        val d = candidate.details
+        val sourceLabel = when (candidate.source) {
+            TicketSource.ACTIVE -> "ACTIVE"
+            TicketSource.BRANCH -> "BRANCH NAME"
+            TicketSource.BOTH -> "ACTIVE + BRANCH NAME"
+        }
+        appendLine("- ${d.key}  [from: $sourceLabel]")
+        appendLine("    Summary: ${d.summary}")
+        if (!d.type.isNullOrBlank()) {
+            appendLine("    Type: ${d.type}")
+        }
+        if (d.components.isNotEmpty()) {
+            appendLine("    Components: ${d.components.joinToString(", ")}")
+        }
+        if (d.labels.isNotEmpty()) {
+            appendLine("    Labels: ${d.labels.joinToString(", ")}")
+        }
+        val desc = d.description?.trim()
+        if (!desc.isNullOrBlank()) {
+            val truncated = if (desc.length > 800) desc.take(800) + "…" else desc
+            appendLine("    Description:")
+            truncated.lineSequence().forEach { appendLine("      $it") }
+        }
+        appendLine()
     }
 }

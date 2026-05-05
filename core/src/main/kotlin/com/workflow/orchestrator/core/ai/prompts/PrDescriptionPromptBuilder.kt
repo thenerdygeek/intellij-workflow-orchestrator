@@ -5,7 +5,11 @@ import com.workflow.orchestrator.core.workflow.TicketComment
 
 object PrDescriptionPromptBuilder {
 
-    private const val DIFF_CAP = 10_000
+    // Sourcegraph supports 150K input tokens (~600K chars). Default cap = 150K chars
+    // (~37K tokens) which leaves ~110K tokens of headroom for ticket context, commits,
+    // and prompt scaffolding. Callers can override on context-overflow retry by passing
+    // a smaller [diffCap] to [build].
+    const val DEFAULT_DIFF_CAP = 150_000
     private const val PRIMARY_DESC_CAP = 2_000
     private const val PRIMARY_AC_CAP = 1_000
     private const val PRIMARY_COMMENT_COUNT = 10
@@ -22,7 +26,9 @@ object PrDescriptionPromptBuilder {
         commitMessages: List<String> = emptyList(),
         tickets: List<TicketContext> = emptyList(),
         sourceBranch: String = "",
-        targetBranch: String = ""
+        targetBranch: String = "",
+        diffStat: String = "",
+        diffCap: Int = DEFAULT_DIFF_CAP
     ): String = buildString {
         val isDiffAvailable = diff.isNotBlank() && diff != "(diff unavailable)"
 
@@ -137,12 +143,80 @@ object PrDescriptionPromptBuilder {
 
         // ── Diff ──
         if (isDiffAvailable) {
+            // Diff stat = full file list with insertion/deletion counts (`git diff --stat`).
+            // Always sent — gives the LLM a complete picture of the PR's surface area even
+            // when the body diff is truncated.
+            if (diffStat.isNotBlank()) {
+                appendLine()
+                appendLine("DIFF SUMMARY (all files in this PR):")
+                appendLine("```")
+                appendLine(diffStat)
+                appendLine("```")
+            }
             appendLine()
             appendLine("DIFF:")
             appendLine("```diff")
-            appendLine(if (diff.length > DIFF_CAP) diff.take(DIFF_CAP) + "\n... (diff truncated)" else diff)
+            appendLine(selectDiffWithinCap(diff, tickets, diffCap))
             appendLine("```")
         }
+    }
+
+    /**
+     * Smart diff selection. When [diff] fits within [cap], returns it unchanged.
+     * Otherwise splits the diff by per-file headers (`diff --git a/<path> b/<path>`) and
+     * fills the budget by prioritizing files whose path matches a Jira component or label
+     * from the primary [tickets] entry. Remaining budget is filled with the rest in order.
+     * Files that don't fit produce a `... (file content omitted to fit budget)` placeholder.
+     */
+    internal fun selectDiffWithinCap(diff: String, tickets: List<TicketContext>, cap: Int = DEFAULT_DIFF_CAP): String {
+        if (diff.length <= cap) return diff
+
+        val files = splitDiffByFile(diff)
+        if (files.isEmpty()) {
+            return diff.take(cap) + "\n... (diff truncated)"
+        }
+
+        val priorityTokens = buildPriorityTokens(tickets)
+        val (priority, rest) = files.partition { f -> priorityTokens.any { tok -> f.path.contains(tok, ignoreCase = true) } }
+
+        val out = StringBuilder()
+        var remaining = cap
+        for (f in priority + rest) {
+            val needed = f.body.length
+            if (needed <= remaining) {
+                out.append(f.body)
+                remaining -= needed
+            } else {
+                // Emit just the header line so the LLM still knows the file changed.
+                val header = "diff --git a/${f.path} b/${f.path}\n... (file content omitted to fit budget)\n"
+                if (header.length <= remaining) {
+                    out.append(header)
+                    remaining -= header.length
+                }
+            }
+        }
+        return out.toString()
+    }
+
+    private data class FileBlock(val path: String, val body: String)
+
+    private fun splitDiffByFile(diff: String): List<FileBlock> {
+        val headerRegex = Regex("^diff --git a/(\\S+) b/\\S+", RegexOption.MULTILINE)
+        val matches = headerRegex.findAll(diff).toList()
+        if (matches.isEmpty()) return emptyList()
+        return matches.mapIndexed { i, m ->
+            val start = m.range.first
+            val end = if (i + 1 < matches.size) matches[i + 1].range.first else diff.length
+            FileBlock(path = m.groupValues[1], body = diff.substring(start, end))
+        }
+    }
+
+    private fun buildPriorityTokens(tickets: List<TicketContext>): List<String> {
+        val primary = tickets.firstOrNull() ?: return emptyList()
+        return buildList {
+            addAll(primary.components.map { it.lowercase() })
+            addAll(primary.labels.map { it.lowercase() })
+        }.filter { it.isNotBlank() && it.length >= 2 }
     }
 
     private fun buildPrimaryBlock(ticket: TicketContext): String = buildString {

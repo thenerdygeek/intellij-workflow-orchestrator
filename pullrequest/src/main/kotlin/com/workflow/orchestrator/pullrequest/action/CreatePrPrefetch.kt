@@ -17,6 +17,10 @@ import com.workflow.orchestrator.core.workflow.JiraTicketProvider
 import com.workflow.orchestrator.core.workflow.TicketContext
 import com.workflow.orchestrator.core.bitbucket.PrService
 import com.workflow.orchestrator.pullrequest.service.PrDescriptionGenerator
+import git4idea.commands.Git
+import git4idea.commands.GitCommand
+import git4idea.commands.GitLineHandler
+import git4idea.repo.GitRepository
 import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -127,11 +131,33 @@ object CreatePrPrefetch {
 
         val selectedBranch = repoPrefetches[initialSelectedRepoIndex].sourceBranch
 
-        // 4. Resolve ticket keys from the selected repo's branch
+        // 4. Resolve ticket keys from the selected repo's branch + active ticket + commit messages.
+        //    Branch and active ticket are the primary signals; commit-message scan catches tickets
+        //    referenced in earlier commits that don't appear in the branch name (common when a
+        //    branch is reused across multiple tickets, or when the team prefixes commits with
+        //    PROJ-XXX without renaming the branch).
         val branchKey = TicketKeyExtractor.extractFromBranch(selectedBranch)
         val activeKey = settings.state.activeTicketId?.takeIf { it.isNotBlank() }
-        val keys = listOfNotNull(branchKey, activeKey?.takeIf { it != branchKey })
-        log.info("[PR:Prefetch] resolvedKeys=$keys selectedBranch='$selectedBranch'")
+
+        val selectedRepo = repoPrefetches[initialSelectedRepoIndex]
+        val gitRepo = readAction {
+            GitRepositoryManager.getInstance(project).repositories
+                .find { it.root.path == selectedRepo.config.localVcsRootPath }
+        }
+        val commitKeys: List<String> = if (gitRepo != null) {
+            extractTicketKeysFromCommits(project, gitRepo, selectedRepo.defaultTarget, selectedBranch)
+        } else emptyList()
+
+        val keys = buildList {
+            // Order: branch (most authoritative — user picked this branch), active (user-set),
+            //        then commit-derived (in order of first appearance, deduped).
+            branchKey?.let { add(it) }
+            activeKey?.takeIf { it !in this }?.let { add(it) }
+            commitKeys.forEach { ck ->
+                if (ck !in this) add(ck)
+            }
+        }
+        log.info("[PR:Prefetch] resolvedKeys=$keys selectedBranch='$selectedBranch' (branch=$branchKey active=$activeKey commits=$commitKeys)")
 
         // 5. Parallel fetch: Jira contexts + transitions + transitionMetas + default reviewers
         return coroutineScope {
@@ -202,6 +228,36 @@ object CreatePrPrefetch {
                 )
             )
         }
+    }
+
+    /**
+     * Read the commit subjects on the source branch but not on the target branch
+     * (`git log target..source --pretty=%B -n 50`) and scan every line for Jira ticket keys.
+     * Empty list when the range is empty (forks of target with no extra commits) or when the
+     * git command fails. Capped at 50 commits to bound runtime; tickets buried 50+ commits
+     * deep are unusual and shouldn't drive PR ticket-resolution.
+     */
+    private suspend fun extractTicketKeysFromCommits(
+        project: Project,
+        repo: GitRepository,
+        targetBranch: String,
+        sourceBranch: String
+    ): List<String> = try {
+        readAction {
+            val handler = GitLineHandler(project, repo.root, GitCommand.LOG).apply {
+                addParameters("--pretty=format:%B%n--END--", "-n", "50", "$targetBranch..$sourceBranch")
+            }
+            val result = Git.getInstance().runCommand(handler)
+            if (!result.success()) {
+                log.warn("[PR:Prefetch] commit-key scan: git log $targetBranch..$sourceBranch failed exit=${result.exitCode}")
+                emptyList()
+            } else {
+                TicketKeyExtractor.extractAllFromText(result.output.joinToString("\n"))
+            }
+        }
+    } catch (e: Exception) {
+        log.warn("[PR:Prefetch] commit-key scan failed: ${e.message}")
+        emptyList()
     }
 
     /**

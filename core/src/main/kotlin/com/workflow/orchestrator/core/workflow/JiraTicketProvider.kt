@@ -37,5 +37,7 @@ data class TicketDetails(
     val key: String,
     val summary: String,
     val description: String?,
-    val type: String?
+    val type: String?,
+    val labels: List<String> = emptyList(),
+    val components: List<String> = emptyList()
 )

@@ -231,7 +231,6 @@ These services are internal to their modules (not defined as interfaces in `:cor
 | `:jira` | `SprintService` | Fetch sprint tickets, filter by assignee, board type handling |
 | `:jira` | `ActiveTicketService` | Resolve branch name to ticket ID, manage active ticket state |
 | `:jira` | `BranchingService` | Generate branch names, create branches on Bitbucket + local |
-| `:jira` | `CommitPrefixService` | Inject ticket ID prefix into commit messages |
 | `:bamboo` | `BuildMonitorService` | Background polling for build status changes |
 | `:bamboo` | `PlanDetectionService` | Auto-detect Bamboo plan key from project structure |
 | `:bamboo` | `CveRemediationService` | Scan pom.xml for CVEs, suggest version bumps |

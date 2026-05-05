@@ -22,7 +22,6 @@ Key endpoints:
 - `SprintService` — sprint dashboard logic, supports scrum (sprint-based) + kanban (board-based) modes
 - `ActiveTicketService` — tracks current ticket, emits `TicketChanged` events
 - `BranchingService` — Start Work flow: creates branch on Bitbucket + transitions Jira ticket. PSI/VFS reads use `readAction { }` (see `:core` "Service & threading conventions").
-- `CommitPrefixService` — auto-prefixes commit messages with ticket ID
 - `BranchChangeTicketDetector` — detects ticket from branch name on branch switch, shows confirmation popup (dismissed branches tracked in-memory)
 
 Phase 4 survivor: `CurrentWorkSection.showBranchPicker` keeps `runReadAction { }` because `MouseAdapter.mouseClicked` is a non-suspend EDT callback (see TODO at `ui/CurrentWorkSection.kt:185`, retire on 2026.1 platform bump).
