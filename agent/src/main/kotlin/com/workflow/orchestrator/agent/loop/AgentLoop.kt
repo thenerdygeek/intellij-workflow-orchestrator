@@ -746,8 +746,15 @@ class AgentLoop(
                         // pre-tool text) < lastPresentedTextLength → the condition below is forever
                         // false → all text after the tool call becomes invisible ("stops abruptly").
                         val hasPendingTool = cachedBlocks?.any { it is ToolUseContent && it.partial } == true
-                        if (hasPendingTool) {
-                            cachedStrippedText  // tool param in flight — don't leak it to the display
+                        // Bug 6 fix — also suppress when the accumulated text ends inside an
+                        // unclosed `<…>` even if the parser hasn't yet flipped a block to
+                        // ToolUseContent. Otherwise a chunk like "_file" arriving between
+                        // "<read" and ">" is appended verbatim to the visible stream because
+                        // it has no `<` or `>` to force a re-parse, and the leading "<read"
+                        // was already stripped by stripPartialTag().
+                        val endsInIncompleteTag = AssistantMessageParser.endsWithIncompleteTag(accumulatedText)
+                        if (hasPendingTool || endsInIncompleteTag) {
+                            cachedStrippedText  // tool tag in flight — don't leak its body to the display
                         } else {
                             (cachedStrippedText + text).also { cachedStrippedText = it }
                         }

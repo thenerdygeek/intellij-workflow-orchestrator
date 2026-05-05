@@ -453,6 +453,28 @@ println(closeTag)</new_string>
     }
 
     @Test
+    fun `endsWithIncompleteTag detects unclosed tag with alphabetic body`() {
+        assertTrue(AssistantMessageParser.endsWithIncompleteTag("<read"))
+        assertTrue(AssistantMessageParser.endsWithIncompleteTag("hello <read_"))
+        assertTrue(AssistantMessageParser.endsWithIncompleteTag("hello <read_file"))
+        assertTrue(AssistantMessageParser.endsWithIncompleteTag("</close"))
+    }
+
+    @Test
+    fun `endsWithIncompleteTag returns false when tag is closed`() {
+        assertFalse(AssistantMessageParser.endsWithIncompleteTag("<read_file>"))
+        assertFalse(AssistantMessageParser.endsWithIncompleteTag("hello <read_file>\n"))
+        assertFalse(AssistantMessageParser.endsWithIncompleteTag("plain text"))
+        assertFalse(AssistantMessageParser.endsWithIncompleteTag(""))
+    }
+
+    @Test
+    fun `endsWithIncompleteTag returns false when fragment is not tag-like`() {
+        // Looks like prose with a stray '<', not a tag fragment
+        assertFalse(AssistantMessageParser.endsWithIncompleteTag("Use the < operator with spaces"))
+    }
+
+    @Test
     fun `edit_file where new_string contains tool-like XML tags`() {
         // The code being inserted contains XML that looks like tool tags
         val text = """<edit_file>

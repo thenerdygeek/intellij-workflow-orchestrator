@@ -177,4 +177,25 @@ object AssistantMessageParser {
         }
         return text
     }
+
+    /**
+     * Returns true if [text] currently ends inside an unclosed tag — i.e. there
+     * is a `<` after the last `>` (or a `<` and no `>` at all) and the body
+     * since that `<` looks like a tag-name fragment (alphanum/underscore/slash).
+     *
+     * Used by the streaming presentation layer to suppress the skip-parse fast
+     * path when the tail of the accumulated text could still be the inside of a
+     * not-yet-closed tag. Without this, a chunk that arrives without `<` or `>`
+     * (e.g. "_file" between chunks "<read" and ">") bypasses re-parse and is
+     * appended to the visible stream, leaking the underscore-suffix of the
+     * tool name into the assistant bubble.
+     */
+    fun endsWithIncompleteTag(text: String): Boolean {
+        val lastOpen = text.lastIndexOf('<')
+        if (lastOpen == -1) return false
+        val afterOpen = text.substring(lastOpen)
+        if ('>' in afterOpen) return false
+        val body = afterOpen.removePrefix("</").removePrefix("<")
+        return body.isEmpty() || body.matches(Regex("^[a-zA-Z_0-9]*$"))
+    }
 }
