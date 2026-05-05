@@ -209,14 +209,22 @@ class BrainRouterTest {
     }
 
     @Test
-    fun `image+tools triggers two-step workaround and badge`() = runBlocking {
-        val openAi = FakeOpenAiCompatBrain(response = makeOk("tool result", toolCalls = listOf(fooToolCall())))
-        val stream = FakeStreamClient(text = "image shows a red circle")
+    fun `image+tools routes through stream client with tools field forwarded`() = runBlocking {
+        // 2026-05-05 simplification: format_lab probe verified Sourcegraph
+        // forwards the `tools` field on /.api/completions/stream at api-version=9.
+        // Image+tools turns now make a single round-trip through /stream — the
+        // prior two-step workaround (vision-summarize → tools call) is gone.
+        val openAi = FakeOpenAiCompatBrain(response = makeOk("should not be used"))
+        val stream = FakeStreamClient(
+            text = "",
+            // The stream client now returns toolCalls assembled from
+            // delta_tool_calls SSE frames; FakeStreamClient mirrors that shape.
+            // (Real frame assembly tested in SourcegraphCompletionsStreamClientTest.)
+        )
         val store = AttachmentStore(tempDir)
         val ref = store.store("fake".toByteArray(), "image/png", null)
-        var badgeFired = false
-        val router = BrainRouter(openAi, stream, store, { "test::model" }) { badgeFired = true }
-        val resp = router.chat(
+        val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
+        router.chat(
             messages = listOf(
                 ChatMessage(
                     role = "user",
@@ -228,26 +236,68 @@ class BrainRouterTest {
             ),
             tools = listOf(fooTool),
         )
-        assertTrue(resp is ApiResult.Success, "expected Success, got: $resp")
-        assertEquals(1, stream.callCount) // step 1: vision-summarize
-        assertEquals(1, openAi.chatCallCount) // step 2: tools call
-        assertTrue(badgeFired, "onAnalyzedImageBadge should fire after a successful two-step")
+        assertEquals(1, stream.callCount,
+            "image+tools must route through the stream endpoint as a single round-trip")
+        assertEquals(0, openAi.chatCallCount,
+            "OpenAiCompat must NOT be called — the two-step workaround is removed")
+        // Verify the tools field was forwarded to /stream
+        val req = stream.lastRequest ?: error("stream client received no request")
+        assertEquals(listOf(fooTool), req.tools,
+            "tools field must be forwarded verbatim to the stream endpoint")
     }
 
     @Test
-    fun `two-step workaround triggers when image arrives via tool result, not user message`() = runBlocking {
-        // Phase 7 Task 7.2 — tool-origin images must follow the same two-step path
-        // as user-pasted images. BrainRouter routes via `messages.any { it.hasImageParts() }`
-        // (position-independent), so a `role="tool"` message carrying ContentPart.Image
-        // (the shape produced by Phase 1's ApiMessage.toChatMessage()) must trigger
-        // step 1 on the stream client and step 2 on OpenAiCompat with the image
-        // already swapped to a text description.
-        val openAi = FakeOpenAiCompatBrain(response = makeOk("invoking foo", toolCalls = listOf(fooToolCall())))
-        val stream = FakeStreamClient(text = "image shows a red error dialog")
+    fun `image+tools surfaces stream client tool calls in assistant message`() = runBlocking {
+        // The stream client assembles delta_tool_calls into a list of ToolCall;
+        // BrainRouter must place them in the assistant ChatMessage so the agent
+        // loop's tool-call dispatcher sees them — same shape it gets from the
+        // OpenAiCompat path.
+        val openAi = FakeOpenAiCompatBrain(response = makeOk(""))
+        val expectedCall = ToolCall(
+            id = "toolu_01",
+            type = "function",
+            function = FunctionCall(name = "foo", arguments = "{\"x\":1}"),
+        )
+        val stream = FakeStreamClient(text = "calling foo", toolCalls = listOf(expectedCall))
         val store = AttachmentStore(tempDir)
         val ref = store.store("fake".toByteArray(), "image/png", null)
-        var badgeFired = false
-        val router = BrainRouter(openAi, stream, store, { "test::model" }) { badgeFired = true }
+        val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
+        val resp = router.chat(
+            messages = listOf(
+                ChatMessage(
+                    role = "user",
+                    parts = listOf(
+                        ContentPart.Image(ref.sha256, "image/png", null),
+                        ContentPart.Text("describe and call foo"),
+                    ),
+                ),
+            ),
+            tools = listOf(fooTool),
+        )
+        val ok = resp as? ApiResult.Success<ChatCompletionResponse>
+            ?: error("expected Success, got: $resp")
+        val msg = ok.data.choices.first().message
+        assertEquals(listOf(expectedCall), msg.toolCalls,
+            "assistant message must carry the assembled tool calls from /stream")
+        assertEquals("calling foo", msg.content,
+            "assistant text content must accompany the tool calls")
+    }
+
+    @Test
+    fun `image+tools via tool-result origin still routes through stream`() = runBlocking {
+        // Tool-origin images (image bytes attached to a role=tool message via
+        // jira.download_attachment etc.) must follow the same path as user-pasted
+        // images. BrainRouter detects the image via `messages.any { it.hasImageParts() }`
+        // — position-independent — and routes the entire conversation through /stream.
+        val openAi = FakeOpenAiCompatBrain(response = makeOk("should not be used"))
+        val expectedCall = ToolCall(
+            id = "toolu_02", type = "function",
+            function = FunctionCall(name = "foo", arguments = "{}"),
+        )
+        val stream = FakeStreamClient(text = "investigating", toolCalls = listOf(expectedCall))
+        val store = AttachmentStore(tempDir)
+        val ref = store.store("fake".toByteArray(), "image/png", null)
+        val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
         val resp = router.chat(
             messages = listOf(
                 ChatMessage(role = "user", content = "investigate JIRA-1"),
@@ -255,11 +305,7 @@ class BrainRouterTest {
                     role = "assistant",
                     content = null,
                     toolCalls = listOf(
-                        ToolCall(
-                            id = "c1",
-                            type = "function",
-                            function = FunctionCall(name = "download_attachment", arguments = "{}"),
-                        ),
+                        ToolCall("c1", "function", FunctionCall("download_attachment", "{}")),
                     ),
                 ),
                 ChatMessage(
@@ -268,470 +314,55 @@ class BrainRouterTest {
                     toolCallId = "c1",
                     parts = listOf(
                         ContentPart.Text("downloaded ss.png"),
-                        ContentPart.Image(sha256 = ref.sha256, mime = "image/png", originalFilename = "ss.png"),
+                        ContentPart.Image(ref.sha256, "image/png", "ss.png"),
                     ),
                 ),
             ),
             tools = listOf(fooTool),
         )
         assertTrue(resp is ApiResult.Success, "expected Success, got: $resp")
-        // Step 1: vision-summarize ran on the stream client.
-        assertEquals(1, stream.callCount, "step 1 must hit stream client for tool-origin image")
-        // Step 2: tools call ran on OpenAiCompat.
-        assertEquals(1, openAi.chatCallCount, "step 2 must hit OpenAiCompat after vision-summarize")
-        // Step 2 must have received the image already swapped to a text description —
-        // no message in the rebuilt list still carries a ContentPart.Image.
-        val step2Messages = openAi.lastMessages
-            ?: error("OpenAiCompat received no messages")
-        assertTrue(
-            step2Messages.none { it.hasImageParts() },
-            "step 2 messages must have all images stripped to text descriptions; got: $step2Messages",
-        )
-        // Badge must fire after a successful two-step regardless of image origin.
-        assertTrue(badgeFired, "onAnalyzedImageBadge should fire after a successful tool-origin two-step")
+        assertEquals(1, stream.callCount, "tool-origin image must hit the stream endpoint")
+        assertEquals(0, openAi.chatCallCount, "OpenAiCompat must NOT be called")
+        // Verify the entire conversation was forwarded — the stream now handles
+        // multi-turn agent contexts natively (no more single-message vision payload).
+        val req = stream.lastRequest ?: error("stream client received no request")
+        assertEquals(3, req.messages.size,
+            "all three turns must be forwarded; got speakers ${req.messages.map { it.speaker }}")
     }
 
     @Test
-    fun `step-2 framing of vision description is authoritative not weak metadata`() = runBlocking {
-        // Regression guard: the original framing was `[image description: …]` which
-        // is weak enough that the step-2 model still triggered its trained
-        // "I can't analyze image files directly" tool-use refusal (Windows logs
-        // 2026-05-04). The framing must establish the description IS the model's
-        // perception of the image, not metadata about it. This test pins the
-        // load-bearing phrases — anyone weakening them will break this test.
-        val openAi = FakeOpenAiCompatBrain(response = makeOk("ok", toolCalls = listOf(fooToolCall())))
-        val visionDescription = "A flowchart showing three boxes labeled A, B, C with arrows."
-        val stream = FakeStreamClient(text = visionDescription)
+    fun `image+tools surfaces gateway rejection same as image-only`() = runBlocking {
+        // The rejection-rendering path (added in commit 4) must work for
+        // image+tools turns too — when an unsupported MIME is paired with
+        // tools, the user still sees the rejection toast not an empty bubble.
+        val openAi = FakeOpenAiCompatBrain(response = makeOk("should not be used"))
+        val stream = FakeStreamClient(
+            text = "",
+            rejectionReason = "media type image/heic not supported",
+        )
         val store = AttachmentStore(tempDir)
-        val ref = store.store("fake".toByteArray(), "image/png", null)
+        val ref = store.store("fake".toByteArray(), "image/heic", null)
         val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
-        router.chat(
+        val resp = router.chat(
             messages = listOf(
                 ChatMessage(
                     role = "user",
                     parts = listOf(
-                        ContentPart.Image(sha256 = ref.sha256, mime = "image/png", originalFilename = null),
-                        ContentPart.Text("describe and call foo"),
-                    ),
-                ),
-            ),
-            tools = listOf(fooTool),
-        )
-        val step2Messages = openAi.lastMessages ?: error("OpenAiCompat received no messages")
-        val combined = step2Messages.joinToString("\n") { it.content ?: "" }
-        // Authoritative framing — must establish the description as authoritative perception.
-        assertTrue(
-            combined.contains("VISION ANALYSIS", ignoreCase = false),
-            "step-2 framing must label the vision output as VISION ANALYSIS to discourage refusal; got: $combined"
-        )
-        assertTrue(
-            combined.contains("actual content of the attached image", ignoreCase = false),
-            "step-2 framing must say the description IS the image content, not just metadata"
-        )
-        assertTrue(
-            combined.contains("Do NOT say you cannot view or analyze images"),
-            "step-2 framing must explicitly forbid the canned refusal"
-        )
-        // The actual description must still be embedded.
-        assertTrue(combined.contains(visionDescription), "step-2 must carry the verbatim description")
-    }
-
-    @Test
-    fun `step-1 vision prompt is positive framing not double-negative`() = runBlocking {
-        // Regression guard: the v0.83.57 prompt used "Do NOT refuse, hedge, or
-        // say you cannot see the image" double-negatives that empirically
-        // (Windows logs 2026-05-05) caused the Cody endpoint to return 0-char
-        // responses — likely a safety/content-filter path that suppresses
-        // output rather than emitting an explicit refusal we could classify.
-        // Positive framing avoids the trigger. This test pins both the new
-        // positive directive AND the absence of "Do NOT refuse" so a future
-        // commit reverting to the heavier wording fails this test.
-        val openAi = FakeOpenAiCompatBrain(response = makeOk("ok", toolCalls = listOf(fooToolCall())))
-        val stream = FakeStreamClient(text = "a screenshot of an error dialog")
-        val store = AttachmentStore(tempDir)
-        val ref = store.store("fake".toByteArray(), "image/png", null)
-        val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
-        router.chat(
-            messages = listOf(
-                ChatMessage(
-                    role = "user",
-                    parts = listOf(
-                        ContentPart.Image(sha256 = ref.sha256, mime = "image/png", originalFilename = null),
+                        ContentPart.Image(ref.sha256, "image/heic", null),
                         ContentPart.Text("call foo"),
                     ),
                 ),
             ),
             tools = listOf(fooTool),
         )
-        val step1Request = stream.lastRequest ?: error("stream client received no request")
-        val step1Prompt = step1Request.messages.flatMap { it.content }
-            .filterIsInstance<StreamContentPart.Text>()
-            .joinToString("\n") { it.text }
-        assertTrue(
-            step1Prompt.contains("Describe what you see in this image", ignoreCase = false),
-            "step-1 prompt must use positive framing; got: $step1Prompt"
-        )
-        assertFalse(
-            step1Prompt.contains("Do NOT refuse", ignoreCase = false),
-            "step-1 prompt must NOT use 'Do NOT refuse' double-negative — empirically caused 0-char responses"
-        )
-    }
-
-    @Test
-    fun `image+tools with empty step-1 description aborts before step 2`() = runBlocking {
-        // Regression guard: when the Cody endpoint returns 200 OK but no text
-        // events (silent safety-filter), step 1's parsed description is "".
-        // Pre-fix, this empty string flowed into step 2's framing as
-        // [VISION ANALYSIS]\n\n[END VISION ANALYSIS] and the step-2 model
-        // honestly reported "vision analysis came back empty" — exactly what
-        // Windows users saw 2026-05-05. Post-fix, empty/blank step-1 output
-        // is treated as a distinct VisionResult.Empty and aborts step 2 with
-        // a user-visible message.
-        val openAi = FakeOpenAiCompatBrain(response = makeOk("should not be used"))
-        val stream = FakeStreamClient(text = "")  // <-- the smoking-gun condition
-        val store = AttachmentStore(tempDir)
-        val ref = store.store("fake".toByteArray(), "image/png", null)
-        val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
-        val resp = router.chat(
-            messages = listOf(
-                ChatMessage(
-                    role = "user",
-                    parts = listOf(
-                        ContentPart.Image(sha256 = ref.sha256, mime = "image/png", originalFilename = null),
-                        ContentPart.Text("call the tool"),
-                    ),
-                ),
-            ),
-            tools = listOf(fooTool),
-        )
-        // Step 1 ran; step 2 must NOT have fired.
-        assertEquals(1, stream.callCount, "step 1 must have been called once")
-        assertEquals(0, openAi.chatCallCount, "step 2 must NOT fire when step 1 returned empty")
-        val ok = resp as? ApiResult.Success<ChatCompletionResponse>
-            ?: error("expected Success synthetic response, got: $resp")
-        val msg = ok.data.choices.first().message.content ?: ""
-        assertTrue(
-            msg.contains("returned no description") || msg.contains("filtered or unreadable"),
-            "synthetic abort message must explain the empty-output cause; got: $msg"
-        )
-        // Pin the abort id so observability tooling can distinguish empty from abstain/fail.
-        assertEquals("router-step1-empty", ok.data.id)
-    }
-
-    @Test
-    fun `image+tools with whitespace-only step-1 description also aborts before step 2`() = runBlocking {
-        // Whitespace-only output is functionally equivalent to empty — step 2's
-        // framing would be [VISION ANALYSIS]\n   \n[END] which is just as useless.
-        // isBlank() catches both cases.
-        val openAi = FakeOpenAiCompatBrain(response = makeOk("should not be used"))
-        val stream = FakeStreamClient(text = "   \n  \t  ")
-        val store = AttachmentStore(tempDir)
-        val ref = store.store("fake".toByteArray(), "image/png", null)
-        val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
-        router.chat(
-            messages = listOf(
-                ChatMessage(
-                    role = "user",
-                    parts = listOf(
-                        ContentPart.Image(sha256 = ref.sha256, mime = "image/png", originalFilename = null),
-                        ContentPart.Text("call foo"),
-                    ),
-                ),
-            ),
-            tools = listOf(fooTool),
-        )
-        assertEquals(0, openAi.chatCallCount, "whitespace-only description must also abort step 2")
-    }
-
-    @Test
-    fun `step-1 vision payload is a single message regardless of conversation length`() = runBlocking {
-        // Regression guard: when the image arrives via tool_result on turn 8 of a
-        // multi-turn agent conversation (system + user + assistant_tool_call +
-        // tool_result × 3 + image-bearing tool_result), step 1 was previously
-        // forwarding the full conversation to /completions/stream. Empirically
-        // (Windows logs 2026-05-05) the vision endpoint silently bailed out and
-        // returned 0 chars on multi-turn payloads — the same image+prompt produced
-        // a 1558-char description in 15.5s when sent as a single-turn payload, but
-        // failed with 0 chars in <1.5s when sent with full agent context.
-        //
-        // The fix builds a clean single-turn vision payload (image + prompt) so
-        // path B (image-via-tool-result) sends the same shape as path A
-        // (image-via-+button). This test pins that contract.
-        val openAi = FakeOpenAiCompatBrain(response = makeOk("ok", toolCalls = listOf(fooToolCall())))
-        val stream = FakeStreamClient(text = "this is a description of the image")
-        val store = AttachmentStore(tempDir)
-        val ref = store.store("fake".toByteArray(), "image/png", null)
-        val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
-        // Realistic 8-message multi-turn agent context with image arriving on the last turn
-        // (mirrors the production shape where the LLM did tool_search → get_ticket →
-        // download_attachment, accumulating 6 prior turns before the image showed up).
-        router.chat(
-            messages = listOf(
-                ChatMessage(role = "system", content = "You are an agent with 76 tools. ".repeat(100)),
-                ChatMessage(role = "user", content = "Check the attachment image of TICKET-1234"),
-                ChatMessage(
-                    role = "assistant",
-                    content = null,
-                    toolCalls = listOf(ToolCall("c1", "function", FunctionCall("tool_search", "{}"))),
-                ),
-                ChatMessage(role = "tool", content = "Loaded jira tool", toolCallId = "c1"),
-                ChatMessage(
-                    role = "assistant",
-                    content = null,
-                    toolCalls = listOf(ToolCall("c2", "function", FunctionCall("jira", "{}"))),
-                ),
-                ChatMessage(role = "tool", content = "Ticket details: ...".repeat(50), toolCallId = "c2"),
-                ChatMessage(
-                    role = "assistant",
-                    content = null,
-                    toolCalls = listOf(ToolCall("c3", "function", FunctionCall("jira", "{}"))),
-                ),
-                ChatMessage(
-                    role = "tool",
-                    content = "Downloaded image-x.png (56485 bytes)",
-                    toolCallId = "c3",
-                    parts = listOf(
-                        ContentPart.Text("Downloaded image-x.png (56485 bytes)"),
-                        ContentPart.Image(sha256 = ref.sha256, mime = "image/png", originalFilename = "image-x.png"),
-                    ),
-                ),
-            ),
-            tools = listOf(fooTool),
-        )
-        val step1Request = stream.lastRequest ?: error("stream client received no request")
-        // Critical assertion: step 1 must send EXACTLY ONE message — not the full 8-message
-        // agent conversation. The prior 7 turns (system, user, tool calls, tool results)
-        // are NOT useful to the vision model and empirically cause it to short-circuit.
-        assertEquals(
-            1,
-            step1Request.messages.size,
-            "step-1 vision payload must be a single message; got ${step1Request.messages.size} messages " +
-                "(speakers: ${step1Request.messages.map { it.speaker }})",
-        )
-        // The single message must carry the image AND the vision prompt.
-        val theMessage = step1Request.messages.single()
-        val parts = theMessage.content
-        val hasImage = parts.any { it is StreamContentPart.Image }
-        val hasPrompt = parts.filterIsInstance<StreamContentPart.Text>()
-            .any { it.text.contains("Describe what you see") }
-        assertTrue(hasImage, "step-1 single message must carry the image")
-        assertTrue(hasPrompt, "step-1 single message must carry the vision prompt")
-    }
-
-    @Test
-    fun `image+tools with abstaining step-1 description aborts before step 2`() = runBlocking {
-        val openAi = FakeOpenAiCompatBrain(response = makeOk("should not be used"))
-        val stream = FakeStreamClient(text = "I cannot see this image clearly.")
-        val store = AttachmentStore(tempDir)
-        val ref = store.store("fake".toByteArray(), "image/png", null)
-        val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
-        val resp = router.chat(
-            messages = listOf(
-                ChatMessage(
-                    role = "user",
-                    parts = listOf(
-                        ContentPart.Image(sha256 = ref.sha256, mime = "image/png", originalFilename = null),
-                        ContentPart.Text("call the tool"),
-                    ),
-                ),
-            ),
-            tools = listOf(fooTool),
-        )
-        // Step 1 ran; step 2 did NOT
-        assertEquals(1, stream.callCount)
-        assertEquals(0, openAi.chatCallCount)
         val ok = resp as? ApiResult.Success<ChatCompletionResponse>
             ?: error("expected Success, got: $resp")
-        assertTrue(ok.data.choices.first().message.content!!.contains("couldn't analyze", ignoreCase = true))
-        // Pin the abort id — AgentLoop uses the "router-step1-" prefix to skip the
-        // consecutive-mistakes counter for synthetic aborts. Renaming this id
-        // without updating AgentLoop's exemption would silently re-introduce the
-        // "model keeps replying without a tool" nudge regression (Windows logs 2026-05-05).
-        assertEquals("router-step1-abstain", ok.data.id)
+        val content = ok.data.choices.first().message.content!!
+        assertTrue(content.contains("Sourcegraph rejected"),
+            "rejection rendering must work for tool-bearing turns too")
+        assertEquals(0, openAi.chatCallCount, "no fallback to OpenAiCompat on rejection")
     }
 
-    @Test
-    fun `image+tools with step-1 HTTP 500 surfaces error toast`() = runBlocking {
-        val openAi = FakeOpenAiCompatBrain(response = makeOk("should not be used"))
-        val stream = FakeStreamClient(throwOnCall = HttpException(500, "server error"))
-        val store = AttachmentStore(tempDir)
-        val ref = store.store("fake".toByteArray(), "image/png", null)
-        val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
-        val resp = router.chat(
-            messages = listOf(
-                ChatMessage(
-                    role = "user",
-                    parts = listOf(ContentPart.Image(ref.sha256, "image/png", null), ContentPart.Text("x")),
-                ),
-            ),
-            tools = listOf(fooTool),
-        )
-        assertEquals(0, openAi.chatCallCount)
-        val ok = resp as? ApiResult.Success<ChatCompletionResponse>
-            ?: error("expected Success, got: $resp")
-        assertTrue(ok.data.choices.first().message.content!!.contains("Image analysis failed", ignoreCase = true))
-        // Pin the abort id — see "abstaining step-1 description aborts" test.
-        assertEquals("router-step1-fail", ok.data.id)
-    }
-
-    @Test
-    fun `all step-1 abort response ids share the router-step1- prefix that AgentLoop exempts`() = runBlocking {
-        // Cross-cutting invariant test: AgentLoop checks `response.id.startsWith("router-step1-")`
-        // to skip the consecutive-mistakes counter for synthetic aborts. If a future commit
-        // adds a new VisionResult variant with a different id prefix, that variant's synthetic
-        // text-only response would erroneously be counted as an LLM "mistake" and trip the
-        // "model keeps replying without using a tool" nudge after 3 image-bearing iterations
-        // (regression shipped in v0.83.59, fixed in v0.83.60).
-        //
-        // This test pins the prefix invariant by exhaustively running each abort path and
-        // asserting all ids share the "router-step1-" prefix. The list MUST cover every
-        // synthesizeAbortResponse call site in BrainRouter.
-        val store = AttachmentStore(tempDir)
-        val ref = store.store("fake".toByteArray(), "image/png", null)
-        val msgsWithImage = listOf(
-            ChatMessage(
-                role = "user",
-                parts = listOf(ContentPart.Image(ref.sha256, "image/png", null), ContentPart.Text("x")),
-            ),
-        )
-
-        // Failed (HTTP error)
-        val failedResp = BrainRouter(
-            FakeOpenAiCompatBrain(response = makeOk("unused")),
-            FakeStreamClient(throwOnCall = HttpException(500, "x")),
-            store, { "m" }, null,
-        ).chat(msgsWithImage, listOf(fooTool)) as ApiResult.Success<ChatCompletionResponse>
-        assertTrue(
-            failedResp.data.id.startsWith("router-step1-"),
-            "Failed-path id must start with router-step1- (got '${failedResp.data.id}')"
-        )
-
-        // Abstained (model said "I cannot see this image…")
-        val abstainResp = BrainRouter(
-            FakeOpenAiCompatBrain(response = makeOk("unused")),
-            FakeStreamClient(text = "I cannot see this image clearly."),
-            store, { "m" }, null,
-        ).chat(msgsWithImage, listOf(fooTool)) as ApiResult.Success<ChatCompletionResponse>
-        assertTrue(
-            abstainResp.data.id.startsWith("router-step1-"),
-            "Abstained-path id must start with router-step1- (got '${abstainResp.data.id}')"
-        )
-
-        // Empty (0-char description)
-        val emptyResp = BrainRouter(
-            FakeOpenAiCompatBrain(response = makeOk("unused")),
-            FakeStreamClient(text = ""),
-            store, { "m" }, null,
-        ).chat(msgsWithImage, listOf(fooTool)) as ApiResult.Success<ChatCompletionResponse>
-        assertTrue(
-            emptyResp.data.id.startsWith("router-step1-"),
-            "Empty-path id must start with router-step1- (got '${emptyResp.data.id}')"
-        )
-    }
-
-    @Test
-    fun `image+tools with step-1 HTTP 401 surfaces error toast`() = runBlocking {
-        val openAi = FakeOpenAiCompatBrain(response = makeOk("should not be used"))
-        val stream = FakeStreamClient(throwOnCall = HttpException(401, "unauthorized"))
-        val store = AttachmentStore(tempDir)
-        val ref = store.store("fake".toByteArray(), "image/png", null)
-        val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
-        val resp = router.chat(
-            messages = listOf(
-                ChatMessage(
-                    role = "user",
-                    parts = listOf(ContentPart.Image(ref.sha256, "image/png", null), ContentPart.Text("x")),
-                ),
-            ),
-            tools = listOf(fooTool),
-        )
-        assertEquals(0, openAi.chatCallCount)
-        val ok = resp as? ApiResult.Success<ChatCompletionResponse>
-            ?: error("expected Success, got: $resp")
-        assertTrue(ok.data.choices.first().message.content!!.contains("Image analysis failed", ignoreCase = true))
-    }
-
-    @Test
-    fun `image+tools with step-1 HTTP 413 surfaces error toast`() = runBlocking {
-        val openAi = FakeOpenAiCompatBrain(response = makeOk("should not be used"))
-        val stream = FakeStreamClient(throwOnCall = HttpException(413, "payload too large"))
-        val store = AttachmentStore(tempDir)
-        val ref = store.store("fake".toByteArray(), "image/png", null)
-        val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
-        val resp = router.chat(
-            messages = listOf(
-                ChatMessage(
-                    role = "user",
-                    parts = listOf(ContentPart.Image(ref.sha256, "image/png", null), ContentPart.Text("x")),
-                ),
-            ),
-            tools = listOf(fooTool),
-        )
-        assertEquals(0, openAi.chatCallCount)
-        val ok = resp as? ApiResult.Success<ChatCompletionResponse>
-            ?: error("expected Success, got: $resp")
-        assertTrue(ok.data.choices.first().message.content!!.contains("Image analysis failed", ignoreCase = true))
-    }
-
-    @Test
-    fun `image+tools with step-1 HTTP 429 surfaces error toast`() = runBlocking {
-        val openAi = FakeOpenAiCompatBrain(response = makeOk("should not be used"))
-        val stream = FakeStreamClient(throwOnCall = HttpException(429, "rate limited"))
-        val store = AttachmentStore(tempDir)
-        val ref = store.store("fake".toByteArray(), "image/png", null)
-        val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
-        val resp = router.chat(
-            messages = listOf(
-                ChatMessage(
-                    role = "user",
-                    parts = listOf(ContentPart.Image(ref.sha256, "image/png", null), ContentPart.Text("x")),
-                ),
-            ),
-            tools = listOf(fooTool),
-        )
-        assertEquals(0, openAi.chatCallCount)
-        val ok = resp as? ApiResult.Success<ChatCompletionResponse>
-            ?: error("expected Success, got: $resp")
-        assertTrue(ok.data.choices.first().message.content!!.contains("Image analysis failed", ignoreCase = true))
-    }
-
-    /** Pin every entry in `ABSTENTION_PHRASES` so a future edit to the list can't silently regress. */
-    @Test
-    fun `every abstention phrase aborts step 2`() = runBlocking {
-        val phrases = listOf(
-            "I cannot see this image",
-            "I can't see what's in the image",
-            "I don't see anything",
-            "no image was provided",
-            "unable to view this picture",
-            "cannot view the attached file",
-            "can't view your image",
-            "I'm unable to process this image",
-        )
-        for (phrase in phrases) {
-            val openAi = FakeOpenAiCompatBrain(response = makeOk("should not be used"))
-            val stream = FakeStreamClient(text = phrase)
-            val store = AttachmentStore(tempDir)
-            val ref = store.store(phrase.toByteArray(), "image/png", null)
-            val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
-            val resp = router.chat(
-                messages = listOf(
-                    ChatMessage(
-                        role = "user",
-                        parts = listOf(ContentPart.Image(ref.sha256, "image/png", null), ContentPart.Text("x")),
-                    ),
-                ),
-                tools = listOf(fooTool),
-            )
-            assertEquals(0, openAi.chatCallCount, "step 2 must NOT run for phrase: '$phrase'")
-            val ok = resp as? ApiResult.Success<ChatCompletionResponse>
-                ?: error("expected Success for phrase '$phrase', got: $resp")
-            assertTrue(
-                ok.data.choices.first().message.content!!.contains("couldn't analyze", ignoreCase = true),
-                "abort message expected for phrase: '$phrase'",
-            )
-        }
-    }
 
     /** ChatStream variant — the path the agent loop calls. */
     @Test
@@ -840,6 +471,7 @@ internal class FakeStreamClient(
     private val deltas: List<String> = emptyList(),
     private val throwOnCall: Throwable? = null,
     private val rejectionReason: String? = null,
+    private val toolCalls: List<ToolCall> = emptyList(),
 ) : SourcegraphCompletionsStreamClient(
     baseUrl = "http://stub",
     tokenProvider = { "stub_token" },
@@ -861,9 +493,10 @@ internal class FakeStreamClient(
         for (d in deltas) onDelta(d)
         return CompletionStreamResult(
             text = text,
-            stopReason = null,
+            stopReason = if (toolCalls.isNotEmpty()) "tool_use" else null,
             durationMs = 1L,
             rejectionReason = rejectionReason,
+            toolCalls = toolCalls,
         )
     }
 }

@@ -23,121 +23,45 @@ import kotlinx.serialization.json.JsonElement
 import java.util.Base64
 
 /**
- * Phrases the vision-summarize step (step 1 of the two-step workaround) MUST
- * NOT pass through to step 2. If the model abstains in step 1, step 2 would
- * see a useless description ("[image description: I cannot see this image]")
- * and produce a garbage tool call.
+ * Routes LLM calls across two Sourcegraph backends based on whether the turn
+ * carries image parts.
  *
- * Pinned by `BrainRouterTest "every abstention phrase aborts step 2"`.
- */
-internal val ABSTENTION_PHRASES = listOf(
-    "i cannot see",
-    "i can't see",
-    "i don't see",
-    "no image",
-    "unable to view",
-    "cannot view",
-    "can't view",
-    "i'm unable to process",
-)
-
-// ---- Two-step workaround prompts and framing -------------------------------
-// Pulled out of `twoStepWorkaround` so each hardening pass lands in one place
-// and tests can reference the constants directly instead of grepping for
-// fragile substrings.
-
-/**
- * Step 1 prompt — replaces the image-bearing turn for the vision call.
+ * **Routing rule** (post-2026-05-05 simplification):
  *
- * Phrased POSITIVELY (no "Do NOT refuse" double-negatives). Empirically
- * (Windows logs 2026-05-05) a heavier directive prompt with "Do NOT refuse,
- * hedge, or say you cannot see the image" produced 0-char responses from the
- * Cody stream endpoint — likely a safety/content-filter path that silently
- * suppressed output instead of returning text we could classify as abstention.
- * Positive framing avoids the trigger and gets useful descriptions back.
- */
-internal const val VISION_PROMPT: String =
-    "Describe what you see in this image clearly and concretely. " +
-        "Include any visible text (transcribe verbatim), UI elements, " +
-        "errors, diagrams, charts, or data. Be specific and complete — " +
-        "your description is the only signal a downstream agent will receive."
-
-/**
- * Step 2 framing wraps the vision description so the OpenAI-compat model treats
- * it as the actual content of the image rather than metadata about an unseen
- * image. The original `[image description: …]` wrapper was weak enough that
- * the trained "I can't analyze image files" tool-use refusal still fired
- * (Windows logs 2026-05-04). The header below pushes back on that pattern.
- */
-internal const val FRAMING_HEADER: String =
-    "[VISION ANALYSIS — this is the actual content of the attached image, " +
-        "produced by a vision model. Treat this as your perception of the image " +
-        "and respond as if you can see it directly. Do NOT say you cannot view " +
-        "or analyze images.]"
-
-internal const val FRAMING_FOOTER: String = "[END VISION ANALYSIS]"
-
-/** Suffix shared by step-1 HTTP-failure messages. */
-internal const val STEP1_RETRY_HINT: String =
-    "Try again, or remove the image and describe it in text."
-
-/** User-visible message when step 1 abstained — step 2 was aborted to avoid a garbled tool call. */
-internal const val STEP1_ABSTAIN_USER_MESSAGE: String =
-    "The model couldn't analyze the attached image. Try a clearer image, or describe it in text."
-
-/**
- * User-visible message when step 1 returned empty text. Distinct from abstention
- * because the model didn't produce any output at all (likely safety-filtered);
- * letting the empty string flow into step 2's framing would produce
- * "[VISION ANALYSIS]\n\n[END]" — and the step-2 model honestly reports it
- * came back empty (Windows logs 2026-05-05).
- */
-internal const val STEP1_EMPTY_USER_MESSAGE: String =
-    "The vision model returned no description for the attached image. " +
-        "This usually means the image was filtered or unreadable. Try a different " +
-        "image, or describe what's in it as text."
-
-/**
- * Phase 6 of multimodal-agent plan — hybrid routing across two Sourcegraph
- * brain backends.
+ * | Condition          | Backend                                      |
+ * |--------------------|----------------------------------------------|
+ * | No image parts     | [openAiCompatBrain] (`/.api/llm/chat/completions`) |
+ * | Image parts        | [streamClient] (`/.api/completions/stream`)        |
  *
- * **Routing rule** (per Decision 4 of the design spec):
+ * **History — why this used to be more complicated:** the prior version of
+ * this class implemented a "two-step workaround" for image+tools turns. The
+ * 2026-04-22 capabilities_lab probe established that Sourcegraph silently
+ * dropped the `tools` field on `/.api/completions/stream` at api-version=8,
+ * so image-bearing turns that also needed tools had to be split: step 1
+ * sent the image alone to `/stream` to get a textual description, step 2
+ * replaced the image with that description and sent it + tools to
+ * `/chat/completions`.
  *
- * | Condition                                    | Backend                                      |
- * |----------------------------------------------|----------------------------------------------|
- * | No image parts                               | [openAiCompatBrain] (existing path)          |
- * | Image parts AND no tools                     | [streamClient] `/.api/completions/stream`    |
- * | Image parts AND tools                        | two-step workaround (vision-summarize → tools) |
+ * The 2026-05-05 format_lab probe at api-version=9 found this is no longer
+ * true: the gateway forwards `tools` on `/stream` and emits tool calls back
+ * as `delta_tool_calls` SSE frames — verified across all 6 vision-capable
+ * Claude 4.5 models. The two-step workaround (and the ~250 lines of step-1
+ * abstention/empty-handling/framing-prompt code that supported it) has been
+ * removed. Image+tools turns now make a single round-trip through `/stream`.
  *
- * **Why hybrid:** the gateway silently drops the `tools` field on
- * `/.api/completions/stream` (capabilities_lab P6/P7), so we cannot just
- * migrate everything to the stream endpoint. Conversely, the OpenAI-compat
- * `/.api/llm/chat/completions` endpoint does NOT accept `image_url` content
- * parts. Hence the routing rule.
- *
- * **Two-step workaround** (image+tools):
- *
- * 1. Send the image alone to `/.api/completions/stream` to obtain a verbal
- *    description.
- * 2. Replace the image part with `[image description: …]` text and send the
- *    rebuilt messages + tools to `/.api/llm/chat/completions`.
- *
- * Step 1 abstention (`I cannot see this image…`) and HTTP errors abort before
- * step 2 — the user gets a single error message rather than a garbled tool
- * call. Successful step-2 completions invoke [onAnalyzedImageBadge] so the UI
- * can render the `📷 image analyzed` strip on the assistant message.
- *
- * **Implements [LlmBrain]:** so it can drop into [AgentLoop] as the `brain`
- * parameter without further wiring. The `tools` parameter is required by the
- * interface but the routing logic uses it to decide between paths.
+ * This also retires the `📷 image analyzed` UI strip — there is no longer a
+ * "vision result merged into a text turn" event to badge. The
+ * [onAnalyzedImageBadge] callback is kept on the constructor for ABI
+ * compatibility but is now never invoked.
  *
  * **Per-session isolation:** [attachmentStore] is constructed per active
  * session in [com.workflow.orchestrator.agent.AgentService]. Reusing a stale
  * store from a prior session would leak attachments into the new session;
  * this class never caches the store reference beyond construction.
  *
- * Spec: `docs/research/2026-05-02-multimodal-agent-design.md` §Architecture
- *       > Two-step workaround.
+ * Spec: `docs/research/2026-05-02-multimodal-agent-design.md` (historical);
+ * baselines `tools/sourcegraph-probe/baselines/capabilities_lab_2026-05-05_*`
+ * + `format_lab_results.json` document the regime change.
  */
 class BrainRouter(
     private val openAiCompatBrain: LlmBrain,
@@ -210,14 +134,13 @@ class BrainRouter(
         maxTokens: Int?,
         toolChoice: JsonElement?,
     ): ApiResult<ChatCompletionResponse> {
-        val needsTools = !tools.isNullOrEmpty()
         val hasImage = messages.any { it.hasImageParts() }
-        val route = when { !hasImage -> "text-only"; !needsTools -> "image-only"; else -> "two-step" }
-        log.info("[multimodal] BrainRouter.chat decision: hasImage=$hasImage hasTools=$needsTools → route=$route")
-        return when {
-            !hasImage -> openAiCompatBrain.chat(messages, tools, maxTokens, toolChoice)
-            !needsTools -> imageOnlyNonStreaming(messages)
-            else -> twoStepWorkaround(messages, tools, maxTokens, toolChoice, onChunk = null)
+        val route = if (hasImage) "image-or-mixed" else "text-only"
+        log.info("[multimodal] BrainRouter.chat decision: hasImage=$hasImage → route=$route")
+        return if (hasImage) {
+            imageBearingNonStreaming(messages, tools, maxTokens)
+        } else {
+            openAiCompatBrain.chat(messages, tools, maxTokens, toolChoice)
         }
     }
 
@@ -227,26 +150,31 @@ class BrainRouter(
         maxTokens: Int?,
         onChunk: suspend (StreamChunk) -> Unit,
     ): ApiResult<ChatCompletionResponse> {
-        val needsTools = !tools.isNullOrEmpty()
         val hasImage = messages.any { it.hasImageParts() }
-        val route = when { !hasImage -> "text-only"; !needsTools -> "image-only-stream"; else -> "two-step" }
-        log.info("[multimodal] BrainRouter.chatStream decision: hasImage=$hasImage hasTools=$needsTools → route=$route")
-        return when {
-            !hasImage -> openAiCompatBrain.chatStream(messages, tools, maxTokens, onChunk)
-            !needsTools -> imageOnlyStreaming(messages, maxTokens, onChunk)
-            else -> twoStepWorkaround(messages, tools, maxTokens, toolChoice = null, onChunk = onChunk)
+        val route = if (hasImage) "image-or-mixed-stream" else "text-only"
+        log.info("[multimodal] BrainRouter.chatStream decision: hasImage=$hasImage → route=$route")
+        return if (hasImage) {
+            imageBearingStreaming(messages, tools, maxTokens, onChunk)
+        } else {
+            openAiCompatBrain.chatStream(messages, tools, maxTokens, onChunk)
         }
     }
 
-    // ---- Image-only (no tools) ----
+    // ---- Image-bearing turns (image-only or image+tools) ----
+    //
+    // Both image-only and image+tools turns route through /.api/completions/
+    // stream. format_lab 2026-05-05 verified the gateway forwards the `tools`
+    // field on api-version=9 — what used to be a two-step workaround is now
+    // a single round-trip.
 
-    private suspend fun imageOnlyStreaming(
+    private suspend fun imageBearingStreaming(
         messages: List<ChatMessage>,
+        tools: List<ToolDefinition>?,
         maxTokens: Int?,
         onChunk: suspend (StreamChunk) -> Unit,
     ): ApiResult<ChatCompletionResponse> {
         return runCatching {
-            val req = buildStreamRequest(messages, maxTokens)
+            val req = buildStreamRequest(messages, tools, maxTokens)
             // Forward each delta as an OpenAI-compat StreamChunk so the agent
             // loop's existing onChunk handler (which knows how to assemble
             // text deltas) works without modification.
@@ -255,19 +183,21 @@ class BrainRouter(
             }
             buildRouterResponse(r)
         }.getOrElse { e ->
-            log.warn("[BrainRouter] image-only stream failed: ${e.message}")
+            log.warn("[BrainRouter] image-bearing stream failed: ${e.message}")
             errorFromThrowable(e)
         }
     }
 
-    private suspend fun imageOnlyNonStreaming(
+    private suspend fun imageBearingNonStreaming(
         messages: List<ChatMessage>,
+        tools: List<ToolDefinition>?,
+        maxTokens: Int?,
     ): ApiResult<ChatCompletionResponse> {
         return runCatching {
-            val r = streamClient.chat(buildStreamRequest(messages, maxTokens = null))
+            val r = streamClient.chat(buildStreamRequest(messages, tools, maxTokens))
             buildRouterResponse(r)
         }.getOrElse { e ->
-            log.warn("[BrainRouter] image-only chat failed: ${e.message}")
+            log.warn("[BrainRouter] image-bearing chat failed: ${e.message}")
             errorFromThrowable(e)
         }
     }
@@ -280,6 +210,10 @@ class BrainRouter(
      * found 58 of 96 cells produce this pattern for HEIC/HEIF/BMP/TIFF/AVIF/
      * SVG and unsupported document shapes — all dead ends previously rendered
      * as empty replies.
+     *
+     * Tool calls assembled by the stream client (from `delta_tool_calls`
+     * frames) are attached to the assistant message so the agent loop's tool
+     * dispatcher sees them — same shape it gets from the OpenAI-compat path.
      */
     private fun buildRouterResponse(
         r: com.workflow.orchestrator.core.ai.dto.CompletionStreamResult,
@@ -291,158 +225,30 @@ class BrainRouter(
         } else {
             r.text
         }
-        return successResponse(text = finalText, stopReason = r.stopReason)
-    }
-
-    // ---- Two-step workaround (image + tools) ----
-    //
-    // The Sourcegraph gateway has two endpoints with mutually-incompatible
-    // capabilities: /.api/llm/chat/completions accepts tools but rejects images,
-    // and /.api/completions/stream accepts images but silently drops the tools
-    // field. When a turn carries both, we chain them: step 1 turns the image
-    // into a text description on the stream endpoint, step 2 sends that
-    // description plus the tools array to the OpenAI-compat endpoint.
-    //
-    // The orchestration below is intentionally a flat `when` over a sealed
-    // VisionResult. The pure helpers (runVisionStep, buildStep2Messages,
-    // VISION_PROMPT, FRAMING_HEADER, etc.) live in the companion so each
-    // hardening pass lands in the right place rather than growing the orchestrator.
-
-    /** Outcome of step 1 — the vision-summarize call against /completions/stream. */
-    private sealed interface VisionResult {
-        /** Step 1 succeeded with a usable image description. */
-        data class Description(val text: String) : VisionResult
-
-        /**
-         * Step 1 returned text but the model abstained ("I cannot see this image…").
-         * Step 2 must NOT proceed — the description is useless and would only
-         * produce a garbled tool call.
-         */
-        data class Abstained(val description: String) : VisionResult
-
-        /**
-         * Step 1's HTTP call succeeded (200) but the parsed description was
-         * empty/blank. Distinct from [Failed] (HTTP error) and [Abstained]
-         * (model produced text saying it couldn't see the image). Empty output
-         * usually means the model's response was safety-filtered server-side
-         * — no text events were emitted at all. Pinned by Windows logs
-         * 2026-05-05 where heavy directive prompting on /completions/stream
-         * silently produced 0-char responses. Step 2 MUST NOT proceed —
-         * letting empty text flow into the framing wraps nothing and the
-         * step-2 model honestly reports it came back empty.
-         */
-        object Empty : VisionResult
-
-        /** Step 1's HTTP call failed. Step 2 must NOT proceed. */
-        data class Failed(val reason: String) : VisionResult
-    }
-
-    private suspend fun twoStepWorkaround(
-        messages: List<ChatMessage>,
-        tools: List<ToolDefinition>?,
-        maxTokens: Int?,
-        toolChoice: JsonElement?,
-        onChunk: (suspend (StreamChunk) -> Unit)?,
-    ): ApiResult<ChatCompletionResponse> {
-        return when (val vision = runVisionStep(messages, maxTokens)) {
-            is VisionResult.Failed ->
-                synthesizeAbortResponse(
-                    id = "router-step1-fail",
-                    content = "Image analysis failed: ${vision.reason}. " + STEP1_RETRY_HINT,
-                )
-            is VisionResult.Abstained ->
-                synthesizeAbortResponse(
-                    id = "router-step1-abstain",
-                    content = STEP1_ABSTAIN_USER_MESSAGE,
-                )
-            is VisionResult.Empty ->
-                synthesizeAbortResponse(
-                    id = "router-step1-empty",
-                    content = STEP1_EMPTY_USER_MESSAGE,
-                )
-            is VisionResult.Description -> {
-                val rebuilt = buildStep2Messages(messages, vision.text)
-                val resp = if (onChunk != null) {
-                    openAiCompatBrain.chatStream(rebuilt, tools, maxTokens, onChunk)
-                } else {
-                    openAiCompatBrain.chat(rebuilt, tools, maxTokens, toolChoice)
-                }
-                if (resp is ApiResult.Success) onAnalyzedImageBadge?.invoke()
-                resp
-            }
-        }
-    }
-
-    /**
-     * Step 1 — replace the last image-bearing turn with [VISION_PROMPT], call
-     * the stream endpoint, classify the response into a [VisionResult].
-     *
-     * Encapsulates: prompt construction, HTTP fault tolerance, abstention
-     * detection, debug logging. Future hardening of step 1 lands here.
-     */
-    private suspend fun runVisionStep(
-        messages: List<ChatMessage>,
-        maxTokens: Int?,
-    ): VisionResult {
-        val visionMessages = messages.buildStep1VisionPayload(VISION_PROMPT)
-        val result = runCatching {
-            streamClient.chat(buildStreamRequest(visionMessages, maxTokens))
-        }
-        if (result.isFailure) {
-            val msg = result.exceptionOrNull()?.message ?: "unknown error"
-            log.warn("[BrainRouter] two-step step 1 failed: $msg")
-            return VisionResult.Failed(msg)
-        }
-        val description = result.getOrThrow().text
-        log.info(
-            "[multimodal] BrainRouter two-step step 1 description: " +
-                "${description.length} chars, preview=${description.take(200).replace("\n", " ")}",
-        )
-        if (description.isBlank()) {
-            log.warn("[multimodal] BrainRouter two-step step 1 returned empty/blank text — likely safety-filtered, aborting step 2")
-            return VisionResult.Empty
-        }
-        if (ABSTENTION_PHRASES.any { description.contains(it, ignoreCase = true) }) {
-            log.info("[multimodal] BrainRouter two-step step 1 abstention detected, aborting step 2")
-            return VisionResult.Abstained(description)
-        }
-        return VisionResult.Description(description)
-    }
-
-    /**
-     * Step 2 — replace every image part with an authoritative framing of [description].
-     *
-     * Encapsulates: framing wording. Future hardening of step 2 lands here.
-     */
-    private fun buildStep2Messages(
-        messages: List<ChatMessage>,
-        description: String,
-    ): List<ChatMessage> {
-        val framed = "$FRAMING_HEADER\n$description\n$FRAMING_FOOTER"
-        return messages.replacingImagePartsWithText(framed)
-    }
-
-    /**
-     * Build a synthetic single-choice [ChatCompletionResponse] used to abort
-     * the two-step before step 2 fires (HTTP failure or abstention). Keeps
-     * the abort paths from duplicating ~12 lines of choice/usage boilerplate.
-     */
-    private fun synthesizeAbortResponse(
-        id: String,
-        content: String,
-    ): ApiResult.Success<ChatCompletionResponse> = ApiResult.Success(
-        ChatCompletionResponse(
-            id = id,
-            choices = listOf(
-                Choice(
-                    index = 0,
-                    message = ChatMessage(role = "assistant", content = content),
-                    finishReason = "stop",
+        return ApiResult.Success(
+            ChatCompletionResponse(
+                id = "router-stream",
+                choices = listOf(
+                    Choice(
+                        index = 0,
+                        message = ChatMessage(
+                            role = "assistant",
+                            content = finalText.ifEmpty { null },
+                            toolCalls = r.toolCalls.takeIf { it.isNotEmpty() },
+                        ),
+                        finishReason = when (r.stopReason) {
+                            null -> "stop"
+                            "end_turn", "stop_sequence" -> "stop"
+                            "length", "max_tokens" -> "length"
+                            "tool_use", "tool_calls" -> "tool_calls"
+                            else -> r.stopReason
+                        },
+                    ),
                 ),
+                usage = null,
             ),
-            usage = null,
-        ),
-    )
+        )
+    }
 
     // ---- Wire-payload construction ----
 
@@ -458,6 +264,7 @@ class BrainRouter(
      */
     private suspend fun buildStreamRequest(
         messages: List<ChatMessage>,
+        tools: List<ToolDefinition>?,
         maxTokens: Int?,
     ): CompletionStreamRequest {
         val streamMessages = messages.map { msg ->
@@ -485,6 +292,7 @@ class BrainRouter(
             // surface a tighter per-model cap once `ModelCatalogService` is
             // wired live; until then 8000 mirrors the Cody-default.
             maxTokensToSample = maxTokens ?: 8000,
+            tools = tools?.takeIf { it.isNotEmpty() },
         )
     }
 
@@ -507,26 +315,6 @@ class BrainRouter(
         // because BrainRouter doesn't rewrite content).
         else -> "human"
     }
-
-    private fun successResponse(text: String, stopReason: String?): ApiResult<ChatCompletionResponse> =
-        ApiResult.Success(
-            ChatCompletionResponse(
-                id = "router-stream",
-                choices = listOf(
-                    Choice(
-                        index = 0,
-                        message = ChatMessage(role = "assistant", content = text),
-                        finishReason = when (stopReason) {
-                            null -> "stop"
-                            "end_turn", "stop_sequence" -> "stop"
-                            "length", "max_tokens" -> "length"
-                            else -> stopReason
-                        },
-                    ),
-                ),
-                usage = null,
-            ),
-        )
 
     private fun errorFromThrowable(e: Throwable): ApiResult<ChatCompletionResponse> {
         val type = when (e) {
@@ -574,56 +362,3 @@ class BrainRouter(
 class AttachmentMissingException(val sha256: String) :
     IllegalStateException("attachment $sha256 not found on disk for session")
 
-// ---- Extension helpers ----
-
-/**
- * Builds a clean single-message payload for the step-1 vision call.
- *
- * Why a single message: empirically (Windows logs 2026-05-05) the vision
- * endpoint silently bails out and returns 0 chars when handed a multi-turn
- * agent conversation with the image buried in turn 8 of 8. The exact same
- * image + prompt + endpoint produces a 1558-char description in 15.5s when
- * sent as a clean single-turn payload (path A — user-attached image), but
- * fails with 0 chars in 0.2–1.4s when sent with full conversation context
- * (path B — image arrived via tool_result on turn 8). Size is comparable
- * (188KB vs 200KB) — the difference is structural: multiple consecutive
- * `human`-coerced tool turns and JSON-shaped surrounding content cause the
- * vision model to short-circuit instead of engaging with the image.
- *
- * The vision step has exactly one job: describe the image. It does not need
- * the system prompt, prior tool calls, prior tool results, or the agent's
- * IDE context. We extract the image parts from the last image-bearing turn
- * and wrap them with [text] in a single user message — the same shape that
- * works for direct attachment.
- *
- * Returns an empty list if no image-bearing turn is found (defensive — the
- * caller should have routed by [hasImageParts] check before reaching here).
- */
-internal fun List<ChatMessage>.buildStep1VisionPayload(text: String): List<ChatMessage> {
-    val imageBearing = lastOrNull { it.hasImageParts() } ?: return emptyList()
-    val imagesOnly = imageBearing.parts.orEmpty().filterIsInstance<ContentPart.Image>()
-    return listOf(
-        ChatMessage(
-            role = "user",
-            content = null,
-            parts = imagesOnly + ContentPart.Text(text),
-        ),
-    )
-}
-
-/**
- * Returns a copy where every image part across the conversation is replaced
- * with the supplied [text] (concatenated onto each affected message's
- * content). Used to rebuild the post-step-1 messages for the OpenAI-compat
- * tools call — the model never sees image bytes; only the description text.
- */
-internal fun List<ChatMessage>.replacingImagePartsWithText(text: String): List<ChatMessage> = map { m ->
-    if (m.hasImageParts()) {
-        m.copy(
-            parts = null,
-            content = ((m.content ?: "") + " " + text).trim(),
-        )
-    } else {
-        m
-    }
-}
