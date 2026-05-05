@@ -211,37 +211,49 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         scope = panelScope,
     )
 
-    private suspend fun autoDetectAndMonitor(branchName: String) {
-        // Previously read `prBar.getSelectedPr()?.fromRef?.latestCommit` — that path is
-        // gone now that PrBar is a passive WorkflowContextService mirror. Use the local
-        // git HEAD instead. When `interactionMode == Live`, the local HEAD typically
-        // matches (or leads/trails) the focused PR's source — divergence display is now
-        // a Phase-6+ concern routed through the PR tab, not this fallback path.
+    /**
+     * Resolve the Bamboo branch plan key for [branchName] and start monitoring.
+     *
+     * **Bitbucket-first contract:** the local HEAD's build statuses are the source of
+     * truth — Bamboo posts statuses keyed by the resolved branch plan (e.g. `SVC138-4`),
+     * which strips to a digit-suffixed branch plan key (`SVC138`) the API can hit
+     * directly via `/result/{key}/latest` without slug-guessing the branch name.
+     *
+     * `preferredMasterKey` is the configured `RepoConfig.bambooPlanKey`. It's used as
+     * a *tiebreaker* when Bitbucket returns multiple statuses for the same commit
+     * (multi-module repos that feed several Bamboo plans), and as a *last-resort
+     * fallback* when no statuses are posted yet (branch with no build, or Bamboo→
+     * Bitbucket hook delayed). It is never the primary source.
+     *
+     * Pre-Bitbucket-first behaviour was: if `bambooPlanKey` was configured, jump
+     * straight to `/result/{master}/branch/{name}/latest`. That 404'd whenever the
+     * branch slug Bamboo stored differed from the URL-encoded git branch name —
+     * which is the common case for `feature/foo` style branches. The shortcut also
+     * skipped the more reliable Bitbucket-status path. Removed in favour of always
+     * asking Bitbucket first.
+     */
+    private suspend fun resolveBranchPlanAndMonitor(
+        branchName: String,
+        preferredMasterKey: String?,
+    ) {
         val latestCommit = readActionLocalHead().orEmpty()
 
-        // Reset activePlanKey so the "configuredPlanKey" fallback below reads the
-        // active repo's bambooPlanKey, not a stale auto-detected key from the
-        // previous repo. Without this reset, manually switching repos (or selecting
-        // a PR whose commit has no build statuses) would keep using the previous
-        // plan even though the active repo has changed.
+        // Reset activePlanKey so a previous PR's auto-detected branch plan doesn't
+        // leak into this repo's polling.
         activePlanKey = ""
 
-        // Check divergence
         if (latestCommit.isNotBlank()) {
             checkDivergence(latestCommit)
         }
 
-        // Try auto-detect Bamboo branch plan key from build statuses. Fallback order
-        // (via currentPlanKey): activeRepoConfig.bambooPlanKey → scalar default.
-        val configuredPlanKey = currentPlanKey()
+        val interval = settings.state.buildPollIntervalSeconds.toLong() * 1000
 
+        // 1. Bitbucket-status path (the canonical source).
         if (latestCommit.isNotBlank()) {
-            val detectedKey = detectPlanKeyFromBuildStatus(latestCommit)
+            val detectedKey = detectPlanKeyFromBuildStatus(latestCommit, preferredMasterKey)
             if (detectedKey != null) {
-                // Use the detected branch plan key directly (e.g., PROJ-PLAN123)
-                log.info("[Build:Dashboard] Using auto-detected branch plan key: $detectedKey")
+                log.info("[Build:Dashboard] Resolved branch plan key '$detectedKey' from Bitbucket statuses (preferredMaster='${preferredMasterKey.orEmpty()}')")
                 activePlanKey = detectedKey
-                val interval = settings.state.buildPollIntervalSeconds.toLong() * 1000
                 monitorService.switchBranch(detectedKey, branchName, interval)
                 invokeLater {
                     hintLabel.isVisible = false
@@ -252,14 +264,21 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             }
         }
 
-        // Fallback to configured plan key
-        if (configuredPlanKey.isNotBlank()) {
-            val interval = settings.state.buildPollIntervalSeconds.toLong() * 1000
-            monitorService.switchBranch(configuredPlanKey, branchName, interval)
-            invokeLater { headerLabel.text = "Plan: $configuredPlanKey / $branchName" }
-        } else {
-            log.warn("[Build:Dashboard] No Bamboo plan key — configure in Settings or create a build")
-            invokeLater { headerLabel.text = "No Bamboo builds found for this branch" }
+        // 2. Fallback: configured master planKey + Bamboo branch lookup. Only reached
+        //    when Bitbucket has no posted status for this commit (e.g. branch with no
+        //    build yet, or Bitbucket→Bamboo hook delayed). The configured key is the
+        //    user's explicit "this repo builds with X" assertion, so honor it.
+        if (!preferredMasterKey.isNullOrBlank()) {
+            log.info("[Build:Dashboard] No Bitbucket statuses for $latestCommit — falling back to configured planKey '$preferredMasterKey' with /branch/$branchName")
+            monitorService.switchBranch(preferredMasterKey, branchName, interval)
+            invokeLater { headerLabel.text = "Plan: $preferredMasterKey / $branchName" }
+            return
+        }
+
+        // 3. Nothing to fall back to.
+        log.warn("[Build:Dashboard] No Bitbucket statuses for commit and no configured planKey for branch '$branchName'")
+        invokeLater {
+            showHint("No Bamboo build for this commit yet — push to trigger one, or configure a plan key in Settings > CI/CD")
         }
     }
 
@@ -275,7 +294,23 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         return cachedBitbucketClient!!
     }
 
-    private suspend fun detectPlanKeyFromBuildStatus(commitId: String): String? {
+    /**
+     * Look up the Bamboo branch plan key that built [commitId] by asking Bitbucket
+     * which builds posted statuses against it. Returns the *branch plan key* (digit-
+     * suffixed, e.g. `SVC138`) — Bamboo's REST API can hit `/result/{key}/latest`
+     * directly with that, no `/branch/{name}/` slug-guessing needed.
+     *
+     * In multi-module repos one commit can attract statuses from several Bamboo
+     * plans (e.g. `API138-4`, `WEB138-7`, `WORKER138-2` all built from the same
+     * SHA). [preferredMasterKey] disambiguates: when supplied, prefer the status
+     * whose extracted plan key starts with the configured master (i.e. its branch
+     * plan family). Falls back to the first status when no preference matches —
+     * preserves pre-multi-module behaviour for single-plan repos.
+     */
+    private suspend fun detectPlanKeyFromBuildStatus(
+        commitId: String,
+        preferredMasterKey: String? = null,
+    ): String? {
         val bitbucketUrl = settings.connections.bitbucketUrl.orEmpty().trimEnd('/')
         if (bitbucketUrl.isBlank()) return null
 
@@ -284,18 +319,24 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         return when (val result = client.getBuildStatuses(commitId)) {
             is ApiResult.Success -> {
                 val statuses = result.data
-                if (statuses.isNotEmpty()) {
-                    // Bitbucket reports the *build* key (e.g. `PROJ-PLAN-42`); strip the
-                    // `-42` build-number suffix so the plan key can be used to trigger new
-                    // builds. Prefers parsing the browse URL, falls back to trimming digits.
-                    val first = statuses.first()
-                    val planKey = BitbucketBranchClient.extractPlanKey(first)
-                    log.info("[Build:Dashboard] Extracted plan key '$planKey' from build status (raw='${first.key}', url='${first.url}')")
-                    planKey
-                } else {
+                if (statuses.isEmpty()) {
                     log.info("[Build:Dashboard] No build statuses found for commit ${commitId.take(8)}")
-                    null
+                    return null
                 }
+
+                val picked = if (!preferredMasterKey.isNullOrBlank() && statuses.size > 1) {
+                    statuses.firstOrNull { status ->
+                        BitbucketBranchClient.extractPlanKey(status).startsWith(preferredMasterKey)
+                    } ?: statuses.first().also {
+                        log.info("[Build:Dashboard] Multi-status commit but none matched preferredMaster='$preferredMasterKey' (extracted: ${statuses.joinToString { BitbucketBranchClient.extractPlanKey(it) }}) — falling back to first")
+                    }
+                } else {
+                    statuses.first()
+                }
+
+                val planKey = BitbucketBranchClient.extractPlanKey(picked)
+                log.info("[Build:Dashboard] Extracted plan key '$planKey' from build status (raw='${picked.key}', url='${picked.url}', totalStatuses=${statuses.size})")
+                planKey
             }
             is ApiResult.Error -> {
                 log.warn("[Build:Dashboard] Failed to get build statuses: ${result.message}")
@@ -699,35 +740,19 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         }
 
         // PrBar renders itself from WorkflowContextService.state — no manual hand-off.
-        loadBuildsForContext(pr.repoName, pr.fromBranch, pr.bambooPlanKey)
+        loadBuildsForContext(pr.fromBranch, pr.bambooPlanKey)
     }
 
-    private fun loadBuildsForContext(repoName: String, branch: String, bambooPlanKey: String?) {
+    private fun loadBuildsForContext(branch: String, bambooPlanKey: String?) {
         hintLabel.isVisible = false
         splitter.isVisible = true
 
-        if (bambooPlanKey.isNullOrBlank()) {
-            // No Bamboo plan key — try auto-detect from build statuses, show hint if that also fails
-            panelScope.launch {
-                autoDetectAndMonitor(branch)
-                // If auto-detect didn't find a plan key, show actionable hint
-                if (activePlanKey.isBlank()) {
-                    invokeLater {
-                        showHint("Bamboo plan key not configured for $repoName \u2014 configure in Settings > CI/CD")
-                    }
-                }
-            }
-            return
-        }
-
-        activePlanKey = bambooPlanKey
-        val interval = settings.state.buildPollIntervalSeconds.toLong() * 1000
         loadingIcon.isVisible = true
         viewingHistoricalBuild = false
         historicalBuildBanner.isVisible = false
         historyListModel.clear()
         historyPanel.isVisible = false
-        headerLabel.text = "Plan: $bambooPlanKey / $branch"
+        headerLabel.text = "Resolving Bamboo plan for $branch..."
         // Clear stale UI immediately — the monitor nullifies stateFlow inside switchBranch,
         // but we can't rely on the collector alone: there's a window between the user's
         // click here and the collector firing on EDT where they could still click a stage
@@ -736,7 +761,10 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         stageListPanel.updateStages(emptyList())
         stageDetailPanel.showEmpty()
         statusLabel.text = ""
-        monitorService.switchBranch(bambooPlanKey, branch, interval)
+
+        panelScope.launch {
+            resolveBranchPlanAndMonitor(branch, preferredMasterKey = bambooPlanKey)
+        }
     }
 
     private fun showHint(message: String) {
