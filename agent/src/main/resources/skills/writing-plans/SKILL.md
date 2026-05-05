@@ -95,6 +95,60 @@ Implementation plan for [feature name].
 - Keep task titles short and descriptive — they appear in the progress checklist
 - Put detailed code blocks and commands INSIDE the task (below the header) — they become the step's description
 
+## Callouts (admonitions)
+
+Callouts are a glance zone at the very TOP of the plan — a single block the user can scan in two seconds to see whether their attention is needed before they approve. The plan document viewer renders GitHub-style alert blockquotes as colored callout boxes.
+
+**Where they go:** before the first `### Task` heading, in the summary text area. NOT inside individual tasks. Sprinkling callouts through every task defeats the purpose — when everything is highlighted, nothing is.
+
+**When to use them:** only when the user's input or attention is genuinely useful before approval. Decisions, assumptions, risks. If the plan needs no review, skip callouts entirely — an empty top zone is cleaner than a `[!NOTE]` filler. Two or three at most for a typical plan.
+
+**Syntax:**
+
+```
+> [!LABEL]
+> One or more lines of body text. Inline `code`, **bold**, [links](url) and lists are fine.
+```
+
+**Recommended labels** — pick the one that fits the situation:
+
+| Label | When to use |
+|---|---|
+| `[!REVIEW REQUIRED]` | The user must verify or decide on something before you can continue (confirm column type, choose between Option A vs B). Most important label. |
+| `[!ASSUMPTION]` | Something you assumed — flag it so the user can correct it cheaply before approval. |
+| `[!RISK]` | A known trade-off or sharp edge in the chosen approach. |
+| `[!IMPORTANT]` | Must-read info that affects correctness. |
+| `[!WARNING]` | Proceed-with-care; behaviour changes if missed. |
+| `[!CAUTION]` | Risk of data loss, breaking change, or security impact. |
+| `[!NOTE]` | Neutral context the reader should know. |
+| `[!TIP]` | A helpful suggestion or shortcut. |
+
+Custom labels (e.g. `[!ROLLBACK PLAN]`) are accepted and render with a generic style. Prefer the labels above when they fit — consistency helps the user scan a long plan quickly.
+
+**Good usage example — callouts at the top, tasks below:**
+
+```
+Implementation plan for switching FooService to constructor injection.
+
+> [!REVIEW REQUIRED]
+> Two legacy tests wire FooService via reflection (`FooLegacyTest`, `FooMigrationTest`).
+> Confirm we can break them — they're tagged `@Tag("legacy")` and slated for deletion.
+
+> [!ASSUMPTION]
+> Spring's `@Component` discovery still finds the class with no constructor annotations.
+> If you're using `proxyBeanMethods = false` anywhere, this needs adjustment.
+
+### Task 1: Update FooService constructor
+**Files:**
+- Modify: `core/src/main/.../FooService.kt`
+...
+
+### Task 2: Update test wiring
+...
+```
+
+Note how Tasks 1 and 2 themselves contain NO callouts. The two callouts at the top are everything the user needs to scan before deciding to approve.
+
 ## Presenting the Plan
 
 Call `plan_mode_respond` with `response` (markdown):

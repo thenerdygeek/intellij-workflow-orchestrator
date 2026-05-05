@@ -48,6 +48,28 @@ class PlanModeRespondTool : AgentTool {
         "Plan format guidelines:\n" +
         "- Use `## Phase N: Title` or `### Task N: Title` headings to structure the response markdown.\n" +
         "- Under each heading, list the files to create/modify, the steps to take, and include actual code blocks.\n\n" +
+        "Callouts (admonitions): the plan viewer renders GitHub-style alert blockquotes as colored " +
+        "callout boxes. Use them as a SINGLE \"things the user should glance at before approving\" zone at " +
+        "the very TOP of the plan — before the first `### Task` header, in the summary area. Do NOT sprinkle " +
+        "callouts through individual tasks; that's just visual noise. The whole point is that the user can " +
+        "scan one block at the top and immediately see whether their input is needed.\n\n" +
+        "Syntax:\n" +
+        "  > [!LABEL]\n" +
+        "  > One or more lines of body text. Inline `code`, **bold**, [links](url) and lists are fine.\n\n" +
+        "Recommended labels (each maps to a distinct callout color):\n" +
+        "- `[!REVIEW REQUIRED]` — the user must verify or decide something before you can continue " +
+        "(e.g. \"confirm column type\", \"choose between Option A and B\"). This is the most important label.\n" +
+        "- `[!ASSUMPTION]` — something you assumed; flag it so the user can correct it cheaply before approval.\n" +
+        "- `[!RISK]` — a known trade-off or sharp edge in the chosen approach.\n" +
+        "- `[!IMPORTANT]` — must-read info that affects correctness.\n" +
+        "- `[!WARNING]` — proceed-with-care detail; behaviour changes if missed.\n" +
+        "- `[!CAUTION]` — risk of data loss, breaking change, security impact.\n" +
+        "- `[!NOTE]` — neutral context the reader should know.\n" +
+        "- `[!TIP]` — a helpful suggestion or shortcut.\n" +
+        "Custom labels are accepted (e.g. `[!ROLLBACK PLAN]`) and render with a generic style.\n\n" +
+        "Rules of thumb: zero callouts is fine — use them only when the user's attention is genuinely " +
+        "needed. Two or three at most for a typical plan. If you have nothing the user must review, " +
+        "skip callouts entirely — an empty top-zone is cleaner than a fake `[!NOTE]` filler.\n\n" +
         "If while writing your response you realize you need more exploration, set needs_more_exploration=true."
 
     override val parameters = FunctionParameters(
