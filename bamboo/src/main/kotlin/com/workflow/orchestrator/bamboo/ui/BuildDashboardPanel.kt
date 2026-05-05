@@ -834,7 +834,12 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                             name = stage.name,
                             status = com.workflow.orchestrator.bamboo.model.BuildStatus.fromBambooState(stage.state, ""),
                             durationMs = stage.durationSeconds * 1000,
-                            resultKey = "",
+                            // Use the first job's resultKey — enables per-job log fetch
+                            // when the user clicks a stage in the historical build view.
+                            // Multi-job stages will only surface the first job's log; a
+                            // future change could materialise per-job rows here as the
+                            // live monitor does (BuildMonitorService.mapToBuildState).
+                            resultKey = stage.jobs.firstOrNull()?.resultKey.orEmpty(),
                             manual = false
                         )
                     }
