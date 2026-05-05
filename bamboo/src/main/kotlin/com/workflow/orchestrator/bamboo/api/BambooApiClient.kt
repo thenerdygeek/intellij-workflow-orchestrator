@@ -126,7 +126,7 @@ class BambooApiClient(
 
     suspend fun getRunningAndQueuedBuilds(planKey: String): ApiResult<List<BambooResultDto>> {
         return get<BambooBuildStatusResponse>(
-            "/rest/api/latest/result/$planKey?includeAllStates=true&max-results=5"
+            "/rest/api/latest/result/$planKey?includeAllStates=true&max-results=5&expand=stages.stage.results.result"
         ).map { response ->
             response.results.result.filter { dto ->
                 dto.lifeCycleState in listOf("InProgress", "Queued", "Pending")
