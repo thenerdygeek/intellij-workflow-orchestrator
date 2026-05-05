@@ -521,6 +521,29 @@ class AgentService(
     @Volatile private var currentBrainModelId: String? = null
 
     /**
+     * Bug 3 — user's pending model change. Set by [requestModelChange] from the
+     * AgentController model dropdown handler. Polled by [AgentLoop] at the top of
+     * every iteration boundary. The loop applies the change via [brainFactory],
+     * resets fallback state, and clears this ref via the `onModelChangeApplied`
+     * callback so the same change isn't re-applied. Volatile so the loop coroutine
+     * sees writes from the EDT/UI thread without locking.
+     */
+    private val pendingModelChange = java.util.concurrent.atomic.AtomicReference<String?>(null)
+
+    /**
+     * Bug 3 — entry point for AgentController.changeModel. Records a pending model
+     * change that will be applied at the next iteration boundary inside the active
+     * AgentLoop. Updates [currentBrainModelId] eagerly so the top-bar context
+     * indicator reflects the new model immediately.
+     */
+    fun requestModelChange(modelId: String) {
+        if (modelId.isBlank()) return
+        pendingModelChange.set(modelId)
+        currentBrainModelId = modelId
+        log.info("[Agent] Model change requested by user: $modelId — will apply on next iteration")
+    }
+
+    /**
      * Per-conversation runtime state that must persist across multiple [executeTask] calls
      * within the same session (multi-turn chat). Without this, every user message would
      * reset the api-debug call counter and the token/cost running totals to zero —
@@ -1484,10 +1507,15 @@ class AgentService(
                 // Network error strategy
                 val strategy = agentSettings.state.networkErrorStrategy ?: "none"
 
-                // Build the fallback chain ONCE — used by both ModelFallbackManager (when
-                // enabled) AND L2 tier escalation (always, when chain has >=2 entries).
-                // Order: Opus thinking → Opus → Sonnet thinking → Sonnet (no Haiku).
-                val cachedFallbackChain = run {
+                // Bug 2 — when strategy is "none", the user explicitly opted out of any
+                // automatic model switching. Disable BOTH L1 (ModelFallbackManager) AND L2
+                // (tier escalation that fires when fallbackManager is null) so the loop
+                // never silently changes the user's chosen model. Same-tier brain recycling
+                // (fresh OkHttp pool on dead-socket) is unaffected — it preserves the model.
+                val cachedFallbackChain: List<String>? = if (strategy == "none") {
+                    log.info("[Agent] Network error strategy = 'none' — L1 fallback and L2 tier escalation both disabled")
+                    null
+                } else {
                     val cachedModels = ModelCache.getCached()
                     val chain = ModelCache.buildFallbackChain(cachedModels)
                     if (chain.size > 1) {
@@ -1945,6 +1973,10 @@ class AgentService(
                     modelCatalogService = sharedCatalog,
                     onModelSwitch = onModelSwitch,
                     compactOnTimeoutExhaustion = compactOnTimeoutExhaustion,
+                    pendingModelChangeProvider = { pendingModelChange.get() },
+                    onModelChangeApplied = { applied ->
+                        pendingModelChange.compareAndSet(applied, null)
+                    },
                     onCheckpoint = {
                         // No-op: MessageStateHandler now handles per-change persistence
                         // directly (Task 6). This callback is retained as a lifecycle hook

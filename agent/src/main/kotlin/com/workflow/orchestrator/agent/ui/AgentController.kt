@@ -3070,6 +3070,13 @@ class AgentController(
         val displayName = cached.find { it.id == model }?.displayName
             ?: com.workflow.orchestrator.core.ai.dto.ModelInfo.formatModelName(model.substringAfterLast("::"))
         dashboard.setModelName(displayName)
+        // Bug 3 — request the AgentLoop to swap brains at the next iteration boundary.
+        // Without this, settings.sourcegraphChatModel was a write-only field after session
+        // start; the live brain was never recycled and follow-up messages kept using the
+        // session's original model (or a previous fallback model that locked the chain).
+        service.requestModelChange(model)
+        // Clear any "fallback active" UI badge — the user has taken authoritative control.
+        dashboard.setModelFallbackState(false, null)
     }
 
     private fun openSettings() {

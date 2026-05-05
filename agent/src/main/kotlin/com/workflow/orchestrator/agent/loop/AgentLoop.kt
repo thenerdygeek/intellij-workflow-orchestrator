@@ -298,6 +298,22 @@ class AgentLoop(
      */
     private val onCompactionState: ((active: Boolean, phase: String) -> Unit)? = null,
     /**
+     * Bug 3 — checked at the top of every iteration boundary. When non-null AND
+     * different from the current `brain.modelId`, the loop calls [brainFactory] with
+     * the returned model id and clears the pending state. Lets the user pick a
+     * different model from the dropdown mid-session and have it take effect on the
+     * next user message / steering message / iteration without restarting the chat.
+     *
+     * Returning null (or the current model) is a no-op. Cleared via [onModelChangeApplied].
+     */
+    private val pendingModelChangeProvider: (() -> String?)? = null,
+    /**
+     * Bug 3 — fired after the loop applies a pending model change. Lets the caller
+     * (AgentService) clear its `AtomicReference<String?>` so the same change isn't
+     * re-applied on the next iteration.
+     */
+    private val onModelChangeApplied: ((newModel: String) -> Unit)? = null,
+    /**
      * Session-scoped approval store. Tracks which tools the user has approved
      * for the current session. Injected from the controller/session level so
      * approvals persist across follow-up messages (multiple loop runs).
@@ -643,6 +659,24 @@ class AgentLoop(
             val iterationStartTime = System.currentTimeMillis()
             sessionMetrics?.recordIterationStart()
             LOG.info("[Loop] Iteration $iteration -- ${contextManager.messageCount()} messages, ${"%.1f".format(contextManager.utilizationPercent())}% context")
+
+            // Bug 3 — apply user-requested model change at the iteration boundary, before
+            // compaction or the next API call. Resets fallback recycle counts so the new
+            // model gets a clean start (otherwise a stale L1/L2 cooldown would override).
+            pendingModelChangeProvider?.invoke()?.takeIf { it.isNotBlank() && it != brain.modelId }?.let { newModel ->
+                brainFactory?.let { factory ->
+                    val oldModel = brain.modelId
+                    LOG.info("[Loop] User-requested model switch at iteration $iteration: $oldModel → $newModel")
+                    brain = factory.invoke(newModel, "User-requested model change")
+                    onModelSwitch?.invoke(oldModel, newModel, "User-requested model change")
+                    sessionMetrics?.recordModelSwitch(oldModel, newModel, "User-requested model change")
+                    sameTierRecycles = 0
+                    pendingEscalation = false
+                    fallbackManager?.reset()
+                    l2TierIdx = cachedFallbackChain?.indexOf(brain.modelId) ?: -1
+                    onModelChangeApplied?.invoke(newModel)
+                }
+            }
 
             // Stage 0: Compact if needed
             if (contextManager.shouldCompact()) {
