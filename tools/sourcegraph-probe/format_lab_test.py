@@ -285,7 +285,7 @@ class _FakeResp:
 
 
 # api-version >= 2: deltaText + stopReason
-text, events, stop = fl.parse_cody_sse(_FakeResp([
+text, events, stop, raw = fl.parse_cody_sse(_FakeResp([
     "event: completion",
     'data: {"deltaText":"red"}',
     "",
@@ -304,7 +304,7 @@ _check("SSE event names captured",
        "completion" in events and "done" in events)
 
 # api-version 1: cumulative completion (later frame replaces, doesn't append)
-text2, _, _ = fl.parse_cody_sse(_FakeResp([
+text2, _, _, _ = fl.parse_cody_sse(_FakeResp([
     "event: completion",
     'data: {"completion":"Red"}',
     "",
@@ -315,7 +315,7 @@ text2, _, _ = fl.parse_cody_sse(_FakeResp([
 _check("SSE completion cumulative replaces", text2 == "Red colored")
 
 # malformed lines and [DONE] sentinel are tolerated
-text3, _, _ = fl.parse_cody_sse(_FakeResp([
+text3, _, _, _ = fl.parse_cody_sse(_FakeResp([
     "event: completion",
     'data: not-valid-json',
     "",
@@ -327,7 +327,7 @@ text3, _, _ = fl.parse_cody_sse(_FakeResp([
 _check("SSE tolerates malformed JSON + [DONE]", text3 == "X")
 
 # empty stream
-text4, _, _ = fl.parse_cody_sse(_FakeResp([]))
+text4, _, _, _ = fl.parse_cody_sse(_FakeResp([]))
 _check("SSE empty stream → empty text", text4 == "")
 
 
@@ -463,6 +463,49 @@ out = fl.run_case(
 )
 _check("multi-image SAW_NO when only one keyword present",
        out.verdict == "FAIL" and out.fail_reason == "SAW_NO")
+
+# (j) tools-group: PASS when raw blob contains a tool-call marker,
+#     SAW_NO when only text comes back (the silent-drop scenario)
+tools_cases = fl.build_tools_cases()
+tools_only = next(c for c in tools_cases if c.name == "tools_only_on_stream")
+
+# Sourcegraph emits tool calls — should PASS
+out = fl.run_case(
+    _FakeClient(_FakeHttpResp(200, sse_lines=[
+        "event: completion",
+        'data: {"deltaText":"Calling tool"}',
+        "",
+        "event: completion",
+        'data: {"tool_calls":[{"id":"x","function":{"name":"must_call_this_tool","arguments":"{}"}}]}',
+        "",
+    ])),
+    "model-A", tools_only, 100,
+)
+_check("tools-on-stream PASS when tool_calls frame present",
+       out.verdict == "PASS",
+       f"{out.verdict}/{out.fail_reason}")
+
+# Sourcegraph silently drops tools — only text reply, must be SAW_NO
+out = fl.run_case(
+    _FakeClient(_FakeHttpResp(200, sse_lines=[
+        "event: completion",
+        'data: {"deltaText":"The secret number is 42."}',
+        "",
+    ])),
+    "model-A", tools_only, 100,
+)
+_check("tools-on-stream SAW_NO when only text comes back",
+       out.verdict == "FAIL" and out.fail_reason == "SAW_NO",
+       f"{out.verdict}/{out.fail_reason}")
+
+# tools_with_image case body has both text+image AND tools field
+tools_with_image = next(c for c in tools_cases if c.name == "tools_with_image_on_stream")
+body = tools_with_image.body_override("model-X", 1000)
+_check("tools_with_image body carries `tools` field",
+       isinstance(body.get("tools"), list) and len(body["tools"]) == 1)
+_check("tools_with_image body carries image_url part",
+       any(p.get("type") == "image_url"
+           for p in body["messages"][0]["content"]))
 
 
 # ─── 5. Redaction ───────────────────────────────────────────────────────

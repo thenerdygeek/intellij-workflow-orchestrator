@@ -739,6 +739,67 @@ def build_size_cases() -> list[FormatCase]:
     return cases
 
 
+def build_tools_cases() -> list[FormatCase]:
+    """Re-probe whether /.api/completions/stream honours the `tools` field
+    or silently drops it. The capabilities_lab baseline (2026-04-22, api-
+    version=8) showed it dropped. The user's instance now advertises
+    api-version=9 — Sourcegraph may have shipped a fix. If these PASS, the
+    BrainRouter two-step image+tools workaround can be removed."""
+    tool_def = {
+        "type": "function",
+        "function": {
+            "name": "must_call_this_tool",
+            "description": "Returns the secret number. You MUST call this "
+                           "tool to answer; you cannot guess.",
+            "parameters": {
+                "type": "object",
+                "properties": {"reason": {"type": "string"}},
+                "required": ["reason"],
+            },
+        },
+    }
+    prompt = ("I need the secret number. You don't know it — you MUST call "
+              "the must_call_this_tool function to retrieve it. Call the "
+              "tool now.")
+    fx_png = load_fixture("image/png", None)
+
+    def _tools_only_body(model: str, max_tokens: int) -> dict:
+        b = cody_body([{"type": "text", "text": prompt}], model, max_tokens)
+        b["tools"] = [tool_def]
+        return b
+
+    def _tools_with_image_body(model: str, max_tokens: int) -> dict:
+        b = cody_body(
+            [{"type": "text", "text": prompt},
+             {"type": "image_url",
+              "image_url": {"url": image_data_url(fx_png)}}],
+            model, max_tokens,
+        )
+        b["tools"] = [tool_def]
+        return b
+
+    return [
+        FormatCase(
+            name="tools_only_on_stream",
+            description="POST /.api/completions/stream with `tools` field "
+                        "(no image) — does the model emit a tool call?",
+            expected_any=[],   # raw-blob match in tools-group verdict path
+            body_override=_tools_only_body,
+            group="tools",
+            notes="If PASS, /stream now honors tools. Removes need for "
+                  "BrainRouter two-step workaround.",
+        ),
+        FormatCase(
+            name="tools_with_image_on_stream",
+            description="POST /.api/completions/stream with `tools` + image",
+            expected_any=[],
+            body_override=_tools_with_image_body,
+            group="tools",
+            notes="The agent's image+tools turn — currently uses two-step.",
+        ),
+    ]
+
+
 def build_multi_cases() -> list[FormatCase]:
     fx_red = load_fixture("image/png", None)
     fx_blue = Fixture("image/png", "png",
@@ -792,13 +853,17 @@ class SourcegraphClient:
                                  timeout=self.timeout)
 
 
-def parse_cody_sse(resp: requests.Response) -> tuple[str, list[str], str | None]:
+def parse_cody_sse(resp: requests.Response) -> tuple[str, list[str], str | None, str]:
     """Walk an SSE response, accumulating deltaText/completion frames.
 
-    Returns (accumulated_text, events_seen, stop_reason)."""
+    Returns (accumulated_text, events_seen, stop_reason, raw_blob).
+    `raw_blob` is the concatenation of every data: payload — used by the
+    tools-on-stream probe to look for tool_use / function_call markers
+    that the gateway might emit in non-text frames."""
     accumulated = ""
     events: list[str] = []
     stop_reason: str | None = None
+    raw_chunks: list[str] = []
     for raw in resp.iter_lines(decode_unicode=True):
         if raw is None:
             continue
@@ -811,6 +876,7 @@ def parse_cody_sse(resp: requests.Response) -> tuple[str, list[str], str | None]
             payload = raw[5:].strip()
             if not payload or payload == "[DONE]":
                 continue
+            raw_chunks.append(payload)
             try:
                 obj = json.loads(payload)
             except json.JSONDecodeError:
@@ -823,7 +889,7 @@ def parse_cody_sse(resp: requests.Response) -> tuple[str, list[str], str | None]
                 accumulated = obj["completion"]    # cumulative on api-version=1
             if isinstance(obj.get("stopReason"), str):
                 stop_reason = obj["stopReason"]
-    return accumulated, events, stop_reason
+    return accumulated, events, stop_reason, "\n".join(raw_chunks)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -953,13 +1019,27 @@ def run_case(client: SourcegraphClient, model: str, case: FormatCase,
         return out
 
     try:
-        text, events, stop_reason = parse_cody_sse(r)
+        text, events, stop_reason, raw_blob = parse_cody_sse(r)
     except requests.RequestException as e:
         out.fail_reason = "SSE_READ_ERROR"
         out.error = str(e)
         return out
 
     out.stop_reason = stop_reason
+
+    # Tools-group cases verdict on the raw stream content, not the text. We
+    # PASS only when the gateway forwarded a tool call back to us; SAW_NO
+    # means the tools field was silently dropped (model replied as text).
+    if case.group == "tools":
+        tool_markers = ("tool_use", "tool_call", "function_call",
+                        "tool_calls", '"toolCalls"', '"toolUse"')
+        saw_tool = any(m in raw_blob for m in tool_markers)
+        out.reply_preview = _short(text or raw_blob[:400], 400)
+        if saw_tool:
+            out.verdict = "PASS"
+        else:
+            out.fail_reason = "SAW_NO"
+        return out
 
     if not text:
         out.fail_reason = "SSE_EMPTY"
@@ -1172,6 +1252,13 @@ def main() -> int:
                     help="Skip the document-block probes")
     ap.add_argument("--include-multi", action="store_true", default=True,
                     help="Probe multi-image messages (default ON)")
+    ap.add_argument("--include-tools", action="store_true", default=True,
+                    help="Re-probe whether /.api/completions/stream honours "
+                         "the `tools` field on the current api-version. "
+                         "Old probe (2026-04-22, api-version=8) showed it was "
+                         "silently dropped; verify this is still the case.")
+    ap.add_argument("--no-tools", action="store_true",
+                    help="Skip the tools-on-stream regression probes")
     ap.add_argument("--max-tokens", type=int, default=10000,
                     help="maxTokensToSample. 10000 sits above any thinking budget "
                          "the gateway pre-allocates, avoiding the "
@@ -1218,6 +1305,8 @@ def main() -> int:
         cases += build_document_cases()
     if args.include_multi:
         cases += build_multi_cases()
+    if args.include_tools and not args.no_tools:
+        cases += build_tools_cases()
     if args.api_version_sweep:
         cases += build_api_version_cases()
     if args.size_sweep:
