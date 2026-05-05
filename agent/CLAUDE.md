@@ -468,6 +468,7 @@ Two-layer enforcement:
 - **Context overflow**: ContextManager compaction triggered + replay
 - **Streaming**: Heuristic token estimate when API returns usage: null
 - **Truncated tool calls**: When finishReason=length produces invalid JSON, asks LLM to retry with smaller operation
+- **Upstream gateway timeout**: When Sourcegraph's Cody Gateway closes the SSE stream mid-response with a `context deadline exceeded` error frame (or when partial XML signals the same), `SourcegraphChatClient` sets `finishReason=upstream_timeout` and `AgentLoop` synthesizes a tool-result error nudging the model to retry with smaller chunks. Continue.dev pattern (`continue/gui/src/redux/thunks/streamNormalInput.ts:257-291`). Detector: `core/ai/GatewayErrorDetector.kt`. Plan: `docs/superpowers/plans/2026-05-05-sse-gateway-timeout-handling.md`.
 - **Model fallback**: Opt-in (`AgentSettings.enableModelFallback`). `ModelFallbackManager` advances through fallback chain (Opus thinking → Opus → Sonnet thinking → Sonnet, no Haiku). After 3 successful iterations on fallback, attempts escalation. If escalation fails, waits 6 iterations.
 
 ## Token Management
