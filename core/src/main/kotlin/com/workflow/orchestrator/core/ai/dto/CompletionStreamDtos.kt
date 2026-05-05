@@ -99,10 +99,17 @@ data class CompletionStreamFrame(
  * `text` is the assembled completion (deltaText concatenation, OR last
  * cumulative completion, depending on api-version). `durationMs` measures
  * wall-clock from request send to last-byte-received.
+ *
+ * `rejectionReason` is populated when the gateway emitted an SSE
+ * `event: error` frame — Sourcegraph signals "this attachment shape is
+ * unsupported" in-band on HTTP 200, not via HTTP 4xx. When non-null,
+ * `text` is typically empty and the caller (BrainRouter) should surface
+ * this string to the user instead of rendering an empty assistant bubble.
  */
 @Serializable
 data class CompletionStreamResult(
     val text: String,
     val stopReason: String?,
-    val durationMs: Long
+    val durationMs: Long,
+    val rejectionReason: String? = null
 )

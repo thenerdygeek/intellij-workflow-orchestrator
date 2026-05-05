@@ -135,6 +135,7 @@ open class SourcegraphCompletionsStreamClient(
             }
             val accumulated = StringBuilder()
             var stopReason: String? = null
+            var rejectionReason: String? = null
             val reader: BufferedReader = resp.body!!.charStream().buffered()
             parser.parse(reader) { result ->
                 when (result) {
@@ -167,14 +168,19 @@ open class SourcegraphCompletionsStreamClient(
                         // No-op; parser has already returned and the loop will exit.
                     }
                     is CodyStreamSseParser.ParseResult.Error -> {
-                        log.warn("[Agent:API] stream parse error frame: ${result.message}")
+                        // Gateway in-band rejection (HTTP 200 + event: error). Capture
+                        // the message so BrainRouter can render it as an assistant
+                        // bubble. Last error wins if multiple frames arrive.
+                        log.warn("[Agent:API] stream rejection: ${result.message}")
+                        rejectionReason = result.message
                     }
                 }
             }
             CompletionStreamResult(
                 text = accumulated.toString(),
                 stopReason = stopReason,
-                durationMs = System.currentTimeMillis() - started
+                durationMs = System.currentTimeMillis() - started,
+                rejectionReason = rejectionReason
             )
         }
     }

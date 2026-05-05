@@ -263,6 +263,42 @@ class SourcegraphCompletionsStreamClientTest {
                 "AuthInterceptor(tokenProvider, AuthScheme.TOKEN) in its default httpClient."
         )
     }
+
+    @Test
+    fun `chat propagates gateway rejection reason from event error frame`() = runBlocking {
+        // Sourcegraph emits HTTP 200 + event: error for unsupported MIMEs
+        // (HEIC, HEIF, BMP, TIFF, AVIF, SVG per format_lab 2026-05-05).
+        // The result must carry rejectionReason so BrainRouter can surface
+        // it as an assistant message instead of an empty bubble.
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "text/event-stream")
+                .setBody(
+                    "event: error\n" +
+                        "data: {\"error\":\"media type image/heic not supported\"}\n\n" +
+                        "event: done\ndata: {}\n"
+                )
+        )
+        val req = CompletionStreamRequest(model = "x", messages = emptyList(), maxTokensToSample = 1)
+        val result = client.chat(req)
+        assertEquals("", result.text, "Rejected request should have empty text")
+        assertEquals("media type image/heic not supported", result.rejectionReason)
+    }
+
+    @Test
+    fun `chat leaves rejectionReason null when no error frame is emitted`() = runBlocking {
+        server.enqueue(
+            MockResponse().setBody(
+                "event: completion\ndata: {\"deltaText\":\"hi\"}\n\n" +
+                    "event: done\ndata: {}\n"
+            )
+        )
+        val req = CompletionStreamRequest(model = "x", messages = emptyList(), maxTokensToSample = 1)
+        val result = client.chat(req)
+        assertEquals("hi", result.text)
+        assertEquals(null, result.rejectionReason,
+            "rejectionReason must be null on successful streams to avoid false-positive UX")
+    }
 }
 
 /**
