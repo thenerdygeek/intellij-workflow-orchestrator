@@ -82,6 +82,17 @@ interface RichInputProps {
    * text/plain path run unchanged.
    */
   onPasteImage?: (file: File) => Promise<boolean>;
+  /**
+   * Optional ghost-text suggestion. When the input is empty, this string is
+   * shown in place of `placeholder` (using the same faded `:empty:before`
+   * styling — cursor stays at offset 0 because the pseudo-element is
+   * non-interactive). Pressing Right Arrow on an empty input invokes
+   * `onAcceptHint`; the parent is expected to call `setText(hint)` to
+   * promote the hint into real input.
+   */
+  hint?: string | null;
+  /** Called when the user presses Right Arrow on an empty input that has a hint. */
+  onAcceptHint?: () => void;
 }
 
 /**
@@ -90,7 +101,7 @@ interface RichInputProps {
  * Text and chips flow naturally together on the same line.
  */
 export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function RichInput(
-  { placeholder, disabled, className, onSubmit, onChange, onEscape, onDropdownKeyDown, onPastedTickets, onPasteImage },
+  { placeholder, disabled, className, onSubmit, onChange, onEscape, onDropdownKeyDown, onPastedTickets, onPasteImage, hint, onAcceptHint },
   ref
 ) {
   const editorRef = useRef<HTMLDivElement>(null);
@@ -389,6 +400,21 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     // If it returns true the event is fully consumed — don't submit or escape.
     if (onDropdownKeyDown?.(e)) return;
 
+    // Right-arrow accept for the ghost-text hint. Only fires when the input
+    // is empty (no text, no chips) and a hint is present; otherwise this is
+    // a real cursor-move and we leave it alone.
+    if (e.key === 'ArrowRight' && hint && onAcceptHint) {
+      const el = editorRef.current;
+      const isEmpty = !!el
+        && (el.textContent?.length ?? 0) === 0
+        && el.querySelectorAll('[data-mention-label]').length === 0;
+      if (isEmpty) {
+        e.preventDefault();
+        onAcceptHint();
+        return;
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       onSubmit?.();
@@ -396,7 +422,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     if (e.key === 'Escape') {
       onEscape?.();
     }
-  }, [onSubmit, onEscape, onDropdownKeyDown]);
+  }, [onSubmit, onEscape, onDropdownKeyDown, hint, onAcceptHint]);
 
   useEffect(() => {
     handleFocusBlur();
@@ -544,6 +570,15 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     }
   }, [fireChange, onPastedTickets, onPasteImage]);
 
+  // When a hint is present, surface it as the empty-state placeholder. The
+  // underlying CSS uses `:empty:before:content-[attr(data-placeholder)]`,
+  // which is non-interactive — the cursor stays at offset 0 (no actual
+  // children), so the hint reads exactly like ghost-text. `data-hint-active`
+  // lets parents distinguish via `[data-hint-active="true"]` if they want to
+  // restyle (e.g., add a ▶ glyph).
+  const hasHint = !!(hint && hint.length > 0);
+  const effectivePlaceholder = hasHint ? hint! : placeholder;
+
   return (
     <div
       ref={editorRef}
@@ -555,10 +590,13 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       onBlur={handleFocusBlur}
       onPaste={handlePaste}
       data-empty="true"
-      data-placeholder={placeholder}
+      data-placeholder={effectivePlaceholder}
+      data-hint-active={hasHint ? 'true' : 'false'}
+      aria-label={hasHint ? `Suggested next message: ${hint}. Press Right Arrow to accept.` : undefined}
       className={cn(
         'rich-input text-[13px] leading-relaxed outline-none min-h-[28px] w-full',
         'empty:before:content-[attr(data-placeholder)] empty:before:text-[var(--fg-muted,#6b7280)] empty:before:pointer-events-none',
+        hasHint && 'empty:before:italic',
         disabled && 'opacity-60 cursor-not-allowed bg-[rgba(0,0,0,0.1)]',
         className
       )}

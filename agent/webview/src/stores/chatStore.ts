@@ -167,6 +167,13 @@ interface ChatState {
   pendingApproval: PendingApproval | null;
   pendingProcessInput: PendingProcessInput | null;
   focusInputTrigger: number;
+  /**
+   * Suggested next-user-message ghost-text. Set from the most recent
+   * `attempt_completion`'s `nextStep`; rendered by `<RichInput>` as faded
+   * placeholder text when the input is empty. Cleared when the user sends a
+   * message, on chat reset, or on a new session.
+   */
+  nextStepHint: string | null;
   debugLogVisible: boolean;
   debugLogEntries: DebugLogEntry[];
   toolOutputStreams: Record<string, string>;
@@ -220,6 +227,8 @@ interface ChatState {
   addDiff(diff: EditDiff): void;
   addDiffExplanation(title: string, diffSource: string): void;
   addCompletionCard(data: CompletionData): void;
+  /** Clears the ghost-text hint without sending or restoring text. */
+  clearNextStepHint(): void;
   addStatus(message: string, type: StatusType): void;
   addThinking(text: string): void;
   clearChat(): void;
@@ -380,6 +389,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   pendingApproval: null,
   pendingProcessInput: null,
   focusInputTrigger: 0,
+  nextStepHint: null,
   debugLogVisible: false,
   debugLogEntries: [],
   toolOutputStreams: {},
@@ -436,6 +446,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       tasks: [],
       sessionStats: null,
       viewMode: 'chat' as const,
+      nextStepHint: null,
       session: {
         status: 'RUNNING',
         tokensUsed: 0,
@@ -506,7 +517,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ...(mentions && mentions.length > 0 ? { mentions } : {}),
       ...(attachments && attachments.length > 0 ? { attachments } : {}),
     };
-    set(state => ({ messages: [...state.messages, msg] }));
+    set(state => ({ messages: [...state.messages, msg], nextStepHint: null }));
   },
 
   addPlanApprovedMessage(planMarkdown: string) {
@@ -724,12 +735,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ? [{ ts: state.streamingMsgTs, type: 'SAY', say: 'TEXT', text: state.streamingText, partial: false }]
         : [];
       const msg: UiMessage = { ts: uniqueTs(), type: 'ASK', ask: 'COMPLETION_RESULT', completionData: data };
+      const hint = data.nextStep && data.nextStep.trim().length > 0 ? data.nextStep.trim() : null;
       return {
         messages: [...state.messages, ...flushed, msg],
         streamingText: null,
         streamingMsgTs: null,
+        nextStepHint: hint,
       };
     });
+  },
+
+  clearNextStepHint() {
+    set({ nextStepHint: null });
   },
 
   addStatus(message: string, type: StatusType) {
@@ -811,6 +828,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       sessionStats: null,
       viewMode: 'chat',
       resumeSessionId: null,
+      nextStepHint: null,
     });
   },
 

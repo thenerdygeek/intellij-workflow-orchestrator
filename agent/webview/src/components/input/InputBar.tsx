@@ -480,6 +480,21 @@ function InputBarContent({
   // Manual compaction in progress — disable input + send so the user can't
   // mutate state during the LLM-summary round-trip.
   const compacting = useChatStore(s => s.compactionState.active);
+  // Ghost-text hint from the most recent attempt_completion's nextStep field.
+  // Rendered as faded placeholder text by RichInput when the input is empty;
+  // Right Arrow promotes it to real input via handleAcceptHint below.
+  const nextStepHint = useChatStore(s => s.nextStepHint);
+  const clearNextStepHint = useChatStore(s => s.clearNextStepHint);
+  // The hint is suppressed during compaction / busy-non-steering / locked
+  // because the input is disabled in those states and showing a stale
+  // suggestion is confusing.
+  const hintActive = !!nextStepHint && !compacting && !(busy && !steeringMode) && !locked;
+  const handleAcceptHint = useCallback(() => {
+    if (!nextStepHint) return;
+    richInputRef.current?.setText(nextStepHint);
+    clearNextStepHint();
+    richInputRef.current?.focus();
+  }, [nextStepHint, clearNextStepHint, richInputRef]);
   // Same Radix click-through guard as the standalone chips. Used by the +
   // (Plus) menu below.
   const plusOpenedAtRef = useRef(0);
@@ -556,6 +571,8 @@ function InputBarContent({
             busy && steeringMode ? 'Steer the agent...' :
             'Ask anything... (@ context, # ticket, / skill)'
           }
+          hint={hintActive ? `${nextStepHint} ▶` : null}
+          onAcceptHint={handleAcceptHint}
           disabled={compacting || locked || (busy && !steeringMode)}
           onSubmit={onSend}
           onChange={onRichInputChange}

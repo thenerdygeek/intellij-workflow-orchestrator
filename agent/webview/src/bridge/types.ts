@@ -381,6 +381,12 @@ export interface CompletionData {
   result: string;
   verifyHow?: string | null;
   discovery?: string | null;
+  /**
+   * Optional suggested next user message. Rendered as faded ghost-text in
+   * the chat input by `<RichInput>` while the input is empty; pressing Right
+   * Arrow promotes it to real input. Null/absent on legacy completions.
+   */
+  nextStep?: string | null;
 }
 
 export interface UiMessagePlanApprovalData {
