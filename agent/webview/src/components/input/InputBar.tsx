@@ -27,7 +27,12 @@ import { ChipPreview } from './ChipPreview';
 // server-side, so user customizations still take effect end-to-end.
 const IMAGE_DEFAULT_SETTINGS = {
   maxBytes: 5_242_880,
-  mimeWhitelist: ['image/png', 'image/jpeg', 'image/webp', 'image/heic', 'image/heif'],
+  // Gateway-verified whitelist (format_lab 2026-05-05). HEIC/HEIF were
+  // dropped from the default because the Sourcegraph gateway rejects them
+  // with event: error frames despite being in Cody's UI list. The Kotlin
+  // PluginSettings default keeps these three in sync; the bridge pushes
+  // user customizations over via __applyImageSettings on settings save.
+  mimeWhitelist: ['image/png', 'image/jpeg', 'image/webp'],
   maxPerTurn: 2,
   enabled: true,
 };
@@ -1087,7 +1092,7 @@ export const InputBar = memo(function InputBar() {
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
+          accept="image/png,image/jpeg,image/webp"
           onChange={handleFilePicked}
           style={{ display: 'none' }}
           aria-hidden="true"

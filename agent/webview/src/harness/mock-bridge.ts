@@ -45,7 +45,7 @@ const state: HarnessState = {
   contextUsage: { used: 0, max: 132_000 },
   imageSettings: {
     maxBytes: 5_242_880,
-    mimeWhitelist: ['image/png', 'image/jpeg', 'image/webp', 'image/heic', 'image/heif'],
+    mimeWhitelist: ['image/png', 'image/jpeg', 'image/webp'],
     maxPerTurn: 2,
     enabled: true,
   },

@@ -657,7 +657,7 @@ class AgentCefPanel(
         // raw JSON string that JS sets onto the AttachmentManager singleton
         // directly.
         imageSettingsQuery = registerQuery(b) { _ ->
-            val payload = imageSettingsProvider?.invoke() ?: """{"maxBytes":5242880,"mimeWhitelist":["image/png","image/jpeg","image/webp","image/heic","image/heif"],"maxPerTurn":2,"enabled":true}"""
+            val payload = imageSettingsProvider?.invoke() ?: """{"maxBytes":5242880,"mimeWhitelist":["image/png","image/jpeg","image/webp"],"maxPerTurn":2,"enabled":true}"""
             JBCefJSQuery.Response(payload)
         }
 
