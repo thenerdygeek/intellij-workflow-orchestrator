@@ -51,12 +51,17 @@ export const TopBar = memo(function TopBar() {
   }, [used, fillPercent, hasTokenData]);
 
   const statusLabel = useMemo(() => {
+    // Bug 1: real "currently compacting" trumps any threshold label so the badge
+    // honestly reflects an in-progress operation. The threshold buckets are
+    // renamed: "Compressing" used to imply an active operation but only meant
+    // "in the threshold zone" — now reads as "Near limit" / "High" / "Critical".
+    if (compacting) return 'Compacting…';
     if (!hasTokenData) return '';
     if (fillPercent >= 97) return 'Critical';
     if (fillPercent >= 88) return 'High';
-    if (fillPercent >= 80) return 'Compressing';
+    if (fillPercent >= 80) return 'Near limit';
     return '';
-  }, [fillPercent, hasTokenData]);
+  }, [fillPercent, hasTokenData, compacting]);
 
   return (
     <div
