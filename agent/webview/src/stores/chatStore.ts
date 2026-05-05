@@ -36,6 +36,34 @@ function safeJsonParse(s: string | undefined): any {
   try { return JSON.parse(s); } catch { return null; }
 }
 
+/**
+ * Bug 7 — content-equality helpers used by setTasks/applyTask{Create,Update}
+ * so a Kotlin-side re-emission of an unchanged task list doesn't cause every
+ * `s => s.tasks` subscriber to re-render. Compares user-visible fields only;
+ * `createdAt`/`updatedAt` are intentionally excluded so Kotlin's repeated
+ * "task touched" pings don't churn the React tree.
+ */
+function taskFieldsEqual(a: Task, b: Task): boolean {
+  if (a === b) return true;
+  if (a.id !== b.id) return false;
+  if (a.subject !== b.subject) return false;
+  if (a.description !== b.description) return false;
+  if (a.activeForm !== b.activeForm) return false;
+  if (a.status !== b.status) return false;
+  if (a.owner !== b.owner) return false;
+  if (a.blocks.length !== b.blocks.length) return false;
+  for (let i = 0; i < a.blocks.length; i++) if (a.blocks[i] !== b.blocks[i]) return false;
+  if (a.blockedBy.length !== b.blockedBy.length) return false;
+  for (let i = 0; i < a.blockedBy.length; i++) if (a.blockedBy[i] !== b.blockedBy[i]) return false;
+  return true;
+}
+function tasksShallowEqual(a: Task[], b: Task[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (!taskFieldsEqual(a[i]!, b[i]!)) return false;
+  return true;
+}
+
 // ── Monotonic timestamp generator ──
 // Guarantees unique ts values even when multiple UiMessages are created
 // in the same millisecond (e.g., draining tool calls in appendToken).
@@ -1862,11 +1890,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   // ── Task Actions (task system port — Phase 5) ──
-  setTasks: (tasks) => set({ tasks }),
+  // Bug 7 — short-circuit on structural equality so the Kotlin side re-emitting
+  // an unchanged task list (e.g. on every persisted UI event) doesn't allocate
+  // a new array reference and force every `s => s.tasks` subscriber to re-render.
+  setTasks: (tasks) => set((state) => {
+    if (tasksShallowEqual(state.tasks, tasks)) return {};
+    return { tasks };
+  }),
   applyTaskCreate: (task) => set((state) => {
     const existing = state.tasks.findIndex((t) => t.id === task.id);
     if (existing >= 0) {
-      // Upsert: duplicate create (e.g. session resume replay) replaces in-place
+      // Upsert: duplicate create (e.g. session resume replay) replaces in-place,
+      // but only when the payload actually differs.
+      if (taskFieldsEqual(state.tasks[existing]!, task)) return {};
       const updated = [...state.tasks];
       updated[existing] = task;
       return { tasks: updated };
@@ -1876,6 +1912,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   applyTaskUpdate: (task) => set((state) => {
     const existing = state.tasks.findIndex((t) => t.id === task.id);
     if (existing >= 0) {
+      if (taskFieldsEqual(state.tasks[existing]!, task)) return {};
       const updated = [...state.tasks];
       updated[existing] = task;
       return { tasks: updated };
