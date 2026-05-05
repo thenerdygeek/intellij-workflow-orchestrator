@@ -1,0 +1,60 @@
+{
+  "url": "https://***.***.***.com/",
+  "probe_date": "2026-05-05",
+  "sourcegraph_version_inferred": "6.12.x",
+  "stream_api_version_probed": 9,
+  "models_probed": [
+    "anthropic::2024-10-22::claude-sonnet-4-5-latest",
+    "anthropic::2024-10-22::claude-sonnet-4-5-thinking-latest",
+    "anthropic::2024-10-22::claude-opus-4-5-latest",
+    "anthropic::2024-10-22::claude-opus-4-5-thinking-latest",
+    "anthropic::2024-10-22::claude-haiku-4-5-latest",
+    "anthropic::2024-10-22::claude-haiku-4-5-thinking-latest"
+  ],
+  "supersedes": "capabilities_lab_2026-04-22_sourcegraph-6.12.json",
+  "supersession_reason": "tools_on_stream and image_plus_tools both flipped from SAW_NO to PASS after Sourcegraph upgraded to api-version=9. The April baseline drove BrainRouter.twoStepWorkaround; this baseline justifies its removal.",
+  "outcomes": [
+    {
+      "name": "tools_on_stream",
+      "description": "POST /.api/completions/stream with `tools` field (no image) on api-version=9",
+      "verdict": "PASS",
+      "fail_reason": "",
+      "status": 200,
+      "elapsed_ms": 930,
+      "stop_reason": "tool_use",
+      "notes": [
+        "Gateway forwards tool_use frames on api-version=9",
+        "Markers observed: tool_use, tool_call, tool_calls, delta_tool_calls",
+        "SUPERSEDES 2026-04-22 baseline (tools were silently dropped at api-version=8)"
+      ]
+    },
+    {
+      "name": "image_plus_tools",
+      "description": "POST /.api/completions/stream with image + tools combined, api-version=9",
+      "verdict": "PASS",
+      "fail_reason": "",
+      "status": 200,
+      "elapsed_ms": 1409,
+      "stop_reason": "tool_use",
+      "notes": [
+        "Image + tools in same turn now works \u2014 no two-step workaround needed",
+        "All 6 vision-capable models PASS",
+        "BrainRouter.twoStepWorkaround can be deleted"
+      ]
+    },
+    {
+      "name": "tools_on_public_chat_completions",
+      "description": "POST /.api/llm/chat/completions with `tools` field \u2014 regression check (this still works)",
+      "verdict": "PASS",
+      "fail_reason": "",
+      "status": 200,
+      "elapsed_ms": null,
+      "stop_reason": "tool_use",
+      "notes": [
+        "Not re-probed in 2026-05-05 \u2014 kept from 2026-04-22 baseline",
+        "Public chat/completions still honours tools as before"
+      ]
+    }
+  ],
+  "source_artifact": "format_lab_2026-05-05"
+}

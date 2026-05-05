@@ -1204,6 +1204,14 @@ def print_tools_audit(outcomes: list[RunOutcome]) -> None:
     for o in tool_outcomes:
         blob = o.raw_blob_preview or ""
         hits = [m for m in markers if m in blob]
+        # stopReason is the canonical terminating signal. If it's tool_use /
+        # tool_calls, the model definitely emitted a tool call even if our
+        # 2 KB preview window truncated past the actual frame (long-thinking
+        # models can spend the whole window on delta_thinking before getting
+        # to the tool call). Treat that as definitive positive evidence.
+        stop = (o.stop_reason or "").lower()
+        if stop in ("tool_use", "tool_calls"):
+            hits.append(f"stopReason={o.stop_reason}")
         model_tail = o.model.split("::")[-1] if "::" in o.model else o.model
         flag = "✅" if (o.verdict == "PASS" and hits) else \
                "⚠ " if (o.verdict == "PASS" and not hits) else "❌"
