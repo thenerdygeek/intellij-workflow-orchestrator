@@ -411,3 +411,164 @@
 
 /* ── Legacy absolute overlay (kept for backward compat, hidden in interactive mode) ── */
 .plan-document-interactive .plan-line-overlay { display: none; }
+
+/* ── Admonitions (callouts) ──
+ *
+ * Visual contract matches GitHub's primer-css `.markdown-alert` rendering:
+ * no background tint, ~0.25em colored left border, body text in the default
+ * fg colour, and an icon-and-label header in the alert colour. Subtle by
+ * design — the user notices the colored bar at a glance, not a flashing box.
+ */
+.plan-admonition {
+  --alert-color: var(--fg-muted, #6b7280);  /* fallback gray */
+  margin: 0 0 16px;
+  padding: 0.5rem 1rem;
+  color: inherit;
+  border-left: 0.25em solid var(--alert-color);
+  background-color: transparent;
+}
+
+.plan-admonition-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--alert-color);
+}
+
+.plan-admonition-icon {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  background-color: currentColor;
+  -webkit-mask-size: contain;
+          mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+          mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+          mask-position: center;
+  /* Octicon `info` (default fallback). */
+  -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z'/></svg>");
+          mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z'/></svg>");
+}
+
+.plan-admonition-label {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.plan-admonition-body { color: inherit; }
+.plan-admonition-body > :first-child { margin-top: 0; }
+.plan-admonition-body > :last-child  { margin-bottom: 0; }
+.plan-admonition-body p { margin: 4px 0; }
+
+/* ── GitHub-native labels: colour + Octicon ────────────────────────────── */
+
+/* NOTE — Octicon `info`, accent blue */
+.plan-admonition[data-admonition-label="NOTE"] {
+  --alert-color: #0969da;
+}
+@media (prefers-color-scheme: dark) {
+  .plan-admonition[data-admonition-label="NOTE"] { --alert-color: #58a6ff; }
+}
+
+/* TIP — Octicon `light-bulb`, success green */
+.plan-admonition[data-admonition-label="TIP"] {
+  --alert-color: #1a7f37;
+}
+@media (prefers-color-scheme: dark) {
+  .plan-admonition[data-admonition-label="TIP"] { --alert-color: #3fb950; }
+}
+.plan-admonition[data-admonition-label="TIP"] .plan-admonition-icon {
+  -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M8 1.5c-2.363 0-4 1.69-4 3.75 0 .984.424 1.625.984 2.304l.214.253c.223.264.47.556.673.848.284.411.537.896.621 1.49a.75.75 0 0 1-1.484.211c-.04-.282-.163-.547-.37-.847a8.456 8.456 0 0 0-.542-.68c-.084-.1-.173-.205-.268-.32C3.201 7.75 2.5 6.766 2.5 5.25 2.5 2.31 4.863 0 8 0s5.5 2.31 5.5 5.25c0 1.516-.701 2.5-1.328 3.259-.095.115-.184.22-.268.319-.207.245-.383.453-.541.681-.208.3-.33.565-.37.847a.751.751 0 0 1-1.485-.212c.084-.593.337-1.078.621-1.489.203-.292.45-.584.673-.848.075-.088.147-.173.213-.253.561-.679.985-1.32.985-2.304 0-2.06-1.637-3.75-4-3.75ZM5.75 12h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1 0-1.5ZM6 15.25a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 0 1.5h-2.5a.75.75 0 0 1-.75-.75Z'/></svg>");
+          mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M8 1.5c-2.363 0-4 1.69-4 3.75 0 .984.424 1.625.984 2.304l.214.253c.223.264.47.556.673.848.284.411.537.896.621 1.49a.75.75 0 0 1-1.484.211c-.04-.282-.163-.547-.37-.847a8.456 8.456 0 0 0-.542-.68c-.084-.1-.173-.205-.268-.32C3.201 7.75 2.5 6.766 2.5 5.25 2.5 2.31 4.863 0 8 0s5.5 2.31 5.5 5.25c0 1.516-.701 2.5-1.328 3.259-.095.115-.184.22-.268.319-.207.245-.383.453-.541.681-.208.3-.33.565-.37.847a.751.751 0 0 1-1.485-.212c.084-.593.337-1.078.621-1.489.203-.292.45-.584.673-.848.075-.088.147-.173.213-.253.561-.679.985-1.32.985-2.304 0-2.06-1.637-3.75-4-3.75ZM5.75 12h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1 0-1.5ZM6 15.25a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 0 1.5h-2.5a.75.75 0 0 1-.75-.75Z'/></svg>");
+}
+
+/* IMPORTANT — Octicon `report`, done purple */
+.plan-admonition[data-admonition-label="IMPORTANT"] {
+  --alert-color: #8250df;
+}
+@media (prefers-color-scheme: dark) {
+  .plan-admonition[data-admonition-label="IMPORTANT"] { --alert-color: #a371f7; }
+}
+.plan-admonition[data-admonition-label="IMPORTANT"] .plan-admonition-icon {
+  -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm7 2.25v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 9a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z'/></svg>");
+          mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm7 2.25v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 9a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z'/></svg>");
+}
+
+/* WARNING — Octicon `alert`, attention amber */
+.plan-admonition[data-admonition-label="WARNING"] {
+  --alert-color: #9a6700;
+}
+@media (prefers-color-scheme: dark) {
+  .plan-admonition[data-admonition-label="WARNING"] { --alert-color: #d29922; }
+}
+.plan-admonition[data-admonition-label="WARNING"] .plan-admonition-icon,
+.plan-admonition[data-admonition-label="RISK"] .plan-admonition-icon {
+  -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z'/></svg>");
+          mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z'/></svg>");
+}
+
+/* CAUTION — Octicon `stop`, danger red */
+.plan-admonition[data-admonition-label="CAUTION"] {
+  --alert-color: #cf222e;
+}
+@media (prefers-color-scheme: dark) {
+  .plan-admonition[data-admonition-label="CAUTION"] { --alert-color: #f85149; }
+}
+.plan-admonition[data-admonition-label="CAUTION"] .plan-admonition-icon {
+  -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M4.47.22A.749.749 0 0 1 5 0h6c.199 0 .389.079.53.22l4.25 4.25c.141.14.22.331.22.53v6a.749.749 0 0 1-.22.53l-4.25 4.25A.749.749 0 0 1 11 16H5a.749.749 0 0 1-.53-.22L.22 11.53A.749.749 0 0 1 0 11V5c0-.199.079-.389.22-.53Zm.84 1.28L1.5 5.31v5.38l3.81 3.81h5.38l3.81-3.81V5.31L10.69 1.5ZM8 4a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z'/></svg>");
+          mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M4.47.22A.749.749 0 0 1 5 0h6c.199 0 .389.079.53.22l4.25 4.25c.141.14.22.331.22.53v6a.749.749 0 0 1-.22.53l-4.25 4.25A.749.749 0 0 1 11 16H5a.749.749 0 0 1-.53-.22L.22 11.53A.749.749 0 0 1 0 11V5c0-.199.079-.389.22-.53Zm.84 1.28L1.5 5.31v5.38l3.81 3.81h5.38l3.81-3.81V5.31L10.69 1.5ZM8 4a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z'/></svg>");
+}
+
+/* ── Plan-specific labels: same chrome, different colour + icon ────────── */
+
+/* REVIEW REQUIRED — Octicon `eye`, accent blue (matches user attention) */
+.plan-admonition[data-admonition-label="REVIEW REQUIRED"] {
+  --alert-color: #0969da;
+}
+@media (prefers-color-scheme: dark) {
+  .plan-admonition[data-admonition-label="REVIEW REQUIRED"] { --alert-color: #58a6ff; }
+}
+.plan-admonition[data-admonition-label="REVIEW REQUIRED"] .plan-admonition-icon {
+  -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M8 2c1.981 0 3.671.992 4.933 2.078 1.27 1.091 2.187 2.345 2.637 3.023a1.62 1.62 0 0 1 0 1.798c-.45.678-1.367 1.932-2.637 3.023C11.67 13.008 9.981 14 8 14c-1.981 0-3.671-.992-4.933-2.078C1.797 10.83.88 9.576.43 8.898a1.62 1.62 0 0 1 0-1.798c.45-.677 1.367-1.931 2.637-3.022C4.33 2.992 6.019 2 8 2ZM1.679 7.932a.12.12 0 0 0 0 .136c.411.622 1.241 1.75 2.366 2.717C5.176 11.758 6.527 12.5 8 12.5c1.473 0 2.825-.742 3.955-1.715 1.124-.967 1.954-2.096 2.366-2.717a.12.12 0 0 0 0-.136c-.412-.621-1.242-1.75-2.366-2.717C10.824 4.242 9.473 3.5 8 3.5c-1.473 0-2.825.742-3.955 1.715-1.124.967-1.954 2.096-2.366 2.717ZM8 10a2 2 0 1 1-.001-3.999A2 2 0 0 1 8 10Z'/></svg>");
+          mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M8 2c1.981 0 3.671.992 4.933 2.078 1.27 1.091 2.187 2.345 2.637 3.023a1.62 1.62 0 0 1 0 1.798c-.45.678-1.367 1.932-2.637 3.023C11.67 13.008 9.981 14 8 14c-1.981 0-3.671-.992-4.933-2.078C1.797 10.83.88 9.576.43 8.898a1.62 1.62 0 0 1 0-1.798c.45-.677 1.367-1.931 2.637-3.022C4.33 2.992 6.019 2 8 2ZM1.679 7.932a.12.12 0 0 0 0 .136c.411.622 1.241 1.75 2.366 2.717C5.176 11.758 6.527 12.5 8 12.5c1.473 0 2.825-.742 3.955-1.715 1.124-.967 1.954-2.096 2.366-2.717a.12.12 0 0 0 0-.136c-.412-.621-1.242-1.75-2.366-2.717C10.824 4.242 9.473 3.5 8 3.5c-1.473 0-2.825.742-3.955 1.715-1.124.967-1.954 2.096-2.366 2.717ZM8 10a2 2 0 1 1-.001-3.999A2 2 0 0 1 8 10Z'/></svg>");
+}
+
+/* ASSUMPTION — Octicon `question`, done purple */
+.plan-admonition[data-admonition-label="ASSUMPTION"] {
+  --alert-color: #8250df;
+}
+@media (prefers-color-scheme: dark) {
+  .plan-admonition[data-admonition-label="ASSUMPTION"] { --alert-color: #a371f7; }
+}
+.plan-admonition[data-admonition-label="ASSUMPTION"] .plan-admonition-icon {
+  -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM5.625 6.5a2.625 2.625 0 1 1 3.75 2.375.75.75 0 0 0-.375.65V9.5a.75.75 0 0 1-1.5 0v-.025c0-.687.39-1.293 1.025-1.582a1.125 1.125 0 1 0-1.4-1.393.75.75 0 0 1-1.5 0ZM9 12a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z'/></svg>");
+          mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM5.625 6.5a2.625 2.625 0 1 1 3.75 2.375.75.75 0 0 0-.375.65V9.5a.75.75 0 0 1-1.5 0v-.025c0-.687.39-1.293 1.025-1.582a1.125 1.125 0 1 0-1.4-1.393.75.75 0 0 1-1.5 0ZM9 12a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z'/></svg>");
+}
+
+/* RISK — same `alert` Octicon as WARNING, attention amber */
+.plan-admonition[data-admonition-label="RISK"] {
+  --alert-color: #9a6700;
+}
+@media (prefers-color-scheme: dark) {
+  .plan-admonition[data-admonition-label="RISK"] { --alert-color: #d29922; }
+}
+
+/* Custom labels (anything not in the known set) keep the default info icon
+ * and the muted fallback colour. data-admonition-known="false" is set by the
+ * remark plugin; we only need this rule if the IDE theme variables do not
+ * provide a sensible muted-fg fallback. */
+.plan-admonition[data-admonition-known="false"] {
+  --alert-color: var(--fg-muted, #6b7280);
+}
+
+/* In the interactive viewer the gutter row would otherwise tint on hover —
+ * that fights with the alert's intentional zero-background look. */
+.plan-block-row:has(.plan-admonition):hover {
+  background-color: transparent;
+}

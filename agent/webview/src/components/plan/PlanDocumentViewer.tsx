@@ -3,6 +3,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import { CodeBlock } from '@/components/markdown/CodeBlock';
+import { remarkPlanAdmonition } from './remarkPlanAdmonition';
 import './plan-document.css';
 
 export interface LineComment {
@@ -134,17 +135,28 @@ function groupLinesIntoBlocks(lines: string[]): LineBlock[] {
 /**
  * Sanitization schema for plan document markdown (T1 — XSS hardening).
  *
- * Extends the GitHub-style defaultSchema to allow the task-list `input` and
- * `li.task-list-item` that remark-gfm generates. The default schema already
- * permits these, but we spell them out here for clarity. No other additions
- * are required for the plan document renderer.
+ * Extends the GitHub-style defaultSchema to allow:
+ * - The task-list `input` and `li.task-list-item` that remark-gfm generates
+ *   (already permitted by defaults; spelled out for clarity).
+ * - The `<div class="plan-admonition" data-admonition-label="…">` wrapper
+ *   that `remarkPlanAdmonition` emits. Without this, sanitize would strip
+ *   the data-attribute and styling would silently fail.
  */
 const PLAN_SANITIZE_SCHEMA = {
   ...defaultSchema,
+  tagNames: [...(defaultSchema.tagNames ?? []), 'div'],
   attributes: {
     ...defaultSchema.attributes,
+    div: [
+      ...((defaultSchema.attributes?.div as unknown[]) ?? []),
+      'className',
+      'dataAdmonitionLabel',
+      'dataAdmonitionKnown',
+    ],
   },
 };
+
+const PLAN_REMARK_PLUGINS = [remarkGfm, remarkPlanAdmonition];
 
 export const PlanDocumentViewer = memo(function PlanDocumentViewer({
   markdown,
@@ -186,7 +198,7 @@ export const PlanDocumentViewer = memo(function PlanDocumentViewer({
       <div className="plan-document">
         <div className="plan-document-body">
           <Markdown
-            remarkPlugins={[remarkGfm]}
+            remarkPlugins={PLAN_REMARK_PLUGINS}
             rehypePlugins={[[rehypeSanitize, PLAN_SANITIZE_SCHEMA]]}
             components={createDocumentComponents()}
           >
@@ -234,7 +246,7 @@ export const PlanDocumentViewer = memo(function PlanDocumentViewer({
               {/* Content */}
               <div className="plan-block-content">
                 <Markdown
-                  remarkPlugins={[remarkGfm]}
+                  remarkPlugins={PLAN_REMARK_PLUGINS}
                   rehypePlugins={[[rehypeSanitize, PLAN_SANITIZE_SCHEMA]]}
                   components={createDocumentComponents()}
                 >
@@ -282,6 +294,26 @@ export const PlanDocumentViewer = memo(function PlanDocumentViewer({
 // Document-optimized markdown components (different from chat MarkdownRenderer)
 function createDocumentComponents(): Record<string, React.ComponentType<any>> {
   return {
+    // Admonition wrapper emitted by `remarkPlanAdmonition`. We render the
+    // label as a header strip, then the children below. CSS picks colour and
+    // icon from `data-admonition-label`. Untagged `<div>` elements (rare in
+    // GFM output) fall through to the default renderer.
+    div({ className, children, ...props }: any) {
+      const isAdmonition = typeof className === 'string' && className.includes('plan-admonition');
+      if (!isAdmonition) {
+        return <div className={className} {...props}>{children}</div>;
+      }
+      const label = (props['data-admonition-label'] as string | undefined) ?? '';
+      return (
+        <div className={className} {...props}>
+          <div className="plan-admonition-header" aria-hidden="true">
+            <span className="plan-admonition-icon" />
+            <span className="plan-admonition-label">{label}</span>
+          </div>
+          <div className="plan-admonition-body">{children}</div>
+        </div>
+      );
+    },
     // Code blocks with syntax highlighting
     code({ className, children, ...props }: any) {
       const isBlock = className?.startsWith('language-');
