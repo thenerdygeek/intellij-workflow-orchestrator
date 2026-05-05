@@ -752,7 +752,7 @@ class AgentLoop(
                         // "<read" and ">" is appended verbatim to the visible stream because
                         // it has no `<` or `>` to force a re-parse, and the leading "<read"
                         // was already stripped by stripPartialTag().
-                        val endsInIncompleteTag = AssistantMessageParser.endsWithIncompleteTag(accumulatedText)
+                        val endsInIncompleteTag = AssistantMessageParser.endsWithIncompleteTag(accumulatedText.toString())
                         if (hasPendingTool || endsInIncompleteTag) {
                             cachedStrippedText  // tool tag in flight — don't leak its body to the display
                         } else {

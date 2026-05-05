@@ -151,6 +151,17 @@ Actions and their parameters:
     // ══════════════════════════════════════════════════════════════════════
 
     private suspend fun executeRunWithCoverage(params: JsonObject, project: Project): ToolResult {
+        // Bug 4 — Layer C: indexing barrier. A recent run_command may have triggered a wide
+        // VFS refresh that fanned out into reindexing; wait for smart mode before launching.
+        if (!com.workflow.orchestrator.core.vfs.waitForSmartModeOrTimeout(project)) {
+            return ToolResult(
+                content = "DUMB_MODE: indexing did not complete within 60s. " +
+                    "A recent file mutation triggered reindexing. Retry shortly.",
+                summary = "DUMB_MODE: timeout waiting for indexing",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true,
+            )
+        }
         val testClass = params["test_class"]?.jsonPrimitive?.contentOrNull
             ?: return ToolResult(
                 "Error: 'test_class' parameter is required for run_with_coverage",

@@ -9,6 +9,7 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.security.DefaultCommandFilter
 import com.workflow.orchestrator.agent.security.FilterResult
 import com.workflow.orchestrator.agent.settings.AgentSettings
+import com.workflow.orchestrator.agent.tools.process.CommandMutationClassifier
 import com.workflow.orchestrator.agent.tools.process.ManagedProcess
 import com.workflow.orchestrator.agent.tools.process.OutputCollector
 import com.workflow.orchestrator.agent.tools.process.ProcessEnvironment
@@ -378,7 +379,8 @@ class RunCommandTool(
                     readerThread.join(IO_DRAIN_TIMEOUT_MS)
                     stderrReaderThread?.join(IO_DRAIN_TIMEOUT_MS)
                     ProcessRegistry.unregister(toolCallId)
-                    return buildExitResult(managed, command, params, stderrLines, prefixWarning)
+                    val mutation = applyPostMutationRefresh(project, command, workingDir)
+                    return buildExitResult(managed, command, params, stderrLines, prefixWarning, mutation)
                 }
 
                 // Priority 2: total timeout
@@ -386,7 +388,8 @@ class RunCommandTool(
                     ProcessRegistry.kill(toolCallId)
                     readerThread.join(IO_DRAIN_TIMEOUT_MS)
                     stderrReaderThread?.join(IO_DRAIN_TIMEOUT_MS)
-                    return buildTimeoutResult(managed, timeoutSeconds, prefixWarning)
+                    val mutation = applyPostMutationRefresh(project, command, workingDir)
+                    return buildTimeoutResult(managed, timeoutSeconds, prefixWarning, mutation)
                 }
 
                 // Priority 3: idle classification per on_idle policy
@@ -590,6 +593,7 @@ class RunCommandTool(
         params: JsonObject,
         stderrLines: List<String>?,
         prefixWarning: String? = null,
+        mutation: CommandMutationClassifier.Mutation = CommandMutationClassifier.Mutation.Generic,
     ): ToolResult {
         val rawOutput = collectOutput(managed)
         val processed = OutputCollector.processOutputTailBiased(
@@ -603,6 +607,7 @@ class RunCommandTool(
 
         val contentBuilder = StringBuilder()
         if (prefixWarning != null) contentBuilder.append(prefixWarning).append("\n\n")
+        vfsHintFor(mutation)?.let { contentBuilder.append(it).append("\n\n") }
         contentBuilder.append("Exit code: $exitCode\n")
         contentBuilder.append(processed.content)
 
@@ -638,6 +643,7 @@ class RunCommandTool(
         managed: ManagedProcess,
         timeoutSeconds: Long,
         prefixWarning: String? = null,
+        mutation: CommandMutationClassifier.Mutation = CommandMutationClassifier.Mutation.Generic,
     ): ToolResult {
         val rawOutput = collectOutput(managed)
         val processed = OutputCollector.processOutputTailBiased(
@@ -647,13 +653,65 @@ class RunCommandTool(
             toolCallId = currentToolCallId.get()
         )
         val prefixSection = if (prefixWarning != null) "$prefixWarning\n\n" else ""
-        val content = "${prefixSection}[TIMEOUT] Command timed out after ${timeoutSeconds}s.\nPartial output:\n${processed.content}"
+        val vfsSection = vfsHintFor(mutation)?.let { "$it\n\n" } ?: ""
+        val content = "${prefixSection}${vfsSection}[TIMEOUT] Command timed out after ${timeoutSeconds}s.\nPartial output:\n${processed.content}"
         return ToolResult(
             content = content,
             summary = "Error: command timed out",
             tokenEstimate = TokenEstimator.estimate(content),
             isError = true
         )
+    }
+
+    /**
+     * Bug 4 — Layers A, B, D: classify the command, refresh VFS at the right scope,
+     * drop JPS state for build-cleans. Always best-effort: failures are logged, never thrown.
+     *
+     * Returns the classification so callers ([buildExitResult] / [buildTimeoutResult])
+     * can include the matching `[VFS NOTE]` LLM-facing hint.
+     */
+    private fun applyPostMutationRefresh(
+        project: Project,
+        command: String,
+        workingDir: String,
+    ): CommandMutationClassifier.Mutation {
+        val mutation = try {
+            CommandMutationClassifier.classify(command)
+        } catch (e: Exception) {
+            LOG.warn("CommandMutationClassifier.classify failed (non-fatal): ${e.message}")
+            return CommandMutationClassifier.Mutation.Generic
+        }
+        try {
+            val workDirPath = java.nio.file.Path.of(workingDir)
+            val scope: com.workflow.orchestrator.core.vfs.PostMutationRefresh.Scope =
+                when (mutation) {
+                    CommandMutationClassifier.Mutation.GitMutator ->
+                        com.workflow.orchestrator.core.vfs.PostMutationRefresh.Scope.WholeProject
+                    else ->
+                        com.workflow.orchestrator.core.vfs.PostMutationRefresh.Scope.WorkingDir(workDirPath)
+                }
+            com.workflow.orchestrator.core.vfs.PostMutationRefresh.refresh(project, scope, async = true)
+            if (mutation == CommandMutationClassifier.Mutation.BuildClean) {
+                com.workflow.orchestrator.core.vfs.PostMutationRefresh.clearJpsCache(project)
+            }
+        } catch (e: Exception) {
+            LOG.warn("PostMutationRefresh wiring failed (non-fatal): ${e.message}")
+        }
+        return mutation
+    }
+
+    /**
+     * Bug 4 — Layer D: produce a `[VFS NOTE]` block prepended to the tool result so the LLM
+     * knows that earlier `read_file` outputs in the conversation may now be stale. Only fires
+     * for git mutators (which can revert content) and build cleans (which destroy outputs).
+     */
+    private fun vfsHintFor(mutation: CommandMutationClassifier.Mutation): String? = when (mutation) {
+        CommandMutationClassifier.Mutation.GitMutator ->
+            "[VFS NOTE] This command may have changed files on disk. Earlier read_file outputs " +
+                "in this conversation may now be stale. Re-read any file you intend to edit before applying changes."
+        CommandMutationClassifier.Mutation.BuildClean ->
+            "[VFS NOTE] Build outputs were cleaned. Re-build before launching tests."
+        else -> null
     }
 
     private fun buildPromptStuckResult(

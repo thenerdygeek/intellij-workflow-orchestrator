@@ -148,6 +148,17 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
     // ══════════════════════════════════════════════════════════════════════
 
     private suspend fun executeRunTests(params: JsonObject, project: Project): ToolResult {
+        // Bug 4 — Layer C: indexing barrier (consistent with java_runtime_exec / coverage).
+        if (!com.workflow.orchestrator.core.vfs.waitForSmartModeOrTimeout(project)) {
+            return ToolResult(
+                content = "DUMB_MODE: indexing did not complete within 60s. " +
+                    "A recent file mutation triggered reindexing. Retry shortly.",
+                summary = "DUMB_MODE: timeout waiting for indexing",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true,
+            )
+        }
+
         val rawTimeout = params["timeout"]?.jsonPrimitive?.intOrNull?.toLong()
         val timeoutSeconds = rawTimeout?.coerceIn(1, RUN_TESTS_MAX_TIMEOUT) ?: RUN_TESTS_DEFAULT_TIMEOUT
 

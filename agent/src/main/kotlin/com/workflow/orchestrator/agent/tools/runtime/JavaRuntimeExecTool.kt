@@ -196,6 +196,18 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
     // ══════════════════════════════════════════════════════════════════════
 
     private suspend fun executeRunTests(params: JsonObject, project: Project): ToolResult {
+        // Bug 4 — Layer C: a recent run_command may have triggered a wide VFS refresh that
+        // fanned out into reindexing. Wait for smart mode before launching tests so JPS
+        // sees a coherent VFS instead of mid-index garbage.
+        if (!com.workflow.orchestrator.core.vfs.waitForSmartModeOrTimeout(project)) {
+            return ToolResult(
+                content = "DUMB_MODE: indexing did not complete within 60s. " +
+                    "A recent file mutation triggered reindexing. Retry shortly.",
+                summary = "DUMB_MODE: timeout waiting for indexing",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true,
+            )
+        }
         val className = params["class_name"]?.jsonPrimitive?.content
             ?: return ToolResult(
                 "Error: 'class_name' is required — specify a fully qualified test class to run (e.g. com.example.MyServiceTest). " +
@@ -1320,6 +1332,17 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
      */
     private suspend fun executeRerunFailedTests(params: JsonObject, project: Project): ToolResult {
         coroutineContext.ensureActive()
+
+        // Bug 4 — Layer C: same indexing barrier as run_tests.
+        if (!com.workflow.orchestrator.core.vfs.waitForSmartModeOrTimeout(project)) {
+            return ToolResult(
+                content = "DUMB_MODE: indexing did not complete within 60s. " +
+                    "A recent file mutation triggered reindexing. Retry shortly.",
+                summary = "DUMB_MODE: timeout waiting for indexing",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true,
+            )
+        }
 
         val sessionId = params["session_id"]?.jsonPrimitive?.content
         val timeoutSeconds = (params["timeout"]?.jsonPrimitive?.intOrNull?.toLong() ?: RUN_TESTS_DEFAULT_TIMEOUT)

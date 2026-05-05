@@ -638,12 +638,18 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
             "Unknown mode", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
         )
 
-        // DumbService guard — IDE is indexing, running now would be unreliable
-        if (DumbService.isDumb(project)) return ToolResult(
-            "DUMB_MODE: IDE is currently indexing. Please wait for indexing to complete " +
-                "before launching a run configuration.",
-            "DUMB_MODE: indexing in progress", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
-        )
+        // Bug 4 — Layer C: upgrade the existing isDumb hard-error to a wait-then-fail.
+        // A recent run_command may have triggered a wide VFS refresh that is currently
+        // reindexing; suspending until smart mode is the friendlier behaviour.
+        if (!com.workflow.orchestrator.core.vfs.waitForSmartModeOrTimeout(project)) {
+            return ToolResult(
+                "DUMB_MODE: indexing did not complete within 60s. A recent file mutation " +
+                    "triggered reindexing. Retry shortly.",
+                "DUMB_MODE: timeout waiting for indexing",
+                ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true,
+            )
+        }
 
         // Name resolution: exact match → unique substring → error
         // M3 fix: RunManager.getInstance + allSettings access must run inside a read action
