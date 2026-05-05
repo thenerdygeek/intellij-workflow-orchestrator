@@ -9,10 +9,12 @@ import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.dto.*
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
+import com.workflow.orchestrator.core.model.ModelPricingRegistry
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -28,6 +30,14 @@ class AgentLoopUpstreamTimeoutTest {
     fun setUp() {
         project = mockk(relaxed = true)
         contextManager = ContextManager(maxInputTokens = 100_000)
+    }
+
+    @AfterEach
+    fun tearDown() {
+        // AgentLoop touches ModelPricingRegistry which starts a FileSystemWatcher;
+        // shut it down so macOS ThreadLeakTracker doesn't trip on the watcher
+        // thread after the test completes. Same pattern as AgentLoopVisionFallbackTest.
+        runCatching { ModelPricingRegistry.resetForTests() }
     }
 
     private class SequenceBrain(private val responses: List<ApiResult<ChatCompletionResponse>>) : LlmBrain {
