@@ -23,38 +23,45 @@ object HaikuPhraseGenerator {
     private val LOG = Logger.getInstance(HaikuPhraseGenerator::class.java)
 
     // ── Working phrase prompt ────────────────────────────────────────────
+    //
+    // Bug 9 — Haiku self-gates updates. The previous prompt forced a funny
+    // message every 30s regardless of whether anything had changed, so the
+    // indicator churned with phrases that "tried too hard to be funny."
+    // The new contract:
+    //  - Compare the current state (recent tools + what the agent is thinking)
+    //    against the LAST phrase shown.
+    //  - Return EMPTY if the situation hasn't meaningfully changed — the
+    //    timer fires every 30s but only writes a new phrase when there's
+    //    something honest to say.
+    //  - Be honest first, witty only if it lands. Brevity > cleverness.
 
-    private const val SYSTEM_PROMPT = """You generate one short, funny loading message for a developer IDE. No preamble, no quotes, no explanation — just the message text ending with "..."
+    private const val EMPTY_RESPONSE = "(no change)"
 
-VOICE: You are a tired, self-aware senior dev with mass Slack energy. Deadpan, self-deprecating, observational. Funniest person in the standup channel, not a corporate chatbot.
+    private const val SYSTEM_PROMPT = """You write a short status line for a developer IDE's working indicator.
 
-RULES:
-- Every message has a SETUP (familiar dev situation) then a TWIST (unexpected, specific, true)
-- The funny word goes LAST — that is where the snap is
-- Be SPECIFIC: "The PR with 47 files and the message 'small fix'" not "The PR"
-- Reference REAL pain: merge conflicts, flaky tests, Jira estimates, TODO comments from 2019, the one file nobody dares touch, code reviews at 4:59pm
-- Maximum 12 words. Shorter hits harder.
-- First person ("I", "we") or second person ("your") only. Never narrate in third person.
-- End with "..."
+YOU SEE: the user's task, the last 2-3 tools the agent ran, what the agent is thinking, AND the phrase currently displayed (if any).
+
+YOUR JOB: decide whether the displayed phrase is still good enough OR a new phrase will be more honest about what the agent is doing right now.
+
+OUTPUT one of:
+  (no change)
+  — return this LITERAL STRING when the situation has not meaningfully shifted since the last phrase. Same kind of work, same area of code, same idea. No update needed.
+
+  A new phrase under 12 words ending with "..."
+  — return this when the agent's focus has clearly moved (different file area, different intent, different blocker, different reasoning).
+
+PRIORITIES, in order:
+1. Honesty about what is happening — the user reads this to know progress.
+2. Specificity — "Walking the AST for /agent/loop" beats "Reading code". Use file paths or symbol names from the recent tools when you have them.
+3. Brevity — short hits harder.
+4. Wry observation — only if it's TRUE for what's actually happening. A pithy, deadpan line is fine. A forced joke is worse than (no change).
 
 NEVER:
-- "Verbing the noun..." format (e.g. "Compiling thoughts...", "Debugging reality...", "Optimizing vibes...")
-- Puns or wordplay — they read as dad jokes
-- The words "magic", "wizard", or "journey"
-- Anything a LinkedIn post would say about coding
-- Generic filler that could apply to any task
-
-EXAMPLES OF THE EXACT TONE:
-- "The tests pass. I don't know why. Don't ask..."
-- "Whoever wrote this owes me an apology. Oh wait, it was me..."
-- "Sprint planning: the fiction we agree to believe..."
-- "Your TODO from 2019 says 'fix later'. It's later..."
-- "git blame says it was me all along..."
-- "Jira says this was a 2-point story. Jira lies..."
-- "Rebasing. Praying. Same thing really..."
-- "The deployment succeeded first try. I'm suspicious..."
-- "Code review at 4:58pm on a Friday. Bold..."
-- "The intern's code works. The architect's doesn't. Classic..." """
+- Repeat or rephrase the current phrase. If the situation hasn't changed, output (no change).
+- Generic filler that could apply to any task ("Working on it...", "Almost there...").
+- Puns, dad jokes, "wizard/magic/journey", or anything a LinkedIn post would say.
+- Third person narration.
+- Output anything other than (no change) or one phrase ending with "..." — no preamble, no quotes, no explanation."""
 
     private const val TITLE_EVAL_SYSTEM_PROMPT = """You evaluate whether a conversation title still fits after a task completed.
 
@@ -143,7 +150,12 @@ Format for new titles:
      * @param agentThinking last ~100 chars of the LLM's stream output (what it's reasoning about)
      * @return a funny one-liner (under 80 chars), or null if generation fails
      */
-    suspend fun generate(task: String, recentTools: List<Pair<String, String>>, agentThinking: String = ""): String? {
+    suspend fun generate(
+        task: String,
+        recentTools: List<Pair<String, String>>,
+        agentThinking: String = "",
+        currentPhrase: String? = null,
+    ): String? {
         return try {
             val brain = createBrain("HaikuPhrase") ?: return null
 
@@ -157,7 +169,13 @@ Format for new titles:
                 "\nThe AI is currently thinking about: ${agentThinking.take(100)}"
             } else ""
 
-            val userPrompt = "Task: \"${task.take(150)}\"\nRecent tools: $toolContext$thinkingContext\n\nOne funny message about what I'm actually doing (under 12 words):"
+            val currentLine = if (!currentPhrase.isNullOrBlank()) {
+                "\nCurrent phrase displayed: \"${currentPhrase.take(80)}\""
+            } else "\nCurrent phrase displayed: (none — first phrase of this task)"
+
+            val userPrompt =
+                "Task: \"${task.take(150)}\"\nRecent tools: $toolContext$thinkingContext$currentLine\n\n" +
+                    "Output (no change) OR a new phrase under 12 words ending with \"...\":"
 
             val result = brain.chat(
                 messages = listOf(
@@ -168,9 +186,15 @@ Format for new titles:
             )
 
             val text = extractText(result, "HaikuPhrase") ?: return null
-            val cleaned = text.removeSurrounding("\"").removeSurrounding("'").take(80)
+            val cleaned = text.removeSurrounding("\"").removeSurrounding("'").trim().take(80)
+            // Bug 9 — empty / "no change" → suppress the update so the displayed
+            // phrase stays put. This is the whole point of Haiku self-gating.
+            if (cleaned.isBlank() || cleaned.equals(EMPTY_RESPONSE, ignoreCase = true)) {
+                LOG.info("[HaikuPhrase] Haiku decided no change is needed — suppressing update")
+                return null
+            }
             LOG.info("[HaikuPhrase] Generated: $cleaned")
-            if (cleaned.isBlank()) null else cleaned
+            cleaned
         } catch (e: Exception) {
             LOG.info("[HaikuPhrase] Exception: ${e.message}")
             null

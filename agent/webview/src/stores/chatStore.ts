@@ -142,6 +142,14 @@ interface ChatState {
    * new chat / session reset along with the rest of the store.
    */
   seenPlanSummaries: Set<string>;
+  /**
+   * Bug 9 — locked random fallback phrase for the working indicator. Owned by the
+   * store rather than re-rolled on every WorkingIndicator remount, so per-iteration
+   * busy toggles don't churn the phrase. Set once at session start and rotated on
+   * new task / new chat. Haiku-generated phrases (smartWorkingPhrase) take
+   * precedence when present.
+   */
+  workingFallbackPhrase: string | null;
   questions: Question[] | null;
   activeQuestionIndex: number;
   questionSummary: any | null;
@@ -246,6 +254,8 @@ interface ChatState {
   setPlanPending(state: 'approve' | 'revise' | null): void;
   /** Bug 8 — record that the typewriter for a given plan-summary identity has played. */
   markPlanSummarySeen(identity: string): void;
+  /** Bug 9 — set the locked working-indicator fallback phrase (rotated on new task). */
+  setWorkingFallbackPhrase(phrase: string): void;
 
   // Task actions (task system port — Phase 5)
   setTasks(tasks: Task[]): void;
@@ -367,6 +377,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   plan: null,
   planCommentCount: 0,
   seenPlanSummaries: new Set<string>(),
+  workingFallbackPhrase: null,
   questions: null,
   activeQuestionIndex: 0,
   questionSummary: null,
@@ -880,6 +891,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
+  setWorkingFallbackPhrase(phrase: string) {
+    set({ workingFallbackPhrase: phrase });
+  },
+
   updatePlanSummary(summary: string) {
     set(state => {
       if (!state.plan) return {};
@@ -985,7 +1000,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setBusy(busy: boolean) {
-    set({ busy, ...(busy ? {} : { smartWorkingPhrase: null }) });
+    // Bug 9 — do NOT clear smartWorkingPhrase on every busy=false.
+    // The previous behaviour cleared it whenever the loop briefly went non-busy
+    // between iterations, which combined with WorkingIndicator unmounting and
+    // re-rolling its random fallback meant the phrase changed every iteration.
+    // smartWorkingPhrase now persists until the task fully completes (clearChat /
+    // resetSession path) or until Haiku replaces it with a meaningful new phrase.
+    set({ busy });
   },
 
   setCompactionState(active: boolean, phase: string) {

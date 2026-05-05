@@ -3261,6 +3261,10 @@ class AgentController(
         }
 
         LOG.info("AgentController: starting Haiku phrase timer (30s interval)")
+        // Bug 9 — track the most recently displayed phrase so we can pass it to Haiku.
+        // The new prompt contract uses this to decide whether the situation has shifted
+        // enough to warrant a new line, or whether (no change) is the honest answer.
+        var lastDisplayed: String? = null
         phraseTimerJob = controllerScope.launch(Dispatchers.IO) {
             delay(30_000)
             while (isActive) {
@@ -3268,12 +3272,13 @@ class AgentController(
                     val tools = synchronized(recentToolCalls) { recentToolCalls.toList() }
                     val agentThinking = lastStreamSnippet.takeLast(100)
                     LOG.info("AgentController: requesting Haiku phrase (${tools.size} recent tools)")
-                    val phrase = HaikuPhraseGenerator.generate(task, tools, agentThinking)
+                    val phrase = HaikuPhraseGenerator.generate(task, tools, agentThinking, lastDisplayed)
                     if (phrase != null) {
                         LOG.info("AgentController: got Haiku phrase: $phrase")
+                        lastDisplayed = phrase
                         invokeLater { dashboard.setSmartWorkingPhrase(phrase) }
                     } else {
-                        LOG.info("AgentController: Haiku phrase returned null")
+                        LOG.info("AgentController: Haiku phrase returned null (no-change or failure)")
                     }
                 } catch (e: Exception) {
                     LOG.warn("AgentController: Haiku phrase timer error: ${e.message}")

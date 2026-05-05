@@ -275,9 +275,18 @@ function useTypewriter(targetText: string, backspaceMs = 15, typeMs = 22) {
 }
 
 export function WorkingIndicator() {
-  const [fallbackPhrase] = useState(() => WORKING_PHRASES[Math.floor(Math.random() * WORKING_PHRASES.length)]!);
+  // Bug 9 — fallback phrase is owned by the store so per-iteration WorkingIndicator
+  // remounts don't re-roll a different random string. The phrase is locked at first
+  // mount of the session and only rotates when explicitly cleared (new task / new chat).
+  const storedFallback = useChatStore(s => s.workingFallbackPhrase);
+  const setStoredFallback = useChatStore(s => s.setWorkingFallbackPhrase);
+  useEffect(() => {
+    if (!storedFallback) {
+      setStoredFallback(WORKING_PHRASES[Math.floor(Math.random() * WORKING_PHRASES.length)]!);
+    }
+  }, [storedFallback, setStoredFallback]);
   const smartPhrase = useChatStore(s => s.smartWorkingPhrase);
-  const phrase = smartPhrase || fallbackPhrase;
+  const phrase = smartPhrase || storedFallback || WORKING_PHRASES[0]!;
   const { display, isAnimating } = useTypewriter(phrase);
 
   return (
