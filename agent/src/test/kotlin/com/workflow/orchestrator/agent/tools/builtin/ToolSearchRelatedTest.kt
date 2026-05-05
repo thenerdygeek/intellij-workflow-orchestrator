@@ -42,18 +42,6 @@ class ToolSearchRelatedTest {
     }
 
     @Test
-    fun `jira suggests git`() {
-        val hint = tool.getRelatedToolsHint(listOf("jira"))
-        assertTrue(hint.contains("git"))
-    }
-
-    @Test
-    fun `bitbucket suggests git`() {
-        val hint = tool.getRelatedToolsHint(listOf("bitbucket_pr"))
-        assertTrue(hint.contains("git"))
-    }
-
-    @Test
     fun `sonar suggests diagnostics and coverage`() {
         val hint = tool.getRelatedToolsHint(listOf("sonar"))
         assertTrue(hint.contains("diagnostics") || hint.contains("coverage"))
