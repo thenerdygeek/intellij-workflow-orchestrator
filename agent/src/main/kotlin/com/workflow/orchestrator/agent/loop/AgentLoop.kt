@@ -1256,51 +1256,7 @@ class AgentLoop(
                 // Exception: plan-mode conversational turns (see inner branch below) are genuine user
                 // exchanges; both counters are reset there.
                 // Only a real tool call (Case A) resets both counters in act mode.
-                //
-                // Synthetic-abort exemption: BrainRouter aborts (image-pipeline failures) return a
-                // synthetic ChatCompletionResponse with id starting with "router-step1-" to surface
-                // a user-visible message via the assistant turn. The model never actually replied,
-                // so it isn't a "mistake" — counting it would trip the consecutive-mistakes nudge
-                // after 3 image-bearing iterations whose vision step kept aborting (Windows logs
-                // 2026-05-05). Treat synthetic aborts as a non-mistake informational turn that
-                // still gets persisted so the user sees the explanation.
                 hasContent -> {
-                    val isSyntheticAbort = response.id.startsWith("router-step1-")
-                    if (isSyntheticAbort) {
-                        // BrainRouter aborted step 1 (HTTP failure / abstention / empty response).
-                        // The synthetic assistant turn carrying the user-visible abort message has
-                        // already been persisted at Stage 4 above. Terminate the task cleanly so
-                        // the user sees the explanation as the agent's final response.
-                        //
-                        // Why NOT just `continue`: the image is still in conversation context and
-                        // the next iteration would re-route to two-step → step 1 returns empty
-                        // again → infinite loop until maxIterations=200. Terminating here breaks
-                        // the cycle and surfaces the abort message immediately.
-                        //
-                        // Why NOT count as a mistake: the model never actually replied — the
-                        // router synthesized this response on its own. Counting would trip the
-                        // consecutive-mistakes nudge after 3 image-bearing iterations even though
-                        // the model is innocent of any "text-only" behavior.
-                        LOG.warn("[Loop] Synthetic router abort (id=${response.id}) — terminating task; vision pipeline failed")
-                        onDebugLog?.invoke(
-                            "warn",
-                            "loop_exit",
-                            "Exit: synthetic_router_abort",
-                            mapOf("id" to response.id, "iteration" to iteration),
-                        )
-                        sessionMetrics?.recordIterationEnd()
-                        return LoopResult.Completed(
-                            summary = assistantMessage.content ?: "",
-                            iterations = iteration,
-                            tokensUsed = totalTokensUsed,
-                            completionData = null,
-                            inputTokens = totalInputTokens,
-                            outputTokens = totalOutputTokens,
-                            filesModified = filesModifiedList(),
-                            linesAdded = totalLinesAdded,
-                            linesRemoved = totalLinesRemoved,
-                        )
-                    }
                     consecutiveMistakes++
                     LOG.info("[Loop] Text-only response (no tool calls) — mistake $consecutiveMistakes/$maxConsecutiveMistakes")
 
