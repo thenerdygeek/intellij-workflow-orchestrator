@@ -228,19 +228,23 @@ export function ToolCallView({ toolCall, isLatest, rolledBack }: ToolCallViewPro
     ? { ...toolPart, output: undefined, errorText: undefined }
     : toolPart;
 
-  // Auto-expand: latest running card is expanded, collapse when superseded
-  const [isOpen, setIsOpen] = useState(false);
+  // Auto-expand: latest running card is expanded, collapse when superseded.
+  // State is lifted into chatStore (keyed by toolCall.id) so it survives
+  // Virtuoso unmount/remount when the row scrolls out of the chat viewport.
+  const isOpen = useChatStore(s => s.toolCallOpen[toolCall.id] ?? false);
+  const setToolCallOpen = useChatStore(s => s.setToolCallOpen);
+  const setIsOpen = (open: boolean) => setToolCallOpen(toolCall.id, open);
   const prevIsLatest = useRef(isLatest);
 
   useEffect(() => {
     if (isLatest && status === 'RUNNING') {
-      setIsOpen(true);
+      setToolCallOpen(toolCall.id, true);
     }
     if (prevIsLatest.current && !isLatest && status === 'RUNNING') {
-      setIsOpen(false);
+      setToolCallOpen(toolCall.id, false);
     }
     prevIsLatest.current = isLatest;
-  }, [isLatest, status]);
+  }, [isLatest, status, toolCall.id, setToolCallOpen]);
 
   const isRunning = status === 'RUNNING';
   const isError = status === 'ERROR';

@@ -221,6 +221,10 @@ interface ChatState {
   debugLogVisible: boolean;
   debugLogEntries: DebugLogEntry[];
   toolOutputStreams: Record<string, string>;
+  // Per-tool expand/collapse flag, keyed by toolCall.id. Lifted out of
+  // ToolCallView's local state so it survives Virtuoso unmount/remount when
+  // the row scrolls out of the chat viewport.
+  toolCallOpen: Record<string, boolean>;
   editStats: EditStats | null;
   checkpoints: CheckpointInfo[];
   rollbackEvents: RollbackInfo[];
@@ -266,6 +270,7 @@ interface ChatState {
   appendToken(token: string): void;
   endStream(): void;
   addToolCall(toolCallId: string, name: string, args: string, status: ToolCallStatus): void;
+  setToolCallOpen(toolCallId: string, open: boolean): void;
   updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string, diff?: string, toolCallId?: string, imageRefs?: ImageRef[]): void;
   finalizeToolChain(): void;
   addDiff(diff: EditDiff): void;
@@ -443,6 +448,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   debugLogVisible: false,
   debugLogEntries: [],
   toolOutputStreams: {},
+  toolCallOpen: {},
   editStats: null,
   checkpoints: [],
   rollbackEvents: [],
@@ -480,6 +486,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Reset tool output streams alongside activeToolCalls — they are keyed by
       // the same tool call IDs and would otherwise leak across sessions.
       toolOutputStreams: {},
+      toolCallOpen: {},
       plan: null,
       planCompletedPendingClear: false,
       seenPlanSummaries: new Set<string>(),
@@ -556,6 +563,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Drop all tool output streams — the map was keyed by the now-cleared
       // tool call IDs and would otherwise leak for the rest of the app's life.
       toolOutputStreams: {},
+      toolCallOpen: {},
       messages,
       queuedSteeringMessages: [],
       // Clear completed plan on session end (no more messages will arrive to trigger deferred clear)
@@ -714,6 +722,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
+  setToolCallOpen(toolCallId: string, open: boolean) {
+    set(state => {
+      const current = state.toolCallOpen[toolCallId];
+      if (current === open) return {};
+      return { toolCallOpen: { ...state.toolCallOpen, [toolCallId]: open } };
+    });
+  },
+
   updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string, diff?: string, toolCallId?: string, imageRefs?: ImageRef[]) {
     set(state => {
       const newMap = new Map(state.activeToolCalls);
@@ -859,6 +875,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       activeToolCalls: new Map(),
   activeSubAgents: new Map(),
       toolOutputStreams: {},
+      toolCallOpen: {},
     });
   },
 
@@ -871,6 +888,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activeSubAgents: new Map(),
       // Drop tool output streams in lockstep with activeToolCalls.
       toolOutputStreams: {},
+      toolCallOpen: {},
       plan: null,
       planCompletedPendingClear: false,
       seenPlanSummaries: new Set<string>(),
@@ -1266,7 +1284,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return {
         pendingApproval: approval,
         ...(hadStream ? { streamingText: null, streamingMsgTs: null } : {}),
-        ...(tools.length > 0 ? { activeToolCalls: new Map(), toolOutputStreams: {} } : {}),
+        ...(tools.length > 0 ? { activeToolCalls: new Map(), toolOutputStreams: {}, toolCallOpen: {} } : {}),
         ...(newMessages.length !== state.messages.length ? { messages: newMessages } : {}),
       };
     });
