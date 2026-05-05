@@ -1154,6 +1154,43 @@ class AgentLoop(
                 continue
             }
 
+            // Stage 3.6: Handle upstream gateway timeout (Continue.dev pattern).
+            // Sourcegraph's Cody Gateway closes the SSE stream when its per-request
+            // deadline fires while the upstream LLM is still streaming. The HTTP
+            // call succeeded so we have a partial response; surface it as a tool
+            // failure so the model self-corrects by chunking smaller.
+            // Source pattern: continue/gui/src/redux/thunks/streamNormalInput.ts:257-291
+            if (choice.finishReason == "upstream_timeout") {
+                val nudge = "Your previous response was truncated by an upstream gateway timeout. " +
+                    "Retry the same operation but split the work into smaller chunks " +
+                    "(for plan_mode_respond: emit a shorter plan or call the tool multiple times " +
+                    "with one section per call). Do not repeat the truncated content verbatim."
+
+                val inFlightToolCalls = assistantMessage.toolCalls
+                if (!inFlightToolCalls.isNullOrEmpty()) {
+                    // Persist the assistant turn (with its tool_calls) so the synthetic
+                    // tool-result has a matching tool_call_id to attach to. Without
+                    // this the next API call would reject an orphan tool message.
+                    contextManager.addAssistantMessage(assistantMessage)
+                    inFlightToolCalls.forEach { tc ->
+                        contextManager.addToolResult(
+                            toolCallId = tc.id,
+                            content = nudge,
+                            isError = true,
+                            toolName = tc.function.name,
+                        )
+                    }
+                } else {
+                    // No tool call recovered (XML truncation case) — preserve the
+                    // partial assistant text for audit, then nudge as a user turn.
+                    contextManager.addAssistantMessage(
+                        ChatMessage(role = "assistant", content = assistantMessage.content ?: "")
+                    )
+                    contextManager.addUserMessage(nudge)
+                }
+                continue
+            }
+
             // Stage 4: Add assistant message to context
             contextManager.addAssistantMessage(assistantMessage)
             sessionMetrics?.recordResponseTime()
