@@ -29,10 +29,8 @@ import com.workflow.orchestrator.bamboo.service.BuildMonitorService
 import com.workflow.orchestrator.core.maven.MavenBuildService
 import com.workflow.orchestrator.core.maven.SurefireReportParser
 import com.workflow.orchestrator.core.maven.TeamCityMessageConverter
-import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.ui.TimeFormatter
-import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.bamboo.BuildResultData
 import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.events.EventBus
@@ -214,32 +212,29 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     /**
      * Resolve the Bamboo branch plan key for [branchName] and start monitoring.
      *
-     * **Bitbucket-first contract:** the local HEAD's build statuses are the source of
-     * truth — Bamboo posts statuses keyed by the resolved branch plan (e.g. `SVC138-4`),
-     * which strips to a digit-suffixed branch plan key (`SVC138`) the API can hit
-     * directly via `/result/{key}/latest` without slug-guessing the branch name.
+     * Routes through [com.workflow.orchestrator.core.services.BambooService.autoDetectPlan]
+     * — the canonical 5-tier waterfall built in commit `a45bcfdb` (2026-04-26). Tier
+     * order: T0 local bamboo-specs → T1 Bitbucket build-status commit walk → T2 Bamboo
+     * `byChangeset` → T3 Linked-Repositories → T4 deep-scan (gated). After any tier
+     * hits, [com.workflow.orchestrator.bamboo.service.PlanDetectionService.resolveBranchKey]
+     * maps the master plan key to its branch plan (e.g. `SVC` + `featureX` → `SVC138`),
+     * so the returned key can be polled directly via `/result/{key}/latest` — no
+     * `/branch/{slug}/latest` slug-guessing.
      *
-     * `preferredMasterKey` is the configured `RepoConfig.bambooPlanKey`. It's used as
-     * a *tiebreaker* when Bitbucket returns multiple statuses for the same commit
-     * (multi-module repos that feed several Bamboo plans), and as a *last-resort
-     * fallback* when no statuses are posted yet (branch with no build, or Bamboo→
-     * Bitbucket hook delayed). It is never the primary source.
-     *
-     * Pre-Bitbucket-first behaviour was: if `bambooPlanKey` was configured, jump
-     * straight to `/result/{master}/branch/{name}/latest`. That 404'd whenever the
-     * branch slug Bamboo stored differed from the URL-encoded git branch name —
-     * which is the common case for `feature/foo` style branches. The shortcut also
-     * skipped the more reliable Bitbucket-status path. Removed in favour of always
-     * asking Bitbucket first.
+     * [configuredMasterKey] (`RepoConfig.bambooPlanKey`) is passed as `preferredMaster`
+     * to disambiguate multi-module repos at T1 (Bitbucket commit-status walk picks the
+     * status whose extracted plan key starts with the configured master). It also
+     * serves as a last-resort fallback when all five tiers miss.
      */
     private suspend fun resolveBranchPlanAndMonitor(
         branchName: String,
-        preferredMasterKey: String?,
+        configuredMasterKey: String?,
     ) {
+        val repo = getGitRepo()
+        val repoRoot = repo?.root?.path?.let { java.nio.file.Paths.get(it) }
+        val remoteUrl = repo?.remotes?.firstOrNull()?.firstUrl.orEmpty()
         val latestCommit = readActionLocalHead().orEmpty()
 
-        // Reset activePlanKey so a previous PR's auto-detected branch plan doesn't
-        // leak into this repo's polling.
         activePlanKey = ""
 
         if (latestCommit.isNotBlank()) {
@@ -248,99 +243,39 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
         val interval = settings.state.buildPollIntervalSeconds.toLong() * 1000
 
-        // 1. Bitbucket-status path (the canonical source).
-        if (latestCommit.isNotBlank()) {
-            val detectedKey = detectPlanKeyFromBuildStatus(latestCommit, preferredMasterKey)
-            if (detectedKey != null) {
-                log.info("[Build:Dashboard] Resolved branch plan key '$detectedKey' from Bitbucket statuses (preferredMaster='${preferredMasterKey.orEmpty()}')")
-                activePlanKey = detectedKey
-                monitorService.switchBranch(detectedKey, branchName, interval)
+        // Multi-tier waterfall via the canonical service surface.
+        val detection = if (remoteUrl.isNotBlank()) {
+            bambooService.autoDetectPlan(repoRoot, remoteUrl, branchName, configuredMasterKey)
+        } else {
+            // No git remote — skip the waterfall and let the policy fall back to the
+            // configured master if present, or surface the hint otherwise.
+            com.workflow.orchestrator.core.services.ToolResult(
+                data = "",
+                summary = "no git remote configured",
+                isError = true,
+            )
+        }
+
+        when (val resolution = BuildPlanResolutionPolicy.resolve(detection, configuredMasterKey)) {
+            is BuildPlanResolutionPolicy.Resolution.UseDetected -> {
+                log.info("[Build:Dashboard] Resolved branch plan '${resolution.planKey}' via BambooService.autoDetectPlan (branch='$branchName', preferredMaster='${configuredMasterKey.orEmpty()}')")
+                activePlanKey = resolution.planKey
+                monitorService.switchBranch(resolution.planKey, branchName, interval)
                 invokeLater {
                     hintLabel.isVisible = false
                     splitter.isVisible = true
-                    headerLabel.text = "Plan: $detectedKey / $branchName"
+                    headerLabel.text = "Plan: ${resolution.planKey} / $branchName"
                 }
-                return
             }
-        }
-
-        // 2. Fallback: configured master planKey + Bamboo branch lookup. Only reached
-        //    when Bitbucket has no posted status for this commit (e.g. branch with no
-        //    build yet, or Bitbucket→Bamboo hook delayed). The configured key is the
-        //    user's explicit "this repo builds with X" assertion, so honor it.
-        if (!preferredMasterKey.isNullOrBlank()) {
-            log.info("[Build:Dashboard] No Bitbucket statuses for $latestCommit — falling back to configured planKey '$preferredMasterKey' with /branch/$branchName")
-            monitorService.switchBranch(preferredMasterKey, branchName, interval)
-            invokeLater { headerLabel.text = "Plan: $preferredMasterKey / $branchName" }
-            return
-        }
-
-        // 3. Nothing to fall back to.
-        log.warn("[Build:Dashboard] No Bitbucket statuses for commit and no configured planKey for branch '$branchName'")
-        invokeLater {
-            showHint("No Bamboo build for this commit yet — push to trigger one, or configure a plan key in Settings > CI/CD")
-        }
-    }
-
-    @Volatile private var cachedBitbucketClient: BitbucketBranchClient? = null
-    @Volatile private var cachedBitbucketUrl: String? = null
-
-    private fun getOrCreateBitbucketClient(url: String): BitbucketBranchClient {
-        if (url != cachedBitbucketUrl || cachedBitbucketClient == null) {
-            cachedBitbucketUrl = url
-            cachedBitbucketClient = BitbucketBranchClient.fromConfiguredSettings()
-                ?: error("Bitbucket URL not configured")
-        }
-        return cachedBitbucketClient!!
-    }
-
-    /**
-     * Look up the Bamboo branch plan key that built [commitId] by asking Bitbucket
-     * which builds posted statuses against it. Returns the *branch plan key* (digit-
-     * suffixed, e.g. `SVC138`) — Bamboo's REST API can hit `/result/{key}/latest`
-     * directly with that, no `/branch/{name}/` slug-guessing needed.
-     *
-     * In multi-module repos one commit can attract statuses from several Bamboo
-     * plans (e.g. `API138-4`, `WEB138-7`, `WORKER138-2` all built from the same
-     * SHA). [preferredMasterKey] disambiguates: when supplied, prefer the status
-     * whose extracted plan key starts with the configured master (i.e. its branch
-     * plan family). Falls back to the first status when no preference matches —
-     * preserves pre-multi-module behaviour for single-plan repos.
-     */
-    private suspend fun detectPlanKeyFromBuildStatus(
-        commitId: String,
-        preferredMasterKey: String? = null,
-    ): String? {
-        val bitbucketUrl = settings.connections.bitbucketUrl.orEmpty().trimEnd('/')
-        if (bitbucketUrl.isBlank()) return null
-
-        val client = getOrCreateBitbucketClient(bitbucketUrl)
-
-        return when (val result = client.getBuildStatuses(commitId)) {
-            is ApiResult.Success -> {
-                val statuses = result.data
-                if (statuses.isEmpty()) {
-                    log.info("[Build:Dashboard] No build statuses found for commit ${commitId.take(8)}")
-                    return null
-                }
-
-                val picked = if (!preferredMasterKey.isNullOrBlank() && statuses.size > 1) {
-                    statuses.firstOrNull { status ->
-                        BitbucketBranchClient.extractPlanKey(status).startsWith(preferredMasterKey)
-                    } ?: statuses.first().also {
-                        log.info("[Build:Dashboard] Multi-status commit but none matched preferredMaster='$preferredMasterKey' (extracted: ${statuses.joinToString { BitbucketBranchClient.extractPlanKey(it) }}) — falling back to first")
-                    }
-                } else {
-                    statuses.first()
-                }
-
-                val planKey = BitbucketBranchClient.extractPlanKey(picked)
-                log.info("[Build:Dashboard] Extracted plan key '$planKey' from build status (raw='${picked.key}', url='${picked.url}', totalStatuses=${statuses.size})")
-                planKey
+            is BuildPlanResolutionPolicy.Resolution.UseConfigured -> {
+                log.info("[Build:Dashboard] Waterfall miss — falling back to configured planKey '${resolution.planKey}' (autoDetect summary: ${detection.summary})")
+                activePlanKey = resolution.planKey
+                monitorService.switchBranch(resolution.planKey, branchName, interval)
+                invokeLater { headerLabel.text = "Plan: ${resolution.planKey} / $branchName" }
             }
-            is ApiResult.Error -> {
-                log.warn("[Build:Dashboard] Failed to get build statuses: ${result.message}")
-                null
+            is BuildPlanResolutionPolicy.Resolution.NoPlan -> {
+                log.warn("[Build:Dashboard] No plan resolved for branch '$branchName' and no configured planKey")
+                invokeLater { showHint(resolution.hintMessage) }
             }
         }
     }
@@ -763,7 +698,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         statusLabel.text = ""
 
         panelScope.launch {
-            resolveBranchPlanAndMonitor(branch, preferredMasterKey = bambooPlanKey)
+            resolveBranchPlanAndMonitor(branch, configuredMasterKey = bambooPlanKey)
         }
     }
 
