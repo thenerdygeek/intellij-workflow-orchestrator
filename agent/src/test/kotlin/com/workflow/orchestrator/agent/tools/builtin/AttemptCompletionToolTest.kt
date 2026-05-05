@@ -128,4 +128,41 @@ class AttemptCompletionToolTest {
         assertTrue(result.isCompletion)
         assertNull(result.completionData?.verifyHow)
     }
+
+    @Test
+    fun `next_step is carried through when provided`() = runTest {
+        val result = tool.execute(buildJsonObject {
+            put("kind", "done")
+            put("result", "Refactored AuthService")
+            put("next_step", "run the tests")
+        }, project)
+        assertTrue(result.isCompletion)
+        assertEquals("run the tests", result.completionData?.nextStep)
+    }
+
+    @Test
+    fun `next_step is null when omitted`() = runTest {
+        val result = tool.execute(buildJsonObject {
+            put("kind", "done")
+            put("result", "Done")
+        }, project)
+        assertTrue(result.isCompletion)
+        assertNull(result.completionData?.nextStep)
+    }
+
+    @Test
+    fun `blank next_step normalizes to null`() = runTest {
+        val result = tool.execute(buildJsonObject {
+            put("kind", "done")
+            put("result", "Done")
+            put("next_step", "   ")
+        }, project)
+        assertTrue(result.isCompletion)
+        assertNull(result.completionData?.nextStep)
+    }
+
+    @Test
+    fun `next_step is not in required parameters`() {
+        assertFalse(tool.parameters.required.contains("next_step"))
+    }
 }

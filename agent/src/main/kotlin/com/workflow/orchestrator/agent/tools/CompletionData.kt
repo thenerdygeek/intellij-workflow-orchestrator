@@ -20,6 +20,9 @@ enum class CompletionKind {
  * @param result     Short summary card text shown to the user.
  * @param verifyHow  Optional CLI command to demonstrate the result to the user.
  * @param discovery  Optional notes surfaced only when [kind] is [CompletionKind.HEADS_UP].
+ * @param nextStep   Optional suggested next user message rendered as a ghost-text hint
+ *                   in the chat input. The webview shows it as faded placeholder text;
+ *                   pressing Right Arrow on an empty input promotes it to real input.
  */
 @Serializable
 data class CompletionData(
@@ -27,4 +30,5 @@ data class CompletionData(
     val result: String,
     val verifyHow: String? = null,
     val discovery: String? = null,
+    val nextStep: String? = null,
 )

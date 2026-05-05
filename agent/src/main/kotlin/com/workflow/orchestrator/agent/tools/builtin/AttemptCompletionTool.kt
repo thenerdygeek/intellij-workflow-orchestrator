@@ -44,6 +44,10 @@ class AttemptCompletionTool : AgentTool {
             "discovery" to ParameterProperty(
                 type = "string",
                 description = "Required when kind=heads_up: the surprising finding, hidden risk, or scope gap the user needs to know about. Must be omitted or null for done and review."
+            ),
+            "next_step" to ParameterProperty(
+                type = "string",
+                description = "Optional. A short, plausible next message the user is likely to send (e.g. \"run the tests\", \"open the failing log\", \"commit this\"). Rendered as faded ghost-text in the chat input; the user accepts it with Right Arrow. Keep it under ~12 words and phrase it as the user would (imperative, first-person). Omit if no next step is obvious."
             )
         ),
         required = listOf("kind", "result")
@@ -76,6 +80,7 @@ class AttemptCompletionTool : AgentTool {
 
         val verifyHow = params["verify_how"]?.jsonPrimitive?.content
         val discovery = params["discovery"]?.jsonPrimitive?.content
+        val nextStep = params["next_step"]?.jsonPrimitive?.content?.takeUnless { it.isBlank() }
 
         if (kind == CompletionKind.HEADS_UP && discovery.isNullOrBlank()) {
             return ToolResult.error(
@@ -88,7 +93,13 @@ class AttemptCompletionTool : AgentTool {
             content = result,
             summary = "Task $kindStr: ${result.take(200)}",
             tokenEstimate = result.length / 4,
-            completionData = CompletionData(kind = kind, result = result, verifyHow = verifyHow, discovery = discovery)
+            completionData = CompletionData(
+                kind = kind,
+                result = result,
+                verifyHow = verifyHow,
+                discovery = discovery,
+                nextStep = nextStep,
+            )
         )
     }
 }
