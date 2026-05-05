@@ -147,7 +147,7 @@ class BambooApiClient(
         maxResults: Int = 10
     ): ApiResult<List<BambooResultDto>> {
         return get<BambooBuildStatusResponse>(
-            "/rest/api/latest/result/$planKey?max-results=$maxResults&expand=stages.stage,variables"
+            "/rest/api/latest/result/$planKey?max-results=$maxResults&expand=stages.stage.results.result,variables"
         ).map { it.results.result }
     }
 
@@ -325,7 +325,7 @@ class BambooApiClient(
         }
 
     suspend fun getBuildResult(resultKey: String): ApiResult<BambooResultDto> {
-        return get("/rest/api/latest/result/$resultKey?expand=stages.stage")
+        return get("/rest/api/latest/result/$resultKey?expand=stages.stage.results.result")
     }
 
     /**

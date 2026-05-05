@@ -13,21 +13,60 @@
         "state": "Successful",
         "lifeCycleState": "Finished",
         "manual": false,
-        "buildDurationInSeconds": 120
+        "buildDurationInSeconds": 120,
+        "results": {
+          "size": 1,
+          "result": [
+            {
+              "key": "PROJ-BUILD-COMPILE-42",
+              "buildResultKey": "PROJ-BUILD-COMPILE-42",
+              "state": "Successful",
+              "lifeCycleState": "Finished",
+              "buildDurationInSeconds": 120,
+              "plan": { "key": "PROJ-BUILD-COMPILE", "name": "Compile", "shortName": "Compile" }
+            }
+          ]
+        }
       },
       {
         "name": "Unit Test",
         "state": "Successful",
         "lifeCycleState": "Finished",
         "manual": false,
-        "buildDurationInSeconds": 180
+        "buildDurationInSeconds": 180,
+        "results": {
+          "size": 1,
+          "result": [
+            {
+              "key": "PROJ-BUILD-UNITTEST-42",
+              "buildResultKey": "PROJ-BUILD-UNITTEST-42",
+              "state": "Successful",
+              "lifeCycleState": "Finished",
+              "buildDurationInSeconds": 180,
+              "plan": { "key": "PROJ-BUILD-UNITTEST", "name": "Unit Test", "shortName": "Unit Test" }
+            }
+          ]
+        }
       },
       {
         "name": "Deploy",
         "state": "Unknown",
         "lifeCycleState": "NotBuilt",
         "manual": true,
-        "buildDurationInSeconds": 0
+        "buildDurationInSeconds": 0,
+        "results": {
+          "size": 1,
+          "result": [
+            {
+              "key": "PROJ-BUILD-DEPLOY-42",
+              "buildResultKey": "PROJ-BUILD-DEPLOY-42",
+              "state": "Unknown",
+              "lifeCycleState": "NotBuilt",
+              "buildDurationInSeconds": 0,
+              "plan": { "key": "PROJ-BUILD-DEPLOY", "name": "Deploy", "shortName": "Deploy" }
+            }
+          ]
+        }
       }
     ]
   }

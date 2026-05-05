@@ -12,8 +12,38 @@
         "stages": {
           "size": 2,
           "stage": [
-            { "name": "Build", "state": "Successful", "lifeCycleState": "Finished", "manual": false, "buildDurationInSeconds": 300 },
-            { "name": "QA", "state": "Successful", "lifeCycleState": "Finished", "manual": false, "buildDurationInSeconds": 400 }
+            {
+              "name": "Build", "state": "Successful", "lifeCycleState": "Finished", "manual": false, "buildDurationInSeconds": 300,
+              "results": {
+                "size": 1,
+                "result": [
+                  {
+                    "key": "PROJ-AUTO-BUILD-849",
+                    "buildResultKey": "PROJ-AUTO-BUILD-849",
+                    "state": "Successful",
+                    "lifeCycleState": "Finished",
+                    "buildDurationInSeconds": 300,
+                    "plan": { "key": "PROJ-AUTO-BUILD", "name": "Build", "shortName": "Build" }
+                  }
+                ]
+              }
+            },
+            {
+              "name": "QA", "state": "Successful", "lifeCycleState": "Finished", "manual": false, "buildDurationInSeconds": 400,
+              "results": {
+                "size": 1,
+                "result": [
+                  {
+                    "key": "PROJ-AUTO-QA-849",
+                    "buildResultKey": "PROJ-AUTO-QA-849",
+                    "state": "Successful",
+                    "lifeCycleState": "Finished",
+                    "buildDurationInSeconds": 400,
+                    "plan": { "key": "PROJ-AUTO-QA", "name": "QA", "shortName": "QA" }
+                  }
+                ]
+              }
+            }
           ]
         }
       },
@@ -27,8 +57,38 @@
         "stages": {
           "size": 2,
           "stage": [
-            { "name": "Build", "state": "Successful", "lifeCycleState": "Finished", "manual": false, "buildDurationInSeconds": 300 },
-            { "name": "QA", "state": "Failed", "lifeCycleState": "Finished", "manual": false, "buildDurationInSeconds": 350 }
+            {
+              "name": "Build", "state": "Successful", "lifeCycleState": "Finished", "manual": false, "buildDurationInSeconds": 300,
+              "results": {
+                "size": 1,
+                "result": [
+                  {
+                    "key": "PROJ-AUTO-BUILD-848",
+                    "buildResultKey": "PROJ-AUTO-BUILD-848",
+                    "state": "Successful",
+                    "lifeCycleState": "Finished",
+                    "buildDurationInSeconds": 300,
+                    "plan": { "key": "PROJ-AUTO-BUILD", "name": "Build", "shortName": "Build" }
+                  }
+                ]
+              }
+            },
+            {
+              "name": "QA", "state": "Failed", "lifeCycleState": "Finished", "manual": false, "buildDurationInSeconds": 350,
+              "results": {
+                "size": 1,
+                "result": [
+                  {
+                    "key": "PROJ-AUTO-QA-848",
+                    "buildResultKey": "PROJ-AUTO-QA-848",
+                    "state": "Failed",
+                    "lifeCycleState": "Finished",
+                    "buildDurationInSeconds": 350,
+                    "plan": { "key": "PROJ-AUTO-QA", "name": "QA", "shortName": "QA" }
+                  }
+                ]
+              }
+            }
           ]
         }
       },
@@ -42,8 +102,38 @@
         "stages": {
           "size": 2,
           "stage": [
-            { "name": "Build", "state": "Successful", "lifeCycleState": "Finished", "manual": false, "buildDurationInSeconds": 320 },
-            { "name": "QA", "state": "Successful", "lifeCycleState": "Finished", "manual": false, "buildDurationInSeconds": 400 }
+            {
+              "name": "Build", "state": "Successful", "lifeCycleState": "Finished", "manual": false, "buildDurationInSeconds": 320,
+              "results": {
+                "size": 1,
+                "result": [
+                  {
+                    "key": "PROJ-AUTO-BUILD-847",
+                    "buildResultKey": "PROJ-AUTO-BUILD-847",
+                    "state": "Successful",
+                    "lifeCycleState": "Finished",
+                    "buildDurationInSeconds": 320,
+                    "plan": { "key": "PROJ-AUTO-BUILD", "name": "Build", "shortName": "Build" }
+                  }
+                ]
+              }
+            },
+            {
+              "name": "QA", "state": "Successful", "lifeCycleState": "Finished", "manual": false, "buildDurationInSeconds": 400,
+              "results": {
+                "size": 1,
+                "result": [
+                  {
+                    "key": "PROJ-AUTO-QA-847",
+                    "buildResultKey": "PROJ-AUTO-QA-847",
+                    "state": "Successful",
+                    "lifeCycleState": "Finished",
+                    "buildDurationInSeconds": 400,
+                    "plan": { "key": "PROJ-AUTO-QA", "name": "QA", "shortName": "QA" }
+                  }
+                ]
+              }
+            }
           ]
         }
       }
