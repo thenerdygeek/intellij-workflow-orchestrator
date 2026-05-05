@@ -31,7 +31,19 @@ data class CompletionStreamRequest(
     val temperature: Double = 0.0,
     val stream: Boolean = true,
     val topK: Int = -1,
-    val topP: Int = -1
+    val topP: Int = -1,
+    /**
+     * Tool definitions forwarded to the upstream provider. format_lab probe
+     * (2026-05-05, api-version=9) verified that Sourcegraph's stream
+     * endpoint now forwards tool calls back as `delta_tool_calls` SSE
+     * frames — flipped from the prior api-version=8 silent-drop behavior.
+     * Null when the caller has no tools (text-only / image-only turns).
+     *
+     * Schema is OpenAI-compatible (same shape as ToolDefinition used by
+     * the public chat/completions endpoint) — Sourcegraph forwards the
+     * field verbatim to the upstream Anthropic/OpenAI provider.
+     */
+    val tools: List<ToolDefinition>? = null
 )
 
 /**
@@ -90,7 +102,41 @@ data class ImageUrl(
 data class CompletionStreamFrame(
     val deltaText: String? = null,
     val completion: String? = null,
-    val stopReason: String? = null
+    val stopReason: String? = null,
+    /**
+     * Incremental tool-call deltas. Observed shape from format_lab 2026-05-05
+     * Haiku 4.5 probe:
+     * ```
+     * {"delta_tool_calls":[{"id":"toolu_vrtx_...","type":"function",
+     *                       "function":{"name":"foo","arguments":""}}]}
+     * {"delta_tool_calls":[{"id":"","type":"function",
+     *                       "function":{"name":"","arguments":"{\""}}]}
+     * ...
+     * ```
+     * First frame carries `id` + `name`; subsequent frames append to
+     * `arguments`. Caller (CodyStreamSseParser → SourcegraphCompletionsStream
+     * Client) accumulates by id.
+     */
+    @SerialName("delta_tool_calls")
+    val deltaToolCalls: List<DeltaToolCall>? = null
+)
+
+/**
+ * One incremental tool-call delta. All fields nullable: the first frame for a
+ * given tool carries `id` + `function.name`; later continuation frames carry
+ * empty strings for those and append to `function.arguments`.
+ */
+@Serializable
+data class DeltaToolCall(
+    val id: String? = null,
+    val type: String? = null,
+    val function: DeltaToolCallFunction? = null
+)
+
+@Serializable
+data class DeltaToolCallFunction(
+    val name: String? = null,
+    val arguments: String? = null
 )
 
 /**
@@ -111,5 +157,11 @@ data class CompletionStreamResult(
     val text: String,
     val stopReason: String?,
     val durationMs: Long,
-    val rejectionReason: String? = null
+    val rejectionReason: String? = null,
+    /**
+     * Tool calls assembled from `delta_tool_calls` SSE frames. Empty list when
+     * the LLM didn't emit any tool calls. Each entry has the canonical
+     * (post-accumulation) shape: id + function.name + complete arguments JSON.
+     */
+    val toolCalls: List<ToolCall> = emptyList()
 )

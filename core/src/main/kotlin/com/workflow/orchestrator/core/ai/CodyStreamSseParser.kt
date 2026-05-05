@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.core.ai
 
 import com.workflow.orchestrator.core.ai.dto.CompletionStreamFrame
+import com.workflow.orchestrator.core.ai.dto.DeltaToolCall
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -71,6 +72,27 @@ class CodyStreamSseParser {
          * surface [message] to the user as an assistant message.
          */
         data class Error(val message: String) : ParseResult
+
+        /**
+         * Incremental tool-call delta from a `delta_tool_calls` SSE frame.
+         * format_lab probe (2026-05-05) verified Sourcegraph forwards tool
+         * calls on `/.api/completions/stream` at api-version=9 — the prior
+         * silent-drop behavior at api-version=8 is gone.
+         *
+         * Wire shape (Haiku 4.5 sample):
+         * ```
+         * delta_tool_calls":[{"id":"toolu_vrtx_...","type":"function",
+         *                     "function":{"name":"foo","arguments":""}}]
+         * ```
+         * Subsequent continuation frames carry empty `id`/`name` and append
+         * to `arguments`. Callers must accumulate by id (or by index — the
+         * stream client uses [accumulateToolCalls]).
+         *
+         * The list contains one entry per tool call advanced in this frame.
+         * Multiple parallel tool calls from the same model produce multiple
+         * deltas in a single frame.
+         */
+        data class ToolCallDelta(val deltas: List<DeltaToolCall>) : ParseResult
     }
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -130,6 +152,12 @@ class CodyStreamSseParser {
                                 frame.deltaText != null -> onResult(ParseResult.TextDelta(frame.deltaText))
                                 frame.completion != null -> onResult(ParseResult.TextReplacement(frame.completion))
                                 // Frame with only stopReason / unknown shape: no text payload — fall through
+                            }
+                            // Tool-call frames may piggy-back text + tool deltas in
+                            // the same SSE frame; emit both so the client can
+                            // accumulate independently.
+                            frame.deltaToolCalls?.takeIf { it.isNotEmpty() }?.let { deltas ->
+                                onResult(ParseResult.ToolCallDelta(deltas))
                             }
                             if (frame.stopReason != null) {
                                 onResult(ParseResult.StopReason(frame.stopReason))

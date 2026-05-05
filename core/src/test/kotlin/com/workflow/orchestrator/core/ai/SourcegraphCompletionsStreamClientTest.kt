@@ -286,6 +286,52 @@ class SourcegraphCompletionsStreamClientTest {
     }
 
     @Test
+    fun `chat assembles tool calls from delta_tool_calls frames`() = runBlocking {
+        // format_lab probe (2026-05-05) verified Sourcegraph forwards tool
+        // calls on /.api/completions/stream at api-version=9. Wire pattern:
+        // first frame carries id + name, continuation frames append to args.
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "text/event-stream")
+                .setBody(
+                    "event: completion\ndata: {\"delta_tool_calls\":[{\"id\":\"toolu_01\"," +
+                        "\"type\":\"function\",\"function\":{\"name\":\"must_call_this\"," +
+                        "\"arguments\":\"\"}}]}\n\n" +
+                        "event: completion\ndata: {\"delta_tool_calls\":[{\"id\":\"\"," +
+                        "\"type\":\"function\",\"function\":{\"name\":\"\"," +
+                        "\"arguments\":\"{\\\"reason\\\":\"}}]}\n\n" +
+                        "event: completion\ndata: {\"delta_tool_calls\":[{\"id\":\"\"," +
+                        "\"type\":\"function\",\"function\":{\"name\":\"\"," +
+                        "\"arguments\":\"\\\"x\\\"}\"}}]}\n\n" +
+                        "event: completion\ndata: {\"stopReason\":\"tool_use\"}\n\n" +
+                        "event: done\ndata: {}\n"
+                )
+        )
+        val req = CompletionStreamRequest(model = "x", messages = emptyList(), maxTokensToSample = 1)
+        val result = client.chat(req)
+        assertEquals(1, result.toolCalls.size, "Expected one assembled tool call")
+        val call = result.toolCalls.first()
+        assertEquals("toolu_01", call.id)
+        assertEquals("must_call_this", call.function.name)
+        assertEquals("{\"reason\":\"x\"}", call.function.arguments,
+            "Continuation frames must concatenate into full arguments JSON")
+        assertEquals("tool_use", result.stopReason)
+    }
+
+    @Test
+    fun `chat leaves toolCalls empty when LLM emits only text`() = runBlocking {
+        server.enqueue(
+            MockResponse().setBody(
+                "event: completion\ndata: {\"deltaText\":\"hello\"}\n\n" +
+                    "event: done\ndata: {}\n"
+            )
+        )
+        val req = CompletionStreamRequest(model = "x", messages = emptyList(), maxTokensToSample = 1)
+        val result = client.chat(req)
+        assertEquals(emptyList<Any>(), result.toolCalls)
+    }
+
+    @Test
     fun `chat leaves rejectionReason null when no error frame is emitted`() = runBlocking {
         server.enqueue(
             MockResponse().setBody(
