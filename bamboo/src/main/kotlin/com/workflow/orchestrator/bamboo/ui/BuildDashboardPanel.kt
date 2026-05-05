@@ -441,27 +441,29 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             object : BranchChangeListener {
                 override fun branchWillChange(branchName: String) {}
                 override fun branchHasChanged(branchName: String) {
-                    // On branch change, resolve the current repo and use its plan key.
-                    // The focusPr will be updated by the PR tab's auto-select on branch
-                    // change (via WorkflowContextService); our state.collect block above
-                    // picks it up.
+                    // Route through the same 5-tier waterfall the PR-selection path uses
+                    // (resolveBranchPlanAndMonitor). The focusPr-driven cascade may also
+                    // fire shortly after via the PR tab's auto-select; that's OK — the
+                    // second resolveBranchPlanAndMonitor call is idempotent (switchBranch
+                    // wipes stateFlow before re-polling).
                     val currentRepo = if (repoSelector != null && allRepos.isNotEmpty()) {
                         val idx = repoSelector.selectedIndex.takeIf { it >= 0 } ?: 0
                         allRepos.getOrNull(idx)
                     } else null
-                    val planKey = currentRepo?.bambooPlanKey?.takeIf { it.isNotBlank() }
-                        ?: settings.state.bambooPlanKey.orEmpty()
-                    if (planKey.isNotBlank()) {
-                        val interval = settings.state.buildPollIntervalSeconds.toLong() * 1000
-                        monitorService.switchBranch(planKey, branchName, interval)
-                        invokeLater {
-                            headerLabel.text = "Plan: $planKey / $branchName"
-                            // Clear history on branch switch
-                            viewingHistoricalBuild = false
-                            historicalBuildBanner.isVisible = false
-                            historyListModel.clear()
-                            historyPanel.isVisible = false
-                        }
+                    val configuredMasterKey = currentRepo?.bambooPlanKey?.takeIf { it.isNotBlank() }
+                        ?: settings.state.bambooPlanKey.orEmpty().takeIf { it.isNotBlank() }
+
+                    invokeLater {
+                        // Clear history immediately on branch switch — historical state
+                        // belongs to the previous branch.
+                        viewingHistoricalBuild = false
+                        historicalBuildBanner.isVisible = false
+                        historyListModel.clear()
+                        historyPanel.isVisible = false
+                    }
+
+                    panelScope.launch {
+                        resolveBranchPlanAndMonitor(branchName, configuredMasterKey)
                     }
                 }
             }
