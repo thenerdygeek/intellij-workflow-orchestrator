@@ -65,23 +65,25 @@ interface BambooService {
     suspend fun searchPlans(query: String): ToolResult<List<PlanData>>
 
     /**
-     * Auto-detects the Bamboo plan key associated with a git repository.
-     *
-     * Runs a three-tier waterfall:
-     * - Tier 0: parse local `bamboo-specs/bamboo.yml` (0 HTTP calls)
-     * - Tier 1: walk last 10 commits via Bitbucket build-status API (1–10 calls)
-     * - Tier 4: full N+1 plan-listing scan (only when `bambooDeepScanEnabled` is ON)
+     * 5-tier waterfall plan detection (T0 local specs → T1 Bitbucket commit-status walk
+     * → T2 Bamboo `byChangeset` → T3 Linked Repositories → T4 deep-scan, gated). After
+     * any tier hits, [PlanDetectionService.resolveBranchKey] maps the master plan key
+     * to its branch plan via `/plan/{master}/branch`.
      *
      * @param repoRoot  local path to the git repository root; null disables Tier 0 + Tier 1
-     * @param remoteUrl the git remote URL to match against for Tier 4 (SSH or HTTPS)
-     * @param branchName current branch name (reserved for future Tier 2/3 use)
+     * @param remoteUrl the git remote URL to match against for Tier 3/4 (SSH or HTTPS)
+     * @param branchName current branch name; resolved to a branch plan via `/plan/{master}/branch`
+     * @param preferredMaster when supplied, T1 (Bitbucket commit-status walk) prefers
+     *   statuses whose extracted plan key starts with this string. Use to disambiguate
+     *   multi-module repos where one git remote feeds several Bamboo plans.
      * @return ToolResult with the detected plan key on success, or isError=true
      *         when no plan is found
      */
     suspend fun autoDetectPlan(
         repoRoot: java.nio.file.Path?,
         remoteUrl: String,
-        branchName: String? = null
+        branchName: String? = null,
+        preferredMaster: String? = null
     ): ToolResult<String>
 
     /**

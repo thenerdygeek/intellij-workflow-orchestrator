@@ -46,7 +46,8 @@ class PlanDetectionService(
     suspend fun autoDetect(
         repoRoot: Path?,
         gitRemoteUrl: String,
-        branchName: String? = null
+        branchName: String? = null,
+        preferredMaster: String? = null
     ): ApiResult<String> {
         // Tier 0 — local bamboo-specs
         if (repoRoot != null) {
@@ -62,7 +63,7 @@ class PlanDetectionService(
         if (repoRoot != null) {
             val bbClient = bbClientFactory()
             if (bbClient != null) {
-                commitWalkPlanKey(repoRoot, bbClient)?.let { candidate ->
+                commitWalkPlanKey(repoRoot, bbClient, preferredMaster)?.let { candidate ->
                     if (validate(candidate)) {
                         log.info("[Bamboo:Plan] T1 hit: $candidate")
                         return ApiResult.Success(resolveBranchKey(candidate, branchName))
@@ -215,7 +216,11 @@ class PlanDetectionService(
         }
     }
 
-    private suspend fun commitWalkPlanKey(repoRoot: Path, bbClient: BitbucketBranchClient): String? {
+    private suspend fun commitWalkPlanKey(
+        repoRoot: Path,
+        bbClient: BitbucketBranchClient,
+        preferredMaster: String? = null,
+    ): String? {
         val shas = try {
             revListRunner(repoRoot)
         } catch (e: Exception) {
@@ -229,8 +234,21 @@ class PlanDetectionService(
             if (statusResult !is ApiResult.Success) continue
             val statuses = statusResult.data
             if (statuses.isEmpty()) continue
-            val planKey = BitbucketBranchClient.extractPlanKey(statuses.first())
-            log.debug("[Bamboo:Plan:T1] Extracted plan key $planKey from commit $sha")
+
+            // Multi-module disambiguation: when caller supplied a preferredMaster
+            // (e.g. RepoConfig.bambooPlanKey from the Build tab), prefer a status
+            // whose extracted plan key starts with it. Falls back to the first
+            // status when no preference matches — same as legacy behaviour.
+            val picked = if (!preferredMaster.isNullOrBlank() && statuses.size > 1) {
+                statuses.firstOrNull { status ->
+                    BitbucketBranchClient.extractPlanKey(status).startsWith(preferredMaster)
+                } ?: statuses.first()
+            } else {
+                statuses.first()
+            }
+
+            val planKey = BitbucketBranchClient.extractPlanKey(picked)
+            log.debug("[Bamboo:Plan:T1] Extracted plan key $planKey from commit $sha (preferredMaster='${preferredMaster.orEmpty()}', totalStatuses=${statuses.size})")
             return planKey
         }
         return null

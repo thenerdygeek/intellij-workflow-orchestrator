@@ -789,7 +789,8 @@ class BambooServiceImpl(private val project: Project) : BambooService {
     override suspend fun autoDetectPlan(
         repoRoot: java.nio.file.Path?,
         remoteUrl: String,
-        branchName: String?
+        branchName: String?,
+        preferredMaster: String?
     ): ToolResult<String> {
         if (remoteUrl.isBlank() && repoRoot == null) {
             return ToolResult(
@@ -811,7 +812,7 @@ class BambooServiceImpl(private val project: Project) : BambooService {
         // tests that run without a real IntelliJ project.
         val effectiveSettings = if (repoRoot != null) settings else null
         val planDetection = PlanDetectionService(api, effectiveSettings)
-        return when (val result = planDetection.autoDetect(repoRoot, remoteUrl, branchName)) {
+        return when (val result = planDetection.autoDetect(repoRoot, remoteUrl, branchName, preferredMaster)) {
             is com.workflow.orchestrator.core.model.ApiResult.Success -> ToolResult(
                 data = result.data,
                 summary = "Auto-detected Bamboo plan: ${result.data}"
