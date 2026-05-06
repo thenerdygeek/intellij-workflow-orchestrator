@@ -53,20 +53,20 @@ These two calls are made today by `BitbucketBranchClient.kt` and return error co
 
 ---
 
-## 2. Bamboo ↔ Bitbucket bridge (the user's stated direction)
+## 2. Bamboo ↔ Bitbucket bridge — final scope after audit-followup (2026-05-07)
 
-The user explicitly asked for "related Bamboo builds etc etc" as a feature direction. The probe surfaced four touchpoints, three of which need follow-up before we can ship.
+The user explicitly asked for "related Bamboo builds etc etc" as a feature direction. After the audit-followup re-probe, the bridge ships with the **v1 build-status surface** + reverse lookup. Rich/deployment endpoints are organically deferred (this org's Bamboo agents don't publish rich data, and no provider has registered deployments).
 
-| # | Endpoint | Probe status | What it unlocks | Decision |
-|---|---|---|---|---|
-| B1 | `GET /commits/{sha}/pull-requests` (reverse lookup) | ✅ 200 (size: 0 for our test SHA — schema validated) | Bamboo build fails for commit X → look up which PRs touched X → notify those authors. **The most valuable bridge, ready to adopt.** | **R-ADD-5: ADOPT** |
-| B2 | `GET /rest/api/latest/.../commits/{cid}/builds` (rich build status) | ⚠️ 400 (`ArgumentValidationException`) — likely "no builds registered for this commit"; v1 GET still works as fallback | Replaces v1 `/rest/build-status/1.0/commits/{sha}` for builds that DO have rich data (testResults, parent SHA, ref). | **R-INV-1: REVALIDATE** before adopting — see §5 |
-| B3 | `GET /rest/api/latest/.../commits/{cid}/deployments` (deployment-by-commit) | ⚠️ 400 (`ArgumentValidationException`) — capability advertised on this DC, but no provider has published deployments yet | "This commit shipped to staging at 14:32" inline indicators. | **R-INV-2: REVALIDATE** after Bamboo publishes a deployment |
-| B4 | `POST /rest/build-status/1.0/commits/stats` (bulk-stats POST) | ❌ 400 (`MismatchedInputException`) — probe sent wrong body shape | Cheap "color a commit list red/green" bulk lookup | **R-INV-3: PROBE BUG**, fix body shape and re-run |
-| B5 | `GET /rest/build-status/1.0/commits/{sha}` (current plugin path) | ✅ 200 | Today's PR build-status badge | **R-NOOP**: keep as fallback when rich endpoint 400s |
-| B6 | `GET /rest/build-status/1.0/commits/stats/{sha}` (single-commit aggregate) | ✅ 200 | Cheap counter `{successful, failed, inProgress}` per-commit | **R-ADD-12: ADOPT** for dashboard counters |
+| # | Endpoint | Status | Decision |
+|---|---|---|---|
+| B1 | `GET /commits/{sha}/pull-requests` (reverse lookup) | ✅ 200 — schema validated (size: 0 on test SHA, but the shape is right) | **R-ADD-5: ADOPT.** Phase 1 of the bridge: Bamboo build fails → reverse-lookup to PRs → notify authors. |
+| B2 | `GET /rest/api/latest/.../commits/{cid}/builds` (rich build status) | ❌ 400 even on a SHA with 2 registered Bamboo builds (audit-followup confirmed) | **DEFER.** Bamboo agents on this org publish only basic v1 schema — no `testResults`/`parent`/`ref` to return. Adoptable once Bamboo is upgraded; out of scope for this audit. |
+| B3 | `GET /rest/api/latest/.../commits/{cid}/deployments` | ❌ 400 (capability advertised but unused) | **DEFER.** No provider has published deployments. Re-evaluate when one comes online. |
+| B4 | `POST /rest/build-status/1.0/commits/stats` (bulk POST) | ❌ 400 with both body shapes tried | **DEFER.** Single-commit GET (B6) is sufficient for our use; bulk lookup not UX-critical. |
+| B5 | `GET /rest/build-status/1.0/commits/{sha}` (current plugin path) | ✅ 200 | **R-NOOP — keep as the long-term build-status fetch.** Returns the basic schema Bamboo publishes (state/key/name/url/description/dateAdded), which is what the PR build-status badge needs anyway. |
+| B6 | `GET /rest/build-status/1.0/commits/stats/{sha}` (single-commit aggregate) | ✅ 200 | **R-ADD-12: ADOPT** for cheap `{successful, failed, inProgress}` dashboard counters. |
 
-The end-to-end story we're enabling: **Bamboo build event → Bitbucket commit-status table → reverse-lookup → PR authors notified**. Phase 1 of the Bamboo bridge ships immediately via R-ADD-5 + R-ADD-12 + R-NOOP B5. Phase 2 (rich build + deployments) waits for a re-probe against a built commit.
+**End-to-end bridge that ships:** Bamboo build event → Bitbucket v1 commit-status table → R-ADD-5 reverse lookup → PR authors notified, with R-ADD-12 powering aggregate counters. Rich-format and deployments wait on Bamboo-side upgrades.
 
 ---
 
@@ -105,26 +105,27 @@ Each row is paired with the exact `BitbucketBranchClient.kt` function to update.
 | R-ADD-13 | `POST /rest/api/1.0/markup/preview` | ✅ 200 | Editor that renders Markdown exactly as Bitbucket will | Commit-msg + PR-desc editors |
 | R-ADD-14 | `GET /pull-requests/{id}/diff/{path}?contextLines=10` | ✅ 200 | Per-file diff fetch — smaller payload for huge PRs | PR review tab |
 | R-ADD-15 | `GET /rest/required-builds/latest/.../conditions` | ✅ 200 (corrected path; v0 used wrong base) | "Required builds before merge" indicator | PR tab |
+| R-ADD-16 | `GET /pull-requests/{id}.patch` (`Accept: text/plain`) | ✅ 200 (validated post-followup) | "Apply this PR locally" agent flows; offline review | PR tab |
 
 **Highest-value adds for Phase 1:** R-ADD-5 (Bamboo bridge), R-ADD-11 (Jira link replaces regex), R-ADD-1/2 (inbox), R-ADD-15 (required-builds gating).
 
 ---
 
-## 5. R-INVESTIGATE — Failures needing follow-up
+## 5. R-INVESTIGATE — Failures, post-followup-re-probe (2026-05-07)
 
-Each row is a `400` / `404` / probe-bug that needs resolution before the implementation commit can decide on it.
+Audit-followup re-probe ran 2026-05-07 against a commit with 2 registered Bamboo builds (auto-discovered by the scanner). Results below resolve the open items.
 
-| ID | Endpoint | Status | Likely cause | Action before adoption decision |
+| ID | Endpoint | Pre-followup | Post-followup | Resolution |
 |---|---|---|---|---|
-| R-INV-1 | `GET /rest/api/latest/.../commits/{cid}/builds` (rich build status) | 400 `ArgumentValidationException` | Test commit has no builds registered; endpoint validates that builds exist before returning | Re-probe against a commit that has Bamboo builds. If still 400, fall back to v1 path permanently. |
-| R-INV-2 | `GET /rest/api/latest/.../commits/{cid}/deployments` | 400 `ArgumentValidationException` | Capability advertised but no Bamboo deployment-publishing has happened yet | Re-probe after a deployment is registered (or accept this as a "future feature when Bamboo wires deployment-publishing"). |
-| R-INV-3 | `POST /rest/build-status/1.0/commits/stats` | 400 `MismatchedInputException` | **Probe bug** — wrong body shape. Probe sends `{commits: ["sha"]}`; Atlassian likely wants `[{commitId: "sha"}]` | Fix probe body shape and re-run; cheap to validate. |
-| R-INV-4 | `GET /pull-requests/{id}/comments` (current plugin call) | 400 | DC 9.4 requires `path` or `count=true` | **Already covered as P0 fix — see §1.1** |
-| R-INV-5 | `GET /repos/{r}/settings/pull-requests/git` (current plugin call) | 404 | No per-repo override exists | **Already covered as P0 fix — see §1.2** |
-| R-INV-6 | `GET /commits/{sha}/jira-issues` | 404 | Endpoint doesn't exist at this path; Jira link plugin exposes the variant **at PR scope** instead | Drop commit-scoped attempt; use R-ADD-11 (PR-scoped) for the Jira-key extraction. |
-| R-INV-7 | `GET /pull-requests/{id}.patch` | 406 Not Acceptable | Probe sends `Accept: application/json`; endpoint serves `text/plain` only | Probe header bug — adjust probe to set `Accept: text/plain`. Endpoint itself is fine; recommend in v2 of probe. |
-| R-INV-8 | `GET /repos/{r}/last-modified/{path}` | 400 `ArgumentValidationException` | Likely needs `at={ref}` query param | Re-probe with `?at=refs/heads/develop` and validate. Then decide. |
-| R-INV-9 | `POST /rest/search/1.0/search` | TIMEOUT (30s) | Search backend either disabled or slow; no actual response | Either skip (search not enabled on this DC) or re-test with longer timeout. |
+| R-INV-1 | `GET /rest/api/latest/.../commits/{cid}/builds` (rich build status) | 400 (suspected: no builds) | **400** even on a SHA with 2 registered Bamboo builds | **DEFER.** This org's Bamboo agents publish only the basic v1 schema (no `testResults`/`parent`/`ref`/`duration`); the rich endpoint rejects when there's nothing rich to return. Adoption requires Bamboo agents to be upgraded first — out of scope for this audit. **Keep `/rest/build-status/1.0/commits/{sha}` (v1) as the long-term build-status fetch.** |
+| R-INV-2 | `GET /rest/api/latest/.../commits/{cid}/deployments` | 400 (suspected: no deployments) | **400** | **DEFER.** Capability advertised but no provider (Bamboo or otherwise) has registered deployment status anywhere. Adoption is unblocked the day a deployment-publisher comes online; until then the endpoint surface is meaningless. Not on the implementation commit. |
+| R-INV-3 | `POST /rest/build-status/1.0/commits/stats` (bulk stats) | 400 `MismatchedInputException` (`{commits:[sha]}`) | **400** still `MismatchedInputException` even with `[{commitId:"sha"}]` | **DEFER.** Body shape still undetermined. Not blocking — the single-commit GET (`/commits/stats/{sha}`, R-ADD-12) is validated and sufficient for dashboard counters. Re-probe in a future audit-followup if bulk lookup becomes UX-critical. |
+| R-INV-4 | `GET /pull-requests/{id}/comments` (current plugin call) | 400 | n/a | **Covered as P0 fix — see §1.1.** |
+| R-INV-5 | `GET /repos/{r}/settings/pull-requests/git` (current plugin call) | 404 | n/a | **Covered as P0 fix — see §1.2.** |
+| R-INV-6 | `GET /commits/{sha}/jira-issues` | 404 | n/a | **Resolved** — drop attempt; use R-ADD-11 (PR-scoped Jira link) instead. |
+| R-INV-7 | `GET /pull-requests/{id}.patch` | 406 Not Acceptable | **✅ 200** with `Accept: text/plain` | **PROMOTE TO ADOPT.** Probe driver fixed (commit `a2584f62` adds per-request `accept=` override). Endpoint usable for "apply this PR locally" agent flows. Track as **R-ADD-16**. |
+| R-INV-8 | `GET /repos/{r}/last-modified/{path}` | 400 `ArgumentValidationException` (no `at=`) | **404** `NoSuchPathException` on README.md (a path that doesn't exist) — endpoint validates input correctly with `at=` | **DEFER for empirical validation.** The endpoint and probe are fine; this specific repo just doesn't have README.md. Needs a re-probe with `--file-path <known-existing-path>` if we want a 200 confirmation. Not blocking. |
+| R-INV-9 | `POST /rest/search/1.0/search` | TIMEOUT (30s) | n/a | **DEFER.** Search backend appears disabled or absent on this DC; not adopting code-search via this endpoint. |
 
 ---
 
@@ -178,10 +179,11 @@ Per the audit policy ("one commit per service"), all approved items below land i
 - **R-SWAP-4** — `blocker-comments?count=true` for blocker badges
 - **R-SWAP-5** — `/participants` for reviewer status
 
-### Phase 3 — Bamboo ↔ Bitbucket bridge (Phase 1 — what works today)
+### Phase 3 — Bamboo ↔ Bitbucket bridge (final scope, post-audit-followup)
 - **R-ADD-5** — reverse `commits/{sha}/pull-requests` lookup wired into `:bamboo` build-failure flows
 - **R-ADD-12** — single-commit aggregate stats `commits/stats/{sha}` for build badges
-- **R-NOOP B5** — keep v1 build-status as the per-commit fallback
+- **R-NOOP B5** — keep v1 `/rest/build-status/1.0/commits/{sha}` as the long-term build-status fetch (NOT a fallback — this is the permanent solution on this org until Bamboo agents publish rich format)
+- _Rich build status (R-INV-1) and deployments (R-INV-2) are deferred — see §5; not in this commit_
 
 ### Phase 4 — Feature additions
 - **R-ADD-11** — `/rest/jira/1.0/.../pull-requests/{id}/issues` replaces manual regex
@@ -189,16 +191,18 @@ Per the audit policy ("one commit per service"), all approved items below land i
 - **R-ADD-15** — required-builds conditions (with corrected path)
 - **R-ADD-13** — markup preview endpoint wired into commit-msg + PR-desc editors
 - **R-ADD-14** — file-scoped diff for the PR review tab
+- **R-ADD-16** — `pull-requests/{id}.patch` with `Accept: text/plain` (validated post-followup; useful for "apply this PR locally" flows)
 
 ### Phase 5 — Quality tab Code Insights (separate commit, can defer)
 - **R-ADD-9 + R-ADD-10** — Code Insights reports + annotations on the Quality tab
 - _Note: this overlaps the existing Sonar integration; needs a Quality-tab design choice. Defer to a separate `:sonar` or `:quality` commit if scope creeps._
 
-### Deferred to follow-up probe (waits on R-INVESTIGATE resolution)
-- **R-INV-1** — rich build-status (revalidate against built commit)
-- **R-INV-2** — deployments (revalidate after publishing)
-- **R-INV-3** — bulk-stats POST (probe bug fix, then validate)
-- **R-INV-8** — last-modified (add `at=` and re-validate)
+### Deferred — out of scope for this implementation commit
+- **R-INV-1** — rich build-status (Bamboo-side upgrade required first)
+- **R-INV-2** — deployments (no provider publishing on this DC)
+- **R-INV-3** — bulk-stats POST (body shape undetermined; not blocking)
+- **R-INV-8** — last-modified (works; needs a re-probe with a path that exists in the repo)
+- **R-INV-9** — code search (backend appears disabled)
 
 ---
 
@@ -216,9 +220,10 @@ Per the audit policy ("one commit per service"), all approved items below land i
 
 | Artifact | Path |
 |---|---|
-| Compressed bundle (committed) | `tools/atlassian-probe/Result_Bitbucket/bundle-full-sweep-compressed.txt` |
-| Unpacked bundle (local-only, not committed) | `tools/atlassian-probe/Result_Bitbucket/bundle-full-sweep.unpacked/` |
+| Versions-only bundle (committed) | `tools/atlassian-probe/Result_Bitbucket/bundle-versions-only-uncompressed.txt` |
+| Full-sweep bundle (committed) | `tools/atlassian-probe/Result_Bitbucket/bundle-full-sweep-compressed.txt` |
+| **Audit-followup bundle (committed)** | `tools/atlassian-probe/Result_Bitbucket/bundle-audit-followup-compressed.txt` |
 | API surface research | `docs/research/2026-05-07-bitbucket-9.4-api-surface.md` |
-| Probe driver | `tools/atlassian-probe/probe_bitbucket.py` v1 (commit `71048d16`) |
+| Probe driver | `tools/atlassian-probe/probe_bitbucket.py` (commits `71048d16` v1, `a2584f62` v1.1 — adds `--audit-followup` mode + `accept=` per-request header override) |
 
-The unpacked dir contains 74 raw `<probe-name>.json` files — each holds the full request/response so future sessions can diff against later probe runs to detect schema drift.
+Unpacked dirs are local-only — future sessions can diff against committed bundles to detect schema drift across instance upgrades.
