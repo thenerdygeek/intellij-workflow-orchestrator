@@ -198,6 +198,130 @@ class JiraProbe:
             notes=["Use to gate transition/comment buttons in UI before user clicks"],
         )
 
+    def run_discover(self) -> None:
+        """Discovery mode — derives values to feed into the full sweep from
+        the user's actual work, not from a global dump of the Jira instance.
+
+        Algorithm:
+            1. Versions / connectivity (already implemented as run_versions_only).
+            2. Find issues where the user is assignee, reporter, or watcher.
+            3. Extract unique project keys from those issues.
+            4. For each of those projects, list the *boards filtered to that
+               project* (usually a handful, not dozens).
+            5. For each scrum board found, list 3 most recent sprints.
+            6. If steps 2-5 yield nothing (e.g. brand-new account), fall back
+               to dumping the full project list with a warning.
+
+        Read-only. Writes a discover.md digest at the result-dir root.
+        """
+        print("[probe] discover mode\n")
+        self.run_versions_only()
+
+        print("\n[probe] discover — your recent work")
+        # 2. Three lightweight JQL searches — assignee/reporter/watcher.
+        # Each is independent so even if one fails (e.g. JQL 'watcher='
+        # disabled by admin), the others still feed the project-key extraction.
+        for label, jql in (
+            ("assigned", "assignee=currentUser() ORDER BY updated DESC"),
+            ("reported", "reporter=currentUser() ORDER BY updated DESC"),
+            ("watching", "watcher=currentUser() ORDER BY updated DESC"),
+        ):
+            self._get(
+                name=f"discover_my_{label}",
+                description=f"Issues you are {label} (recent 10)",
+                path="/rest/api/2/search?jql="
+                     + urllib.parse.quote(jql)
+                     + "&maxResults=10&fields=summary,status,project",
+                category="existing",
+                notes=[f"Discovery — finds projects via your {label} issues"],
+            )
+
+        # 3. Extract project keys from the union of the three searches.
+        my_project_keys = self._collect_project_keys_from_my_issues()
+        # 4 + 5: for each project, fetch project meta + boards + sprints
+        if my_project_keys:
+            print(f"\n[probe] discover — found {len(my_project_keys)} project(s) "
+                  f"you work in: {', '.join(my_project_keys)}")
+            for pkey in my_project_keys[:5]:  # cap so we don't fan out forever
+                pk_url = urllib.parse.quote(pkey)
+                self._get(
+                    name=f"discover_project_{pkey}",
+                    description=f"Project {pkey} details",
+                    path=f"/rest/api/2/project/{pk_url}",
+                    category="existing",
+                    notes=[f"Discovery — project {pkey} metadata"],
+                )
+                self._get(
+                    name=f"discover_boards_{pkey}",
+                    description=f"Boards in project {pkey}",
+                    path=f"/rest/agile/1.0/board?projectKeyOrId={pk_url}&maxResults=20",
+                    category="existing",
+                    notes=[f"Discovery — boards filtered to project {pkey}"],
+                )
+                # Pull sprints for up to 3 scrum boards per project
+                boards = _read_raw_body(self.raw_dir / f"discover_boards_{pkey}.json")
+                board_values = (
+                    boards.get("values") if isinstance(boards, dict) else None
+                ) or []
+                scrum_boards = [
+                    b for b in board_values
+                    if isinstance(b, dict)
+                    and b.get("id") is not None
+                    and b.get("type") in ("scrum", "scrum-and-kanban")
+                ]
+                for entry in scrum_boards[:3]:
+                    bid = entry["id"]
+                    self._get(
+                        name=f"discover_sprints_board_{bid}",
+                        description=f"Recent sprints on board {bid} ({pkey})",
+                        path=f"/rest/agile/1.0/board/{bid}/sprint?maxResults=5",
+                        category="existing",
+                        notes=[f"Discovery — sprints from board {bid} in {pkey}"],
+                    )
+        else:
+            # 6. Fallback for users with zero assigned/reported/watched issues.
+            print("\n[probe] discover — no recent work found; falling back to project list")
+            self._get(
+                name="discover_projects_fallback",
+                description="All visible projects (fallback when you have no issues)",
+                path="/rest/api/2/project?maxResults=20",
+                category="candidate",
+                notes=[
+                    "FALLBACK — you have no assigned/reported/watched issues. "
+                    "The list below shows projects you can read; pick one you "
+                    "actually want to use, or grab a ticket key from the Jira UI."
+                ],
+            )
+
+        # Always write the digest, even on fallback path
+        self._write_discover_digest(my_project_keys)
+
+    def _collect_project_keys_from_my_issues(self) -> list[str]:
+        """Pull unique project keys from the three discover_my_* searches.
+
+        Prefers the order assigned > reported > watching so the most-relevant
+        project ends up first in the suggested command line."""
+        seen: dict[str, None] = {}  # ordered set
+        for label in ("assigned", "reported", "watching"):
+            body = _read_raw_body(self.raw_dir / f"discover_my_{label}.json")
+            if not isinstance(body, dict):
+                continue
+            for issue in (body.get("issues") or []):
+                if not isinstance(issue, dict):
+                    continue
+                # Prefer fields.project.key if present (more reliable than
+                # parsing the issue key — handles project keys with digits etc).
+                fields = issue.get("fields") or {}
+                proj = fields.get("project") if isinstance(fields, dict) else None
+                if isinstance(proj, dict) and proj.get("key"):
+                    seen.setdefault(str(proj["key"]), None)
+                    continue
+                # Fallback: parse from issue key
+                key = issue.get("key")
+                if isinstance(key, str) and "-" in key:
+                    seen.setdefault(key.split("-", 1)[0], None)
+        return list(seen.keys())
+
     def run_full(self, issue_key: Optional[str], board_id: Optional[int],
                  project_key: Optional[str], sprint_id: Optional[int]) -> None:
         # 1) Always run the version block first
@@ -480,6 +604,197 @@ class JiraProbe:
         print(f"\n[probe] wrote summary → {summary_path}")
         print(f"[probe] wrote {len(self.results)} raw payloads → {self.raw_dir}")
 
+    def _write_discover_digest(self, my_project_keys: list[str]) -> None:
+        """Render a human-friendly discover.md scoped to the user's actual work."""
+        lines: list[str] = ["# Discovery — pick values for the full sweep", ""]
+
+        # Per-search "your issues" tables
+        issue_section_total = 0
+        # Also collect the first useful (key, projectKey) pair to seed suggestions
+        first_issue_key: Optional[str] = None
+        first_issue_proj: Optional[str] = None
+        for label in ("assigned", "reported", "watching"):
+            body = _read_raw_body(self.raw_dir / f"discover_my_{label}.json")
+            rows: list[tuple[str, str, str, str]] = []
+            if isinstance(body, dict):
+                for i in (body.get("issues") or []):
+                    if not isinstance(i, dict):
+                        continue
+                    k = i.get("key")
+                    if not k:
+                        continue
+                    fields = i.get("fields") or {}
+                    summary = str(fields.get("summary", "") if isinstance(fields, dict) else "")
+                    status = ""
+                    proj_key = ""
+                    if isinstance(fields, dict):
+                        if isinstance(fields.get("status"), dict):
+                            status = str(fields["status"].get("name", ""))
+                        if isinstance(fields.get("project"), dict):
+                            proj_key = str(fields["project"].get("key", ""))
+                    rows.append((str(k), summary, status, proj_key))
+                    if first_issue_key is None:
+                        first_issue_key = str(k)
+                        first_issue_proj = proj_key or (str(k).split("-", 1)[0] if "-" in str(k) else None)
+            if rows:
+                issue_section_total += len(rows)
+                lines.append(f"## Issues you are {label} (top {len(rows)})")
+                lines.append("")
+                lines.append("| Key | Summary | Status | Project |")
+                lines.append("|---|---|---|---|")
+                for k, s, st, pk in rows:
+                    lines.append(
+                        f"| `{k}` | {s.replace('|', '\\|')[:80]} | {st} | `{pk}` |"
+                    )
+                lines.append("")
+
+        if issue_section_total == 0:
+            lines.append("## Your recent work")
+            lines.append("")
+            lines.append(
+                "_No issues found where you are assignee, reporter, or watcher. "
+                "This usually means a brand-new account or a Jira admin who has "
+                "disabled `watcher` JQL. See the fallback project list below._"
+            )
+            lines.append("")
+
+        # Per-project sections — much smaller than dumping all visible projects
+        if my_project_keys:
+            lines.append("## Projects you work in (filtered)")
+            lines.append("")
+            for pkey in my_project_keys[:5]:
+                proj_body = _read_raw_body(self.raw_dir / f"discover_project_{pkey}.json")
+                proj_name = ""
+                proj_lead = ""
+                if isinstance(proj_body, dict):
+                    proj_name = str(proj_body.get("name", ""))
+                    lead = proj_body.get("lead")
+                    if isinstance(lead, dict):
+                        proj_lead = str(lead.get("displayName", ""))
+
+                lines.append(f"### `{pkey}` — {proj_name}" + (f" (lead: {proj_lead})" if proj_lead else ""))
+                lines.append("")
+
+                # Boards in this project
+                boards_body = _read_raw_body(self.raw_dir / f"discover_boards_{pkey}.json")
+                board_rows = []
+                if isinstance(boards_body, dict):
+                    for b in (boards_body.get("values") or []):
+                        if isinstance(b, dict) and b.get("id") is not None:
+                            board_rows.append((b["id"], str(b.get("name", "")), str(b.get("type", ""))))
+                if board_rows:
+                    lines.append("**Boards:**")
+                    lines.append("")
+                    lines.append("| Board ID | Name | Type |")
+                    lines.append("|---|---|---|")
+                    for bid, name, btype in board_rows:
+                        lines.append(f"| `{bid}` | {name} | {btype} |")
+                    lines.append("")
+
+                    # Sprints per scrum board (only those we actually fetched)
+                    for bid, name, btype in board_rows:
+                        if btype not in ("scrum", "scrum-and-kanban"):
+                            continue
+                        sprints_body = _read_raw_body(self.raw_dir / f"discover_sprints_board_{bid}.json")
+                        sprint_rows = []
+                        if isinstance(sprints_body, dict):
+                            for s in (sprints_body.get("values") or []):
+                                if isinstance(s, dict) and s.get("id") is not None:
+                                    sprint_rows.append(
+                                        (s["id"], str(s.get("name", "")), str(s.get("state", "")))
+                                    )
+                        if sprint_rows:
+                            lines.append(f"**Sprints on board `{bid}` ({name}):**")
+                            lines.append("")
+                            lines.append("| Sprint ID | Name | State |")
+                            lines.append("|---|---|---|")
+                            for sid, sname, sstate in sprint_rows:
+                                lines.append(f"| `{sid}` | {sname} | {sstate} |")
+                            lines.append("")
+                else:
+                    lines.append("_No boards found in this project (you may not have agile-board permissions on it)._")
+                    lines.append("")
+        else:
+            # Fallback — full project list
+            fallback = _read_raw_body(self.raw_dir / "discover_projects_fallback.json")
+            lines.append("## Projects you can read (fallback list)")
+            lines.append("")
+            lines.append(
+                "_You have no recent assigned/reported/watched issues, so this is "
+                "everything your token can browse. Pick the one you actually use._"
+            )
+            lines.append("")
+            if isinstance(fallback, list) and fallback:
+                lines.append("| Key | Name |")
+                lines.append("|---|---|")
+                for p in fallback[:20]:
+                    if isinstance(p, dict) and p.get("key"):
+                        lines.append(f"| `{p['key']}` | {p.get('name', '')} |")
+                lines.append("")
+
+        # Suggested command-line — seeded with the first project/issue/board/sprint we found
+        suggested_proj = first_issue_proj or (my_project_keys[0] if my_project_keys else "PROJECT_KEY")
+        suggested_issue = first_issue_key or (
+            f"{suggested_proj}-1" if suggested_proj != "PROJECT_KEY" else "ISSUE-KEY"
+        )
+        # First scrum board in the suggested project
+        suggested_board: Any = "BOARD_ID"
+        suggested_sprint: Any = "SPRINT_ID"
+        if suggested_proj != "PROJECT_KEY":
+            boards_body = _read_raw_body(self.raw_dir / f"discover_boards_{suggested_proj}.json")
+            if isinstance(boards_body, dict):
+                for b in (boards_body.get("values") or []):
+                    if isinstance(b, dict) and b.get("type") in ("scrum", "scrum-and-kanban"):
+                        suggested_board = b["id"]
+                        sprints_body = _read_raw_body(
+                            self.raw_dir / f"discover_sprints_board_{suggested_board}.json"
+                        )
+                        if isinstance(sprints_body, dict):
+                            sprints = sprints_body.get("values") or []
+                            if sprints and isinstance(sprints[0], dict):
+                                suggested_sprint = sprints[0].get("id", "SPRINT_ID")
+                        break
+
+        lines.append("---")
+        lines.append("")
+        lines.append("## Suggested command for the full sweep")
+        lines.append("")
+        lines.append(
+            "_Seeded with the most-recent values from your work above. Replace "
+            "any of them with whatever you'd rather use._"
+        )
+        lines.append("")
+        lines.append("Windows `cmd`:")
+        lines.append("")
+        lines.append("```bat")
+        lines.append(
+            f"python probe_jira.py --url <YOUR_JIRA_URL> --token <YOUR_PAT> ^\n"
+            f"    --issue-key {suggested_issue} ^\n"
+            f"    --board-id {suggested_board} ^\n"
+            f"    --sprint-id {suggested_sprint} ^\n"
+            f"    --project-key {suggested_proj}"
+        )
+        lines.append("```")
+        lines.append("")
+        lines.append("PowerShell / Unix shells:")
+        lines.append("")
+        lines.append("```bash")
+        lines.append(
+            f"python probe_jira.py --url <YOUR_JIRA_URL> --token <YOUR_PAT> \\\n"
+            f"    --issue-key {suggested_issue} \\\n"
+            f"    --board-id {suggested_board} \\\n"
+            f"    --sprint-id {suggested_sprint} \\\n"
+            f"    --project-key {suggested_proj}"
+        )
+        lines.append("```")
+        lines.append("")
+
+        digest_path = self.results_dir / "discover.md"
+        digest_path.write_text("\n".join(lines), encoding="utf-8")
+        print(f"\n[probe] wrote discovery digest → {digest_path}")
+        print("[probe] open it locally, pick values, then re-run with the suggested args.")
+        print("[probe] (this file contains real project/board names — redact before sharing.)")
+
     def _format_version_note(self) -> str:
         info = next((r for r in self.results if r.name == "serverInfo"), None)
         if not info or not info.ok:
@@ -541,6 +856,15 @@ def _extract_issue_id_from_raw(raw_path: Path) -> Optional[str]:
         return None
 
 
+def _read_raw_body(raw_path: Path) -> Any:
+    """Return the parsed `raw_body` from a saved probe response file, or None."""
+    try:
+        data = json.loads(raw_path.read_text(encoding="utf-8"))
+        return data.get("raw_body")
+    except Exception:
+        return None
+
+
 def _allocate_results_dir(parent: Path) -> Path:
     n = 1
     while True:
@@ -570,6 +894,11 @@ def main() -> int:
     p.add_argument("--no-verify", action="store_true", help="Disable TLS verification (self-signed certs)")
     p.add_argument("--versions-only", action="store_true",
                    help="Only call /serverInfo + /myself + /mypermissions and exit")
+    p.add_argument("--discover", action="store_true",
+                   help="Discovery mode: list visible projects, boards, sprints, "
+                        "and recent issues so you can pick values for the full "
+                        "sweep without digging through Jira URLs. Writes "
+                        "Result_N/discover.md with a copy-paste command.")
     p.add_argument("--out", default=str(Path(__file__).parent),
                    help="Parent dir for Result_N/ output (default: alongside the script)")
     args = p.parse_args()
@@ -592,9 +921,20 @@ def main() -> int:
     out_parent.mkdir(parents=True, exist_ok=True)
     results_dir = _allocate_results_dir(out_parent)
 
+    if args.discover and args.versions_only:
+        print("ERROR: --discover and --versions-only are mutually exclusive.", file=sys.stderr)
+        return 2
+
+    if args.discover:
+        mode_label = "discover"
+    elif args.versions_only:
+        mode_label = "versions-only"
+    else:
+        mode_label = "full sweep"
+
     print(f"[probe] target: {args.url}")
     print(f"[probe] output: {results_dir}")
-    print(f"[probe] mode:   {'versions-only' if args.versions_only else 'full sweep'}")
+    print(f"[probe] mode:   {mode_label}")
     print()
 
     probe = JiraProbe(args.url, args.token, verify=not args.no_verify, results_dir=results_dir)
@@ -607,9 +947,12 @@ def main() -> int:
         "project_key": args.project_key,
         "no_verify": args.no_verify,
         "versions_only": args.versions_only,
+        "discover": args.discover,
     }
 
-    if args.versions_only:
+    if args.discover:
+        probe.run_discover()
+    elif args.versions_only:
         probe.run_versions_only()
     else:
         probe.run_full(
@@ -620,7 +963,10 @@ def main() -> int:
         )
 
     probe.write_summary(args_used)
-    print(f"[probe] done — open {results_dir / 'summary.md'} and paste back to me.")
+    if args.discover:
+        print(f"[probe] done — open {results_dir / 'discover.md'} to pick values for the full sweep.")
+    else:
+        print(f"[probe] done — open {results_dir / 'summary.md'} and paste back to me.")
     return 0
 
 

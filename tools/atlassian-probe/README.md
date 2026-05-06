@@ -49,6 +49,22 @@ Picks any real values you have access to. Anything you omit just skips the probe
 — no failure. The `--issue-key` enables the dev-status probes (which need the issue's numeric
 id), so include one if you can.
 
+### Discover mode (find your IDs)
+
+If you don't already know your project key / board id / sprint id, run:
+
+```bash
+python probe_jira.py --url https://jira.company.com --token <PAT> --discover
+```
+
+This finds issues where you're assignee/reporter/watcher, extracts the project keys
+from those issues (usually 1–3, never the entire org's ~200), and pulls boards
+filtered to those projects + their sprints. Output goes to `Result_N/discover.md`
+with a copy-paste command line at the bottom seeded with real values.
+
+If you're a brand-new account with zero issues, it falls back to listing your
+readable projects and tells you so explicitly.
+
 ### Self-signed certificates
 
 ```bash
