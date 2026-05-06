@@ -51,14 +51,18 @@ Notes:
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime
+import gzip
 import hashlib
 import sys
+import textwrap
 import uuid
 from pathlib import Path
 
 
 HEADER_PREFIX = "# atlassian-probe bundle v"
+COMPRESSED_PREFIX = "# atlassian-probe bundle (compressed) v"
 BUNDLE_VERSION = "1"
 
 
@@ -66,18 +70,8 @@ BUNDLE_VERSION = "1"
 # Pack
 # ---------------------------------------------------------------------------
 
-def pack(in_dir: Path, out_file: Path) -> int:
-    if not in_dir.is_dir():
-        print(f"ERROR: {in_dir} is not a directory", file=sys.stderr)
-        return 2
-
-    files: list[Path] = sorted(p for p in in_dir.rglob("*") if p.is_file())
-    if not files:
-        print(f"ERROR: {in_dir} is empty", file=sys.stderr)
-        return 2
-
-    # 16-hex-char boundary (~64 bits entropy). Statistically zero chance of
-    # collision with any line of content in a probe result.
+def _build_multipart(in_dir: Path, files: list[Path]) -> tuple[str, list[tuple[Path, str]]]:
+    """Build the plain-text multipart body. Returns (text, list-of-skipped)."""
     boundary = "atlprobe-" + uuid.uuid4().hex[:16]
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -104,17 +98,63 @@ def pack(in_dir: Path, out_file: Path) -> int:
         parts.append(f"path: {rel}")
         parts.append(f"size: {size}")
         parts.append(f"sha256: {digest}")
-        parts.append("")  # blank line separating headers from body
+        parts.append("")
         parts.append(text)
-        # If the body did not end in a newline, the next boundary still
-        # appears on its own line because we emit it as a separate parts entry
     parts.append(f"--{boundary}--")
-    parts.append("")  # trailing newline
+    parts.append("")
+    return "\n".join(parts), failed
 
-    out_file.write_text("\n".join(parts), encoding="utf-8")
 
+def pack(in_dir: Path, out_file: Path, compress: bool = False) -> int:
+    if not in_dir.is_dir():
+        print(f"ERROR: {in_dir} is not a directory", file=sys.stderr)
+        return 2
+
+    files: list[Path] = sorted(p for p in in_dir.rglob("*") if p.is_file())
+    if not files:
+        print(f"ERROR: {in_dir} is empty", file=sys.stderr)
+        return 2
+
+    multipart_text, failed = _build_multipart(in_dir, files)
+
+    if not compress:
+        out_file.write_text(multipart_text, encoding="utf-8")
+    else:
+        # gzip → base64 → 76-col-wrapped text. JSON compresses 5–10×; base64
+        # then expands by 4/3, net ~4–8× shrink. The wrapped output remains
+        # paste-safe in clipboards that strip overlong lines.
+        raw_bytes = multipart_text.encode("utf-8")
+        compressed = gzip.compress(raw_bytes, compresslevel=9)
+        b64 = base64.b64encode(compressed).decode("ascii")
+        wrapped = "\n".join(textwrap.wrap(b64, 76))
+        original_sha = hashlib.sha256(raw_bytes).hexdigest()
+        now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        header_lines = [
+            f"{COMPRESSED_PREFIX}{BUNDLE_VERSION}",
+            f"# generated: {now}",
+            f"# source: {in_dir.name}",
+            f"# files: {len(files)}",
+            f"# original-bytes: {len(raw_bytes)}",
+            f"# compressed-bytes: {len(compressed)}",
+            f"# original-sha256: {original_sha}",
+            f"# encoding: gzip+base64 (76-col wrapped)",
+            f"# instructions: python bundle.py unpack --in <this-file>",
+        ]
+        # Write header lines, then a blank-line separator (unpack uses the
+        # blank line to detect end-of-header), then the wrapped base64.
+        out_file.write_text(
+            "\n".join(header_lines) + "\n\n" + wrapped + "\n",
+            encoding="utf-8",
+        )
+
+    final_size = out_file.stat().st_size
     print(f"[bundle] packed {len(files)} files → {out_file}")
-    print(f"[bundle] size: {out_file.stat().st_size} bytes")
+    if compress:
+        ratio = len(multipart_text.encode("utf-8")) / final_size
+        print(f"[bundle] size: {final_size:,} bytes "
+              f"(compressed {ratio:.1f}× from {len(multipart_text.encode('utf-8')):,})")
+    else:
+        print(f"[bundle] size: {final_size:,} bytes")
     if failed:
         print(f"[bundle] WARNING: {len(failed)} file(s) skipped:", file=sys.stderr)
         for path, reason in failed:
@@ -132,6 +172,41 @@ def unpack(in_file: Path, out_dir: Path) -> int:
         return 2
 
     raw = in_file.read_text(encoding="utf-8")
+
+    # Auto-detect compressed bundles. The compressed header lives above the
+    # base64-encoded gzip blob; we strip the header, decode + decompress, and
+    # then fall through to the plain-text multipart parser.
+    if raw.startswith(COMPRESSED_PREFIX):
+        header_lines: list[str] = []
+        body_lines: list[str] = []
+        in_header = True
+        expected_sha: str | None = None
+        for line in raw.split("\n"):
+            if in_header:
+                header_lines.append(line)
+                if line.startswith("# original-sha256:"):
+                    expected_sha = line.split(":", 1)[1].strip()
+                if line == "":
+                    in_header = False
+                continue
+            body_lines.append(line)
+        try:
+            compressed = base64.b64decode("".join(body_lines))
+            decoded = gzip.decompress(compressed).decode("utf-8")
+        except Exception as e:
+            print(f"ERROR: failed to decompress bundle: {type(e).__name__}: {e}",
+                  file=sys.stderr)
+            return 2
+        if expected_sha:
+            actual = hashlib.sha256(decoded.encode("utf-8")).hexdigest()
+            if actual != expected_sha:
+                print(f"ERROR: decompressed SHA256 mismatch "
+                      f"(expected {expected_sha[:16]}…, got {actual[:16]}…) — "
+                      f"bundle was modified or truncated in transit",
+                      file=sys.stderr)
+                return 2
+        raw = decoded
+
     lines = raw.split("\n")
 
     # Parse header
@@ -261,7 +336,12 @@ def main() -> int:
     pack_p.add_argument("--in", dest="in_path", required=True,
                         help="Input directory (e.g., Result_2_redacted)")
     pack_p.add_argument("--out", dest="out_path", default=None,
-                        help="Output file (default: <in>.bundle.txt)")
+                        help="Output file (default: <in>.bundle.txt or "
+                             "<in>.bundle.b64.txt with --compress)")
+    pack_p.add_argument("--compress", action="store_true",
+                        help="gzip + base64-encode the bundle. Typical 4–8× "
+                             "shrink. Use this when the plain bundle is too "
+                             "big to paste into chat. Unpack auto-detects.")
 
     unpack_p = sub.add_parser("unpack", help="extract a bundle file back into a directory")
     unpack_p.add_argument("--in", dest="in_path", required=True,
@@ -273,16 +353,19 @@ def main() -> int:
     src = Path(args.in_path).resolve()
 
     if args.cmd == "pack":
-        out = (Path(args.out_path).resolve() if args.out_path
-               else src.with_name(src.name + ".bundle.txt"))
-        return pack(src, out)
+        if args.out_path:
+            out = Path(args.out_path).resolve()
+        else:
+            suffix = ".bundle.b64.txt" if args.compress else ".bundle.txt"
+            out = src.with_name(src.name + suffix)
+        return pack(src, out, compress=args.compress)
     else:  # unpack
-        # Default: strip the trailing .bundle.txt or use .unpacked suffix
+        # Default: strip any known bundle suffix and append .unpacked
         if args.out_path:
             out_dir = Path(args.out_path).resolve()
         else:
             stem = src.name
-            for suffix in (".bundle.txt", ".bundle", ".txt"):
+            for suffix in (".bundle.b64.txt", ".bundle.txt", ".bundle", ".txt"):
                 if stem.endswith(suffix):
                     stem = stem[: -len(suffix)]
                     break

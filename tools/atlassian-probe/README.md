@@ -166,37 +166,59 @@ After redacting, run:
 
 ```bash
 python bundle.py pack --in Result_2_redacted
-# writes Result_2_redacted.bundle.txt
+# writes Result_2_redacted.bundle.txt (plain text)
 ```
 
-Paste the **entire bundle file** in one shot. On the receiving side:
+If the resulting bundle is too big for your clipboard / chat input (typical
+limit is around 100KB–1MB; a full sweep with 30+ files is ~3MB plain), add
+`--compress`:
+
+```bash
+python bundle.py pack --in Result_2_redacted --compress
+# writes Result_2_redacted.bundle.b64.txt — gzip + base64, typically 5–40× smaller
+```
+
+JSON compresses extremely well (lots of repeated keys), so a 3MB plain
+bundle typically shrinks to ~80KB compressed. Paste the entire compressed
+file the same way. On the receiving side:
 
 ```bash
 python bundle.py unpack --in Result_2_redacted.bundle.txt
-# extracts to Result_2_redacted.unpacked/
+# (or .bundle.b64.txt — auto-detects compressed vs plain)
 ```
 
-The bundle is plain text (UTF-8 multipart-style) with a UUID boundary in the
-header and SHA256 per file — corruption from copy-paste truncation, accidental
-edits, or boundary collision is detected on unpack and refused.
+The plain bundle is human-readable UTF-8 multipart with a UUID boundary and
+per-file SHA256. The compressed bundle is gzip-then-base64 (76-column
+wrapped) with an outer SHA256 over the original. Either way, unpack
+verifies integrity and refuses to write any file whose hash doesn't
+round-trip — paste truncation or accidental edits are caught.
 
 ```
-Result_2_redacted/
+Result_2_redacted/                 ← input dir
 ├── summary.md
 ├── redaction_report.json
 └── raw/...
 
-         │ python bundle.py pack --in Result_2_redacted
+         │ python bundle.py pack --in Result_2_redacted [--compress]
          ▼
-Result_2_redacted.bundle.txt   ← single file, paste this
+Result_2_redacted.bundle.txt        (plain, human-readable)
+or
+Result_2_redacted.bundle.b64.txt    (compressed, ~5–40× smaller)
 
+         │ paste into chat → save back as a file
          │ python bundle.py unpack --in <file>
          ▼
-Result_2_redacted.unpacked/
-├── summary.md                 ← byte-for-byte identical to source
+Result_2_redacted.unpacked/         ← byte-for-byte identical
+├── summary.md
 ├── redaction_report.json
 └── raw/...
 ```
+
+### Still too big for your clipboard?
+
+Worst case, just paste `summary.md` directly — it's only 100–300 lines and
+fits anywhere. The receiver can request specific `raw/<name>.json` files
+one at a time as the analysis needs them.
 
 ## Safety
 
