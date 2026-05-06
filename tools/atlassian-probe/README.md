@@ -159,6 +159,45 @@ Result_1_redacted/
     └── ...
 ```
 
+## Bundling for one-shot sharing
+
+Probe results are 30+ files. Pasting them into chat one by one is annoying.
+After redacting, run:
+
+```bash
+python bundle.py pack --in Result_2_redacted
+# writes Result_2_redacted.bundle.txt
+```
+
+Paste the **entire bundle file** in one shot. On the receiving side:
+
+```bash
+python bundle.py unpack --in Result_2_redacted.bundle.txt
+# extracts to Result_2_redacted.unpacked/
+```
+
+The bundle is plain text (UTF-8 multipart-style) with a UUID boundary in the
+header and SHA256 per file — corruption from copy-paste truncation, accidental
+edits, or boundary collision is detected on unpack and refused.
+
+```
+Result_2_redacted/
+├── summary.md
+├── redaction_report.json
+└── raw/...
+
+         │ python bundle.py pack --in Result_2_redacted
+         ▼
+Result_2_redacted.bundle.txt   ← single file, paste this
+
+         │ python bundle.py unpack --in <file>
+         ▼
+Result_2_redacted.unpacked/
+├── summary.md                 ← byte-for-byte identical to source
+├── redaction_report.json
+└── raw/...
+```
+
 ## Safety
 
 - **Never mutates.** Only `GET`. No transitions, comments, worklogs, branch creates, watchers, etc.
