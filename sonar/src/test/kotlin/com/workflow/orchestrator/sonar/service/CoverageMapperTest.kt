@@ -135,4 +135,62 @@ class CoverageMapperTest {
 
         assertEquals(LineCoverageStatus.COVERED, result[1])
     }
+
+    @Test
+    fun `maps new_lines_to_cover and new_uncovered_lines and complexity fields`() {
+        // Regression test: these four fields populated the four columns
+        // ("New Uncov. Lines", "New Lines", "Complexity", "Cognitive") and the
+        // new-code filter — they were always 0/null in production until the
+        // sonarMetricKeys override was removed.
+        val components = listOf(
+            SonarMeasureComponentDto(
+                key = "k",
+                path = "src/PaymentService.kt",
+                measures = listOf(
+                    SonarMeasureDto("new_lines_to_cover", "42"),
+                    SonarMeasureDto("new_uncovered_lines", "8"),
+                    SonarMeasureDto("complexity", "27"),
+                    SonarMeasureDto("cognitive_complexity", "19")
+                )
+            )
+        )
+
+        val file = CoverageMapper.mapMeasures(components, projectKey = "test")["src/PaymentService.kt"]!!
+
+        assertEquals(42, file.newLinesToCover)
+        assertEquals(8, file.newUncoveredLines)
+        assertEquals(27, file.complexity)
+        assertEquals(19, file.cognitiveComplexity)
+    }
+
+    @Test
+    fun `new-code filter keeps files with newLinesToCover gt 0 and drops the rest`() {
+        // Mirrors SonarDataService.refreshWith line 349-350: the newCodeFileCoverage
+        // map is built by filtering out any file whose new_lines_to_cover is null
+        // or zero. Encodes the contract here so a future refactor can't silently
+        // re-break the new-code Coverage tab.
+        val components = listOf(
+            SonarMeasureComponentDto(
+                key = "k1",
+                path = "src/Touched.kt",
+                measures = listOf(SonarMeasureDto("new_lines_to_cover", "10"))
+            ),
+            SonarMeasureComponentDto(
+                key = "k2",
+                path = "src/Untouched.kt",
+                measures = listOf(SonarMeasureDto("new_lines_to_cover", "0"))
+            ),
+            SonarMeasureComponentDto(
+                key = "k3",
+                path = "src/NoData.kt",
+                measures = listOf(SonarMeasureDto("line_coverage", "75.0"))
+            )
+        )
+        val fileCoverage = CoverageMapper.mapMeasures(components, projectKey = "test")
+
+        val newCodeSubset = fileCoverage
+            .filter { (_, data) -> data.newLinesToCover != null && data.newLinesToCover > 0 }
+
+        assertEquals(setOf("src/Touched.kt"), newCodeSubset.keys)
+    }
 }

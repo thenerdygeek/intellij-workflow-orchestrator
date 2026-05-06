@@ -125,6 +125,35 @@ class SonarApiClientTest {
     }
 
     @Test
+    fun `getMeasures default URL includes every metric the Quality tab renders`() = runTest {
+        // Regression test: SonarDataService now calls getMeasures without an explicit
+        // metricKeys arg, so the API client's DEFAULT_METRIC_KEYS drives the request.
+        // The Coverage table and the new-code filter both depend on these keys being
+        // present; if any go missing the user sees blank columns or an empty new-code
+        // subset (silently masked by the old fallback). Pin the contract here.
+        server.enqueue(MockResponse().setBody(fixture("measures-component-tree.json")))
+
+        client.getMeasures("com.myapp:my-app")
+
+        val path = server.takeRequest().path!!
+        // New-code filter — without new_lines_to_cover, no files qualify as "new code"
+        assertTrue(path.contains("new_lines_to_cover"), "missing new_lines_to_cover in $path")
+        // New-code Coverage table columns
+        assertTrue(path.contains("new_coverage"), "missing new_coverage in $path")
+        assertTrue(path.contains("new_branch_coverage"), "missing new_branch_coverage in $path")
+        assertTrue(path.contains("new_uncovered_lines"), "missing new_uncovered_lines in $path")
+        // Overall Coverage table columns
+        assertTrue(path.contains("line_coverage"), "missing line_coverage in $path")
+        assertTrue(path.contains("branch_coverage"), "missing branch_coverage in $path")
+        assertTrue(path.contains("uncovered_lines"), "missing uncovered_lines in $path")
+        assertTrue(path.contains("uncovered_conditions"), "missing uncovered_conditions in $path")
+        assertTrue(path.contains("complexity"), "missing complexity in $path")
+        assertTrue(path.contains("cognitive_complexity"), "missing cognitive_complexity in $path")
+        // additionalFields=period required for new_* metrics
+        assertTrue(path.contains("additionalFields=period"), "missing additionalFields=period in $path")
+    }
+
+    @Test
     fun `getSourceLines returns per-line coverage data`() = runTest {
         server.enqueue(MockResponse().setBody(fixture("source-lines.json")))
 

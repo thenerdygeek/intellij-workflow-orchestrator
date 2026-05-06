@@ -3,7 +3,6 @@ package com.workflow.orchestrator.sonar.settings
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.project.Project
-import com.intellij.ui.dsl.builder.COLUMNS_LARGE
 import com.intellij.ui.dsl.builder.bindSelected
 import com.intellij.ui.dsl.builder.bindText
 import com.intellij.ui.dsl.builder.columns
@@ -115,15 +114,6 @@ class CodeQualityConfigurable(private val project: Project) : SearchableConfigur
 
             // === 4. Advanced (collapsed by default) ===
             collapsibleGroup("Advanced") {
-                row("SonarQube metrics:") {
-                    textField()
-                        .bindText(
-                            { settings.state.sonarMetricKeys ?: "" },
-                            { settings.state.sonarMetricKeys = it }
-                        )
-                        .columns(COLUMNS_LARGE)
-                        .comment("Comma-separated metric keys for API queries")
-                }
                 row {
                     checkBox("Show coverage gutter markers")
                         .bindSelected(settings.state::coverageGutterMarkersEnabled)

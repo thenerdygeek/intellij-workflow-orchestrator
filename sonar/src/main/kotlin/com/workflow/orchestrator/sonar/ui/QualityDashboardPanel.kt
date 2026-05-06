@@ -188,12 +188,14 @@ class QualityDashboardPanel(
         }
         add(topSection, BorderLayout.NORTH)
 
-        // Wire gate banner callback for cross-tab navigation
+        // Wire gate banner callback for cross-tab navigation. Coverage and issue
+        // conditions both honor the failing metric's `new_*` prefix so the user
+        // lands on the same scope the gate evaluated.
         gateBanner.onShowBlockingIssues = { filter ->
+            if (filter.newCodeMode) dataService.setNewCodeMode(true)
             if (filter.isCoverageCondition) {
                 tabbedPane.selectedIndex = 2  // Coverage tab
             } else {
-                if (filter.newCodeMode) dataService.setNewCodeMode(true)
                 tabbedPane.selectedIndex = 1  // Issues tab
                 filter.issueType?.let { issueListPanel.applyPreFilter(it, filter.newCodeMode) }
             }
@@ -218,8 +220,7 @@ class QualityDashboardPanel(
                             issuesStale = false
                         }
                         2 -> if (coverageStale) {
-                            val coverageData = currentState.activeFileCoverage.ifEmpty { currentState.fileCoverage }
-                            coverageTablePanel.update(coverageData, currentState.newCodeMode && currentState.activeFileCoverage.isNotEmpty(), currentState.totalCoverageFileCount)
+                            coverageTablePanel.update(currentState.activeFileCoverage, currentState.newCodeMode, currentState.totalCoverageFileCount)
                             coverageStale = false
                         }
                     }
@@ -470,8 +471,7 @@ class QualityDashboardPanel(
                 issuesStale = false
             }
             2 -> if (coverageStale) {
-                val coverageData = state.activeFileCoverage.ifEmpty { state.fileCoverage }
-                coverageTablePanel.update(coverageData, state.newCodeMode && state.activeFileCoverage.isNotEmpty(), state.totalCoverageFileCount)
+                coverageTablePanel.update(state.activeFileCoverage, state.newCodeMode, state.totalCoverageFileCount)
                 coverageStale = false
             }
         }

@@ -44,7 +44,7 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()),
         isVisible = false
     }
 
-    private val emptyLabel = JBLabel("No coverage data available. Configure SonarQube project key in Settings > CI/CD.").apply {
+    private val emptyLabel = JBLabel().apply {
         foreground = JBUI.CurrentTheme.Label.disabledForeground()
         horizontalAlignment = javax.swing.SwingConstants.CENTER
         verticalAlignment = javax.swing.SwingConstants.CENTER
@@ -228,6 +228,11 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()),
 
         removeAll()
         if (allCoverageData.isEmpty()) {
+            emptyLabel.text = if (newCodeMode) {
+                "No files in the new-code period. Switch to Overall to see project-wide coverage."
+            } else {
+                "No coverage data available. Configure SonarQube project key in Settings > CI/CD."
+            }
             add(emptyLabel, BorderLayout.CENTER)
         } else {
             // Header panel with summary + search

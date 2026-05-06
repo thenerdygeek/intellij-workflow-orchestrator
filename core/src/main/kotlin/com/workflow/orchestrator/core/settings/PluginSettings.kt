@@ -103,7 +103,6 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var maxDiffLinesForReview by property(10000)
 
         // SonarQube
-        var sonarMetricKeys by string("coverage,line_coverage,branch_coverage,uncovered_lines,uncovered_conditions,new_coverage,new_branch_coverage")
         var coverageGutterMarkersEnabled by property(false)
         var sonarIntentionActionEnabled by property(false)
         var sonarInlineAnnotationsEnabled by property(false)
