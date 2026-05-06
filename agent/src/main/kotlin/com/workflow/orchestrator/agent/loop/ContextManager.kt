@@ -344,6 +344,69 @@ class ContextManager(
     }
 
     /**
+     * Collapse a trailing `[assistant w/ completion tool_call, tool_result]` pair into a
+     * single plain assistant text turn. The "completion tools" are `attempt_completion`
+     * and `task_report` — both signal the loop's exit and produce `LoopResult.Completed`.
+     *
+     * **Why this exists.** Sourcegraph's `sanitizeMessages` converts `role: tool` into
+     * `role: user` with a `"TOOL RESULT:\n..."` prefix and then merges consecutive
+     * same-role messages. If we leave the trailing tool result in place, two things
+     * break:
+     *   1. The next user turn (typed message or `next_step` hint accept) gets merged
+     *      into a single user message with the prior completion result as its
+     *      dominant content — the LLM sees "TOOL RESULT: <prior summary>\n\n<user
+     *      hint>" and re-issues `attempt_completion` with the same arguments.
+     *   2. Resume of any session whose tail isn't `RESUME_COMPLETED_TASK` (e.g. a
+     *      crashed session that had a prior completion mid-history) auto-iterates
+     *      the LLM on the dangling tool result.
+     *
+     * Collapsing the pair preserves the assistant's streaming narrative (if any) and
+     * appends the tool's result text, then drops both `tool_calls` and the tool
+     * result entry. The conversation reads cleanly as `[..., assistant: "<narrative
+     * + result>", user: "<follow-up>"]` — exactly what the LLM expects.
+     *
+     * **Caller side-effects.** Self-mutating only — caller is responsible for
+     * mirroring the change to the persisted disk-side history via
+     * [MessageStateHandler.collapseLastCompletionToolPair]. Both sites must run
+     * together so the in-memory and on-disk views stay aligned (otherwise resume
+     * loads the on-disk shape and re-introduces the bug).
+     *
+     * @return true if a matching pair was found and collapsed, false otherwise.
+     */
+    fun collapseLastCompletionToolPair(): Boolean {
+        if (messages.size < 2) return false
+        val tail = messages.last()
+        if (tail.role != "tool") return false
+        val toolCallId = tail.toolCallId ?: return false
+
+        val penult = messages[messages.size - 2]
+        if (penult.role != "assistant") return false
+        val penultToolCalls = penult.toolCalls
+        if (penultToolCalls.isNullOrEmpty()) return false
+        val matchingCall = penultToolCalls.firstOrNull {
+            it.id == toolCallId && it.function.name in COMPLETION_TOOL_NAMES
+        } ?: return false
+
+        // Strip the "[ERROR] " prefix that addToolResult adds for failed tool calls so
+        // the assistant text reads naturally. attempt_completion / task_report only
+        // succeed when args validate; an error here would be unusual but we degrade
+        // gracefully rather than emitting "[ERROR] " in the rewritten history.
+        val resultText = (tail.content ?: "").removePrefix("[ERROR] ")
+        val streamingText = penult.content?.takeIf { it.isNotBlank() }
+        val combined = when {
+            streamingText != null && resultText.isNotBlank() -> "$streamingText\n\n$resultText"
+            streamingText != null -> streamingText
+            else -> resultText
+        }
+
+        messages.removeAt(messages.size - 1)  // tool result
+        messages.removeAt(messages.size - 1)  // assistant w/ completion tool_call
+        messages.add(ChatMessage(role = "assistant", content = combined))
+        LOG.info("[Context] Collapsed completion tool pair (toolCallId=$toolCallId, name=${matchingCall.function.name}) into plain assistant turn")
+        return true
+    }
+
+    /**
      * Add a tool result and track file reads for deduplication.
      *
      * When a tool result contains file content, we track which file was read
@@ -1314,6 +1377,15 @@ class ContextManager(
          * Multimodal-agent Phase 2.
          */
         const val FALLBACK_MAX_INPUT_TOKENS = 90_000
+
+        /**
+         * Tools that signal the loop's exit and produce `LoopResult.Completed`. Both
+         * leave the api conversation history with a trailing `[assistant w/ tool_call,
+         * tool_result]` pair that needs to be collapsed to avoid sanitization merging
+         * on follow-up turns and auto-iteration on resume. See
+         * [collapseLastCompletionToolPair] and the mirror in `MessageStateHandler`.
+         */
+        val COMPLETION_TOOL_NAMES: Set<String> = setOf("attempt_completion", "task_report")
 
         /**
          * Per-image token estimate used by [tokenEstimate] and [estimateMessageTokens]

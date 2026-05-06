@@ -136,6 +136,64 @@ class MessageStateHandler(
         saveApiHistoryInternal()
     }
 
+    /**
+     * Mirror of `ContextManager.collapseLastCompletionToolPair` for the persisted api
+     * history. Replaces the trailing `[ApiMessage(role=ASSISTANT, content=[..., ToolUse]),
+     * ApiMessage(role=USER, content=[ToolResult])]` pair with a single text-only
+     * assistant message when the tool is `attempt_completion` or `task_report`.
+     *
+     * Rationale: see [ContextManager.collapseLastCompletionToolPair]. Briefly: leaving
+     * the trailing tool result on disk lets it leak into the next LLM request as a
+     * `"TOOL RESULT:..."` user-role merge, and causes resume to auto-iterate. This
+     * helper rewrites the persisted shape so neither failure mode is reachable.
+     *
+     * Mutex-guarded, atomic-write — same contract as every other handler mutator.
+     *
+     * @return true if a matching pair was found and collapsed, false otherwise.
+     */
+    suspend fun collapseLastCompletionToolPair(): Boolean = mutex.withLock {
+        if (apiHistory.size < 2) return@withLock false
+        val tail = apiHistory.last()
+        if (tail.role != ApiRole.USER) return@withLock false
+        val tailToolResult = tail.content.filterIsInstance<ContentBlock.ToolResult>().firstOrNull()
+            ?: return@withLock false
+        val toolUseId = tailToolResult.toolUseId
+
+        val penult = apiHistory[apiHistory.size - 2]
+        if (penult.role != ApiRole.ASSISTANT) return@withLock false
+        val matchingToolUse = penult.content.filterIsInstance<ContentBlock.ToolUse>()
+            .firstOrNull { it.id == toolUseId && it.name in COMPLETION_TOOL_NAMES_HERE }
+            ?: return@withLock false
+
+        // Preserve any streaming text the assistant emitted; combine it with the tool
+        // result content (which is what the LLM passed as the `result` argument).
+        val streamingText = penult.content
+            .filterIsInstance<ContentBlock.Text>()
+            .joinToString("\n") { it.text }
+            .trim()
+        val resultText = tailToolResult.content
+        val combined = when {
+            streamingText.isNotBlank() && resultText.isNotBlank() -> "$streamingText\n\n$resultText"
+            streamingText.isNotBlank() -> streamingText
+            else -> resultText
+        }
+        val replacement = penult.copy(content = listOf(ContentBlock.Text(combined)))
+
+        apiHistory.removeAt(apiHistory.size - 1)  // tool result (USER w/ ToolResult)
+        apiHistory.removeAt(apiHistory.size - 1)  // assistant w/ ToolUse
+        apiHistory.add(replacement)
+        saveApiHistoryInternal()
+        true
+    }
+
+    /**
+     * Tools whose `[assistant w/ ToolUse, USER w/ ToolResult]` trailing pair must be
+     * collapsed by [collapseLastCompletionToolPair]. Mirror of the same set in
+     * [com.workflow.orchestrator.agent.loop.ContextManager.COMPLETION_TOOL_NAMES] —
+     * inlined here to avoid a `:agent` → `:agent` cyclic-import shape during refactors.
+     */
+    private val COMPLETION_TOOL_NAMES_HERE: Set<String> = setOf("attempt_completion", "task_report")
+
     suspend fun overwriteClineMessages(messages: List<UiMessage>) = mutex.withLock {
         uiMessages.clear()
         uiMessages.addAll(messages)

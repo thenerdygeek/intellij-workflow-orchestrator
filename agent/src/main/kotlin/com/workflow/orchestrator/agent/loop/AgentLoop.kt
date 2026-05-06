@@ -606,6 +606,17 @@ class AgentLoop(
             TokenEstimator.estimateToolDefinitions(toolDefinitions)
         )
 
+        // Backward-compat sweep: legacy sessions persisted before the completion-pair
+        // collapse landed at the loop's exit site still have the trailing
+        // [assistant w/ completion tool_call, tool_result] pair on disk. If we add
+        // the new user message on top of that, sanitizeMessages will merge the prior
+        // tool result with the new user turn (see ContextManager.collapseLastCompletionToolPair
+        // for the full failure mode). Run the collapse here too so a follow-up turn
+        // against any history shape — fresh, resumed, or legacy — gets a clean tail.
+        // Both sites must run together so the in-memory and on-disk views stay aligned.
+        contextManager.collapseLastCompletionToolPair()
+        messageStateHandler?.collapseLastCompletionToolPair()
+
         // Multimodal: when this turn carries image attachments, seed the in-memory
         // ChatMessage list with structured `parts` so BrainRouter.hasImageParts() fires
         // and the request routes to the vision endpoint. Without this the persisted
@@ -1944,6 +1955,17 @@ class AgentLoop(
                     onDebugLog?.invoke("info", "loop_exit", "Exit: $toolName", mapOf("iteration" to iteration))
                     toolResult.completionData?.let { sessionMetrics?.recordCompletion(it.kind) }
                     sessionMetrics?.recordIterationEnd()
+                    // Collapse the just-persisted [assistant w/ completion tool_call,
+                    // tool_result] pair into a single plain assistant text turn. Without
+                    // this, the next user turn (typed message or `next_step` hint accept)
+                    // gets merged with the prior tool result via sanitizeMessages's
+                    // tool→user conversion + same-role merging — the LLM sees "TOOL
+                    // RESULT: <prior summary>\n\n<user prompt>" and re-issues
+                    // attempt_completion. Resume of the session also auto-iterates on
+                    // the dangling tool result. Both bugs disappear once the trailing
+                    // pair becomes a single plain assistant turn.
+                    contextManager.collapseLastCompletionToolPair()
+                    messageStateHandler?.collapseLastCompletionToolPair()
                     return LoopResult.Completed(
                         summary = toolResult.content,
                         iterations = iteration,
