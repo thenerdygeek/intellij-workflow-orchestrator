@@ -40,6 +40,7 @@ class SubagentSystemPromptSnapshotTest {
             hasPythonPlugin = false,
             hasPythonCorePlugin = false,
             hasSpringPlugin = true,
+            hasMicroservicesModule = true,
             detectedFrameworks = setOf(Framework.SPRING),
             detectedBuildTools = setOf(BuildTool.GRADLE),
         )
@@ -53,6 +54,7 @@ class SubagentSystemPromptSnapshotTest {
             hasPythonPlugin = true,
             hasPythonCorePlugin = false,
             hasSpringPlugin = false,
+            hasMicroservicesModule = true,
             detectedFrameworks = setOf(Framework.DJANGO),
             detectedBuildTools = setOf(BuildTool.POETRY),
         )

@@ -54,7 +54,7 @@ You are running in PyCharm 2025.1 Professional.
 Available languages: Python.
 Detected frameworks: Django.
 Build tools: poetry.
-Specialized tools available via tool_search: django, build, debug, database.
+Specialized tools available via tool_search: endpoints, django, build, debug, database.
 
 
 **When to load IDE tools (common workflows):**
@@ -131,9 +131,10 @@ Before using glob_files or search_code for these tasks, use tool_search first:
 | Fix module deps, SDK, or language level | "project_structure" | Editing build.gradle/pom.xml |
 | Extract specific lines from large output | grep_pattern param | Piping through grep via run_command |
 | Create/edit a run or debug config | "runtime_config" | Editing .idea/runConfigurations/*.xml |
-| Launch an existing run configuration | runtime_exec(action=run_config, config_name=..., mode=run, wait_for_ready=true) | run_command — captures ports, ready signals, and errors |
+| Launch an existing run configuration | runtime_exec(action=run_config, config_name=..., mode=run, wait_for_ready=true) — captures ports, ready signals, and errors | run_command |
 | Launch a run configuration in debug mode | runtime_exec(action=run_config, mode=debug, wait_for_pause=bool) | Manual launch via IDE UI |
-| Stop a running configuration gracefully | runtime_exec(action=stop_run_config, config_name=..., graceful_timeout_seconds=10, force_on_timeout=true) | background_process(action=kill) or run_command |
+| Stop a running IntelliJ run configuration | runtime_exec(action=stop_run_config, config_name=..., graceful_timeout_seconds=10, force_on_timeout=true) | run_command('kill <pid>') |
+| Kill a background process started by run_command(background=true) | background_process(action=kill, id=bg_xxx) | run_command('kill <pid>') after manually tracking the pid |
 | Relaunch a running configuration | runtime_exec(action=run_config, config_name=...) — idempotent: stops any existing instance of the same configuration first, then launches fresh | Manually stop then relaunch |
 | Smoke-test an HTTP endpoint after launch | Chain runtime_exec(run_config, ...) then run_command('curl <url>:<port>') using the returned port | Hardcoding ports or guessing |
 | Discover or run pytest tests | "build" (pytest_discover, pytest_run, pytest_fixtures) | Manually running pytest via run_command |

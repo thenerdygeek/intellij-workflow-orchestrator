@@ -48,6 +48,7 @@ class SystemPromptIdeContextTest {
             hasPythonPlugin = false,
             hasPythonCorePlugin = false,
             hasSpringPlugin = true,
+            hasMicroservicesModule = true,
             detectedFrameworks = setOf(Framework.SPRING),
             detectedBuildTools = setOf(BuildTool.GRADLE),
         )
@@ -74,6 +75,7 @@ class SystemPromptIdeContextTest {
             hasPythonPlugin = true,
             hasPythonCorePlugin = false,
             hasSpringPlugin = false,
+            hasMicroservicesModule = true,
             detectedFrameworks = setOf(Framework.DJANGO),
             detectedBuildTools = setOf(BuildTool.POETRY),
         )
@@ -100,6 +102,7 @@ class SystemPromptIdeContextTest {
             hasPythonPlugin = false,
             hasPythonCorePlugin = false,
             hasSpringPlugin = false,
+            hasMicroservicesModule = true,
             detectedFrameworks = emptySet(),
             detectedBuildTools = emptySet(),
         )
@@ -113,6 +116,7 @@ class SystemPromptIdeContextTest {
             hasPythonPlugin = true,
             hasPythonCorePlugin = false,
             hasSpringPlugin = true,
+            hasMicroservicesModule = true,
             detectedFrameworks = setOf(Framework.SPRING, Framework.DJANGO),
             detectedBuildTools = setOf(BuildTool.GRADLE, BuildTool.POETRY),
         )

@@ -411,7 +411,8 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("| If you need to... | Search for... | Instead of... |")
         appendLine("|---|---|---|")
         if (ideContext == null || ideContext.supportsJava) {
-            appendLine("| Find API endpoints | \"endpoints\" or \"spring\" | Grepping for @PostMapping |")
+            val endpointSearch = if (ideContext?.hasMicroservicesModule == true) "\"endpoints\"" else "\"spring\""
+            appendLine("| Find API endpoints | $endpointSearch | Grepping for @PostMapping |")
             appendLine("| Understand Spring beans/config | \"spring\" | Grepping for @Bean/@Component |")
             appendLine("| Find all methods with a specific annotation | \"spring\" (annotated_methods action) | Grepping for @Transactional/@Scheduled |")
         }
@@ -440,13 +441,14 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("| Extract specific lines from large output | grep_pattern param | Piping through grep via run_command |")
         appendLine("| Create/edit a run or debug config | \"runtime_config\" | Editing .idea/runConfigurations/*.xml |")
         if (ideContext == null || ideContext.supportsJava) {
-            appendLine("| Launch an existing run configuration (Spring Boot / Application / Gradle) | runtime_exec(action=run_config, config_name=..., mode=run, wait_for_ready=true) | run_command('./gradlew bootRun') or similar — captures ports, ready signals, and errors |")
+            appendLine("| Launch an existing run configuration (Spring Boot / Application / Gradle) | runtime_exec(action=run_config, config_name=..., mode=run, wait_for_ready=true) — captures ports, ready signals, and errors | run_command('./gradlew bootRun') or similar |")
             appendLine("| Launch a Spring Boot app with authoritative readiness detection | runtime_exec(action=run_config, readiness_strategy=auto) — automatically probes /actuator/health when Spring Boot config detected | Relying on log banner alone |")
         } else {
-            appendLine("| Launch an existing run configuration | runtime_exec(action=run_config, config_name=..., mode=run, wait_for_ready=true) | run_command — captures ports, ready signals, and errors |")
+            appendLine("| Launch an existing run configuration | runtime_exec(action=run_config, config_name=..., mode=run, wait_for_ready=true) — captures ports, ready signals, and errors | run_command |")
         }
         appendLine("| Launch a run configuration in debug mode | runtime_exec(action=run_config, mode=debug, wait_for_pause=bool) | Manual launch via IDE UI |")
-        appendLine("| Stop a running configuration gracefully | runtime_exec(action=stop_run_config, config_name=..., graceful_timeout_seconds=10, force_on_timeout=true) | background_process(action=kill) or run_command |")
+        appendLine("| Stop a running IntelliJ run configuration | runtime_exec(action=stop_run_config, config_name=..., graceful_timeout_seconds=10, force_on_timeout=true) | run_command('kill <pid>') |")
+        appendLine("| Kill a background process started by run_command(background=true) | background_process(action=kill, id=bg_xxx) | run_command('kill <pid>') after manually tracking the pid |")
         appendLine("| Relaunch a running configuration | runtime_exec(action=run_config, config_name=...) — idempotent: stops any existing instance of the same configuration first, then launches fresh | Manually stop then relaunch |")
         appendLine("| Smoke-test an HTTP endpoint after launch | Chain runtime_exec(run_config, ...) then run_command('curl <url>:<port>') using the returned port | Hardcoding ports or guessing |")
         if (ideContext == null || ideContext.supportsJava) {

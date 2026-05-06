@@ -50,7 +50,11 @@ class SpringTool(
 
     override val description: String
         get() = buildString {
-            appendLine("Spring framework intelligence — beans, endpoints, configuration, JPA, security, actuator.")
+            if (includeEndpointActions) {
+                appendLine("Spring framework intelligence — beans, endpoints, configuration, JPA, security, actuator.")
+            } else {
+                appendLine("Spring framework intelligence — beans, configuration, JPA, security, actuator.")
+            }
             appendLine()
             appendLine("Actions and their parameters:")
             appendLine("- context(filter?, profile?) → Spring bean context (filter by name/type and/or @Profile value)")
