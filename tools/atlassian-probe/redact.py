@@ -122,6 +122,12 @@ class SecretMap:
 
     def __init__(self, custom_words: list[str] | None = None,
                  rng: random.Random | None = None) -> None:
+        """
+        rng: random source for custom-word replacement. Default is
+        random.SystemRandom() which is backed by os.urandom and is
+        cryptographically secure — no internal PRNG state to reconstruct.
+        Tests pass a seeded random.Random for reproducibility.
+        """
         self.host: dict[str, str] = {}
         self.email: dict[str, str] = {}
         self.issue_key: dict[str, str] = {}
@@ -138,7 +144,10 @@ class SecretMap:
         # Inverse sets — values that are already redacted placeholders
         self._redacted_values: set[str] = set()
 
-        self._rng = rng or random.Random()
+        # SystemRandom is os.urandom-backed → cryptographically secure, no
+        # MT state for an attacker to recover from observing the output.
+        # Tests can inject a seeded random.Random for reproducibility.
+        self._rng = rng or random.SystemRandom()
         # Each user entry is a SUBSTRING MARKER. The redactor finds any run of
         # [a-zA-Z0-9_\- ] characters that contains the marker anywhere inside
         # it, and redacts the whole run. Markers with non-allowed characters
