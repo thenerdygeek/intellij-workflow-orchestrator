@@ -6,14 +6,29 @@ Sprint dashboard, ticket management, branching, and commit integration.
 
 Auth: `Authorization: Bearer <PAT>`
 Base: `https://{host}/rest/api/2/`
+Audit baseline: Jira DC 10.3.16, Server-only. See `docs/research/2026-05-06-jira-recommendations.md` for the per-endpoint keep/swap/add table and `tools/atlassian-probe/Result_Jira/bundle*.txt` for the redacted probe responses.
 
 Key endpoints:
 - `GET /rest/api/2/myself` — test connection
+- `GET /rest/api/2/myself?expand=groups,applicationRoles` — onboarding banner (groups + roles)
+- `GET /rest/api/2/serverInfo` — version detection
 - `GET /rest/agile/1.0/board/{boardId}/sprint/{sprintId}/issue` — sprint tickets (filter: assignee=currentUser())
 - `GET /rest/api/2/issue/{key}?expand=issuelinks` — ticket with links
+- `GET /rest/api/2/issue/{key}?fields=…&expand=renderedFields,changelog` — combined rich fetch + history (one round-trip)
 - `POST /rest/api/2/issue/{key}/transitions` — transition status
 - `POST /rest/api/2/issue/{key}/comment` — add comment (wiki markup)
 - `POST /rest/api/2/issue/{key}/worklog` — log time
+- `POST /rest/api/2/search` — JQL search (used by `validateTicketKeys` to avoid URL-length limits)
+- `GET /rest/api/2/issue/picker?query=&showSubTasks=true&showSubTaskParent=true` — `@`-mention key-prefix suggestions
+- `GET /rest/api/2/mypermissions[?projectKey=…]` — UI button gating (5-min cache)
+- `GET /rest/api/2/field` — custom-field discovery (5-min cache, settings dropdown)
+- `GET /rest/api/2/issue/{key}/remotelink` — Confluence/external link section
+- `GET /rest/api/2/issue/{key}/watchers` + `POST` (body=`"username"`) + `DELETE ?username=` — watch toggle
+- `GET /rest/api/2/filter/favourite` + `GET /rest/api/2/filter/{id}` — Sprint-tab Saved Filters
+
+Skipped on this DC (probe-confirmed not backported): `POST /rest/api/3/search/jql`, `POST /rest/api/2/search/approximate-count`, `GET /rest/api/2/filter/search`.
+
+Server quirk: `/rest/api/2/user/search` requires `username=` (NOT `query=` — Cloud-only). `/rest/api/2/user/assignable/search` accepts both.
 
 ## Architecture
 
@@ -28,12 +43,13 @@ Phase 4 survivor: `CurrentWorkSection.showBranchPicker` keeps `runReadAction { }
 
 ## UI
 
-- `SprintDashboardPanel` — ticket list with detail panel (collapsible sections)
+- `SprintDashboardPanel` — ticket list with detail panel (collapsible sections). Adds a "Saved Filters" section above the sprint list (`SavedFiltersSection`); clicking a filter swaps the list to filter results with a "← Back to sprint" header.
 - `TicketStatusBarWidget` — shows active ticket in status bar
 - `StartWorkDialog` — branch creation + Jira transition dialog
 - `TicketDetectionPopup` — confirmation popup for branch-detected tickets (Set as Active / Dismiss)
 - `TransitionDialog` — manual status transitions
 - `JiraSearchContributorFactory` — Search Everywhere integration for tickets
+- `TicketDetailPanel` sections (lazy-loaded, dispose-cascading): `DevStatusSection`, `WorklogSection`, `ChangelogSection` (history feed), `LinkedDocsSection` (Confluence + external links). Watch toggle in the header row. Transition / Comment / Watch / Log-Work buttons are gated by `PermissionGate` against `JiraService.getMyPermissions(projectKey)` — fail-open on API error.
 - **UI Overhaul:** SprintPaginationCache (file-based cache at `~/.workflow-orchestrator/`) for sprint pagination state. Cell renderer uses left border accents by status, side-by-side SprintTimeBar, worklog table layout, and PR badge styling in DevStatusSection.
 
 ## Transitions
@@ -44,7 +60,7 @@ Endpoints:
 
 Search endpoints (via JiraSearchService):
 - `/rest/api/2/user/assignable/search?issueKey=&query=`
-- `/rest/api/2/user/search?query=`
+- `/rest/api/2/user/search?username=`  ← Server requires `username`, NOT `query` (Cloud-only)
 - `/rest/api/1.0/labels/suggest?query=` (404 => empty list fallback)
 - `/rest/api/2/groups/picker?query=`
 - `/rest/api/2/project/{key}/versions`  (5min cache)

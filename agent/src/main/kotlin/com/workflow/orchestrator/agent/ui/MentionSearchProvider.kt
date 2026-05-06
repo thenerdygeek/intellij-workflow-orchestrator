@@ -6,8 +6,10 @@ import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectRootManager
 import com.intellij.psi.search.PsiShortNamesCache
+import com.workflow.orchestrator.core.model.jira.IssueSuggestion
 import com.workflow.orchestrator.core.model.jira.JiraCommentData
 import com.workflow.orchestrator.core.model.jira.JiraTicketData
+import com.workflow.orchestrator.core.model.workflow.TicketRef
 import com.workflow.orchestrator.core.services.JiraService
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -456,14 +458,78 @@ class MentionSearchProvider(private val project: Project) {
                     .state.value.activeTicket
             } catch (_: Exception) { null }
         } else null
-        return try {
-            val jiraService = try {
-                project.getService(JiraService::class.java)
-            } catch (e: Exception) {
-                LOG.warn("MentionSearchProvider: JiraService not available: ${e.message}")
-                return "[]"
-            }
 
+        val jiraService = try {
+            project.getService(JiraService::class.java)
+        } catch (e: Exception) {
+            LOG.warn("MentionSearchProvider: JiraService not available: ${e.message}")
+            return "[]"
+        }
+
+        // Non-blank, non-keyword query: try the Jira issue-picker endpoint first.
+        // Falls back to the sprint walk if the endpoint errors (some Jira instances
+        // disable or restrict /issue/picker).
+        if (query.isNotBlank()) {
+            val pickerJson = fetchViaIssuePicker(jiraService, query)
+            if (pickerJson != null) return pickerJson
+        }
+
+        // Blank query OR issue-picker failure: existing sprint-walk filter logic.
+        return fetchViaSprintWalk(jiraService, query, activeTicketForBlank)
+    }
+
+    /**
+     * Calls `JiraService.getIssueSuggestions(query)` and serializes the result
+     * into the @-mention dropdown JSON shape. Returns null on error so the
+     * caller can fall back to the sprint walk.
+     */
+    private suspend fun fetchViaIssuePicker(
+        jiraService: JiraService,
+        query: String
+    ): String? {
+        return try {
+            val result = jiraService.getIssueSuggestions(query)
+            if (result.isError) {
+                LOG.warn(
+                    "MentionSearchProvider: getIssueSuggestions failed: ${result.summary} — falling back to sprint walk"
+                )
+                return null
+            }
+            val suggestions: List<IssueSuggestion> = result.data
+            LOG.info(
+                "MentionSearchProvider: issue-picker returned ${suggestions.size} suggestions for query '$query'"
+            )
+            buildJsonArray {
+                for (s in suggestions.take(8)) {
+                    val description = (s.summaryText ?: s.summary).take(60)
+                    add(buildJsonObject {
+                        put("type", JsonPrimitive("ticket"))
+                        put("label", JsonPrimitive(s.key))
+                        put("path", JsonPrimitive(s.key))
+                        put("description", JsonPrimitive(description))
+                        put("source", JsonPrimitive("issue_picker"))
+                    })
+                }
+            }.toString()
+        } catch (e: Exception) {
+            LOG.warn("MentionSearchProvider: issue-picker threw ${e.javaClass.simpleName}: ${e.message} — falling back to sprint walk")
+            null
+        }
+    }
+
+    /**
+     * Existing sprint-cache filter logic, refactored into a helper.
+     * Used for blank queries and as a fallback when the issue-picker endpoint
+     * is unavailable or errors. The sprint cache is pre-populated by the
+     * Sprint tab via [onSprintDataLoaded]; on a cache miss this falls through
+     * to board/sprint discovery (with double-checked locking).
+     */
+    private suspend fun fetchViaSprintWalk(
+        jiraService: JiraService,
+        query: String,
+        activeTicketForBlank: TicketRef?
+    ): String {
+        return try {
             // Load sprint tickets — mirrors the Sprint tab's logic:
             // 1. Use configured board ID from settings
             // 2. If not configured, auto-discover (prefer scrum boards)

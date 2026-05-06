@@ -29,8 +29,10 @@ import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import git4idea.repo.GitRepositoryManager
+import com.workflow.orchestrator.core.model.jira.FilterData
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.workflow.orchestrator.jira.api.dto.JiraSprint
+import com.workflow.orchestrator.jira.service.JiraServiceImpl
 import com.workflow.orchestrator.jira.service.toJiraTicketData
 import com.workflow.orchestrator.jira.service.ActiveTicketService
 import com.workflow.orchestrator.jira.service.BranchNameValidator
@@ -171,6 +173,27 @@ class SprintDashboardPanel(
     )
     private lateinit var currentWorkSection: CurrentWorkSection
     private lateinit var sprintCollapsible: CollapsibleSection
+
+    // -- Saved filters (R-ADD-7) --
+    private lateinit var savedFiltersSection: SavedFiltersSection
+    private lateinit var savedFiltersCollapsible: CollapsibleSection
+    private val filterResultsHeader = JPanel(BorderLayout()).apply {
+        isOpaque = false
+        border = JBUI.Borders.empty(4, 6)
+        isVisible = false
+    }
+    private val filterResultsTitle = JBLabel("").apply {
+        font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
+    }
+    private val backToSprintLink = JBLabel("← Back to sprint").apply {
+        foreground = StatusColors.LINK
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        border = JBUI.Borders.emptyLeft(8)
+    }
+    /** When non-null, the ticket list is showing JQL results from a saved filter rather than sprint data. */
+    private var activeFilter: FilterData? = null
+    /** Snapshot of the sprint list so we can restore it when leaving filter view. */
+    private var sprintIssuesSnapshot: List<JiraIssue> = emptyList()
 
     /** Check if a JiraIssue is a section header (used for assignee grouping). */
     private fun isHeader(issue: JiraIssue): Boolean = issue.id.startsWith("header-")
@@ -387,14 +410,44 @@ class SprintDashboardPanel(
             count = 0
         )
 
+        // Saved Filters section — populated lazily on first load. Hidden until non-empty
+        // results arrive (per R-ADD-7 spec: empty/error states hide the entire section).
+        savedFiltersSection = SavedFiltersSection(project) { filter -> onFilterClicked(filter) }
+        savedFiltersCollapsible = CollapsibleSection(
+            title = "SAVED FILTERS",
+            content = savedFiltersSection,
+            initiallyExpanded = true
+        ).apply {
+            // Stay hidden as a whole until favourites load successfully.
+            isVisible = false
+        }
+
+        // Filter-results header (with "Back to sprint" link) sits between the saved-filters
+        // section and the sprint list; visible only while a filter's JQL results are showing.
+        filterResultsHeader.add(filterResultsTitle, BorderLayout.WEST)
+        filterResultsHeader.add(backToSprintLink, BorderLayout.EAST)
+        backToSprintLink.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                exitFilterResultsView()
+            }
+        })
+
         // Left panel: stacked collapsible sections
         val leftPanel = JPanel(BorderLayout()).apply {
             isOpaque = false
             border = JBUI.Borders.empty(0, 8, 4, 0)
         }
 
-        // Current work section is fixed at top, sprint fills remaining space
-        leftPanel.add(currentWorkCollapsible, BorderLayout.NORTH)
+        // North block: currentWork + savedFilters + filterResultsHeader stacked vertically
+        val northStack = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            add(currentWorkCollapsible)
+            add(savedFiltersCollapsible)
+            add(filterResultsHeader)
+        }
+
+        leftPanel.add(northStack, BorderLayout.NORTH)
         leftPanel.add(sprintCollapsible, BorderLayout.CENTER)
 
         // Refresh current work on init
@@ -491,6 +544,8 @@ class SprintDashboardPanel(
     // ---------------------------------------------------------------
 
     fun loadData() {
+        // Reload favourites alongside the sprint refresh — they ride the same flow per spec.
+        loadFavouriteFilters()
         val settings = PluginSettings.getInstance(project)
         // Hydrate from app-level last-used board on a fresh project (e.g. new clone),
         // and persist back so subsequent loads stay project-local.
@@ -598,6 +653,100 @@ class SprintDashboardPanel(
                 }
             }
         }
+    }
+
+    // ---------------------------------------------------------------
+    // Saved filters (R-ADD-7)
+    // ---------------------------------------------------------------
+
+    private fun loadFavouriteFilters() {
+        scope.launch {
+            val service = JiraServiceImpl.getInstance(project)
+            val result = service.getFavouriteFilters()
+            if (result.isError) {
+                log.warn("[Jira:UI] Favourite filters load failed: ${result.summary}")
+            }
+            withContext(Dispatchers.EDT) {
+                savedFiltersSection.update(result)
+                // Hide the wrapping collapsible when the section itself decides to hide.
+                savedFiltersCollapsible.isVisible = savedFiltersSection.isVisible
+                revalidate()
+                repaint()
+            }
+        }
+    }
+
+    private fun onFilterClicked(filter: FilterData) {
+        setLoading(true, "Loading filter '${filter.name}'…")
+        scope.launch {
+            val service = JiraServiceImpl.getInstance(project)
+            // The list endpoint may omit JQL; fetch detail if missing.
+            val resolvedFilter = if (filter.jql.isNullOrBlank()) {
+                val detail = service.getFilter(filter.id)
+                if (detail.isError) {
+                    withContext(Dispatchers.EDT) {
+                        setLoading(false, "Filter load failed: ${detail.summary}")
+                    }
+                    return@launch
+                }
+                detail.data
+            } else filter
+
+            val jql = resolvedFilter.jql
+            if (jql.isNullOrBlank()) {
+                withContext(Dispatchers.EDT) {
+                    setLoading(false, "Filter '${resolvedFilter.name}' has no JQL.")
+                }
+                return@launch
+            }
+
+            // Use the underlying API client so the result is List<JiraIssue> and
+            // can plug straight into the existing list model + cell renderer.
+            val api = service.getApiClient()
+            if (api == null) {
+                withContext(Dispatchers.EDT) {
+                    setLoading(false, "Jira not configured.")
+                }
+                return@launch
+            }
+            val issuesResult = api.searchByJql(jql, 50)
+            withContext(Dispatchers.EDT) {
+                when (issuesResult) {
+                    is ApiResult.Success -> {
+                        if (activeFilter == null) {
+                            // First filter activation — snapshot sprint list so we can restore.
+                            sprintIssuesSnapshot = allIssues
+                        }
+                        activeFilter = resolvedFilter
+                        allIssues = issuesResult.data
+                        updateList(allIssues)
+                        // Header swap: replace sprint title with "Filter: <name>" + back link.
+                        filterResultsTitle.text = "Filter: ${resolvedFilter.name}"
+                        filterResultsHeader.isVisible = true
+                        sprintCollapsible.updateCount(allIssues.size)
+                        setLoading(false, "${allIssues.size} ticket(s) for '${resolvedFilter.name}'")
+                    }
+                    is ApiResult.Error -> {
+                        setLoading(false, "Filter run failed: ${issuesResult.message}")
+                        log.warn("[Jira:UI] Filter JQL run failed: ${issuesResult.message}")
+                    }
+                }
+            }
+        }
+    }
+
+    /** Restore the active-sprint list view after the user dismisses filter results. */
+    private fun exitFilterResultsView() {
+        if (activeFilter == null) return
+        activeFilter = null
+        filterResultsHeader.isVisible = false
+        allIssues = sprintIssuesSnapshot
+        sprintIssuesSnapshot = emptyList()
+        updateList(allIssues)
+        sprintCollapsible.updateCount(allIssues.size)
+        setLoading(false, "${allIssues.size} tickets loaded")
+        revalidate()
+        repaint()
     }
 
     /** Emit sprint tickets via EventBus so # ticket autocomplete uses cached data instead of re-fetching. */

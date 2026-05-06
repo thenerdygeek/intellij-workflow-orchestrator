@@ -13,6 +13,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -24,6 +25,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import com.intellij.openapi.diagnostic.Logger
 import java.io.IOException
 import java.net.URLEncoder
@@ -119,6 +121,19 @@ class JiraApiClient(
         log.debug("[Jira:API] GET /rest/api/2/search (jql=$jql, maxResults=$maxResults)")
         return get<JiraIssueSearchResult>(
             "/rest/api/2/search?jql=$encodedJql&maxResults=$maxResults&fields=summary,status,issuetype,priority,assignee,attachment"
+        ).map { it.issues }
+    }
+
+    /**
+     * Paged JQL search variant used by the IntelliJ Tasks integration, which calls
+     * [JiraTaskRepository.getIssues] with `(offset, limit)` and expects server-side
+     * pagination. Mirrors [searchByJql] but threads `startAt` into the query string.
+     */
+    suspend fun searchByJqlPaged(jql: String, startAt: Int, maxResults: Int): ApiResult<List<JiraIssue>> {
+        val encodedJql = URLEncoder.encode(jql, "UTF-8")
+        log.debug("[Jira:API] GET /rest/api/2/search (jql=$jql, startAt=$startAt, maxResults=$maxResults)")
+        return get<JiraIssueSearchResult>(
+            "/rest/api/2/search?jql=$encodedJql&startAt=$startAt&maxResults=$maxResults&fields=summary,status,issuetype,priority,assignee"
         ).map { it.issues }
     }
 
@@ -239,7 +254,10 @@ class JiraApiClient(
                     log.debug("[Jira:API] GET $path -> ${it.code}")
                     statusCode?.set(0, it.code)
                     when (it.code) {
-                        in 200..299 -> ApiResult.Success(it.body?.string() ?: "")
+                        in 200..299 -> {
+                            checkJsonContentType(it, path)?.let { err -> return@withContext err }
+                            ApiResult.Success(it.body?.string() ?: "")
+                        }
                         401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Jira token").also { _ ->
                             log.warn("[Jira:API] Authentication failed (401) at $path")
                         }
@@ -281,15 +299,7 @@ class JiraApiClient(
                     log.debug("[Jira:API] GET $path -> ${it.code}")
                     when (it.code) {
                         in 200..299 -> {
-                            val contentType = it.header("Content-Type") ?: ""
-                            if (contentType.isNotBlank() &&
-                                !contentType.contains("application/json", ignoreCase = true) &&
-                                !contentType.contains("text/json", ignoreCase = true)) {
-                                return@withContext ApiResult.Error(
-                                    ErrorType.PARSE_ERROR,
-                                    "Unexpected response Content-Type: $contentType (expected JSON)"
-                                )
-                            }
+                            checkJsonContentType(it, path)?.let { err -> return@withContext err }
                             val bodyStr = it.body?.string() ?: ""
                             val parsed = json.parseToJsonElement(bodyStr)
                             if (parsed is JsonObject) {
@@ -424,35 +434,39 @@ class JiraApiClient(
     /**
      * Validates ticket keys by batch search.
      * Returns a map of valid key → TicketKeyInfo. Missing keys are not in the map.
+     *
+     * Uses POST /rest/api/2/search so the JQL goes in the body and the URL-length cap
+     * (which forced an earlier `chunked(100)` GET workaround) no longer applies.
      */
     suspend fun validateTicketKeys(keys: List<String>): ApiResult<Map<String, TicketKeyInfo>> {
         if (keys.isEmpty()) return ApiResult.Success(emptyMap())
 
-        // Batch in groups of 100 (JQL IN clause limit)
-        val allResults = mutableMapOf<String, TicketKeyInfo>()
-        for (batch in keys.chunked(100)) {
-            val jql = "key in (${batch.joinToString(",")})"
-            val encodedJql = URLEncoder.encode(jql, "UTF-8")
-            log.debug("[Jira:API] Validating ${batch.size} ticket keys")
-            val result = get<JiraIssueSearchResult>(
-                "/rest/api/2/search?jql=$encodedJql&maxResults=${batch.size}&fields=summary,status"
-            )
-            when (result) {
-                is ApiResult.Success -> {
-                    for (issue in result.data.issues) {
-                        allResults[issue.key] = TicketKeyInfo(
-                            key = issue.key,
-                            summary = issue.fields.summary,
-                            status = issue.fields.status.name
-                        )
-                    }
+        val jql = "key in (${keys.joinToString(",")})"
+        val body = buildJsonObject {
+            put("jql", jql)
+            putJsonArray("fields") {
+                add("summary")
+                add("status")
+            }
+            put("maxResults", keys.size)
+        }.toString()
+        log.debug("[Jira:API] POST /rest/api/2/search (validate ${keys.size} ticket keys)")
+        return when (val result = postJson<JiraIssueSearchResult>("/rest/api/2/search", body)) {
+            is ApiResult.Success -> {
+                val map = result.data.issues.associate { issue ->
+                    issue.key to TicketKeyInfo(
+                        key = issue.key,
+                        summary = issue.fields.summary,
+                        status = issue.fields.status.name
+                    )
                 }
-                is ApiResult.Error -> {
-                    log.warn("[Jira:API] Ticket key validation failed: ${result.message}")
-                }
+                ApiResult.Success(map)
+            }
+            is ApiResult.Error -> {
+                log.warn("[Jira:API] Ticket key validation failed: ${result.message}")
+                result
             }
         }
-        return ApiResult.Success(allResults)
     }
 
     suspend fun getWorklogs(issueKey: String, maxResults: Int = 20): ApiResult<JiraWorklogResponse> {
@@ -507,15 +521,7 @@ class JiraApiClient(
                     log.debug("[Jira:API] GET $path -> ${it.code}")
                     when (it.code) {
                         in 200..299 -> {
-                            val contentType = it.header("Content-Type") ?: ""
-                            if (contentType.isNotBlank() &&
-                                !contentType.contains("application/json", ignoreCase = true) &&
-                                !contentType.contains("text/json", ignoreCase = true)) {
-                                return@withContext ApiResult.Error(
-                                    ErrorType.PARSE_ERROR,
-                                    "Unexpected response Content-Type: $contentType (expected JSON)"
-                                )
-                            }
+                            checkJsonContentType(it, path)?.let { err -> return@withContext err }
                             val bodyStr = it.body?.string() ?: ""
                             ApiResult.Success(json.decodeFromString<T>(bodyStr))
                         }
@@ -551,7 +557,14 @@ class JiraApiClient(
                 response.use {
                     log.debug("[Jira:API] POST $path -> ${it.code}")
                     when (it.code) {
-                        in 200..299 -> ApiResult.Success(Unit)
+                        in 200..299 -> {
+                            // 204 No Content has no body, no Content-Type — skip the guard for empty bodies.
+                            val len = it.body?.contentLength() ?: 0
+                            if (len > 0) {
+                                checkJsonContentType(it, path)?.let { err -> return@withContext err }
+                            }
+                            ApiResult.Success(Unit)
+                        }
                         401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Jira token").also {
                             log.warn("[Jira:API] Authentication failed (401)")
                         }
@@ -568,6 +581,220 @@ class JiraApiClient(
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Jira: ${e.message}", e)
             }
         }
+
+    /**
+     * Typed POST helper: serializes a JSON-body request and decodes the response into [T].
+     * Mirrors [get] for response-code mapping, content-type guard, and error semantics.
+     */
+    private suspend inline fun <reified T> postJson(path: String, jsonBody: String): ApiResult<T> =
+        withContext(Dispatchers.IO) {
+            try {
+                val body = jsonBody.toRequestBody("application/json".toMediaType())
+                val request = Request.Builder().url("$baseUrl$path").post(body).build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    log.debug("[Jira:API] POST $path -> ${it.code}")
+                    when (it.code) {
+                        in 200..299 -> {
+                            checkJsonContentType(it, path)?.let { err -> return@withContext err }
+                            val bodyStr = it.body?.string() ?: ""
+                            ApiResult.Success(json.decodeFromString<T>(bodyStr))
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Jira token").also {
+                            log.warn("[Jira:API] Authentication failed (401) at $path")
+                        }
+                        403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Jira permissions").also {
+                            log.warn("[Jira:API] Forbidden (403) at $path")
+                        }
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Resource not found at $path").also {
+                            log.warn("[Jira:API] Not found (404) at $path")
+                        }
+                        429 -> ApiResult.Error(ErrorType.RATE_LIMITED, "Jira rate limit exceeded").also {
+                            log.warn("[Jira:API] Rate limited (429) at $path")
+                        }
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Jira returned ${it.code}").also { _ ->
+                            log.warn("[Jira:API] Server error (${response.code}) at $path")
+                        }
+                    }
+                }
+            } catch (e: IOException) {
+                log.warn("[Jira:API] Network error at $path: ${e.message}")
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Jira: ${e.message}", e)
+            }
+        }
+
+    private suspend fun delete(path: String): ApiResult<Unit> =
+        withContext(Dispatchers.IO) {
+            try {
+                val request = Request.Builder().url("$baseUrl$path").delete().build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    log.debug("[Jira:API] DELETE $path -> ${it.code}")
+                    when (it.code) {
+                        in 200..299 -> ApiResult.Success(Unit)
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Jira token").also {
+                            log.warn("[Jira:API] Authentication failed (401) at $path")
+                        }
+                        403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Jira permissions").also {
+                            log.warn("[Jira:API] Forbidden (403) at $path")
+                        }
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Resource not found at $path").also {
+                            log.warn("[Jira:API] Not found (404) at $path")
+                        }
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Jira returned ${it.code}").also { _ ->
+                            log.warn("[Jira:API] Server error (${response.code}) at $path")
+                        }
+                    }
+                }
+            } catch (e: IOException) {
+                log.warn("[Jira:API] Network error at $path: ${e.message}")
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Jira: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Returns null when the response is OK to parse as JSON; an [ApiResult.Error] otherwise.
+     *
+     * Two failure modes covered:
+     *  - **HTML (auth-expired session redirect):** when auth expires, Jira responds 302 →
+     *    `/login.jsp?permissionViolation=true`. With `followRedirects=true` the client receives
+     *    HTML on a 200 status, and JSON parsing yields confusing errors. We map this to
+     *    [ErrorType.AUTH_FAILED] so the UI surface ("Check your Jira token in Settings") stays
+     *    correct regardless of the underlying status code.
+     *  - **Other non-JSON content types:** mapped to [ErrorType.PARSE_ERROR] like before.
+     *
+     * Empty/blank Content-Type is treated as OK because some endpoints return 204 No Content
+     * with no Content-Type at all.
+     */
+    private fun checkJsonContentType(response: Response, path: String): ApiResult.Error? {
+        val contentType = response.header("Content-Type").orEmpty()
+        if (contentType.isBlank()) return null
+        if (contentType.contains("text/html", ignoreCase = true)) {
+            log.warn("[Jira:API] Got text/html on $path — likely auth-expired login redirect.")
+            return ApiResult.Error(
+                ErrorType.AUTH_FAILED,
+                "Jira returned HTML — likely not authenticated"
+            )
+        }
+        if (!contentType.contains("application/json", ignoreCase = true) &&
+            !contentType.contains("text/json", ignoreCase = true)) {
+            return ApiResult.Error(
+                ErrorType.PARSE_ERROR,
+                "Unexpected response Content-Type: $contentType (expected JSON)"
+            )
+        }
+        return null
+    }
+
+    // ── New endpoint methods (R-PROJ extensions) ───────────────────────────────
+
+    /**
+     * `GET /rest/api/2/mypermissions[?projectKey=…]`
+     *
+     * Returns global permission flags when [projectKey] is null, project-scoped when set.
+     * Per-key shape is `{id, key, name, type, havePermission, deprecatedKey}`.
+     */
+    suspend fun getMyPermissions(projectKey: String? = null): ApiResult<JiraPermissions> {
+        val path = if (projectKey != null) {
+            "/rest/api/2/mypermissions?projectKey=${URLEncoder.encode(projectKey, "UTF-8")}"
+        } else {
+            "/rest/api/2/mypermissions"
+        }
+        log.debug("[Jira:API] GET $path")
+        return get(path)
+    }
+
+    /**
+     * `GET /rest/api/2/field` — flat array of every field (system + custom).
+     * The `custom` boolean tells the consumer whether the field id is a `customfield_*`.
+     */
+    suspend fun getFields(): ApiResult<List<JiraField>> {
+        log.debug("[Jira:API] GET /rest/api/2/field")
+        return get("/rest/api/2/field")
+    }
+
+    /**
+     * `GET /rest/api/2/issue/{key}/remotelink` — Confluence pages, web links, etc.
+     */
+    suspend fun getRemoteLinks(key: String): ApiResult<List<JiraRemoteLink>> {
+        log.debug("[Jira:API] GET /rest/api/2/issue/$key/remotelink")
+        return get("/rest/api/2/issue/$key/remotelink")
+    }
+
+    /**
+     * `GET /rest/api/2/issue/{key}/watchers`
+     */
+    suspend fun getWatchers(key: String): ApiResult<JiraWatchers> {
+        log.debug("[Jira:API] GET /rest/api/2/issue/$key/watchers")
+        return get("/rest/api/2/issue/$key/watchers")
+    }
+
+    /**
+     * `POST /rest/api/2/issue/{key}/watchers` with a JSON-string body (the username,
+     * literally a JSON string like `"jdoe"`). That's the documented Jira API shape.
+     */
+    suspend fun addWatcher(key: String, username: String): ApiResult<Unit> {
+        log.debug("[Jira:API] POST /rest/api/2/issue/$key/watchers (add $username)")
+        val body = JsonPrimitive(username).toString()
+        return post("/rest/api/2/issue/$key/watchers", body)
+    }
+
+    /**
+     * `DELETE /rest/api/2/issue/{key}/watchers?username=…`
+     */
+    suspend fun removeWatcher(key: String, username: String): ApiResult<Unit> {
+        val encoded = URLEncoder.encode(username, "UTF-8")
+        log.debug("[Jira:API] DELETE /rest/api/2/issue/$key/watchers (remove $username)")
+        return delete("/rest/api/2/issue/$key/watchers?username=$encoded")
+    }
+
+    /**
+     * `GET /rest/api/2/myself?expand=groups,applicationRoles`
+     */
+    suspend fun getMyselfExpanded(): ApiResult<JiraMyself> {
+        log.debug("[Jira:API] GET /rest/api/2/myself?expand=groups,applicationRoles")
+        return get("/rest/api/2/myself?expand=groups,applicationRoles")
+    }
+
+    /**
+     * `GET /rest/api/2/issue/picker?query=…&showSubTasks=true&showSubTaskParent=true`
+     *
+     * Used by the # ticket-mention search — flat list of every issue across every section.
+     * Sections vary by query type (key-prefix → only `History Search` returns; free-text →
+     * `History Search` + `Current Search`), so we don't index on section id.
+     */
+    suspend fun getIssueSuggestions(query: String): ApiResult<JiraIssuePickerResult> {
+        val encoded = URLEncoder.encode(query, "UTF-8")
+        log.debug("[Jira:API] GET /rest/api/2/issue/picker?query=$query")
+        return get("/rest/api/2/issue/picker?query=$encoded&showSubTasks=true&showSubTaskParent=true")
+    }
+
+    /**
+     * `GET /rest/api/2/filter/favourite` — saved JQL filters the user marked as favourite.
+     */
+    suspend fun getFavouriteFilters(): ApiResult<List<JiraFilter>> {
+        log.debug("[Jira:API] GET /rest/api/2/filter/favourite")
+        return get("/rest/api/2/filter/favourite")
+    }
+
+    /**
+     * `GET /rest/api/2/filter/{id}` — single saved filter (always carries `jql`).
+     */
+    suspend fun getFilter(id: Long): ApiResult<JiraFilter> {
+        log.debug("[Jira:API] GET /rest/api/2/filter/$id")
+        return get("/rest/api/2/filter/$id")
+    }
+
+    /**
+     * Like [getIssueWithContext] but additionally requests `expand=…,changelog`,
+     * so the detail panel gets the full activity log in one round-trip.
+     */
+    suspend fun getIssueWithContextAndChangelog(key: String): ApiResult<JiraIssueWithChangelog> {
+        val fields = "summary,description,status,priority,issuetype,assignee,reporter," +
+                "labels,components,fixVersions,comment"
+        log.debug("[Jira:API] GET /rest/api/2/issue/$key (rich + changelog)")
+        return get("/rest/api/2/issue/$key?fields=$fields&expand=renderedFields,changelog")
+    }
 }
 
 /** Escapes JQL reserved characters in user-supplied text. Shared by [JiraApiClient] and Tasks integration. */

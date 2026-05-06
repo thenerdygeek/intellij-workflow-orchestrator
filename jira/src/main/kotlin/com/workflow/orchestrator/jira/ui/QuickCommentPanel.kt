@@ -34,9 +34,10 @@ class QuickCommentPanel(private val project: Project) : JPanel(BorderLayout()), 
 
     var issueKey: String = ""
     var onCommentPosted: (() -> Unit)? = null
+    private val defaultPlaceholder = "Add a comment..."
 
     init {
-        commentField.emptyText.text = "Add a comment..."
+        commentField.emptyText.text = defaultPlaceholder
         sendButton.toolTipText = "Post comment"
         sendButton.addActionListener { postComment() }
         commentField.addActionListener { postComment() } // Enter key posts
@@ -44,6 +45,22 @@ class QuickCommentPanel(private val project: Project) : JPanel(BorderLayout()), 
         add(commentField, BorderLayout.CENTER)
         add(sendButton, BorderLayout.EAST)
         border = JBUI.Borders.empty(4, 8)
+    }
+
+    /**
+     * Enable or disable the comment input + send button. When disabling, an
+     * optional [placeholder] is shown in the field's empty-text slot to explain
+     * why (e.g. "You don't have permission to comment"). On re-enable, the
+     * default placeholder is restored.
+     */
+    fun setInputEnabled(enabled: Boolean, placeholder: String? = null) {
+        commentField.isEnabled = enabled
+        sendButton.isEnabled = enabled
+        commentField.emptyText.text = if (!enabled && !placeholder.isNullOrBlank()) {
+            placeholder
+        } else {
+            defaultPlaceholder
+        }
     }
 
     private fun postComment() {

@@ -91,7 +91,10 @@ class JiraSearchServiceImplTest {
         val request = server.takeRequest()
         assertTrue(request.path!!.startsWith("/rest/api/2/user/search"),
             "Expected /rest/api/2/user/search, got: ${request.path}")
-        assertTrue(request.path!!.contains("query=alice"))
+        assertTrue(request.path!!.contains("username=alice"),
+            "Expected username=alice (Jira Server requires username=, not query=), got: ${request.path}")
+        assertFalse(request.path!!.contains("query=alice"),
+            "user/search must not use query= (Cloud-only); got: ${request.path}")
     }
 
     // ── 3. suggestLabels — happy path ─────────────────────────────────────────

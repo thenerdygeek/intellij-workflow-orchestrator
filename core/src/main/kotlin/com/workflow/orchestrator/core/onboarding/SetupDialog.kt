@@ -9,7 +9,11 @@ import com.workflow.orchestrator.core.auth.AuthTestService
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
+import com.workflow.orchestrator.core.services.JiraService
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.ui.StatusColors
+import com.intellij.util.ui.JBUI
+import java.awt.Font
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPasswordField
@@ -65,6 +69,15 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
         val urlField = JTextField(20)
         val tokenField = JPasswordField(20)
         val statusLabel = JLabel("")
+        // Jira-only: shows groups + applicationRoles after successful auth-test.
+        // For other services it stays empty / hidden — the auth-test endpoints
+        // don't expose this metadata.
+        val jiraIdentityLabel = JLabel("").apply {
+            foreground = StatusColors.SECONDARY_TEXT
+            font = font.deriveFont(font.size2D - 1f).deriveFont(Font.PLAIN)
+            border = JBUI.Borders.emptyTop(2)
+            isVisible = false
+        }
 
         collapsibleGroup(title) {
             row("Server URL:") {
@@ -82,6 +95,8 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
                         return@button
                     }
                     statusLabel.text = "Testing..."
+                    jiraIdentityLabel.isVisible = false
+                    jiraIdentityLabel.text = ""
                     runBackgroundableTask("Testing $title", project, false) {
                         val result = runBlockingCancellable {
                             authTestService.testConnection(serviceType, url, token)
@@ -91,6 +106,11 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
                                 is ApiResult.Success -> {
                                     statusLabel.text = "Connected!"
                                     successfulTests[serviceType] = TestResult(serviceType, url, token)
+                                    if (serviceType == ServiceType.JIRA) {
+                                        // Best-effort enrichment; failures (e.g. permission gaps)
+                                        // silently leave the second line hidden.
+                                        loadJiraIdentity(jiraIdentityLabel)
+                                    }
                                 }
                                 is ApiResult.Error -> {
                                     statusLabel.text = "Failed: ${result.message}"
@@ -100,6 +120,48 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
                     }
                 }
                 cell(statusLabel)
+            }
+            if (serviceType == ServiceType.JIRA) {
+                row {
+                    cell(jiraIdentityLabel)
+                }
+            }
+        }
+    }
+
+    /** Truncate a string to [max] characters, appending an ellipsis when shortened. */
+    private fun ellipsize(s: String, max: Int): String =
+        if (s.length <= max) s else s.take(max - 1).trimEnd() + "…"
+
+    /**
+     * Fetch the current Jira user with groups + applicationRoles expanded and render
+     * a `"Member of: ... · Roles: ..."` line under the connection status.  Failures
+     * (auth still valid but `myself` returns nothing useful, or insufficient permission)
+     * leave the label hidden — the existing "Connected!" line carries forward.
+     *
+     * Threading: runBackgroundableTask hops to a pooled thread, runBlockingCancellable
+     * suspends the JiraService call; UI updates run via `invokeLater` (modality-aware).
+     */
+    private fun loadJiraIdentity(label: JLabel) {
+        runBackgroundableTask("Loading Jira identity", project, false) {
+            val result = runBlockingCancellable {
+                project.getService(JiraService::class.java).getMyselfExpanded()
+            }
+            invokeLater {
+                if (result.isError) return@invokeLater
+                val data = result.data
+                val groups = data.groups.joinToString(", ")
+                val roles = data.applicationRoles.joinToString(", ")
+                if (groups.isBlank() && roles.isBlank()) return@invokeLater
+                val combined = buildString {
+                    if (groups.isNotBlank()) append("Member of: ").append(groups)
+                    if (roles.isNotBlank()) {
+                        if (isNotEmpty()) append(" · ")
+                        append("Roles: ").append(roles)
+                    }
+                }
+                label.text = ellipsize(combined, 80)
+                label.isVisible = true
             }
         }
     }

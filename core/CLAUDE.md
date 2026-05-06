@@ -48,7 +48,26 @@ Activity-aware polling: `baseIntervalMs` (default 30s), `maxIntervalMs` (default
 ### PR creation settings
 
 - `enableAiTitleGeneration: Boolean = true` (project-level) — controls the AI-sparkle icon inside the PR title field
-- `jiraAcceptanceCriteriaFieldId: String? = null` (project-level) — Jira custom field ID for acceptance criteria (e.g. `customfield_10001`); used to enrich LLM context
+- `jiraAcceptanceCriteriaFieldId: String? = null` (project-level) — Jira custom field ID for acceptance criteria (e.g. `customfield_10001`); used to enrich LLM context. Settings UI presents a dropdown sourced from `JiraService.getFields()` (5-min cached) with a textfield fallback when discovery fails.
+
+### JiraService surface (extended 2026-05-06 audit)
+
+`core.services.JiraService` adds eleven methods to support permission-aware UI gating, on-demand custom-field discovery, history/remote-link/watcher panels, saved filters, and key-prefix mention search:
+
+| Method | Backing endpoint | Cache |
+|---|---|---|
+| `getMyPermissions(projectKey?)` | `GET /rest/api/2/mypermissions` | 5 min, keyed `projectKey ?: "_global"` |
+| `getFields()` | `GET /rest/api/2/field` | 5 min global; `JiraServiceImpl.invalidateFieldsCache()` for settings refresh button |
+| `getRemoteLinks(key)` | `GET /rest/api/2/issue/{key}/remotelink` | none |
+| `getWatchers(key)`, `addWatcher(key, user)`, `removeWatcher(key, user)` | `/rest/api/2/issue/{key}/watchers` (GET / POST `"user"` / DELETE) | none |
+| `getMyselfExpanded()` | `GET /rest/api/2/myself?expand=groups,applicationRoles` | none |
+| `getIssueSuggestions(query)` | `GET /rest/api/2/issue/picker` | none; flattens whichever sections come back |
+| `getFavouriteFilters()` / `getFilter(id)` | `/rest/api/2/filter/favourite` and `/rest/api/2/filter/{id}` | none |
+| `getTicketHistory(key)` | `GET /rest/api/2/issue/{key}?expand=renderedFields,changelog` | none; flattens histories × items into `TicketHistoryEntry` rows |
+
+Models live in `core.model.jira.*` (`MyPermissionsData`, `JiraFieldData`, `RemoteLinkData`, `WatchersData`, `MyselfData`, `IssueSuggestion`, `FilterData`, `TicketHistoryEntry`).
+
+`JiraApiClient` adds an HTML content-type guard: any 200 response with `Content-Type: text/html` (auth-expired login redirect) is mapped to `ApiResult.Error(AUTH_FAILED)` so the loop doesn't try to JSON-parse the login page.
 
 ## CredentialStore
 

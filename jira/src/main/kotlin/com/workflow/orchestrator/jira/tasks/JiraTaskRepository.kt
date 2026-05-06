@@ -1,40 +1,43 @@
 package com.workflow.orchestrator.jira.tasks
 
+import com.intellij.openapi.progress.runBlockingCancellable
 import com.intellij.tasks.Task
 import com.intellij.tasks.impl.BaseRepositoryImpl
-import com.workflow.orchestrator.jira.api.dto.JiraIssue
-import com.workflow.orchestrator.jira.api.dto.JiraIssueSearchResult
-import com.workflow.orchestrator.jira.api.escapeJql
-import com.intellij.openapi.diagnostic.Logger
-import com.workflow.orchestrator.core.http.HttpClientFactory
-import com.workflow.orchestrator.core.model.ServiceType
-import kotlinx.serialization.json.Json
-import okhttp3.OkHttpClient
-import okhttp3.Request
+import com.workflow.orchestrator.jira.api.JiraApiClient
 
 /**
  * IntelliJ Tasks integration for Jira Server.
  *
- * Extends [BaseRepositoryImpl] to appear in Tools > Tasks > Open Task.
- * Uses OkHttp directly (not the coroutine-based JiraApiClient) because the Tasks
- * framework invokes these methods on its own background threads, and there is no
- * project reference available for JiraServiceImpl.getInstance(project).
+ * Extends [BaseRepositoryImpl] to appear in Tools > Tasks > Open Task. The Tasks
+ * framework persists this repository in IDE-level settings (Tools > Tasks > Servers),
+ * so no [com.intellij.openapi.project.Project] reference is available — that rules out
+ * `project.getService(JiraServiceImpl::class.java)`.
  *
- * The HTTP client is built via [HttpClientFactory.clientFor] so that it shares the
- * plugin-wide connection pool and the full interceptor stack (auth, retry, metrics,
- * sensitive-endpoint protection). Auth reads [BaseRepositoryImpl.password] lazily
- * so it always reflects the current configured token.
+ * Instead we instantiate [JiraApiClient] directly with `(baseUrl, tokenProvider)`. The
+ * client internally uses the same `HttpClientFactory.clientFor(ServiceType.JIRA)` pool
+ * the rest of the plugin uses, so all funnel cross-cutting concerns are inherited:
+ * auth interceptor, retry, metrics, sensitive-endpoint protection, and the HTML
+ * content-type guard (which maps a 200-with-HTML auth-redirect to AUTH_FAILED).
+ *
+ * All HTTP work is delegated to [JiraTaskFunnel] (a plain class that doesn't extend the
+ * platform's heavy `BaseRepositoryImpl`), which is what tests exercise directly with
+ * `MockWebServer`. Tasks framework callbacks run on background threads, so we bridge
+ * to suspending client methods via [runBlockingCancellable] — that propagates the
+ * framework's `ProgressIndicator.cancel()` into coroutine cancellation.
  */
 class JiraTaskRepository : BaseRepositoryImpl {
 
-    private val log = Logger.getInstance(JiraTaskRepository::class.java)
-
-    private val httpClient: OkHttpClient by lazy {
-        HttpClientFactory(tokenProvider = { _ -> password })
-            .clientFor(ServiceType.JIRA)
+    private val funnel: JiraTaskFunnel by lazy {
+        val client = JiraApiClient(
+            baseUrl = url?.trimEnd('/') ?: "",
+            tokenProvider = { password }
+        )
+        JiraTaskFunnel(
+            apiClient = client,
+            baseUrlProvider = { url },
+            bridge = { block -> runBlockingCancellable { block() } }
+        )
     }
-
-    private val json = Json { ignoreUnknownKeys = true }
 
     /** No-arg constructor required by the Tasks framework for XML serialization. */
     constructor() : super()
@@ -46,84 +49,23 @@ class JiraTaskRepository : BaseRepositoryImpl {
 
     override fun clone(): JiraTaskRepository = JiraTaskRepository(this)
 
-    override fun findTask(id: String): Task? {
-        val baseUrl = url?.trimEnd('/') ?: return null
-        val path = "$baseUrl/rest/api/2/issue/$id"
-        val request = Request.Builder()
-            .url(path)
-            .get()
-            .build()
-
-        return try {
-            val response = httpClient.newCall(request).execute()
-            response.use {
-                if (it.isSuccessful) {
-                    val body = it.body?.string() ?: return null
-                    val issue = json.decodeFromString<JiraIssue>(body)
-                    JiraTask(issue, baseUrl)
-                } else null
-            }
-        } catch (e: Exception) {
-            log.debug("[Jira:Tasks] HTTP error for $path: ${e.message}")
-            null
-        }
-    }
+    override fun findTask(id: String): Task? = funnel.findTask(id)
 
     override fun getIssues(
         query: String?,
         offset: Int,
         limit: Int,
         withClosed: Boolean
-    ): Array<Task> {
-        val baseUrl = url?.trimEnd('/') ?: return emptyArray()
-
-        val jql = buildJql(query ?: "", withClosed)
-        val encodedJql = java.net.URLEncoder.encode(jql, "UTF-8")
-        val requestUrl = "$baseUrl/rest/api/2/search?jql=$encodedJql&startAt=$offset&maxResults=$limit"
-
-        val request = Request.Builder()
-            .url(requestUrl)
-            .get()
-            .build()
-
-        return try {
-            val response = httpClient.newCall(request).execute()
-            response.use {
-                if (it.isSuccessful) {
-                    val body = it.body?.string() ?: return emptyArray()
-                    val searchResult = json.decodeFromString<JiraIssueSearchResult>(body)
-                    searchResult.issues.map { issue -> JiraTask(issue, baseUrl) }.toTypedArray()
-                } else emptyArray()
-            }
-        } catch (e: Exception) {
-            log.debug("[Jira:Tasks] HTTP error for search: ${e.message}")
-            emptyArray()
-        }
-    }
+    ): Array<Task> = funnel.getIssues(query, offset, limit, withClosed)
 
     override fun createCancellableConnection(): CancellableConnection {
         return object : CancellableConnection() {
-            private var call: okhttp3.Call? = null
+            override fun doTest() = funnel.testConnection()
 
-            override fun doTest() {
-                val baseUrl = url?.trimEnd('/') ?: throw Exception("URL not configured")
-                val request = Request.Builder()
-                    .url("$baseUrl/rest/api/2/myself")
-                    .get()
-                    .build()
-
-                call = httpClient.newCall(request)
-                val response = call!!.execute()
-                response.use {
-                    if (!it.isSuccessful) {
-                        throw Exception("Connection failed: HTTP ${it.code}")
-                    }
-                }
-            }
-
-            override fun cancel() {
-                call?.cancel()
-            }
+            // runBlockingCancellable propagates ProgressIndicator cancellation through
+            // coroutine cancellation, so explicit cancel() is best-effort and not needed
+            // for typical "test connection" timeouts.
+            override fun cancel() = Unit
         }
     }
 
@@ -136,25 +78,4 @@ class JiraTaskRepository : BaseRepositoryImpl {
         val match = Regex("[A-Z][A-Z0-9]+-\\d+").find(taskName)
         return match?.value
     }
-
-    private fun buildJql(query: String, withClosed: Boolean): String {
-        val parts = mutableListOf<String>()
-
-        if (query.isNotBlank()) {
-            // If query looks like a Jira key, search by key; otherwise text search
-            if (Regex("[A-Z][A-Z0-9]+-\\d+").matches(query)) {
-                parts.add("key = \"${escapeJql(query)}\"")
-            } else {
-                parts.add("summary ~ \"${escapeJql(query)}\"")
-            }
-        }
-
-        if (!withClosed) {
-            parts.add("statusCategory != Done")
-        }
-
-        val jql = parts.joinToString(" AND ")
-        return if (jql.isNotBlank()) "$jql ORDER BY updated DESC" else "ORDER BY updated DESC"
-    }
-
 }

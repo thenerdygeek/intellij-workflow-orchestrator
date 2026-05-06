@@ -49,7 +49,7 @@ __pycache__/
 # Test/lab result artifacts
 docs/Result_*/
 tools/sourcegraph-probe/Result_*/
-tools/atlassian-probe/Result_*/bundle.unpacked/
+tools/atlassian-probe/Result_*/bundle*.unpacked/
 
 # Superpowers plans (ephemeral dev artifacts)
 docs/superpowers/plans/

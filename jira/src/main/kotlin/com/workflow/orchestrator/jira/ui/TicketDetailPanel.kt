@@ -14,6 +14,7 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.services.JiraService
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.ui.TimeFormatter
 import com.workflow.orchestrator.core.util.HtmlEscape
@@ -31,6 +32,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicReference
 import java.awt.*
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
@@ -103,8 +105,13 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
     private var currentIssueKey: String? = null
     private var currentWorklogSection: WorklogSection? = null
     private var currentDevStatusSection: DevStatusSection? = null
+    private var currentChangelogSection: ChangelogSection? = null
+    private var currentLinkedDocsSection: LinkedDocsSection? = null
     private var lazyLoadJob: Job? = null
     private val lazyScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** Cached current Jira username (for watch toggle). Populated lazily once per panel. */
+    private val currentUserName = AtomicReference<String?>(null)
 
     // Lazy-loaded section placeholders
     private val commentsPlaceholder = JPanel(BorderLayout()).apply {
@@ -124,19 +131,40 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         currentWorklogSection = null
         currentDevStatusSection?.dispose()
         currentDevStatusSection = null
+        currentChangelogSection?.dispose()
+        currentChangelogSection = null
+        currentLinkedDocsSection?.dispose()
+        currentLinkedDocsSection = null
 
         contentPanel.removeAll()
+
+        // Buttons (transition + watch) are wired to permission state once it loads.
+        val transitionBtnHolder = AtomicReference<javax.swing.JButton?>(null)
+        val watchBtnHolder = AtomicReference<javax.swing.JButton?>(null)
 
         // Immediate sections (from cached sprint data)
         addHeader(issue)
         addVerticalSpace(8)
-        addTransitionButton(issue)
+        addTransitionAndWatchButtons(issue, transitionBtnHolder, watchBtnHolder)
         addVerticalSpace(12)
         addInfoCards(issue)
         addLabelsAndComponents(issue)
         addDescription(issue)
         addSubtasks(issue)
         addDependencies(issue)
+
+        // Linked docs (lazy-loaded; section hides itself when empty)
+        addVerticalSpace(12)
+        val linkedDocsHeader = createSectionHeaderLabel("Linked Docs")
+        contentPanel.add(linkedDocsHeader)
+        linkedDocsHeader.isVisible = false
+        val linkedDocsSection = LinkedDocsSection(project)
+        currentLinkedDocsSection = linkedDocsSection
+        linkedDocsSection.onContent = { hasContent ->
+            linkedDocsHeader.isVisible = hasContent
+        }
+        addFullWidthComponent(linkedDocsSection)
+        linkedDocsSection.loadLinks(issue.key)
 
         // Dev Status (lazy-loaded via dev-status API)
         addVerticalSpace(12)
@@ -153,6 +181,14 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         currentWorklogSection = worklogSection
         addFullWidthComponent(worklogSection)
         worklogSection.loadWorklogs(issue.key)
+
+        // Changelog feed (lazy-loaded)
+        addVerticalSpace(12)
+        addSectionHeader("History")
+        val changelogSection = ChangelogSection(project)
+        currentChangelogSection = changelogSection
+        addFullWidthComponent(changelogSection)
+        changelogSection.loadHistory(issue.key)
 
         // Lazy-loaded sections (show placeholders, fetch in background)
         if (issue.fields.attachment.isNotEmpty()) {
@@ -183,9 +219,17 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
 
         // Lazy load comments
         lazyLoadComments(issue.key)
+
+        // Permission gating + initial watch state
+        loadPermissionsAndApplyGating(issue, transitionBtnHolder, watchBtnHolder)
+        loadInitialWatchState(issue, watchBtnHolder)
     }
 
-    private fun addTransitionButton(issue: JiraIssue) {
+    private fun addTransitionAndWatchButtons(
+        issue: JiraIssue,
+        transitionBtnHolder: AtomicReference<javax.swing.JButton?>,
+        watchBtnHolder: AtomicReference<javax.swing.JButton?>
+    ) {
         val buttonPanel = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
             isOpaque = false
         }
@@ -202,6 +246,18 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
             }
         }
         buttonPanel.add(transitionBtn)
+        transitionBtnHolder.set(transitionBtn)
+
+        // Watch button. Initial label is neutral; loadInitialWatchState() flips it
+        // to "Watching" or "Watch" once getWatchers() returns. Permission check
+        // may hide it entirely.
+        val watchBtn = javax.swing.JButton("👁 Watch").apply {
+            border = JBUI.Borders.empty(2, 8)
+            toolTipText = "Add yourself as a watcher"
+            addActionListener { onWatchButtonClicked(issue, this) }
+        }
+        buttonPanel.add(watchBtn)
+        watchBtnHolder.set(watchBtn)
 
         val jiraUrl = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(
             project
@@ -219,6 +275,134 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         }
 
         addFullWidthComponent(buttonPanel)
+    }
+
+    /**
+     * Loads `MyPermissions` for the issue's project and applies gating to the
+     * transition button, comment input, and watch button. Fail-open on error.
+     */
+    private fun loadPermissionsAndApplyGating(
+        issue: JiraIssue,
+        transitionBtnHolder: AtomicReference<javax.swing.JButton?>,
+        watchBtnHolder: AtomicReference<javax.swing.JButton?>
+    ) {
+        val projectKey = issue.key.substringBefore("-")
+        lazyScope.launch {
+            val service = project.getService(JiraService::class.java)
+            val result = service.getMyPermissions(projectKey)
+            val gate = if (result.isError) {
+                log.warn("[Jira:UI] Failed to load permissions for $projectKey: ${result.summary} — failing open")
+                PermissionGate.PERMISSIVE
+            } else {
+                PermissionGate(result.data)
+            }
+            withContext(Dispatchers.EDT) {
+                if (currentIssueKey != issue.key) return@withContext
+                applyGating(gate, transitionBtnHolder.get(), watchBtnHolder.get())
+            }
+        }
+    }
+
+    private fun applyGating(
+        gate: PermissionGate,
+        transitionBtn: javax.swing.JButton?,
+        watchBtn: javax.swing.JButton?
+    ) {
+        // Transition: disable + tooltip
+        transitionBtn?.let {
+            if (!gate.canTransition) {
+                it.isEnabled = false
+                it.toolTipText = "You don't have permission to transition this issue"
+            }
+        }
+        // Comment: disable input + placeholder
+        if (!gate.canComment) {
+            quickCommentPanel.setInputEnabled(false, "You don't have permission to comment")
+        } else {
+            quickCommentPanel.setInputEnabled(true)
+        }
+        // Watch: hide entirely if no permission
+        watchBtn?.isVisible = gate.canViewWatchers
+    }
+
+    /**
+     * Fetches the watcher list once, sets the initial button label and tooltip.
+     */
+    private fun loadInitialWatchState(issue: JiraIssue, watchBtnHolder: AtomicReference<javax.swing.JButton?>) {
+        lazyScope.launch {
+            val service = project.getService(JiraService::class.java)
+            val result = service.getWatchers(issue.key)
+            withContext(Dispatchers.EDT) {
+                if (currentIssueKey != issue.key) return@withContext
+                val btn = watchBtnHolder.get() ?: return@withContext
+                if (result.isError) {
+                    log.warn("[Jira:UI] Failed to load watchers for ${issue.key}: ${result.summary}")
+                    return@withContext
+                }
+                applyWatchState(btn, result.data.isWatching, result.data.watchCount)
+            }
+        }
+    }
+
+    private fun applyWatchState(btn: javax.swing.JButton, isWatching: Boolean, watchCount: Int) {
+        btn.text = if (isWatching) "👁 Watching" else "👁 Watch"
+        btn.toolTipText = if (watchCount >= 0) {
+            "Watching: $watchCount user${if (watchCount == 1) "" else "s"}"
+        } else {
+            "Add yourself as a watcher"
+        }
+    }
+
+    private fun onWatchButtonClicked(issue: JiraIssue, btn: javax.swing.JButton) {
+        btn.isEnabled = false
+        lazyScope.launch {
+            val service = project.getService(JiraService::class.java)
+            // Resolve current user lazily (cache on this panel)
+            val username = currentUserName.get() ?: run {
+                val me = service.getMyselfExpanded()
+                if (me.isError) {
+                    log.warn("[Jira:UI] Failed to resolve current user for watch toggle: ${me.summary}")
+                    withContext(Dispatchers.EDT) { btn.isEnabled = true }
+                    return@launch
+                }
+                currentUserName.compareAndSet(null, me.data.name)
+                me.data.name
+            }
+
+            // Need current state to decide add vs remove
+            val before = service.getWatchers(issue.key)
+            val isWatching = !before.isError && before.data.isWatching
+            val toggleResult = if (isWatching) {
+                service.removeWatcher(issue.key, username)
+            } else {
+                service.addWatcher(issue.key, username)
+            }
+            if (toggleResult.isError) {
+                log.warn("[Jira:UI] Watch toggle failed for ${issue.key}: ${toggleResult.summary}")
+            }
+
+            // Re-fetch to drive the new label/tooltip
+            val after = service.getWatchers(issue.key)
+            withContext(Dispatchers.EDT) {
+                if (currentIssueKey == issue.key) {
+                    if (!after.isError) applyWatchState(btn, after.data.isWatching, after.data.watchCount)
+                }
+                btn.isEnabled = true
+            }
+        }
+    }
+
+    /**
+     * Returns a section-header label that the caller can flip visible/hidden;
+     * useful when the section content (e.g. linked docs) may turn out to be empty.
+     */
+    private fun createSectionHeaderLabel(text: String): JBLabel {
+        return JBLabel(text.uppercase()).apply {
+            font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
+            foreground = StatusColors.SECONDARY_TEXT
+            border = JBUI.Borders.emptyLeft(2)
+            alignmentX = Component.LEFT_ALIGNMENT
+        }
     }
 
     private fun addLabelsAndComponents(issue: JiraIssue) {
@@ -669,6 +853,10 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         currentWorklogSection = null
         currentDevStatusSection?.dispose()
         currentDevStatusSection = null
+        currentChangelogSection?.dispose()
+        currentChangelogSection = null
+        currentLinkedDocsSection?.dispose()
+        currentLinkedDocsSection = null
         quickCommentPanel.dispose()
     }
 

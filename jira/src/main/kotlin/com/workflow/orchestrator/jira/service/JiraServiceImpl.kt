@@ -13,19 +13,29 @@ import com.workflow.orchestrator.core.model.jira.DevStatusBuildData
 import com.workflow.orchestrator.core.model.jira.DevStatusBundle
 import com.workflow.orchestrator.core.model.jira.DevStatusCommitData
 import com.workflow.orchestrator.core.model.jira.DevStatusDeploymentData
+import com.workflow.orchestrator.core.model.jira.FilterData
+import com.workflow.orchestrator.core.model.jira.IssueSuggestion
 import com.workflow.orchestrator.core.model.jira.JiraBoardSummary
 import com.workflow.orchestrator.core.model.jira.DevStatusPrData
 import com.workflow.orchestrator.core.model.jira.DevStatusReviewData
 import com.workflow.orchestrator.core.model.jira.JiraCommentData
 import com.workflow.orchestrator.core.model.jira.JiraAttachmentData
+import com.workflow.orchestrator.core.model.jira.JiraFieldData
 import com.workflow.orchestrator.core.model.jira.JiraLinkedIssueRef
 import com.workflow.orchestrator.core.model.jira.JiraSubtaskRef
 import com.workflow.orchestrator.core.model.jira.JiraTicketData
 import com.workflow.orchestrator.core.model.jira.FieldValue
+import com.workflow.orchestrator.core.model.jira.MyPermissionsData
+import com.workflow.orchestrator.core.model.jira.MyselfData
+import com.workflow.orchestrator.core.model.jira.PermissionFlag
+import com.workflow.orchestrator.core.model.jira.RemoteLinkData
+import com.workflow.orchestrator.core.model.jira.TicketHistoryEntry
 import com.workflow.orchestrator.core.model.jira.TransitionInput
 import com.workflow.orchestrator.core.model.jira.TransitionMeta
 import com.workflow.orchestrator.core.model.jira.SprintData
 import com.workflow.orchestrator.core.model.jira.StartWorkResultData
+import com.workflow.orchestrator.core.model.jira.WatcherUser
+import com.workflow.orchestrator.core.model.jira.WatchersData
 import com.workflow.orchestrator.core.model.jira.WorklogData
 import com.workflow.orchestrator.core.services.JiraService
 import com.workflow.orchestrator.core.services.SessionDownloadDir
@@ -34,6 +44,7 @@ import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.jira.api.JiraApiClient
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Unified Jira service implementation used by both UI panels and AI agent.
@@ -48,11 +59,18 @@ class JiraServiceImpl(private val project: Project) : JiraService {
     private val credentialStore = CredentialStore()
     private val settings get() = PluginSettings.getInstance(project)
 
+    /**
+     * Test seam: when non-null, [client] returns this instance instead of building one
+     * from [PluginSettings] + [CredentialStore]. Mirrors [JiraSearchServiceImpl.testClient].
+     */
+    internal var testClient: JiraApiClient? = null
+
     @Volatile private var cachedClient: JiraApiClient? = null
     @Volatile private var cachedBaseUrl: String? = null
 
     private val client: JiraApiClient?
         get() {
+            testClient?.let { return it }
             val url = settings.connections.jiraUrl.orEmpty().trimEnd('/')
             if (url.isBlank()) return null
             if (url != cachedBaseUrl || cachedClient == null) {
@@ -1123,6 +1141,429 @@ class JiraServiceImpl(private val project: Project) : JiraService {
             else FieldValue.Text(v.toString())
         }
         else -> FieldValue.Text(v.toString())
+    }
+
+    // ── Caches for new endpoints ─────────────────────────────────────────
+
+    private data class CacheEntry<T>(val value: T, val expiresAt: Long)
+
+    private val permissionsCache = ConcurrentHashMap<String, CacheEntry<MyPermissionsData>>()
+
+    @Volatile private var fieldsCache: CacheEntry<List<JiraFieldData>>? = null
+
+    private val cacheTtlMs = 5 * 60_000L
+
+    // ── New endpoint methods ─────────────────────────────────────────────
+
+    override suspend fun getMyPermissions(projectKey: String?): ToolResult<MyPermissionsData> {
+        val cacheKey = projectKey ?: "_global"
+        val now = System.currentTimeMillis()
+        permissionsCache[cacheKey]?.let { entry ->
+            if (entry.expiresAt > now) {
+                return ToolResult.success(
+                    data = entry.value,
+                    summary = "Found ${entry.value.permissions.size} permission(s) " +
+                        (if (projectKey != null) "for project $projectKey" else "globally") + " (cached)."
+                )
+            }
+        }
+
+        val api = client ?: return ToolResult(
+            data = MyPermissionsData(emptyMap()),
+            summary = "Jira not configured. Cannot fetch permissions.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        return when (val result = api.getMyPermissions(projectKey)) {
+            is ApiResult.Success -> {
+                val filtered = result.data.permissions.entries
+                    .filter { (_, p) -> !p.deprecatedKey }
+                    .associate { (k, p) ->
+                        k to PermissionFlag(
+                            key = p.key.ifBlank { k },
+                            name = p.name,
+                            havePermission = p.havePermission,
+                            deprecated = p.deprecatedKey
+                        )
+                    }
+                val data = MyPermissionsData(filtered)
+                permissionsCache[cacheKey] = CacheEntry(data, now + cacheTtlMs)
+                ToolResult.success(
+                    data = data,
+                    summary = "Found ${data.permissions.size} permission(s) " +
+                        (if (projectKey != null) "for project $projectKey" else "globally") + "."
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Failed to fetch permissions: ${result.message}")
+                ToolResult(
+                    data = MyPermissionsData(emptyMap()),
+                    summary = "Error fetching permissions: ${result.message}",
+                    isError = true,
+                    hint = "Check Jira connection in Settings."
+                )
+            }
+        }
+    }
+
+    /**
+     * Force the next [getFields] call to bypass the 5-min cache.
+     *
+     * Used by the settings UI's "Refresh fields" button so a freshly-added custom
+     * field shows up in the picker without waiting for cache expiry.
+     */
+    fun invalidateFieldsCache() {
+        fieldsCache = null
+    }
+
+    override suspend fun getFields(): ToolResult<List<JiraFieldData>> {
+        val now = System.currentTimeMillis()
+        fieldsCache?.let { entry ->
+            if (entry.expiresAt > now) {
+                return ToolResult.success(
+                    data = entry.value,
+                    summary = "Found ${entry.value.size} field(s) (cached)."
+                )
+            }
+        }
+
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Jira not configured. Cannot fetch fields.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        return when (val result = api.getFields()) {
+            is ApiResult.Success -> {
+                val fields = result.data.map { f ->
+                    JiraFieldData(
+                        id = f.id,
+                        name = f.name,
+                        isCustom = f.custom,
+                        schemaType = f.schema?.type
+                    )
+                }
+                fieldsCache = CacheEntry(fields, now + cacheTtlMs)
+                ToolResult.success(
+                    data = fields,
+                    summary = "Found ${fields.size} field(s)."
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Failed to fetch fields: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching fields: ${result.message}",
+                    isError = true,
+                    hint = "Check Jira connection in Settings."
+                )
+            }
+        }
+    }
+
+    override suspend fun getRemoteLinks(key: String): ToolResult<List<RemoteLinkData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Jira not configured. Cannot fetch remote links for $key.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        return when (val result = api.getRemoteLinks(key)) {
+            is ApiResult.Success -> {
+                val links = result.data.map { l ->
+                    RemoteLinkData(
+                        id = l.id,
+                        applicationType = l.application?.type,
+                        applicationName = l.application?.name,
+                        relationship = l.relationship,
+                        url = l.`object`?.url ?: "",
+                        title = l.`object`?.title
+                    )
+                }
+                ToolResult.success(
+                    data = links,
+                    summary = "Found ${links.size} remote link(s) for $key."
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Failed to fetch remote links for $key: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching remote links for $key: ${result.message}",
+                    isError = true,
+                    hint = "Verify the ticket key is correct."
+                )
+            }
+        }
+    }
+
+    override suspend fun getWatchers(key: String): ToolResult<WatchersData> {
+        val api = client ?: return ToolResult(
+            data = WatchersData(0, false, emptyList()),
+            summary = "Jira not configured. Cannot fetch watchers for $key.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        return when (val result = api.getWatchers(key)) {
+            is ApiResult.Success -> {
+                val data = WatchersData(
+                    watchCount = result.data.watchCount,
+                    isWatching = result.data.isWatching,
+                    watchers = result.data.watchers.map { w ->
+                        WatcherUser(name = w.name, displayName = w.displayName, emailAddress = w.emailAddress)
+                    }
+                )
+                ToolResult.success(
+                    data = data,
+                    summary = "$key has ${data.watchCount} watcher(s)."
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Failed to fetch watchers for $key: ${result.message}")
+                ToolResult(
+                    data = WatchersData(0, false, emptyList()),
+                    summary = "Error fetching watchers for $key: ${result.message}",
+                    isError = true,
+                    hint = "Verify the ticket key is correct."
+                )
+            }
+        }
+    }
+
+    override suspend fun addWatcher(key: String, username: String): ToolResult<Unit> {
+        val api = client ?: return ToolResult(
+            data = Unit,
+            summary = "Jira not configured. Cannot add watcher to $key.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        return when (val result = api.addWatcher(key, username)) {
+            is ApiResult.Success -> ToolResult.success(
+                data = Unit,
+                summary = "Added $username as a watcher on $key."
+            )
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Failed to add watcher $username to $key: ${result.message}")
+                ToolResult(
+                    data = Unit,
+                    summary = "Error adding watcher $username to $key: ${result.message}",
+                    isError = true,
+                    hint = "Verify the username and ticket key are correct."
+                )
+            }
+        }
+    }
+
+    override suspend fun removeWatcher(key: String, username: String): ToolResult<Unit> {
+        val api = client ?: return ToolResult(
+            data = Unit,
+            summary = "Jira not configured. Cannot remove watcher from $key.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        return when (val result = api.removeWatcher(key, username)) {
+            is ApiResult.Success -> ToolResult.success(
+                data = Unit,
+                summary = "Removed $username from watchers on $key."
+            )
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Failed to remove watcher $username from $key: ${result.message}")
+                ToolResult(
+                    data = Unit,
+                    summary = "Error removing watcher $username from $key: ${result.message}",
+                    isError = true,
+                    hint = "Verify the username and ticket key are correct."
+                )
+            }
+        }
+    }
+
+    override suspend fun getMyselfExpanded(): ToolResult<MyselfData> {
+        val api = client ?: return ToolResult(
+            data = MyselfData(name = "", displayName = ""),
+            summary = "Jira not configured.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        return when (val result = api.getMyselfExpanded()) {
+            is ApiResult.Success -> {
+                val m = result.data
+                val data = MyselfData(
+                    name = m.name,
+                    displayName = m.displayName,
+                    emailAddress = m.emailAddress,
+                    groups = m.groups?.items?.map { it.name }.orEmpty(),
+                    applicationRoles = m.applicationRoles?.items?.map { it.name }.orEmpty()
+                )
+                ToolResult.success(
+                    data = data,
+                    summary = "Current user: ${data.displayName} (${data.name}); " +
+                        "${data.groups.size} group(s), ${data.applicationRoles.size} role(s)."
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Failed to fetch myself: ${result.message}")
+                ToolResult(
+                    data = MyselfData(name = "", displayName = ""),
+                    summary = "Error fetching current user: ${result.message}",
+                    isError = true,
+                    hint = "Check Jira connection in Settings."
+                )
+            }
+        }
+    }
+
+    override suspend fun getIssueSuggestions(query: String): ToolResult<List<IssueSuggestion>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Jira not configured.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        return when (val result = api.getIssueSuggestions(query)) {
+            is ApiResult.Success -> {
+                // Flatten across every section — key-prefix queries return only History Search,
+                // free-text queries return both History Search and Current Search.
+                val suggestions = result.data.sections.flatMap { section ->
+                    section.issues.map { e ->
+                        IssueSuggestion(
+                            key = e.key,
+                            summary = e.summary,
+                            summaryText = e.summaryText,
+                            iconUrl = e.img
+                        )
+                    }
+                }
+                ToolResult.success(
+                    data = suggestions,
+                    summary = "Found ${suggestions.size} issue suggestion(s) for '$query'."
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Failed to fetch issue suggestions for '$query': ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching issue suggestions: ${result.message}",
+                    isError = true,
+                    hint = "Check Jira connection in Settings."
+                )
+            }
+        }
+    }
+
+    override suspend fun getFavouriteFilters(): ToolResult<List<FilterData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Jira not configured.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        return when (val result = api.getFavouriteFilters()) {
+            is ApiResult.Success -> {
+                val filters = result.data.mapNotNull { f -> f.toFilterData() }
+                ToolResult.success(
+                    data = filters,
+                    summary = "Found ${filters.size} favourite filter(s)."
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Failed to fetch favourite filters: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching favourite filters: ${result.message}",
+                    isError = true,
+                    hint = "Check Jira connection in Settings."
+                )
+            }
+        }
+    }
+
+    override suspend fun getFilter(id: Long): ToolResult<FilterData> {
+        val api = client ?: return ToolResult(
+            data = FilterData(id = id, name = ""),
+            summary = "Jira not configured.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        return when (val result = api.getFilter(id)) {
+            is ApiResult.Success -> {
+                val data = result.data.toFilterData() ?: FilterData(id = id, name = "")
+                ToolResult.success(
+                    data = data,
+                    summary = "Filter $id: ${data.name}."
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Failed to fetch filter $id: ${result.message}")
+                ToolResult(
+                    data = FilterData(id = id, name = ""),
+                    summary = "Error fetching filter $id: ${result.message}",
+                    isError = true,
+                    hint = "Verify the filter id is correct."
+                )
+            }
+        }
+    }
+
+    override suspend fun getTicketHistory(key: String): ToolResult<List<TicketHistoryEntry>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Jira not configured. Cannot fetch history for $key.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        return when (val result = api.getIssueWithContextAndChangelog(key)) {
+            is ApiResult.Success -> {
+                val histories = result.data.changelog?.histories.orEmpty()
+                val entries = histories.flatMap { h ->
+                    h.items.map { item ->
+                        TicketHistoryEntry(
+                            actorDisplayName = h.author?.displayName ?: h.author?.name ?: "Unknown",
+                            createdAt = h.created,
+                            field = item.field,
+                            oldValue = item.fromString,
+                            newValue = item.toString
+                        )
+                    }
+                }
+                ToolResult.success(
+                    data = entries,
+                    summary = "Found ${entries.size} history entry(ies) for $key."
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Failed to fetch history for $key: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching history for $key: ${result.message}",
+                    isError = true,
+                    hint = "Verify the ticket key is correct."
+                )
+            }
+        }
+    }
+
+    private fun com.workflow.orchestrator.jira.api.dto.JiraFilter.toFilterData(): FilterData? {
+        val parsedId = id.toLongOrNull() ?: return null
+        return FilterData(
+            id = parsedId,
+            name = name,
+            description = description?.takeIf { it.isNotBlank() },
+            jql = jql,
+            viewUrl = viewUrl,
+            owner = owner?.displayName?.takeIf { it.isNotBlank() } ?: owner?.name?.takeIf { it.isNotBlank() }
+        )
     }
 
     companion object {

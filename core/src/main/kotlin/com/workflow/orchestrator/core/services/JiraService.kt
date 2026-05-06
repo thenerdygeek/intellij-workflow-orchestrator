@@ -9,12 +9,20 @@ import com.workflow.orchestrator.core.model.jira.DevStatusCommitData
 import com.workflow.orchestrator.core.model.jira.DevStatusDeploymentData
 import com.workflow.orchestrator.core.model.jira.DevStatusPrData
 import com.workflow.orchestrator.core.model.jira.DevStatusReviewData
+import com.workflow.orchestrator.core.model.jira.FilterData
+import com.workflow.orchestrator.core.model.jira.IssueSuggestion
 import com.workflow.orchestrator.core.model.jira.JiraBoardSummary
 import com.workflow.orchestrator.core.model.jira.JiraCommentData
+import com.workflow.orchestrator.core.model.jira.JiraFieldData
 import com.workflow.orchestrator.core.model.jira.JiraTicketData
+import com.workflow.orchestrator.core.model.jira.MyPermissionsData
+import com.workflow.orchestrator.core.model.jira.MyselfData
+import com.workflow.orchestrator.core.model.jira.RemoteLinkData
+import com.workflow.orchestrator.core.model.jira.TicketHistoryEntry
 import com.workflow.orchestrator.core.model.jira.TransitionMeta
 import com.workflow.orchestrator.core.model.jira.SprintData
 import com.workflow.orchestrator.core.model.jira.StartWorkResultData
+import com.workflow.orchestrator.core.model.jira.WatchersData
 import com.workflow.orchestrator.core.model.jira.WorklogData
 
 /**
@@ -98,4 +106,37 @@ interface JiraService {
 
     /** Fetch all six dev-status categories in parallel and return as a bundle. */
     suspend fun getFullDevStatus(issueId: String): ToolResult<DevStatusBundle>
+
+    /** Get current user's permissions, optionally scoped to a project. 5-min cache. */
+    suspend fun getMyPermissions(projectKey: String? = null): ToolResult<MyPermissionsData>
+
+    /** Get all Jira fields (system + custom). 5-min cache. */
+    suspend fun getFields(): ToolResult<List<JiraFieldData>>
+
+    /** Get remote links (Confluence pages, web links, etc.) for an issue. */
+    suspend fun getRemoteLinks(key: String): ToolResult<List<RemoteLinkData>>
+
+    /** Get the watcher list for an issue. */
+    suspend fun getWatchers(key: String): ToolResult<WatchersData>
+
+    /** Add a user (by Jira username) as a watcher on an issue. */
+    suspend fun addWatcher(key: String, username: String): ToolResult<Unit>
+
+    /** Remove a user (by Jira username) from an issue's watcher list. */
+    suspend fun removeWatcher(key: String, username: String): ToolResult<Unit>
+
+    /** Get the current user with groups + applicationRoles expanded. */
+    suspend fun getMyselfExpanded(): ToolResult<MyselfData>
+
+    /** Issue-picker suggestions for the # ticket-mention search. Flattened across sections. */
+    suspend fun getIssueSuggestions(query: String): ToolResult<List<IssueSuggestion>>
+
+    /** Saved JQL filters the user marked as favourite. */
+    suspend fun getFavouriteFilters(): ToolResult<List<FilterData>>
+
+    /** Single saved JQL filter (always carries the JQL string). */
+    suspend fun getFilter(id: Long): ToolResult<FilterData>
+
+    /** Flattened changelog: one entry per (history, item) pair, oldest first as Jira returns them. */
+    suspend fun getTicketHistory(key: String): ToolResult<List<TicketHistoryEntry>>
 }

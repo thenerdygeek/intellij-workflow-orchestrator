@@ -119,7 +119,7 @@ class JiraSearchServiceImpl : JiraSearchService {
             summary = notConfigured(),
             isError = true
         )
-        val path = "/rest/api/2/user/search?query=${enc(query)}&maxResults=$limit"
+        val path = "/rest/api/2/user/search?username=${enc(query)}&maxResults=$limit"
         log.debug("[JiraSearch] GET $path")
         return when (val result = api.getRawString(path)) {
             is ApiResult.Error -> apiError(result, emptyList())
