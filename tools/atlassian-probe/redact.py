@@ -42,11 +42,48 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import re
+import string
 import sys
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+
+
+# ---------------------------------------------------------------------------
+# CUSTOM REDACT WORDS — edit this list freely
+# ---------------------------------------------------------------------------
+# Any word in this list gets replaced wherever it appears in the probe output
+# (case-insensitive, word-boundary matched) with a same-length random string.
+#
+# What "same-length random" means in practice:
+#   "AcmeCorp"        → "QtZkLpAr"      (8 chars in, 8 chars out; case preserved)
+#   "MYPROJECT"       → "ZWQXKFTLG"     (all uppercase in, all uppercase out)
+#   "release-2.5.0"   → "qfovwhe-2.5.0" (letters randomized, digits/punct kept)
+#
+# Replacement is **stable per run** — the same input word always maps to the
+# same random output across every file, so cross-file references stay intact
+# (e.g., if "MyProduct" appears in 3 different responses, they'll all show the
+# same fake string). The mapping is regenerated from scratch on each run, so
+# the random string is different every time you run redact.py.
+#
+# Word-boundary matching means:
+#   - "ACME" in this list matches "ACME-1234" (boundary between E and -)
+#   - "ACME" does NOT match "ACMECORP" (no boundary in the middle)
+#   - If you want "ACME" to also catch "ACMECORP", add both words explicitly.
+#
+# Add company names, internal product names, code names, team names, repo
+# names — anything that would identify your environment in a free-text field.
+# Things already handled by the structured redactors (hostnames, emails,
+# issue keys, user names, free-text descriptions) don't need to be here.
+CUSTOM_REDACT_WORDS: list[str] = [
+    # Examples — replace with your own. Delete the example lines before sharing.
+    # "AcmeCorp",
+    # "Internal Project Name",
+    # "redroom",
+]
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +98,8 @@ class SecretMap:
     getting re-mapped to `user-3@…` if the regex sweep runs twice).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, custom_words: list[str] | None = None,
+                 rng: random.Random | None = None) -> None:
         self.host: dict[str, str] = {}
         self.email: dict[str, str] = {}
         self.issue_key: dict[str, str] = {}
@@ -72,8 +110,27 @@ class SecretMap:
         self.branch: dict[str, str] = {}
         self.avatar: dict[str, str] = {}
         self.url_fallback: dict[str, str] = {}
+        # Custom-word mapping is keyed by the lowercased original so case
+        # variants ("AcmeCorp" / "ACMECORP") collapse to the same redaction.
+        self.custom: dict[str, str] = {}
         # Inverse sets — values that are already redacted placeholders
         self._redacted_values: set[str] = set()
+
+        self._rng = rng or random.Random()
+        # Build a single regex covering every custom word, longest-first so
+        # "AcmeCorp" wins over "Acme" if both are listed.
+        cleaned = [w for w in (custom_words or []) if w and w.strip()]
+        cleaned.sort(key=len, reverse=True)
+        self._custom_words = cleaned
+        if cleaned:
+            # \b only fires between word-chars and non-word-chars. For words
+            # containing spaces or punctuation (e.g., "Internal Project Name")
+            # we lean on the literal-text match without forcing \b at internal
+            # boundaries — we only \b-anchor the outer ends.
+            joined = "|".join(re.escape(w) for w in cleaned)
+            self._custom_re = re.compile(rf"(?<!\w)(?:{joined})(?!\w)", re.IGNORECASE)
+        else:
+            self._custom_re = None
 
     def _remember(self, redacted: str) -> str:
         self._redacted_values.add(redacted)
@@ -165,6 +222,39 @@ class SecretMap:
             self.url_fallback[url] = self._remember(redacted)
         return self.url_fallback[url]
 
+    def map_custom_word(self, original: str) -> str:
+        """Generate (and cache) a same-length random replacement for a custom word.
+
+        Letters become random letters with case preserved, digits become random
+        digits, anything else (spaces, hyphens, periods) is kept verbatim. The
+        same input is always mapped to the same output within one run.
+        """
+        # Case-insensitive lookup so "AcmeCorp" and "ACMECORP" share a redaction
+        cache_key = original.lower()
+        if cache_key in self.custom:
+            return self.custom[cache_key]
+        if original in self._redacted_values:
+            return original
+        chars: list[str] = []
+        for ch in original:
+            if ch.isupper():
+                chars.append(self._rng.choice(string.ascii_uppercase))
+            elif ch.islower():
+                chars.append(self._rng.choice(string.ascii_lowercase))
+            elif ch.isdigit():
+                chars.append(self._rng.choice(string.digits))
+            else:
+                chars.append(ch)
+        replacement = "".join(chars)
+        self.custom[cache_key] = self._remember(replacement)
+        return replacement
+
+    def apply_custom_words(self, s: str) -> str:
+        """Replace every match of the configured custom-word regex in `s`."""
+        if self._custom_re is None:
+            return s
+        return self._custom_re.sub(lambda m: self.map_custom_word(m.group(0)), s)
+
     # Returns *all* mappings as flat str→str pairs (longest-first) for summary.md text replace.
     def all_pairs(self) -> list[tuple[str, str]]:
         pairs: list[tuple[str, str]] = []
@@ -218,7 +308,16 @@ class Redactor:
         self.source_host = source_host
 
     def redact_string(self, s: str) -> str:
-        # Always: known hosts → mapped
+        # Order matters here:
+        #   1. Hostname substring replace runs FIRST so a custom word that
+        #      happens to overlap the host (e.g. "AcmeCorp" inside
+        #      "jira.acmecorp.com") doesn't shred the host pattern before the
+        #      structured replacer sees it. After this pass the host is the
+        #      clean placeholder "jira.redacted.example".
+        #   2. URL/email/issue-key structured replacements run next.
+        #   3. Custom words run LAST so they can only catch what the
+        #      structured replacers left behind (free-text fields, error
+        #      messages, label values, custom workflow status names, etc.).
         for original, mapped in list(self.smap.host.items()):
             s = s.replace(original, mapped)
         # Other URLs: replace whole URL (host portion not yet mapped)
@@ -240,6 +339,9 @@ class Redactor:
         s = EMAIL_RE.sub(lambda m: self.smap.map_email(m.group(0)), s)
         # Issue keys
         s = ISSUE_KEY_RE.sub(lambda m: self.smap.map_issue_key(m.group(0)), s)
+        # Custom words last — only catches what's still recognizable as
+        # company/product names after structured replacement
+        s = self.smap.apply_custom_words(s)
         return s
 
     def redact_node(self, node: Any, parent_key: str | None = None,
@@ -268,8 +370,11 @@ class Redactor:
                 continue
 
             # Preserve enum names: parent_key in PRESERVE_NAME_PARENTS and key=='name'
+            # We still apply custom words here — a custom workflow status like
+            # "AcmeCorp Reviewed" should have "AcmeCorp" redacted while keeping
+            # the rest of the enum value visible.
             if k == "name" and parent_key in PRESERVE_NAME_PARENTS and isinstance(v, str):
-                out[k] = v
+                out[k] = self.smap.apply_custom_words(v)
                 continue
 
             # User-object name/displayName/key fields
@@ -433,9 +538,14 @@ def redact_summary_md(summary_text: str, smap: SecretMap) -> str:
     raw-file pass, so the text-replace covers them. Re-running the regex would
     catch already-redacted values (e.g. `user-2@redacted.example`) and re-map
     them, producing inconsistent IDs across raw files vs. summary."""
+    # Structured replacements first so the host/email/issue-key patterns
+    # in notes columns get clean placeholders before custom words can shred
+    # the host string. Custom words run last to catch leftover company/
+    # product names in free-text columns.
     out = summary_text
     for original, mapped in smap.all_pairs():
         out = out.replace(original, mapped)
+    out = smap.apply_custom_words(out)
     return out
 
 
@@ -485,8 +595,12 @@ def main() -> int:
     print(f"[redact] in:  {in_dir}")
     print(f"[redact] out: {out_dir}")
 
-    smap = SecretMap()
+    smap = SecretMap(custom_words=CUSTOM_REDACT_WORDS)
     red = Redactor(source_host, smap)
+    if CUSTOM_REDACT_WORDS:
+        print(f"[redact] custom words active ({len(CUSTOM_REDACT_WORDS)}): "
+              f"{', '.join(repr(w) for w in CUSTOM_REDACT_WORDS[:5])}"
+              f"{' …' if len(CUSTOM_REDACT_WORDS) > 5 else ''}")
 
     raw_files = sorted(raw_in.glob("*.json"))
     for raw_path in raw_files:
@@ -518,7 +632,9 @@ def main() -> int:
             "branches": len(smap.branch),
             "avatars": len(smap.avatar),
             "fallback_urls": len(smap.url_fallback),
+            "custom_words": len(smap.custom),
         },
+        "custom_words_configured": len(CUSTOM_REDACT_WORDS),
         "files_processed": len(raw_files),
     }
     (out_dir / "redaction_report.json").write_text(

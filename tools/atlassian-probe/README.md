@@ -100,6 +100,35 @@ What gets replaced (with stable per-run mapping — same value always maps to sa
 - Commit hashes → `<commit-N>`
 - Dev-status branch displayIds → `<branch-N>`
 
+### Custom word list (you can edit this)
+
+Open `redact.py` and look for the `CUSTOM_REDACT_WORDS` list near the top:
+
+```python
+CUSTOM_REDACT_WORDS: list[str] = [
+    "AcmeCorp",
+    "MyProduct",
+    "Redroom",
+]
+```
+
+Any word you list there is replaced — case-insensitively, word-boundary
+matched — with a same-length random string. Letters become random letters
+(case mirrored), digits become random digits, hyphens / dots / spaces are
+kept verbatim. The replacement is **stable within one run** (same word →
+same fake string everywhere) and regenerated on every run.
+
+Examples:
+- `"AcmeCorp"` (8 chars) → `"TovqGjyu"`
+- `"redroom"` (7 chars, lowercase) → matches because of case-insensitive lookup, and reuses the same replacement chosen for `"Redroom"`
+- `"acmecorp-internal"` → only `acmecorp` is matched (hyphen is a word boundary), produces `"TovqGjyu-internal"`
+- `"release-2026.05.06"` (not in the list) → kept verbatim
+
+Add company / product / code / repo / team names that would identify your
+environment in free-text fields. You don't need to add things already
+covered by the structured redactors (hostnames, emails, issue keys,
+display names, free-text descriptions).
+
 The mapping itself is **never written to disk** — there's no "key file" you have to keep
 secret. Once redacted, the original values are unrecoverable from the output. A
 `redaction_report.json` is written with **counts only** (e.g., "12 emails redacted") so you
