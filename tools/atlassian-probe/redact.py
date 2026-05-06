@@ -54,33 +54,47 @@ from urllib.parse import urlparse
 # ---------------------------------------------------------------------------
 # CUSTOM REDACT WORDS — edit this list freely
 # ---------------------------------------------------------------------------
-# Any word in this list gets replaced wherever it appears in the probe output
-# (case-insensitive, word-boundary matched) with a same-length random string.
+# Each entry is a **prefix**: any alphanumeric run that starts with the prefix
+# (case-insensitively) is redacted, including the rest of the run, up to the
+# first non-alphanumeric character. The replacement is the same length as the
+# matched run, with case class preserved per character (uppercase → random
+# uppercase, lowercase → random lowercase, digit → random digit).
 #
-# What "same-length random" means in practice:
-#   "AcmeCorp"        → "QtZkLpAr"      (8 chars in, 8 chars out; case preserved)
-#   "MYPROJECT"       → "ZWQXKFTLG"     (all uppercase in, all uppercase out)
-#   "release-2.5.0"   → "qfovwhe-2.5.0" (letters randomized, digits/punct kept)
+# Concrete behaviour for prefix "claud":
+#   "claud"           → 5-char random lowercase
+#   "claude"          → 6-char random lowercase
+#   "claudia"         → 7-char random lowercase
+#   "claude123"       → 6 lowercase letters + 3 random digits ("abcdef987")
+#   "CLAUD"           → 5-char random UPPERCASE
+#   "ClAUdE"          → mixed case mirrored: u,l,u,u,l,u → e.g. "AbcDEF" (6 chars)
+#   "CLauDe145"       → upper,upper,lower,lower,upper,lower,d,d,d (9 chars)
+#   "ClaUDe-1234"     → only "ClaUDe" gets matched; "-1234" preserved verbatim
+#                       because '-' is non-alphanumeric and breaks the run
+#   "CLAude123-456"   → only "CLAude123" gets matched; "-456" preserved
 #
-# Replacement is **stable per run** — the same input word always maps to the
-# same random output across every file, so cross-file references stay intact
-# (e.g., if "MyProduct" appears in 3 different responses, they'll all show the
-# same fake string). The mapping is regenerated from scratch on each run, so
-# the random string is different every time you run redact.py.
+# Stable mapping: the same exact input string always maps to the same output
+# within one run (so "Claude" appearing in 3 files all show the same fake).
+# Different case variants of the same word ("Claude" vs "CLAUDE") map
+# independently — they have different per-character case patterns, so they
+# produce different fake outputs. The mapping is regenerated on every run, so
+# the random output is different each time you run redact.py.
 #
-# Word-boundary matching means:
-#   - "ACME" in this list matches "ACME-1234" (boundary between E and -)
-#   - "ACME" does NOT match "ACMECORP" (no boundary in the middle)
-#   - If you want "ACME" to also catch "ACMECORP", add both words explicitly.
+# Boundary rule: prefix matching only fires at an alphanumeric boundary
+# (start of string, or after a non-alphanumeric character). So prefix "claud"
+# does NOT match the "claud" inside "subclaude" — the match must START a run.
+#
+# If an entry contains non-alphanumeric characters (spaces, hyphens, dots),
+# it's split into multiple prefixes — one per alphanumeric piece. So
+# "Acme-Corp" registers as two prefixes: "Acme" and "Corp".
 #
 # Add company names, internal product names, code names, team names, repo
-# names — anything that would identify your environment in a free-text field.
-# Things already handled by the structured redactors (hostnames, emails,
-# issue keys, user names, free-text descriptions) don't need to be here.
+# names — anything that would identify your environment. Things already
+# handled by the structured redactors (hostnames, emails, issue keys, user
+# names, free-text descriptions) don't need to be here.
 CUSTOM_REDACT_WORDS: list[str] = [
     # Examples — replace with your own. Delete the example lines before sharing.
+    # "claud",
     # "AcmeCorp",
-    # "Internal Project Name",
     # "redroom",
 ]
 # ---------------------------------------------------------------------------
@@ -117,18 +131,37 @@ class SecretMap:
         self._redacted_values: set[str] = set()
 
         self._rng = rng or random.Random()
-        # Build a single regex covering every custom word, longest-first so
-        # "AcmeCorp" wins over "Acme" if both are listed.
-        cleaned = [w for w in (custom_words or []) if w and w.strip()]
-        cleaned.sort(key=len, reverse=True)
-        self._custom_words = cleaned
-        if cleaned:
-            # \b only fires between word-chars and non-word-chars. For words
-            # containing spaces or punctuation (e.g., "Internal Project Name")
-            # we lean on the literal-text match without forcing \b at internal
-            # boundaries — we only \b-anchor the outer ends.
-            joined = "|".join(re.escape(w) for w in cleaned)
-            self._custom_re = re.compile(rf"(?<!\w)(?:{joined})(?!\w)", re.IGNORECASE)
+        # Each user entry is treated as a prefix, with non-alphanumeric chars
+        # acting as separators (so "Acme-Corp" registers as two prefixes:
+        # "Acme" and "Corp"). The regex matches at an alphanumeric boundary
+        # and then extends through the rest of the alphanumeric run.
+        prefixes: list[str] = []
+        for w in (custom_words or []):
+            if not w or not w.strip():
+                continue
+            for piece in re.split(r"[^a-zA-Z0-9]+", w.strip()):
+                if piece:
+                    prefixes.append(piece)
+        # Dedupe (case-insensitive) preserving longest-first so e.g. "claudia"
+        # wins over "claud" if both are listed.
+        seen: set[str] = set()
+        unique_prefixes: list[str] = []
+        for p in sorted(prefixes, key=len, reverse=True):
+            pl = p.lower()
+            if pl not in seen:
+                seen.add(pl)
+                unique_prefixes.append(p)
+        self._custom_words = unique_prefixes
+        if unique_prefixes:
+            joined = "|".join(re.escape(p) for p in unique_prefixes)
+            # (?<![a-zA-Z0-9])  — lookbehind: previous char is not alphanumeric
+            #                     (or string start). Ensures we match at a run boundary.
+            # (?:p1|p2|...)     — the prefix itself
+            # [a-zA-Z0-9]*      — extend through the rest of the alphanumeric run
+            self._custom_re = re.compile(
+                rf"(?<![a-zA-Z0-9])(?:{joined})[a-zA-Z0-9]*",
+                re.IGNORECASE,
+            )
         else:
             self._custom_re = None
 
@@ -223,16 +256,17 @@ class SecretMap:
         return self.url_fallback[url]
 
     def map_custom_word(self, original: str) -> str:
-        """Generate (and cache) a same-length random replacement for a custom word.
+        """Generate (and cache) a same-length random replacement for a matched run.
 
-        Letters become random letters with case preserved, digits become random
-        digits, anything else (spaces, hyphens, periods) is kept verbatim. The
-        same input is always mapped to the same output within one run.
+        Letters become random letters with case preserved per character, digits
+        become random digits. The same exact input always maps to the same
+        output within one run (so "Claude" in three files → same fake string).
+        Different case variants of the same word ("Claude" vs "CLAUDE") map
+        independently because their per-character case patterns differ — and a
+        random replacement that mirrors case is the goal of this feature.
         """
-        # Case-insensitive lookup so "AcmeCorp" and "ACMECORP" share a redaction
-        cache_key = original.lower()
-        if cache_key in self.custom:
-            return self.custom[cache_key]
+        if original in self.custom:
+            return self.custom[original]
         if original in self._redacted_values:
             return original
         chars: list[str] = []
@@ -244,9 +278,11 @@ class SecretMap:
             elif ch.isdigit():
                 chars.append(self._rng.choice(string.digits))
             else:
+                # Defense in depth — alphanumeric runs shouldn't contain
+                # anything else, but if they ever do, keep the char verbatim.
                 chars.append(ch)
         replacement = "".join(chars)
-        self.custom[cache_key] = self._remember(replacement)
+        self.custom[original] = self._remember(replacement)
         return replacement
 
     def apply_custom_words(self, s: str) -> str:
