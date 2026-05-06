@@ -54,47 +54,55 @@ from urllib.parse import urlparse
 # ---------------------------------------------------------------------------
 # CUSTOM REDACT WORDS — edit this list freely
 # ---------------------------------------------------------------------------
-# Each entry is a **prefix**: any alphanumeric run that starts with the prefix
-# (case-insensitively) is redacted, including the rest of the run, up to the
-# first non-alphanumeric character. The replacement is the same length as the
-# matched run, with case class preserved per character (uppercase → random
-# uppercase, lowercase → random lowercase, digit → random digit).
+# Each entry is a **substring marker**. The redactor finds any run of
+# letters/digits/underscores/hyphens/spaces that contains the marker
+# (case-insensitively, anywhere within the run), and replaces the ENTIRE run
+# with a same-length random string. Letters become random letters with case
+# preserved per character, digits become random digits, and spaces/hyphens/
+# underscores inside the run are kept verbatim at their exact positions.
 #
-# Concrete behaviour for prefix "claud":
-#   "claud"           → 5-char random lowercase
-#   "claude"          → 6-char random lowercase
-#   "claudia"         → 7-char random lowercase
-#   "claude123"       → 6 lowercase letters + 3 random digits ("abcdef987")
-#   "CLAUD"           → 5-char random UPPERCASE
-#   "ClAUdE"          → mixed case mirrored: u,l,u,u,l,u → e.g. "AbcDEF" (6 chars)
-#   "CLauDe145"       → upper,upper,lower,lower,upper,lower,d,d,d (9 chars)
-#   "ClaUDe-1234"     → only "ClaUDe" gets matched; "-1234" preserved verbatim
-#                       because '-' is non-alphanumeric and breaks the run
-#   "CLAude123-456"   → only "CLAude123" gets matched; "-456" preserved
+# Concrete behaviour for marker "claud":
+#   "claud"             → 5-char random lowercase
+#   "claude"            → 6-char random lowercase
+#   "claudia"           → 7-char random lowercase
+#   "claude123"         → 6 lowercase + 3 digits, e.g. "abcdef987"
+#   "CLAUD"             → 5-char UPPERCASE random
+#   "ClAUdE"            → case mirrored u,l,u,u,l,u → e.g. "AbcDEf" (6 chars)
+#   "CLauDe145"         → matches the whole run, 9 chars
+#   "subclaude"         → matches the whole run "subclaude" (9 chars)
+#   "1claude"           → matches the whole run "1claude" (7 chars: digit + 6 lower)
+#   "ClaUDe-1234"       → matches "ClaUDe-1234" (hyphen inside the run);
+#                         hyphen kept at position 7, letters/digits randomized
+#   "AcmeCorp internal" → matches the whole phrase (space inside the run);
+#                         space kept at position 8
 #
-# Stable mapping: the same exact input string always maps to the same output
-# within one run (so "Claude" appearing in 3 files all show the same fake).
-# Different case variants of the same word ("Claude" vs "CLAUDE") map
-# independently — they have different per-character case patterns, so they
-# produce different fake outputs. The mapping is regenerated on every run, so
-# the random output is different each time you run redact.py.
+# A "run" ends at any character that's NOT in [a-zA-Z0-9_\- ]. So:
+#   "hello.subclaude.world"  → only "subclaude" is a run-with-marker;
+#                              "hello." and ".world" preserved (dot breaks runs)
+#   "v1.2.3 claud"           → "v1", "2", "3", " claud" — the last run
+#                              contains the marker and gets redacted (along
+#                              with its leading space)
 #
-# Boundary rule: prefix matching only fires at an alphanumeric boundary
-# (start of string, or after a non-alphanumeric character). So prefix "claud"
-# does NOT match the "claud" inside "subclaude" — the match must START a run.
+# Stable per-run mapping: the same exact string maps to the same fake string
+# within one redact.py invocation (so "Claude" in 5 files → same fake string).
+# Different case variants ("Claude" vs "CLAUDE") map independently because
+# their per-character case patterns differ. Markers like "claud" with
+# different surrounding context (e.g. "claude" vs "claude123") produce
+# different fakes because the matched RUN is different. Random output
+# regenerates on every run.
 #
-# If an entry contains non-alphanumeric characters (spaces, hyphens, dots),
-# it's split into multiple prefixes — one per alphanumeric piece. So
-# "Acme-Corp" registers as two prefixes: "Acme" and "Corp".
+# If a marker itself contains non-allowed characters (e.g. dots), only the
+# first alphanumeric/space/hyphen/underscore piece is used as the marker.
+# Use multiple entries for multi-segment names like "foo.bar.com".
 #
-# Add company names, internal product names, code names, team names, repo
-# names — anything that would identify your environment. Things already
-# handled by the structured redactors (hostnames, emails, issue keys, user
-# names, free-text descriptions) don't need to be here.
+# Add company names, internal product names, code names, team/repo names —
+# anything that would identify your environment. Hostnames/emails/issue keys/
+# user display names are already handled by the structured redactors;
+# free-text fields are length-redacted.
 CUSTOM_REDACT_WORDS: list[str] = [
-    # Examples — replace with your own. Delete the example lines before sharing.
+    # Examples — replace with your own. Delete example lines before sharing.
     # "claud",
-    # "AcmeCorp",
+    # "acme",
     # "redroom",
 ]
 # ---------------------------------------------------------------------------
@@ -131,35 +139,48 @@ class SecretMap:
         self._redacted_values: set[str] = set()
 
         self._rng = rng or random.Random()
-        # Each user entry is treated as a prefix, with non-alphanumeric chars
-        # acting as separators (so "Acme-Corp" registers as two prefixes:
-        # "Acme" and "Corp"). The regex matches at an alphanumeric boundary
-        # and then extends through the rest of the alphanumeric run.
-        prefixes: list[str] = []
+        # Each user entry is a SUBSTRING MARKER. The redactor finds any run of
+        # [a-zA-Z0-9_\- ] characters that contains the marker anywhere inside
+        # it, and redacts the whole run. Markers with non-allowed characters
+        # (e.g. dots) are split on those characters; the first non-empty piece
+        # is used (so "foo.bar" registers as "foo"; users wanting both pieces
+        # should add them as separate entries).
+        markers: list[str] = []
         for w in (custom_words or []):
             if not w or not w.strip():
                 continue
-            for piece in re.split(r"[^a-zA-Z0-9]+", w.strip()):
-                if piece:
-                    prefixes.append(piece)
-        # Dedupe (case-insensitive) preserving longest-first so e.g. "claudia"
-        # wins over "claud" if both are listed.
+            # Strip non-allowed chars; if the marker has internal dots/etc.,
+            # only the first piece is taken.
+            pieces = [p for p in re.split(r"[^a-zA-Z0-9_\- ]+", w.strip()) if p.strip()]
+            for piece in pieces:
+                # Strip leading/trailing whitespace from the marker itself,
+                # but preserve internal spaces (so "Internal Project" stays as is).
+                cleaned = piece.strip(" -_")
+                if cleaned:
+                    markers.append(cleaned)
+        # Dedupe (case-insensitive) preserving longest-first so a longer
+        # marker wins over a shorter substring of itself when both are listed.
         seen: set[str] = set()
-        unique_prefixes: list[str] = []
-        for p in sorted(prefixes, key=len, reverse=True):
-            pl = p.lower()
-            if pl not in seen:
-                seen.add(pl)
-                unique_prefixes.append(p)
-        self._custom_words = unique_prefixes
-        if unique_prefixes:
-            joined = "|".join(re.escape(p) for p in unique_prefixes)
-            # (?<![a-zA-Z0-9])  — lookbehind: previous char is not alphanumeric
-            #                     (or string start). Ensures we match at a run boundary.
-            # (?:p1|p2|...)     — the prefix itself
-            # [a-zA-Z0-9]*      — extend through the rest of the alphanumeric run
+        unique_markers: list[str] = []
+        for m in sorted(markers, key=len, reverse=True):
+            ml = m.lower()
+            if ml not in seen:
+                seen.add(ml)
+                unique_markers.append(m)
+        self._custom_words = unique_markers
+        if unique_markers:
+            joined = "|".join(re.escape(m) for m in unique_markers)
+            # ALLOWED  — characters that constitute a "run": letters, digits,
+            #            underscores, hyphens, and spaces.
+            # The pattern matches:
+            #   (?<!ALLOWED)            — start at a run boundary
+            #   ALLOWED*?               — any leading run characters (non-greedy)
+            #   (?:m1|m2|...)           — the marker substring (case-insensitive)
+            #   ALLOWED*                — any trailing run characters (greedy)
+            #   (?!ALLOWED)             — end at a run boundary
+            allowed_class = r"[a-zA-Z0-9_\- ]"
             self._custom_re = re.compile(
-                rf"(?<![a-zA-Z0-9])(?:{joined})[a-zA-Z0-9]*",
+                rf"(?<!{allowed_class}){allowed_class}*?(?:{joined}){allowed_class}*(?!{allowed_class})",
                 re.IGNORECASE,
             )
         else:
