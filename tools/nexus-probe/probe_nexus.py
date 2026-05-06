@@ -71,6 +71,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import re
 import sys
 import time
 import urllib.parse
@@ -104,6 +105,11 @@ class ProbeResult:
     notes: list[str] = field(default_factory=list)
     category: str = ""        # "version" | "existing" | "swap" | "feature" | "internal"
     auth_scheme: str = ""     # "basic" | "bearer-challenge" | "anonymous"
+    # Selected response headers — Nexus's `Server: Nexus/X.Y.Z-NN (EDITION)` is
+    # the canonical version-detect signal (set on every response, including
+    # 401/403). `Link` carries `_catalog`/`tags/list` pagination. `WWW-Authenticate`
+    # exposes the Bearer challenge realm. `Location` documents redirects.
+    response_headers: dict[str, str] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +193,7 @@ class NexusProbe:
             result.status = resp.status_code
             result.elapsed_ms = int((time.perf_counter() - start) * 1000)
             result.ok = 200 <= resp.status_code < 300
+            result.response_headers = self._capture_headers(resp)
             raw_payload = self._fill_payload(result, resp, expect_json)
             self._note_redirect(result, resp)
         except requests.RequestException as e:
@@ -273,6 +280,7 @@ class NexusProbe:
             result.status = resp.status_code
             result.elapsed_ms = int((time.perf_counter() - start) * 1000)
             result.ok = 200 <= resp.status_code < 300
+            result.response_headers = self._capture_headers(resp)
             raw_payload = self._fill_payload(result, resp, expect_json)
             self._note_redirect(result, resp)
         except requests.RequestException as e:
@@ -292,6 +300,62 @@ class NexusProbe:
                      notes: Optional[list[str]] = None) -> ProbeResult:
         return self._docker_request(name, description, path, category,
                                     method="HEAD", notes=notes, expect_json=False)
+
+    def _docker_head_accept(self, name: str, description: str, path: str,
+                            accept: str, notes: Optional[list[str]] = None) -> ProbeResult:
+        """HEAD a /v2/* path with an explicit Accept header — used for the OCI
+        manifest media-type negotiation dance (4 variants per tag).
+
+        Bypasses _docker_request because the standard helper doesn't accept a
+        custom Accept header and the body-fill logic isn't needed for HEAD.
+        Auth still goes through the same Basic-then-bearer-challenge flow.
+        """
+        url = f"{self.registry}{path}"
+        result = ProbeResult(
+            name=name, description=description, method="HEAD", path=path,
+            category="swap", notes=list(notes or []),
+        )
+        start = time.perf_counter()
+        try:
+            headers = self._docker_initial_headers()
+            headers["Accept"] = accept
+            resp = self.docker_session.head(
+                url, timeout=30, allow_redirects=False, headers=headers,
+            )
+            if resp.status_code == 401:
+                challenge = self._parse_bearer_challenge(
+                    resp.headers.get("WWW-Authenticate") or "",
+                )
+                if challenge is not None:
+                    result.auth_scheme = "bearer-challenge"
+                    token = self._fetch_bearer_token(challenge)
+                    if token is not None:
+                        retry = dict(headers)
+                        retry["Authorization"] = f"Bearer {token}"
+                        resp = self.docker_session.head(
+                            url, timeout=30, allow_redirects=False, headers=retry,
+                        )
+                else:
+                    result.auth_scheme = "basic" if self._basic_b64 else "anonymous"
+            else:
+                result.auth_scheme = "basic" if self._basic_b64 else "anonymous"
+
+            result.status = resp.status_code
+            result.elapsed_ms = int((time.perf_counter() - start) * 1000)
+            result.ok = 200 <= resp.status_code < 300
+            result.response_headers = self._capture_headers(resp)
+            result.payload_kind = "empty"  # HEAD always
+            result.notes.append(
+                f"Sent Accept: {accept}; got Content-Type: "
+                f"{resp.headers.get('Content-Type', '(none)')}"
+            )
+        except requests.RequestException as e:
+            result.error = f"{type(e).__name__}: {e}"
+            result.payload_kind = "error"
+            result.elapsed_ms = int((time.perf_counter() - start) * 1000)
+        self._persist(name, result, None)
+        self.results.append(result)
+        return result
 
     # -- shared helpers --------------------------------------------------------
 
@@ -358,6 +422,31 @@ class NexusProbe:
         self._bearer_cache[cache_key] = token
         return token
 
+    # Headers we always copy into raw/<name>.json — small set so the bundle
+    # stays compact, but enough to power version-detect + pagination + auth
+    # negotiation analysis offline.
+    _HEADERS_TO_CAPTURE = (
+        "Server",            # Nexus/X.Y.Z-NN (EDITION) — primary version-detect
+        "WWW-Authenticate",  # Bearer realm / Basic challenge
+        "Link",              # /v2/_catalog and /v2/.../tags/list pagination
+        "Location",          # 3xx redirects
+        "Content-Type",      # negotiation outcome
+        "Content-Length",    # body size
+        "ETag",              # cache state
+        "Date",              # server clock skew
+        "Docker-Content-Digest",  # /v2/.../manifests digest
+        "Docker-Distribution-Api-Version",  # /v2/ root advertises registry/2.0
+    )
+
+    @classmethod
+    def _capture_headers(cls, resp: requests.Response) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for name in cls._HEADERS_TO_CAPTURE:
+            v = resp.headers.get(name)
+            if v:
+                out[name] = v
+        return out
+
     @staticmethod
     def _fill_payload(result: ProbeResult, resp: requests.Response,
                       expect_json: bool) -> Any:
@@ -401,41 +490,65 @@ class NexusProbe:
 
     def run_versions_only(self) -> None:
         print("[probe] versions-only mode\n")
-        # Status: Nexus 3 returns 200 anonymously when "Anonymous Access" is
-        # enabled; otherwise 401 — both are informative.
+        # Layered version-detect ladder per docs/research/2026-05-07-nexus-3.90-api-surface.md §1:
+        #   1. Server: header on EVERY response  (primary — works on 401/403 too)
+        #   2. /v1/status/check                   (renamed in 3.81; non-admin)
+        #   3. /service/rest/swagger.json         (anonymous-readable; .info.version)
+        #   4. Rapture HTML scrape on /           (final fallback — cache-buster `?<ver>`)
+        # The phantom /v1/system/about (which 404'd in v0) has been removed —
+        # it never existed in the v1/ namespace on Nexus 3.
         self._rest_get(
             name="rest_status",
-            description="Connectivity / liveness (mirrors Atlassian's /serverInfo)",
+            description="Connectivity / liveness (200 = up; 503 = unavailable)",
             path="/service/rest/v1/status",
             category="version",
-            notes=["May respond 200 anonymously if 'Anonymous Access' is enabled"],
+            notes=["Spec: 200 with empty body when alive — empty body is correct, not a fault"],
         )
         self._rest_get(
             name="rest_status_writable",
-            description="Read-write availability (used for capacity planning)",
+            description="Read-write availability (200 = read-write; 503 = read-only mode)",
             path="/service/rest/v1/status/writable",
             category="version",
-            notes=["200 = node is read-write; 503 = read-only mode"],
         )
         self._rest_get(
-            name="rest_system_about",
-            description="Nexus version + edition (Pro/OSS) — primary version-detect endpoint",
-            path="/service/rest/v1/system/about",
+            name="rest_status_check",
+            description="System health check JSON (renamed from /service/metrics/healthcheck in 3.81)",
+            path="/service/rest/v1/status/check",
             category="version",
             notes=[
-                "Use this to fill in the Nexus version question once you run the probe. "
-                "Look at .data.applicationVersion and .data.editionShort."
+                "Tristate: 200 = namespace + auth ok; 401/403 = perm-fail; 404 = pre-3.81 install. "
+                "Body is informational; status code is the primary signal."
+            ],
+        )
+        self._rest_get(
+            name="rest_swagger_json",
+            description="Nexus's own OpenAPI 3 spec — anonymous-readable; advertises every endpoint",
+            path="/service/rest/swagger.json",
+            category="version",
+            notes=[
+                "Per Sonatype: 'does not require any privilege to access'. "
+                "Body has .info.version (string) + .paths (every endpoint this instance ships). "
+                "Single most-comprehensive capability-discovery signal."
             ],
         )
         self._rest_get(
             name="rest_security_realms_active",
-            description="Active auth realms — confirms Basic vs token vs Docker bearer support",
+            description="Active auth realms — admin-only on 3.90; expected 403 for read-only token",
             path="/service/rest/v1/security/realms/active",
-            category="version",
+            category="internal",
             notes=[
-                "If the array contains 'DockerToken' the registry accepts the bearer-challenge "
-                "flow we mirror in DockerRegistryClient. 'NexusAuthenticatingRealm' = Basic."
+                "If the array contains 'DockerToken' the registry uses the bearer-challenge "
+                "flow we mirror in DockerRegistryClient; 'NexusAuthenticatingRealm' = Basic. "
+                "Non-admin tokens get 403 — that's a capability marker, not a failure."
             ],
+        )
+        self._rest_get(
+            name="rest_root_html",
+            description="Rapture HTML root — version cache-buster fallback (`?3.90.1-01`) on static asset URLs",
+            path="/",
+            category="version",
+            notes=["Final-fallback version source — used when Server: header is stripped by a reverse proxy"],
+            expect_json=False,
         )
         self._docker_get(
             name="docker_v2_root",
@@ -444,7 +557,8 @@ class NexusProbe:
             category="version",
             notes=[
                 "200 with empty body = registry online. 401 with Bearer challenge = "
-                "Docker Bearer Token Realm enabled. 401 without challenge = Basic only."
+                "Docker Bearer Token Realm enabled. 401 without challenge = Basic only. "
+                "404 HTML = wrong host — Docker registry is on a different URL than the REST API."
             ],
         )
 
@@ -673,6 +787,458 @@ class NexusProbe:
             ],
         )
 
+        # 6) System / health / observability — metrics surface (mostly admin)
+        print("\n[probe] version/internal — metrics + system surface")
+        self._rest_get(
+            name="metrics_ping",
+            description="Lowest-cost liveness ping (renamed from /service/metrics/ping in 3.81)",
+            path="/service/rest/metrics/ping",
+            category="version",
+            notes=["Returns 'pong' for any authenticated user"],
+            expect_json=False,
+        )
+        self._rest_get(
+            name="metrics_data",
+            description="JVM/JMX metrics — capacity counters",
+            path="/service/rest/metrics/data",
+            category="internal",
+            notes=["nx-metrics-all OR admin; non-admin = 403"],
+        )
+        self._rest_get(
+            name="metrics_threads",
+            description="Thread dump diagnostic (admin)",
+            path="/service/rest/metrics/threads",
+            category="internal",
+            expect_json=False,
+        )
+        self._rest_get(
+            name="metrics_prometheus",
+            description="Prometheus-format metrics text",
+            path="/service/rest/metrics/prometheus",
+            category="internal",
+            notes=["nx-metrics-all OR admin"],
+            expect_json=False,
+        )
+        self._rest_get(
+            name="system_node",
+            description="HA cluster NodeInformation (Pro-only)",
+            path="/service/rest/v1/system/node",
+            category="feature",
+            notes=["Pro-only — confirms HA cluster membership when 200"],
+        )
+        self._rest_get(
+            name="system_license",
+            description="License details (Pro; admin-likely)",
+            path="/service/rest/v1/system/license",
+            category="internal",
+            notes=["Definitive OSS-vs-Pro answer if reachable; expect 403 for non-admin"],
+        )
+
+        # 7) Security / capability mapping — beyond just /users
+        print("\n[probe] internal — security capability mapping")
+        self._rest_get(
+            name="security_realms_available",
+            description="All available realms (admin)",
+            path="/service/rest/v1/security/realms/available",
+            category="internal",
+            notes=["Admin-only; pairs with realms/active for 'what could be enabled'"],
+        )
+        self._rest_get(
+            name="security_user_sources",
+            description="User backends configured (LDAP/SAML/Crowd) — non-admin readable",
+            path="/service/rest/v1/security/user-sources",
+            category="internal",
+            notes=[
+                "Per Sonatype: the ONLY documented non-admin GET in the security mgmt API. "
+                "Tells us which auth backends exist."
+            ],
+        )
+        self._rest_get(
+            name="security_anonymous",
+            description="Anonymous access state (admin)",
+            path="/service/rest/v1/security/anonymous",
+            category="internal",
+            notes=["admin-only; affects whether some endpoints work without auth"],
+        )
+        self._rest_get(
+            name="security_roles",
+            description="Roles list (admin)",
+            path="/service/rest/v1/security/roles",
+            category="internal",
+        )
+        self._rest_get(
+            name="security_privileges",
+            description="Privileges list (admin)",
+            path="/service/rest/v1/security/privileges",
+            category="internal",
+        )
+        self._rest_get(
+            name="security_content_selectors",
+            description="Content selectors (CEL-style ACLs; nx-settings-read)",
+            path="/service/rest/v1/security/content-selectors",
+            category="internal",
+            notes=["Tells us if content-selector firewalling is configured"],
+        )
+        self._rest_get(
+            name="security_ssl_truststore",
+            description="Trusted CA certs for outbound proxying (admin)",
+            path="/service/rest/v1/security/ssl/truststore",
+            category="internal",
+        )
+        self._rest_get(
+            name="security_atlassian_crowd",
+            description="Crowd integration config (admin, Pro)",
+            path="/service/rest/v1/security/atlassian-crowd",
+            category="internal",
+            notes=["404 if Crowd plugin not active"],
+        )
+
+        # 8) Repository administration (read paths only)
+        print("\n[probe] internal/feature — repo admin (read paths)")
+        self._rest_get(
+            name="blobstores",
+            description="Blob stores (file/S3/Azure/GCP backends) (admin)",
+            path="/service/rest/v1/blobstores",
+            category="internal",
+        )
+        self._rest_get(
+            name="routing_rules",
+            description="Routing rules (admin, nx-all)",
+            path="/service/rest/v1/routing-rules",
+            category="internal",
+            notes=["Empty array = none configured"],
+        )
+        self._rest_get(
+            name="cleanup_policies",
+            description="Cleanup policies (Pro 3.70+, nexus:settings.read)",
+            path="/service/rest/v1/cleanup-policies",
+            category="feature",
+            notes=["Pro-only; lists auto-purge policies"],
+        )
+        self._rest_get(
+            name="email_config",
+            description="SMTP / email config (admin)",
+            path="/service/rest/v1/email",
+            category="internal",
+        )
+        self._rest_get(
+            name="tasks_list",
+            description="Scheduled tasks list (admin)",
+            path="/service/rest/v1/tasks",
+            category="internal",
+            notes=["admin-only; capability marker"],
+        )
+        self._rest_get(
+            name="capabilities_types",
+            description="Capability types catalog (admin)",
+            path="/service/rest/v1/capabilities/types",
+            category="internal",
+            notes=["admin-only; lists available capability plugins"],
+        )
+
+        # 9) Per-format direct repo paths (NOT under /service/rest/v1/)
+        # These are what Maven/Gradle/Docker actually call. High-value swaps.
+        if maven_repo:
+            print(f"\n[probe] swap/feature — per-format paths in {maven_repo}")
+            mv = urllib.parse.quote(maven_repo, safe="")
+            coord = _read_first_maven_coord(self.raw_dir / f"components_{maven_repo}.json")
+            if coord:
+                group, artifact = coord
+                group_path = group.replace(".", "/")
+                self._rest_get(
+                    name=f"maven_metadata_{maven_repo}",
+                    description=(
+                        f"maven-metadata.xml at {group}:{artifact} — Maven/Gradle's "
+                        f"native 'find latest version' path"
+                    ),
+                    path=f"/repository/{mv}/{group_path}/{artifact}/maven-metadata.xml",
+                    category="swap",
+                    notes=[
+                        "SWAP candidate — replaces /v1/search?sort=version dance with one XML fetch. "
+                        "Repo-read perm only; returns release/latest/versions block."
+                    ],
+                    expect_json=False,
+                )
+                self._rest_get(
+                    name=f"maven_metadata_sha256_{maven_repo}",
+                    description=f"SHA256 sidecar for the maven-metadata.xml above",
+                    path=f"/repository/{mv}/{group_path}/{artifact}/maven-metadata.xml.sha256",
+                    category="feature",
+                    notes=["Cheap integrity check; .sha1 sidecar is the older fallback"],
+                    expect_json=False,
+                )
+            else:
+                self.results.append(ProbeResult(
+                    name=f"maven_metadata_{maven_repo}_skipped",
+                    description="Maven format-specific probes skipped — no group/artifact derivable",
+                    method="-", path="-", payload_kind="error", category="swap",
+                    error=f"components_{maven_repo} yielded no items with both group and name",
+                ))
+
+        # 10) Search variants — high-value swaps + new features
+        if maven_repo:
+            mv = urllib.parse.quote(maven_repo, safe="")
+            print(f"\n[probe] swap/feature — search variants on {maven_repo}")
+            self._rest_get(
+                name=f"search_sort_version_desc_{maven_repo}",
+                description=f"Newest-first component search — 'what's the latest version' in one call",
+                path=f"/service/rest/v1/search?repository={mv}&format=maven2&sort=version&direction=desc",
+                category="swap",
+                notes=["SWAP — replaces multi-call 'list then sort client-side'"],
+            )
+            self._rest_get(
+                name=f"search_release_only_{maven_repo}",
+                description=f"Release-only search (skip snapshots)",
+                path=f"/service/rest/v1/search?repository={mv}&format=maven2&prerelease=false",
+                category="feature",
+            )
+            self._rest_get(
+                name=f"search_assets_download_{maven_repo}",
+                description=f"One-call download — /search/assets/download with sort=version&direction=desc",
+                path=(
+                    f"/service/rest/v1/search/assets/download?repository={mv}"
+                    f"&format=maven2&sort=version&direction=desc"
+                ),
+                category="swap",
+                notes=[
+                    "SWAP — replaces 'search → pick → fetch URL' dance with single 302 redirect. "
+                    "expect_json=False since the success path is a redirect to a binary asset."
+                ],
+                expect_json=False,
+            )
+
+        # 3.88 SQL search wildcard semantics test — fires regardless of repo flag
+        # so we always learn which search backend the instance is on.
+        print("\n[probe] version — 3.88 SQL search wildcard test")
+        self._rest_get(
+            name="search_wildcard_trailing",
+            description="Trailing-wildcard search ?q=neo* (3.88+ SQL search supports this)",
+            path="/service/rest/v1/search?q=neo*",
+            category="version",
+            notes=[
+                "Distinguishes search backend: 3.88+ SQL returns results; pre-3.88 also returns "
+                "results but tolerates the other forms below."
+            ],
+        )
+        self._rest_get(
+            name="search_wildcard_leading",
+            description="Leading-wildcard search ?q=*neo* (pre-3.88 only)",
+            path="/service/rest/v1/search?q=*neo*",
+            category="version",
+            notes=[
+                "3.88+: returns empty silently; pre-3.88: works. If empty AND trailing returns "
+                "results, this instance is on the SQL search path."
+            ],
+        )
+
+        # Hash-based reverse-lookup + asset-by-id — derive from components page 1
+        if maven_repo:
+            sha1 = _read_first_asset_sha1(self.raw_dir / f"components_{maven_repo}.json")
+            if sha1:
+                self._rest_get(
+                    name=f"search_sha1_{sha1[:8]}",
+                    description=f"Reverse-lookup by sha1 ({sha1[:8]}…) — 'what artifact is this jar?'",
+                    path=f"/service/rest/v1/search?sha1={sha1}",
+                    category="feature",
+                    notes=["NEW capability — answers 'I have this jar; what is it?'"],
+                )
+            asset_id = _read_first_asset_id(self.raw_dir / f"components_{maven_repo}.json")
+            if asset_id:
+                aid = urllib.parse.quote(asset_id, safe="")
+                self._rest_get(
+                    name=f"asset_by_id_{asset_id[:12]}",
+                    description=(
+                        f"Single asset by id ({asset_id[:8]}…) — direct downloadUrl + "
+                        "4-checksum trio (md5/sha1/sha256/sha512)"
+                    ),
+                    path=f"/service/rest/v1/assets/{aid}",
+                    category="feature",
+                    notes=["Returns md5/sha1/sha256/sha512 + downloadUrl in one call"],
+                )
+
+        # Per-format repo config — works for any repo, but we only have a name
+        # if --maven-repo is set. Format/type are derived from repositories_all.
+        if maven_repo:
+            mv = urllib.parse.quote(maven_repo, safe="")
+            ft = self._lookup_repo_format_type(maven_repo)
+            if ft:
+                fmt, repo_type = ft
+                fq = urllib.parse.quote(fmt, safe="")
+                tq = urllib.parse.quote(repo_type, safe="")
+                self._rest_get(
+                    name=f"repo_config_{maven_repo}",
+                    description=(
+                        f"Per-format config — full {fmt}/{repo_type} settings "
+                        f"(remoteUrl, version-policy, deployment policy, group members)"
+                    ),
+                    path=f"/service/rest/v1/repositories/{fq}/{tq}/{mv}",
+                    category="feature",
+                    notes=["Currently the plugin sees only what's in /v1/repositories list"],
+                )
+            self._rest_get(
+                name=f"repo_summary_{maven_repo}",
+                description=f"Single-repo summary",
+                path=f"/service/rest/v1/repositories/{mv}",
+                category="feature",
+                notes=["Quicker than full /repositories list"],
+            )
+
+        # 11) Docker v2 advanced — OCI Accept-header dance + blob HEAD + pagination
+        if docker_repo:
+            dr = urllib.parse.quote(docker_repo, safe="")
+            chosen_tag = manifest_tag or _read_first_tag(
+                self.raw_dir / f"docker_tags_{docker_repo}.json"
+            )
+            if chosen_tag:
+                tg = urllib.parse.quote(chosen_tag, safe="")
+                print(f"\n[probe] swap — OCI Accept-header dance for {docker_repo}:{chosen_tag}")
+                # Plugin's biggest latent bug: multi-arch images return an OCI
+                # image-index, not a v2 manifest. Plugin sends one Accept; will
+                # silently mishandle. Probe with all 4 variants and record which
+                # the registry returns (Content-Type response header tells us).
+                accepts = [
+                    ("manifest_v2",
+                     "application/vnd.docker.distribution.manifest.v2+json",
+                     "Docker v2 single-arch manifest (what plugin requests today)"),
+                    ("manifest_list_v2",
+                     "application/vnd.docker.distribution.manifest.list.v2+json",
+                     "Docker manifest list — multi-arch (multiple platforms)"),
+                    ("oci_image_index",
+                     "application/vnd.oci.image.index.v1+json",
+                     "OCI image-index — multi-arch, OCI flavor"),
+                    ("oci_image_manifest",
+                     "application/vnd.oci.image.manifest.v1+json",
+                     "OCI single-arch manifest — non-Docker images (BuildKit, buildah, kaniko)"),
+                ]
+                for short, mt, desc in accepts:
+                    self._docker_head_accept(
+                        name=f"docker_manifest_{short}_{docker_repo}",
+                        description=f"HEAD manifest with Accept: {mt} ({desc})",
+                        path=f"/v2/{dr}/manifests/{tg}",
+                        accept=mt,
+                        notes=["Records Content-Type response → tells us which media-type registry returns"],
+                    )
+                # Blob HEAD using the digest from the existing manifest probe
+                first_digest = _read_first_blob_digest(
+                    self.raw_dir / f"docker_manifest_get_{docker_repo}.json"
+                )
+                if first_digest:
+                    fd = urllib.parse.quote(first_digest, safe="")
+                    self._docker_head(
+                        name=f"docker_blob_head_{docker_repo}",
+                        description=f"HEAD blob {first_digest[:16]}… — cheapest layer existence check",
+                        path=f"/v2/{dr}/blobs/{fd}",
+                        category="feature",
+                        notes=["OCI dist spec — answers 'does this layer exist' without downloading"],
+                    )
+                # OCI referrers (1.1) — Sigstore/cosign signatures, SBOM. Unverified for 3.90.
+                if first_digest:
+                    fd = urllib.parse.quote(first_digest, safe="")
+                    self._docker_get(
+                        name=f"docker_referrers_{docker_repo}",
+                        description=f"OCI referrers index for {first_digest[:16]}…",
+                        path=f"/v2/{dr}/referrers/{fd}",
+                        category="feature",
+                        notes=[
+                            "Unverified for 3.90 (Nexus claims OCI 1.0/1.0.1 since 3.71; "
+                            "1.1 referrers not explicitly stated). 404 = not supported."
+                        ],
+                    )
+            # Tags pagination — exercises Link: rel="next"
+            self._docker_get(
+                name=f"docker_tags_pagination_{docker_repo}",
+                description=f"Tag list page 1 with n=10 — exercises Link: rel=\"next\" pagination cursor",
+                path=f"/v2/{dr}/tags/list?n=10",
+                category="swap",
+                notes=["SWAP — plugin caps at first 100 tags; Link header unlocks full enumeration"],
+            )
+        # _catalog pagination — independent of --docker-repo
+        self._docker_get(
+            name="docker_catalog_pagination",
+            description="Docker catalog page 1 with n=10 — exercises last= pagination",
+            path="/v2/_catalog?n=10",
+            category="swap",
+            notes=["SWAP — plugin caps at first 100 repos"],
+        )
+
+        # 12) Pro-only + 3.90-new + unverified probes
+        print("\n[probe] feature/internal — Pro / 3.90-new / unverified")
+        self._rest_get(
+            name="recovery_mode",
+            description="Recovery mode state (NEW in 3.90.0; admin-only)",
+            path="/service/rest/v1/recovery-mode",
+            category="feature",
+            notes=[
+                "3.90.0+; 404 on older. Active mode would explain weird search/upload behavior. "
+                "Expect 403 for non-admin."
+            ],
+        )
+        self._rest_get(
+            name="tags_list",
+            description="Pro tags list (logical artifact groups for staging-style workflows)",
+            path="/service/rest/v1/tags",
+            category="feature",
+            notes=["Pro-only; user-readable when token has nx-all"],
+        )
+        self._rest_get(
+            name="monthly_metrics",
+            description="Monthly metrics (Pro?) — last-12-months counters",
+            path="/service/rest/v1/monthly-metrics",
+            category="feature",
+            notes=["Unverified for 3.90; probe-and-see"],
+        )
+        self._rest_get(
+            name="malicious_risk_disk",
+            description="Malicious risk on disk (Sonatype Firewall)",
+            path="/service/rest/v1/malicious-risk/risk-on-disk",
+            category="feature",
+            notes=["Unverified for 3.90; admin-only-likely"],
+        )
+        self._rest_get(
+            name="replication_connection",
+            description="Replication connection config (Pro)",
+            path="/service/rest/v1/replication/connection",
+            category="feature",
+            notes=["Unverified path — if 404, replication-via-REST not exposed in 3.90"],
+        )
+        self._rest_get(
+            name="replication_group",
+            description="Replication group config (Pro)",
+            path="/service/rest/v1/replication/group",
+            category="feature",
+            notes=["Unverified path"],
+        )
+        self._rest_get(
+            name="firewall_audit_status",
+            description="Repository Firewall audit status (Pro+IQ)",
+            path="/service/rest/v1/firewall/audit-status",
+            category="feature",
+            notes=["Pro+IQ link; 404 if not configured"],
+        )
+        self._rest_get(
+            name="firewall_configuration",
+            description="Repository Firewall / IQ-server connection config (Pro+IQ)",
+            path="/service/rest/v1/firewall/configuration",
+            category="feature",
+            notes=["Pro+IQ; tells us if policy-driven artifact blocking is active"],
+        )
+
+    # -- repo lookup helper for per-format config probe ----------------------
+
+    def _lookup_repo_format_type(self, repo_name: str) -> Optional[tuple[str, str]]:
+        """Walk the cached /v1/repositories result and return (format, type)
+        for `repo_name`. Used by the per-format config probe in §10."""
+        for fname in ("repositories_all", "discover_repositories"):
+            body = _read_raw_body(self.raw_dir / f"{fname}.json")
+            if isinstance(body, list):
+                for r in body:
+                    if isinstance(r, dict) and r.get("name") == repo_name:
+                        fmt = r.get("format")
+                        rtype = r.get("type")
+                        if isinstance(fmt, str) and isinstance(rtype, str):
+                            return (fmt, rtype)
+        return None
+
     # -- discovery digest -----------------------------------------------------
 
     def _first_repo_by_format(self, raw_filename: str,
@@ -868,51 +1434,108 @@ class NexusProbe:
         print(f"\n[probe] wrote summary -> {summary_path}")
         print(f"[probe] wrote {len(self.results)} raw payloads -> {self.raw_dir}")
 
+    # Server: Nexus/3.90.1-01 (PRO)  →  ('3.90.1', '01', 'PRO')
+    _SERVER_HEADER_RE = re.compile(
+        r"Nexus/(?P<version>\d+\.\d+\.\d+)-(?P<build>\d+)\s*\((?P<edition>[^)]+)\)"
+    )
+    # rapture cache-buster:  href="../static/rapture/...?3.90.1-01"  →  '3.90.1-01'
+    _RAPTURE_VERSION_RE = re.compile(r"/static/rapture/[^\"']*?\?([0-9A-Za-z\.\-]+)")
+
     def _format_version_note(self) -> str:
-        about = next((r for r in self.results if r.name == "rest_system_about"), None)
-        if not about or not about.ok:
-            return "_/system/about did not respond — Nexus version unknown._"
+        # 1. Server: header — set on EVERY response, including 401/403.
+        server_seen: list[tuple[str, str]] = []  # (probe-name, header-value)
+        for r in self.results:
+            sv = (r.response_headers or {}).get("Server")
+            if sv and "Nexus/" in sv:
+                server_seen.append((r.name, sv))
+        primary = ""
+        version = build = edition = ""
+        if server_seen:
+            primary = server_seen[0][1]
+            m = self._SERVER_HEADER_RE.search(primary)
+            if m:
+                version = m.group("version")
+                build = m.group("build")
+                edition = m.group("edition")
+
+        # 2. Fallback — /v1/status/check JSON has no documented version field on
+        # 3.90, but if it 200'd we know the v1 namespace + auth are healthy.
+        status_check_state = "(skipped)"
+        for r in self.results:
+            if r.name == "rest_status_check":
+                status_check_state = (
+                    "200 (alive + auth ok)" if r.ok
+                    else f"{r.status} (auth/perm or pre-3.81)"
+                )
+                break
+
+        # 3. Fallback — /swagger.json .info.version (anonymous-readable)
+        swagger_version = ""
         try:
-            data = json.loads(
-                (self.raw_dir / "rest_system_about.json").read_text(encoding="utf-8")
-            ).get("raw_body") or {}
-        except Exception:
-            return "_/system/about response could not be parsed._"
-        # Nexus 3 nests fields under .data
-        d = data.get("data") if isinstance(data, dict) else None
-        if not isinstance(d, dict):
-            d = data if isinstance(data, dict) else {}
-        edition = d.get("editionShort") or d.get("edition") or ""
-        version = d.get("applicationVersion") or d.get("version") or ""
-        build_rev = d.get("buildRevision") or ""
-        # Auth realms hint
-        realms_kind = "(unknown)"
-        try:
-            ra = json.loads(
-                (self.raw_dir / "rest_security_realms_active.json").read_text(encoding="utf-8")
-            ).get("raw_body")
-            if isinstance(ra, list):
-                realms_kind = ", ".join(str(x) for x in ra) or "(empty)"
+            swagger_body = _read_raw_body(self.raw_dir / "rest_swagger_json.json")
+            if isinstance(swagger_body, dict):
+                info = swagger_body.get("info") or {}
+                if isinstance(info, dict):
+                    swagger_version = str(info.get("version") or "")
         except Exception:
             pass
+
+        # 4. Fallback — rapture HTML scrape for cache-buster on /static/ URLs
+        rapture_version = ""
+        for raw_name in ("rest_root_html", "docker_v2_root"):
+            try:
+                rec = json.loads(
+                    (self.raw_dir / f"{raw_name}.json").read_text(encoding="utf-8")
+                )
+                preview = (rec.get("result") or {}).get("payload_preview") or ""
+                if isinstance(preview, str) and preview:
+                    m = self._RAPTURE_VERSION_RE.search(preview)
+                    if m:
+                        rapture_version = m.group(1)
+                        break
+            except Exception:
+                continue
+
+        # Auth realms hint (typically 403 for non-admin — that's the capability marker)
+        realms_state = "(skipped)"
+        try:
+            for r in self.results:
+                if r.name == "rest_security_realms_active":
+                    if r.ok:
+                        body = _read_raw_body(self.raw_dir / "rest_security_realms_active.json")
+                        if isinstance(body, list):
+                            realms_state = ", ".join(str(x) for x in body) or "(empty array)"
+                    else:
+                        realms_state = f"{r.status} (admin-only — non-admin token capability marker)"
+                    break
+        except Exception:
+            pass
+
         # Docker /v2/ status
-        docker_kind = "(unknown)"
-        try:
-            v2 = json.loads(
-                (self.raw_dir / "docker_v2_root.json").read_text(encoding="utf-8")
-            ).get("result") or {}
-            docker_status = v2.get("status")
-            docker_auth = v2.get("auth_scheme")
-            docker_kind = f"status={docker_status} auth={docker_auth}"
-        except Exception:
-            pass
-        return (
-            f"- **applicationVersion:** `{version}`\n"
-            f"- **edition:** `{edition}`  ← OSS/Pro/CommunityEdition\n"
-            f"- **buildRevision:** `{build_rev}`\n"
-            f"- **active auth realms:** `{realms_kind}`\n"
-            f"- **/v2/ probe:** `{docker_kind}`\n"
+        docker_state = "(skipped)"
+        for r in self.results:
+            if r.name == "docker_v2_root":
+                docker_state = f"status={r.status} auth={r.auth_scheme or '-'}"
+                break
+
+        # Compose the markdown block — primary first, fallbacks beneath, with
+        # a clear "winner" line for at-a-glance reading.
+        winner = (
+            f"`Nexus {version}-{build} ({edition})` (from Server: header)" if version
+            else f"`{swagger_version}` (from /swagger.json .info.version)" if swagger_version
+            else f"`{rapture_version}` (from rapture HTML cache-buster)" if rapture_version
+            else "**unknown** — every detect path failed; check reverse-proxy header stripping"
         )
+        lines = [
+            f"- **Detected:** {winner}",
+            f"- **Server: header sample:** `{primary or '(not seen on any response — possibly stripped)'}`",
+            f"- **/v1/status/check:** {status_check_state}",
+            f"- **/swagger.json .info.version:** `{swagger_version or '(unreachable or non-JSON)'}`",
+            f"- **rapture cache-buster scrape:** `{rapture_version or '(no /static/rapture/ URL in any HTML body)'}`",
+            f"- **active auth realms:** {realms_state}",
+            f"- **/v2/ probe:** `{docker_state}`",
+        ]
+        return "\n".join(lines) + "\n"
 
 
 # ---------------------------------------------------------------------------
@@ -996,6 +1619,84 @@ def _read_first_tag(raw_path: Path) -> Optional[str]:
     return None
 
 
+def _read_first_maven_coord(raw_path: Path) -> Optional[tuple[str, str]]:
+    """Return (groupId, artifactId) from the first item with both set.
+
+    Nexus 3 component-list payload shape:
+      {"items": [{"id":..., "repository": "...", "format": "maven2",
+                  "group": "com.example", "name": "my-artifact", "version": "...",
+                  "assets": [...]}, ...]}
+    """
+    body = _read_raw_body(raw_path)
+    if isinstance(body, dict):
+        for it in (body.get("items") or []):
+            if isinstance(it, dict):
+                g = it.get("group")
+                n = it.get("name")
+                if isinstance(g, str) and g and isinstance(n, str) and n:
+                    return (g, n)
+    return None
+
+
+def _read_first_asset_id(raw_path: Path) -> Optional[str]:
+    """First asset id walking items[].assets[]. Asset ids are opaque base64
+    strings — used by /v1/assets/{id} for direct downloadUrl + checksum trio."""
+    body = _read_raw_body(raw_path)
+    if isinstance(body, dict):
+        for it in (body.get("items") or []):
+            if isinstance(it, dict):
+                for a in (it.get("assets") or []):
+                    if isinstance(a, dict) and a.get("id"):
+                        return str(a["id"])
+    return None
+
+
+def _read_first_asset_sha1(raw_path: Path) -> Optional[str]:
+    """First non-empty SHA1 from items[].assets[].checksum.sha1.
+    Used by /v1/search?sha1=... to demonstrate hash-based reverse lookup."""
+    body = _read_raw_body(raw_path)
+    if isinstance(body, dict):
+        for it in (body.get("items") or []):
+            if isinstance(it, dict):
+                for a in (it.get("assets") or []):
+                    if isinstance(a, dict):
+                        cks = a.get("checksum") or {}
+                        if isinstance(cks, dict):
+                            v = cks.get("sha1")
+                            if isinstance(v, str) and v:
+                                return v
+    return None
+
+
+def _read_first_blob_digest(raw_path: Path) -> Optional[str]:
+    """First layer/config blob digest from a Docker v2 manifest body.
+
+    v2 manifest shape:
+      {"schemaVersion":2, "config":{"digest":"sha256:..."},
+       "layers":[{"digest":"sha256:..."}, ...]}
+    OCI image-manifest is the same key shape; OCI image-index nests under
+    .manifests[].digest (different concept — that's a per-arch manifest, not
+    a layer). We prefer .config.digest then .layers[0].digest then .manifests[0].digest.
+    """
+    body = _read_raw_body(raw_path)
+    if not isinstance(body, dict):
+        return None
+    config = body.get("config")
+    if isinstance(config, dict) and isinstance(config.get("digest"), str):
+        return config["digest"]
+    layers = body.get("layers")
+    if isinstance(layers, list):
+        for layer in layers:
+            if isinstance(layer, dict) and isinstance(layer.get("digest"), str):
+                return layer["digest"]
+    manifests = body.get("manifests")
+    if isinstance(manifests, list):
+        for m in manifests:
+            if isinstance(m, dict) and isinstance(m.get("digest"), str):
+                return m["digest"]
+    return None
+
+
 def _allocate_results_dir(parent: Path) -> Path:
     n = 1
     while True:
@@ -1043,7 +1744,10 @@ def main() -> int:
     p.add_argument("--no-verify", action="store_true",
                    help="Disable TLS verification (self-signed certs)")
     p.add_argument("--versions-only", action="store_true",
-                   help="Only call /status, /system/about, /security/realms/active, /v2/ and exit")
+                   help="Only call the version-detect ladder (/status, /status/writable, "
+                        "/status/check, /swagger.json, /, /v2/, /realms/active) and exit. "
+                        "The Server: HTTP header on every response is the primary "
+                        "version source; the rest are fallbacks + capability checks.")
     p.add_argument("--discover", action="store_true",
                    help="Discovery mode: list all repos + Docker catalog, pick a maven + docker "
                         "repo, write Result_N/discover.md with a copy-paste full-sweep command.")
