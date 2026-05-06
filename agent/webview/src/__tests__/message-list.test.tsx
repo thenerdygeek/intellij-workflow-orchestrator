@@ -3,23 +3,31 @@ import { render, screen } from '@testing-library/react';
 
 // Virtuoso uses urx reactive streams that require a real browser scroll model;
 // replace it with a minimal shim that exercices the same props contract.
+// Real Virtuoso renders `components.Footer` as a React component receiving
+// `{ context }`; the mock matches so the stable-Footer pattern in MessageList
+// (Footer reads dynamic content from `context.footer`) is exercised.
 vi.mock('react-virtuoso', () => ({
   Virtuoso: ({
     totalCount,
     itemContent,
     components,
+    context,
   }: {
     totalCount: number;
     itemContent: (i: number) => React.ReactNode;
-    components?: { Footer?: () => React.ReactNode };
-  }) => (
-    <div role="log">
-      {Array.from({ length: totalCount }, (_, i) => (
-        <div key={i}>{itemContent(i)}</div>
-      ))}
-      {components?.Footer?.()}
-    </div>
-  ),
+    components?: { Footer?: React.ComponentType<{ context?: unknown }> };
+    context?: unknown;
+  }) => {
+    const Footer = components?.Footer;
+    return (
+      <div role="log">
+        {Array.from({ length: totalCount }, (_, i) => (
+          <div key={i}>{itemContent(i)}</div>
+        ))}
+        {Footer ? <Footer context={context} /> : null}
+      </div>
+    );
+  },
 }));
 
 import { MessageList } from '@/components/chat/MessageList';

@@ -439,6 +439,10 @@ class AgentLoop(
     /** Cumulative estimated cost in USD across all API calls in this session (seeded from prior turns). Null when no priced call has happened yet. */
     private var totalCostUsd: Double? = initialCostUsd
 
+    /** WARN-once per unknown model id so a missing pricing entry surfaces in logs
+     *  without spamming on every API call. Reset only when this loop instance dies. */
+    private val unknownPricingModelsLogged = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     /** Files modified during this loop run (from tool artifacts). Gap 1+14: file tracking. */
     private val modifiedFiles = mutableSetOf<String>()
     /** Lines added during this loop run (from edit/create diffs). Gap 21: change tracking. */
@@ -1282,6 +1286,10 @@ class AgentLoop(
                 cacheReadTokens = cacheReadToks,
                 cacheWriteTokens = cacheCreationToks,
             )
+            if (pricingEntry == null && unknownPricingModelsLogged.add(brain.modelId)) {
+                LOG.warn("[Loop] No pricing entry for model '${brain.modelId}' — cost will not accumulate. " +
+                    "Add an entry to pricing.json or override at ~/.workflow-orchestrator/pricing.json.")
+            }
 
             // Accumulate session cost — null stays null when model has no pricing entry,
             // otherwise add to running total (starting from 0.0 on first priced call).

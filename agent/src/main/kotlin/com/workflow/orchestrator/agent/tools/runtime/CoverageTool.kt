@@ -1067,14 +1067,14 @@ Actions and their parameters:
                 when {
                     methods.size == 1 -> data.javaClass.getField("METHOD_NAME").set(data, methods.first())
                     methods.size >= 2 -> {
-                        // JUnit 5 PATTERNS format: "fully.qualified.Class,method1|method2|method3"
-                        val patternsField = data.javaClass.getField("PATTERNS")
-                        @Suppress("UNCHECKED_CAST")
-                        val patterns = patternsField.get(data) as? java.util.LinkedHashSet<String>
-                            ?: java.util.LinkedHashSet()
-                        patterns.clear()
-                        patterns.add("$className,${methods.joinToString("|")}")
-                        patternsField.set(data, patterns)
+                        // Per JUnitConfiguration.bePatternConfiguration: each LinkedHashSet
+                        // entry is one "fully.qualified.Class,methodName" pair. The backing
+                        // field myPattern is private; setPatterns is the public API.
+                        val patterns = java.util.LinkedHashSet<String>(methods.size).apply {
+                            methods.forEach { add("$className,$it") }
+                        }
+                        data.javaClass.getMethod("setPatterns", java.util.LinkedHashSet::class.java)
+                            .invoke(data, patterns)
                     }
                 }
             } catch (_: Exception) { return null }

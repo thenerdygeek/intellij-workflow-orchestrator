@@ -585,26 +585,31 @@ class AgentService(
             log.info("[Agent] Using caller-specified model override: $modelOverride")
             modelOverride
         } else {
-            // Always fetch models and pick the best (latest Opus).
-            // If fetch fails, fall back to settings or factory auto-resolution.
-            val client = SourcegraphChatClient(baseUrl = sgUrl, tokenProvider = tokenProvider, model = "")
-            val models = try {
-                ModelCache.getModels(client)
-            } catch (e: Exception) {
-                log.warn("[Agent] Failed to fetch models from Sourcegraph: ${e.message}")
-                emptyList()
-            }
-            val best = ModelCache.pickBest(models)
-
-            if (best != null) {
-                log.info("[Agent] Auto-selected model: ${best.modelName} (${best.id})")
-                best.id
+            // Honour the user's saved selection (from the model picker / settings page) FIRST.
+            // Auto-pick only runs when nothing has ever been selected (first-launch) or when
+            // settings is blank — otherwise [ModelCache.pickBest] would silently override the
+            // user's choice with Opus-thinking on every fresh task, leading to ~5x over-billing
+            // when they had Sonnet selected.
+            val settingsModel = AgentSettings.getInstance(project).state.sourcegraphChatModel
+            if (!settingsModel.isNullOrBlank()) {
+                log.info("[Agent] Using user-selected model from settings: $settingsModel")
+                settingsModel
             } else {
-                // Model fetch failed or returned empty — try settings
-                val settingsModel = AgentSettings.getInstance(project).state.sourcegraphChatModel
-                if (!settingsModel.isNullOrBlank()) {
-                    log.info("[Agent] Models unavailable, using settings model: $settingsModel")
-                    settingsModel
+                // No saved choice — fetch models and auto-pick the latest Opus tier as a sane
+                // first-run default. AgentController.loadModelList() also persists this back
+                // into settings so subsequent tasks see a non-blank value here.
+                val client = SourcegraphChatClient(baseUrl = sgUrl, tokenProvider = tokenProvider, model = "")
+                val models = try {
+                    ModelCache.getModels(client)
+                } catch (e: Exception) {
+                    log.warn("[Agent] Failed to fetch models from Sourcegraph: ${e.message}")
+                    emptyList()
+                }
+                val best = ModelCache.pickBest(models)
+
+                if (best != null) {
+                    log.info("[Agent] No saved selection — auto-picking: ${best.modelName} (${best.id})")
+                    best.id
                 } else {
                     // Last resort — try factory which may have cached models
                     log.warn("[Agent] No models available and no model configured. Trying factory auto-resolution.")

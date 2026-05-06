@@ -6,14 +6,13 @@ import org.junit.jupiter.api.Test
 import java.io.File
 
 /**
- * Source-text contract for the multi-method native-runner recovery path
- * introduced in step 3 of the Windows-compatibility sweep.
+ * Source-text contract for the multi-method native-runner recovery path.
  *
  * Recovery flow:
- *   1. createJUnitRunSettings tries the JUnit PATTERNS reflection trick for
- *      multi-method runs.
- *   2. If reflection fails (NoSuchFieldException — known capability gap on
- *      certain platform builds), the failure reason is emitted with the
+ *   1. createJUnitRunSettings populates patterns via the public setPatterns
+ *      method on JUnitConfiguration.Data.
+ *   2. If reflection fails (e.g., a forked or future plugin build where the
+ *      setter signature has shifted), the failure reason is emitted with the
  *      sentinel prefix `MULTI_METHOD_PATTERNS_UNAVAILABLE`.
  *   3. The dispatcher in executeRunTests recognizes the sentinel and routes
  *      the same call through the shell fallback (which supports multi-method
@@ -22,6 +21,8 @@ import java.io.File
  * If either side of the sentinel handshake is removed, the auto-recovery
  * silently breaks — the LLM gets the old hard error and has to retry with
  * use_native_runner=false. These assertions lock in both ends.
+ *
+ * Storage format itself is pinned by [JUnitPatternsFormatTest].
  */
 class JavaRuntimeExecPatternsRecoveryTest {
 

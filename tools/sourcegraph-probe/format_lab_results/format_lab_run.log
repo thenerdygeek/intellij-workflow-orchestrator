@@ -1,0 +1,306 @@
+Sourcegraph URL : https://***.***.***.com/
+latest stream api-version : 9 (from /.api/client-config)
+Models          : 6  (filtered 6 vision-capable from /.api/modelconfig/supported-models.json)
+  - anthropic::2024-10-22::claude-sonnet-4-5-latest
+  - anthropic::2024-10-22::claude-sonnet-4-5-thinking-latest
+  - anthropic::2024-10-22::claude-opus-4-5-latest
+  - anthropic::2024-10-22::claude-opus-4-5-thinking-latest
+  - anthropic::2024-10-22::claude-haiku-4-5-latest
+  - anthropic::2024-10-22::claude-haiku-4-5-thinking-latest
+Cases           : 16 (mime=10, document=3, multi=1, api_version=0, size=0)
+
+── anthropic::2024-10-22::claude-sonnet-4-5-latest ─────────────────────────────────────
+  ✅ mime_png                         v9  status=200  1534ms    reply='Red'
+  ✅ mime_jpeg                        v9  status=200  1470ms    reply='Red'
+  ✅ mime_webp                        v9  status=200  1357ms    reply='Red'
+  ❌ mime_heic                        v9  status=200  507ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ mime_heif                        v9  status=200  513ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ✅ mime_gif                         v9  status=200  1429ms    reply='Red'
+  ❌ mime_bmp                         v9  status=200  627ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ mime_tiff                        v9  status=200  512ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ mime_avif                        v9  status=200  430ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ mime_svg                         v9  status=200  638ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ doc_anthropic_native_pdf         v9  status=200  238ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ doc_openai_file_pdf              v9  status=200  1325ms    [REFUSED]
+      reply : I don't see any PDF document attached to your message. Could you please try uploading it again?
+  ❌ doc_image_url_with_pdf_mime      v9  status=200  418ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ✅ multi_two_images                 v9  status=200  1476ms    reply='red, blue'
+  ✅ tools_only_on_stream             v9  status=200  930ms    reply='I'll call the tool to retrieve the secret number for you.'
+  ✅ tools_with_image_on_stream       v9  status=200  1409ms    reply='I'll call the tool to retrieve the secret number for you.'
+
+── anthropic::2024-10-22::claude-sonnet-4-5-thinking-latest ─────────────────────────────────────
+  ✅ mime_png                         v9  status=200  1180ms    reply='Red'
+  ✅ mime_jpeg                        v9  status=200  1601ms    reply='Red'
+  ✅ mime_webp                        v9  status=200  1272ms    reply='Red'
+  ❌ mime_heic                        v9  status=200  510ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ mime_heif                        v9  status=200  715ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ mime_gif                         v9  status=200  1530ms    [SAW_NO]
+      reply : White
+  ❌ mime_bmp                         v9  status=200  454ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ mime_tiff                        v9  status=200  665ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ mime_avif                        v9  status=200  497ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ mime_svg                         v9  status=200  443ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ doc_anthropic_native_pdf         v9  status=200  256ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ doc_openai_file_pdf              v9  status=200  3039ms    [REFUSED]
+      reply : I don't see any PDF document attached to your message. The context file appears to be empty. Could you please attach the PDF document you'd like me to read?
+  ❌ doc_image_url_with_pdf_mime      v9  status=200  652ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ✅ multi_two_images                 v9  status=200  2674ms    reply='Red, Blue'
+  ✅ tools_only_on_stream             v9  status=200  1935ms    reply='{"delta_thinking":"The user is asking me to retrieve"}
+{"delta_thinking":" the"}
+{"delta_thinking":" secret number by"}
+{"delta_thinking":" calling the must_call_this_"}
+{"delta_thinking":"tool function. They've explicitly stated"}
+{"delta_thinking":" that I must"}
+{"delta_thinking":" call this"}
+{"delta_thinking":" tool and"}
+{"delta_thinking":" that I don"}
+{"delta_thinking":"'t know the number"'
+  ✅ tools_with_image_on_stream       v9  status=200  4295ms    reply='{"delta_thinking":"The user is asking me to retrieve"}
+{"delta_thinking":" the"}
+{"delta_thinking":" secret number by"}
+{"delta_thinking":" calling the"}
+{"delta_thinking":" must"}
+{"delta_thinking":"_call_this_tool function."}
+{"delta_thinking":" This"}
+{"delta_thinking":" function"}
+{"delta_thinking":" requires a \""}
+{"delta_thinking":"reason\" parameter."}
+{"delta_thinking":" I"}
+{"delta_think'
+
+── anthropic::2024-10-22::claude-opus-4-5-latest ─────────────────────────────────────
+  ✅ mime_png                         v9  status=200  2320ms    reply='Red'
+  ✅ mime_jpeg                        v9  status=200  1071ms    reply='Red'
+  ✅ mime_webp                        v9  status=200  1534ms    reply='Red'
+  ❌ mime_heic                        v9  status=200  716ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ mime_heif                        v9  status=200  509ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ✅ mime_gif                         v9  status=200  2547ms    reply='Red'
+  ❌ mime_bmp                         v9  status=200  403ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ mime_tiff                        v9  status=200  616ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ mime_avif                        v9  status=200  465ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ mime_svg                         v9  status=200  541ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ doc_anthropic_native_pdf         v9  status=200  212ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ doc_openai_file_pdf              v9  status=200  948ms    [SAW_NO]
+      reply : Based on the document content, the word is:
+
+**LIFE**
+  ❌ doc_image_url_with_pdf_mime      v9  status=200  544ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ✅ multi_two_images                 v9  status=200  1483ms    reply='red, blue'
+  ✅ tools_only_on_stream             v9  status=200  1086ms    reply='I'll call the tool to retrieve the secret number for you.'
+  ✅ tools_with_image_on_stream       v9  status=200  1333ms    reply='I'll call the tool to retrieve the secret number for you.'
+
+── anthropic::2024-10-22::claude-opus-4-5-thinking-latest ─────────────────────────────────────
+  ✅ mime_png                         v9  status=200  1502ms    reply='Red'
+  ✅ mime_jpeg                        v9  status=200  1531ms    reply='Red'
+  ✅ mime_webp                        v9  status=200  1580ms    reply='Red'
+  ❌ mime_heic                        v9  status=200  714ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ mime_heif                        v9  status=200  512ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ✅ mime_gif                         v9  status=200  1633ms    reply='Red'
+  ❌ mime_bmp                         v9  status=200  510ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ mime_tiff                        v9  status=200  410ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ mime_avif                        v9  status=200  604ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ mime_svg                         v9  status=200  509ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ doc_anthropic_native_pdf         v9  status=200  308ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ doc_openai_file_pdf              v9  status=200  1017ms    [REFUSED]
+      reply : I don't see any content in the attached document. The context file appears to be empty. Could you please re-upload the PDF or share its contents another way?
+  ❌ doc_image_url_with_pdf_mime      v9  status=200  819ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ multi_two_images                 v9  status=200  1327ms    [SAW_NO]
+      reply : I can only see one image, which shows a solid blue color.
+  ✅ tools_only_on_stream             v9  status=200  1156ms    reply='{"delta_thinking":"The user is asking for"}
+{"delta_thinking":" the secret number and"}
+{"delta_thinking":" explicitly"}
+{"delta_thinking":" stating that I must call the must"}
+{"delta_thinking":"_call_this_tool function to"}
+{"delta_thinking":" retrieve it. Let"}
+{"delta_thinking":" me call"}
+{"delta_thinking":" this"}
+{"delta_thinking":" tool"}
+{"delta_thinking":" now"}
+{"delta_thinking":"."}
+{"'
+  ✅ tools_with_image_on_stream       v9  status=200  1491ms    reply='{"delta_thinking":"The user is asking me to call the"}
+{"delta_thinking":" must"}
+{"delta_thinking":"_call_this_tool function to"}
+{"delta_thinking":" retrieve a secret number. The"}
+{"delta_thinking":" function requires a \""}
+{"delta_thinking":"reason\" parameter."}
+{"delta_thinking":" I"}
+{"delta_thinking":" should"}
+{"delta_thinking":" call this"}
+{"delta_thinking":" tool to"}
+{"delta_thinking'
+
+── anthropic::2024-10-22::claude-haiku-4-5-latest ─────────────────────────────────────
+  ✅ mime_png                         v9  status=200  708ms    reply='Red'
+  ✅ mime_jpeg                        v9  status=200  802ms    reply='Red'
+  ✅ mime_webp                        v9  status=200  694ms    reply='Red'
+  ❌ mime_heic                        v9  status=200  979ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ mime_heif                        v9  status=200  514ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ✅ mime_gif                         v9  status=200  673ms    reply='Red'
+  ❌ mime_bmp                         v9  status=200  410ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ mime_tiff                        v9  status=200  495ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ mime_avif                        v9  status=200  417ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ mime_svg                         v9  status=200  416ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ doc_anthropic_native_pdf         v9  status=200  209ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ doc_openai_file_pdf              v9  status=200  1328ms    [REFUSED]
+      reply : I don't see any PDF document attached to your message. The context file appears to be empty. Could you please share the PDF document you'd like me to read?
+  ❌ doc_image_url_with_pdf_mime      v9  status=200  436ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ✅ multi_two_images                 v9  status=200  1287ms    reply='Red, Blue'
+  ✅ tools_only_on_stream             v9  status=200  708ms    reply='{"delta_tool_calls":[{"id":"toolu_vrtx_01DECbr7RtdMYd5ao7zp8DmC","type":"function","function":{"name":"must_call_this_tool","arguments":""}}]}
+{"delta_tool_calls":[{"id":"","type":"function","function":{"name":"","arguments":"{\"reaso"}}]}
+{"delta_tool_calls":[{"id":"","type":"function","function":{"name":"","arguments":"n\": \"To"}}]}
+{"delta_tool_calls":[{"id":"","type":"function","function":{"n'
+  ✅ tools_with_image_on_stream       v9  status=200  920ms    reply='{"delta_tool_calls":[{"id":"toolu_vrtx_01TBzjSzHo7YcdWQRbgDgYp7","type":"function","function":{"name":"must_call_this_tool","arguments":""}}]}
+{"delta_tool_calls":[{"id":"","type":"function","function":{"name":"","arguments":"{\"reason\": \""}}]}
+{"delta_tool_calls":[{"id":"","type":"function","function":{"name":"","arguments":"User is requ"}}]}
+{"delta_tool_calls":[{"id":"","type":"function","fun'
+
+── anthropic::2024-10-22::claude-haiku-4-5-thinking-latest ─────────────────────────────────────
+  ✅ mime_png                         v9  status=200  681ms    reply='Red'
+  ✅ mime_jpeg                        v9  status=200  735ms    reply='Red'
+  ✅ mime_webp                        v9  status=200  713ms    reply='Red'
+  ❌ mime_heic                        v9  status=200  403ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ mime_heif                        v9  status=200  881ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ✅ mime_gif                         v9  status=200  962ms    reply='Red'
+  ❌ mime_bmp                         v9  status=200  462ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ mime_tiff                        v9  status=200  464ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ mime_avif                        v9  status=200  451ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ mime_svg                         v9  status=200  510ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ doc_anthropic_native_pdf         v9  status=200  203ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ❌ doc_openai_file_pdf              v9  status=200  715ms    [REFUSED]
+      reply : I don't see any content in the provided context file. The file appears to be empty. Could you please share the PDF document again or paste its text content?
+  ❌ doc_image_url_with_pdf_mime      v9  status=200  711ms    [SSE_EMPTY]
+      reply : events_seen=['error', 'done']
+  ✅ multi_two_images                 v9  status=200  3271ms    reply='red, blue'
+  ✅ tools_only_on_stream             v9  status=200  936ms    reply='{"delta_thinking":"The user is asking me to call the"}
+{"delta_thinking":" must"}
+{"delta_thinking":"_call_this_tool function to"}
+{"delta_thinking":" retrieve a secret number. They're emphas"}
+{"delta_thinking":"izing that I"}
+{"delta_thinking":" MUST call this"}
+{"delta_thinking":" tool to get the answer"}
+{"delta_thinking":"."}
+{"delta_thinking":" The function"}
+{"delta_thinking":" requires a \'
+  ✅ tools_with_image_on_stream       v9  status=200  708ms    reply='{"delta_thinking":"The user is asking me to call the"}
+{"delta_thinking":" \"must_call_this_tool"}
+{"delta_thinking":"\" function to retrieve"}
+{"delta_thinking":" a secret number. They've explicitly stated"}
+{"delta_thinking":" that I don't know it"}
+{"delta_thinking":" and that I"}
+{"delta_thinking":" MUST call the tool to get it."}
+{"delta_thinking":"\n\nThe"}
+{"delta_thinking":" function requi'
+
+
+==============================================================================================================
+SUMMARY MATRIX  ( ✅ = format works for that model | ⏭  = skipped | ❌ = does not )
+==============================================================================================================
+                               claude-sonnet-4-5-latest           claude-sonnet-4-5-thinking-latest  claude-opus-4-5-latest             claude-opus-4-5-thinking-latest    claude-haiku-4-5-latest            claude-haiku-4-5-thinking-latest 
+mime_png                       PASS                               PASS                               PASS                               PASS                               PASS                               PASS                             
+mime_jpeg                      PASS                               PASS                               PASS                               PASS                               PASS                               PASS                             
+mime_webp                      PASS                               PASS                               PASS                               PASS                               PASS                               PASS                             
+mime_heic                      SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                        
+mime_heif                      SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                        
+mime_gif                       PASS                               SAW_NO                             PASS                               PASS                               PASS                               PASS                             
+mime_bmp                       SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                        
+mime_tiff                      SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                        
+mime_avif                      SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                        
+mime_svg                       SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                        
+doc_anthropic_native_pdf       SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                        
+doc_openai_file_pdf            REFUSED                            REFUSED                            SAW_NO                             REFUSED                            REFUSED                            REFUSED                          
+doc_image_url_with_pdf_mime    SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                          SSE_EMPTY                        
+multi_two_images               PASS                               PASS                               PASS                               SAW_NO                             PASS                               PASS                             
+tools_only_on_stream           PASS                               PASS                               PASS                               PASS                               PASS                               PASS                             
+tools_with_image_on_stream     PASS                               PASS                               PASS                               PASS                               PASS                               PASS                             
+==============================================================================================================
+
+TOTAL: 40 PASS / 0 SKIP / 56 FAIL out of 96 cells
+
+TOOLS-ON-STREAM AUDIT (pre-rework verification)
+--------------------------------------------------------------------------------
+Each PASS must have at least one marker firing. If a row shows '<NONE>',
+the verdict is a false positive and the workaround must stay for that model.
+
+  ✅ claude-sonnet-4-5-latest                    tools_only_on_stream            markers=[tool_use, tool_call, tool_calls, delta_tool_calls]
+  ✅ claude-sonnet-4-5-latest                    tools_with_image_on_stream      markers=[tool_use, tool_call, tool_calls, delta_tool_calls]
+  ✅ claude-sonnet-4-5-thinking-latest           tools_only_on_stream            markers=[tool_call, tool_calls, delta_tool_calls]
+  ✅ claude-sonnet-4-5-thinking-latest           tools_with_image_on_stream      markers=[tool_call, tool_calls, delta_tool_calls]
+  ✅ claude-opus-4-5-latest                      tools_only_on_stream            markers=[tool_call, tool_calls, delta_tool_calls]
+  ✅ claude-opus-4-5-latest                      tools_with_image_on_stream      markers=[tool_call, tool_calls, delta_tool_calls]
+  ✅ claude-opus-4-5-thinking-latest             tools_only_on_stream            markers=[tool_call, tool_calls, delta_tool_calls]
+  ✅ claude-opus-4-5-thinking-latest             tools_with_image_on_stream      markers=[tool_call, tool_calls, delta_tool_calls]
+  ✅ claude-haiku-4-5-latest                     tools_only_on_stream            markers=[tool_use, tool_call, tool_calls, delta_tool_calls]
+  ✅ claude-haiku-4-5-latest                     tools_with_image_on_stream      markers=[tool_use, tool_call, tool_calls, delta_tool_calls]
+  ✅ claude-haiku-4-5-thinking-latest            tools_only_on_stream            markers=[tool_call, tool_calls, delta_tool_calls]
+  ⚠  claude-haiku-4-5-thinking-latest            tools_with_image_on_stream      markers=[<NONE — SUSPECT>]
+
+
+FORMAT-SUPPORT RECOMMENDATION
+------------------------------------------------------------
+✅ Fully supported (every model passed):
+     image/png
+     image/jpeg
+     image/webp
+⚠  Partial support (some models, not all):
+     image/gif    (5/6 models)
+❌ NOT supported (every model SAW_NO / 4xx):
+     image/heic
+     image/heif
+     image/bmp
+     image/tiff
+     image/avif
+     image/svg+xml
+
+Suggested PluginSettings.imageMimeWhitelist:
+     listOf('image/png', 'image/jpeg', 'image/webp')
+
+Wrote format_lab_results.json
+Wrote format_lab_run.log (full console transcript)

@@ -34,6 +34,23 @@ function HeaderSpacer() {
   return <div className="h-3" />;
 }
 
+// Dynamic footer content is delivered via Virtuoso's `context` prop, not by
+// rebuilding `components.Footer`. If we passed `() => <>{footer}</>` here,
+// React would see a different component type on every parent re-render and
+// unmount the entire footer subtree — collapsing any `useState` inside (e.g.
+// the expand/collapse state of the active ToolCallChain). Keeping `Footer`
+// stable lets re-renders propagate normally without a remount.
+type FooterContext = { footer: ReactNode };
+function StableFooter({ context }: { context?: FooterContext }) {
+  return <>{context?.footer ?? null}</>;
+}
+
+const STABLE_COMPONENTS = {
+  Item: ItemContainer,
+  Header: HeaderSpacer,
+  Footer: StableFooter,
+};
+
 export const MessageList = forwardRef<MessageListHandle, MessageListProps>(function MessageList(
   { count, renderItem, footer, atBottomChange, ariaLabel },
   ref,
@@ -57,14 +74,10 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     },
   }), []);
 
-  const components = useMemo(() => {
-    const c: Record<string, unknown> = { Item: ItemContainer, Header: HeaderSpacer };
-    if (footer) c.Footer = () => <>{footer}</>;
-    return c;
-  }, [footer]);
+  const context = useMemo<FooterContext>(() => ({ footer }), [footer]);
 
   return (
-    <Virtuoso
+    <Virtuoso<unknown, FooterContext>
       ref={virtuosoRef}
       className="flex-1 min-h-0"
       role="log"
@@ -76,7 +89,8 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
       atBottomThreshold={120}
       atBottomStateChange={atBottomChange}
       increaseViewportBy={{ top: 400, bottom: 400 }}
-      components={components}
+      components={STABLE_COMPONENTS}
+      context={context}
     />
   );
 });

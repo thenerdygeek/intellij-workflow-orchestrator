@@ -867,26 +867,29 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                             methodField.set(data, methods.first())
                         }
                         methods.size >= 2 -> {
-                            // JUnit 5 PATTERNS format: one entry per class-scoped selector,
-                            // written as "fully.qualified.Class,method1|method2|method3".
-                            // See com.intellij.execution.junit.JUnitConfiguration$Data.PATTERNS.
+                            // Storage format per JUnitConfiguration.bePatternConfiguration:
+                            // one LinkedHashSet entry per "fully.qualified.Class,methodName"
+                            // pair. The `||` separator from getPatternPresentation() is for
+                            // display only — NOT the persistence format. The backing field
+                            // `myPattern` is private; the public setter `setPatterns` is the
+                            // stable API across platform versions.
                             try {
-                                val patternsField = data.javaClass.getField("PATTERNS")
-                                @Suppress("UNCHECKED_CAST")
-                                val patterns = patternsField.get(data) as? java.util.LinkedHashSet<String>
-                                    ?: java.util.LinkedHashSet()
-                                patterns.clear()
-                                patterns.add("$className,${methods.joinToString("|")}")
-                                patternsField.set(data, patterns)
+                                val patterns = java.util.LinkedHashSet<String>(methods.size).apply {
+                                    methods.forEach { add("$className,$it") }
+                                }
+                                val setPatterns = data.javaClass.getMethod(
+                                    "setPatterns", java.util.LinkedHashSet::class.java
+                                )
+                                setPatterns.invoke(data, patterns)
                             } catch (e: Exception) {
                                 // Sentinel prefix MULTI_METHOD_PATTERNS_UNAVAILABLE lets the
                                 // dispatcher (executeRunTests) recognize this as a known
-                                // capability gap and auto-route to the shell fallback,
-                                // which handles multi-method on every build tool. Class
-                                // name is reported verbatim so future failures on unusual
-                                // platform builds are debuggable without reflection guesswork.
+                                // capability gap and auto-route to the shell fallback. Kept
+                                // as defense-in-depth for forked or future plugin versions
+                                // where the setter signature shifts. Class name is reported
+                                // verbatim for debuggability.
                                 return fail(
-                                    "MULTI_METHOD_PATTERNS_UNAVAILABLE: PATTERNS field not found on " +
+                                    "MULTI_METHOD_PATTERNS_UNAVAILABLE: setPatterns(LinkedHashSet) not callable on " +
                                         "${data.javaClass.name} (${e.javaClass.simpleName}: ${e.message})"
                                 )
                             }
@@ -1465,19 +1468,29 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                                 testObjectField.set(data, if (isTestNG) "CLASS" else "class")
                                 mainClassField.set(data, failedClasses.first())
                             } else {
-                                // Pattern mode: multiple classes
+                                // Pattern mode: one entry per failed (Class[, method])
+                                // pair so the rerun executes exactly the failures, not the
+                                // whole containing class. Per JUnitConfiguration.bePatternConfiguration
+                                // each entry is "fully.qualified.Class" (whole class) or
+                                // "fully.qualified.Class,methodName" (single method).
+                                // Backing field myPattern is private; setPatterns is the
+                                // public API on JUnitConfiguration.Data.
                                 testObjectField.set(data, if (isTestNG) "CLASS" else "pattern")
                                 mainClassField.set(data, failedClasses.first())
                                 try {
-                                    // JUnit 5 pattern support via PATTERNS field
-                                    val patternsField = data.javaClass.getField("PATTERNS")
-                                    @Suppress("UNCHECKED_CAST")
-                                    val patterns = patternsField.get(data) as? java.util.LinkedHashSet<String>
-                                        ?: java.util.LinkedHashSet()
-                                    patterns.clear()
-                                    patterns.addAll(failedClasses)
-                                    patternsField.set(data, patterns)
-                                } catch (_: Exception) { /* PATTERNS field not available in JUnit 4 */ }
+                                    val patterns = java.util.LinkedHashSet<String>(failedClassMethods.size).apply {
+                                        failedClassMethods.forEach { (cls, m) ->
+                                            add(if (m == null) cls else "$cls,$m")
+                                        }
+                                    }
+                                    data.javaClass.getMethod(
+                                        "setPatterns", java.util.LinkedHashSet::class.java
+                                    ).invoke(data, patterns)
+                                } catch (_: Exception) {
+                                    // Setter not callable on this plugin variant — leave
+                                    // myPattern empty; MAIN_CLASS_NAME above ensures the
+                                    // first failed class still reruns instead of nothing.
+                                }
                             }
                         }
                     } catch (_: Exception) { /* best-effort field population */ }
