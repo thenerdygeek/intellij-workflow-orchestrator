@@ -551,6 +551,139 @@ class JiraProbe:
             ],
         )
 
+    # -- audit follow-up ------------------------------------------------------
+
+    def run_audit_followup(self, issue_key: Optional[str], project_key: Optional[str],
+                           filter_id: Optional[int]) -> None:
+        """Targeted probes for the 5 gaps in the 2026-05-06 Jira recommendations doc.
+
+        Each probe verifies the *exact* request shape the plugin would send if we
+        adopted the corresponding R-* recommendation. Read-only:
+          A — POST /rest/api/2/search with `key in (…)` body  → R-SWAP-1
+          B — GET  /rest/api/2/issue/picker?query={proj}-     → R-SWAP-2
+          C — GET  /rest/api/2/mypermissions?projectKey={k}   → R-ADD-1
+          D — GET  /rest/api/2/filter/{id} (one favourite)    → R-ADD-7
+          E — GET  /rest/api/2/issue/{key}?expand=rendered,changelog (combined) → R-ADD-3
+        """
+        print("[probe] audit-followup mode\n")
+
+        # Always (re)pin the version in case the user shares this bundle stand-alone.
+        self._get(
+            name="serverInfo",
+            description="Server version + deployment type",
+            path="/rest/api/2/serverInfo",
+            category="version",
+        )
+
+        # ---- A — R-SWAP-1: POST /rest/api/2/search with realistic body ------
+        if issue_key:
+            self._post(
+                name="search_v2_post_keys",
+                description="POST /rest/api/2/search with `key in (…)` body — validateTicketKeys migration target",
+                path="/rest/api/2/search",
+                category="candidate",
+                json_body={
+                    "jql": f"key in ({issue_key})",
+                    "fields": ["summary", "status"],
+                    "maxResults": 1,
+                },
+                notes=[
+                    "R-SWAP-1: confirms POST body shape works. 200 with 1 issue + no "
+                    "'errorMessages' = green light to drop the chunked(100) loop."
+                ],
+            )
+        else:
+            print("[probe] A skipped — pass --issue-key to verify POST search body shape")
+
+        # ---- B — R-SWAP-2: issue-picker with project-key prefix --------------
+        # Mention search typically queries by partial key (`PROJ-`), not free text.
+        prefix = None
+        if issue_key and "-" in issue_key:
+            prefix = issue_key.split("-", 1)[0] + "-"
+        elif project_key:
+            prefix = project_key + "-"
+        if prefix:
+            self._get(
+                name="issue_picker_keyprefix",
+                description=f"Issue-picker with key-prefix query ('{prefix}') — MentionSearchProvider migration target",
+                path=f"/rest/api/2/issue/picker?query={urllib.parse.quote(prefix)}"
+                     f"&showSubTasks=true&showSubTaskParent=true",
+                category="candidate",
+                notes=[
+                    "R-SWAP-2: confirms issue-picker returns a useful 'currentSearch' "
+                    "section for partial-key queries (the realistic mention-search input)."
+                ],
+            )
+        else:
+            print("[probe] B skipped — need --issue-key or --project-key to derive a prefix")
+
+        # ---- C — R-ADD-1: project-scoped permissions ------------------------
+        if project_key:
+            self._get(
+                name="mypermissions_project",
+                description="Project-scoped permissions — UI gating per-project",
+                path=f"/rest/api/2/mypermissions?projectKey={urllib.parse.quote(project_key)}",
+                category="candidate",
+                notes=[
+                    "R-ADD-1: confirms projectKey-scoped variant works. Same shape as "
+                    "global call but the `havePermission` flags reflect this project's ACLs."
+                ],
+            )
+        else:
+            print("[probe] C skipped — pass --project-key to verify project-scoped permissions")
+
+        # ---- D — R-ADD-7: filter detail (need filter id) --------------------
+        # If the user didn't pass --filter-id, fetch their favourites and pick the first.
+        chosen_filter_id: Optional[int] = filter_id
+        if chosen_filter_id is None:
+            fav = self._get(
+                name="filter_favourite",
+                description="User's favourite filters (used to pick a filter id for the detail probe)",
+                path="/rest/api/2/filter/favourite",
+                category="candidate",
+            )
+            if fav.ok:
+                fav_body = _read_raw_body(self.raw_dir / "filter_favourite.json")
+                if isinstance(fav_body, list):
+                    for f in fav_body:
+                        if isinstance(f, dict) and f.get("id"):
+                            try:
+                                chosen_filter_id = int(f["id"])
+                                break
+                            except (TypeError, ValueError):
+                                continue
+        if chosen_filter_id is not None:
+            self._get(
+                name="filter_detail",
+                description=f"Filter {chosen_filter_id} detail (incl. JQL) — Sprint-tab favourites click target",
+                path=f"/rest/api/2/filter/{chosen_filter_id}",
+                category="candidate",
+                notes=[
+                    "R-ADD-7: confirms we can fetch a saved filter's full JQL after the "
+                    "user clicks one in the favourites list."
+                ],
+            )
+        else:
+            print("[probe] D skipped — no filter id available "
+                  "(pass --filter-id, or favourite at least one filter in Jira)")
+
+        # ---- E — R-ADD-3 polish: combined rendered+changelog expand ---------
+        if issue_key:
+            self._get(
+                name="issue_rich_with_changelog",
+                description="Rich fetch + changelog in one call — single-call detail-panel feed",
+                path=f"/rest/api/2/issue/{urllib.parse.quote(issue_key)}"
+                     "?fields=summary,description,status,priority,issuetype,assignee,reporter,"
+                     "labels,components,fixVersions,comment&expand=renderedFields,changelog",
+                category="candidate",
+                notes=[
+                    "R-ADD-3 polish: confirms combining renderedFields + changelog in one "
+                    "request. Saves a round-trip when the detail panel opens."
+                ],
+            )
+        else:
+            print("[probe] E skipped — pass --issue-key to verify combined-expand fetch")
+
     # -- summary --------------------------------------------------------------
 
     def write_summary(self, args_used: dict[str, Any]) -> None:
@@ -899,6 +1032,14 @@ def main() -> int:
                         "and recent issues so you can pick values for the full "
                         "sweep without digging through Jira URLs. Writes "
                         "Result_N/discover.md with a copy-paste command.")
+    p.add_argument("--audit-followup", action="store_true",
+                   help="Targeted follow-up probes for the 2026-05-06 Jira "
+                        "recommendations doc (R-SWAP-1, R-SWAP-2, R-ADD-1, "
+                        "R-ADD-7, R-ADD-3 polish). Read-only. Needs "
+                        "--issue-key + --project-key; --filter-id optional.")
+    p.add_argument("--filter-id", type=int,
+                   help="Specific Jira filter id to fetch (audit-followup probe D). "
+                        "If omitted, the first favourite filter is used.")
     p.add_argument("--out", default=str(Path(__file__).parent),
                    help="Parent dir for Result_N/ output (default: alongside the script)")
     args = p.parse_args()
@@ -921,14 +1062,18 @@ def main() -> int:
     out_parent.mkdir(parents=True, exist_ok=True)
     results_dir = _allocate_results_dir(out_parent)
 
-    if args.discover and args.versions_only:
-        print("ERROR: --discover and --versions-only are mutually exclusive.", file=sys.stderr)
+    exclusive = sum(bool(x) for x in (args.discover, args.versions_only, args.audit_followup))
+    if exclusive > 1:
+        print("ERROR: --discover, --versions-only, and --audit-followup are mutually exclusive.",
+              file=sys.stderr)
         return 2
 
     if args.discover:
         mode_label = "discover"
     elif args.versions_only:
         mode_label = "versions-only"
+    elif args.audit_followup:
+        mode_label = "audit-followup"
     else:
         mode_label = "full sweep"
 
@@ -945,15 +1090,23 @@ def main() -> int:
         "board_id": args.board_id,
         "sprint_id": args.sprint_id,
         "project_key": args.project_key,
+        "filter_id": args.filter_id,
         "no_verify": args.no_verify,
         "versions_only": args.versions_only,
         "discover": args.discover,
+        "audit_followup": args.audit_followup,
     }
 
     if args.discover:
         probe.run_discover()
     elif args.versions_only:
         probe.run_versions_only()
+    elif args.audit_followup:
+        probe.run_audit_followup(
+            issue_key=args.issue_key,
+            project_key=args.project_key,
+            filter_id=args.filter_id,
+        )
     else:
         probe.run_full(
             issue_key=args.issue_key,
