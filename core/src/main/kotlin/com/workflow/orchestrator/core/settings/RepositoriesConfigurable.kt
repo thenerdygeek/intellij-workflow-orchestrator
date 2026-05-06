@@ -317,7 +317,7 @@ class RepositoriesConfigurable(
             log.info("[Settings:Repos] Settings repos: before=$savedReposBefore, after=${pluginSettings.getRepos().size}")
 
             // Show VCS detection results immediately in the UI
-            invokeLater {
+            platformInvokeLater(ModalityState.stateForComponent(repoStatusLabel)) {
                 editedRepos.clear()
                 editedRepos.addAll(pluginSettings.getRepos())
                 refreshRepoTable()

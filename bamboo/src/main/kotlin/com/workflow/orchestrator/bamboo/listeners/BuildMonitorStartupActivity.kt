@@ -23,6 +23,7 @@ class BuildMonitorStartupActivity : ProjectActivity {
 
             // Resolve plan key: primary repo → global fallback
             val resolver = RepoContextResolver.getInstance(project)
+            // editor-fallback-allowed: startup-time bootstrap — no user action context (no focused PR / clicked ticket / checked changes) to derive a stronger signal from
             val repoConfig = resolver.getPrimary()
             val planKey = repoConfig?.bambooPlanKey?.takeIf { it.isNotBlank() }
                 ?: settings.state.bambooPlanKey?.takeIf { it.isNotBlank() }
