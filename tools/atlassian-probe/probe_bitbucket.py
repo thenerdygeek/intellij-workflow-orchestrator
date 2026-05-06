@@ -88,16 +88,24 @@ class BitbucketProbe:
     # -- low-level request helper ----------------------------------------------
 
     def _request(self, name: str, description: str, path: str, category: str,
-                 method: str = "GET", json_body: Optional[dict[str, Any]] = None,
-                 notes: Optional[list[str]] = None, expect_json: bool = True) -> ProbeResult:
+                 method: str = "GET", json_body: Any = None,
+                 notes: Optional[list[str]] = None, expect_json: bool = True,
+                 accept: Optional[str] = None) -> ProbeResult:
         """Issue a single HTTP request and persist its outcome.
 
         POST is allowed only for endpoints that are functionally search / lookup /
         rendering and never mutate Bitbucket state:
-          - POST /rest/search/1.0/search       (code/PR search)
-          - POST /rest/api/1.0/markup/preview  (render Markdown)
-        Both are documented as read-only. The User-Agent string includes
+          - POST /rest/search/1.0/search             (code/PR search)
+          - POST /rest/api/1.0/markup/preview        (render Markdown)
+          - POST /rest/build-status/1.0/commits/stats (bulk read-only lookup)
+        All documented as read-only. The User-Agent string includes
         `(read-only)` so admins can audit probe traffic in Bitbucket's logs.
+
+        `json_body` is `Any` (not `dict`) because some Bitbucket POSTs expect a
+        top-level array (e.g. /commits/stats wants `[{commitId: ...}]`).
+
+        `accept` overrides the session's `Accept: application/json` header for
+        endpoints that only serve text (e.g. `/pull-requests/{id}.patch`).
         """
         url = f"{self.base}{path}"
         result = ProbeResult(
@@ -106,15 +114,18 @@ class BitbucketProbe:
         )
         start = time.perf_counter()
         raw_payload: Any = None
+        per_request_headers = {"Accept": accept} if accept else None
         try:
             if method == "GET":
-                resp = self.session.get(url, timeout=30, allow_redirects=False)
+                resp = self.session.get(url, timeout=30, allow_redirects=False,
+                                        headers=per_request_headers)
             elif method == "POST":
                 resp = self.session.post(
                     url,
                     json=json_body if json_body is not None else {},
                     timeout=30,
                     allow_redirects=False,
+                    headers=per_request_headers,
                 )
             else:
                 raise ValueError(f"Unsupported method: {method}")
@@ -162,16 +173,20 @@ class BitbucketProbe:
         return result
 
     def _get(self, name: str, description: str, path: str, category: str,
-             notes: Optional[list[str]] = None, expect_json: bool = True) -> ProbeResult:
+             notes: Optional[list[str]] = None, expect_json: bool = True,
+             accept: Optional[str] = None) -> ProbeResult:
         return self._request(name, description, path, category,
-                             method="GET", notes=notes, expect_json=expect_json)
+                             method="GET", notes=notes, expect_json=expect_json,
+                             accept=accept)
 
     def _post(self, name: str, description: str, path: str, category: str,
-              json_body: dict[str, Any],
-              notes: Optional[list[str]] = None, expect_json: bool = True) -> ProbeResult:
+              json_body: Any,
+              notes: Optional[list[str]] = None, expect_json: bool = True,
+              accept: Optional[str] = None) -> ProbeResult:
         return self._request(name, description, path, category,
                              method="POST", json_body=json_body,
-                             notes=notes, expect_json=expect_json)
+                             notes=notes, expect_json=expect_json,
+                             accept=accept)
 
     # -- modes ----------------------------------------------------------------
 
@@ -971,6 +986,211 @@ class BitbucketProbe:
                           "Bitbucket token expires in 7 days' before it actually expires."
                       ])
 
+    # -- audit follow-up -------------------------------------------------------
+
+    def run_audit_followup(self, project_key: Optional[str], repo_slug: Optional[str],
+                           pr_id: Optional[int], commit_id: Optional[str],
+                           branch_name: Optional[str], file_path: Optional[str]) -> None:
+        """Targeted re-probe for the 5 R-INVESTIGATE items in the 2026-05-07
+        Bitbucket recommendations doc.
+
+        Each probe verifies the *exact* request shape we'd use if the
+        recommendation were adopted. Read-only:
+
+          R-INV-1 — GET /rest/api/latest/.../commits/{cid}/builds (rich build status)
+                    needs a SHA with registered builds
+          R-INV-2 — GET /rest/api/latest/.../commits/{cid}/deployments
+                    needs the same / a deployed SHA
+          R-INV-3 — POST /rest/build-status/1.0/commits/stats with FIXED body shape
+                    `[{commitId: "..."}]` instead of v1's `{commits: [...]}`
+          R-INV-7 — GET /pull-requests/{id}.patch with FIXED Accept: text/plain
+          R-INV-8 — GET /repos/{r}/last-modified/{path} with `?at=<branch-ref>`
+
+        If `--commit-id` isn't provided (or returns 400 on the rich-build
+        probe), the script scans up to 20 recent commits on the default
+        branch via `/rest/build-status/1.0/commits/{sha}` (cheap calls)
+        and uses the first commit that has any build registered.
+        """
+        print("[probe] audit-followup mode\n")
+
+        # Always re-pin the version so the bundle is interpretable stand-alone.
+        self._get(
+            name="application_properties",
+            description="Server version + display name (mirrors Jira's /serverInfo)",
+            path="/rest/api/1.0/application-properties",
+            category="version",
+        )
+        self._get(
+            name="capabilities",
+            description="Capability map — re-pin alongside the followup probes",
+            path="/rest/capabilities",
+            category="version",
+        )
+
+        if not (project_key and repo_slug):
+            print("[probe] ERROR: --audit-followup requires --project-key and --repo-slug")
+            return
+
+        pk = urllib.parse.quote(project_key)
+        rs = urllib.parse.quote(repo_slug)
+
+        # 1. Resolve a SHA that has builds. Strategy:
+        #    a) If user passed --commit-id, try it first.
+        #    b) On 400 (or no SHA passed), scan recent commits.
+        target_sha: Optional[str] = None
+        if commit_id:
+            print(f"[probe] audit-followup — trying user-provided commit {commit_id[:12]}...")
+            quick = self._get(
+                name="audit_user_commit_check",
+                description=f"Check if user-provided commit {commit_id[:12]} has any builds",
+                path=f"/rest/build-status/1.0/commits/{urllib.parse.quote(commit_id)}",
+                category="version",
+                notes=["Audit-followup probe to confirm the user's commit has registered builds"],
+            )
+            quick_body = _read_raw_body(self.raw_dir / "audit_user_commit_check.json")
+            has_builds = (
+                isinstance(quick_body, dict)
+                and (quick_body.get("values") or [])
+            )
+            if has_builds:
+                target_sha = commit_id
+                print(f"[probe] audit-followup — user-provided commit has "
+                      f"{len(quick_body['values'])} build(s); using it")
+
+        if target_sha is None:
+            target_sha = self._scan_for_built_commit(pk, rs)
+
+        if target_sha:
+            cid = urllib.parse.quote(target_sha)
+
+            # R-INV-1 — rich build status against a SHA with builds
+            self._get(
+                name="audit_commit_builds_rich",
+                description=f"R-INV-1: rich build status for built commit {target_sha[:12]}",
+                path=f"/rest/api/latest/projects/{pk}/repos/{rs}/commits/{cid}/builds",
+                category="swap",
+                notes=[
+                    "R-INV-1 follow-up. If 200 with non-empty values + testResults — "
+                    "the rich endpoint is adoptable as the v1 build-status replacement."
+                ],
+            )
+
+            # R-INV-2 — deployments against the same SHA
+            self._get(
+                name="audit_commit_deployments",
+                description=f"R-INV-2: deployments for commit {target_sha[:12]}",
+                path=f"/rest/api/latest/projects/{pk}/repos/{rs}/commits/{cid}/deployments",
+                category="feature",
+                notes=[
+                    "R-INV-2 follow-up. 200 + values = adoptable. 200 + empty = "
+                    "endpoint works but no provider has published; defer adoption."
+                ],
+            )
+
+            # R-INV-3 — bulk stats with FIXED body shape (array of objects, not
+            # an object with a 'commits' key). This is the documented shape per
+            # Atlassian's /commits/stats endpoint.
+            self._post(
+                name="audit_commit_builds_stats_bulk_fixed",
+                description="R-INV-3: bulk stats POST with FIXED body shape",
+                path="/rest/build-status/1.0/commits/stats",
+                category="feature",
+                json_body=[{"commitId": target_sha}],
+                notes=[
+                    "R-INV-3 follow-up. v1 probe sent {commits: [sha]} and got 400 "
+                    "MismatchedInputException. This call sends [{commitId: sha}] — "
+                    "the documented shape. 200 = probe v2 should adopt this body."
+                ],
+            )
+        else:
+            print("[probe] audit-followup — could not find a built commit; "
+                  "R-INV-1/2/3 skipped. Pass --commit-id explicitly or commit "
+                  "+ build something on the default branch first.")
+
+        # R-INV-7 — pr_patch with FIXED Accept: text/plain (no SHA needed)
+        if pr_id is not None:
+            self._get(
+                name="audit_pr_patch_text",
+                description=f"R-INV-7: pr_patch with Accept: text/plain (PR #{pr_id})",
+                path=f"/rest/api/1.0/projects/{pk}/repos/{rs}/pull-requests/{pr_id}.patch",
+                category="swap",
+                accept="text/plain",
+                expect_json=False,
+                notes=[
+                    "R-INV-7 follow-up. v1 probe sent default Accept: application/json "
+                    "and got 406. text/plain should give us the patch body."
+                ],
+            )
+        else:
+            print("[probe] audit-followup — R-INV-7 skipped (no --pr-id)")
+
+        # R-INV-8 — last-modified with `?at=<branchRef>`
+        if branch_name and (file_path or True):
+            target_path = file_path or "README.md"
+            target_path_q = urllib.parse.quote(target_path)
+            branch_ref = f"refs/heads/{branch_name}"
+            self._get(
+                name="audit_last_modified_with_at",
+                description=f"R-INV-8: last-modified for {target_path} with at=refs/heads/{branch_name}",
+                path=f"/rest/api/1.0/projects/{pk}/repos/{rs}/last-modified/{target_path_q}"
+                     f"?at={urllib.parse.quote(branch_ref)}",
+                category="feature",
+                notes=[
+                    "R-INV-8 follow-up. v1 probe omitted at= and got 400 ArgumentValidationException. "
+                    "With at= pinned to a branch ref, this should return per-path lastModified info."
+                ],
+            )
+        else:
+            print("[probe] audit-followup — R-INV-8 skipped (no --branch-name)")
+
+    def _scan_for_built_commit(self, pk_quoted: str, rs_quoted: str,
+                               max_scan: int = 20) -> Optional[str]:
+        """Walk recent commits on the default branch and return the first SHA
+        that has at least one build registered. Up to `max_scan` commits.
+
+        Each scan call probes `/rest/build-status/1.0/commits/{sha}` (very cheap;
+        Atlassian designed this endpoint for exactly this 'is this commit built?'
+        use case). Stops at the first hit so 99% of runs probe ≤5 commits.
+        """
+        print("[probe] audit-followup — scanning recent commits for one with builds...")
+        # Pull recent commits on default branch
+        recent = self._get(
+            name="audit_recent_commits_for_scan",
+            description="Recent commits (default branch) — used to find one with builds",
+            path=f"/rest/api/1.0/projects/{pk_quoted}/repos/{rs_quoted}/commits?limit={max_scan}",
+            category="version",
+            notes=[f"Scanning up to {max_scan} commits for one with registered builds"],
+        )
+        body = _read_raw_body(self.raw_dir / "audit_recent_commits_for_scan.json")
+        if not isinstance(body, dict):
+            return None
+        for c in (body.get("values") or [])[:max_scan]:
+            if not isinstance(c, dict):
+                continue
+            sha = c.get("id")
+            if not isinstance(sha, str) or not sha:
+                continue
+            short = sha[:12]
+            scan = self._get(
+                name=f"audit_scan_{short}",
+                description=f"Scan: build-status v1 for commit {short}",
+                path=f"/rest/build-status/1.0/commits/{urllib.parse.quote(sha)}",
+                category="version",
+                notes=[f"Scanning {short} for builds (audit-followup auto-discovery)"],
+            )
+            scan_body = _read_raw_body(self.raw_dir / f"audit_scan_{short}.json")
+            if (
+                isinstance(scan_body, dict)
+                and (scan_body.get("values") or [])
+            ):
+                builds_count = len(scan_body["values"])
+                print(f"[probe] audit-followup — found built commit {short} "
+                      f"({builds_count} build(s) registered); using it for R-INV-1/2/3")
+                return sha
+        print("[probe] audit-followup — scanned {len_} commits, none have builds".format(
+            len_=len(body.get("values") or [])))
+        return None
+
     # -- summary --------------------------------------------------------------
 
     def write_summary(self, args_used: dict[str, Any]) -> None:
@@ -1404,6 +1624,13 @@ def main() -> int:
                         "extract values for the full sweep so you don't have to "
                         "dig through Bitbucket URLs. Writes Result_N/discover.md "
                         "with a copy-paste command.")
+    p.add_argument("--audit-followup", action="store_true",
+                   help="Targeted re-probe of the 5 R-INVESTIGATE items in the "
+                        "2026-05-07 Bitbucket recommendations doc (rich build "
+                        "status, deployments, bulk stats POST, pr_patch, "
+                        "last-modified). Read-only. Auto-discovers a built "
+                        "commit if --commit-id isn't given. Needs --project-key "
+                        "+ --repo-slug; --pr-id and --branch-name optional.")
     p.add_argument("--out", default=str(Path(__file__).parent),
                    help="Parent dir for Result_N/ output (default: alongside the script)")
     args = p.parse_args()
@@ -1424,14 +1651,18 @@ def main() -> int:
     out_parent.mkdir(parents=True, exist_ok=True)
     results_dir = _allocate_results_dir(out_parent)
 
-    if args.discover and args.versions_only:
-        print("ERROR: --discover and --versions-only are mutually exclusive.", file=sys.stderr)
+    exclusive_modes = sum(bool(x) for x in (args.discover, args.versions_only, args.audit_followup))
+    if exclusive_modes > 1:
+        print("ERROR: --discover, --versions-only, and --audit-followup are mutually exclusive.",
+              file=sys.stderr)
         return 2
 
     if args.discover:
         mode_label = "discover"
     elif args.versions_only:
         mode_label = "versions-only"
+    elif args.audit_followup:
+        mode_label = "audit-followup"
     else:
         mode_label = "full sweep"
 
@@ -1455,12 +1686,22 @@ def main() -> int:
         "no_verify": args.no_verify,
         "versions_only": args.versions_only,
         "discover": args.discover,
+        "audit_followup": args.audit_followup,
     }
 
     if args.discover:
         probe.run_discover()
     elif args.versions_only:
         probe.run_versions_only()
+    elif args.audit_followup:
+        probe.run_audit_followup(
+            project_key=args.project_key,
+            repo_slug=args.repo_slug,
+            pr_id=args.pr_id,
+            commit_id=args.commit_id,
+            branch_name=args.branch_name,
+            file_path=args.file_path,
+        )
     else:
         probe.run_full(
             project_key=args.project_key,
