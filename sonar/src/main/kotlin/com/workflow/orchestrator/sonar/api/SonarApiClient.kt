@@ -36,6 +36,16 @@ class SonarApiClient(
             "sqale_index,sqale_rating,duplicated_lines_density,cognitive_complexity," +
             "reliability_rating,security_rating,coverage,branch_coverage"
 
+        /** SonarQube enforces ps ≤ 500 on /api/measures/component_tree. */
+        const val MEASURES_PAGE_SIZE = 500
+
+        /**
+         * Cap on pagination loop in [getMeasures]. 10 pages × 500 ps = 5000
+         * components — covers all but the largest monorepos in a single
+         * refresh. Past this, we log a warning and return partial data
+         * rather than make the IDE wait indefinitely.
+         */
+        const val MAX_MEASURES_PAGES = 10
     }
     private val log = Logger.getInstance(SonarApiClient::class.java)
     private val json = Json { ignoreUnknownKeys = true }
@@ -122,13 +132,45 @@ class SonarApiClient(
         log.info("[Sonar:API] GET /api/measures/component_tree for project '$projectKey' branch='${branch ?: "default"}'")
         val metrics = metricKeys.ifBlank { DEFAULT_METRIC_KEYS }
         val branchParam = branch?.let { "&branch=${URLEncoder.encode(it, "UTF-8")}" } ?: ""
-        // additionalFields=period is required for new_* metrics (SonarQube returns them in period.value, not value)
+        // additionalFields=period is required for new_* metrics (SonarQube returns
+        // them in period.value, not value).
         val needsPeriod = metrics.contains("new_")
         val additionalFields = if (needsPeriod) "&additionalFields=period" else ""
-        return get<SonarMeasureSearchResult>(
-            "/api/measures/component_tree?component=${URLEncoder.encode(projectKey, "UTF-8")}" +
-                "&metricKeys=$metrics&qualifiers=FIL&ps=500$branchParam$additionalFields"
-        ).map { it.components }
+        // When new_lines_to_cover is in the metric set, sort by it descending so
+        // files with the most new code surface in the earliest pages. Without
+        // this, Sonar's default sort (alphabetical by name) can bury new-code
+        // files past the page cutoff on large projects — verified against a
+        // 531-file project where the Coverage tab showed an empty new-code
+        // listing because the new-code files happened to sort late.
+        val sortParams = if (metrics.contains("new_lines_to_cover")) {
+            "&s=metric&metricSort=new_lines_to_cover&asc=false"
+        } else ""
+        // Paginate up to MAX_PAGES so projects with thousands of files still
+        // get a complete set rather than a truncated one. The hard cap
+        // protects against runaway requests on misconfigured projects.
+        val all = mutableListOf<SonarMeasureComponentDto>()
+        for (page in 1..MAX_MEASURES_PAGES) {
+            val url = "/api/measures/component_tree?component=${URLEncoder.encode(projectKey, "UTF-8")}" +
+                "&metricKeys=$metrics&qualifiers=FIL&ps=$MEASURES_PAGE_SIZE&p=$page" +
+                "$branchParam$additionalFields$sortParams"
+            when (val pageResult = get<SonarMeasureSearchResult>(url)) {
+                is ApiResult.Success -> {
+                    all += pageResult.data.components
+                    val total = pageResult.data.paging.total
+                    if (all.size >= total || pageResult.data.components.isEmpty()) {
+                        log.info("[Sonar:API] Fetched ${all.size}/${total} components in $page page(s)")
+                        return ApiResult.Success(all)
+                    }
+                }
+                is ApiResult.Error -> {
+                    // First-page failure → return error. Mid-pagination failure
+                    // → return what we have rather than discard partial data.
+                    return if (page == 1) pageResult else ApiResult.Success(all)
+                }
+            }
+        }
+        log.warn("[Sonar:API] Hit MAX_MEASURES_PAGES=$MAX_MEASURES_PAGES; returning ${all.size} components (project may have more)")
+        return ApiResult.Success(all)
     }
 
     /**

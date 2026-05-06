@@ -42,7 +42,24 @@ data class SonarQualityGateResponse(
 @Serializable
 data class SonarQualityGateDto(
     val status: String,
-    val conditions: List<SonarConditionDto> = emptyList()
+    val conditions: List<SonarConditionDto> = emptyList(),
+    val period: SonarGatePeriodDto? = null
+)
+
+/**
+ * New-code period metadata embedded in the quality gate response. Different
+ * shape from `SonarMeasurePeriodDto` (which carries per-metric values for
+ * new_* measures): this one tells you what defines the new-code period
+ * itself (REFERENCE_BRANCH, NUMBER_OF_DAYS, PREVIOUS_VERSION, …).
+ *
+ * Useful as a fallback for [SonarNewCodePeriodDto] when the dedicated
+ * `/api/new_code_periods/show` endpoint requires admin and returns 403 —
+ * the gate response is fetched with project Browse permission.
+ */
+@Serializable
+data class SonarGatePeriodDto(
+    val mode: String = "",
+    val parameter: String = ""
 )
 
 @Serializable

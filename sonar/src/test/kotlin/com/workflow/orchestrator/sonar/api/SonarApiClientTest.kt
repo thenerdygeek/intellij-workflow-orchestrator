@@ -125,6 +125,101 @@ class SonarApiClientTest {
     }
 
     @Test
+    fun `getMeasures sorts by new_lines_to_cover desc when that metric is in the request`() = runTest {
+        // Default Sonar sort is alphabetical by name, which on large projects
+        // can bury files with new code past the page cutoff (verified against a
+        // 531-file project where the Coverage tab showed empty new-code listing
+        // because the 31 truncated files included the only ones with new code).
+        // Sorting by new_lines_to_cover desc puts files with the most new code
+        // in page 1, regardless of their alphabetical position.
+        server.enqueue(MockResponse().setBody(fixture("measures-component-tree.json")))
+
+        client.getMeasures("com.myapp:my-app")
+
+        val path = server.takeRequest().path!!
+        assertTrue(path.contains("s=metric"), "missing s=metric in $path")
+        assertTrue(path.contains("metricSort=new_lines_to_cover"), "missing metricSort in $path")
+        assertTrue(path.contains("asc=false"), "missing asc=false in $path")
+    }
+
+    @Test
+    fun `getMeasures does not request metricSort when new_lines_to_cover is absent from keys`() = runTest {
+        // Sonar rejects metricSort=X with 400 if X isn't in metricKeys. Guard:
+        // the sort param is conditional on new_lines_to_cover being requested.
+        server.enqueue(MockResponse().setBody(fixture("measures-component-tree.json")))
+
+        client.getMeasures("com.myapp:my-app", metricKeys = "coverage,line_coverage")
+
+        val path = server.takeRequest().path!!
+        assertFalse(path.contains("metricSort="), "must NOT include metricSort when new_lines_to_cover absent: $path")
+    }
+
+    @Test
+    fun `getMeasures paginates until paging total is reached and merges components`() = runTest {
+        // Without pagination, projects with > 500 files lose their tail to
+        // truncation, which causes the new-code Coverage tab to silently miss
+        // files when they sort past the cutoff. Pagination loops on `p=N` until
+        // we have all `paging.total` components or the page returns empty.
+        val page1 = """
+            {
+              "paging": {"pageIndex": 1, "pageSize": 500, "total": 600},
+              "components": [
+                {"key": "k1", "name": "A.kt", "qualifier": "FIL", "path": "A.kt",
+                 "measures": [{"metric": "coverage", "value": "80"}]}
+              ]
+            }
+        """.trimIndent()
+        val page2 = """
+            {
+              "paging": {"pageIndex": 2, "pageSize": 500, "total": 600},
+              "components": [
+                {"key": "k2", "name": "B.kt", "qualifier": "FIL", "path": "B.kt",
+                 "measures": [{"metric": "coverage", "value": "70"}]}
+              ]
+            }
+        """.trimIndent()
+        server.enqueue(MockResponse().setBody(page1))
+        server.enqueue(MockResponse().setBody(page2))
+
+        val result = client.getMeasures("com.myapp:my-app")
+
+        assertTrue(result.isSuccess)
+        val components = (result as ApiResult.Success).data
+        assertEquals(2, components.size)
+        assertEquals("A.kt", components[0].path)
+        assertEquals("B.kt", components[1].path)
+
+        val req1 = server.takeRequest()
+        val req2 = server.takeRequest()
+        assertTrue(req1.path!!.contains("p=1"), "first request should target page 1: ${req1.path}")
+        assertTrue(req2.path!!.contains("p=2"), "second request should target page 2: ${req2.path}")
+    }
+
+    @Test
+    fun `getMeasures stops paginating when a page returns empty components`() = runTest {
+        // Defensive: if Sonar's paging.total is stale (e.g. components removed
+        // mid-pagination), an empty components list means we're done — don't
+        // loop forever waiting for total to be reached.
+        val firstPage = """
+            {
+              "paging": {"pageIndex": 1, "pageSize": 500, "total": 1000},
+              "components": [
+                {"key": "k1", "name": "A.kt", "qualifier": "FIL", "path": "A.kt", "measures": []}
+              ]
+            }
+        """.trimIndent()
+        val emptyPage = """{"paging": {"pageIndex": 2, "pageSize": 500, "total": 1000}, "components": []}"""
+        server.enqueue(MockResponse().setBody(firstPage))
+        server.enqueue(MockResponse().setBody(emptyPage))
+
+        val result = client.getMeasures("com.myapp:my-app")
+
+        assertTrue(result.isSuccess)
+        assertEquals(1, (result as ApiResult.Success).data.size)
+        assertEquals(2, server.requestCount, "should have stopped after the empty page")
+    }
+
+    @Test
     fun `getMeasures default URL includes every metric the Quality tab renders`() = runTest {
         // Regression test: SonarDataService now calls getMeasures without an explicit
         // metricKeys arg, so the API client's DEFAULT_METRIC_KEYS drives the request.

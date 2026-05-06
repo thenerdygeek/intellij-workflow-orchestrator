@@ -41,6 +41,10 @@ class SonarDtoSerializationTest {
         assertEquals("ERROR", result.projectStatus.status)
         assertEquals("ERROR", result.projectStatus.conditions[0].status)
         assertEquals("42.1", result.projectStatus.conditions[0].actualValue)
+        // Period metadata embedded in the gate response — used as a fallback
+        // for /api/new_code_periods/show on tokens without admin permission.
+        assertEquals("REFERENCE_BRANCH", result.projectStatus.period?.mode)
+        assertEquals("release", result.projectStatus.period?.parameter)
     }
 
     @Test
