@@ -19,10 +19,10 @@ class BitbucketPrToolTest {
     }
 
     @Test
-    fun `action enum contains all 14 actions`() {
+    fun `action enum contains all 18 actions`() {
         val actions = tool.parameters.properties["action"]?.enumValues
         assertNotNull(actions)
-        assertEquals(14, actions!!.size)
+        assertEquals(18, actions!!.size)
         assertTrue("create_pr" in actions)
         assertTrue("get_pr_detail" in actions)
         assertTrue("get_pr_commits" in actions)
@@ -37,6 +37,11 @@ class BitbucketPrToolTest {
         assertTrue("update_pr_description" in actions)
         assertTrue("get_my_prs" in actions)
         assertTrue("get_reviewing_prs" in actions)
+        // 2026-05-07 audit additions:
+        assertTrue("get_pr_participants" in actions)
+        assertTrue("get_blocker_comment_count" in actions)
+        assertTrue("get_linked_jira_issues" in actions)
+        assertTrue("get_required_builds" in actions)
     }
 
     @Test

@@ -31,6 +31,8 @@ Actions and their parameters:
 - search_users(filter) → Search for users by name/username
 - get_file_content(file_path, at_ref) → Get file content at a specific git ref
 - get_build_statuses(commit_id) → Get CI build statuses for a commit
+- get_commit_build_stats(commit_id) → Aggregate {successful, failed, inProgress} counter (R-ADD-12)
+- get_commit_pull_requests(commit_id) → Reverse lookup: PRs containing this commit (R-ADD-5)
 - list_repos() → List all repositories in the project
 
 Common optional: repo_name for multi-repo projects. description for approval dialog on write actions.
@@ -41,7 +43,9 @@ Common optional: repo_name for multi-repo projects. description for approval dia
             "action" to ParameterProperty("string", "Operation to perform",
                 enumValues = listOf(
                     "get_branches", "create_branch", "search_users",
-                    "get_file_content", "get_build_statuses", "list_repos"
+                    "get_file_content", "get_build_statuses",
+                    "get_commit_build_stats", "get_commit_pull_requests",
+                    "list_repos"
                 )),
             "filter"      to ParameterProperty("string", "Name filter — for get_branches, search_users"),
             "name"        to ParameterProperty("string", "Branch name — for create_branch"),
@@ -113,6 +117,19 @@ Common optional: repo_name for multi-repo projects. description for approval dia
                 ToolValidation.validateNotBlank(commitId, "commit_id")?.let { return it }
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
                 service.getBuildStatuses(commitId, repoName = repoName).toAgentToolResult()
+            }
+
+            "get_commit_build_stats" -> {
+                val commitId = params["commit_id"]?.jsonPrimitive?.content ?: return BitbucketToolUtils.missingParam("commit_id")
+                ToolValidation.validateNotBlank(commitId, "commit_id")?.let { return it }
+                service.getCommitBuildStats(commitId).toAgentToolResult()
+            }
+
+            "get_commit_pull_requests" -> {
+                val commitId = params["commit_id"]?.jsonPrimitive?.content ?: return BitbucketToolUtils.missingParam("commit_id")
+                ToolValidation.validateNotBlank(commitId, "commit_id")?.let { return it }
+                val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+                service.getPullRequestsForCommit(commitId, repoName = repoName).toAgentToolResult()
             }
 
             "list_repos" -> {

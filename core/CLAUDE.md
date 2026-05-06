@@ -50,6 +50,25 @@ Activity-aware polling: `baseIntervalMs` (default 30s), `maxIntervalMs` (default
 - `enableAiTitleGeneration: Boolean = true` (project-level) — controls the AI-sparkle icon inside the PR title field
 - `jiraAcceptanceCriteriaFieldId: String? = null` (project-level) — Jira custom field ID for acceptance criteria (e.g. `customfield_10001`); used to enrich LLM context. Settings UI presents a dropdown sourced from `JiraService.getFields()` (5-min cached) with a textfield fallback when discovery fails.
 
+### BitbucketBranchClient surface (extended 2026-05-07 audit)
+
+`core.bitbucket.BitbucketBranchClient` adds eight methods + adopts two endpoint changes from the 2026-05-07 Bitbucket DC 9.4 audit. Source: `docs/research/2026-05-07-bitbucket-recommendations.md`.
+
+| Method | Backing endpoint | Notes |
+|---|---|---|
+| `getDashboardPullRequests(role, state)` | `GET /rest/api/1.0/dashboard/pull-requests` | R-SWAP-1 / R-SWAP-2 — collapses per-repo iteration into 1 call. `PrListService.refresh()` adopts this for AUTHOR/REVIEWER buckets. |
+| `getBlockerComments(p, r, prId, countOnly)` | `GET /pull-requests/{id}/blocker-comments?count=true` | R-SWAP-4 — replaces client-side `comments.filter { severity == BLOCKER }`. |
+| `getPullRequestParticipants(p, r, prId)` | `GET /pull-requests/{id}/participants` | R-SWAP-5 — explicit endpoint with `state` + `lastReviewedCommit`. |
+| `getCommitPullRequests(p, r, sha)` | `GET /commits/{sha}/pull-requests` | R-ADD-5 — reverse lookup; powers the Bamboo bridge. |
+| `getCommitBuildStats(sha)` | `GET /rest/build-status/1.0/commits/stats/{sha}` | R-ADD-12 — `{successful, failed, inProgress}` counter. |
+| `getLinkedJiraIssues(p, r, prId)` | `GET /rest/jira/1.0/.../pull-requests/{id}/issues` | R-ADD-11 — Atlassian Jira-link plugin. 404 → empty list (plugin not installed). |
+| `getRequiredBuilds(p, r)` | `GET /rest/required-builds/latest/projects/{p}/repos/{r}/conditions` | R-ADD-15 — canonical path; v0 path under `/rest/api/1.0/` 404s on DC 9.4. |
+| `listPrComments` (rewritten) | derived from `getPullRequestActivities` | R-1.1 — DC 9.4 rejects direct `/comments` listing; activities timeline carries every COMMENTED action. |
+| `getMergeStrategies` (extended) | repo URL → project URL on 404 | R-1.2 — repo absence-of-override is 404, falls back to project-level setting. Resolution cached per session. |
+| `getBranches` (extended) | now passes `&details=true` | R-SWAP-3 — branches return `metadata` (aheadBehind, latestCommit, jiraIssues, build) inline. |
+
+The new methods all surface through `core.services.BitbucketService` (Phase 5: `getBlockerCommentsCount`, `getPullRequestParticipants`, `getPullRequestsForCommit`, `getCommitBuildStats`, `getLinkedJiraIssues`, `getRequiredBuilds`) with `ToolResult<T>` semantics; `:pullrequest`'s `BitbucketServiceImpl` adapts them to `core.model.bitbucket.{ParticipantData,BuildStatsData,JiraIssueRef,RequiredBuildsCondition}`. Agent wrappers in `:agent` (`BitbucketPrTool`, `BitbucketRepoTool`) expose them as actions.
+
 ### JiraService surface (extended 2026-05-06 audit)
 
 `core.services.JiraService` adds eleven methods to support permission-aware UI gating, on-demand custom-field discovery, history/remote-link/watcher panels, saved filters, and key-prefix mention search:

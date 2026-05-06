@@ -136,48 +136,93 @@ class PrListService(
             listOf(Triple(projectKey, repoSlug, repoSlug))
         }
 
-        // Fetch PRs from all repos in parallel, limited to 3 concurrent repo fetches
-        // to prevent monopolizing the connection pool (10-40 API calls otherwise)
+        // R-SWAP-1 / R-SWAP-2 (2026-05-07 Bitbucket audit): use the cross-repo dashboard
+        // endpoint for AUTHOR and REVIEWER instead of iterating per-repo. Each call is one
+        // round-trip regardless of repo count. The "ALL" role has no dashboard equivalent,
+        // so the per-repo loop is kept (capped via repoFetchSemaphore) for that bucket only.
+        val configuredRepoKeys: Set<String> = repoEntries
+            .map { (p, r, _) -> "$p/$r".lowercase() }
+            .toSet()
+        val repoNameByKey: Map<String, String> = repoEntries
+            .associate { (p, r, name) -> "$p/$r".lowercase() to name }
+
         val allMyPrs: List<BitbucketPrDetail>
         val allReviewingPrs: List<BitbucketPrDetail>
         val allRepoPrsList: List<BitbucketPrDetail>
 
         coroutineScope {
-            val results = repoEntries.map { (projectKey, repoSlug, repoName) ->
-                async {
-                    repoFetchSemaphore.withPermit {
-                        log.info("[PR:List] Refreshing PRs for $projectKey/$repoSlug (username=$username, state=$currentState)")
-
-                        // Fetch PRs authored by the current user (paginated)
-                        val myResults = fetchAllPages(client, projectKey, repoSlug, username, "AUTHOR")
-                        myResults.forEach { it.repoName = repoName }
-
-                        // Fetch PRs where the current user is a reviewer (paginated)
-                        val reviewResults = fetchAllPages(client, projectKey, repoSlug, username, "REVIEWER")
-                        reviewResults.forEach { it.repoName = repoName }
-
-                        // Fetch all PRs in the repo (no role filter — all users)
-                        val allResults = fetchAllPages(client, projectKey, repoSlug, null, "ALL")
-                        allResults.forEach { it.repoName = repoName }
-
-                        Triple(myResults, reviewResults, allResults)
+            val authorDeferred = async {
+                fetchDashboardPrs(client, "AUTHOR", configuredRepoKeys, repoNameByKey)
+            }
+            val reviewerDeferred = async {
+                fetchDashboardPrs(client, "REVIEWER", configuredRepoKeys, repoNameByKey)
+            }
+            val allRepoDeferred = async {
+                repoEntries.map { (projectKey, repoSlug, repoName) ->
+                    async {
+                        repoFetchSemaphore.withPermit {
+                            val results = fetchAllPages(client, projectKey, repoSlug, null, "ALL")
+                            results.forEach { it.repoName = repoName }
+                            results
+                        }
                     }
-                }
-            }.awaitAll()
-
-            allMyPrs = results.flatMap { it.first }
-            allReviewingPrs = results.flatMap { it.second }
-            allRepoPrsList = results.flatMap { it.third }
+                }.awaitAll().flatten()
+            }
+            allMyPrs = authorDeferred.await()
+            allReviewingPrs = reviewerDeferred.await()
+            allRepoPrsList = allRepoDeferred.await()
         }
 
         _myPrs.value = allMyPrs
-        log.info("[PR:List] Found ${allMyPrs.size} authored PRs across ${repoEntries.size} repos (state=$currentState)")
+        log.info("[PR:List] Found ${allMyPrs.size} authored PRs (dashboard, scoped to ${repoEntries.size} configured repos, state=$currentState)")
 
         _reviewingPrs.value = allReviewingPrs
-        log.info("[PR:List] Found ${allReviewingPrs.size} reviewing PRs across ${repoEntries.size} repos (state=$currentState)")
+        log.info("[PR:List] Found ${allReviewingPrs.size} reviewing PRs (dashboard, scoped to ${repoEntries.size} configured repos, state=$currentState)")
 
         _allRepoPrs.value = allRepoPrsList
         log.info("[PR:List] Found ${allRepoPrsList.size} total repo PRs across ${repoEntries.size} repos (state=$currentState)")
+    }
+
+    /**
+     * Calls the cross-repo dashboard endpoint and filters the response down to repos
+     * the user has configured in the plugin (the dashboard returns every repo the
+     * user has access to, which can be more than what's wired into this project).
+     *
+     * Each PR's `repoName` transient field is populated from the configured repo's
+     * displayLabel for the multi-repo grouping in the UI.
+     */
+    private suspend fun fetchDashboardPrs(
+        client: BitbucketBranchClient,
+        role: String,
+        configuredRepoKeys: Set<String>,
+        repoNameByKey: Map<String, String>,
+    ): List<BitbucketPrDetail> {
+        val results = mutableListOf<BitbucketPrDetail>()
+        var start = 0
+        var isLast = false
+        while (!isLast && results.size < 100) {
+            val page = client.getDashboardPullRequests(role, currentState, limit = 25, start = start)
+            if (page is ApiResult.Success) {
+                page.data.values.forEach { pr ->
+                    val repoSlug = pr.toRef?.repository?.slug.orEmpty()
+                    val projKey = pr.toRef?.repository?.project?.key.orEmpty()
+                    if (projKey.isBlank() || repoSlug.isBlank()) return@forEach
+                    val key = "$projKey/$repoSlug".lowercase()
+                    if (configuredRepoKeys.isEmpty() || key in configuredRepoKeys) {
+                        pr.repoName = repoNameByKey[key] ?: repoSlug
+                        results += pr
+                    }
+                }
+                isLast = page.data.isLastPage
+                start = page.data.nextPageStart ?: break
+            } else {
+                if (page is ApiResult.Error) {
+                    log.warn("[PR:List] Dashboard $role page start=$start failed: ${page.message}")
+                }
+                break
+            }
+        }
+        return results
     }
 
     /**

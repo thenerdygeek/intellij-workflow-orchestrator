@@ -15,9 +15,10 @@ import kotlin.coroutines.coroutineContext
 /**
  * Pull request lifecycle — create, inspect, approve, merge, decline, update PRs.
  *
- * 14 actions: create_pr, get_pr_detail, get_pr_commits, get_pr_activities,
+ * 18 actions: create_pr, get_pr_detail, get_pr_commits, get_pr_activities,
  * get_pr_changes, get_pr_diff, check_merge_status, approve_pr, merge_pr,
- * decline_pr, update_pr_title, update_pr_description, get_my_prs, get_reviewing_prs
+ * decline_pr, update_pr_title, update_pr_description, get_my_prs, get_reviewing_prs,
+ * get_pr_participants, get_blocker_comment_count, get_linked_jira_issues, get_required_builds.
  */
 class BitbucketPrTool : AgentTool {
 
@@ -41,6 +42,10 @@ Actions and their parameters:
 - update_pr_description(pr_id, pr_description) → Change PR description
 - get_my_prs(state?) → List PRs authored by current user
 - get_reviewing_prs(state?) → List PRs where current user is reviewer
+- get_pr_participants(pr_id) → Reviewer status + lastReviewedCommit (R-SWAP-5)
+- get_blocker_comment_count(pr_id) → Cheap counter for blocker-severity comments (R-SWAP-4)
+- get_linked_jira_issues(pr_id) → Jira keys for the PR via Bitbucket's Jira-link plugin (R-ADD-11)
+- get_required_builds → Per-branch required-builds conditions for the active repo (R-ADD-15)
 
 Common optional: repo_name for multi-repo projects. description for approval dialog on write actions.
 """.trimIndent()
@@ -52,7 +57,9 @@ Common optional: repo_name for multi-repo projects. description for approval dia
                     "create_pr", "get_pr_detail", "get_pr_commits", "get_pr_activities",
                     "get_pr_changes", "get_pr_diff", "check_merge_status", "approve_pr",
                     "merge_pr", "decline_pr", "update_pr_title", "update_pr_description",
-                    "get_my_prs", "get_reviewing_prs"
+                    "get_my_prs", "get_reviewing_prs",
+                    "get_pr_participants", "get_blocker_comment_count",
+                    "get_linked_jira_issues", "get_required_builds"
                 )),
             "pr_id"                to ParameterProperty("string", "Pull request ID (numeric) — for most PR actions"),
             "title"                to ParameterProperty("string", "PR title — for create_pr"),
@@ -191,6 +198,29 @@ Common optional: repo_name for multi-repo projects. description for approval dia
                 val state = params["state"]?.jsonPrimitive?.content ?: "OPEN"
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
                 service.getReviewingPullRequests(state, repoName = repoName).toAgentToolResult()
+            }
+
+            "get_pr_participants" -> {
+                val prId = BitbucketToolUtils.parsePrId(params) ?: return BitbucketToolUtils.invalidPrId()
+                val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+                service.getPullRequestParticipants(prId, repoName = repoName).toAgentToolResult()
+            }
+
+            "get_blocker_comment_count" -> {
+                val prId = BitbucketToolUtils.parsePrId(params) ?: return BitbucketToolUtils.invalidPrId()
+                val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+                service.getBlockerCommentsCount(prId, repoName = repoName).toAgentToolResult()
+            }
+
+            "get_linked_jira_issues" -> {
+                val prId = BitbucketToolUtils.parsePrId(params) ?: return BitbucketToolUtils.invalidPrId()
+                val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+                service.getLinkedJiraIssues(prId, repoName = repoName).toAgentToolResult()
+            }
+
+            "get_required_builds" -> {
+                val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+                service.getRequiredBuilds(repoName = repoName).toAgentToolResult()
             }
 
             else -> ToolResult(

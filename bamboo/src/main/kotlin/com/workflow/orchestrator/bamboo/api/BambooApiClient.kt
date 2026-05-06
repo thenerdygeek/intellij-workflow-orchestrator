@@ -83,6 +83,24 @@ class BambooApiClient(
         return get(path)
     }
 
+    /**
+     * Fetches the VCS revision (commit SHA) recorded against a build result.
+     *
+     * Used by the Bamboo→Bitbucket bridge (R-ADD-5): when a build fails for plan
+     * key X build N, we ask Bamboo for `?expand=vcsRevisions`, then call
+     * `BitbucketBranchClient.getCommitPullRequests(sha)` to identify affected PRs.
+     *
+     * Returns the first repository VCS revision in the result, or `null` when
+     * Bamboo has no VCS revisions recorded (e.g. plan with no source repo).
+     *
+     * Source: docs/research/2026-05-07-bitbucket-recommendations.md §2 B1.
+     */
+    suspend fun getResultVcsRevision(resultKey: String): ApiResult<String?> {
+        log.info("[Bamboo:API] getResultVcsRevision: GET /rest/api/latest/result/$resultKey?expand=vcsRevisions")
+        return get<BambooVcsRevisionsResponse>("/rest/api/latest/result/$resultKey?expand=vcsRevisions")
+            .map { it.vcsRevisions.vcsRevision.firstOrNull()?.vcsRevisionKey }
+    }
+
     suspend fun getBuildLog(resultKey: String): ApiResult<String> {
         log.debug("[Bamboo:API] Fetching build log for resultKey=$resultKey")
         // Use the download endpoint for plain text logs (not the REST API logEntries which returns XML)

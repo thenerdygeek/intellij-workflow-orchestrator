@@ -31,44 +31,59 @@ class BitbucketBranchClientCommentsTest {
     @AfterEach
     fun tearDown() { server.shutdown() }
 
+    /*
+     * `listPrComments` was rewritten by the 2026-05-07 Bitbucket audit (R-1.1) to
+     * derive comments from the activities timeline because DC 9.4 returns 400 from
+     * the direct `/comments` listing without `path` or `count=true`. The behaviour
+     * tests are now in `BitbucketBranchClientAuditAdditionsTest`. The pagination
+     * test below kept its name but was retargeted at the activities endpoint to
+     * preserve the multi-page coverage on the new code path.
+     */
     @Test
-    fun `listPrComments aggregates across pages`() = runTest {
-        server.enqueue(MockResponse().setResponseCode(200).setBody(
-            """{"values":[{"id":1,"version":0,"text":"a"},{"id":2,"version":0,"text":"b"}],"isLastPage":false,"nextPageStart":2}"""
-        ))
-        server.enqueue(MockResponse().setResponseCode(200).setBody(
-            """{"values":[{"id":3,"version":0,"text":"c"}],"isLastPage":true}"""
-        ))
+    fun `listPrComments aggregates COMMENTED activities across pages`() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"values":[
+                    {"id":100,"action":"COMMENTED","user":{"name":"u","displayName":"U"},"comment":{"id":1,"text":"a","author":{"name":"u","displayName":"U"}}},
+                    {"id":101,"action":"OPENED","user":{"name":"u","displayName":"U"}},
+                    {"id":102,"action":"COMMENTED","user":{"name":"u","displayName":"U"},"comment":{"id":2,"text":"b","author":{"name":"u","displayName":"U"}}}
+                  ],"isLastPage":false,"nextPageStart":2}"""
+            )
+        )
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"values":[
+                    {"id":200,"action":"COMMENTED","user":{"name":"u","displayName":"U"},"comment":{"id":3,"text":"c","author":{"name":"u","displayName":"U"}}}
+                  ],"isLastPage":true}"""
+            )
+        )
         val result = client.listPrComments("P", "R", 1)
         assertTrue(result is ApiResult.Success)
         val values = (result as ApiResult.Success).data.values
         assertEquals(3, values.size)
         assertEquals(listOf(1L, 2L, 3L), values.map { it.id })
-
-        val req1 = server.takeRequest()
-        assertTrue(!req1.path!!.contains("start=") || req1.path!!.contains("start=0"))
-        val req2 = server.takeRequest()
-        assertTrue(req2.path!!.contains("start=2"))
     }
 
     @Test
     fun `listPrComments single page happy path`() = runTest {
-        server.enqueue(MockResponse().setResponseCode(200).setBody(
-            """{"values":[{"id":1,"version":0,"text":"hi"}],"isLastPage":true}"""
-        ))
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"values":[{"id":1,"action":"COMMENTED","user":{"name":"u","displayName":"U"},"comment":{"id":1,"text":"hi","author":{"name":"u","displayName":"U"}}}],"isLastPage":true}"""
+            )
+        )
         val result = client.listPrComments("P", "R", 1)
         assertTrue(result is ApiResult.Success)
         assertEquals(1, (result as ApiResult.Success).data.values.size)
     }
 
     @Test
-    fun `listPrComments uses GET and Accept application_json and correct path`() = runTest {
+    fun `listPrComments uses GET and Accept application_json and activities path`() = runTest {
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"values":[],"isLastPage":true}"""))
         client.listPrComments("P", "R", 1)
         val req = server.takeRequest()
         assertEquals("GET", req.method)
         assertTrue(req.getHeader("Accept")!!.contains("application/json"))
-        assertTrue(req.path!!.contains("/pull-requests/1/comments"))
+        assertTrue(req.path!!.contains("/pull-requests/1/activities"))
     }
 
     @Test

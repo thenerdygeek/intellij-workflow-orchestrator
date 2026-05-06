@@ -47,6 +47,13 @@ Build variables include `dockerTagsAsJson` — JSON payload of service-to-docker
 - `CveRemediationService` — parses CVE data, provides version bump suggestions
 - `PlanDetectionService` — auto-detects Bamboo plan key from project
 
+## Bamboo→Bitbucket bridge (2026-05-07 audit)
+
+- `BambooApiClient.getResultVcsRevision(resultKey)` queries `?expand=vcsRevisions` and returns the first commit SHA recorded against a build. Returns null when Bamboo has no VCS revision recorded for the build (rare — only if the plan has no source repository linked).
+- `BuildFailureBridgeStartupActivity` (in `bamboo/listeners/`) wires the bridge: subscribes to `WorkflowEvent.BuildFinished` (FAILED), resolves the commit SHA via `BambooApiClient.getResultVcsRevision`, then calls `:core`'s `BitbucketBranchClient.getCommitPullRequests` for every configured repo and surfaces a single notification (group `workflow.pr`) listing the affected PR ids.
+- Lives in `:bamboo` (not `:pullrequest`) because the project's module-graph rule forbids `:pullrequest → :bamboo`. `:bamboo`'s only cross-module dependency stays `:core` — the listener consumes `BitbucketBranchClient` from `:core`, not `:pullrequest`.
+- Rich build status (`/rest/api/latest/.../commits/{cid}/builds`) and deployments are deferred — the org's Bamboo agents publish only the basic v1 schema. See `docs/research/2026-05-07-bitbucket-recommendations.md` §2 + §5 for detail.
+
 ## UI
 
 - `BuildDashboardPanel` — build list + stage detail + log viewer

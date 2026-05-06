@@ -150,9 +150,9 @@ These tools consolidate multiple operations behind an `action` enum:
 | **bamboo_builds** | 11 | build_status, trigger_build, get_build_log, get_test_results, etc. |
 | **bamboo_plans** | 8 | get_plans, search_plans, get_plan_branches, rerun_failed_jobs, etc. |
 | **sonar** | 13 | issues, quality_gate, coverage, branch_quality_report, local_analysis, etc. |
-| **bitbucket_pr** | 14 | create/approve/merge/decline_pr, get_pr_detail, check_merge_status, etc. |
+| **bitbucket_pr** | 18 | create/approve/merge/decline_pr, get_pr_detail, check_merge_status, get_pr_participants (R-SWAP-5), get_blocker_comment_count (R-SWAP-4), get_linked_jira_issues (R-ADD-11), get_required_builds (R-ADD-15), etc. |
 | **bitbucket_review** | 6 | add_pr_comment, add_inline_comment, reply_to_comment, etc. |
-| **bitbucket_repo** | 6 | get_branches, create_branch, search_users, get_file_content, etc. |
+| **bitbucket_repo** | 8 | get_branches, create_branch, search_users, get_file_content, get_build_statuses, get_commit_build_stats (R-ADD-12), get_commit_pull_requests (R-ADD-5), list_repos. |
 
 ### runtime_exec Launch Actions — Implementation Notes
 

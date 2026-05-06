@@ -239,6 +239,11 @@
         <postStartupActivity
             implementation="com.workflow.orchestrator.bamboo.listeners.BuildMonitorStartupActivity"/>
 
+        <!-- Bamboo→Bitbucket bridge (R-ADD-5, audit 2026-05-07): on a FAILED build,
+             reverse-lookup the commit SHA to PRs and notify the user. -->
+        <postStartupActivity
+            implementation="com.workflow.orchestrator.bamboo.listeners.BuildFailureBridgeStartupActivity"/>
+
         <!-- TODO Phase 1B: BuildStatusBarWidgetFactory -->
 
         <!-- Auto-detect orchestrator (core, no module dependency) -->

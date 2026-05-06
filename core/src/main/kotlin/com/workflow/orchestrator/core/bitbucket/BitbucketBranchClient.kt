@@ -48,7 +48,42 @@ data class BitbucketBranch(
     val id: String,
     val displayId: String,
     val latestCommit: String? = null,
-    val isDefault: Boolean = false
+    val isDefault: Boolean = false,
+    /**
+     * Populated by Bitbucket DC 9.4 when the request includes `details=true`.
+     * Carries `aheadBehind`, `latestCommit` author info, and resolved Jira issues
+     * inline; eliminates the N follow-up calls the plugin used to make per branch
+     * for `aheadBehind` / `lastModified`.
+     *
+     * Source: docs/research/2026-05-07-bitbucket-recommendations.md §3 R-SWAP-3.
+     */
+    val metadata: BranchMetadata? = null,
+)
+
+/**
+ * Optional `metadata` payload Bitbucket DC adds when a branches listing is
+ * requested with `details=true`. All fields use `JsonElement` so we don't lock
+ * the schema down — Bitbucket has multiple metadata providers (build-status,
+ * jira-link, default-reviewers, ahead-behind, latest-commit) and the keys/shapes
+ * differ per provider. Callers that need a specific provider's payload should
+ * decode it from the JsonElement on demand.
+ */
+@Serializable
+data class BranchMetadata(
+    @kotlinx.serialization.SerialName("com.atlassian.bitbucket.server.bitbucket-branch:ahead-behind-metadata-provider")
+    val aheadBehind: AheadBehindMetadata? = null,
+    @kotlinx.serialization.SerialName("com.atlassian.bitbucket.server.bitbucket-ref-metadata:latest-commit-metadata")
+    val latestCommitMetadata: kotlinx.serialization.json.JsonElement? = null,
+    @kotlinx.serialization.SerialName("com.atlassian.bitbucket.server.bitbucket-jira:branch-list-jira-issues")
+    val jiraIssues: kotlinx.serialization.json.JsonElement? = null,
+    @kotlinx.serialization.SerialName("com.atlassian.bitbucket.server.bitbucket-build:build-metadata")
+    val build: kotlinx.serialization.json.JsonElement? = null,
+)
+
+@Serializable
+data class AheadBehindMetadata(
+    val ahead: Int = 0,
+    val behind: Int = 0,
 )
 
 @Serializable
@@ -109,7 +144,27 @@ data class BitbucketPrResponse(
 data class BitbucketPrRef(
     val id: String = "",
     val displayId: String = "",
-    val latestCommit: String = ""
+    val latestCommit: String = "",
+    /**
+     * Populated by the dashboard PR endpoint (and any cross-repo listing) so callers
+     * can identify the source/target repo without re-resolving from the PR id.
+     * Kept optional because per-repo endpoints don't always echo it back.
+     *
+     * Source: docs/research/2026-05-07-bitbucket-recommendations.md §3 R-SWAP-1.
+     */
+    val repository: BitbucketPrRefRepository? = null,
+)
+
+@Serializable
+data class BitbucketPrRefRepository(
+    val slug: String = "",
+    val name: String = "",
+    val project: BitbucketPrRefProject = BitbucketPrRefProject(),
+)
+
+@Serializable
+data class BitbucketPrRefProject(
+    val key: String = "",
 )
 
 // --- Build Status DTOs ---
@@ -444,6 +499,110 @@ private data class CommentParentRef(val id: Int)
 @Serializable
 private data class ReviewerStatusRequest(val status: String, val approved: Boolean)
 
+// --- Audit-driven additions (2026-05-07) ---
+
+/**
+ * Response shape from `GET /pull-requests/{id}/blocker-comments?count=true`.
+ * The `count=true` form returns just the size; the `values=` form (without `count=true`)
+ * returns the full list. We surface both fields so callers can use the same DTO.
+ *
+ * Source: docs/research/2026-05-07-bitbucket-recommendations.md §3 R-SWAP-4.
+ */
+@Serializable
+data class BitbucketBlockerCommentsResponse(
+    val size: Int = 0,
+    val values: List<BitbucketPrCommentResponse> = emptyList(),
+)
+
+/**
+ * Response shape from `GET /pull-requests/{id}/participants` — explicit endpoint
+ * with `state` (UNAPPROVED / APPROVED / NEEDS_WORK) and `lastReviewedCommit` per
+ * participant, richer than the embedded `reviewers` array on `getPullRequest`.
+ *
+ * Source: docs/research/2026-05-07-bitbucket-recommendations.md §3 R-SWAP-5.
+ */
+@Serializable
+data class BitbucketParticipantsResponse(
+    val values: List<BitbucketPrParticipantDetail> = emptyList(),
+    val size: Int = 0,
+    val isLastPage: Boolean = true,
+    val nextPageStart: Int? = null,
+)
+
+@Serializable
+data class BitbucketPrParticipantDetail(
+    val user: BitbucketUser,
+    val role: String = "REVIEWER",
+    val approved: Boolean = false,
+    val status: String = "UNAPPROVED",
+    val lastReviewedCommit: String? = null,
+)
+
+/**
+ * Response shape from `GET /rest/build-status/1.0/commits/stats/{sha}`. Used for
+ * cheap aggregate counters on dashboards / commit-list badges (vs paginating the
+ * full build list per commit).
+ *
+ * Source: docs/research/2026-05-07-bitbucket-recommendations.md §2 B6, §4 R-ADD-12.
+ */
+@Serializable
+data class BitbucketBuildStatsResponse(
+    val successful: Int = 0,
+    val failed: Int = 0,
+    val inProgress: Int = 0,
+)
+
+/**
+ * Single Jira-issue reference returned by Bitbucket's Jira-link plugin from
+ * `GET /rest/jira/1.0/.../pull-requests/{id}/issues`. Replaces three regex-based
+ * extraction sites where the plugin used to scan PR titles, branch names, and
+ * commit messages for `[A-Z]+-[0-9]+` patterns.
+ *
+ * Source: docs/research/2026-05-07-bitbucket-recommendations.md §4 R-ADD-11.
+ */
+@Serializable
+data class BitbucketJiraIssueRef(
+    val key: String,
+    val url: String = "",
+)
+
+/**
+ * Response shape from `GET /commits/{sha}/pull-requests` — reverse lookup from
+ * commit SHA to PRs containing the commit. Wired into the Bamboo bridge so a
+ * failed build can identify which PR authors to notify.
+ *
+ * Source: docs/research/2026-05-07-bitbucket-recommendations.md §2 B1, §4 R-ADD-5.
+ */
+@Serializable
+data class BitbucketCommitPrsResponse(
+    val values: List<BitbucketPrDetail> = emptyList(),
+    val size: Int = 0,
+    val isLastPage: Boolean = true,
+    val nextPageStart: Int? = null,
+)
+
+/**
+ * Response shape from `GET /rest/required-builds/latest/.../conditions` (the
+ * canonical path; the v0 path under `/rest/api/1.0/` 404s on DC 9.4 per the
+ * audit).
+ *
+ * Source: docs/research/2026-05-07-bitbucket-recommendations.md §4 R-ADD-15.
+ */
+@Serializable
+data class BitbucketRequiredBuildsResponse(
+    val values: List<BitbucketRequiredBuildCondition> = emptyList(),
+    val size: Int = 0,
+    val isLastPage: Boolean = true,
+)
+
+@Serializable
+data class BitbucketRequiredBuildCondition(
+    val id: Long = 0,
+    val buildParentKeys: List<String> = emptyList(),
+    val refMatcher: kotlinx.serialization.json.JsonElement? = null,
+    val exemptRefMatcher: kotlinx.serialization.json.JsonElement? = null,
+)
+
 /**
  * Lightweight Bitbucket Server REST client for branch operations only.
  * Lives in :core so both :jira (Start Work) and :handover (PR creation)
@@ -637,8 +796,12 @@ class BitbucketBranchClient(
             log.info("[Core:Bitbucket] Fetching branches for $projectKey/$repoSlug")
             try {
                 val filterParam = if (filterText.isNotBlank()) "&filterText=$filterText" else ""
+                // `details=true` (R-SWAP-3) inlines `metadata` (aheadBehind, latestCommit,
+                // build, jira-link) per branch — eliminates the per-branch follow-up calls
+                // the plugin used to make for that information.
+                // Source: docs/research/2026-05-07-bitbucket-recommendations.md §3 R-SWAP-3.
                 val request = Request.Builder()
-                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/branches?limit=100&orderBy=MODIFICATION$filterParam")
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/branches?limit=100&orderBy=MODIFICATION&details=true$filterParam")
                     .get()
                     .header("Accept", "application/json")
                     .build()
@@ -1538,44 +1701,92 @@ class BitbucketBranchClient(
         }
 
     /**
+     * Per-process cache of the resolved merge-strategy URL. DC 9.4 returns 404 from
+     * `/repos/{r}/settings/pull-requests/git` whenever the repo doesn't have its own
+     * override of the project default; we then fall back to the project URL and
+     * remember which one worked so subsequent fetches skip the 404.
+     *
+     * Key: `"$projectKey/$repoSlug"`. Value: `true` if the repo URL responded 200 last
+     * time (use repo URL); `false` if we had to fall back to the project URL.
+     *
+     * Source: docs/research/2026-05-07-bitbucket-recommendations.md §1.2.
+     */
+    private val repoSettingsResolution = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+    /**
      * Gets available merge strategies for a repository.
-     * GET /rest/api/1.0/projects/{proj}/repos/{repo}/settings/pull-requests/git
-     * Returns the merge configuration including default strategy and available strategies.
+     *
+     * Tries `GET /rest/api/1.0/projects/{p}/repos/{r}/settings/pull-requests/git` first.
+     * On 404 (repo has no per-repo override of the project default) falls back to
+     * `GET /rest/api/1.0/projects/{p}/settings/pull-requests/git`. Both URLs return the
+     * same `BitbucketRepoSettingsResponse` shape. The resolution is cached in-memory per
+     * (projectKey, repoSlug) so subsequent calls skip the 404.
+     *
+     * Source: docs/research/2026-05-07-bitbucket-recommendations.md §1.2.
      */
     suspend fun getMergeStrategies(
         projectKey: String,
         repoSlug: String
-    ): ApiResult<BitbucketMergeConfig> =
-        withContext(Dispatchers.IO) {
-            log.info("[Core:Bitbucket] Fetching merge strategies for $projectKey/$repoSlug")
-            try {
-                val request = Request.Builder()
-                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/settings/pull-requests/git")
-                    .get()
-                    .header("Accept", "application/json")
-                    .build()
-                val response = httpClient.newCall(request).execute()
-                response.use {
-                    when (it.code) {
-                        in 200..299 -> {
-                            val body = it.body?.string() ?: ""
-                            val settings = json.decodeFromString<BitbucketRepoSettingsResponse>(body)
-                            log.info("[Core:Bitbucket] Found ${settings.mergeConfig.strategies.size} merge strategies for $projectKey/$repoSlug")
-                            ApiResult.Success(settings.mergeConfig)
-                        }
-                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
-                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Repository $projectKey/$repoSlug not found")
-                        else -> {
-                            val errorBody = it.body?.string() ?: ""
-                            ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}: $errorBody")
-                        }
+    ): ApiResult<BitbucketMergeConfig> = withContext(Dispatchers.IO) {
+        log.info("[Core:Bitbucket] Fetching merge strategies for $projectKey/$repoSlug")
+        val cacheKey = "$projectKey/$repoSlug"
+        val preferRepoUrl = repoSettingsResolution[cacheKey] ?: true
+        if (preferRepoUrl) {
+            val repoResult = fetchMergeStrategiesAt(
+                "$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/settings/pull-requests/git",
+                "$projectKey/$repoSlug repo",
+            )
+            if (repoResult is ApiResult.Success) {
+                repoSettingsResolution[cacheKey] = true
+                return@withContext repoResult
+            }
+            if (repoResult is ApiResult.Error && repoResult.type != ErrorType.NOT_FOUND) {
+                return@withContext repoResult
+            }
+            log.info("[Core:Bitbucket] Repo merge-strategy URL 404'd for $projectKey/$repoSlug; falling back to project URL")
+        }
+        val projectResult = fetchMergeStrategiesAt(
+            "$baseUrl/rest/api/1.0/projects/$projectKey/settings/pull-requests/git",
+            "$projectKey project",
+        )
+        if (projectResult is ApiResult.Success) {
+            repoSettingsResolution[cacheKey] = false
+        }
+        projectResult
+    }
+
+    private suspend fun fetchMergeStrategiesAt(
+        url: String,
+        scopeForLog: String,
+    ): ApiResult<BitbucketMergeConfig> = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .header("Accept", "application/json")
+                .build()
+            val response = httpClient.newCall(request).execute()
+            response.use {
+                when (it.code) {
+                    in 200..299 -> {
+                        val body = it.body?.string() ?: ""
+                        val settings = json.decodeFromString<BitbucketRepoSettingsResponse>(body)
+                        log.info("[Core:Bitbucket] Found ${settings.mergeConfig.strategies.size} merge strategies for $scopeForLog")
+                        ApiResult.Success(settings.mergeConfig)
+                    }
+                    401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                    404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Merge-strategy settings not found at $scopeForLog")
+                    else -> {
+                        val errorBody = it.body?.string() ?: ""
+                        ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}: $errorBody")
                     }
                 }
-            } catch (e: IOException) {
-                log.error("[Core:Bitbucket] Network error fetching merge strategies", e)
-                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
             }
+        } catch (e: IOException) {
+            log.error("[Core:Bitbucket] Network error fetching merge strategies at $scopeForLog", e)
+            ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
         }
+    }
 
     /**
      * Declines a pull request.
@@ -1737,44 +1948,15 @@ class BitbucketBranchClient(
     }
 
     /**
-     * Fetches a single page of comments for a pull request.
-     * GET /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/comments?limit=100&start={start}
-     */
-    private suspend fun fetchCommentsPage(
-        projectKey: String,
-        repoSlug: String,
-        prId: Int,
-        start: Int,
-    ): ApiResult<BitbucketPrCommentList> =
-        withContext(Dispatchers.IO) {
-            try {
-                val request = Request.Builder()
-                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/comments?limit=100&start=$start")
-                    .get()
-                    .header("Accept", "application/json")
-                    .build()
-                val response = httpClient.newCall(request).execute()
-                response.use {
-                    when (it.code) {
-                        in 200..299 -> {
-                            val body = it.body?.string() ?: ""
-                            val parsed = json.decodeFromString<BitbucketPrCommentList>(body)
-                            ApiResult.Success(parsed)
-                        }
-                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
-                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "PR #$prId not found in $projectKey/$repoSlug")
-                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
-                    }
-                }
-            } catch (e: IOException) {
-                log.error("[Core:Bitbucket] Network error fetching PR #$prId comments (start=$start)", e)
-                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
-            }
-        }
-
-    /**
-     * Gets comments for a pull request, aggregating across all pages.
-     * GET /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/comments?limit=100&start={start}
+     * Gets comments for a pull request, derived from the activities timeline.
+     *
+     * On Bitbucket DC 9.4 the direct `GET /pull-requests/{id}/comments` listing rejects
+     * requests that don't pass `path` or `count=true` (returns 400). The audit confirmed
+     * `/activities` keeps returning 200 and already includes every COMMENTED action with
+     * the full comment body, so we filter the activities timeline for `action=COMMENTED`
+     * and surface the embedded comment objects.
+     *
+     * Source: docs/research/2026-05-07-bitbucket-recommendations.md §1.1.
      */
     suspend fun listPrComments(
         projectKey: String,
@@ -1782,33 +1964,56 @@ class BitbucketBranchClient(
         prId: Int,
         start: Int = 0,
     ): ApiResult<BitbucketPrCommentList> {
-        log.info("[Core:Bitbucket] Fetching comments for PR #$prId in $projectKey/$repoSlug")
-        val maxPages = 20  // safety cap: ~2000 comments at limit=100
-        val aggregated = mutableListOf<BitbucketPrCommentResponse>()
-        var cursor = start
-        var pages = 0
-        while (pages < maxPages) {
-            when (val page = fetchCommentsPage(projectKey, repoSlug, prId, cursor)) {
-                is ApiResult.Error -> return page
-                is ApiResult.Success -> {
-                    aggregated += page.data.values
-                    if (page.data.isLastPage || page.data.nextPageStart == null) {
-                        log.info("[Core:Bitbucket] Found ${aggregated.size} comments in PR #$prId")
-                        return ApiResult.Success(
-                            BitbucketPrCommentList(values = aggregated, isLastPage = true, nextPageStart = null)
-                        )
-                    }
-                    cursor = page.data.nextPageStart
-                    pages++
-                }
+        log.info("[Core:Bitbucket] Fetching comments for PR #$prId in $projectKey/$repoSlug (via activities)")
+        return when (val activities = getPullRequestActivities(projectKey, repoSlug, prId, start)) {
+            is ApiResult.Error -> activities
+            is ApiResult.Success -> {
+                val comments = activities.data.values
+                    .filter { it.action == "COMMENTED" }
+                    .mapNotNull { it.comment?.toCommentResponse() }
+                log.info("[Core:Bitbucket] Found ${comments.size} comments in PR #$prId (from activities)")
+                ApiResult.Success(
+                    BitbucketPrCommentList(
+                        values = comments,
+                        isLastPage = activities.data.isLastPage,
+                        nextPageStart = activities.data.nextPageStart,
+                    )
+                )
             }
         }
-        // Cap hit — return aggregated with isLastPage=false indicating truncation
-        log.warn("[Core:Bitbucket] PR #$prId comments truncated at $maxPages pages (${aggregated.size} comments)")
-        return ApiResult.Success(
-            BitbucketPrCommentList(values = aggregated, isLastPage = false, nextPageStart = cursor)
-        )
     }
+
+    /**
+     * Maps the lightweight comment payload that lives on `BitbucketPrActivity.comment`
+     * onto the richer [BitbucketPrCommentResponse] DTO that downstream UI/services consume.
+     *
+     * The activities timeline omits a few fields (`severity`, `state`, `comments` thread
+     * replies, `permittedOperations`, `version`) that the comments listing previously
+     * carried. Defaults match the field defaults on `BitbucketPrCommentResponse` so the
+     * UI degrades gracefully — anything that needs the missing fields can re-fetch the
+     * comment by id via [getPrComment].
+     */
+    private fun BitbucketPrComment.toCommentResponse(): BitbucketPrCommentResponse =
+        BitbucketPrCommentResponse(
+            id = id,
+            text = text,
+            author = BitbucketPrCommentAuthor(
+                name = author.name,
+                displayName = author.displayName,
+                emailAddress = author.emailAddress,
+            ),
+            createdDate = createdDate,
+            updatedDate = updatedDate,
+            anchor = anchor?.let { a ->
+                BitbucketPrCommentAnchor(
+                    path = a.path,
+                    srcPath = a.srcPath,
+                    line = a.line.takeIf { it != 0 },
+                    lineType = a.lineType.takeIf { it.isNotBlank() },
+                    fileType = a.fileType.takeIf { it.isNotBlank() },
+                )
+            },
+        )
 
     /**
      * Gets a single comment by ID for a pull request.
@@ -2194,5 +2399,301 @@ class BitbucketBranchClient(
             ApiResult.Error(ErrorType.NETWORK_ERROR, "setCommentState failed: ${e.message}", e)
         }
     }
+
+    // ============================================================================
+    // Audit-driven additions (2026-05-07) — see
+    // docs/research/2026-05-07-bitbucket-recommendations.md.
+    // ============================================================================
+
+    /**
+     * Fetches PRs across every repo the current user has access to in a single call.
+     *
+     * Replaces the per-repo iteration in `PrListService.refresh()` (R-SWAP-1 / R-SWAP-2):
+     * for users with N repos, the dashboard endpoint collapses N round-trips into 1.
+     * The returned list carries `toRef.repository.{slug,project.key}` so callers can
+     * still bucket PRs per repo if needed.
+     *
+     * @param role  AUTHOR, REVIEWER, or PARTICIPANT
+     * @param state OPEN, MERGED, or DECLINED
+     * @param limit max results to fetch (DC defaults to 25, 100 hard max)
+     *
+     * Source: docs/research/2026-05-07-bitbucket-recommendations.md §3 R-SWAP-1, R-SWAP-2.
+     */
+    suspend fun getDashboardPullRequests(
+        role: String,
+        state: String = "OPEN",
+        limit: Int = 25,
+        start: Int = 0,
+    ): ApiResult<BitbucketPrDetailListResponse> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Fetching dashboard PRs (role=$role, state=$state, start=$start, limit=$limit)")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/dashboard/pull-requests?role=$role&state=$state&start=$start&limit=$limit")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                httpClient.newCall(request).execute().use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val parsed = json.decodeFromString<BitbucketPrDetailListResponse>(body)
+                            log.info("[Core:Bitbucket] Dashboard returned ${parsed.values.size} $role PRs (isLastPage=${parsed.isLastPage})")
+                            ApiResult.Success(parsed)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error fetching dashboard PRs", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Lists blocker-severity comments for a PR.
+     *
+     * `GET /pull-requests/{prId}/blocker-comments` — when `count=true` only the size is
+     * populated (cheap badge counter); without `count=true` the `values` list is filled.
+     * Replaces the client-side `comments.filter { severity == "BLOCKER" }` loop the
+     * plugin used to do over the full comments listing.
+     *
+     * Source: docs/research/2026-05-07-bitbucket-recommendations.md §3 R-SWAP-4.
+     */
+    suspend fun getBlockerComments(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+        countOnly: Boolean = false,
+    ): ApiResult<BitbucketBlockerCommentsResponse> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Fetching blocker comments for PR #$prId (countOnly=$countOnly)")
+            try {
+                val countParam = if (countOnly) "?count=true" else ""
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/blocker-comments$countParam")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                httpClient.newCall(request).execute().use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val parsed = json.decodeFromString<BitbucketBlockerCommentsResponse>(body)
+                            log.info("[Core:Bitbucket] PR #$prId blocker comments: size=${parsed.size}, values=${parsed.values.size}")
+                            ApiResult.Success(parsed)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "PR #$prId not found in $projectKey/$repoSlug")
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error fetching blocker comments for PR #$prId", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Fetches the full list of participants on a PR with `state` and `lastReviewedCommit`
+     * per reviewer. The dedicated endpoint is richer than parsing the embedded
+     * `reviewers` array on `getPullRequestDetail()`.
+     *
+     * Source: docs/research/2026-05-07-bitbucket-recommendations.md §3 R-SWAP-5.
+     */
+    suspend fun getPullRequestParticipants(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+    ): ApiResult<BitbucketParticipantsResponse> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Fetching participants for PR #$prId in $projectKey/$repoSlug")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/participants?limit=100")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                httpClient.newCall(request).execute().use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val parsed = json.decodeFromString<BitbucketParticipantsResponse>(body)
+                            log.info("[Core:Bitbucket] PR #$prId has ${parsed.values.size} participants")
+                            ApiResult.Success(parsed)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "PR #$prId not found in $projectKey/$repoSlug")
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error fetching participants for PR #$prId", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Reverse lookup: given a commit SHA, return the PRs containing that commit.
+     *
+     * Powers the Bamboo bridge — when a build fails for commit X, the listener calls
+     * this to find the affected PRs and notify the authors.
+     *
+     * Source: docs/research/2026-05-07-bitbucket-recommendations.md §2 B1, §4 R-ADD-5.
+     */
+    suspend fun getCommitPullRequests(
+        projectKey: String,
+        repoSlug: String,
+        sha: String,
+        limit: Int = 25,
+    ): ApiResult<BitbucketCommitPrsResponse> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Reverse lookup PRs for commit $sha in $projectKey/$repoSlug")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/commits/$sha/pull-requests?limit=$limit")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                httpClient.newCall(request).execute().use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val parsed = json.decodeFromString<BitbucketCommitPrsResponse>(body)
+                            log.info("[Core:Bitbucket] Commit $sha is in ${parsed.values.size} PR(s)")
+                            ApiResult.Success(parsed)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Commit $sha not found in $projectKey/$repoSlug")
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error reverse-looking-up PRs for commit $sha", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Cheap aggregate build counter for a commit: `{successful, failed, inProgress}`.
+     *
+     * Source: docs/research/2026-05-07-bitbucket-recommendations.md §2 B6, §4 R-ADD-12.
+     */
+    suspend fun getCommitBuildStats(sha: String): ApiResult<BitbucketBuildStatsResponse> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Fetching build stats for commit $sha")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/build-status/1.0/commits/stats/$sha")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                httpClient.newCall(request).execute().use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val parsed = json.decodeFromString<BitbucketBuildStatsResponse>(body)
+                            log.info("[Core:Bitbucket] Commit $sha build stats: success=${parsed.successful} fail=${parsed.failed} inProgress=${parsed.inProgress}")
+                            ApiResult.Success(parsed)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "No build stats for commit $sha")
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error fetching build stats for $sha", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Fetches Jira issues linked to a PR via Bitbucket's Jira-link plugin.
+     *
+     * Replaces the three regex-based extraction sites in the plugin (PR-title regex,
+     * branch-name regex, commit-message regex) where keys were scanned for
+     * `[A-Z]+-[0-9]+`. The Atlassian Jira link plugin already extracts AND validates
+     * keys against Jira before returning them, so this is more accurate than regex.
+     *
+     * Returns an empty list (wrapped in Success) if the Jira-link plugin is not
+     * installed or no keys were detected — both are legitimate states.
+     *
+     * Source: docs/research/2026-05-07-bitbucket-recommendations.md §4 R-ADD-11.
+     */
+    suspend fun getLinkedJiraIssues(
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+    ): ApiResult<List<BitbucketJiraIssueRef>> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Fetching linked Jira issues for PR #$prId in $projectKey/$repoSlug")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/jira/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/issues")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                httpClient.newCall(request).execute().use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val parsed = json.decodeFromString<List<BitbucketJiraIssueRef>>(body)
+                            log.info("[Core:Bitbucket] PR #$prId has ${parsed.size} linked Jira issue(s)")
+                            ApiResult.Success(parsed)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        // 404 = Jira-link plugin not installed; treat as empty list, not a failure.
+                        404 -> ApiResult.Success(emptyList())
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error fetching linked Jira issues for PR #$prId", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
+
+    /**
+     * Fetches required-builds conditions for a repo (per-branch merge gating rules).
+     *
+     * Uses the canonical `/rest/required-builds/latest/` base — DC 9.4 returns 404 from
+     * the v0 path under `/rest/api/1.0/`, per the audit. Callers cross-reference these
+     * `buildParentKeys` against the build statuses on the PR's source-tip commit to
+     * decide which required builds have passed.
+     *
+     * Source: docs/research/2026-05-07-bitbucket-recommendations.md §4 R-ADD-15.
+     */
+    suspend fun getRequiredBuilds(
+        projectKey: String,
+        repoSlug: String,
+    ): ApiResult<BitbucketRequiredBuildsResponse> =
+        withContext(Dispatchers.IO) {
+            log.info("[Core:Bitbucket] Fetching required-builds conditions for $projectKey/$repoSlug")
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/rest/required-builds/latest/projects/$projectKey/repos/$repoSlug/conditions")
+                    .get()
+                    .header("Accept", "application/json")
+                    .build()
+                httpClient.newCall(request).execute().use {
+                    when (it.code) {
+                        in 200..299 -> {
+                            val body = it.body?.string() ?: ""
+                            val parsed = json.decodeFromString<BitbucketRequiredBuildsResponse>(body)
+                            log.info("[Core:Bitbucket] $projectKey/$repoSlug has ${parsed.values.size} required-builds condition(s)")
+                            ApiResult.Success(parsed)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                        // 404 = required-builds plugin not installed; treat as empty list.
+                        404 -> ApiResult.Success(BitbucketRequiredBuildsResponse(values = emptyList(), size = 0, isLastPage = true))
+                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                    }
+                }
+            } catch (e: IOException) {
+                log.error("[Core:Bitbucket] Network error fetching required-builds for $projectKey/$repoSlug", e)
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+            }
+        }
 
 }

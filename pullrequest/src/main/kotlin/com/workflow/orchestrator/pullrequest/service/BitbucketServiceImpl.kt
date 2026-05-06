@@ -1047,6 +1047,146 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
 
     private fun emptyCommentAuthor() = PrCommentAuthor(name = "", displayName = "")
 
+    // --- 2026-05-07 audit additions (recommendations doc §3, §4) ---
+
+    override suspend fun getBlockerCommentsCount(prId: Int, repoName: String?): ToolResult<Int> {
+        val api = client ?: return ToolResult(
+            data = 0, summary = "Bitbucket not configured.", isError = true,
+            hint = "Set up Bitbucket connection in Settings."
+        )
+        val (projectKey, repoSlug) = resolveRepo(repoName) ?: return ToolResult(
+            data = 0, summary = "Bitbucket project/repo not configured.", isError = true,
+            hint = "Set Bitbucket project key and repo slug in Settings."
+        )
+        return when (val result = api.getBlockerComments(projectKey, repoSlug, prId, countOnly = true)) {
+            is ApiResult.Success -> ToolResult.success(result.data.size, "PR #$prId has ${result.data.size} blocker comment(s)")
+            is ApiResult.Error -> ToolResult(
+                data = 0, summary = "Error fetching blocker count: ${result.message}", isError = true,
+                hint = "Verify the PR exists."
+            )
+        }
+    }
+
+    override suspend fun getPullRequestParticipants(prId: Int, repoName: String?): ToolResult<List<ParticipantData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(), summary = "Bitbucket not configured.", isError = true,
+            hint = "Set up Bitbucket connection in Settings."
+        )
+        val (projectKey, repoSlug) = resolveRepo(repoName) ?: return ToolResult(
+            data = emptyList(), summary = "Bitbucket project/repo not configured.", isError = true,
+            hint = "Set Bitbucket project key and repo slug in Settings."
+        )
+        return when (val result = api.getPullRequestParticipants(projectKey, repoSlug, prId)) {
+            is ApiResult.Success -> {
+                val participants = result.data.values.map { p ->
+                    ParticipantData(
+                        username = p.user.name,
+                        displayName = p.user.displayName.ifBlank { p.user.name },
+                        role = p.role,
+                        approved = p.approved,
+                        status = p.status,
+                        lastReviewedCommit = p.lastReviewedCommit,
+                    )
+                }
+                ToolResult.success(participants, "PR #$prId has ${participants.size} participant(s)")
+            }
+            is ApiResult.Error -> ToolResult(
+                data = emptyList(), summary = "Error fetching participants: ${result.message}", isError = true,
+                hint = "Verify the PR exists."
+            )
+        }
+    }
+
+    override suspend fun getPullRequestsForCommit(sha: String, repoName: String?): ToolResult<List<PullRequestData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(), summary = "Bitbucket not configured.", isError = true,
+            hint = "Set up Bitbucket connection in Settings."
+        )
+        val (projectKey, repoSlug) = resolveRepo(repoName) ?: return ToolResult(
+            data = emptyList(), summary = "Bitbucket project/repo not configured.", isError = true,
+            hint = "Set Bitbucket project key and repo slug in Settings."
+        )
+        return when (val result = api.getCommitPullRequests(projectKey, repoSlug, sha)) {
+            is ApiResult.Success -> {
+                val prs = result.data.values.map { it.toPullRequestData() }
+                ToolResult.success(prs, "Commit ${sha.take(8)} is in ${prs.size} PR(s)")
+            }
+            is ApiResult.Error -> ToolResult(
+                data = emptyList(), summary = "Error reverse-looking-up PRs: ${result.message}", isError = true,
+                hint = "Verify the commit and repo configuration."
+            )
+        }
+    }
+
+    override suspend fun getCommitBuildStats(sha: String): ToolResult<BuildStatsData> {
+        val api = client ?: return ToolResult(
+            data = BuildStatsData(0, 0, 0), summary = "Bitbucket not configured.", isError = true,
+            hint = "Set up Bitbucket connection in Settings."
+        )
+        return when (val result = api.getCommitBuildStats(sha)) {
+            is ApiResult.Success -> {
+                val stats = BuildStatsData(
+                    successful = result.data.successful,
+                    failed = result.data.failed,
+                    inProgress = result.data.inProgress,
+                )
+                ToolResult.success(
+                    stats,
+                    "Commit ${sha.take(8)} builds: ${stats.successful} ok, ${stats.failed} failed, ${stats.inProgress} running"
+                )
+            }
+            is ApiResult.Error -> ToolResult(
+                data = BuildStatsData(0, 0, 0),
+                summary = "Error fetching build stats: ${result.message}", isError = true,
+                hint = "Verify the commit SHA."
+            )
+        }
+    }
+
+    override suspend fun getLinkedJiraIssues(prId: Int, repoName: String?): ToolResult<List<JiraIssueRef>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(), summary = "Bitbucket not configured.", isError = true,
+            hint = "Set up Bitbucket connection in Settings."
+        )
+        val (projectKey, repoSlug) = resolveRepo(repoName) ?: return ToolResult(
+            data = emptyList(), summary = "Bitbucket project/repo not configured.", isError = true,
+            hint = "Set Bitbucket project key and repo slug in Settings."
+        )
+        return when (val result = api.getLinkedJiraIssues(projectKey, repoSlug, prId)) {
+            is ApiResult.Success -> {
+                val refs = result.data.map { JiraIssueRef(it.key, it.url) }
+                ToolResult.success(refs, "PR #$prId has ${refs.size} linked Jira issue(s)")
+            }
+            is ApiResult.Error -> ToolResult(
+                data = emptyList(), summary = "Error fetching linked Jira issues: ${result.message}", isError = true,
+                hint = "Verify the PR exists; ignore if Jira-link plugin is not installed."
+            )
+        }
+    }
+
+    override suspend fun getRequiredBuilds(repoName: String?): ToolResult<List<RequiredBuildsCondition>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(), summary = "Bitbucket not configured.", isError = true,
+            hint = "Set up Bitbucket connection in Settings."
+        )
+        val (projectKey, repoSlug) = resolveRepo(repoName) ?: return ToolResult(
+            data = emptyList(), summary = "Bitbucket project/repo not configured.", isError = true,
+            hint = "Set Bitbucket project key and repo slug in Settings."
+        )
+        return when (val result = api.getRequiredBuilds(projectKey, repoSlug)) {
+            is ApiResult.Success -> {
+                val conditions = result.data.values.map { c ->
+                    RequiredBuildsCondition(id = c.id, buildParentKeys = c.buildParentKeys)
+                }
+                ToolResult.success(conditions, "$projectKey/$repoSlug has ${conditions.size} required-build condition(s)")
+            }
+            is ApiResult.Error -> ToolResult(
+                data = emptyList(), summary = "Error fetching required builds: ${result.message}", isError = true,
+                hint = "Verify repo config; required-builds plugin may not be installed."
+            )
+        }
+    }
+
     override suspend fun testConnection(): ToolResult<Unit> {
         val api = client ?: return ToolResult(
             data = Unit,

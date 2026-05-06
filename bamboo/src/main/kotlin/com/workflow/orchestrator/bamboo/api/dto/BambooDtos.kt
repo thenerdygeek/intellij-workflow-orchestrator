@@ -133,6 +133,31 @@ data class BambooJobResultDto(
     val plan: BambooPlanDto? = null
 )
 
+// --- VCS Revisions DTO (Bamboo→Bitbucket bridge, 2026-05-07) ---
+
+/**
+ * Response from `GET /rest/api/latest/result/{resultKey}?expand=vcsRevisions`.
+ * Used by the Bamboo→Bitbucket bridge to resolve a failed build to its commit
+ * SHA, then to the PRs containing that commit (R-ADD-5).
+ */
+@Serializable
+data class BambooVcsRevisionsResponse(
+    val vcsRevisions: BambooVcsRevisionCollection = BambooVcsRevisionCollection(),
+)
+
+@Serializable
+data class BambooVcsRevisionCollection(
+    val size: Int = 0,
+    val vcsRevision: List<BambooVcsRevisionDto> = emptyList(),
+)
+
+@Serializable
+data class BambooVcsRevisionDto(
+    val repositoryId: Long = 0,
+    val repositoryName: String = "",
+    val vcsRevisionKey: String = "",
+)
+
 // --- Plan Variables DTOs ---
 
 /** Response from GET /plan/{key}?expand=variableContext */

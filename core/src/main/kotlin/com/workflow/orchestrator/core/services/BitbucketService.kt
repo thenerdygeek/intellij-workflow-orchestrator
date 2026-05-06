@@ -172,4 +172,24 @@ interface BitbucketService {
         prId: Int,
         commentId: Long,
     ): ToolResult<PrComment>
+
+    // --- 2026-05-07 audit additions (recommendations doc §3, §4) ---
+
+    /** Count of blocker-severity comments on a PR. Source: R-SWAP-4. */
+    suspend fun getBlockerCommentsCount(prId: Int, repoName: String? = null): ToolResult<Int>
+
+    /** Full participant list for a PR with `state` + `lastReviewedCommit`. Source: R-SWAP-5. */
+    suspend fun getPullRequestParticipants(prId: Int, repoName: String? = null): ToolResult<List<ParticipantData>>
+
+    /** Reverse lookup: which PRs contain this commit. Powers the Bamboo bridge. Source: R-ADD-5. */
+    suspend fun getPullRequestsForCommit(sha: String, repoName: String? = null): ToolResult<List<PullRequestData>>
+
+    /** Aggregate `{successful, failed, inProgress}` build counter for a commit. Source: R-ADD-12. */
+    suspend fun getCommitBuildStats(sha: String): ToolResult<BuildStatsData>
+
+    /** Jira issues linked to a PR via Bitbucket's Jira-link plugin. Source: R-ADD-11. */
+    suspend fun getLinkedJiraIssues(prId: Int, repoName: String? = null): ToolResult<List<JiraIssueRef>>
+
+    /** Required-builds conditions for a repo (per-branch merge gating). Source: R-ADD-15. */
+    suspend fun getRequiredBuilds(repoName: String? = null): ToolResult<List<RequiredBuildsCondition>>
 }

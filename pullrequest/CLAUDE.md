@@ -59,3 +59,10 @@ Uses `BitbucketBranchClient` from `:core` — `getBranches`, `getUsers`, `create
 - `PrListPanel` — filterable PR list with status indicators
 - `PrDetailPanel` — PR metadata, reviewers, merge status, action buttons
 - **UI Overhaul:** Outline-style status badges (OPEN/MERGED/DECLINED), sharp card corners, monospace PR IDs, left border accent colored by PR status.
+
+## Bitbucket DC 9.4 audit changes (2026-05-07)
+
+- `PrListService.refresh()` now uses `BitbucketBranchClient.getDashboardPullRequests("AUTHOR")` and `("REVIEWER")` — single cross-repo round-trips replace the old per-repo `?role.1=AUTHOR` loop. The "ALL" bucket still iterates per-repo (no dashboard equivalent for that role). PRs returned by the dashboard are filtered down to repos the user has configured in `PluginSettings.getRepos()`.
+- `BitbucketServiceImpl` exposes the new audit methods (`getBlockerCommentsCount`, `getPullRequestParticipants`, `getPullRequestsForCommit`, `getCommitBuildStats`, `getLinkedJiraIssues`, `getRequiredBuilds`) so both agent tools and panels can adopt them.
+- The Bamboo→Bitbucket bridge listener (R-ADD-5) lives in `:bamboo/listeners/BuildFailureBridgeStartupActivity` because the project's module-graph rule forbids `:pullrequest → :bamboo`. The listener consumes `BitbucketBranchClient.getCommitPullRequests` from `:core` and surfaces a notification when a failed build maps to one or more PRs. See `bamboo/CLAUDE.md` for the full flow.
+- `PrDetailPanel`'s pre-PR ticket-key extraction (auto-fill title from branch, ticketId for `PullRequestCreated` event) now goes through the canonical `core.util.TicketKeyExtractor`. R-ADD-11's `getLinkedJiraIssues` is PR-id-scoped so it doesn't apply to those pre-PR sites; it ships through the agent tool wrapper for use after a PR exists.

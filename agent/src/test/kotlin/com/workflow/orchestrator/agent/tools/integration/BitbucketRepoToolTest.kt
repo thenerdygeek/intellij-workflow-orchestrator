@@ -19,16 +19,19 @@ class BitbucketRepoToolTest {
     }
 
     @Test
-    fun `action enum contains all 6 actions`() {
+    fun `action enum contains all 8 actions`() {
         val actions = tool.parameters.properties["action"]?.enumValues
         assertNotNull(actions)
-        assertEquals(6, actions!!.size)
+        assertEquals(8, actions!!.size)
         assertTrue("get_branches" in actions)
         assertTrue("create_branch" in actions)
         assertTrue("search_users" in actions)
         assertTrue("get_file_content" in actions)
         assertTrue("get_build_statuses" in actions)
         assertTrue("list_repos" in actions)
+        // 2026-05-07 audit additions:
+        assertTrue("get_commit_build_stats" in actions)
+        assertTrue("get_commit_pull_requests" in actions)
     }
 
     @Test

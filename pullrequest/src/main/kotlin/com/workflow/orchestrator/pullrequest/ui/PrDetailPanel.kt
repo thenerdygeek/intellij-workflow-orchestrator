@@ -40,6 +40,7 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketReviewerUser
 import com.workflow.orchestrator.core.bitbucket.BitbucketUser
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
+import com.workflow.orchestrator.core.util.TicketKeyExtractor
 import com.workflow.orchestrator.core.services.BitbucketService
 import com.workflow.orchestrator.core.model.workflow.InteractionMode
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
@@ -472,10 +473,11 @@ class PrDetailPanel(
         val currentBranch = targetRepo?.currentBranch?.name ?: "unknown"
         createSourceBranchLabel.text = currentBranch
 
-        // Auto-fill title from branch name (e.g., "PROJ-123-feature" -> "PROJ-123: ")
-        val ticketPattern = Regex("^([A-Z]+-\\d+)")
-        val match = ticketPattern.find(currentBranch)
-        createTitleField.text = if (match != null) "${match.groupValues[1]}: " else ""
+        // Auto-fill title from branch name (e.g., "PROJ-123-feature" -> "PROJ-123: ").
+        // Uses canonical TicketKeyExtractor. The PR-scoped Jira-link endpoint
+        // (R-ADD-11) doesn't apply here — there's no PR id yet at create-PR time.
+        val branchKey = TicketKeyExtractor.extractFromBranch(currentBranch)
+        createTitleField.text = if (branchKey != null) "$branchKey: " else ""
 
         // Clear previous form state
         createDescriptionArea.text = ""
@@ -717,9 +719,8 @@ class PrDetailPanel(
                 is ApiResult.Success -> {
                     val pr = result.data
                     val prUrl = pr.links.self.firstOrNull()?.href ?: ""
-                    // Extract ticket ID from branch name
-                    val ticketPattern = Regex("^([A-Z]+-\\d+)")
-                    val ticketId = ticketPattern.find(fromBranch)?.groupValues?.get(1) ?: ""
+                    // Extract ticket ID from branch name via canonical helper.
+                    val ticketId = TicketKeyExtractor.extractFromBranch(fromBranch) ?: ""
 
                     // Emit PullRequestCreated event
                     project.getService(EventBus::class.java)

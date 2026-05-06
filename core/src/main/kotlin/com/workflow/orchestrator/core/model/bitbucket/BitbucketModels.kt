@@ -152,3 +152,49 @@ data class RepoInfo(
     val repoSlug: String,
     val isPrimary: Boolean
 )
+
+// --- 2026-05-07 Bitbucket audit additions ---
+
+/**
+ * Aggregate build counter for a single commit. Source: R-ADD-12.
+ */
+@Serializable
+data class BuildStatsData(
+    val successful: Int,
+    val failed: Int,
+    val inProgress: Int,
+)
+
+/**
+ * One PR-participant entry — richer than [ReviewerData] because it includes
+ * `lastReviewedCommit` so the UI can flag stale approvals when new commits land.
+ * Source: R-SWAP-5.
+ */
+@Serializable
+data class ParticipantData(
+    val username: String,
+    val displayName: String,
+    val role: String,
+    val approved: Boolean,
+    val status: String,
+    val lastReviewedCommit: String? = null,
+)
+
+/**
+ * Jira-issue reference returned by Bitbucket's Jira-link plugin. Source: R-ADD-11.
+ */
+@Serializable
+data class JiraIssueRef(
+    val key: String,
+    val url: String,
+)
+
+/**
+ * One required-builds condition — surfaces the build keys that must succeed for
+ * a merge to be allowed. Source: R-ADD-15.
+ */
+@Serializable
+data class RequiredBuildsCondition(
+    val id: Long,
+    val buildParentKeys: List<String>,
+)
