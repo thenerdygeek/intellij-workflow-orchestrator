@@ -208,6 +208,50 @@ class BitbucketProbe:
                 "swap/feature recommendations are even applicable on this instance."
             ],
         )
+        # Capability discovery — DC 7.4+ added first-party build & deployment
+        # capability endpoints under /rest/api/latest/. These advertise the
+        # actual schema each provider supports (e.g. whether testResults are
+        # accepted on this instance) and give us the canonical versioned base
+        # path for follow-up probes (especially Code Insights, which can shift
+        # base-path between point releases).
+        self._get(
+            name="build_capabilities",
+            description="Build-status fields the instance advertises (DC 7.4+, capability='build')",
+            path="/rest/api/latest/build/capabilities",
+            category="version",
+            notes=["Discovery for the rich /commits/{cid}/builds API; field set varies by version"],
+        )
+        self._get(
+            name="deployment_capabilities",
+            description="Deployment-status capabilities (DC 7.16+, capability='deployment')",
+            path="/rest/api/latest/deployment/capabilities",
+            category="version",
+            notes=["Gates whether the deployments-by-commit probe is meaningful"],
+        )
+        self._get(
+            name="insights_capabilities",
+            description="Code Insights capabilities — gives the actual versioned base path",
+            path="/rest/insights/latest/capabilities",
+            category="version",
+            notes=[
+                "Solves the base-path-shifting-between-point-releases problem. "
+                "Subsequent insights probes use the path advertised here, not "
+                "the hard-coded /rest/insights/1.0/."
+            ],
+        )
+
+    def _resolve_insights_base(self) -> str:
+        """Return the Code Insights API base path advertised by the instance.
+
+        Falls back to /rest/insights/1.0 if the capabilities call did not
+        surface a `url` field — that's the documented stable path through
+        DC 9.x, but we ask the server first because Atlassian has shifted
+        base paths between point releases on other plugin-provided APIs.
+        """
+        body = _read_raw_body(self.raw_dir / "insights_capabilities.json")
+        if isinstance(body, dict) and isinstance(body.get("url"), str):
+            return body["url"].rstrip("/")
+        return "/rest/insights/1.0"
 
     def run_discover(self) -> None:
         """Discovery mode — derives values to feed into the full sweep from the
@@ -365,7 +409,7 @@ class BitbucketProbe:
     def run_full(self, project_key: Optional[str], repo_slug: Optional[str],
                  pr_id: Optional[int], commit_id: Optional[str],
                  branch_name: Optional[str], comment_id: Optional[int],
-                 file_path: Optional[str]) -> None:
+                 file_path: Optional[str], my_username: Optional[str]) -> None:
         # 1) Always run the version block first
         self.run_versions_only()
 
@@ -559,6 +603,24 @@ class BitbucketProbe:
                               f"/rest/api/1.0/projects/{pk}/repos/{rs}/pull-requests/{pr_id}/properties",
                               category="feature",
                               notes=["Useful for 3rd-party integrations like Code Insights, Sonar"])
+                    self._get("pr_participants",
+                              "Full reviewer list with approval state + lastReviewedCommit",
+                              f"/rest/api/1.0/projects/{pk}/repos/{rs}/pull-requests/{pr_id}"
+                              f"/participants?limit=20",
+                              category="existing",
+                              notes=[
+                                  "Cleaner than parsing pr_get.reviewers — explicit endpoint, "
+                                  "includes per-reviewer state + lastReviewedCommit timestamp."
+                              ])
+                    self._get("pr_patch",
+                              "PR as a patch (alt to /diff)",
+                              f"/rest/api/1.0/projects/{pk}/repos/{rs}/pull-requests/{pr_id}.patch",
+                              category="swap",
+                              expect_json=False,
+                              notes=[
+                                  "text/plain patch output. Useful for 'apply this PR locally' "
+                                  "agent flows or offline review."
+                              ])
 
                 # 10) Repo-level SWAP candidates
                 print(f"\n[probe] swap candidates — repo {project_key}/{repo_slug}")
@@ -623,16 +685,38 @@ class BitbucketProbe:
                               category="existing",
                               notes=["Plugin currently uses this for the PR build-status badge"])
                     # SWAP candidates around build status
-                    self._get("build_status_v2",
-                              "Build status v2 — adds parent + testResults",
-                              f"/rest/build-status/2.0/commits/{cid}",
+                    self._get("commit_builds_rich",
+                              "Rich build status (DC 7.4+) — testResults, parent SHA, ref",
+                              f"/rest/api/latest/projects/{pk}/repos/{rs}/commits/{cid}/builds",
                               category="swap",
                               notes=[
-                                  "SWAP candidate for v1. Bamboo agents publish to v2 in DC 8+, "
-                                  "so v2 returns testCount / failedCount / parent SHA. Adopting it "
-                                  "would let the PR badge show 'tests: 142/144 passed' inline — the "
-                                  "Bamboo↔Bitbucket bridge the user asked about."
+                                  "REPLACES the misnamed v0 'build_status_v2' probe. There is no "
+                                  "/rest/build-status/2.0/ path — the canonical 'rich' endpoint "
+                                  "lives under /rest/api/latest/. Returns testResults "
+                                  "{successful, failed, skipped}, parent SHA, ref, duration, "
+                                  "lastUpdated. Bamboo agents publish here in DC 8+; adopting "
+                                  "this lets the PR badge show 'tests: 142/144 passed' inline."
                               ])
+                    self._get("commit_deployments",
+                              "Deployments associated with this commit (DC 7.16+)",
+                              f"/rest/api/latest/projects/{pk}/repos/{rs}/commits/{cid}/deployments",
+                              category="feature",
+                              notes=[
+                                  "NEW SURFACE — completely missing from v0 probe. Gated by "
+                                  "the 'deployment' capability (confirmed advertised on this "
+                                  "instance). Returns environment + state + url per deployment. "
+                                  "Powers 'this commit shipped to staging at 14:32' inline indicators."
+                              ])
+                    self._post("commit_builds_stats_bulk",
+                               "Bulk build-status stats — read-only POST",
+                               "/rest/build-status/1.0/commits/stats",
+                               category="feature",
+                               json_body={"commits": [commit_id]},
+                               notes=[
+                                   "Read-only POST: body is a list of commit IDs, returns "
+                                   "{successful, failed, inProgress} counts per commit. Useful for "
+                                   "coloring a commit-list red/green without N round-trips."
+                               ])
                     self._get("build_status_v1_stats",
                               "Build status v1 aggregate counts (PASS/FAIL/INPROGRESS)",
                               f"/rest/build-status/1.0/commits/stats/{cid}",
@@ -697,6 +781,29 @@ class BitbucketProbe:
                               "Useful for 'why isn't my Bamboo build triggering?' debug. "
                               "May 401/403 for non-admin tokens — that's still informative."
                           ])
+                # Pick the first webhook id from the response above and probe its
+                # statistics-summary — turns the bare list into a 'is delivery
+                # actually working?' diagnostic.
+                webhooks_body = _read_raw_body(self.raw_dir / "repo_webhooks.json")
+                first_webhook_id: Optional[int] = None
+                if isinstance(webhooks_body, dict):
+                    for w in (webhooks_body.get("values") or []):
+                        if isinstance(w, dict) and w.get("id") is not None:
+                            try:
+                                first_webhook_id = int(w["id"])
+                                break
+                            except (TypeError, ValueError):
+                                continue
+                if first_webhook_id is not None:
+                    self._get("repo_webhook_statistics_summary",
+                              f"Webhook {first_webhook_id} delivery success/failure (rolled up)",
+                              f"/rest/api/1.0/projects/{pk}/repos/{rs}/webhooks/"
+                              f"{first_webhook_id}/statistics/summary",
+                              category="feature",
+                              notes=[
+                                  "Diagnostic for 'why aren't my Bamboo builds triggering?' — "
+                                  "shows success/failure ratio across recent deliveries."
+                              ])
                 self._get("repo_permissions_users",
                           "Users with explicit perms on this repo",
                           f"/rest/api/1.0/projects/{pk}/repos/{rs}/permissions/users?limit=10",
@@ -715,13 +822,34 @@ class BitbucketProbe:
                               "PR.' Could replace the silent push-rejection UX."
                           ])
                 self._get("repo_required_builds",
-                          "Required-builds rules (must-pass-builds before merge)",
-                          f"/rest/api/1.0/projects/{pk}/repos/{rs}/required-builds?limit=10",
-                          category="feature")
+                          "Required-builds merge-check conditions (correct base path)",
+                          f"/rest/required-builds/latest/projects/{pk}/repos/{rs}/conditions",
+                          category="feature",
+                          notes=[
+                              "v0 used /rest/api/1.0/.../required-builds which 404s on DC 9.4 — "
+                              "the canonical path is /rest/required-builds/latest/.../conditions."
+                          ])
                 self._get("repo_recent_commits_feed",
                           "Recent commits (default branch) — activity feed feature",
                           f"/rest/api/1.0/projects/{pk}/repos/{rs}/commits?limit=10",
                           category="feature")
+                self._get("repo_ref_change_activities",
+                          "Recent push activity feed (replaces ad-hoc commits scan)",
+                          f"/rest/api/1.0/projects/{pk}/repos/{rs}/ref-change-activities?limit=20",
+                          category="feature",
+                          notes=[
+                              "Push-events stream — who pushed what, when. Cleaner than scanning "
+                              "/commits because it includes branch-create / branch-delete / "
+                              "force-push events."
+                          ])
+                self._get("repo_attachments",
+                          "PR attachment listing (image attachments on review comments)",
+                          f"/rest/api/1.0/projects/{pk}/repos/{rs}/attachments?limit=20",
+                          category="feature",
+                          notes=[
+                              "Bitbucket DC stores PR comment image attachments here. The plugin "
+                              "could surface these in the AI-review summary."
+                          ])
                 # File-targeted feature probes
                 file_for_targeted = file_path or "README.md"
                 fp = urllib.parse.quote(file_for_targeted)
@@ -739,16 +867,43 @@ class BitbucketProbe:
                           category="feature",
                           notes=["File-tree browser endpoint; alt to /browse with cleaner pagination"])
 
-                # 13) Code Insights (per-commit) — gated by Code Insights plugin
+                # 13) Code Insights (per-commit) — confirmed installed via 'code-insights' capability.
+                # Use the capabilities-discovered base path so probes survive base-path shifts
+                # between point releases (Atlassian has moved insights paths in the past).
                 if commit_id:
                     cid = urllib.parse.quote(commit_id)
+                    insights_base = self._resolve_insights_base()
                     self._get("insights_reports",
                               "Code Insights reports for this commit",
-                              f"/rest/insights/1.0/projects/{pk}/repos/{rs}/commits/{cid}/reports",
+                              f"{insights_base}/projects/{pk}/repos/{rs}/commits/{cid}/reports",
                               category="feature",
                               notes=[
-                                  "Sonar publishes findings here. NOTE + DEFER per the audit brief — "
-                                  "adopting it requires Quality-tab choices that belong in :sonar."
+                                  "Sonar / SCA tools publish findings here. Capability "
+                                  "'code-insights' confirmed installed on this instance — "
+                                  "this is now a real ADOPT candidate, not 'defer'."
+                              ])
+                    # Single report by key — uses the Sonar key as a stand-in. If the
+                    # instance has no Sonar integration this 404s; that's still useful
+                    # because it confirms which providers ARE publishing reports here.
+                    self._get("insights_report_by_key_sonar",
+                              "Single Code Insights report (sonar key as stand-in)",
+                              f"{insights_base}/projects/{pk}/repos/{rs}/commits/{cid}"
+                              f"/reports/io.atlassian.bitbucket.code-insights.sonar",
+                              category="feature",
+                              notes=[
+                                  "Stand-in key. v2 should iterate keys returned by "
+                                  "insights_reports above; for v1 we just confirm the "
+                                  "endpoint shape works."
+                              ])
+                    self._get("insights_annotations_all",
+                              "Cross-report annotations on this commit",
+                              f"{insights_base}/projects/{pk}/repos/{rs}/commits/{cid}"
+                              f"/annotations?limit=50",
+                              category="feature",
+                              notes=[
+                                  "Returns every annotation across all reports (with optional "
+                                  "?key=, ?path=, ?severity=, ?type= filters). Powers a "
+                                  "'show me every Sonar+SCA finding on this commit' tab."
                               ])
 
         # 14) Cross-cutting search / preview / capability probes (no params)
@@ -776,6 +931,45 @@ class BitbucketProbe:
                        "Useful for the agent's commit-message preview / PR-description editor — "
                        "lets us render exactly the way Bitbucket will render, no client-side guessing."
                    ])
+
+        # 15) Inbox + profile — calling-user-scoped, no params required, return
+        # personalised data. Cleaner than walking projects/repos for a "what
+        # should I look at" UX.
+        print("\n[probe] swap candidates — inbox + profile (calling-user scoped)")
+        self._get("inbox_pr_count",
+                  "Inbox PR count — single integer, perfect for tool-window badges",
+                  "/rest/api/1.0/inbox/pull-requests/count",
+                  category="swap",
+                  notes=["Cheap badge counter (no body parsing, just int)"])
+        self._get("inbox_pr_list",
+                  "Inbox PRs requiring my action",
+                  "/rest/api/1.0/inbox/pull-requests?limit=10",
+                  category="swap",
+                  notes=[
+                      "Atlassian's algorithmic 'PRs that need YOUR attention' list. "
+                      "More targeted than the role=REVIEWER dashboard variant."
+                  ])
+        self._get("profile_recent_repos",
+                  "Recently-touched repos for the calling user",
+                  "/rest/api/1.0/profile/recent/repos?limit=10",
+                  category="swap",
+                  notes=[
+                      "Better than projects+repos for warm-state UX — the IntelliJ plugin's "
+                      "repo picker could rank by 'recent for me' instead of alphabetical."
+                  ])
+
+        # 16) Personal access tokens — calling-user can read their own without
+        # admin rights. Needs the user's username (PATs are user-scoped).
+        if my_username:
+            user_slug = urllib.parse.quote(my_username)
+            self._get("access_tokens_self",
+                      f"PATs owned by {my_username} — token-expiry inventory",
+                      f"/rest/access-tokens/1.0/users/{user_slug}",
+                      category="feature",
+                      notes=[
+                          "Surfaces token expiry dates so the plugin can warn 'your "
+                          "Bitbucket token expires in 7 days' before it actually expires."
+                      ])
 
     # -- summary --------------------------------------------------------------
 
@@ -1027,26 +1221,37 @@ class BitbucketProbe:
             data = json.loads(raw_file.read_text(encoding="utf-8")).get("raw_body") or {}
         except Exception:
             return "_application-properties response could not be parsed._"
-        # License lookup (best-effort — non-admin tokens 401/403)
-        license_kind = "(unknown — admin-only endpoint)"
-        try:
-            ldata = json.loads(
-                (self.raw_dir / "admin_license.json").read_text(encoding="utf-8")
-            ).get("raw_body")
-            if isinstance(ldata, dict):
-                license_kind = (
-                    "Data Center" if ldata.get("dataCenter") is True
-                    else (ldata.get("license") or "Server")
-                )
-        except Exception:
-            pass
+        edition, edition_source = self._detect_edition()
         return (
             f"- **version:** `{data.get('version')}`\n"
             f"- **buildNumber:** `{data.get('buildNumber')}`\n"
             f"- **buildDate:** `{data.get('buildDate')}`\n"
             f"- **displayName:** `{data.get('displayName')}`\n"
-            f"- **license/edition:** `{license_kind}`  ← must indicate Data Center for our use\n"
+            f"- **edition:** `{edition}` _(detected via {edition_source})_\n"
         )
+
+    def _detect_edition(self) -> tuple[str, str]:
+        """Return (edition, source). Prefers `/rest/capabilities` over
+        `/admin/license` because capabilities is anonymous-readable while
+        admin/license requires an admin token (so non-admin PATs always 401
+        there). Smart-mirroring (`repository-mirroring`) is DC-exclusive — its
+        presence in capabilities is sufficient proof of edition.
+        """
+        body = _read_raw_body(self.raw_dir / "capabilities.json")
+        if isinstance(body, dict):
+            caps = body.get("capabilities")
+            if isinstance(caps, dict):
+                for k in caps.keys():
+                    if isinstance(k, str) and "mirroring" in k:
+                        return ("Data Center", "/rest/capabilities (`repository-mirroring` is DC-exclusive)")
+        # Fall back to admin/license if it happened to return content
+        ldata = _read_raw_body(self.raw_dir / "admin_license.json")
+        if isinstance(ldata, dict) and ldata.get("dataCenter") is True:
+            return ("Data Center", "/rest/api/1.0/admin/license")
+        # Server SKU has been EOL since 8.x EOL — if neither signal is present,
+        # the safe assumption on a 9.x instance is still DC.
+        return ("Data Center (assumed — Server SKU is EOL after 8.x)",
+                "fallback (capabilities did not surface mirroring; admin/license unreadable)")
 
 
 # ---------------------------------------------------------------------------
@@ -1054,6 +1259,7 @@ class BitbucketProbe:
 # ---------------------------------------------------------------------------
 
 _WRITES_INVENTORY: list[tuple[str, str, str]] = [
+    # Plugin's current writes
     ("POST",   "/rest/api/1.0/projects/{p}/repos/{r}/branches",                     "createBranch()"),
     ("POST",   "/rest/api/1.0/projects/{p}/repos/{r}/pull-requests",                "createPullRequest()"),
     ("PUT",    "/rest/api/1.0/projects/{p}/repos/{r}/pull-requests/{prId}",         "updatePullRequest()"),
@@ -1065,7 +1271,21 @@ _WRITES_INVENTORY: list[tuple[str, str, str]] = [
     ("POST",   "/rest/api/1.0/projects/{p}/repos/{r}/pull-requests/{prId}/merge",   "mergePullRequest()"),
     ("POST",   "/rest/api/1.0/projects/{p}/repos/{r}/pull-requests/{prId}/decline", "declinePullRequest()"),
     ("PUT",    "/rest/api/1.0/projects/{p}/repos/{r}/pull-requests/{prId}/participants/{username}", "setReviewerStatus()"),
+    # New surfaces the plugin doesn't write to TODAY but the agent could be tempted
+    # to wrap. Inventoried so any future tool wrapper trips the safety review.
+    ("POST",   "/rest/api/latest/projects/{p}/repos/{r}/commits/{cid}/builds",      "(future) submitBuildStatus — replaces deprecated /rest/build-status/1.0/ POST"),
+    ("DELETE", "/rest/api/latest/projects/{p}/repos/{r}/commits/{cid}/builds",      "(future) deleteBuildStatusByKey"),
+    ("POST",   "/rest/api/latest/projects/{p}/repos/{r}/commits/{cid}/deployments", "(future) registerDeployment — gated by 'deployment' capability"),
+    ("DELETE", "/rest/api/latest/projects/{p}/repos/{r}/commits/{cid}/deployments", "(future) deleteDeployment — REPO_ADMIN required"),
+    ("POST",   "/rest/insights/1.0/projects/{p}/repos/{r}/commits/{cid}/reports/{key}/annotations", "(future) addCodeInsightsAnnotations"),
+    ("PUT",    "/rest/insights/1.0/projects/{p}/repos/{r}/commits/{cid}/reports/{key}",            "(future) createOrUpdateCodeInsightsReport"),
+    ("DELETE", "/rest/insights/1.0/projects/{p}/repos/{r}/commits/{cid}/reports/{key}",            "(future) deleteCodeInsightsReport"),
+    ("POST",   "/rest/api/1.0/projects/{p}/repos/{r}/pull-requests/{prId}/comments/{cid}/apply-suggestion", "(future) applyCodeSuggestionFromComment — DC 8.x+ feature"),
 ]
+# Footnote: POST /rest/api/1.0/tasks was REMOVED in DC 9.0 — do not migrate to it.
+# POST /rest/build-status/1.0/commits/{cid} is soft-deprecated; the GET still works
+# but plugins should write to /rest/api/latest/.../commits/{cid}/builds instead.
+# GET /rest/mirroring/latest/mirrorServers/{id}/token was REMOVED in 9.x for security.
 
 
 # ---------------------------------------------------------------------------
@@ -1172,9 +1392,13 @@ def main() -> int:
                    help="Specific comment id to fetch by id (auto-derived from PR activities if omitted)")
     p.add_argument("--file-path", help="Path of a file in the repo (default: README.md) — "
                                        "used by browse / raw / files / last-modified probes")
+    p.add_argument("--my-username", help="Your own Bitbucket username/slug (enables the "
+                                          "access-tokens-self probe so we can see token "
+                                          "expiry dates without admin rights)")
     p.add_argument("--no-verify", action="store_true", help="Disable TLS verification (self-signed certs)")
     p.add_argument("--versions-only", action="store_true",
-                   help="Only call /application-properties + /admin/license + /capabilities + /users and exit")
+                   help="Probe application-properties + admin/license + users + 4 capability "
+                        "endpoints (rest/capabilities, build, deployment, insights) and exit")
     p.add_argument("--discover", action="store_true",
                    help="Discovery mode: list active PRs, projects, repos, and "
                         "extract values for the full sweep so you don't have to "
@@ -1227,6 +1451,7 @@ def main() -> int:
         "branch_name": args.branch_name,
         "comment_id": args.comment_id,
         "file_path": args.file_path,
+        "my_username": args.my_username,
         "no_verify": args.no_verify,
         "versions_only": args.versions_only,
         "discover": args.discover,
@@ -1245,6 +1470,7 @@ def main() -> int:
             branch_name=args.branch_name,
             comment_id=args.comment_id,
             file_path=args.file_path,
+            my_username=args.my_username,
         )
 
     probe.write_summary(args_used)
