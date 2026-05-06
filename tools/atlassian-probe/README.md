@@ -71,14 +71,56 @@ tools/atlassian-probe/
 Each `raw/*.json` has the request metadata, response status / time, and the **full parsed body**
 so we can diff against future probe runs and detect endpoint behaviour drift.
 
+## Redacting before you share
+
+The probe saves real Jira data (issue summaries, your username, comments, hostnames). Before
+sharing the results, run `redact.py` to swap identifying values for stable placeholders:
+
+```bash
+python redact.py --in Result_1
+# writes Result_1_redacted/ next to it; original is untouched
+```
+
+What stays (so analysis still works):
+- Status codes, timings, request paths
+- JSON shape — every key, every nesting level, every type, presence/absence of fields
+- Server version info (version, buildNumber, deploymentType — these are product versions, not company info)
+- Field IDs (customfield_*, system field IDs)
+- Enum values: status.name, priority.name, issuetype.name, resolution.name, etc.
+- Numeric IDs, booleans, timestamps
+- Free-text *length* (replaced with `<redacted-text:142-chars>` so payload size is still visible)
+
+What gets replaced (with stable per-run mapping — same value always maps to same placeholder):
+- Your Jira hostname → `jira.redacted.example`
+- Email addresses → `user-N@redacted.example`
+- Issue keys (`MYPROJ-1234`) → `KEY-001` (project component preserved consistently)
+- Project keys (`MYPROJ`) → `PROJ`
+- User names / display names in user contexts → `user-N` / `User N`
+- Avatar URLs → `https://redacted.example/avatar/N`
+- Commit hashes → `<commit-N>`
+- Dev-status branch displayIds → `<branch-N>`
+
+The mapping itself is **never written to disk** — there's no "key file" you have to keep
+secret. Once redacted, the original values are unrecoverable from the output. A
+`redaction_report.json` is written with **counts only** (e.g., "12 emails redacted") so you
+can sanity-check coverage without leaking values.
+
+```
+Result_1_redacted/
+├── summary.md             # share this
+├── redaction_report.json  # counts only, safe to share
+└── raw/                   # share specific failures from here
+    ├── serverInfo.json
+    └── ...
+```
+
 ## Safety
 
 - **Never mutates.** Only `GET`. No transitions, comments, worklogs, branch creates, watchers, etc.
   Even if you pass `--issue-key`, the script will not touch any state on that issue.
 - **Token is in-memory only.** Never written to any output file. The script logs URLs but never
   the `Authorization` header.
-- **`raw/*.json` may contain ticket data.** Inspect before sharing externally — it includes
-  whatever your token can read (issue summaries, comments, user names).
+- **`raw/*.json` may contain ticket data.** Run `redact.py` before sharing externally.
 - **No retries on auth errors.** A 401 stops dead instead of locking your account.
 
 ## Troubleshooting
