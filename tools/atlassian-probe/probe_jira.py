@@ -498,10 +498,12 @@ def main() -> int:
         return 2
 
     if args.no_verify:
-        # Suppress urllib3 SSL warnings since user explicitly opted out
+        # Suppress urllib3 SSL warnings since user explicitly opted out.
+        # `requests.packages.urllib3` was deprecated and may not exist on newer
+        # urllib3 — use the urllib3 module directly.
         try:
-            from urllib3.exceptions import InsecureRequestWarning
-            requests.packages.urllib3.disable_warnings(InsecureRequestWarning)  # type: ignore[attr-defined]
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         except Exception:
             pass
 

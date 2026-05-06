@@ -54,6 +54,13 @@ from urllib.parse import urlparse
 # ---------------------------------------------------------------------------
 
 class SecretMap:
+    """Bidirectional mapping from original→redacted values.
+
+    All `map_*` methods are **idempotent**: passing in an already-redacted value
+    returns it unchanged. This is what stops re-redaction (e.g. `user-2@…`
+    getting re-mapped to `user-3@…` if the regex sweep runs twice).
+    """
+
     def __init__(self) -> None:
         self.host: dict[str, str] = {}
         self.email: dict[str, str] = {}
@@ -65,59 +72,97 @@ class SecretMap:
         self.branch: dict[str, str] = {}
         self.avatar: dict[str, str] = {}
         self.url_fallback: dict[str, str] = {}
+        # Inverse sets — values that are already redacted placeholders
+        self._redacted_values: set[str] = set()
+
+    def _remember(self, redacted: str) -> str:
+        self._redacted_values.add(redacted)
+        return redacted
+
+    def is_already_redacted(self, value: str) -> bool:
+        return value in self._redacted_values
 
     def map_host(self, host: str) -> str:
+        if host in self._redacted_values:
+            return host
         if host not in self.host:
-            self.host[host] = "jira.redacted.example" if not self.host else f"jira{len(self.host)}.redacted.example"
+            redacted = "jira.redacted.example" if not self.host else f"jira{len(self.host)}.redacted.example"
+            self.host[host] = self._remember(redacted)
         return self.host[host]
 
     def map_email(self, email: str) -> str:
+        if email in self._redacted_values:
+            return email
         if email not in self.email:
-            self.email[email] = f"user-{len(self.email) + 1}@redacted.example"
+            redacted = f"user-{len(self.email) + 1}@redacted.example"
+            self.email[email] = self._remember(redacted)
         return self.email[email]
 
     def map_issue_key(self, key: str) -> str:
+        if key in self._redacted_values:
+            return key
         if key not in self.issue_key:
-            # Preserve project-key consistency: same project → same redacted prefix
-            project, num = key.split("-", 1)
-            self.map_project_key(project)  # ensure project is mapped
+            project, _ = key.split("-", 1)
+            self.map_project_key(project)
             redacted_proj = self.project_key[project]
-            self.issue_key[key] = f"{redacted_proj}-{len(self.issue_key) + 1:03d}"
+            redacted = f"{redacted_proj}-{len(self.issue_key) + 1:03d}"
+            self.issue_key[key] = self._remember(redacted)
         return self.issue_key[key]
 
     def map_project_key(self, project: str) -> str:
+        if project in self._redacted_values:
+            return project
         if project not in self.project_key:
-            self.project_key[project] = "PROJ" if not self.project_key else f"PROJ{len(self.project_key) + 1}"
+            redacted = "PROJ" if not self.project_key else f"PROJ{len(self.project_key) + 1}"
+            self.project_key[project] = self._remember(redacted)
         return self.project_key[project]
 
     def map_user_name(self, name: str) -> str:
+        if name in self._redacted_values:
+            return name
         if name not in self.user_name:
-            self.user_name[name] = f"user-{len(self.user_name) + 1}"
+            redacted = f"user-{len(self.user_name) + 1}"
+            self.user_name[name] = self._remember(redacted)
         return self.user_name[name]
 
     def map_user_display(self, display: str) -> str:
+        if display in self._redacted_values:
+            return display
         if display not in self.user_display:
-            self.user_display[display] = f"User {len(self.user_display) + 1}"
+            redacted = f"User {len(self.user_display) + 1}"
+            self.user_display[display] = self._remember(redacted)
         return self.user_display[display]
 
     def map_commit(self, sha: str) -> str:
+        if sha in self._redacted_values:
+            return sha
         if sha not in self.commit:
-            self.commit[sha] = f"<commit-{len(self.commit) + 1}>"
+            redacted = f"<commit-{len(self.commit) + 1}>"
+            self.commit[sha] = self._remember(redacted)
         return self.commit[sha]
 
     def map_branch(self, branch: str) -> str:
+        if branch in self._redacted_values:
+            return branch
         if branch not in self.branch:
-            self.branch[branch] = f"<branch-{len(self.branch) + 1}>"
+            redacted = f"<branch-{len(self.branch) + 1}>"
+            self.branch[branch] = self._remember(redacted)
         return self.branch[branch]
 
     def map_avatar(self, url: str) -> str:
+        if url in self._redacted_values:
+            return url
         if url not in self.avatar:
-            self.avatar[url] = f"https://redacted.example/avatar/{len(self.avatar) + 1}"
+            redacted = f"https://redacted.example/avatar/{len(self.avatar) + 1}"
+            self.avatar[url] = self._remember(redacted)
         return self.avatar[url]
 
     def map_url_fallback(self, url: str) -> str:
+        if url in self._redacted_values:
+            return url
         if url not in self.url_fallback:
-            self.url_fallback[url] = f"https://redacted.example/url/{len(self.url_fallback) + 1}"
+            redacted = f"https://redacted.example/url/{len(self.url_fallback) + 1}"
+            self.url_fallback[url] = self._remember(redacted)
         return self.url_fallback[url]
 
     # Returns *all* mappings as flat str→str pairs (longest-first) for summary.md text replace.
@@ -249,14 +294,26 @@ class Redactor:
                 out[k] = self.smap.map_commit(v)
                 continue
 
-            # Branch displayId in dev-status context (parent ~ branches/ref)
-            if (k in BRANCH_NAME_FIELDS and isinstance(v, str)
-                    and not COMMIT_HASH_RE.fullmatch(v)
-                    and not ISSUE_KEY_RE.fullmatch(v)):
-                # Avoid clobbering numeric/short ids
-                if any(c in v for c in "/-_") or len(v) > 8:
+            # `displayId` is overloaded in dev-status responses:
+            #  - inside a *branch*: branch name (sometimes path-like, sometimes a short ref)
+            #  - inside a *commit*: short commit hash (e.g. `8a7b6c5`)
+            # Dispatch by content shape, not field name alone.
+            if k == "displayId" and isinstance(v, str):
+                if COMMIT_HASH_RE.fullmatch(v):
+                    out[k] = self.smap.map_commit(v)
+                    continue
+                if "/" in v or len(v) > 8:
                     out[k] = self.smap.map_branch(v)
                     continue
+
+            # `name` field can be a branch path when it contains slashes —
+            # branch names like `feature/ACME-1234-fix-safari-jwt` would otherwise
+            # leak the descriptor even though the issue key gets swapped.
+            if (k == "name" and isinstance(v, str) and "/" in v
+                    and not is_user_here
+                    and parent_key not in PRESERVE_NAME_PARENTS):
+                out[k] = self.smap.map_branch(v)
+                continue
 
             out[k] = self.redact_node(v, parent_key=k, in_user_obj=is_user_here)
         return out
@@ -288,27 +345,28 @@ def redact_serverinfo_body(body: dict[str, Any], red: Redactor) -> dict[str, Any
     return out
 
 
-def detect_source_host(result_dir: Path) -> str:
-    """Sniff the source host from any raw response — typically the JSON body's `self` field."""
-    # Try a few well-known files
-    for candidate in ("serverInfo.json", "myself.json", "search_jql_v2.json",
-                      "issue_basic.json", "boards.json"):
-        f = result_dir / "raw" / candidate
-        if not f.exists():
-            continue
+def detect_source_host(result_dir: Path) -> str | None:
+    """Sniff the source host from any raw response — typically the JSON body's `self` field.
+
+    Returns None if no host could be found (e.g. every probe failed with a network
+    error so all raw_body values are null). Caller decides whether that's fatal."""
+    # Walk every raw file, not just well-known names — handles partial probe runs.
+    raw_dir = result_dir / "raw"
+    for f in sorted(raw_dir.glob("*.json")):
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
         except Exception:
             continue
         body = data.get("raw_body")
-        # `self` URLs in Jira responses look like https://host/rest/api/2/...
-        candidate_urls = []
+        if not body:
+            continue
+        candidate_urls: list[str] = []
         if isinstance(body, dict):
             if isinstance(body.get("self"), str):
                 candidate_urls.append(body["self"])
             if isinstance(body.get("baseUrl"), str):
                 candidate_urls.append(body["baseUrl"])
-        # Also dig into nested objects for self URLs
+
         def walk(n: Any) -> None:
             if isinstance(n, dict):
                 v = n.get("self")
@@ -319,6 +377,7 @@ def detect_source_host(result_dir: Path) -> str:
             elif isinstance(n, list):
                 for x in n[:5]:
                     walk(x)
+
         walk(body)
         for url in candidate_urls:
             try:
@@ -327,10 +386,7 @@ def detect_source_host(result_dir: Path) -> str:
                     return host
             except Exception:
                 continue
-    raise SystemExit(
-        "ERROR: Could not detect source host from raw responses. "
-        "Pass --source-host explicitly."
-    )
+    return None
 
 
 def process_file(raw_path: Path, out_path: Path, red: Redactor) -> None:
@@ -370,12 +426,16 @@ def process_file(raw_path: Path, out_path: Path, red: Redactor) -> None:
 
 
 def redact_summary_md(summary_text: str, smap: SecretMap) -> str:
+    """Apply the accumulated mapping to summary.md as plain text replacement.
+
+    We do **not** run EMAIL_RE / ISSUE_KEY_RE here. By the time summary.md is
+    processed, every email/key the probe captured is already in `smap` from the
+    raw-file pass, so the text-replace covers them. Re-running the regex would
+    catch already-redacted values (e.g. `user-2@redacted.example`) and re-map
+    them, producing inconsistent IDs across raw files vs. summary."""
     out = summary_text
     for original, mapped in smap.all_pairs():
         out = out.replace(original, mapped)
-    # Catch-all email regex (in case any escaped through)
-    out = EMAIL_RE.sub(lambda m: smap.map_email(m.group(0)), out)
-    out = ISSUE_KEY_RE.sub(lambda m: smap.map_issue_key(m.group(0)), out)
     return out
 
 
@@ -412,6 +472,15 @@ def main() -> int:
     raw_out.mkdir(parents=True, exist_ok=True)
 
     source_host = args.source_host or detect_source_host(in_dir)
+    if not source_host:
+        print(
+            "[redact] WARNING: could not auto-detect source host — every probe response "
+            "appears to be empty/error. The redactor will still run (emails, issue keys, "
+            "free text get replaced) but URLs from your Jira instance will pass through "
+            "unchanged. If you actually had successful probes, pass --source-host yourjira.example.com.",
+            file=sys.stderr,
+        )
+        source_host = "unknown.host.example"
     print(f"[redact] source host: {source_host} → jira.redacted.example")
     print(f"[redact] in:  {in_dir}")
     print(f"[redact] out: {out_dir}")
