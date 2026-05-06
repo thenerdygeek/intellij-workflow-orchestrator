@@ -548,6 +548,24 @@ Faithful port of Cline's two-file session persistence (message-state.ts + disk.t
 6. Rebuild ContextManager with `ApiMessage.toChatMessage()` conversion
 7. Continue execution via `initiateTaskLoop(newUserContent)`
 
+## Storage Tiers
+
+The plugin writes to four distinct roots. Anything the agent's read tools must reach has to live in one of the first two; anything else is invisible to `read_file` / `read_document` / `search_code` and the agent will reject the path with "outside project".
+
+| Tier | Root | What lives here | Reachable by agent reads? |
+|---|---|---|---|
+| 1. Project | `{project.basePath}` | User code; project-scoped agent assets (`.workflow/skills/`, `.workflow/agents/`, `.agent-hooks.json`). Agent **writes** allowed here. | Yes |
+| 2. Per-session agent data | `~/.workflow-orchestrator/{slug}-{sha6}/agent/sessions/{id}/` | `api_conversation_history.json`, `ui_messages.json`, `tasks.json`, `plan.json`, `checkpoints/`, `attachments/` (image uploads), `tool-output/` (spilled tool output), **`downloads/`** (artifact downloads from feature modules). Agent **writes** allowed only into `{agentDir}/memory/` — see `PathValidator.resolveAndValidateForWrite`. | Yes — via `PathValidator.resolveAndValidateForRead` |
+| 3. Cross-session agent data | `~/.workflow-orchestrator/{slug}-{sha6}/agent/` (parent of `sessions/`) and `~/.workflow-orchestrator/{slug}-{sha6}/logs/` | `sessions.json` global index, `pr-review-sessions.json`, `pr-review-findings/`, `agent-YYYY-MM-DD.jsonl` logs (7-day rotation). | Yes — same allowlisted root |
+| 4. User-global agent data | `~/.workflow-orchestrator/` | `agents/` (user personas), `skills/` (user skills), `pricing.json`, `trace-fallback/`, `diagnostics/`. | Yes — same allowlisted root |
+| OUT | `java.io.tmpdir`, `PathManager.systemPath/`, IntelliJ config | OkHttp HTTP cache, `PersistentStateComponent` XML, anything under system temp. | **No.** Anything written here is unreachable to agent read tools. |
+
+**Convention:** Per-session data goes under `sessions/{id}/`. Cross-session data goes directly under `agent/`. Anything outside the `~/.workflow-orchestrator/` tree is invisible to the agent.
+
+**Cross-module storage routing.** Feature modules (`:jira`, `:bamboo`, etc.) that download artifacts on the agent's behalf must land bytes in tier 2, not in `java.io.tmpdir`. The channel is the `:core` coroutine context element [`SessionDownloadDir`](../core/src/main/kotlin/com/workflow/orchestrator/core/services/SessionDownloadDir.kt) — installed by [`AgentLoopAttachmentScope`](src/main/kotlin/com/workflow/orchestrator/agent/loop/AgentLoopAttachmentScope.kt) alongside `SessionAttachmentAccess`, read by feature modules via `SessionDownloadDir.current()` without taking a `:agent` dependency. When `current()` returns null (UI handlers, tests, sub-agents that skip the wrap) callers fall back to system temp — the original behavior — keeping non-agent paths working.
+
+Wired today: `:jira` `download_attachment` lands at `{sessionDir}/downloads/jira-{attachmentId}/{filename}`. Future feature-module download tools (Bamboo artifacts, Bitbucket file blobs, etc.) should follow the same pattern with their own `{source}-{id}/` subfolder.
+
 ## File-Based Memory System
 
 Per-project, file-backed auto-memory patterned after Claude Code. No specialized tools — the LLM operates on memory files with `read_file`, `create_file`, `edit_file`.

@@ -32,7 +32,7 @@ import java.security.MessageDigest
  *
  * Phase 4 of multimodal-agent plan.
  */
-class AttachmentStore(private val sessionDir: Path) {
+class AttachmentStore(val sessionDir: Path) {
 
     private val attachmentsDir: Path = sessionDir.resolve("attachments")
 

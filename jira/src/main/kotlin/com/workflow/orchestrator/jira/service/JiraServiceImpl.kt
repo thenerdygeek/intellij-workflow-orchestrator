@@ -28,6 +28,7 @@ import com.workflow.orchestrator.core.model.jira.SprintData
 import com.workflow.orchestrator.core.model.jira.StartWorkResultData
 import com.workflow.orchestrator.core.model.jira.WorklogData
 import com.workflow.orchestrator.core.services.JiraService
+import com.workflow.orchestrator.core.services.SessionDownloadDir
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.jira.api.JiraApiClient
@@ -722,7 +723,16 @@ class JiraServiceImpl(private val project: Project) : JiraService {
             )
 
         val downloadService = AttachmentDownloadService(project)
-        val downloadResult = downloadService.downloadAttachment(attachment)
+        // Land the file inside the active agent session's `{sessionDir}/downloads/`
+        // when called from an agent tool — that directory is under the
+        // `~/.workflow-orchestrator/` tree, which `PathValidator.resolveAndValidateForRead`
+        // allowlists, so the agent can `read_file` / `read_document` it afterwards.
+        // Outside the agent (UI handler, tests), `SessionDownloadDir.current()`
+        // returns null and we fall through to the service's system-temp default.
+        // See `agent/CLAUDE.md` "Storage tiers".
+        val sessionDownloads = SessionDownloadDir.current()
+        val targetDir = sessionDownloads?.resolve("jira-$attachmentId")?.toFile()
+        val downloadResult = downloadService.downloadAttachment(attachment, targetDir)
             ?: return ToolResult(
                 data = AttachmentContentData(
                     filename = attachment.filename, mimeType = attachment.mimeType,

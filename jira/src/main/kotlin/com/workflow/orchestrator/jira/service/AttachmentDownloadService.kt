@@ -54,6 +54,9 @@ class AttachmentDownloadService(private val project: Project) {
 
             val isTempDownload = targetDir == null
             val dir = targetDir ?: createTempDir()
+            // Caller-provided dirs (e.g. agent session `downloads/jira-<id>/`)
+            // may not exist yet; createTempDir() returns one that already does.
+            if (!isTempDownload) java.nio.file.Files.createDirectories(dir.toPath())
 
             val request = Request.Builder()
                 .url(url)
