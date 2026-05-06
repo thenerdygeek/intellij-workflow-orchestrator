@@ -15,7 +15,11 @@ object CoverageMapper {
             .filter { it.path != null }
             .associate { comp ->
                 val path = comp.path!!
-                val measures = comp.measures.associate { it.metric to it.value }
+                // SonarQube returns new_* metrics under measure.period.value (not the
+                // top-level value) when additionalFields=period is in the request, which
+                // SonarApiClient.getMeasures always includes for any new_* request. Read
+                // through effectiveValue() so both shapes work.
+                val measures = comp.measures.associate { it.metric to it.effectiveValue() }
                 path to FileCoverageData(
                     filePath = path,
                     lineCoverage = measures["line_coverage"]?.toDoubleOrNull() ?: 0.0,

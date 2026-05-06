@@ -275,7 +275,7 @@ def _probe_bamboo_plan(label: str, client: ApiClient, plan_key: str, branch: str
         _run_endpoints(client, job_eps, results, endpoint_filter, raw_names)
 
 
-def probe_bamboo(cfg: dict, output_dir: Path, endpoint_filter: set = None):
+def probe_bamboo(cfg: dict, output_dir: Path, endpoint_filter: set = None, raw: bool = False):
     """Probe Bamboo API endpoints for CI plan and automation suite plan."""
     client = ApiClient(
         cfg["url"], {"Authorization": f"Bearer {cfg['token']}"}, "bamboo"
@@ -314,10 +314,10 @@ def probe_bamboo(cfg: dict, output_dir: Path, endpoint_filter: set = None):
     if not ci_plan_key and not suite_plan_key:
         print("    [SKIP] No ci_plan_key or suite_plan_key configured")
 
-    save_results("bamboo", results, output_dir)
+    save_results("bamboo", results, output_dir, raw=raw)
 
 
-def probe_jira(cfg: dict, output_dir: Path, endpoint_filter: set = None):
+def probe_jira(cfg: dict, output_dir: Path, endpoint_filter: set = None, raw: bool = False):
     """Probe Jira API endpoints."""
     client = ApiClient(
         cfg["url"], {"Authorization": f"Bearer {cfg['token']}"}, "jira"
@@ -396,10 +396,10 @@ def probe_jira(cfg: dict, output_dir: Path, endpoint_filter: set = None):
         print(f"{status}")
         time.sleep(0.2)
 
-    save_results("jira", results, output_dir)
+    save_results("jira", results, output_dir, raw=raw)
 
 
-def probe_sonar(cfg: dict, output_dir: Path, endpoint_filter: set = None):
+def probe_sonar(cfg: dict, output_dir: Path, endpoint_filter: set = None, raw: bool = False):
     """Probe all SonarQube API endpoints."""
     client = ApiClient(
         cfg["url"], {"Authorization": f"Bearer {cfg['token']}"}, "sonar"
@@ -414,6 +414,21 @@ def probe_sonar(cfg: dict, output_dir: Path, endpoint_filter: set = None):
 
     project_key = cfg.get("project_key", "")
     branch = cfg.get("branch", "")
+    # Mirrors SonarApiClient.DEFAULT_METRIC_KEYS so the probe reproduces what
+    # the plugin actually requests. The Coverage tab + new-code filter break
+    # silently if any of these are missing from the response.
+    plugin_metric_keys = (
+        "coverage,line_coverage,branch_coverage,uncovered_lines,uncovered_conditions,lines_to_cover,"
+        "new_coverage,new_branch_coverage,new_uncovered_lines,new_uncovered_conditions,new_lines_to_cover,"
+        "bugs,vulnerabilities,code_smells,"
+        "new_bugs,new_vulnerabilities,new_code_smells,"
+        "sqale_index,sqale_rating,duplicated_lines_density,complexity,cognitive_complexity,"
+        "reliability_rating,security_rating"
+    )
+    project_health_metric_keys = (
+        "sqale_index,sqale_rating,duplicated_lines_density,cognitive_complexity,"
+        "reliability_rating,security_rating,coverage,branch_coverage"
+    )
     if project_key:
         branch_params = {"branch": branch} if branch else {}
         endpoints += [
@@ -424,13 +439,18 @@ def probe_sonar(cfg: dict, output_dir: Path, endpoint_filter: set = None):
             ("issues", "/api/issues/search",
              {"componentKeys": project_key, "resolved": "false", "ps": "10",
               **branch_params}),
+            # Full plugin metric set, with additionalFields=period — required for
+            # new_* metrics, which Sonar returns under `period.value` not `value`.
+            # If the plugin's CoverageMapper reads `value` directly while this
+            # call is in flight, every new_* field comes back null/empty.
             ("measures_tree", "/api/measures/component_tree",
-             {"component": project_key, "metricKeys": "coverage,new_coverage,ncloc",
-              "qualifiers": "FIL", "ps": "10", **branch_params}),
+             {"component": project_key, "metricKeys": plugin_metric_keys,
+              "qualifiers": "FIL", "ps": "10",
+              "additionalFields": "period", **branch_params}),
             ("project_measures", "/api/measures/component",
              {"component": project_key,
-              "metricKeys": "coverage,new_coverage,ncloc,bugs,vulnerabilities,code_smells,duplicated_lines_density",
-              **branch_params}),
+              "metricKeys": project_health_metric_keys,
+              "additionalFields": "period", **branch_params}),
             ("ce_activity", "/api/ce/activity",
              {"component": project_key, "ps": "5"}),
             ("new_code_period", "/api/new_code_periods/show",
@@ -452,10 +472,10 @@ def probe_sonar(cfg: dict, output_dir: Path, endpoint_filter: set = None):
         print(f"{status}")
         time.sleep(0.2)
 
-    save_results("sonar", results, output_dir)
+    save_results("sonar", results, output_dir, raw=raw)
 
 
-def probe_bitbucket(cfg: dict, output_dir: Path, endpoint_filter: set = None):
+def probe_bitbucket(cfg: dict, output_dir: Path, endpoint_filter: set = None, raw: bool = False):
     """Probe all Bitbucket Server API endpoints."""
     client = ApiClient(
         cfg["url"], {"Authorization": f"Bearer {cfg['token']}"}, "bitbucket"
@@ -525,10 +545,10 @@ def probe_bitbucket(cfg: dict, output_dir: Path, endpoint_filter: set = None):
         print(f"{status}")
         time.sleep(0.2)
 
-    save_results("bitbucket", results, output_dir)
+    save_results("bitbucket", results, output_dir, raw=raw)
 
 
-def probe_docker_registry(cfg: dict, output_dir: Path, endpoint_filter: set = None):
+def probe_docker_registry(cfg: dict, output_dir: Path, endpoint_filter: set = None, raw: bool = False):
     """Probe Docker Registry v2 endpoints (Nexus uses Basic auth with username:passcode)."""
     username = cfg.get("username", "")
     passcode = cfg.get("passcode", "")
@@ -569,13 +589,24 @@ def probe_docker_registry(cfg: dict, output_dir: Path, endpoint_filter: set = No
         print(f"{status}")
         time.sleep(0.2)
 
-    save_results("docker-registry", results, output_dir)
+    save_results("docker-registry", results, output_dir, raw=raw)
 
 
 # ─── Output ──────────────────────────────────────────────────────────────────
 
-def save_results(service: str, results: list, output_dir: Path):
-    """Save censored results to file. Only keys, types, status codes, and errors survive."""
+def save_results(service: str, results: list, output_dir: Path, raw: bool = False):
+    """Save results to file. Default behavior censors all values (only keys,
+    types, status codes, and errors survive). When raw=True, dumps actual
+    response bodies — required when debugging field shapes (e.g. confirming
+    SonarQube returns new_* metrics in `period.value` vs top-level `value`).
+    Raw output contains real API data; do not commit the file."""
+    if raw:
+        filepath = output_dir / f"{service}.raw.json"
+        with open(filepath, "w") as f:
+            json.dump(results, f, indent=2, default=str)
+        print(f"  -> Saved RAW (uncensored) to {filepath}")
+        return
+
     censored = []
     for r in results:
         entry = {}
@@ -663,6 +694,10 @@ def main():
                         help="Comma-separated services to probe: bamboo,jira,sonar,bitbucket,docker (default: all)")
     parser.add_argument("--endpoints", type=str, default="",
                         help="Comma-separated endpoint names to run (default: all). E.g. --endpoints job_log,job_result")
+    parser.add_argument("--raw", action="store_true",
+                        help="Save raw uncensored response bodies (writes <service>.raw.json). "
+                             "Required for debugging field-shape questions like SonarQube period.value vs value. "
+                             "Output contains real API data — do not commit.")
     args = parser.parse_args()
 
     if args.init is not None:
@@ -721,7 +756,7 @@ def main():
             print(f"\n  [SKIP] {svc}: no token configured")
             continue
         try:
-            probe_fn(cfg, output_dir, endpoint_filter)
+            probe_fn(cfg, output_dir, endpoint_filter, raw=args.raw)
         except Exception as e:
             print(f"\n  [ERROR] {svc}: {e}")
 
@@ -736,7 +771,11 @@ def main():
         json.dump(meta, f, indent=2)
 
     print(f"\nDone. Results in {output_dir}/")
-    print("Share the JSON files — all sensitive data has been censored.")
+    if args.raw:
+        print("RAW mode: <service>.raw.json files contain uncensored API data.")
+        print("Do not commit them. The .gitignore already excludes scripts/api-probe-results/.")
+    else:
+        print("Share the JSON files — all sensitive data has been censored.")
 
 
 if __name__ == "__main__":

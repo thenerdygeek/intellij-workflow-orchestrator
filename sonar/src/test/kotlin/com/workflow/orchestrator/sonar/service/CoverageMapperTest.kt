@@ -2,6 +2,7 @@ package com.workflow.orchestrator.sonar.service
 
 import com.workflow.orchestrator.sonar.api.dto.SonarMeasureComponentDto
 import com.workflow.orchestrator.sonar.api.dto.SonarMeasureDto
+import com.workflow.orchestrator.sonar.api.dto.SonarMeasurePeriodDto
 import com.workflow.orchestrator.sonar.api.dto.SonarSourceLineDto
 import com.workflow.orchestrator.sonar.model.LineCoverageStatus
 import org.junit.jupiter.api.Assertions.*
@@ -159,6 +160,45 @@ class CoverageMapperTest {
 
         assertEquals(42, file.newLinesToCover)
         assertEquals(8, file.newUncoveredLines)
+        assertEquals(27, file.complexity)
+        assertEquals(19, file.cognitiveComplexity)
+    }
+
+    @Test
+    fun `maps new_ metrics from period value not top-level value (real SonarQube shape)`() {
+        // Empirically captured 2026-05-06 from next.sonarqube.com:
+        //   {"metric":"new_lines_to_cover","period":{"index":1,"value":"42"}}
+        //   {"metric":"new_uncovered_lines","period":{"index":1,"value":"8","bestValue":true}}
+        //   {"metric":"complexity","value":"27"}
+        // SonarQube returns new_* metric values inside `period.value` when
+        // additionalFields=period is in the request (which SonarApiClient.getMeasures
+        // always includes when metricKeys contains "new_"). Reading the top-level
+        // `value` field returns "" and the new-code filter drops every file silently.
+        val components = listOf(
+            SonarMeasureComponentDto(
+                key = "k",
+                path = "src/PaymentService.kt",
+                measures = listOf(
+                    SonarMeasureDto(metric = "new_lines_to_cover",
+                        period = SonarMeasurePeriodDto(value = "42")),
+                    SonarMeasureDto(metric = "new_uncovered_lines",
+                        period = SonarMeasurePeriodDto(value = "8")),
+                    SonarMeasureDto(metric = "new_coverage",
+                        period = SonarMeasurePeriodDto(value = "78.5")),
+                    SonarMeasureDto(metric = "new_branch_coverage",
+                        period = SonarMeasurePeriodDto(value = "50.0")),
+                    SonarMeasureDto(metric = "complexity", value = "27"),
+                    SonarMeasureDto(metric = "cognitive_complexity", value = "19")
+                )
+            )
+        )
+
+        val file = CoverageMapper.mapMeasures(components, projectKey = "test")["src/PaymentService.kt"]!!
+
+        assertEquals(42, file.newLinesToCover)
+        assertEquals(8, file.newUncoveredLines)
+        assertEquals(78.5, file.newCoverage!!, 0.01)
+        assertEquals(50.0, file.newBranchCoverage!!, 0.01)
         assertEquals(27, file.complexity)
         assertEquals(19, file.cognitiveComplexity)
     }
