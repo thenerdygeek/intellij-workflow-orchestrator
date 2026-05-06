@@ -1,0 +1,45 @@
+{
+  "result": {
+    "name": "serverInfo",
+    "description": "Server version + deployment type",
+    "method": "GET",
+    "path": "/rest/api/2/serverInfo",
+    "status": 200,
+    "ok": true,
+    "elapsed_ms": 1249,
+    "payload_kind": "json",
+    "payload_preview": {
+      "baseUrl": "https://redacted.example/url/1",
+      "version": "10.3.16",
+      "versionNumbers": [
+        10,
+        3,
+        16
+      ],
+      "deploymentType": "Server",
+      "buildNumber": 10030016,
+      "…": "+5 more keys"
+    },
+    "error": null,
+    "notes": [
+      "Use this to fill in the Jira version question once you run the probe"
+    ],
+    "category": "version"
+  },
+  "raw_body": {
+    "baseUrl": "https://redacted.example/url/1",
+    "version": "10.3.16",
+    "versionNumbers": [
+      10,
+      3,
+      16
+    ],
+    "deploymentType": "Server",
+    "buildNumber": 10030016,
+    "buildDate": "2026-01-07T00:00:00.000+0100",
+    "databaseBuildNumber": 10030016,
+    "serverTime": "2026-05-06T16:28:33.672+0200",
+    "scmInfo": "d130bae65421e3c63021a7b379141874f1f8608f",
+    "serverTitle": "COMP JIRA"
+  }
+}

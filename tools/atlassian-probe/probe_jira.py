@@ -80,19 +80,37 @@ class JiraProbe:
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.results: list[ProbeResult] = []
 
-    # -- low-level GET helper --------------------------------------------------
+    # -- low-level request helper ----------------------------------------------
 
-    def _get(self, name: str, description: str, path: str, category: str,
-             notes: Optional[list[str]] = None, expect_json: bool = True) -> ProbeResult:
+    def _request(self, name: str, description: str, path: str, category: str,
+                 method: str = "GET", json_body: Optional[dict[str, Any]] = None,
+                 notes: Optional[list[str]] = None, expect_json: bool = True) -> ProbeResult:
+        """Issue a single HTTP request and persist its outcome.
+
+        POST is allowed only for endpoints that are functionally search/lookup
+        (e.g. /rest/api/3/search/jql, /rest/api/2/search/approximate-count) —
+        no Jira state ever changes from a probe call. The User-Agent string
+        and `(read-only)` marker make this auditable in Jira's access logs.
+        """
         url = f"{self.base}{path}"
         result = ProbeResult(
-            name=name, description=description, method="GET", path=path,
+            name=name, description=description, method=method, path=path,
             category=category, notes=list(notes or []),
         )
         start = time.perf_counter()
         raw_payload: Any = None
         try:
-            resp = self.session.get(url, timeout=30, allow_redirects=False)
+            if method == "GET":
+                resp = self.session.get(url, timeout=30, allow_redirects=False)
+            elif method == "POST":
+                resp = self.session.post(
+                    url,
+                    json=json_body if json_body is not None else {},
+                    timeout=30,
+                    allow_redirects=False,
+                )
+            else:
+                raise ValueError(f"Unsupported method: {method}")
             result.status = resp.status_code
             result.elapsed_ms = int((time.perf_counter() - start) * 1000)
             result.ok = 200 <= resp.status_code < 300
@@ -130,10 +148,23 @@ class JiraProbe:
         raw_file = self.raw_dir / f"{name}.json"
         raw_file.write_text(json.dumps({
             "result": asdict(result),
+            "request_body": json_body,  # null for GET; helps reproduce POST probes later
             "raw_body": raw_payload if raw_payload is not None else None,
         }, indent=2, default=str), encoding="utf-8")
         self.results.append(result)
         return result
+
+    def _get(self, name: str, description: str, path: str, category: str,
+             notes: Optional[list[str]] = None, expect_json: bool = True) -> ProbeResult:
+        return self._request(name, description, path, category,
+                             method="GET", notes=notes, expect_json=expect_json)
+
+    def _post(self, name: str, description: str, path: str, category: str,
+              json_body: dict[str, Any],
+              notes: Optional[list[str]] = None, expect_json: bool = True) -> ProbeResult:
+        return self._request(name, description, path, category,
+                             method="POST", json_body=json_body,
+                             notes=notes, expect_json=expect_json)
 
     # -- modes ----------------------------------------------------------------
 
@@ -339,12 +370,62 @@ class JiraProbe:
                       f"/rest/api/2/issue/{ek}/watchers",
                       category="candidate")
 
-        # 8) Forward-compat: Cloud-style v3 search (does this DC have it backported?)
-        self._get("search_jql_v3_post",
-                  "Forward-compat: POST /rest/api/3/search/jql (Cloud-style cursor search)",
-                  "/rest/api/3/search/jql?maxResults=1",  # GET probe is enough — 404/405 tells us if backported
-                  category="candidate",
-                  notes=["Cloud deprecated GET /api/2/search May-2024; checking if DC has the new endpoint yet"])
+        # 8) Jira 10–era candidate endpoints (added after probing user's instance
+        #    confirmed Jira 10.3.16). These are the modern Cloud-style search
+        #    endpoints that Atlassian started backporting to DC in the 10.x line.
+        #    POST is required by the API contract — these are search-only and do
+        #    not mutate any Jira state.
+        print("\n[probe] candidate endpoints (Jira 10+ search APIs)")
+        self._post(
+            name="search_jql_v3_post",
+            description="Modern cursor-based search POST /rest/api/3/search/jql (Jira 10+)",
+            path="/rest/api/3/search/jql",
+            category="candidate",
+            json_body={
+                "jql": "order by updated DESC",
+                "fields": ["summary", "status"],
+                "maxResults": 1,
+            },
+            notes=[
+                "Cloud-style cursor pagination (nextPageToken). 404 = not backported on this DC. "
+                "200 = we can plan a v2-search → v3-search migration in the plugin."
+            ],
+        )
+        self._post(
+            name="search_v2_post",
+            description="POST variant of /rest/api/2/search — handles long JQL where GET fails",
+            path="/rest/api/2/search",
+            category="candidate",
+            json_body={
+                "jql": "order by updated DESC",
+                "fields": ["summary", "status"],
+                "maxResults": 1,
+            },
+            notes=[
+                "Plugin currently uses GET. POST avoids URL-length limits when JQL is long "
+                "(e.g. validateTicketKeys with 100 keys joined by IN clause)."
+            ],
+        )
+        self._post(
+            name="search_approximate_count",
+            description="Approximate JQL hit count (Jira 10 — fast, no result fetch)",
+            path="/rest/api/2/search/approximate-count",
+            category="candidate",
+            json_body={"jql": "order by updated DESC"},
+            notes=[
+                "Jira 10–native. Useful for 'N tickets match' UI without paying for a full search."
+            ],
+        )
+        self._get(
+            name="issue_picker",
+            description="History-grouped suggestions for @-mention input",
+            path="/rest/api/2/issue/picker?query=test&showSubTasks=true&showSubTaskParent=true",
+            category="candidate",
+            notes=[
+                "Returns sections for 'currentSearch' and 'history' — could replace the "
+                "agent's MentionSearchProvider's manual board+sprint walking."
+            ],
+        )
 
     # -- summary --------------------------------------------------------------
 
