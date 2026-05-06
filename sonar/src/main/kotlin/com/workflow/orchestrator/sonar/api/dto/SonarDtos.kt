@@ -94,7 +94,24 @@ data class SonarIssueDto(
     val updateDate: String? = null,
     val status: String = "OPEN",       // OPEN, CONFIRMED, REOPENED, RESOLVED, CLOSED
     val tags: List<String> = emptyList(),
-    val author: String? = null
+    val author: String? = null,
+    // Clean Code taxonomy (SonarQube 9.6+). All optional / defaulted so older
+    // servers without these fields still parse cleanly.
+    val cleanCodeAttribute: String? = null,
+    val cleanCodeAttributeCategory: String? = null,
+    val impacts: List<SonarImpactDto> = emptyList(),
+    val issueStatus: String? = null    // Separate from legacy `status`; OPEN, FIXED, ACCEPTED, FALSE_POSITIVE
+)
+
+/**
+ * Per-software-quality impact carried on every Sonar 9.6+ issue.
+ * The agent uses this for prioritization (e.g. RELIABILITY/HIGH ranks higher
+ * than MAINTAINABILITY/LOW even when both have legacy `severity=MAJOR`).
+ */
+@Serializable
+data class SonarImpactDto(
+    val softwareQuality: String = "",   // RELIABILITY | SECURITY | MAINTAINABILITY
+    val severity: String = ""           // INFO | LOW | MEDIUM | HIGH | BLOCKER
 )
 
 @Serializable

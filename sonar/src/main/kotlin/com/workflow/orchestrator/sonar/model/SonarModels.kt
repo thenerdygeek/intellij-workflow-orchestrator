@@ -46,7 +46,19 @@ data class MappedIssue(
      * (and its local VCS root + branch).
      */
     val projectKey: String,
+    // Clean Code taxonomy (SonarQube 9.6+). All optional — older servers leave them empty.
+    val cleanCodeAttribute: String? = null,
+    val cleanCodeAttributeCategory: String? = null,
+    val impacts: List<Impact> = emptyList(),
 )
+
+data class Impact(
+    val softwareQuality: SoftwareQuality,
+    val severity: ImpactSeverity,
+)
+
+enum class SoftwareQuality { RELIABILITY, SECURITY, MAINTAINABILITY, UNKNOWN }
+enum class ImpactSeverity { INFO, LOW, MEDIUM, HIGH, BLOCKER, UNKNOWN }
 
 data class FileCoverageData(
     val filePath: String,

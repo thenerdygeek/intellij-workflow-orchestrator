@@ -14,14 +14,41 @@ data class SonarIssueData(
     val component: String,
     val line: Int?,
     val status: String,
-    val type: String            // "BUG", "VULNERABILITY", "CODE_SMELL"
+    val type: String,           // "BUG", "VULNERABILITY", "CODE_SMELL"
+    // SonarQube 9.6+ Clean Code taxonomy. Empty/null on older servers.
+    val cleanCodeAttribute: String? = null,        // CLEAR | CONVENTIONAL | FORMATTED | EFFICIENT | LAWFUL | RESPECTFUL | TRUSTWORTHY | DISTINCT | LOGICAL | COMPLETE | IDENTIFIABLE
+    val cleanCodeAttributeCategory: String? = null, // CONSISTENT | INTENTIONAL | ADAPTABLE | RESPONSIBLE
+    val impacts: List<SonarImpact> = emptyList(),
+    val issueStatus: String? = null                // OPEN | FIXED | ACCEPTED | FALSE_POSITIVE — distinct from legacy `status`
 ) {
     override fun toString(): String {
         val file = component.substringAfterLast(':').substringAfterLast('/')
         val loc = if (line != null) "$file:$line" else file
-        return "[$severity/$type] $loc — ${message.take(120)}"
+        val impactStr = if (impacts.isEmpty()) "" else
+            " [impacts: ${impacts.joinToString(",") { "${shortQuality(it.softwareQuality)}/${it.severity}" }}]"
+        val taxonomy = if (cleanCodeAttributeCategory != null && cleanCodeAttribute != null)
+            " [$cleanCodeAttributeCategory/$cleanCodeAttribute]" else ""
+        return "[$severity/$type]$impactStr$taxonomy $loc — ${message.take(120)}"
+    }
+
+    private fun shortQuality(q: String): String = when (q) {
+        "RELIABILITY" -> "REL"
+        "SECURITY" -> "SEC"
+        "MAINTAINABILITY" -> "MNT"
+        else -> q.take(3)
     }
 }
+
+/**
+ * Per-software-quality severity carried on every Sonar 9.6+ issue. The agent
+ * uses this for prioritization (e.g. RELIABILITY/HIGH outranks MAINTAINABILITY/LOW
+ * even when both legacy `severity` values are MAJOR).
+ */
+@Serializable
+data class SonarImpact(
+    val softwareQuality: String,   // RELIABILITY | SECURITY | MAINTAINABILITY
+    val severity: String           // INFO | LOW | MEDIUM | HIGH | BLOCKER
+)
 
 /**
  * Quality gate status with individual metric conditions.

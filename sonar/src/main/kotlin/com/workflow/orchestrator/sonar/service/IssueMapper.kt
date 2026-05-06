@@ -1,9 +1,13 @@
 package com.workflow.orchestrator.sonar.service
 
+import com.workflow.orchestrator.sonar.api.dto.SonarImpactDto
 import com.workflow.orchestrator.sonar.api.dto.SonarIssueDto
+import com.workflow.orchestrator.sonar.model.Impact
+import com.workflow.orchestrator.sonar.model.ImpactSeverity
 import com.workflow.orchestrator.sonar.model.IssueSeverity
 import com.workflow.orchestrator.sonar.model.IssueType
 import com.workflow.orchestrator.sonar.model.MappedIssue
+import com.workflow.orchestrator.sonar.model.SoftwareQuality
 
 object IssueMapper {
 
@@ -30,9 +34,19 @@ object IssueMapper {
                 creationDate = dto.creationDate,
                 status = dto.status,
                 projectKey = projectKey,
+                cleanCodeAttribute = dto.cleanCodeAttribute,
+                cleanCodeAttributeCategory = dto.cleanCodeAttributeCategory,
+                impacts = dto.impacts.map(::mapImpact),
             )
         }
     }
+
+    private fun mapImpact(dto: SonarImpactDto): Impact = Impact(
+        softwareQuality = runCatching { SoftwareQuality.valueOf(dto.softwareQuality) }
+            .getOrDefault(SoftwareQuality.UNKNOWN),
+        severity = runCatching { ImpactSeverity.valueOf(dto.severity) }
+            .getOrDefault(ImpactSeverity.UNKNOWN),
+    )
 
     private fun parseType(type: String): IssueType = when (type) {
         "BUG" -> IssueType.BUG

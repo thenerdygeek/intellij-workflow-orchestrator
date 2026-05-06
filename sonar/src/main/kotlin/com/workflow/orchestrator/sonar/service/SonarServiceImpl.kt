@@ -73,7 +73,11 @@ class SonarServiceImpl(private val project: Project) : SonarService {
                         component = dto.component,
                         line = dto.textRange?.startLine,
                         status = "OPEN",
-                        type = dto.type
+                        type = dto.type,
+                        cleanCodeAttribute = dto.cleanCodeAttribute,
+                        cleanCodeAttributeCategory = dto.cleanCodeAttributeCategory,
+                        impacts = dto.impacts.map { com.workflow.orchestrator.core.model.sonar.SonarImpact(it.softwareQuality, it.severity) },
+                        issueStatus = dto.issueStatus,
                     )
                 }
 
@@ -542,7 +546,11 @@ class SonarServiceImpl(private val project: Project) : SonarService {
                         component = dto.component,
                         line = dto.textRange?.startLine,
                         status = dto.status,
-                        type = dto.type
+                        type = dto.type,
+                        cleanCodeAttribute = dto.cleanCodeAttribute,
+                        cleanCodeAttributeCategory = dto.cleanCodeAttributeCategory,
+                        impacts = dto.impacts.map { com.workflow.orchestrator.core.model.sonar.SonarImpact(it.softwareQuality, it.severity) },
+                        issueStatus = dto.issueStatus,
                     )
                 }
 
@@ -833,7 +841,11 @@ class SonarServiceImpl(private val project: Project) : SonarService {
                 SonarIssueData(
                     key = dto.key, rule = dto.rule, severity = dto.severity,
                     message = dto.message, component = dto.component,
-                    line = dto.textRange?.startLine, status = "OPEN", type = dto.type
+                    line = dto.textRange?.startLine, status = "OPEN", type = dto.type,
+                    cleanCodeAttribute = dto.cleanCodeAttribute,
+                    cleanCodeAttributeCategory = dto.cleanCodeAttributeCategory,
+                    impacts = dto.impacts.map { com.workflow.orchestrator.core.model.sonar.SonarImpact(it.softwareQuality, it.severity) },
+                    issueStatus = dto.issueStatus,
                 )
             }
             is ApiResult.Error -> emptyList()

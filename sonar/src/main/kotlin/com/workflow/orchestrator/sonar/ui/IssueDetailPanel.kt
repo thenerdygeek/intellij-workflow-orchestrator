@@ -51,6 +51,17 @@ class IssueDetailPanel(
         cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
     }
 
+    /**
+     * SonarQube 9.6+ Clean Code section: cleanCodeAttributeCategory → cleanCodeAttribute
+     * breadcrumb plus per-software-quality impact chips. Hidden entirely (HTML empty)
+     * when the issue carries no taxonomy data — graceful degradation for older Sonar.
+     */
+    private val cleanCodeLabel = JBLabel().apply {
+        font = font.deriveFont(Font.PLAIN, JBUI.scale(11).toFloat())
+        border = JBUI.Borders.emptyBottom(8)
+        isVisible = false
+    }
+
     private val codeArea = JTextArea().apply {
         isEditable = false
         font = Font("JetBrains Mono", Font.PLAIN, JBUI.scale(12))
@@ -82,13 +93,15 @@ class IssueDetailPanel(
     private val contentPanel = JPanel(BorderLayout()).apply {
         border = JBUI.Borders.empty(8)
 
-        // Top: title + metadata
+        // Top: title + metadata + clean code section
         val headerPanel = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             titleLabel.alignmentX = Component.LEFT_ALIGNMENT
             metadataLabel.alignmentX = Component.LEFT_ALIGNMENT
+            cleanCodeLabel.alignmentX = Component.LEFT_ALIGNMENT
             add(titleLabel)
             add(metadataLabel)
+            add(cleanCodeLabel)
         }
         add(headerPanel, BorderLayout.NORTH)
 
@@ -192,6 +205,9 @@ class IssueDetailPanel(
         metaParts.add(issue.rule)
         metadataLabel.text = metaParts.joinToString(" \u2022 ")
 
+        // Clean Code taxonomy (Sonar 9.6+). Hidden when no taxonomy data is present.
+        renderCleanCodeSection(issue)
+
         // AI fix button only for issues
         fixWithAgentButton.isVisible = true
         fixWithAgentButton.isEnabled = AgentChatRedirect.getInstance() != null
@@ -199,6 +215,36 @@ class IssueDetailPanel(
         // Load code snippet and rule info asynchronously
         loadCodeSnippet(issue.filePath, issue.startLine, issue.projectKey)
         loadRuleInfo(issue.rule)
+    }
+
+    private fun renderCleanCodeSection(issue: com.workflow.orchestrator.sonar.model.MappedIssue) {
+        val hasBreadcrumb = !issue.cleanCodeAttribute.isNullOrBlank() && !issue.cleanCodeAttributeCategory.isNullOrBlank()
+        val hasImpacts = issue.impacts.isNotEmpty()
+        if (!hasBreadcrumb && !hasImpacts) {
+            cleanCodeLabel.isVisible = false
+            cleanCodeLabel.text = ""
+            return
+        }
+        val sb = StringBuilder("<html>")
+        if (hasBreadcrumb) {
+            // Breadcrumb in dim secondary color so it reads as a label, not a value
+            val crumbColor = StatusColors.htmlColor(StatusColors.SECONDARY_TEXT as JBColor)
+            sb.append("<font color='$crumbColor'>Clean Code: <b>")
+            sb.append(issue.cleanCodeAttributeCategory)
+            sb.append(" \u2192 ")
+            sb.append(issue.cleanCodeAttribute)
+            sb.append("</b></font>")
+        }
+        if (hasImpacts) {
+            if (hasBreadcrumb) sb.append("&nbsp;&nbsp;\u2022&nbsp;&nbsp;")
+            sb.append(issue.impacts.joinToString("&nbsp;&nbsp;") { impact ->
+                val color = StatusColors.htmlColor(ImpactRendering.colorFor(impact.severity))
+                "<font color='$color'><b>${impact.softwareQuality.name} \u00b7 ${impact.severity.name}</b></font>"
+            })
+        }
+        sb.append("</html>")
+        cleanCodeLabel.text = sb.toString()
+        cleanCodeLabel.isVisible = true
     }
 
     private fun renderHotspot(item: QualityListItem.HotspotItem) {
@@ -225,6 +271,10 @@ class IssueDetailPanel(
             else -> hotspot.status
         }
         metadataLabel.text = "$filePath:$lineStr \u2022 $statusText \u2022 ${hotspot.securityCategory.replace("-", " ")}"
+
+        // Clean Code taxonomy doesn't apply to hotspots — hide the section.
+        cleanCodeLabel.isVisible = false
+        cleanCodeLabel.text = ""
 
         // No AI fix for hotspots
         fixWithAgentButton.isVisible = false

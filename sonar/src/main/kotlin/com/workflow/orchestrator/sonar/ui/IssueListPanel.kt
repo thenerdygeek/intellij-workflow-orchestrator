@@ -394,9 +394,14 @@ private class IssueListCellRenderer : JPanel(), ListCellRenderer<QualityListItem
             JBUI.Borders.empty(4, 8)
         )
 
-        // Main line: type + severity label in color + message + file:line
+        // Clean Code impacts badge (Sonar 9.6+) \u2014 colored by highest-severity impact.
+        // Empty/older Sonar leaves `impacts` empty so the badge is suppressed.
+        val impactBadge = ImpactRendering.htmlBadge(issue)
+
+        // Main line: type + severity label + optional impact badge + message + file:line
         mainLabel.text = "<html>$typeStr " +
             "<font color='$htmlColor'><b>[${issue.severity}]</b></font>" +
+            impactBadge +
             "  ${issue.message} \u2014 $fileName:${issue.startLine}</html>"
         mainLabel.foreground = if (isSelected) list.selectionForeground else list.foreground
 

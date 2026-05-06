@@ -1,9 +1,12 @@
 package com.workflow.orchestrator.sonar.service
 
+import com.workflow.orchestrator.sonar.api.dto.SonarImpactDto
 import com.workflow.orchestrator.sonar.api.dto.SonarIssueDto
 import com.workflow.orchestrator.sonar.api.dto.SonarTextRangeDto
+import com.workflow.orchestrator.sonar.model.ImpactSeverity
 import com.workflow.orchestrator.sonar.model.IssueSeverity
 import com.workflow.orchestrator.sonar.model.IssueType
+import com.workflow.orchestrator.sonar.model.SoftwareQuality
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
@@ -83,6 +86,73 @@ class IssueMapperTest {
         assertEquals(IssueSeverity.MAJOR, result[2].severity)
         assertEquals(IssueSeverity.MINOR, result[3].severity)
         assertEquals(IssueSeverity.INFO, result[4].severity)
+    }
+
+    @Test
+    fun `maps Clean Code taxonomy fields and impacts`() {
+        val dtos = listOf(
+            SonarIssueDto(
+                key = "k1", rule = "java:S2259", severity = "MAJOR",
+                message = "m", component = "p:k:src/F.kt", type = "BUG",
+                cleanCodeAttribute = "LOGICAL",
+                cleanCodeAttributeCategory = "INTENTIONAL",
+                impacts = listOf(
+                    SonarImpactDto(softwareQuality = "RELIABILITY", severity = "HIGH"),
+                    SonarImpactDto(softwareQuality = "MAINTAINABILITY", severity = "LOW"),
+                ),
+            )
+        )
+
+        val result = IssueMapper.mapIssues(dtos, "p:k")
+
+        val mapped = result[0]
+        assertEquals("LOGICAL", mapped.cleanCodeAttribute)
+        assertEquals("INTENTIONAL", mapped.cleanCodeAttributeCategory)
+        assertEquals(2, mapped.impacts.size)
+        assertEquals(SoftwareQuality.RELIABILITY, mapped.impacts[0].softwareQuality)
+        assertEquals(ImpactSeverity.HIGH, mapped.impacts[0].severity)
+        assertEquals(SoftwareQuality.MAINTAINABILITY, mapped.impacts[1].softwareQuality)
+        assertEquals(ImpactSeverity.LOW, mapped.impacts[1].severity)
+    }
+
+    @Test
+    fun `unrecognized impact values fall back to UNKNOWN instead of crashing`() {
+        // Future-proofing: if SonarQube introduces a new softwareQuality or severity value,
+        // the mapper must downgrade gracefully rather than throw IllegalArgumentException.
+        val dtos = listOf(
+            SonarIssueDto(
+                key = "k1", rule = "r", severity = "MAJOR", message = "m",
+                component = "p:k:src/F.kt", type = "BUG",
+                impacts = listOf(
+                    SonarImpactDto(softwareQuality = "AVAILABILITY", severity = "EXTREME"),
+                ),
+            )
+        )
+
+        val result = IssueMapper.mapIssues(dtos, "p:k")
+
+        val impact = result[0].impacts.single()
+        assertEquals(SoftwareQuality.UNKNOWN, impact.softwareQuality)
+        assertEquals(ImpactSeverity.UNKNOWN, impact.severity)
+    }
+
+    @Test
+    fun `older Sonar without taxonomy fields produces empty impacts`() {
+        // Pre-9.6 Sonar omits cleanCodeAttribute / impacts entirely. The DTO defaults keep
+        // parsing alive; the mapper must surface that as null/empty in the domain model
+        // rather than fabricating UNKNOWN entries.
+        val dtos = listOf(
+            SonarIssueDto(
+                key = "k1", rule = "r", severity = "MAJOR", message = "m",
+                component = "p:k:src/F.kt", type = "BUG"
+            )
+        )
+
+        val result = IssueMapper.mapIssues(dtos, "p:k")
+
+        assertNull(result[0].cleanCodeAttribute)
+        assertNull(result[0].cleanCodeAttributeCategory)
+        assertTrue(result[0].impacts.isEmpty())
     }
 
     @Test

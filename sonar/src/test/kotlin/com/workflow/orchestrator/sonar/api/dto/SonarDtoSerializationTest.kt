@@ -57,14 +57,31 @@ class SonarDtoSerializationTest {
         assertEquals("CRITICAL", bug.severity)
         assertEquals("BUG", bug.type)
         assertEquals(42, bug.textRange?.startLine)
+        // Sonar 9.6+ Clean Code taxonomy
+        assertEquals("LOGICAL", bug.cleanCodeAttribute)
+        assertEquals("INTENTIONAL", bug.cleanCodeAttributeCategory)
+        assertEquals(1, bug.impacts.size)
+        assertEquals("RELIABILITY", bug.impacts[0].softwareQuality)
+        assertEquals("HIGH", bug.impacts[0].severity)
+        assertEquals("OPEN", bug.issueStatus)
 
         val vuln = result.issues[1]
         assertEquals("BLOCKER", vuln.severity)
         assertEquals("VULNERABILITY", vuln.type)
+        // Multi-impact issue: SECURITY/BLOCKER + RELIABILITY/MEDIUM
+        assertEquals(2, vuln.impacts.size)
+        assertEquals("SECURITY", vuln.impacts[0].softwareQuality)
+        assertEquals("BLOCKER", vuln.impacts[0].severity)
+        assertEquals("MEDIUM", vuln.impacts[1].severity)
 
+        // Older Sonar (< 9.6) has no taxonomy fields — defaults preserve compatibility.
         val smell = result.issues[2]
         assertNull(smell.textRange)
         assertEquals("2h", smell.effort)
+        assertNull(smell.cleanCodeAttribute)
+        assertNull(smell.cleanCodeAttributeCategory)
+        assertTrue(smell.impacts.isEmpty())
+        assertNull(smell.issueStatus)
     }
 
     @Test

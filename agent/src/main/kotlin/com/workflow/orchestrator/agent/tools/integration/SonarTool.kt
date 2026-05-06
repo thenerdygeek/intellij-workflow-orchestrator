@@ -44,11 +44,11 @@ class SonarTool : AgentTool {
 SonarQube code quality — issues, coverage, quality gates, analysis, security hotspots.
 
 Actions and their parameters:
-- issues(project_key, file?, branch?, new_code_only?) → Code issues (optionally filter by file path; set new_code_only=true to see only issues in new code period)
+- issues(project_key, file?, branch?, new_code_only?) → Code issues (optionally filter by file path; set new_code_only=true to see only issues in new code period). Returns up to 500 issues — for full coverage on large projects use issues_paged. On Sonar 9.6+ each issue carries `impacts[]` (per-software-quality severity in RELIABILITY/SECURITY/MAINTAINABILITY) and `cleanCodeAttribute`/`cleanCodeAttributeCategory` — use these for prioritization beyond legacy `severity`/`type` (e.g. RELIABILITY/HIGH outranks MAINTAINABILITY/LOW even when both are MAJOR).
 - quality_gate(project_key, branch?) → Quality gate status (includes both overall and new code conditions)
 - coverage(project_key, branch?) → **Overall** code coverage metrics (line %, branch %, covered/total lines). This returns the full project coverage, NOT new code coverage. For new code coverage, use branch_quality_report instead.
 - search_projects(query) → Search SonarQube projects
-- analysis_tasks(project_key) → Recent analysis task status
+- analysis_tasks(project_key) → Recent analysis task status. **Requires admin permission** — returns 403 for non-admin tokens; do not retry on 403, ask the user to use an admin token or fall back to `branches`/`quality_gate` for the same data without admin.
 - branches(project_key) → Analyzed branches
 - project_measures(project_key, branch?) → All project metrics (ratings, debt, overall coverage, duplication)
 - source_lines(component_key, from?, to?, branch?) → Source code with per-line coverage status (from/to are line numbers)

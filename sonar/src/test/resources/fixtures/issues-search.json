@@ -9,7 +9,13 @@
       "component": "com.myapp:my-app:src/main/kotlin/com/myapp/service/UserService.kt",
       "type": "BUG",
       "effort": "15min",
-      "textRange": {"startLine": 42, "endLine": 42, "startOffset": 8, "endOffset": 32}
+      "textRange": {"startLine": 42, "endLine": 42, "startOffset": 8, "endOffset": 32},
+      "cleanCodeAttribute": "LOGICAL",
+      "cleanCodeAttributeCategory": "INTENTIONAL",
+      "impacts": [
+        {"softwareQuality": "RELIABILITY", "severity": "HIGH"}
+      ],
+      "issueStatus": "OPEN"
     },
     {
       "key": "AYz2",
@@ -19,7 +25,14 @@
       "component": "com.myapp:my-app:src/main/kotlin/com/myapp/repo/QueryBuilder.kt",
       "type": "VULNERABILITY",
       "effort": "30min",
-      "textRange": {"startLine": 18, "endLine": 20, "startOffset": 0, "endOffset": 45}
+      "textRange": {"startLine": 18, "endLine": 20, "startOffset": 0, "endOffset": 45},
+      "cleanCodeAttribute": "TRUSTWORTHY",
+      "cleanCodeAttributeCategory": "RESPONSIBLE",
+      "impacts": [
+        {"softwareQuality": "SECURITY", "severity": "BLOCKER"},
+        {"softwareQuality": "RELIABILITY", "severity": "MEDIUM"}
+      ],
+      "issueStatus": "OPEN"
     },
     {
       "key": "AYz3",
