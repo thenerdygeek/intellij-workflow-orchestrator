@@ -2,14 +2,89 @@
 """
 API Response Probe for Workflow Orchestrator IntelliJ Plugin.
 
-Hits all service APIs (Bamboo, Jira, SonarQube, Bitbucket, Docker Registry)
-and saves censored JSON responses for analysis.
+Read-only probe of the five backend services the plugin talks to:
+    Bamboo · Jira · SonarQube · Bitbucket Server · Docker Registry (Nexus).
 
-Usage:
-    python3 api-probe.py --config api-probe-config.json
+Use it to:
+    - Verify the plugin's DTOs match what each server actually returns
+    - Diagnose response-shape bugs (e.g. SonarQube period.value vs value)
+    - Capture a baseline before/after a server upgrade
 
-Config file format (create from template):
-    python3 api-probe.py --init config.json
+This script ONLY makes GET / HEAD requests — no writes, no triggers.
+It works on macOS, Linux, and Windows. Standard library only — no pip install.
+
+──────────────────────────────────────────────────────────────────────────────
+Quick start
+──────────────────────────────────────────────────────────────────────────────
+
+  1. Generate a config template (once per machine):
+
+         python3 scripts/api-probe.py --init scripts/api-probe-config.json
+
+  2. Edit `scripts/api-probe-config.json` and fill in the URLs, tokens, and
+     resource keys you want to probe. Sections you leave blank or with
+     placeholder tokens are skipped automatically. The file is gitignored.
+
+  3. Run the probe:
+
+         # All five services, censored output (safe to share)
+         python3 scripts/api-probe.py --config scripts/api-probe-config.json
+
+         # One service only
+         python3 scripts/api-probe.py --config scripts/api-probe-config.json \\
+             --services sonar
+
+         # One endpoint only (faster while iterating)
+         python3 scripts/api-probe.py --config scripts/api-probe-config.json \\
+             --services sonar --endpoints measures_tree
+
+         # Full raw bodies for field-shape debugging (writes <svc>.raw.json
+         # next to the censored <svc>.json — see "Sensitive data" below)
+         python3 scripts/api-probe.py --config scripts/api-probe-config.json \\
+             --raw
+
+  Windows users: same commands, just use `python` instead of `python3` if the
+  Python launcher is mapped that way. PowerShell/cmd both work.
+
+──────────────────────────────────────────────────────────────────────────────
+Output files (in scripts/api-probe-results/, gitignored)
+──────────────────────────────────────────────────────────────────────────────
+
+  bamboo.json            Censored — Bamboo CI/automation plan responses
+  jira.json              Censored — Jira issue / sprint / dev-status responses
+  sonar.json             Censored — SonarQube measures / quality gate / issues
+  bitbucket.json         Censored — Bitbucket PR / branch / activity responses
+  docker-registry.json   Censored — Nexus tag list / manifest HEAD checks
+  _metadata.json         Run timestamp, services probed, config keys used
+
+  When --raw is passed, each service ALSO writes <service>.raw.json with
+  full response bodies, then runs a redaction pass over those files to mask
+  obvious sensitive fields (tokens, emails, display names, user keys,
+  avatar URLs). Numbers, structural fields, and metric names stay intact —
+  that's the point of raw mode.
+
+──────────────────────────────────────────────────────────────────────────────
+Sensitive data
+──────────────────────────────────────────────────────────────────────────────
+
+  Default (no --raw):
+      Every value in the response body is replaced with a type placeholder
+      (`<str>`, `<int>`, etc.). Only keys, types, status codes, errors, and
+      array lengths survive. These files are safe to commit or share.
+
+  --raw mode:
+      Real numbers and metric names are kept (needed for debugging field
+      shapes). Known sensitive fields are still redacted before write —
+      see REDACT_KEYS below for the exact list. If you suspect a field
+      isn't covered, add it to REDACT_KEYS and re-run; the script never
+      writes redaction-bypassed output.
+
+  In all modes, request URL paths and Authorization headers are NOT logged.
+  The config file (`api-probe-config.json`) is gitignored because it
+  contains tokens. The results directory (`api-probe-results/`) is
+  gitignored too.
+
+──────────────────────────────────────────────────────────────────────────────
 """
 
 import argparse
@@ -27,7 +102,69 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 
-# ─── Censoring ───────────────────────────────────────────────────────────────
+# ─── Redaction (raw mode) ────────────────────────────────────────────────────
+
+# Field names that hold sensitive identifiers across the services we probe.
+# Match is case-insensitive and exact (a key called "email" matches; "newEmail"
+# does not). Add new entries here as new field types are discovered — this is
+# the single source of truth for what gets masked in --raw output.
+REDACT_KEYS = frozenset({
+    # Auth / tokens
+    "token", "accessToken", "refreshToken", "authToken", "apiToken",
+    "password", "secret", "apiKey", "privateKey",
+    # User identifiers
+    "email", "emailAddress", "mail",
+    "displayName", "fullName", "userName", "username",
+    "authorName", "committerName", "creatorName", "ownerName",
+    "authorEmail", "committerEmail",
+    "userSlug",
+    # Note: deliberately NOT redacting "key", "user", "name", "slug" — those
+    # are too broad and would mask Sonar component keys, Jira issue keys,
+    # project slugs, and metric names that we need to see for shape debugging.
+    # URLs that often embed credentials or user IDs
+    "avatarUrl", "selfUrl", "self",
+    # Free-form text that may contain anything
+    "description", "comment", "message", "summary",
+    # Bamboo job artifacts and log paths sometimes embed user/project structure
+    "buildLogUrl", "downloadUrl", "log",
+})
+
+# Regex masks applied to ALL string leaves in --raw mode (independent of key
+# name). These catch sensitive patterns embedded inside larger strings —
+# e.g. a token referenced in a free-form description, or an email inside a
+# git log message.
+import re as _re
+_REDACT_PATTERNS = [
+    # Email addresses
+    (_re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"), "<email>"),
+    # Bearer/Basic tokens accidentally in URLs
+    (_re.compile(r"(Bearer\s+|Basic\s+|token\s+)[A-Za-z0-9._\-]{8,}", _re.IGNORECASE), r"\1<redacted>"),
+    # Long base64-ish blobs (likely tokens)
+    (_re.compile(r"\b[A-Za-z0-9+/]{40,}={0,2}\b"), "<redacted-blob>"),
+]
+
+
+def redact_value(val: Any, parent_key: str = "") -> Any:
+    """Mask sensitive fields in raw responses while preserving numeric values
+    and structural shape (the things we actually need for debugging).
+
+    A key matches REDACT_KEYS case-insensitively. String leaves are also
+    pattern-matched against email/token regexes regardless of key name."""
+    if isinstance(val, dict):
+        return {k: redact_value(v, parent_key=k) for k, v in val.items()}
+    if isinstance(val, list):
+        return [redact_value(v, parent_key=parent_key) for v in val]
+    if isinstance(val, str):
+        if parent_key.lower() in {k.lower() for k in REDACT_KEYS} and val:
+            return "<redacted>"
+        out = val
+        for pattern, replacement in _REDACT_PATTERNS:
+            out = pattern.sub(replacement, out)
+        return out
+    return val
+
+
+# ─── Censoring (default mode) ────────────────────────────────────────────────
 
 def censor_value(val: Any, depth: int = 0) -> Any:
     """Recursively censor all values. Preserves only keys, types, and array lengths."""
@@ -601,10 +738,14 @@ def save_results(service: str, results: list, output_dir: Path, raw: bool = Fals
     SonarQube returns new_* metrics in `period.value` vs top-level `value`).
     Raw output contains real API data; do not commit the file."""
     if raw:
+        # Mask known sensitive fields (REDACT_KEYS) and inline patterns
+        # (emails, bearer tokens, long base64 blobs) before writing. Numbers
+        # and structural fields stay intact — that's the point of raw mode.
+        redacted = redact_value(results)
         filepath = output_dir / f"{service}.raw.json"
         with open(filepath, "w") as f:
-            json.dump(results, f, indent=2, default=str)
-        print(f"  -> Saved RAW (uncensored) to {filepath}")
+            json.dump(redacted, f, indent=2, default=str)
+        print(f"  -> Saved RAW (sensitive fields redacted) to {filepath}")
         return
 
     censored = []
@@ -695,9 +836,11 @@ def main():
     parser.add_argument("--endpoints", type=str, default="",
                         help="Comma-separated endpoint names to run (default: all). E.g. --endpoints job_log,job_result")
     parser.add_argument("--raw", action="store_true",
-                        help="Save raw uncensored response bodies (writes <service>.raw.json). "
-                             "Required for debugging field-shape questions like SonarQube period.value vs value. "
-                             "Output contains real API data — do not commit.")
+                        help="Save full response bodies to <service>.raw.json (instead of "
+                             "type-placeholder censoring). Numbers and structural fields are "
+                             "preserved; sensitive fields (tokens, emails, displayName, etc.) "
+                             "are redacted. Required for debugging field-shape questions like "
+                             "SonarQube period.value vs value. Output is gitignored.")
     args = parser.parse_args()
 
     if args.init is not None:
@@ -772,10 +915,12 @@ def main():
 
     print(f"\nDone. Results in {output_dir}/")
     if args.raw:
-        print("RAW mode: <service>.raw.json files contain uncensored API data.")
-        print("Do not commit them. The .gitignore already excludes scripts/api-probe-results/.")
+        print("RAW mode: <service>.raw.json files keep numeric values and shape;")
+        print("known sensitive fields (tokens, emails, displayName, etc.) are redacted.")
+        print("If you spot a sensitive field that wasn't masked, add its key to")
+        print("REDACT_KEYS at the top of this script and re-run before sharing.")
     else:
-        print("Share the JSON files — all sensitive data has been censored.")
+        print("Share the JSON files — all values replaced with type placeholders.")
 
 
 if __name__ == "__main__":
