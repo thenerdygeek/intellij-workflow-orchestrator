@@ -143,7 +143,7 @@ class BambooServiceImpl(private val project: Project) : BambooService {
             hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
         )
 
-        return when (val result = api.triggerBuild(planKey, variables)) {
+        return when (val result = api.queueBuild(planKey, variables)) {
             is ApiResult.Success -> {
                 val qr = result.data
                 val data = BuildTriggerData(
@@ -365,7 +365,7 @@ class BambooServiceImpl(private val project: Project) : BambooService {
             hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
         )
 
-        return when (val result = api.triggerBuild(planKey, variables, stage)) {
+        return when (val result = api.queueBuild(planKey, variables, stage)) {
             is ApiResult.Success -> ToolResult.success(
                 data = Unit,
                 summary = "Stage '${stage ?: "all"}' triggered for $planKey (#${result.data.buildNumber})."

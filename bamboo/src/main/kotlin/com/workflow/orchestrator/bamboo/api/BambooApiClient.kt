@@ -5,12 +5,10 @@ import com.workflow.orchestrator.core.http.HttpClientFactory
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
 import com.workflow.orchestrator.core.model.ServiceType
+import com.workflow.orchestrator.core.services.postForm
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -139,26 +137,59 @@ class BambooApiClient(
             .map { it.variableContext.variable }
     }
 
-    suspend fun triggerBuild(
+    /**
+     * Queue a build for a Bamboo plan.
+     *
+     * **Wire contract (validated 2026-05-07 against Bamboo DC 10.2.14 via
+     * `tools/atlassian-probe/probe_bamboo.py --write-test`):** Bamboo's queue
+     * endpoint accepts variables ONLY when the request body is form-encoded with
+     * `bamboo.variable.<name>=<value>` pairs. The earlier JSON-body shape returned
+     * 200 and queued the build, but silently dropped every variable — automation
+     * suites' `dockerTagsAsJson` overrides went unused for months. The audit
+     * (`docs/research/2026-05-07-write-ops-ux-audit.md` finding #1) traced the
+     * silent drop to that body shape.
+     *
+     * `executeAllStages` and (optional) `stage` are URL query parameters, not
+     * body fields, per Atlassian's REST docs.
+     *
+     * @param planKey the plan key (e.g. `PROJ-BUILD`).
+     * @param variables map of `<name>` → `<value>` pairs. Each pair is sent as
+     *   `bamboo.variable.<name>=<value>`. Empty map produces an empty body.
+     * @param stageName when non-null, only this stage runs; `executeAllStages`
+     *   defaults to false. URL-encoded into the query string.
+     * @param executeAllStages defaults to true when `stageName` is null,
+     *   false otherwise.
+     */
+    suspend fun queueBuild(
         planKey: String,
         variables: Map<String, String> = emptyMap(),
-        stageName: String? = null
+        stageName: String? = null,
+        executeAllStages: Boolean = stageName == null,
     ): ApiResult<BambooQueueResponse> {
-        log.debug("[Bamboo:API] Triggering build for planKey=$planKey, stage=$stageName, variables=${variables.keys}")
-        val params = buildString {
+        log.debug("[Bamboo:API] queueBuild planKey=$planKey, stage=$stageName, executeAllStages=$executeAllStages, variables=${variables.keys}")
+        val query = buildString {
+            append("?executeAllStages=$executeAllStages")
             if (stageName != null) {
-                append("?stage=${URLEncoder.encode(stageName, "UTF-8")}&executeAllStages=false")
+                append("&stage=")
+                append(URLEncoder.encode(stageName, "UTF-8"))
             }
         }
-        val bodyJson = if (variables.isNotEmpty()) {
-            val varArray = JsonArray(variables.entries.map { (k, v) ->
-                JsonObject(mapOf("name" to JsonPrimitive(k), "value" to JsonPrimitive(v)))
-            })
-            JsonObject(mapOf("variables" to varArray)).toString()
-        } else {
-            "{}"
+        // Form fields use raw keys/values — `postForm` (FormBody.Builder) URL-encodes
+        // both key and value on the wire, producing `bamboo.variable.<urlEnc(k)>=<urlEnc(v)>`.
+        val formFields = variables.mapKeys { (k, _) -> "bamboo.variable.$k" }
+        val url = "$baseUrl/rest/api/latest/queue/$planKey$query"
+        return when (val raw = postForm(httpClient, url, formFields)) {
+            is ApiResult.Success -> {
+                try {
+                    ApiResult.Success(json.decodeFromString<BambooQueueResponse>(raw.data))
+                } catch (e: Exception) {
+                    log.warn("[Bamboo:API] queueBuild parse failed: ${e.message}")
+                    log.debug("[Bamboo:API] queueBuild response (first 200): ${raw.data.take(200)}")
+                    ApiResult.Error(ErrorType.PARSE_ERROR, "Failed to parse queue response: ${e.message}")
+                }
+            }
+            is ApiResult.Error -> raw
         }
-        return post("/rest/api/latest/queue/$planKey$params", bodyJson)
     }
 
     suspend fun getRunningAndQueuedBuilds(planKey: String): ApiResult<List<BambooResultDto>> {
@@ -294,41 +325,6 @@ class BambooApiClient(
                         401 -> { log.warn("[Bamboo:API] Authentication failed (401)"); ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token") }
                         403 -> { log.warn("[Bamboo:API] Forbidden (403)"); ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bamboo permissions") }
                         404 -> { log.warn("[Bamboo:API] Not found (404)"); ApiResult.Error(ErrorType.NOT_FOUND, "Bamboo resource not found") }
-                        else -> { log.warn("[Bamboo:API] Server error (${it.code})"); ApiResult.Error(ErrorType.SERVER_ERROR, "Bamboo returned ${it.code}") }
-                    }
-                }
-            } catch (e: IOException) {
-                log.warn("[Bamboo:API] Network error: ${e.message}")
-                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bamboo: ${e.message}", e)
-            }
-        }
-
-    private suspend inline fun <reified T> post(path: String, jsonBody: String): ApiResult<T> =
-        withContext(Dispatchers.IO) {
-            try {
-                val body = jsonBody.toRequestBody("application/json".toMediaType())
-                val request = Request.Builder().url("$baseUrl$path").post(body)
-                    .header("Accept", "application/json")
-                    .build()
-                val response = httpClient.newCall(request).execute()
-                response.use {
-                    log.debug("[Bamboo:API] POST $path responded with status=${it.code}")
-                    when (it.code) {
-                        in 200..299 -> {
-                            val contentType = it.header("Content-Type") ?: ""
-                            if (contentType.isNotBlank() &&
-                                !contentType.contains("application/json", ignoreCase = true) &&
-                                !contentType.contains("text/json", ignoreCase = true)) {
-                                return@withContext ApiResult.Error(
-                                    ErrorType.PARSE_ERROR,
-                                    "Unexpected response Content-Type: $contentType (expected JSON)"
-                                )
-                            }
-                            val bodyStr = it.body?.string() ?: ""
-                            ApiResult.Success(json.decodeFromString<T>(bodyStr))
-                        }
-                        401 -> { log.warn("[Bamboo:API] Authentication failed (401)"); ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token") }
-                        403 -> { log.warn("[Bamboo:API] Forbidden (403)"); ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bamboo permissions") }
                         else -> { log.warn("[Bamboo:API] Server error (${it.code})"); ApiResult.Error(ErrorType.SERVER_ERROR, "Bamboo returned ${it.code}") }
                     }
                 }

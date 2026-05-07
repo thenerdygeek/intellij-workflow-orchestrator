@@ -126,22 +126,82 @@ class BambooApiClientTest {
     }
 
     @Test
-    fun `triggerBuild sends POST with variables`() = runTest {
+    fun `queueBuild sends form-encoded POST with bamboo dot variable pairs`() = runTest {
+        // Wire shape validated 2026-05-07 against Bamboo DC 10.2.14 via
+        // tools/atlassian-probe/probe_bamboo.py --write-test. Bamboo silently dropped
+        // every variable when sent JSON; form-encoded `bamboo.variable.X=Y` is the
+        // only shape the queue endpoint actually honors.
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"buildResultKey":"PROJ-BUILD-44","buildNumber":44}"""))
 
         val variables = mapOf("skipTests" to "true", "deployTarget" to "prod")
-        val result = client.triggerBuild("PROJ-BUILD", variables, stageName = "Deploy")
+        val result = client.queueBuild("PROJ-BUILD", variables, stageName = "Deploy")
 
         assertTrue(result.isSuccess)
+        val qr = (result as ApiResult.Success).data
+        assertEquals("PROJ-BUILD-44", qr.buildResultKey)
+        assertEquals(44, qr.buildNumber)
 
         val recorded = server.takeRequest()
         assertEquals("POST", recorded.method)
-        assertTrue(recorded.path!!.contains("/rest/api/latest/queue/PROJ-BUILD"))
-        assertTrue(recorded.path!!.contains("stage=Deploy"))
+        // URL: /rest/api/latest/queue/PROJ-BUILD with executeAllStages + stage in query string
+        assertTrue(
+            recorded.path!!.startsWith("/rest/api/latest/queue/PROJ-BUILD?"),
+            "Expected queue/{planKey}? prefix, got ${recorded.path}"
+        )
         assertTrue(recorded.path!!.contains("executeAllStages=false"))
+        assertTrue(recorded.path!!.contains("stage=Deploy"))
+        // Content-Type and XSRF header (set automatically by postForm)
+        val contentType = recorded.getHeader("Content-Type") ?: ""
+        assertTrue(
+            contentType.startsWith("application/x-www-form-urlencoded"),
+            "Expected application/x-www-form-urlencoded, got '$contentType'"
+        )
+        assertEquals("no-check", recorded.getHeader("X-Atlassian-Token"))
+        // Body is form-encoded `bamboo.variable.<k>=<v>` pairs
         val body = recorded.body.readUtf8()
-        assertTrue(body.contains("skipTests"))
-        assertTrue(body.contains("true"))
+        val pairs = body.split("&").toSet()
+        assertEquals(
+            setOf("bamboo.variable.skipTests=true", "bamboo.variable.deployTarget=prod"),
+            pairs
+        )
+    }
+
+    @Test
+    fun `queueBuild URL-encodes special characters in variable values`() = runTest {
+        // dockerTagsAsJson values are JSON literals like {"svc":"1.2.3"} — braces, quotes,
+        // colons all need URL-encoding. Round-trip must reach the server intact.
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"buildResultKey":"PROJ-AUTO-101","buildNumber":101}"""))
+
+        val payload = """{"svc":"1.2.3","env":"prod"}"""
+        val result = client.queueBuild("PROJ-AUTO", mapOf("dockerTagsAsJson" to payload))
+
+        assertTrue(result.isSuccess)
+        val recorded = server.takeRequest()
+        // Decoded body must contain the exact original payload + key — proves URL-encoding round-trip.
+        val decoded = java.net.URLDecoder.decode(recorded.body.readUtf8(), "UTF-8")
+        assertEquals("bamboo.variable.dockerTagsAsJson=$payload", decoded)
+        // executeAllStages defaults to true when no stage is provided
+        assertTrue(recorded.path!!.contains("executeAllStages=true"))
+        assertFalse(recorded.path!!.contains("stage="))
+    }
+
+    @Test
+    fun `queueBuild URL-encodes stage name in query string`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"buildResultKey":"PROJ-BUILD-50","buildNumber":50}"""))
+
+        val result = client.queueBuild("PROJ-BUILD", emptyMap(), stageName = "Deploy & Verify")
+
+        assertTrue(result.isSuccess)
+        val recorded = server.takeRequest()
+        // Stage name with spaces + ampersand must be URL-encoded so the server sees it as a single param value
+        assertTrue(
+            recorded.path!!.contains("stage=Deploy+%26+Verify") ||
+                recorded.path!!.contains("stage=Deploy%20%26%20Verify"),
+            "Expected URL-encoded stage name in path, got ${recorded.path}"
+        )
+        assertTrue(recorded.path!!.contains("executeAllStages=false"))
+        // Empty variables map → empty form body
+        assertTrue(recorded.body.readUtf8().isEmpty())
     }
 
     @Test
