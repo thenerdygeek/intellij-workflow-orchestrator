@@ -77,6 +77,34 @@ Activity-aware polling: `baseIntervalMs` (default 30s), `maxIntervalMs` (default
 
 The new methods all surface through `core.services.BitbucketService` (Phase 5: `getBlockerCommentsCount`, `getPullRequestParticipants`, `getPullRequestsForCommit`, `getCommitBuildStats`, `getLinkedJiraIssues`, `getRequiredBuilds`) with `ToolResult<T>` semantics; `:pullrequest`'s `BitbucketServiceImpl` adapts them to `core.model.bitbucket.{ParticipantData,BuildStatsData,JiraIssueRef,RequiredBuildsCondition}`. Agent wrappers in `:agent` (`BitbucketPrTool`, `BitbucketRepoTool`) expose them as actions.
 
+### BitbucketBranchClient surface (extended 2026-05-07 write-ops audit, PR 6)
+
+PR 6 of the write-ops fix plan (audit P1 findings #6 + #7) extends the client
+surface for branch-aware default reviewers and commit-pinned inline comments:
+
+- `getDefaultReviewersForBranch(repo, sourceBranch, targetBranch)` — resolves the
+  default-reviewer conditions whose `sourceRefMatcher` AND `targetRefMatcher`
+  both accept the branch pair, and returns the union of reviewers across the
+  matching conditions only. Replaces the previous union-all logic for the
+  PR-creation path. The `DefaultReviewerCondition` DTO now carries
+  `sourceRefMatcher` / `targetRefMatcher` (with `RefMatcher.matches()` covering
+  `BRANCH`, `MODEL_BRANCH`, `MODEL_CATEGORY`, `ANY_REF`, `PATTERN`); legacy
+  `getDefaultReviewers` is retained for admin/preview callers that want every
+  configured reviewer.
+- `addInlineComment(..., diffType, fromHash, toHash)` — pins the comment to the
+  specific diff range so it doesn't float when new commits land. AI-review
+  pushes capture `toRef.latestCommit` at review-time and pass `diffType=COMMIT`
+  + `toHash=<that commit>`; legacy callers that omit the new args keep the
+  server-default `EFFECTIVE` behaviour.
+- `PrActionService.updateDescription` now routes through
+  `BitbucketBranchClient.modifyPullRequest` (same retry-on-409 pattern as
+  `updateTitle` / `addReviewer` / `removeReviewer`), and the dialog caller
+  drops the now-redundant `version` argument.
+- `BitbucketServiceImpl.{addReviewer, removeReviewer, updatePrTitle}` (the
+  agent entry points) now delegate to `PrActionService` for the primary repo
+  and use `modifyPullRequest` directly for non-primary multi-repo coords —
+  retry semantics flow through both paths instead of being duplicated.
+
 ### JiraService surface (extended 2026-05-07 write-ops audit, PR 5)
 
 `addComment` now takes an optional `CommentVisibility` (`role`/`group` + name) so closure

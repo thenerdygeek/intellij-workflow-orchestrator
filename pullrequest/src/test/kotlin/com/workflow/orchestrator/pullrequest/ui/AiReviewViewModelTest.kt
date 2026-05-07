@@ -56,19 +56,45 @@ class AiReviewViewModelTest {
     }
 
     @Test
-    fun `pushFinding inline uses addInlineComment`() = runTest {
+    fun `pushFinding inline uses addInlineComment with floating anchor when no toHash`() = runTest {
         val store = mockk<PrReviewFindingsStore>()
         val service = mockk<BitbucketService>()
         val finding = sample(id = "f-inline", file = "src/Foo.kt", line = 42)
         coEvery {
-            service.addInlineComment(1, "src/Foo.kt", 42, "ADDED", "msg", null)
+            service.addInlineComment(1, "src/Foo.kt", 42, "ADDED", "msg", null, null, null, null)
         } returns ToolResult.success(Unit, summary = "posted inline")
         coEvery { store.markPushed("f-inline", "", any()) } returns ToolResult.success(Unit, summary = "")
         coEvery { store.list(any(), any(), any()) } returns ToolResult.success(emptyList(), summary = "0")
         val vm = AiReviewViewModel(store, service, "PROJ", "repo", 1, "s1")
         val ok = vm.pushFinding(finding)
         assertTrue(ok)
-        coVerify { service.addInlineComment(1, "src/Foo.kt", 42, "ADDED", "msg", null) }
+        coVerify { service.addInlineComment(1, "src/Foo.kt", 42, "ADDED", "msg", null, null, null, null) }
+    }
+
+    @Test
+    fun `pushFinding inline pins to commit when toHash provided`() = runTest {
+        val store = mockk<PrReviewFindingsStore>()
+        val service = mockk<BitbucketService>()
+        val finding = sample(id = "f-pin", file = "src/Foo.kt", line = 42)
+        coEvery {
+            service.addInlineComment(
+                prId = 1, filePath = "src/Foo.kt", line = 42, lineType = "ADDED",
+                text = "msg", repoName = null, diffType = "COMMIT", fromHash = null,
+                toHash = "deadbeef1234"
+            )
+        } returns ToolResult.success(Unit, summary = "pinned")
+        coEvery { store.markPushed("f-pin", "", any()) } returns ToolResult.success(Unit, summary = "")
+        coEvery { store.list(any(), any(), any()) } returns ToolResult.success(emptyList(), summary = "0")
+        val vm = AiReviewViewModel(store, service, "PROJ", "repo", 1, "s1", "deadbeef1234")
+        val ok = vm.pushFinding(finding)
+        assertTrue(ok)
+        coVerify {
+            service.addInlineComment(
+                prId = 1, filePath = "src/Foo.kt", line = 42, lineType = "ADDED",
+                text = "msg", repoName = null, diffType = "COMMIT", fromHash = null,
+                toHash = "deadbeef1234",
+            )
+        }
     }
 
     @Test

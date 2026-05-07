@@ -1934,12 +1934,15 @@ class PrDetailPanel(
 
         private fun saveDescription() {
             val prId = currentPrId ?: return
-            val version = currentPr?.version ?: 0
             val newDescription = editArea.text
             updateButton.isEnabled = false
 
             scope.launch {
-                PrActionService.getInstance(project).updateDescription(prId, newDescription, version)
+                // No `version` arg — PrActionService.updateDescription routes through
+                // modifyPullRequest which fetches the fresh version itself and retries
+                // once on a 409 stale-version response (PR 6 of the 2026-05-07
+                // write-ops fix plan).
+                PrActionService.getInstance(project).updateDescription(prId, newDescription)
                 invokeLater {
                     updateButton.isEnabled = true
                     currentDescription = newDescription

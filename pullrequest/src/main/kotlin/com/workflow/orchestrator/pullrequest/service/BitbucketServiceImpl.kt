@@ -196,11 +196,32 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
         )
     }
 
-    override suspend fun addInlineComment(prId: Int, filePath: String, line: Int, lineType: String, text: String, repoName: String?): ToolResult<Unit> {
+    override suspend fun addInlineComment(
+        prId: Int,
+        filePath: String,
+        line: Int,
+        lineType: String,
+        text: String,
+        repoName: String?,
+        diffType: String?,
+        fromHash: String?,
+        toHash: String?,
+    ): ToolResult<Unit> {
         val api = client ?: return notConfiguredError("Cannot add inline comment to PR #$prId.")
         val (projectKey, repoSlug) = resolveRepo(repoName) ?: return repoNotConfiguredError()
 
-        return when (val result = api.addInlineComment(projectKey, repoSlug, prId, filePath, line, lineType, text)) {
+        return when (val result = api.addInlineComment(
+            projectKey = projectKey,
+            repoSlug = repoSlug,
+            prId = prId,
+            filePath = filePath,
+            lineNumber = line,
+            lineType = lineType,
+            text = text,
+            diffType = diffType,
+            fromHash = fromHash,
+            toHash = toHash,
+        )) {
             is ApiResult.Success -> ToolResult.success(Unit, "Inline comment added to PR #$prId at $filePath:$line")
             is ApiResult.Error -> {
                 log.warn("[BitbucketService] Failed to add inline comment to PR #$prId: ${result.message}")
@@ -264,73 +285,84 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
         }
     }
 
+    /**
+     * Agent entry point for adding a reviewer. Routes through the same
+     * [PrActionService.addReviewer] path the dialog uses so the
+     * [BitbucketBranchClient.modifyPullRequest] retry-on-409 logic isn't
+     * duplicated (PR 6 follow-up to PR 3 of the 2026-05-07 write-ops fix plan).
+     *
+     * For multi-repo agents (where [repoName] selects a non-primary repo) we
+     * detect the mismatch up-front and fall back to the legacy direct-PUT path
+     * so the call still works against the chosen repo. PrActionService is
+     * single-repo (settings-resolved) by construction; refactoring it to
+     * accept [RepoCoords] is out of scope for this PR.
+     */
     override suspend fun addReviewer(prId: Int, username: String, repoName: String?): ToolResult<Unit> {
         val api = client ?: return notConfiguredError("Cannot add reviewer to PR #$prId.")
         val (projectKey, repoSlug) = resolveRepo(repoName) ?: return repoNotConfiguredError()
 
-        // Fetch current PR to preserve existing reviewers (PUT replaces entire PR)
-        val currentPr = api.getPullRequestDetail(projectKey, repoSlug, prId)
-        val existingPr = when (currentPr) {
-            is ApiResult.Success -> currentPr.data
-            is ApiResult.Error -> return ToolResult(data = Unit,
-                summary = "Error fetching PR #$prId: ${currentPr.message}", isError = true,
-                hint = "Verify the PR exists.")
-        }
-
-        if (existingPr.reviewers.any { it.user.name == username }) {
-            return ToolResult(data = Unit, summary = "'$username' is already a reviewer on PR #$prId.",
-                isError = true, hint = "Use setReviewerStatus to change their review status.")
-        }
-
-        val updatedReviewers = existingPr.reviewers.map {
-            BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = it.user.name))
-        } + BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = username))
-
-        val updateRequest = BitbucketPrUpdateRequest(
-            title = existingPr.title,
-            description = existingPr.description ?: "",
-            version = existingPr.version,
-            reviewers = updatedReviewers
-        )
-        return when (val result = api.updatePullRequest(projectKey, repoSlug, prId, updateRequest)) {
-            is ApiResult.Success -> ToolResult.success(Unit, "Reviewer '$username' added to PR #$prId")
-            is ApiResult.Error -> {
-                log.warn("[BitbucketService] Failed to add reviewer '$username' to PR #$prId: ${result.message}")
-                ToolResult(data = Unit, summary = "Error adding reviewer: ${result.message}", isError = true,
-                    hint = "Verify the username is correct.")
+        // Multi-repo agent path: PrActionService is single-repo (resolves via
+        // settings.bitbucketProjectKey/RepoSlug). When the agent targets a
+        // non-primary repo, route directly through modifyPullRequest with the
+        // resolved coords so we still get retry-on-409 without leaking
+        // settings-vs-tool repo selection through PrActionService.
+        if (!isPrimaryRepo(projectKey, repoSlug)) {
+            // Pre-check against a fresh GET so we can return the friendly
+            // "already a reviewer" message; the modifyPullRequest mutator on
+            // retry is idempotent if a concurrent caller added them.
+            val pre = api.getPullRequestDetail(projectKey, repoSlug, prId)
+            if (pre is ApiResult.Success && pre.data.reviewers.any { it.user.name == username }) {
+                return ToolResult(data = Unit, summary = "'$username' is already a reviewer on PR #$prId.",
+                    isError = true, hint = "Use setReviewerStatus to change their review status.")
+            }
+            return modifyPullRequestForAgent(api, prId, projectKey, repoSlug, "add reviewer '$username'") { current ->
+                BitbucketPrUpdateRequest(
+                    title = current.title,
+                    description = current.description ?: "",
+                    version = current.version,
+                    reviewers = (current.reviewers.map {
+                        BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = it.user.name))
+                    } + BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = username)))
+                        .distinctBy { it.user.name },  // idempotent on retry race
+                )
             }
         }
+
+        val result = PrActionService.getInstance(project).addReviewer(prId, username)
+        return result.toToolResult(
+            okSummary = "Reviewer '$username' added to PR #$prId",
+            errPrefix = "Error adding reviewer",
+            hint = "Verify the username is correct.",
+        )
     }
 
+    /**
+     * Agent entry point for updating a PR title. See [addReviewer] for the
+     * single-repo / multi-repo routing rationale.
+     */
     override suspend fun updatePrTitle(prId: Int, newTitle: String, repoName: String?): ToolResult<Unit> {
         val api = client ?: return notConfiguredError("Cannot update PR #$prId title.")
         val (projectKey, repoSlug) = resolveRepo(repoName) ?: return repoNotConfiguredError()
 
-        // Fetch current PR to preserve description/reviewers (PUT replaces entire PR)
-        val currentPr = api.getPullRequestDetail(projectKey, repoSlug, prId)
-        val existingPr = when (currentPr) {
-            is ApiResult.Success -> currentPr.data
-            is ApiResult.Error -> return ToolResult(data = Unit,
-                summary = "Error fetching PR #$prId: ${currentPr.message}", isError = true,
-                hint = "Verify the PR exists.")
+        if (!isPrimaryRepo(projectKey, repoSlug)) {
+            return modifyPullRequestForAgent(api, prId, projectKey, repoSlug, "update title") { current ->
+                BitbucketPrUpdateRequest(
+                    title = newTitle,
+                    description = current.description ?: "",
+                    version = current.version,
+                    reviewers = current.reviewers.map {
+                        BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = it.user.name))
+                    },
+                )
+            }
         }
 
-        val updateRequest = BitbucketPrUpdateRequest(
-            title = newTitle,
-            description = existingPr.description ?: "",
-            version = existingPr.version,
-            reviewers = existingPr.reviewers.map {
-                BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = it.user.name))
-            }
+        val result = PrActionService.getInstance(project).updateTitle(prId, newTitle)
+        return result.toToolResult(
+            okSummary = "PR #$prId title updated to: $newTitle",
+            errPrefix = "Error updating PR title",
+            hint = "Check Bitbucket connection in Settings.",
         )
-        return when (val result = api.updatePullRequest(projectKey, repoSlug, prId, updateRequest)) {
-            is ApiResult.Success -> ToolResult.success(Unit, "PR #$prId title updated to: $newTitle")
-            is ApiResult.Error -> {
-                log.warn("[BitbucketService] Failed to update PR #$prId title: ${result.message}")
-                ToolResult(data = Unit, summary = "Error updating PR title: ${result.message}", isError = true,
-                    hint = "Check Bitbucket connection in Settings.")
-            }
-        }
     }
 
     // --- Branch operations ---
@@ -813,42 +845,40 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
         }
     }
 
+    /**
+     * Agent entry point for removing a reviewer. See [addReviewer] for the
+     * single-repo / multi-repo routing rationale.
+     */
     override suspend fun removeReviewer(prId: Int, username: String, repoName: String?): ToolResult<Unit> {
         val api = client ?: return notConfiguredError("Cannot remove reviewer from PR #$prId.")
         val (projectKey, repoSlug) = resolveRepo(repoName) ?: return repoNotConfiguredError()
 
-        // Fetch current PR to get reviewer list
-        val currentPr = api.getPullRequestDetail(projectKey, repoSlug, prId)
-        val existingPr = when (currentPr) {
-            is ApiResult.Success -> currentPr.data
-            is ApiResult.Error -> return ToolResult(data = Unit,
-                summary = "Error fetching PR #$prId: ${currentPr.message}", isError = true,
-                hint = "Verify the PR exists.")
-        }
-
-        if (existingPr.reviewers.none { it.user.name == username }) {
-            return ToolResult(data = Unit, summary = "'$username' is not a reviewer on PR #$prId.",
-                isError = true, hint = "Check the username is correct.")
-        }
-
-        val updatedReviewers = existingPr.reviewers
-            .filter { it.user.name != username }
-            .map { BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = it.user.name)) }
-
-        val updateRequest = BitbucketPrUpdateRequest(
-            title = existingPr.title,
-            description = existingPr.description ?: "",
-            version = existingPr.version,
-            reviewers = updatedReviewers
-        )
-        return when (val result = api.updatePullRequest(projectKey, repoSlug, prId, updateRequest)) {
-            is ApiResult.Success -> ToolResult.success(Unit, "Reviewer '$username' removed from PR #$prId")
-            is ApiResult.Error -> {
-                log.warn("[BitbucketService] Failed to remove reviewer '$username' from PR #$prId: ${result.message}")
-                ToolResult(data = Unit, summary = "Error removing reviewer: ${result.message}", isError = true,
-                    hint = "Verify the username is correct.")
+        if (!isPrimaryRepo(projectKey, repoSlug)) {
+            // Pre-check (single GET) so the "not a reviewer" path stays a friendly
+            // VALIDATION_ERROR rather than a no-op PUT.
+            val pre = api.getPullRequestDetail(projectKey, repoSlug, prId)
+            if (pre is ApiResult.Success && pre.data.reviewers.none { it.user.name == username }) {
+                return ToolResult(data = Unit, summary = "'$username' is not a reviewer on PR #$prId.",
+                    isError = true, hint = "Check the username is correct.")
+            }
+            return modifyPullRequestForAgent(api, prId, projectKey, repoSlug, "remove reviewer '$username'") { current ->
+                BitbucketPrUpdateRequest(
+                    title = current.title,
+                    description = current.description ?: "",
+                    version = current.version,
+                    reviewers = current.reviewers
+                        .filter { it.user.name != username }
+                        .map { BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = it.user.name)) },
+                )
             }
         }
+
+        val result = PrActionService.getInstance(project).removeReviewer(prId, username)
+        return result.toToolResult(
+            okSummary = "Reviewer '$username' removed from PR #$prId",
+            errPrefix = "Error removing reviewer",
+            hint = "Verify the username is correct.",
+        )
     }
 
     // --- Private helpers ---
@@ -894,6 +924,56 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
         data = Unit, summary = "Bitbucket project/repo not configured.",
         isError = true, hint = "Set Bitbucket project key and repo slug in Settings."
     )
+
+    /**
+     * True iff the given coords match the project-scoped settings that
+     * [PrActionService] uses internally. The agent path can target a non-primary
+     * repo via `repoName`; PrActionService is single-repo, so we route mismatched
+     * coords through [modifyPullRequestForAgent] instead. (PR 6 of the 2026-05-07
+     * write-ops fix plan.)
+     */
+    private fun isPrimaryRepo(projectKey: String, repoSlug: String): Boolean {
+        val s = settings.state
+        return s.bitbucketProjectKey == projectKey && s.bitbucketRepoSlug == repoSlug
+    }
+
+    /**
+     * Multi-repo agent fallback that talks to [BitbucketBranchClient.modifyPullRequest]
+     * directly with the agent-supplied [projectKey] / [repoSlug]. Used when
+     * [PrActionService] (which is settings-scoped to the primary repo) cannot
+     * be delegated to without leaking repo state.
+     */
+    private suspend fun modifyPullRequestForAgent(
+        api: BitbucketBranchClient,
+        prId: Int,
+        projectKey: String,
+        repoSlug: String,
+        opLabel: String,
+        mutate: (com.workflow.orchestrator.core.bitbucket.BitbucketPrDetail) -> BitbucketPrUpdateRequest,
+    ): ToolResult<Unit> {
+        val result = api.modifyPullRequest(
+            repo = com.workflow.orchestrator.core.bitbucket.RepoCoords(projectKey, repoSlug),
+            prId = prId,
+            mutate = mutate,
+        )
+        return when (result) {
+            is ApiResult.Success -> ToolResult.success(Unit, "$opLabel succeeded on PR #$prId")
+            is ApiResult.Error -> {
+                log.warn("[BitbucketService] $opLabel failed on PR #$prId: ${result.message}")
+                ToolResult(data = Unit, summary = "Error: $opLabel — ${result.message}", isError = true,
+                    hint = "Check Bitbucket connection or refresh the PR and retry.")
+            }
+        }
+    }
+
+    private fun ApiResult<Unit>.toToolResult(
+        okSummary: String,
+        errPrefix: String,
+        hint: String,
+    ): ToolResult<Unit> = when (this) {
+        is ApiResult.Success -> ToolResult.success(Unit, okSummary)
+        is ApiResult.Error -> ToolResult(data = Unit, summary = "$errPrefix: $message", isError = true, hint = hint)
+    }
 
     // --- PR comments ---
 

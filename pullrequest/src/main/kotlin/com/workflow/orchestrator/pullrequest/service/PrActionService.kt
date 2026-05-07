@@ -239,28 +239,26 @@ class PrActionService(private val project: Project) {
 
     /**
      * Update a pull request description.
+     *
+     * Routes through [BitbucketBranchClient.modifyPullRequest] so the GET-PUT
+     * cycle refetches and retries once if the cached `version` is stale —
+     * fixing the same 409 race the audit called out for `updateTitle` /
+     * `addReviewer` / `removeReviewer` in PR 3, extended to `updateDescription`
+     * here as a PR 6 follow-up. The previous explicit `version` parameter is
+     * dropped (per `feedback_no_compat_shims.md`) — the helper fetches the
+     * fresh value itself, the same way [updateTitle] does.
      */
-    suspend fun updateDescription(prId: Int, description: String, version: Int): ApiResult<Unit> {
+    suspend fun updateDescription(prId: Int, description: String): ApiResult<Unit> {
         val client = getClient()
             ?: return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket not configured")
         if (!isConfigured())
             return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket project/repo not configured")
 
-        log.info("[PR:Action] Updating description for PR #$prId — fetching current PR to preserve title/reviewers")
-
-        // Fetch current PR to preserve title and reviewers (Bitbucket PUT replaces the entire PR)
-        val currentPr = client.getPullRequestDetail(projectKey(), repoSlug(), prId)
-        val existingPr = (currentPr as? ApiResult.Success)?.data
-
-        val updateRequest = BitbucketPrUpdateRequest(
-            title = existingPr?.title ?: "",
-            description = description,
-            version = existingPr?.version ?: version,
-            reviewers = existingPr?.reviewers?.map {
-                BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = it.user.name))
-            } ?: emptyList()
-        )
-        return when (val result = client.updatePullRequest(projectKey(), repoSlug(), prId, updateRequest)) {
+        log.info("[PR:Action] Updating description for PR #$prId via modifyPullRequest")
+        return when (val result = client.modifyPullRequest(
+            repo = RepoCoords(projectKey(), repoSlug()),
+            prId = prId,
+        ) { current -> updateDescriptionMutator(current, description) }) {
             is ApiResult.Success -> {
                 log.info("[PR:Action] PR #$prId description updated")
                 ApiResult.Success(Unit)
@@ -296,9 +294,23 @@ class PrActionService(private val project: Project) {
 
     /**
      * Add an inline comment to a specific file/line in a pull request.
+     *
+     * The optional [diffType] / [fromHash] / [toHash] arguments pin the comment to
+     * a specific commit pair so it stays anchored to the exact code the reviewer
+     * saw, even when new commits land on the PR. Pass `diffType="COMMIT"` plus
+     * `toHash=PR.toRef.latestCommit` for AI / batch reviews — see
+     * [com.workflow.orchestrator.core.bitbucket.InlineCommentDiffType] (audit
+     * finding #7, PR 6 of the 2026-05-07 write-ops fix plan).
      */
     suspend fun addInlineComment(
-        prId: Int, filePath: String, lineNumber: Int, lineType: String, text: String
+        prId: Int,
+        filePath: String,
+        lineNumber: Int,
+        lineType: String,
+        text: String,
+        diffType: String? = null,
+        fromHash: String? = null,
+        toHash: String? = null,
     ): ApiResult<Unit> {
         val client = getClient()
             ?: return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket not configured")
@@ -306,7 +318,18 @@ class PrActionService(private val project: Project) {
             return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket project/repo not configured")
 
         log.info("[PR:Action] Adding inline comment to PR #$prId at $filePath:$lineNumber")
-        return when (val result = client.addInlineComment(projectKey(), repoSlug(), prId, filePath, lineNumber, lineType, text)) {
+        return when (val result = client.addInlineComment(
+            projectKey = projectKey(),
+            repoSlug = repoSlug(),
+            prId = prId,
+            filePath = filePath,
+            lineNumber = lineNumber,
+            lineType = lineType,
+            text = text,
+            diffType = diffType,
+            fromHash = fromHash,
+            toHash = toHash,
+        )) {
             is ApiResult.Success -> {
                 log.info("[PR:Action] Inline comment added to PR #$prId at $filePath:$lineNumber")
                 ApiResult.Success(Unit)
@@ -448,6 +471,16 @@ internal fun updateTitleMutator(current: BitbucketPrDetail, newTitle: String): B
     BitbucketPrUpdateRequest(
         title = newTitle,
         description = current.description ?: "",
+        version = current.version,
+        reviewers = current.reviewers.map {
+            BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = it.user.name))
+        },
+    )
+
+internal fun updateDescriptionMutator(current: BitbucketPrDetail, newDescription: String): BitbucketPrUpdateRequest =
+    BitbucketPrUpdateRequest(
+        title = current.title,
+        description = newDescription,
         version = current.version,
         reviewers = current.reviewers.map {
             BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = it.user.name))

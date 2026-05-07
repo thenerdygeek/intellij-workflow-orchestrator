@@ -92,6 +92,45 @@ object CreatePrPrefetch {
 
     private val log = Logger.getInstance(CreatePrPrefetch::class.java)
 
+    /**
+     * Re-resolve the default-reviewer list when the dialog's target branch
+     * changes. The repo's default-reviewer conditions are scoped per
+     * (sourceRefMatcher, targetRefMatcher), so a different target branch can
+     * surface a different reviewer set (audit P1 finding #6, PR 6 of the
+     * 2026-05-07 write-ops fix plan).
+     *
+     * Returns an empty list on any error so the dialog falls back to the
+     * pre-fetched chips rather than crashing — net effect: same UX as before
+     * the change, just with sharper defaults when the call succeeds.
+     */
+    suspend fun resolveDefaultReviewersForBranch(
+        @Suppress("UNUSED_PARAMETER") project: Project,
+        repoConfig: RepoConfig,
+        sourceBranch: String,
+        targetBranch: String,
+    ): List<BitbucketUser> {
+        val client = BitbucketBranchClient.forRepo(repoConfig) ?: return emptyList()
+        return try {
+            when (val r = client.getDefaultReviewersForBranch(
+                repo = com.workflow.orchestrator.core.bitbucket.RepoCoords(
+                    repoConfig.bitbucketProjectKey.orEmpty(),
+                    repoConfig.bitbucketRepoSlug.orEmpty(),
+                ),
+                sourceBranch = sourceBranch,
+                targetBranch = targetBranch,
+            )) {
+                is ApiResult.Success -> r.data
+                is ApiResult.Error -> {
+                    log.warn("[PR:Prefetch] resolveDefaultReviewersForBranch failed for '${repoConfig.displayLabel}': ${r.message}")
+                    emptyList()
+                }
+            }
+        } catch (e: Exception) {
+            log.warn("[PR:Prefetch] resolveDefaultReviewersForBranch exception for '${repoConfig.displayLabel}': ${e.message}")
+            emptyList()
+        }
+    }
+
     suspend fun run(project: Project): PrefetchResult {
         val settings = PluginSettings.getInstance(project)
         val resolver = RepoContextResolver.getInstance(project)
@@ -311,19 +350,29 @@ object CreatePrPrefetch {
                 config.defaultTargetBranch.orEmpty().ifBlank { "develop" }
             }
 
+            // PR 6 of the 2026-05-07 write-ops fix plan (audit P1 finding #6):
+            // resolve default reviewers for the *specific* (source → target) branch
+            // pair the dialog will use, instead of unioning every condition. The
+            // dialog re-runs this on target-change via [reloadDefaultReviewersForBranch]
+            // so the suggested chips stay accurate as the user picks a different
+            // base branch.
             val repoDefaultReviewers: List<BitbucketUser> = try {
-                when (val r = client.getDefaultReviewers(
-                    config.bitbucketProjectKey.orEmpty(),
-                    config.bitbucketRepoSlug.orEmpty()
+                when (val r = client.getDefaultReviewersForBranch(
+                    repo = com.workflow.orchestrator.core.bitbucket.RepoCoords(
+                        config.bitbucketProjectKey.orEmpty(),
+                        config.bitbucketRepoSlug.orEmpty(),
+                    ),
+                    sourceBranch = sourceBranch,
+                    targetBranch = defaultTarget,
                 )) {
                     is ApiResult.Success -> r.data
                     is ApiResult.Error -> {
-                        log.warn("[PR:Prefetch] getDefaultReviewers failed for '${config.displayLabel}': ${r.message}")
+                        log.warn("[PR:Prefetch] getDefaultReviewersForBranch failed for '${config.displayLabel}': ${r.message}")
                         emptyList()
                     }
                 }
             } catch (e: Exception) {
-                log.warn("[PR:Prefetch] getDefaultReviewers exception for '${config.displayLabel}': ${e.message}")
+                log.warn("[PR:Prefetch] getDefaultReviewersForBranch exception for '${config.displayLabel}': ${e.message}")
                 emptyList()
             }
 

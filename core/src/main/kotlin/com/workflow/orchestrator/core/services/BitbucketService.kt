@@ -23,8 +23,26 @@ interface BitbucketService {
     /** Get commits for a pull request. */
     suspend fun getPullRequestCommits(prId: Int, repoName: String? = null): ToolResult<List<CommitData>>
 
-    /** Add an inline comment to a file/line in a pull request. */
-    suspend fun addInlineComment(prId: Int, filePath: String, line: Int, lineType: String, text: String, repoName: String? = null): ToolResult<Unit>
+    /**
+     * Add an inline comment to a file/line in a pull request.
+     *
+     * The optional [diffType] / [fromHash] / [toHash] arguments pin the comment to
+     * a specific commit pair so it stays anchored when new commits land on the PR
+     * (audit P1 finding #7, PR 6 of the 2026-05-07 write-ops fix plan). Pass
+     * `diffType="COMMIT"` plus `toHash=PR.toRef.latestCommit` for AI / batch
+     * reviews. Omitting them retains the legacy `EFFECTIVE` server-default.
+     */
+    suspend fun addInlineComment(
+        prId: Int,
+        filePath: String,
+        line: Int,
+        lineType: String,
+        text: String,
+        repoName: String? = null,
+        diffType: String? = null,
+        fromHash: String? = null,
+        toHash: String? = null,
+    ): ToolResult<Unit>
 
     /** Reply to an existing comment on a pull request. */
     suspend fun replyToComment(prId: Int, parentCommentId: Int, text: String, repoName: String? = null): ToolResult<Unit>

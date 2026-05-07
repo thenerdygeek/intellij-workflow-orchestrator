@@ -72,17 +72,31 @@ class AiReviewTabPanel(
             statusLabel.text = "Services not available."
             return
         }
-        val vm = AiReviewViewModel(store, service, projectKey, repoSlug, prId, entry.sessionId).apply {
-            addChangeListener {
-                ApplicationManager.getApplication().invokeLater {
-                    listModel.clear()
-                    findings.forEach { listModel.addElement(it) }
-                    statusLabel.text = lastError ?: "${findings.size} findings (session ${entry.sessionId}, ${entry.status})"
+        // Resolve the PR's latest commit on the IO scope so inline comments pin to
+        // the commit the reviewer saw (audit P1 finding #7, PR 6 of the 2026-05-07
+        // write-ops fix plan). Bitbucket returns PR commits in reverse-chronological
+        // order so the head of the list is the toRef.latestCommit. If the fetch
+        // fails we fall back to the legacy floating-anchor behaviour rather than
+        // blocking the user from pushing findings.
+        scope.launch {
+            val toHash = runCatching {
+                val commits = service.getPullRequestCommits(prId, repoName = null)
+                if (commits.isError) "" else commits.data.firstOrNull()?.id.orEmpty()
+            }.getOrDefault("")
+            ApplicationManager.getApplication().invokeLater {
+                val vm = AiReviewViewModel(store, service, projectKey, repoSlug, prId, entry.sessionId, toHash).apply {
+                    addChangeListener {
+                        ApplicationManager.getApplication().invokeLater {
+                            listModel.clear()
+                            findings.forEach { listModel.addElement(it) }
+                            statusLabel.text = lastError ?: "${findings.size} findings (session ${entry.sessionId}, ${entry.status})"
+                        }
+                    }
                 }
+                viewModel = vm
+                refresh()
             }
         }
-        viewModel = vm
-        refresh()
     }
 
     fun onSessionChanged() { bindSessionIfExists() }

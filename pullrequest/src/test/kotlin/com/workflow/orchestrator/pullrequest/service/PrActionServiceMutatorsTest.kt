@@ -122,4 +122,39 @@ class PrActionServiceMutatorsTest {
         val req = removeReviewerMutator(current, "bob")
         assertTrue(req.reviewers.isEmpty())
     }
+
+    // -------- 2026-05-07 PR 6: updateDescriptionMutator (audit P1 follow-up) --------
+
+    @Test
+    fun `updateDescriptionMutator threads version and preserves title plus reviewers`() {
+        val current = pr(title = "Keep me", description = "old desc", version = 11,
+            reviewers = listOf("alice", "bob"))
+
+        val req = updateDescriptionMutator(current, "new desc")
+
+        assertEquals("new desc", req.description)
+        assertEquals("Keep me", req.title, "Title must survive a description-only update")
+        assertEquals(11, req.version, "Mutator must thread current.version so retry sees fresh value")
+        assertEquals(listOf("alice", "bob"), req.reviewers.map { it.user.name })
+    }
+
+    @Test
+    fun `updateDescriptionMutator on retry sees refreshed version`() {
+        val first = pr(version = 3)
+        val second = pr(version = 5)
+
+        val firstReq = updateDescriptionMutator(first, "desc")
+        val secondReq = updateDescriptionMutator(second, "desc")
+
+        assertEquals(3, firstReq.version)
+        assertEquals(5, secondReq.version,
+            "Retry path: re-applying the mutator with a refetched PR must surface the new version")
+    }
+
+    @Test
+    fun `updateDescriptionMutator handles null current description`() {
+        val current = pr(description = null)
+        val req = updateDescriptionMutator(current, "new")
+        assertEquals("new", req.description)
+    }
 }

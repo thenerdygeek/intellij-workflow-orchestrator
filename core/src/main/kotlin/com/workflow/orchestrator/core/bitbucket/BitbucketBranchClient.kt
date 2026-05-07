@@ -101,14 +101,108 @@ private data class UserListResponse(
 
 /**
  * One condition in Bitbucket Server's default-reviewers plugin. A repo can have many
- * (scoped by ref matchers); we only care about the reviewers they prescribe.
+ * conditions; each is scoped to a (sourceRefMatcher, targetRefMatcher) pair so that
+ * different default-reviewer sets can apply for different branch flows. The audit
+ * (P1 finding #6, 2026-05-07) showed the previous DTO discarded the matchers and
+ * unioned every reviewer across every condition — so a `feature/x → develop` PR
+ * would suggest reviewers configured for `release/{any}` → `master` too.
+ *
+ * Real shape (from probe `default_reviewers_conditions.json`): the `type` on a
+ * matcher is itself a `{id, name}` object — the `id` field is the matcher-type
+ * discriminator (`BRANCH`, `MODEL_BRANCH`, `MODEL_CATEGORY`, `ANY_REF`, `PATTERN`).
+ *
+ * Matching rules per [RefMatcherType]:
+ *  - `BRANCH` / `MODEL_BRANCH`: the matcher's [RefMatcher.id] is the full branch ref
+ *    (e.g. `refs/heads/develop`); we match exact-equal against either the branch ref
+ *    or the displayId-style "develop" form passed by callers.
+ *  - `MODEL_CATEGORY`: the matcher's `id` is the category (`feature`, `release`, …);
+ *    we match the branch as a category prefix (`feature/x` matches `feature`).
+ *  - `ANY_REF`: always matches.
+ *  - `PATTERN`: glob with `*` and `?`; small regex transform escapes the rest.
  */
 @Serializable
-private data class DefaultReviewerCondition(
+internal data class DefaultReviewerCondition(
     val id: Int = 0,
+    val sourceRefMatcher: RefMatcher = RefMatcher.ANY,
+    val targetRefMatcher: RefMatcher = RefMatcher.ANY,
     val reviewers: List<BitbucketUser> = emptyList(),
-    val requiredApprovals: Int = 0
+    val requiredApprovals: Int = 0,
 )
+
+@Serializable
+internal data class RefMatcher(
+    val id: String = "",
+    val displayId: String = "",
+    val type: RefMatcherTypeDescriptor = RefMatcherTypeDescriptor(),
+) {
+    /** Discriminator pulled out of the nested `type` object for branching. */
+    val matcherType: RefMatcherType
+        get() = when (type.id) {
+            "BRANCH" -> RefMatcherType.BRANCH
+            "MODEL_BRANCH" -> RefMatcherType.MODEL_BRANCH
+            "MODEL_CATEGORY" -> RefMatcherType.MODEL_CATEGORY
+            "ANY_REF" -> RefMatcherType.ANY_REF
+            "PATTERN" -> RefMatcherType.PATTERN
+            else -> RefMatcherType.ANY_REF
+        }
+
+    /**
+     * True iff this matcher accepts [branch]. [branch] may be either the full
+     * `refs/heads/<name>` form or just the displayId `<name>` — we normalise
+     * before comparing.
+     */
+    fun matches(branch: String): Boolean {
+        val displayBranch = branch.removePrefix("refs/heads/")
+        return when (matcherType) {
+            RefMatcherType.BRANCH, RefMatcherType.MODEL_BRANCH -> {
+                val normalisedMatcher = id.removePrefix("refs/heads/")
+                normalisedMatcher == displayBranch || id == branch || id == "refs/heads/$displayBranch"
+            }
+            RefMatcherType.MODEL_CATEGORY -> {
+                // Category names typically map to a "<category>/" prefix on the branch
+                // (e.g. category=feature matches feature/x). Be permissive: also
+                // accept exact-equal because Bitbucket sometimes uses the displayId.
+                displayBranch == id || displayBranch.startsWith("$id/")
+            }
+            RefMatcherType.ANY_REF -> true
+            RefMatcherType.PATTERN -> globToRegex(id).matches(displayBranch) ||
+                globToRegex(id).matches(branch)
+        }
+    }
+
+    companion object {
+        val ANY = RefMatcher(
+            id = "ANY_REF_MATCHER_ID",
+            displayId = "Any branch",
+            type = RefMatcherTypeDescriptor(id = "ANY_REF", name = "Any branch"),
+        )
+
+        /** Translate Bitbucket-style globs (`*`, `?`) into a Kotlin [Regex]. */
+        internal fun globToRegex(pattern: String): Regex {
+            val sb = StringBuilder("^")
+            for (c in pattern) {
+                when (c) {
+                    '*' -> sb.append(".*")
+                    '?' -> sb.append('.')
+                    '.', '+', '(', ')', '{', '}', '[', ']', '^', '$', '|', '\\' -> {
+                        sb.append('\\').append(c)
+                    }
+                    else -> sb.append(c)
+                }
+            }
+            sb.append('$')
+            return Regex(sb.toString())
+        }
+    }
+}
+
+@Serializable
+internal data class RefMatcherTypeDescriptor(
+    val id: String = "ANY_REF",
+    val name: String = "",
+)
+
+internal enum class RefMatcherType { BRANCH, MODEL_BRANCH, MODEL_CATEGORY, ANY_REF, PATTERN }
 
 @Serializable
 private data class ProjectListResponse(
@@ -479,23 +573,48 @@ data class BitbucketCommitRef(val id: String, val displayId: String)
 // --- Inline Comment & Reply Request DTOs ---
 
 @Serializable
-private data class InlineCommentRequest(
+internal data class InlineCommentRequest(
     val text: String,
-    val anchor: InlineCommentAnchor
+    val anchor: InlineCommentAnchor,
 )
 
+/**
+ * Bitbucket DC inline-comment anchor. The anchor identifies which file/line the
+ * comment attaches to.
+ *
+ * The five pinning fields ([diffType], [fromHash], [toHash]) were added in PR 6
+ * of the 2026-05-07 write-ops fix plan to fix audit finding #7: when [diffType]
+ * is left at the server default of `EFFECTIVE`, comments float to whichever line
+ * the diff hunk maps to as new commits land on the PR. Sending `diffType=COMMIT`
+ * with the explicit commit pair pins the comment to the exact commit the
+ * reviewer saw, matching what Bitbucket's web UI does on review submission.
+ *
+ * `srcPath` carries the old path on a renamed file. The three pinning fields
+ * are nullable; null is the legacy "let the server pick the diff" behaviour
+ * (callers that don't yet know the commit hash retain the old behaviour).
+ */
 @Serializable
-private data class InlineCommentAnchor(
+internal data class InlineCommentAnchor(
     val path: String,
     val line: Int,
-    val lineType: String,
-    val fileType: String,
+    val lineType: String, // ADDED | REMOVED | CONTEXT
+    val fileType: String, // FROM | TO
     val srcPath: String? = null,
+    val diffType: String? = null, // COMMIT | EFFECTIVE | RANGE
+    val fromHash: String? = null,
+    val toHash: String? = null,
 ) {
     companion object {
         fun deriveFileType(lineType: String): String =
             if (lineType == "REMOVED") "FROM" else "TO"
     }
+}
+
+/** Discriminator strings for [InlineCommentAnchor.diffType]. */
+internal object InlineCommentDiffType {
+    const val COMMIT = "COMMIT"
+    const val EFFECTIVE = "EFFECTIVE"
+    const val RANGE = "RANGE"
 }
 
 @Serializable
@@ -1056,49 +1175,99 @@ class BitbucketBranchClient(
         }
 
     /**
-     * Fetches the repo-level default reviewers configured in Bitbucket Server.
+     * Fetches every default-reviewer condition configured for the repo, returning
+     * the union of reviewers across all conditions (de-duplicated by username).
      *
      * GET /rest/default-reviewers/1.0/projects/{projectKey}/repos/{repoSlug}/conditions
      *
-     * Returns the union of reviewers across all conditions (de-duplicated by username).
-     * We intentionally do NOT filter by source/target ref matchers here — the user will
-     * see ALL repo defaults and can remove any they don't want. This avoids a second
-     * "resolve repo id" HTTP call that the `/reviewers` endpoint would require.
+     * **Prefer [getDefaultReviewersForBranch]** when both source and target branches
+     * are known — this method's union-all behaviour is the legacy shape that the
+     * 2026-05-07 audit (P1 finding #6) called out. It's retained for callers that
+     * genuinely want every repo-level reviewer (e.g. settings/admin previews); the
+     * PR-creation path now goes through the branch-aware variant so the dialog only
+     * suggests reviewers whose conditions actually apply.
      *
-     * Returns empty list (wrapped in Success) when the default-reviewers plugin is not
-     * installed (404) or no conditions are configured — both are legitimate repo states.
+     * Returns empty list (wrapped in Success) when the default-reviewers plugin is
+     * not installed (404) or no conditions are configured — both are legitimate
+     * repo states.
      */
-    suspend fun getDefaultReviewers(projectKey: String, repoSlug: String): ApiResult<List<BitbucketUser>> =
-        withContext(Dispatchers.IO) {
-            log.info("[Core:Bitbucket] Fetching default-reviewer conditions for $projectKey/$repoSlug")
-            try {
-                val request = Request.Builder()
-                    .url("$baseUrl/rest/default-reviewers/1.0/projects/$projectKey/repos/$repoSlug/conditions")
-                    .get()
-                    .header("Accept", "application/json")
-                    .build()
-                val response = httpClient.newCall(request).execute()
-                response.use {
-                    when (it.code) {
-                        in 200..299 -> {
-                            val body = it.body?.string() ?: "[]"
-                            val conditions = json.decodeFromString<List<DefaultReviewerCondition>>(body)
-                            val unique = conditions.flatMap { c -> c.reviewers }
-                                .distinctBy { u -> u.name }
-                            log.info("[Core:Bitbucket] Default reviewers for $projectKey/$repoSlug: ${unique.size}")
-                            ApiResult.Success(unique)
-                        }
-                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
-                        // 404 → default-reviewers plugin not installed, treat as "no defaults"
-                        404 -> ApiResult.Success(emptyList())
-                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
-                    }
-                }
-            } catch (e: IOException) {
-                log.error("[Core:Bitbucket] Network error fetching default reviewers", e)
-                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+    suspend fun getDefaultReviewers(projectKey: String, repoSlug: String): ApiResult<List<BitbucketUser>> {
+        log.info("[Core:Bitbucket] Fetching default-reviewer conditions for $projectKey/$repoSlug (union-all)")
+        return when (val r = getDefaultReviewerConditions(projectKey, repoSlug)) {
+            is ApiResult.Success -> {
+                val unique = r.data.flatMap { c -> c.reviewers }.distinctBy { u -> u.name }
+                log.info("[Core:Bitbucket] Default reviewers for $projectKey/$repoSlug: ${unique.size}")
+                ApiResult.Success(unique)
             }
+            is ApiResult.Error -> r
         }
+    }
+
+    /**
+     * Branch-aware variant of [getDefaultReviewers]. Filters the repo's
+     * default-reviewer conditions down to those whose `sourceRefMatcher` AND
+     * `targetRefMatcher` both accept the requested branch pair, then returns the
+     * union of reviewers across the surviving conditions.
+     *
+     * Source: 2026-05-07 audit P1 finding #6 (PR 6 of the write-ops fix plan).
+     */
+    suspend fun getDefaultReviewersForBranch(
+        repo: RepoCoords,
+        sourceBranch: String,
+        targetBranch: String,
+    ): ApiResult<List<BitbucketUser>> {
+        log.info(
+            "[Core:Bitbucket] Resolving default reviewers for ${repo.projectKey}/${repo.repoSlug} " +
+                "source='$sourceBranch' target='$targetBranch'"
+        )
+        return when (val r = getDefaultReviewerConditions(repo.projectKey, repo.repoSlug)) {
+            is ApiResult.Success -> {
+                val matched = r.data.filter { c ->
+                    c.sourceRefMatcher.matches(sourceBranch) && c.targetRefMatcher.matches(targetBranch)
+                }
+                val unique = matched.flatMap { c -> c.reviewers }.distinctBy { u -> u.name }
+                log.info(
+                    "[Core:Bitbucket] Matched ${matched.size}/${r.data.size} conditions → ${unique.size} reviewers"
+                )
+                ApiResult.Success(unique)
+            }
+            is ApiResult.Error -> r
+        }
+    }
+
+    /**
+     * Raw fetch of the conditions list. Internal helper shared by
+     * [getDefaultReviewers] and [getDefaultReviewersForBranch] so the matcher-aware
+     * filtering happens in one place.
+     */
+    internal suspend fun getDefaultReviewerConditions(
+        projectKey: String,
+        repoSlug: String,
+    ): ApiResult<List<DefaultReviewerCondition>> = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder()
+                .url("$baseUrl/rest/default-reviewers/1.0/projects/$projectKey/repos/$repoSlug/conditions")
+                .get()
+                .header("Accept", "application/json")
+                .build()
+            val response = httpClient.newCall(request).execute()
+            response.use {
+                when (it.code) {
+                    in 200..299 -> {
+                        val body = it.body?.string() ?: "[]"
+                        ApiResult.Success(json.decodeFromString<List<DefaultReviewerCondition>>(body))
+                    }
+                    401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
+                    // 404 → default-reviewers plugin not installed, treat as "no defaults"
+                    404 -> ApiResult.Success(emptyList())
+                    else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}")
+                }
+            }
+        } catch (e: IOException) {
+            log.error("[Core:Bitbucket] Network error fetching default-reviewer conditions", e)
+            ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
+        }
+    }
 
     /**
      * Searches Bitbucket Server users by filter text.
@@ -2317,6 +2486,14 @@ class BitbucketBranchClient(
     /**
      * Adds an inline comment to a specific file/line in a pull request.
      * POST /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/comments
+     *
+     * The optional [diffType] / [fromHash] / [toHash] arguments pin the comment to
+     * a specific diff range so it doesn't float when the PR receives new commits
+     * after the comment is anchored. The recommended use for AI / batch reviews
+     * is `diffType="COMMIT"` with `toHash` set to the PR's `toRef.latestCommit`
+     * at review time (audit finding #7, PR 6 of the 2026-05-07 write-ops fix
+     * plan). Callers that don't pass any of the pinning fields keep the legacy
+     * server-default `EFFECTIVE` behaviour.
      */
     suspend fun addInlineComment(
         projectKey: String,
@@ -2327,9 +2504,15 @@ class BitbucketBranchClient(
         lineType: String,
         text: String,
         srcPath: String? = null,
+        diffType: String? = null,
+        fromHash: String? = null,
+        toHash: String? = null,
     ): ApiResult<Unit> =
         withContext(Dispatchers.IO) {
-            log.info("[Core:Bitbucket] Adding inline comment to PR #$prId at $filePath:$lineNumber ($lineType)")
+            log.info(
+                "[Core:Bitbucket] Adding inline comment to PR #$prId at $filePath:$lineNumber " +
+                    "($lineType) diffType=$diffType toHash=${toHash?.take(8)}"
+            )
             try {
                 val payload = json.encodeToString(
                     InlineCommentRequest(
@@ -2340,6 +2523,9 @@ class BitbucketBranchClient(
                             lineType = lineType,
                             fileType = InlineCommentAnchor.deriveFileType(lineType),
                             srcPath = srcPath,
+                            diffType = diffType,
+                            fromHash = fromHash,
+                            toHash = toHash,
                         )
                     )
                 ).toRequestBody("application/json".toMediaType())

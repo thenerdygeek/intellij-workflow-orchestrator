@@ -218,4 +218,54 @@ class PrActionServiceModifyRetryTest {
 
         assertEquals(ErrorType.STALE_VERSION, (result as ApiResult.Error).type)
     }
+
+    // ---------------- updateDescription (PR 6 follow-up) ----------------
+
+    @Test
+    fun `updateDescription 409 then success retries with refreshed version`() = runTest {
+        enqueue409Then200(
+            getV1 = prJson(version = 3),
+            getV2 = prJson(version = 5),
+            putOk = prJson(version = 6, title = "Original"),
+        )
+
+        val result = client.modifyPullRequest(RepoCoords("P", "r"), prId = 42) { current ->
+            updateDescriptionMutator(current, "Updated description after race")
+        }
+
+        assertTrue(result is ApiResult.Success, "Expected success after retry; got: $result")
+        assertEquals(6, (result as ApiResult.Success).data.version)
+
+        server.takeRequest()  // GET 1
+        val put1 = server.takeRequest()
+        assertEquals("PUT", put1.method)
+        val put1Body = put1.body.readUtf8()
+        assertTrue(put1Body.contains("\"version\":3"), "First PUT must carry v3")
+
+        server.takeRequest()  // GET 2
+        val put2Body = server.takeRequest().body.readUtf8()
+        assertTrue(put2Body.contains("\"version\":5"), "Retry PUT must carry refreshed v5; body=$put2Body")
+        assertTrue(put2Body.contains("Updated description after race"),
+            "Retry PUT must keep the user-typed description; body=$put2Body")
+    }
+
+    @Test
+    fun `updateDescription double 409 surfaces STALE_VERSION typed error`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(prJson(version = 3)))
+        server.enqueue(
+            MockResponse().setResponseCode(409)
+                .setBody("""{"errors":[{"message":"version conflict"}]}""")
+        )
+        server.enqueue(MockResponse().setResponseCode(200).setBody(prJson(version = 5)))
+        server.enqueue(
+            MockResponse().setResponseCode(409)
+                .setBody("""{"errors":[{"message":"version conflict"}]}""")
+        )
+
+        val result = client.modifyPullRequest(RepoCoords("P", "r"), prId = 42) { current ->
+            updateDescriptionMutator(current, "x")
+        }
+
+        assertEquals(ErrorType.STALE_VERSION, (result as ApiResult.Error).type)
+    }
 }
