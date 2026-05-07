@@ -1738,10 +1738,14 @@ class JiraServiceImpl(private val project: Project) : JiraService {
         // Roles: `/project/{key}/role` returns a name-keyed object — flatten to RoleOption(name).
         // Groups: `/groups/picker?query=` returns `{groups:[{name:…}]}` — empty query lists everything
         //         the user can see (Jira DC v2 caps at 200 by default, fine for a dropdown).
-        val rolesDeferred = coroutineScope { async { api.getProjectRoles(projectKey) } }
-        val groupsDeferred = coroutineScope { async { api.getRawString("/rest/api/2/groups/picker?query=") } }
-        val rolesResult = rolesDeferred.await()
-        val groupsResult = groupsDeferred.await()
+        // Both fetches share ONE coroutineScope so the awaits run truly concurrently — wrapping
+        // each `async` in its own `coroutineScope` (the original PR 5 shape) made them serial,
+        // because `coroutineScope` suspends until its child coroutines complete.
+        val (rolesResult, groupsResult) = coroutineScope {
+            val rolesDeferred = async { api.getProjectRoles(projectKey) }
+            val groupsDeferred = async { api.getRawString("/rest/api/2/groups/picker?query=") }
+            rolesDeferred.await() to groupsDeferred.await()
+        }
 
         val roles: List<RoleOption> = when (rolesResult) {
             is ApiResult.Success -> parseProjectRoles(rolesResult.data)

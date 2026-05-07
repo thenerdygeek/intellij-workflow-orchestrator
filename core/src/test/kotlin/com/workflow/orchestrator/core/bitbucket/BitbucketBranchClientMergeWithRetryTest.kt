@@ -94,7 +94,7 @@ class BitbucketBranchClientMergeWithRetryTest {
         server.enqueue(MockResponse().setResponseCode(200).setBody(basePrV3))
         server.enqueue(
             MockResponse().setResponseCode(409)
-                .setBody("""{"errors":[{"message":"version conflict"}]}""")
+                .setBody("""{"errors":[{"message":"PR is out-of-date","exceptionName":"com.atlassian.bitbucket.pull.PullRequestOutOfDateException"}]}""")
         )
         val refetched = basePrV3.replace("\"version\": 3", "\"version\": 5")
         server.enqueue(MockResponse().setResponseCode(200).setBody(refetched))
@@ -128,13 +128,13 @@ class BitbucketBranchClientMergeWithRetryTest {
         server.enqueue(MockResponse().setResponseCode(200).setBody(basePrV3))
         server.enqueue(
             MockResponse().setResponseCode(409)
-                .setBody("""{"errors":[{"message":"version conflict"}]}""")
+                .setBody("""{"errors":[{"message":"PR is out-of-date","exceptionName":"com.atlassian.bitbucket.pull.PullRequestOutOfDateException"}]}""")
         )
         val refetched = basePrV3.replace("\"version\": 3", "\"version\": 5")
         server.enqueue(MockResponse().setResponseCode(200).setBody(refetched))
         server.enqueue(
             MockResponse().setResponseCode(409)
-                .setBody("""{"errors":[{"message":"version conflict"}]}""")
+                .setBody("""{"errors":[{"message":"PR is out-of-date","exceptionName":"com.atlassian.bitbucket.pull.PullRequestOutOfDateException"}]}""")
         )
 
         val result = client.mergePullRequestWithRetry(
@@ -151,6 +151,40 @@ class BitbucketBranchClientMergeWithRetryTest {
             "Expected actionable copy; got: ${error.message}"
         )
         assertEquals(4, server.requestCount, "Exactly 2 GET+POST attempts before giving up")
+    }
+
+    @Test
+    fun `mergePullRequestWithRetry does NOT retry on merge-veto 409 and surfaces real message`() = runTest {
+        // Merge vetoes (failing build, unresolved tasks, missing approvers) come back as
+        // PullRequestMergeVetoedException. Retrying does nothing — the gate is real.
+        // Audit cross-ref: PR 1-7 review P1-1 fix.
+        server.enqueue(MockResponse().setResponseCode(200).setBody(basePrV3))
+        server.enqueue(
+            MockResponse().setResponseCode(409).setBody(
+                """{"errors":[{"message":"The pull request has 1 vetoes preventing it from being merged.","exceptionName":"com.atlassian.bitbucket.pull.PullRequestMergeVetoedException","vetoes":[{"summaryMessage":"Required build is failing","detailedMessage":"Build PROJ-CI-42 must succeed"}]}]}"""
+            )
+        )
+
+        val result = client.mergePullRequestWithRetry(
+            repo = RepoCoords("PROJ", "repo"),
+            prId = 42,
+        )
+
+        assertTrue(result is ApiResult.Error, "Veto must surface as error; got: $result")
+        val error = result as ApiResult.Error
+        assertEquals(
+            ErrorType.VALIDATION_ERROR, error.type,
+            "Veto must NOT be STALE_VERSION (would mislead the user). Got: ${error.type}"
+        )
+        assertTrue(
+            error.message.contains("vetoes", ignoreCase = true) ||
+                error.message.contains("preventing", ignoreCase = true),
+            "Error must surface Bitbucket's actual veto message; got: ${error.message}"
+        )
+        assertEquals(
+            2, server.requestCount,
+            "Veto must NOT trigger refetch+retry (only the first GET+POST). Got ${server.requestCount} requests."
+        )
     }
 
     @Test

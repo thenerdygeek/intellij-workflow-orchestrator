@@ -16,6 +16,23 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 
+/**
+ * Bitbucket DC's structured error response envelope. Used to disambiguate
+ * 409s on the merge endpoint (PullRequestOutOfDateException vs.
+ * PullRequestMergeVetoedException) and to extract user-actionable error
+ * messages without lossy string-matching on a hardcoded copy.
+ */
+@Serializable
+internal data class BitbucketErrorEnvelope(
+    val errors: List<BitbucketErrorEntry> = emptyList(),
+)
+
+@Serializable
+internal data class BitbucketErrorEntry(
+    val message: String? = null,
+    val exceptionName: String? = null,
+)
+
 @Serializable
 data class BitbucketProject(
     val key: String,
@@ -1916,7 +1933,29 @@ class BitbucketBranchClient(
                         }
                         401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bitbucket token")
                         404 -> ApiResult.Error(ErrorType.NOT_FOUND, "PR #$prId not found in $projectKey/$repoSlug")
-                        409 -> ApiResult.Error(ErrorType.VALIDATION_ERROR, "PR #$prId version conflict or merge preconditions not met — refresh and retry")
+                        409 -> {
+                            // Bitbucket DC distinguishes the two 409 causes via `exceptionName`
+                            // in the error body. PullRequestOutOfDateException = stale version
+                            // (caller should retry with refreshed version); everything else
+                            // (PullRequestMergeVetoedException, etc.) is a real merge gate
+                            // that retrying won't fix. Surfacing typed STALE_VERSION lets
+                            // mergePullRequestWithRetry skip the string-match heuristic and
+                            // gives end-users an accurate error message for veto failures.
+                            val errorBody = it.body?.string() ?: ""
+                            val isOutOfDate = errorBody.contains(
+                                "PullRequestOutOfDateException", ignoreCase = false
+                            ) || errorBody.contains("out-of-date", ignoreCase = true)
+                            if (isOutOfDate) {
+                                ApiResult.Error(
+                                    ErrorType.STALE_VERSION,
+                                    "PR #$prId version is stale — refresh and try again"
+                                )
+                            } else {
+                                val parsedMessage = parseBitbucketErrorMessage(errorBody)
+                                    ?: "Merge preconditions not met for PR #$prId"
+                                ApiResult.Error(ErrorType.VALIDATION_ERROR, parsedMessage)
+                            }
+                        }
                         else -> {
                             val errorBody = it.body?.string() ?: ""
                             ApiResult.Error(ErrorType.SERVER_ERROR, "Bitbucket returned ${it.code}: $errorBody")
@@ -1991,20 +2030,32 @@ class BitbucketBranchClient(
             deleteSourceBranch = deleteSourceBranch,
             commitMessage = commitMessage,
         )
-        // mergePullRequest currently maps 409 → ErrorType.VALIDATION_ERROR with the legacy
-        // "version conflict or merge preconditions not met — refresh and retry" copy.
-        // Translate that to STALE_VERSION so callers get an unambiguous signal that the
-        // race retry is what's needed (vs. e.g. a real veto that warrants a different UX).
-        if (merged is ApiResult.Error &&
-            merged.type == ErrorType.VALIDATION_ERROR &&
-            merged.message.contains("version conflict", ignoreCase = true)
-        ) {
-            return ApiResult.Error(
-                ErrorType.STALE_VERSION,
-                "PR #$prId was updated by someone else — refresh and try again."
-            )
-        }
+        // mergePullRequest now disambiguates the two 409 causes via the response body's
+        // `exceptionName` and surfaces STALE_VERSION as a typed error directly. We no
+        // longer string-match — a real veto returns VALIDATION_ERROR with the actual
+        // Bitbucket message, and only true stale-version 409s flow back as STALE_VERSION.
         return merged
+    }
+
+    /**
+     * Parses Bitbucket DC's structured error response body to extract the first
+     * actionable error message. Body shape:
+     * `{"errors": [{"message": "...", "exceptionName": "...", "vetoes": [...]}]}`
+     *
+     * Returns the joined messages of all errors, or null if the body isn't
+     * parseable (caller falls back to a generic message).
+     */
+    private fun parseBitbucketErrorMessage(body: String): String? {
+        if (body.isBlank()) return null
+        return try {
+            val parsed = json.decodeFromString<BitbucketErrorEnvelope>(body)
+            parsed.errors
+                .mapNotNull { it.message?.takeIf { m -> m.isNotBlank() } }
+                .takeIf { it.isNotEmpty() }
+                ?.joinToString("; ")
+        } catch (e: Exception) {
+            null
+        }
     }
 
     /**
