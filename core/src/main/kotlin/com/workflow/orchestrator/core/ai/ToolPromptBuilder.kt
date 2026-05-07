@@ -26,6 +26,9 @@ object ToolPromptBuilder {
                 for ((name, prop) in params.properties) {
                     val req = if (name in requiredSet) "required" else "optional"
                     appendLine("- $name: ($req) ${escapeXml(prop.description)}")
+                    if (!prop.enumValues.isNullOrEmpty()) {
+                        appendLine("    Allowed values: ${prop.enumValues.joinToString(", ")}")
+                    }
                 }
             }
 

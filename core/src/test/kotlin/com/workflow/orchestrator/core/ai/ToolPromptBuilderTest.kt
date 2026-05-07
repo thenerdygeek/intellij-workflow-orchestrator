@@ -79,6 +79,48 @@ class ToolPromptBuilderTest {
     }
 
     @Test
+    fun `build emits Allowed values when parameter has enumValues`() {
+        val tool = ToolDefinition(
+            function = FunctionDefinition(
+                name = "demo",
+                description = "Demo tool.",
+                parameters = FunctionParameters(
+                    properties = mapOf(
+                        "action" to ParameterProperty(
+                            type = "string",
+                            description = "Demo action.",
+                            enumValues = listOf("foo", "bar", "baz")
+                        )
+                    ),
+                    required = listOf("action")
+                )
+            )
+        )
+        val rendered = ToolPromptBuilder.build(listOf(tool))
+        assertTrue(rendered.contains("Allowed values: foo, bar, baz"),
+            "rendered prompt should advertise the enumValues; got: $rendered")
+    }
+
+    @Test
+    fun `build does not emit Allowed values when enumValues is null`() {
+        val tool = ToolDefinition(
+            function = FunctionDefinition(
+                name = "no_enum",
+                description = "Tool without enum.",
+                parameters = FunctionParameters(
+                    properties = mapOf(
+                        "path" to ParameterProperty(type = "string", description = "A path")
+                    ),
+                    required = listOf("path")
+                )
+            )
+        )
+        val rendered = ToolPromptBuilder.build(listOf(tool))
+        assertFalse(rendered.contains("Allowed values:"),
+            "rendered prompt should not contain Allowed values line when enumValues is absent")
+    }
+
+    @Test
     fun `marks optional params`() {
         val tools = listOf(
             ToolDefinition(
