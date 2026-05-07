@@ -551,6 +551,47 @@ class JiraProbe:
             ],
         )
 
+    # -- devstatus headers ----------------------------------------------------
+
+    def run_devstatus_headers(self, issue_id: str) -> None:
+        """Capture raw HTTP headers from /rest/dev-status/1.0/issue/detail.
+
+        Issues a single GET and writes status + headers to
+        Result_Jira/devstatus-headers.txt so we can check whether Jira DC
+        sets ETag / Last-Modified / Cache-Control on dev-status responses.
+        If yes, CachingInterceptor can be upgraded to conditional GET
+        (If-None-Match); if not, the existing synthetic-ETag SHA-256 path
+        is the ceiling.
+        """
+        print("[probe] devstatus-headers mode\n")
+        url = (
+            f"{self.base}/rest/dev-status/1.0/issue/detail"
+            f"?issueId={issue_id}&applicationType=stash&dataType=branch"
+        )
+        print(f"[probe] GET {url}")
+        try:
+            resp = self.session.get(url, timeout=30)
+        except requests.RequestException as exc:
+            print(f"[probe] ERROR: {exc}", file=sys.stderr)
+            raise
+
+        print(f"\nStatus: {resp.status_code}")
+        for key, value in resp.headers.items():
+            print(f"{key}: {value}")
+
+        # Build file content
+        lines: list[str] = [
+            f"GET {url}",
+            "",
+            f"Status: {resp.status_code}",
+        ]
+        for key, value in resp.headers.items():
+            lines.append(f"{key}: {value}")
+
+        out_path = self.results_dir / "devstatus-headers.txt"
+        out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        print(f"\n[probe] wrote headers → {out_path}")
+
     # -- audit follow-up ------------------------------------------------------
 
     def run_audit_followup(self, issue_key: Optional[str], project_key: Optional[str],
@@ -1037,6 +1078,17 @@ def main() -> int:
                         "recommendations doc (R-SWAP-1, R-SWAP-2, R-ADD-1, "
                         "R-ADD-7, R-ADD-3 polish). Read-only. Needs "
                         "--issue-key + --project-key; --filter-id optional.")
+    p.add_argument("--devstatus-headers", action="store_true",
+                   help="Single GET to /rest/dev-status/1.0/issue/detail and "
+                        "write the response status + headers to "
+                        "Result_Jira/devstatus-headers.txt. Used to determine "
+                        "whether Jira DC sets ETag / Last-Modified so the "
+                        "plugin can upgrade to conditional GET. Requires "
+                        "--issue-id (numeric Jira issue id, not the key).")
+    p.add_argument("--issue-id", type=str,
+                   help="Numeric Jira issue id for --devstatus-headers "
+                        "(e.g. 10042). NOT the issue key (PROJ-123). "
+                        "If omitted with --devstatus-headers, prompted interactively.")
     p.add_argument("--filter-id", type=int,
                    help="Specific Jira filter id to fetch (audit-followup probe D). "
                         "If omitted, the first favourite filter is used.")
@@ -1060,11 +1112,18 @@ def main() -> int:
 
     out_parent = Path(args.out)
     out_parent.mkdir(parents=True, exist_ok=True)
-    results_dir = _allocate_results_dir(out_parent)
+    if args.devstatus_headers:
+        results_dir = out_parent / "Result_Jira"
+        results_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        results_dir = _allocate_results_dir(out_parent)
 
-    exclusive = sum(bool(x) for x in (args.discover, args.versions_only, args.audit_followup))
+    exclusive = sum(bool(x) for x in (
+        args.discover, args.versions_only, args.audit_followup, args.devstatus_headers,
+    ))
     if exclusive > 1:
-        print("ERROR: --discover, --versions-only, and --audit-followup are mutually exclusive.",
+        print("ERROR: --discover, --versions-only, --audit-followup, and "
+              "--devstatus-headers are mutually exclusive.",
               file=sys.stderr)
         return 2
 
@@ -1074,6 +1133,8 @@ def main() -> int:
         mode_label = "versions-only"
     elif args.audit_followup:
         mode_label = "audit-followup"
+    elif args.devstatus_headers:
+        mode_label = "devstatus-headers"
     else:
         mode_label = "full sweep"
 
@@ -1087,6 +1148,7 @@ def main() -> int:
     args_used = {
         "url": args.url,
         "issue_key": args.issue_key,
+        "issue_id": args.issue_id,
         "board_id": args.board_id,
         "sprint_id": args.sprint_id,
         "project_key": args.project_key,
@@ -1095,7 +1157,18 @@ def main() -> int:
         "versions_only": args.versions_only,
         "discover": args.discover,
         "audit_followup": args.audit_followup,
+        "devstatus_headers": args.devstatus_headers,
     }
+
+    if args.devstatus_headers:
+        issue_id = args.issue_id
+        if not issue_id:
+            issue_id = input("Numeric Jira issue id (e.g. 10042): ").strip()
+        if not issue_id:
+            print("ERROR: --issue-id is required for --devstatus-headers", file=sys.stderr)
+            return 2
+        probe.run_devstatus_headers(issue_id)
+        return 0
 
     if args.discover:
         probe.run_discover()
