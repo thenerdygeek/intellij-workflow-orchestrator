@@ -11,13 +11,20 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
+import java.nio.file.Paths
 
 /**
  * Bamboo plan management tool — discover, search, and configure build plans.
  *
- * Split from the consolidated BambooTool. Covers 8 plan-oriented actions:
- * get_plans, get_project_plans, search_plans, get_plan_branches,
- * get_build_variables, get_plan_variables, rerun_failed_jobs, trigger_stage.
+ * Split from the consolidated BambooTool. Covers 10 plan-oriented actions:
+ * get_projects, get_plans, get_project_plans, search_plans, get_plan_branches,
+ * get_build_variables, get_plan_variables, rerun_failed_jobs, trigger_stage,
+ * auto_detect_plan.
+ *
+ * auto_detect_plan routing:
+ *  - Legacy (1-arg): only git_remote_url supplied → uses fast plan-list scan.
+ *  - Rich (5-tier): any of repo_root / branch_name / preferred_master supplied →
+ *    uses the richer multi-tier detection (better for multi-module repos).
  */
 class BambooPlansTool : AgentTool {
 
@@ -30,6 +37,7 @@ Use for: 'list Bamboo plans', 'find a CI plan for repo X', 'show plan branches',
 Do NOT use for: local IDE Maven/Gradle reload, project module discovery, or local build configuration — use get_build_problems / project_structure for those.
 
 Actions and their parameters:
+- get_projects() → List all Bamboo projects (use this before get_project_plans to discover valid project keys)
 - get_plans() → List all build plans
 - get_project_plans(project_key) → Plans in a project
 - search_plans(query) → Search plans by name
@@ -38,7 +46,10 @@ Actions and their parameters:
 - get_plan_variables(plan_key) → Default plan variables
 - rerun_failed_jobs(plan_key, build_number) → Rerun failed jobs in build
 - trigger_stage(plan_key, stage?, variables?) → Trigger specific stage (variables: JSON {"key":"value"})
-- auto_detect_plan(git_remote_url) → Auto-detect the Bamboo plan key from a Git remote URL
+- auto_detect_plan(git_remote_url, repo_root?, branch_name?, preferred_master?) →
+    Auto-detect the Bamboo plan key from a Git remote URL.
+    When repo_root / branch_name / preferred_master are absent: uses legacy 1-arg detection (fast plan-list scan).
+    When any of those optional params is supplied: uses the richer 5-tier detection (better for multi-module repos).
 
 description optional: for approval dialog on rerun_failed_jobs/trigger_stage.
 """.trimIndent()
@@ -49,7 +60,7 @@ description optional: for approval dialog on rerun_failed_jobs/trigger_stage.
                 type = "string",
                 description = "Operation to perform",
                 enumValues = listOf(
-                    "get_plans", "get_project_plans", "search_plans", "get_plan_branches",
+                    "get_projects", "get_plans", "get_project_plans", "search_plans", "get_plan_branches",
                     "get_build_variables", "get_plan_variables", "rerun_failed_jobs", "trigger_stage",
                     "auto_detect_plan"
                 )
@@ -90,6 +101,18 @@ description optional: for approval dialog on rerun_failed_jobs/trigger_stage.
                 type = "string",
                 description = "Git remote URL (e.g. git@github.com:org/repo.git or https://github.com/org/repo) — for auto_detect_plan"
             ),
+            "repo_root" to ParameterProperty(
+                type = "string",
+                description = "Optional. Local repo root path. When provided alongside git_remote_url (or with branch_name/preferred_master), routes auto_detect_plan to the richer 5-tier detection (better for multi-module repos)."
+            ),
+            "branch_name" to ParameterProperty(
+                type = "string",
+                description = "Optional. Branch to detect. Triggers the 5-tier auto_detect_plan overload when present."
+            ),
+            "preferred_master" to ParameterProperty(
+                type = "string",
+                description = "Optional. Preferred master/main branch name. Triggers the 5-tier auto_detect_plan overload when present."
+            ),
             "description" to ParameterProperty(
                 type = "string",
                 description = "Brief description shown in approval dialog — for write actions: rerun_failed_jobs, trigger_stage"
@@ -113,7 +136,30 @@ description optional: for approval dialog on rerun_failed_jobs/trigger_stage.
         val service = ServiceLookup.bamboo(project)
             ?: return ServiceLookup.notConfigured("Bamboo")
 
+        return executeWithService(params, service)
+    }
+
+    /**
+     * Core execution logic — separated for testability so tests can inject a mock [BambooService]
+     * without requiring IntelliJ's service infrastructure.
+     */
+    internal suspend fun executeWithService(
+        params: JsonObject,
+        service: com.workflow.orchestrator.core.services.BambooService
+    ): ToolResult {
+        val action = params["action"]?.jsonPrimitive?.content
+            ?: return ToolResult(
+                "Error: 'action' parameter required",
+                "Error: missing action",
+                ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+
         return when (action) {
+            "get_projects" -> {
+                service.getProjects().toAgentToolResult()
+            }
+
             "get_plans" -> {
                 service.getPlans().toAgentToolResult()
             }
@@ -178,7 +224,23 @@ description optional: for approval dialog on rerun_failed_jobs/trigger_stage.
                 val gitRemoteUrl = params["git_remote_url"]?.jsonPrimitive?.content
                     ?: return ToolValidation.missingParam("git_remote_url")
                 ToolValidation.validateNotBlank(gitRemoteUrl, "git_remote_url")?.let { return it }
-                service.autoDetectPlan(gitRemoteUrl).toAgentToolResult()
+
+                val repoRoot = params["repo_root"]?.jsonPrimitive?.content
+                val branchName = params["branch_name"]?.jsonPrimitive?.content
+                val preferredMaster = params["preferred_master"]?.jsonPrimitive?.content
+
+                if (repoRoot == null && branchName == null && preferredMaster == null) {
+                    // Legacy 1-arg path — no 5-tier hints supplied
+                    service.autoDetectPlan(gitRemoteUrl).toAgentToolResult()
+                } else {
+                    // 5-tier overload — richer detection for multi-module repos
+                    service.autoDetectPlan(
+                        repoRoot = repoRoot?.let { Paths.get(it) },
+                        remoteUrl = gitRemoteUrl,
+                        branchName = branchName,
+                        preferredMaster = preferredMaster
+                    ).toAgentToolResult()
+                }
             }
 
             else -> ToolResult(
