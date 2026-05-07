@@ -948,6 +948,55 @@ class BambooProbe:
                 )
             lines.append("")
 
+            # Per-plan branches detail — surface each branch's *branch plan
+            # key* so the user can pass a specific branch's key as --plan-key
+            # on a follow-up discover or full-sweep run. Bamboo's master plan
+            # key only returns master-branch results; other branches live
+            # under their own branch plan keys.
+            for spec in plan_specs:
+                plkey = spec["key"]
+                branches_body = _read_raw_body(
+                    self.raw_dir / f"discover_plan_{plkey}_branches.json"
+                ) or {}
+                branch_rows: list[tuple[str, str, Any]] = []
+                if isinstance(branches_body, dict):
+                    inner = branches_body.get("branches") or {}
+                    if isinstance(inner, dict):
+                        for b in (inner.get("branch") or []):
+                            if isinstance(b, dict):
+                                branch_rows.append((
+                                    str(b.get("key", "")),
+                                    str(b.get("shortName", "")),
+                                    b.get("enabled"),
+                                ))
+                if branch_rows:
+                    lines.append(f"### Branches under `{plkey}` ({len(branch_rows)})")
+                    lines.append("")
+                    lines.append(
+                        "> In Bamboo each Git branch has its own **branch "
+                        "plan key** — separate from the master plan key. "
+                        "To audit a specific branch's builds (e.g., "
+                        "`develop`), pass that branch's key below as "
+                        "`--plan-key`, NOT the master plan key. The plugin "
+                        "calls `/result/{plan}/branch/{branch}/latest` "
+                        "internally; the probe needs the branch plan key "
+                        "directly to walk that branch's recent results."
+                    )
+                    lines.append("")
+                    lines.append("| Branch | Branch plan key | Enabled |")
+                    lines.append("|---|---|---|")
+                    for bkey, bshort, benabled in branch_rows[:10]:
+                        if benabled is True:
+                            enabled_str = "yes"
+                        elif benabled is False:
+                            enabled_str = "no"
+                        else:
+                            enabled_str = "—"
+                        lines.append(
+                            f"| `{bshort}` | `{bkey}` | {enabled_str} |"
+                        )
+                    lines.append("")
+
         if sample and sample.get("plan_result_key"):
             lines.append(
                 f"## Sample IDs from the most recent run on "
@@ -974,6 +1023,17 @@ class BambooProbe:
             br = sample.get("branch")
             if br:
                 lines.append(f"- **Branch**: `{br}`")
+            else:
+                lines.append(
+                    "- **Branch**: _not reported by Bamboo for this build "
+                    "(typical when the queried plan key is the **master** "
+                    "plan and the most-recent build was on a different "
+                    "branch — Bamboo stores those under separate branch "
+                    "plan keys). To audit a specific branch like `develop`, "
+                    "pick its branch plan key from the 'Branches under' "
+                    "table above and re-run discover with that key as "
+                    "`--plan-key`._"
+                )
             sha = sample.get("commit_sha")
             if sha:
                 lines.append(f"- **Latest commit SHA**: `{sha}`")
@@ -1001,7 +1061,7 @@ class BambooProbe:
             or (sample or {}).get("plan_result_key")
             or "PROJ-PLAN-JOBSHORT-1"
         )
-        suggested_branch = (sample or {}).get("branch") or "master"
+        suggested_branch = (sample or {}).get("branch") or "<your-branch>"
         suggested_sha = (sample or {}).get("commit_sha") or "<commit-sha>"
 
         lines.append("---")
@@ -1016,6 +1076,18 @@ class BambooProbe:
             "validating. Run twice if you want both._"
         )
         lines.append("")
+        if suggested_branch == "<your-branch>":
+            lines.append(
+                "> **Branch placeholder warning** — discover did not learn "
+                "the branch from this run (Bamboo did not return "
+                "`planBranchName` for the sample build). Replace "
+                "`<your-branch>` below with the actual branch you want to "
+                "audit (e.g., `develop`), AND consider re-running discover "
+                "with the matching **branch plan key** from the 'Branches "
+                "under' table above so the result key, job key, and commit "
+                "SHA are also branch-specific."
+            )
+            lines.append("")
         lines.append("Unix shell / PowerShell:")
         lines.append("")
         lines.append("```bash")
