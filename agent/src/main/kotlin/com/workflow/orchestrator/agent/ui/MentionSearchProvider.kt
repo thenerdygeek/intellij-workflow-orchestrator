@@ -11,6 +11,7 @@ import com.workflow.orchestrator.core.model.jira.JiraCommentData
 import com.workflow.orchestrator.core.model.jira.JiraTicketData
 import com.workflow.orchestrator.core.model.workflow.TicketRef
 import com.workflow.orchestrator.core.services.JiraService
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
@@ -511,6 +512,9 @@ class MentionSearchProvider(private val project: Project) {
                     })
                 }
             }.toString()
+        } catch (e: CancellationException) {
+            // Honor structured concurrency: never swallow cancellation.
+            throw e
         } catch (e: Exception) {
             LOG.warn("MentionSearchProvider: issue-picker threw ${e.javaClass.simpleName}: ${e.message} — falling back to sprint walk")
             null

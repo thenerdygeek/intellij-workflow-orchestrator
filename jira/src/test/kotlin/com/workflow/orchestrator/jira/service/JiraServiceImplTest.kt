@@ -147,6 +147,28 @@ class JiraServiceImplTest {
         assertEquals("Spec", link.title)
     }
 
+    @Test
+    fun `getRemoteLinks drops entries with no usable URL`() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """[
+                    {"id":1,"application":{"type":"com.atlassian.confluence","name":"Wiki"},
+                     "object":{"url":"https://wiki.example/page","title":"Real"}},
+                    {"id":2,"application":{"type":"com.atlassian.confluence","name":"Wiki"},
+                     "object":{"title":"No URL"}},
+                    {"id":3,"application":{"type":"com.atlassian.confluence","name":"Wiki"},
+                     "object":{"url":"","title":"Blank URL"}}
+                  ]"""
+            )
+        )
+
+        val result = service.getRemoteLinks("PROJ-1")
+
+        assertFalse(result.isError)
+        assertEquals(1, result.data.size, "Only the link with a non-blank URL should be emitted.")
+        assertEquals(1L, result.data[0].id)
+    }
+
     // ── getMyselfExpanded: flattens groups.items → list of names ──────────
 
     @Test
@@ -232,6 +254,20 @@ class JiraServiceImplTest {
 
         assertFalse(result.isError)
         assertEquals("assignee=currentUser()", result.data.jql)
+    }
+
+    @Test
+    fun `getFilter surfaces isError when the response id cannot be parsed`() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"id":"not-a-number","name":"Broken","jql":"x=y"}"""
+            )
+        )
+
+        val result = service.getFilter(91483L)
+
+        assertTrue(result.isError, "Malformed id should not be silently masked as success.")
+        assertEquals(91483L, result.data.id)
     }
 
     // ── getTicketHistory: flattens (history, item) pairs ──────────────────

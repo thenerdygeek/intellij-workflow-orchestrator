@@ -1273,13 +1273,17 @@ class JiraServiceImpl(private val project: Project) : JiraService {
 
         return when (val result = api.getRemoteLinks(key)) {
             is ApiResult.Success -> {
-                val links = result.data.map { l ->
+                // Drop links without a usable URL — Jira occasionally returns entries
+                // whose `object.url` is null (orphaned links from removed apps); they
+                // would render as un-clickable rows in LinkedDocsSection.
+                val links = result.data.mapNotNull { l ->
+                    val url = l.`object`?.url?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
                     RemoteLinkData(
                         id = l.id,
                         applicationType = l.application?.type,
                         applicationName = l.application?.name,
                         relationship = l.relationship,
-                        url = l.`object`?.url ?: "",
+                        url = url,
                         title = l.`object`?.title
                     )
                 }
@@ -1497,11 +1501,21 @@ class JiraServiceImpl(private val project: Project) : JiraService {
 
         return when (val result = api.getFilter(id)) {
             is ApiResult.Success -> {
-                val data = result.data.toFilterData() ?: FilterData(id = id, name = "")
-                ToolResult.success(
-                    data = data,
-                    summary = "Filter $id: ${data.name}."
-                )
+                val data = result.data.toFilterData()
+                if (data == null) {
+                    log.warn("[JiraService] Filter $id returned a malformed id (${result.data.id}); cannot map.")
+                    ToolResult(
+                        data = FilterData(id = id, name = ""),
+                        summary = "Filter $id returned a malformed id and could not be parsed.",
+                        isError = true,
+                        hint = "The Jira filter response did not contain a numeric id."
+                    )
+                } else {
+                    ToolResult.success(
+                        data = data,
+                        summary = "Filter $id: ${data.name}."
+                    )
+                }
             }
             is ApiResult.Error -> {
                 log.warn("[JiraService] Failed to fetch filter $id: ${result.message}")
