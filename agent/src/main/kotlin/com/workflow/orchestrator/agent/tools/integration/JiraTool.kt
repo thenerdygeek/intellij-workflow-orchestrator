@@ -39,7 +39,7 @@ class JiraTool : AgentTool {
 Jira ticket management — issues, sprints, boards, transitions, comments, time logging.
 
 Actions and their parameters:
-- get_ticket(key, include_dev_status?, include_remote_links?, include_history?) → Full ticket details. include_* flags fan out in parallel; each adds a block to the response. include_dev_status for "what's the status across CI/PR", include_remote_links for "what design docs link to this", include_history for "who changed what when"
+- get_ticket(key, include_dev_status?, include_remote_links?, include_history?, include_permissions?) → Full ticket details. include_* flags fan out in parallel; each adds a block to the response. include_dev_status for "what's the status across CI/PR", include_remote_links for "what design docs link to this", include_history for "who changed what when", include_permissions to check what actions the current user can take before attempting them.
 - get_transitions(key) → Available status transitions
 - transition(key, transition_id, fields?, comment?) → Move ticket to new status.
   If the response payload is MissingFields, call ask_followup_question for each
@@ -171,6 +171,10 @@ description optional: for approval dialog on write actions.
             "include_history" to ParameterProperty(
                 type = "boolean",
                 description = "If true, also fetch the ticket's status/assignee/priority change history. Default false."
+            ),
+            "include_permissions" to ParameterProperty(
+                type = "boolean",
+                description = "If true, also fetch the user's permissions on this ticket's project (transition, comment, log work, watch). Default false. Useful for the LLM to check before attempting an action that may 403."
             )
         ),
         required = listOf("action")
@@ -199,7 +203,8 @@ description optional: for approval dialog on write actions.
                 val includeDevStatus = params["include_dev_status"]?.jsonPrimitive?.content?.lowercase() == "true"
                 val includeRemoteLinks = params["include_remote_links"]?.jsonPrimitive?.content?.lowercase() == "true"
                 val includeHistory = params["include_history"]?.jsonPrimitive?.content?.lowercase() == "true"
-                val anyInclude = includeDevStatus || includeRemoteLinks || includeHistory
+                val includePermissions = params["include_permissions"]?.jsonPrimitive?.content?.lowercase() == "true"
+                val anyInclude = includeDevStatus || includeRemoteLinks || includeHistory || includePermissions
                 if (!anyInclude) {
                     service.getTicket(key).toAgentToolResult()
                 } else {
@@ -208,6 +213,8 @@ description optional: for approval dialog on write actions.
                         val devStatusDeferred = if (includeDevStatus) async { service.getFullDevStatus(key) } else null
                         val remoteLinksDeferred = if (includeRemoteLinks) async { service.getRemoteLinks(key) } else null
                         val historyDeferred = if (includeHistory) async { service.getTicketHistory(key) } else null
+                        val projectKey = key.substringBefore("-")
+                        val permsDeferred = if (includePermissions) async { service.getMyPermissions(projectKey) } else null
 
                         val ticketResult = ticketDeferred.await()
                         if (ticketResult.isError) return@coroutineScope ticketResult.toAgentToolResult()
@@ -227,6 +234,10 @@ description optional: for approval dialog on write actions.
                         historyDeferred?.await()?.let { h ->
                             blocks += formatTicketHistory(h.data)
                             summaries += h.summary
+                        }
+                        permsDeferred?.await()?.let { p ->
+                            blocks += formatPermissions(p.data)
+                            summaries += p.summary
                         }
 
                         val combined = blocks.joinToString("\n\n")
@@ -739,6 +750,18 @@ description optional: for approval dialog on write actions.
         }
     }
 
+    private fun formatPermissions(perms: com.workflow.orchestrator.core.model.jira.MyPermissionsData): String {
+        if (perms.permissions.isEmpty()) return "Permissions: (none)"
+        val lines = perms.permissions.values
+            .filter { !it.deprecated }
+            .sortedBy { it.key }
+            .map { flag ->
+                val state = if (flag.havePermission) "granted" else "denied"
+                "  • ${flag.key} (${flag.name}): $state"
+            }
+        return "Permissions:\n" + lines.joinToString("\n")
+    }
+
     private fun formatRemoteLinks(links: List<com.workflow.orchestrator.core.model.jira.RemoteLinkData>): String {
         if (links.isEmpty()) return "Remote Links: (none)"
         val lines = links.map { "• [${it.applicationName ?: it.applicationType ?: "link"}] ${it.title ?: "(no title)"} → ${it.url}" }
@@ -765,8 +788,9 @@ description optional: for approval dialog on write actions.
         includeRemoteLinks: Boolean,
         includeHistory: Boolean,
         service: com.workflow.orchestrator.core.services.JiraService,
+        includePermissions: Boolean = false,
     ): ToolResult {
-        val anyInclude = includeDevStatus || includeRemoteLinks || includeHistory
+        val anyInclude = includeDevStatus || includeRemoteLinks || includeHistory || includePermissions
         if (!anyInclude) {
             return service.getTicket(key).toAgentToolResult()
         }
@@ -775,6 +799,8 @@ description optional: for approval dialog on write actions.
             val devStatusDeferred = if (includeDevStatus) async { service.getFullDevStatus(key) } else null
             val remoteLinksDeferred = if (includeRemoteLinks) async { service.getRemoteLinks(key) } else null
             val historyDeferred = if (includeHistory) async { service.getTicketHistory(key) } else null
+            val projectKey = key.substringBefore("-")
+            val permsDeferred = if (includePermissions) async { service.getMyPermissions(projectKey) } else null
 
             val ticketResult = ticketDeferred.await()
             if (ticketResult.isError) return@coroutineScope ticketResult.toAgentToolResult()
@@ -794,6 +820,10 @@ description optional: for approval dialog on write actions.
             historyDeferred?.await()?.let { h ->
                 blocks += formatTicketHistory(h.data)
                 summaries += h.summary
+            }
+            permsDeferred?.await()?.let { p ->
+                blocks += formatPermissions(p.data)
+                summaries += p.summary
             }
 
             val combined = blocks.joinToString("\n\n")

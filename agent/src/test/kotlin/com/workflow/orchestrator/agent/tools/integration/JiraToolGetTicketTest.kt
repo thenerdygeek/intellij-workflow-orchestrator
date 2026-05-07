@@ -2,6 +2,8 @@ package com.workflow.orchestrator.agent.tools.integration
 
 import com.workflow.orchestrator.core.model.jira.DevStatusBundle
 import com.workflow.orchestrator.core.model.jira.JiraTicketData
+import com.workflow.orchestrator.core.model.jira.MyPermissionsData
+import com.workflow.orchestrator.core.model.jira.PermissionFlag
 import com.workflow.orchestrator.core.model.jira.RemoteLinkData
 import com.workflow.orchestrator.core.model.jira.TicketHistoryEntry
 import com.workflow.orchestrator.core.services.JiraService
@@ -153,6 +155,79 @@ class JiraToolGetTicketTest {
         assertTrue(result.content.contains("Jane Smith"), "content must reference author from stub")
         assertTrue(result.content.contains("status"), "content must reference changed field")
         coVerify(exactly = 1) { service.getTicketHistory("PROJ-1") }
+    }
+
+    private fun permissionsResult() = ToolResult(
+        data = MyPermissionsData(
+            permissions = mapOf(
+                "TRANSITION_ISSUES" to PermissionFlag(
+                    key = "TRANSITION_ISSUES",
+                    name = "Transition Issues",
+                    havePermission = true
+                ),
+                "ADD_COMMENTS" to PermissionFlag(
+                    key = "ADD_COMMENTS",
+                    name = "Add Comments",
+                    havePermission = true
+                ),
+                "WORK_ON_ISSUES" to PermissionFlag(
+                    key = "WORK_ON_ISSUES",
+                    name = "Work On Issues",
+                    havePermission = false
+                )
+            )
+        ),
+        summary = "Permissions for project PROJ",
+        isError = false
+    )
+
+    // ── include_permissions=true ─────────────────────────────────────────────
+
+    @Test
+    fun `get_ticket with include_permissions=true fetches permissions and appends block`() = runTest {
+        val service = mockk<JiraService>()
+        coEvery { service.getTicket("PROJ-1") } returns ticketResult()
+        coEvery { service.getMyPermissions("PROJ") } returns permissionsResult()
+
+        val result = tool.executeGetTicketForTest(
+            key = "PROJ-1",
+            includeDevStatus = false,
+            includeRemoteLinks = false,
+            includeHistory = false,
+            includePermissions = true,
+            service = service
+        )
+
+        assertFalse(result.isError)
+        assertTrue(result.content.contains("Permissions"), "content must contain 'Permissions' header")
+        assertTrue(
+            result.content.contains("TRANSITION_ISSUES") || result.content.contains("Transition Issues"),
+            "content must reference at least one permission name"
+        )
+        assertTrue(
+            result.content.contains("true") || result.content.contains("false") ||
+                result.content.contains("granted") || result.content.contains("denied"),
+            "content must reference a permission boolean state"
+        )
+        coVerify(exactly = 1) { service.getMyPermissions("PROJ") }
+    }
+
+    // ── include_permissions omitted → no fetch ────────────────────────────────
+
+    @Test
+    fun `get_ticket without include_permissions does NOT fetch permissions`() = runTest {
+        val service = mockk<JiraService>()
+        coEvery { service.getTicket("PROJ-1") } returns ticketResult()
+
+        tool.executeGetTicketForTest(
+            key = "PROJ-1",
+            includeDevStatus = false,
+            includeRemoteLinks = false,
+            includeHistory = false,
+            service = service
+        )
+
+        coVerify(exactly = 0) { service.getMyPermissions(any()) }
     }
 
     // ── multiple flags fan-out in parallel ────────────────────────────────────
