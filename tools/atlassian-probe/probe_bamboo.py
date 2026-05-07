@@ -820,202 +820,260 @@ class BambooProbe:
 
     _SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(\.\d+)?$")
 
+    def _process_build_for_mirror(
+        self,
+        plan_key: str,
+        build: dict,
+        variable_name: str,
+    ) -> tuple[dict, Optional[dict]]:
+        """Process one build dict for the baseline mirror. Issues per-build
+        GET for variables and computes scoring inputs. Returns
+        (entry, divergence_or_none). `entry` is parseable when it carries
+        `plugin_score` — non-parseable entries get a `skipped` field.
+        """
+        build_num = build.get("buildNumber", "?")
+        raw_result_key = build.get("buildResultKey") or ""
+        result_key = raw_result_key or f"{plan_key}-{build_num}"
+        state = build.get("state", "?")
+        life = build.get("lifeCycleState", "?")
+
+        # Per-build vars (the path the plugin uses for the lookup)
+        self._get(
+            name=f"baseline_vars_{result_key}",
+            description=f"getBuildVariables({result_key}) — per-build expand=variables",
+            path=f"/rest/api/latest/result/{result_key}?expand=variables",
+            category="baseline_mirror",
+        )
+        per_build_blob = _read_raw_body(
+            self.raw_dir / f"baseline_vars_{result_key}.json"
+        )
+        per_build_vars: dict = {}
+        if per_build_blob:
+            per_build_vars = {
+                v.get("name"): v.get("value")
+                for v in (per_build_blob.get("variables") or {}).get("variable") or []
+                if v.get("name")
+            }
+
+        # Embedded vars (from the collection expand) for divergence check
+        embedded_vars = {
+            v.get("name"): v.get("value")
+            for v in (build.get("variables") or {}).get("variable") or []
+            if v.get("name")
+        }
+        only_in_embedded = sorted(set(embedded_vars) - set(per_build_vars))
+        only_in_per_build = sorted(set(per_build_vars) - set(embedded_vars))
+        differing_values = sorted(
+            k for k in (set(embedded_vars) & set(per_build_vars))
+            if embedded_vars[k] != per_build_vars[k]
+        )
+        divergence: Optional[dict] = None
+        if only_in_embedded or only_in_per_build or differing_values:
+            divergence = {
+                "build": build_num,
+                "result_key": result_key,
+                "only_in_embedded": only_in_embedded,
+                "only_in_per_build": only_in_per_build,
+                "differing_values": differing_values,
+            }
+
+        # Plugin's case-insensitive lookup on per-build vars
+        docker_tags_value: Optional[str] = next(
+            (v for k, v in per_build_vars.items()
+             if k.lower() == variable_name.lower()),
+            None,
+        )
+
+        # Stages live at build["stages"]["stage"] when expanded
+        stages_node = build.get("stages") or {}
+        stages = stages_node.get("stage") if isinstance(stages_node, dict) else stages_node
+        if not isinstance(stages, list):
+            stages = []
+        success_stages = sum(
+            1 for s in stages
+            if (s.get("state") or "").lower() == "successful"
+        )
+        failed_stages = sum(
+            1 for s in stages
+            if (s.get("state") or "").lower() == "failed"
+        )
+
+        # Test counts — try build-level first, fall back to summing nested
+        # job results. Different Bamboo configs populate one or the other.
+        failed_tests_top = build.get("failedTestCount")
+        success_tests_top = build.get("successfulTestCount")
+        failed_tests_summed = 0
+        success_tests_summed = 0
+        for s in stages:
+            results_node = s.get("results") or {}
+            jobs = results_node.get("result") if isinstance(results_node, dict) else results_node
+            if not isinstance(jobs, list):
+                jobs = []
+            for j in jobs:
+                failed_tests_summed += int(j.get("failedTestCount") or 0)
+                success_tests_summed += int(j.get("successfulTestCount") or 0)
+        failed_tests = (
+            failed_tests_top if isinstance(failed_tests_top, int) else failed_tests_summed
+        )
+        success_tests = (
+            success_tests_top if isinstance(success_tests_top, int) else success_tests_summed
+        )
+
+        entry = {
+            "build_num": build_num,
+            "result_key": result_key,
+            "raw_result_key_was_empty": raw_result_key == "",
+            "state": state,
+            "lifecycle": life,
+            "var_count_per_build": len(per_build_vars),
+            "var_count_embedded": len(embedded_vars),
+            "success_stages": success_stages,
+            "failed_stages": failed_stages,
+            "failed_tests": failed_tests,
+            "success_tests": success_tests,
+            "failed_tests_source": (
+                "build-level" if isinstance(failed_tests_top, int)
+                else "summed-from-jobs"
+            ),
+        }
+
+        if docker_tags_value is None:
+            entry["skipped"] = (
+                f"no '{variable_name}' (case-insensitive) in "
+                f"{len(per_build_vars)} per-build vars"
+            )
+            return entry, divergence
+
+        try:
+            tags = json.loads(docker_tags_value)
+        except (json.JSONDecodeError, ValueError):
+            entry["skipped"] = "value present but did not parse as JSON"
+            entry["raw_value_preview"] = docker_tags_value[:120]
+            return entry, divergence
+        if not isinstance(tags, dict):
+            entry["skipped"] = "value parsed but not a JSON object"
+            return entry, divergence
+        if not tags:
+            entry["skipped"] = "value parsed to empty object"
+            return entry, divergence
+
+        release_count = sum(
+            1 for v in tags.values()
+            if isinstance(v, str) and self._SEMVER_RE.match(v)
+        )
+        total_services = len(tags)
+        all_release = total_services > 0 and release_count == total_services
+
+        # Plugin's current scoring (TagBuilderService.kt:110)
+        plugin_score = (release_count * 10) + (success_stages * 5) - (failed_stages * 20)
+
+        entry.update({
+            "total_services": total_services,
+            "release_count": release_count,
+            "all_release": all_release,
+            "plugin_score": plugin_score,
+            "docker_tags_sample": dict(list(tags.items())[:3]),
+            "docker_tags_full": tags,
+        })
+        return entry, divergence
+
+    def _print_full_dockertags(self, label: str, entry: dict) -> None:
+        """Pretty-print a baseline pick's full dockerTagsAsJson with a
+        ✓ marker on each tag that matches the semver release pattern."""
+        tags = entry.get("docker_tags_full") or {}
+        print(f"\n    {label} dockerTagsAsJson "
+              f"(build #{entry['build_num']}, {entry['result_key']}):")
+        if not tags:
+            print(f"      (empty)")
+            return
+        longest = max(len(k) for k in tags)
+        for service, tag in sorted(tags.items()):
+            tag_str = tag if isinstance(tag, str) else json.dumps(tag)
+            is_release = isinstance(tag, str) and self._SEMVER_RE.match(tag)
+            marker = "  ✓ release" if is_release else ""
+            print(f"      {service:<{longest}}  =  {tag_str}{marker}")
+
     def mirror_baseline_detection(
         self,
         plan_key: str,
         variable_name: str = "DockerTagsAsJSON",
-        max_results: int = 10,
+        target_parseable: int = 10,
+        max_walk: int = 50,
     ) -> dict:
         """Replays automation/TagBuilderService.kt:scoreAndRankRuns against
         the live Bamboo so the probe verifies the plugin's read paths are
-        producing what the plugin assumes. Returns the would-be baseline
-        + per-build diagnostics + a divergence report comparing the two
-        variable-fetch shapes the plugin uses (`expand=variables` per build
-        vs `expand=results.result.variables.variable` collection).
-        """
-        # 1. Recent builds with embedded variables (collection expand)
-        self._get(
-            name=f"baseline_recent_{plan_key}",
-            description=f"getRecentResults({plan_key}) — collection expand for baseline mirror",
-            path=f"/rest/api/latest/result/{plan_key}"
-                 f"?max-results={max_results}"
-                 f"&expand=results.result.stages.stage.results.result,"
-                 f"results.result.variables.variable",
-            category="baseline_mirror",
-        )
-        recent_blob = _read_raw_body(self.raw_dir / f"baseline_recent_{plan_key}.json")
-        if not recent_blob:
-            return {
-                "plan_key": plan_key, "variable_name": variable_name,
-                "error": "could not fetch recent builds",
-                "ranked": [], "selected": None, "divergences": [],
-            }
+        producing what the plugin assumes.
 
-        builds = (recent_blob.get("results") or {}).get("result") or []
+        Paginates recent builds until target_parseable parseable entries
+        are accumulated or max_walk total builds have been examined. The
+        plugin's TagBuilderService hardcodes maxResults=10 with no
+        pagination, so any sandbox / dev / partial run in the recent 10
+        reduces the effective baseline pool. The mirror walks further so
+        you can see what would actually be available with proper paging.
+
+        Returns a digest with the plugin's pick (current scoring) AND the
+        proposed two-tier pick side by side, plus a divergence report
+        between the two variable-fetch shapes the plugin uses.
+        """
+        page_size = 10
+        start_index = 0
+        pages_fetched = 0
         ranked: list[dict] = []
+        parseable: list[dict] = []
         divergences: list[dict] = []
 
-        for build in builds:
-            build_num = build.get("buildNumber", "?")
-            raw_result_key = build.get("buildResultKey") or ""
-            result_key = raw_result_key or f"{plan_key}-{build_num}"
-            state = build.get("state", "?")
-            life = build.get("lifeCycleState", "?")
-
-            # 2. Per-build vars (the path the plugin uses for the lookup)
+        outer_break = False
+        while not outer_break and len(parseable) < target_parseable and len(ranked) < max_walk:
+            page_label = f"p{start_index:04d}"
             self._get(
-                name=f"baseline_vars_{result_key}",
-                description=f"getBuildVariables({result_key}) — per-build expand=variables",
-                path=f"/rest/api/latest/result/{result_key}?expand=variables",
+                name=f"baseline_recent_{plan_key}_{page_label}",
+                description=(f"getRecentResults({plan_key}) page "
+                             f"start_index={start_index} size={page_size}"),
+                path=(f"/rest/api/latest/result/{plan_key}"
+                      f"?max-results={page_size}&start-index={start_index}"
+                      f"&expand=results.result.stages.stage.results.result,"
+                      f"results.result.variables.variable"),
                 category="baseline_mirror",
             )
-            per_build_blob = _read_raw_body(
-                self.raw_dir / f"baseline_vars_{result_key}.json"
+            page_blob = _read_raw_body(
+                self.raw_dir / f"baseline_recent_{plan_key}_{page_label}.json"
             )
-            per_build_vars: dict = {}
-            if per_build_blob:
-                per_build_vars = {
-                    v.get("name"): v.get("value")
-                    for v in (per_build_blob.get("variables") or {}).get("variable") or []
-                    if v.get("name")
-                }
+            pages_fetched += 1
+            if not page_blob:
+                if pages_fetched == 1:
+                    return {
+                        "plan_key": plan_key, "variable_name": variable_name,
+                        "error": "could not fetch recent builds",
+                        "walked": [], "parseable": [],
+                        "plugin_pick": None, "two_tier_pick": None,
+                        "divergences": [], "pages_fetched": pages_fetched,
+                    }
+                break
+            page_builds = (page_blob.get("results") or {}).get("result") or []
+            if not page_builds:
+                break
 
-            # 3. Embedded vars (from the collection expand) for divergence check
-            embedded_vars = {
-                v.get("name"): v.get("value")
-                for v in (build.get("variables") or {}).get("variable") or []
-                if v.get("name")
-            }
-
-            only_in_embedded = sorted(set(embedded_vars) - set(per_build_vars))
-            only_in_per_build = sorted(set(per_build_vars) - set(embedded_vars))
-            differing_values = sorted(
-                k for k in (set(embedded_vars) & set(per_build_vars))
-                if embedded_vars[k] != per_build_vars[k]
-            )
-            if only_in_embedded or only_in_per_build or differing_values:
-                divergences.append({
-                    "build": build_num,
-                    "result_key": result_key,
-                    "only_in_embedded": only_in_embedded,
-                    "only_in_per_build": only_in_per_build,
-                    "differing_values": differing_values,
-                })
-
-            # 4. Plugin's case-insensitive lookup on per-build vars
-            docker_tags_value: Optional[str] = next(
-                (v for k, v in per_build_vars.items()
-                 if k.lower() == variable_name.lower()),
-                None,
-            )
-
-            # Stages live at build["stages"]["stage"] when expanded
-            stages_node = build.get("stages") or {}
-            stages = stages_node.get("stage") if isinstance(stages_node, dict) else stages_node
-            if not isinstance(stages, list):
-                stages = []
-            success_stages = sum(
-                1 for s in stages
-                if (s.get("state") or "").lower() == "successful"
-            )
-            failed_stages = sum(
-                1 for s in stages
-                if (s.get("state") or "").lower() == "failed"
-            )
-
-            # Test counts — try build-level first, fall back to summing job
-            # results from stages.stage.results.result. Different Bamboo
-            # configs populate one or the other; we surface whichever is non-zero.
-            failed_tests_top = build.get("failedTestCount")
-            success_tests_top = build.get("successfulTestCount")
-            failed_tests_summed = 0
-            success_tests_summed = 0
-            for s in stages:
-                results_node = s.get("results") or {}
-                jobs = results_node.get("result") if isinstance(results_node, dict) else results_node
-                if not isinstance(jobs, list):
-                    jobs = []
-                for j in jobs:
-                    failed_tests_summed += int(j.get("failedTestCount") or 0)
-                    success_tests_summed += int(j.get("successfulTestCount") or 0)
-            failed_tests = (
-                failed_tests_top if isinstance(failed_tests_top, int) else failed_tests_summed
-            )
-            success_tests = (
-                success_tests_top if isinstance(success_tests_top, int) else success_tests_summed
-            )
-
-            entry = {
-                "build_num": build_num,
-                "result_key": result_key,
-                "raw_result_key_was_empty": raw_result_key == "",
-                "state": state,
-                "lifecycle": life,
-                "var_count_per_build": len(per_build_vars),
-                "var_count_embedded": len(embedded_vars),
-                "success_stages": success_stages,
-                "failed_stages": failed_stages,
-                "failed_tests": failed_tests,
-                "success_tests": success_tests,
-                "failed_tests_source": (
-                    "build-level" if isinstance(failed_tests_top, int)
-                    else "summed-from-jobs"
-                ),
-            }
-
-            if docker_tags_value is None:
-                entry["skipped"] = (
-                    f"no '{variable_name}' (case-insensitive) in "
-                    f"{len(per_build_vars)} per-build vars"
+            for build in page_builds:
+                entry, divergence = self._process_build_for_mirror(
+                    plan_key, build, variable_name,
                 )
                 ranked.append(entry)
-                continue
+                if divergence:
+                    divergences.append(divergence)
+                if "plugin_score" in entry:
+                    parseable.append(entry)
+                if len(parseable) >= target_parseable or len(ranked) >= max_walk:
+                    outer_break = True
+                    break
 
-            try:
-                tags = json.loads(docker_tags_value)
-            except (json.JSONDecodeError, ValueError):
-                entry["skipped"] = "value present but did not parse as JSON"
-                entry["raw_value_preview"] = docker_tags_value[:120]
-                ranked.append(entry)
-                continue
-            if not isinstance(tags, dict):
-                entry["skipped"] = "value parsed but not a JSON object"
-                ranked.append(entry)
-                continue
-            if not tags:
-                entry["skipped"] = "value parsed to empty object"
-                ranked.append(entry)
-                continue
+            if len(page_builds) < page_size:
+                break
+            start_index += len(page_builds)
 
-            release_count = sum(
-                1 for v in tags.values()
-                if isinstance(v, str) and self._SEMVER_RE.match(v)
-            )
-            total_services = len(tags)
-            all_release = total_services > 0 and release_count == total_services
-
-            # Plugin's current scoring (TagBuilderService.kt:110)
-            plugin_score = (release_count * 10) + (success_stages * 5) - (failed_stages * 20)
-
-            entry.update({
-                "total_services": total_services,
-                "release_count": release_count,
-                "all_release": all_release,
-                "plugin_score": plugin_score,
-                "docker_tags_sample": dict(list(tags.items())[:3]),
-                "docker_tags_full": tags,
-            })
-            ranked.append(entry)
-
-        # ---- Two ranking views ----
-        scored = [r for r in ranked if "plugin_score" in r]
-
-        # 1. Plugin's current scoring (sort by score desc)
-        plugin_ranked = sorted(scored, key=lambda r: r["plugin_score"], reverse=True)
+        # ---- Two ranking views (only over parseable entries) ----
+        plugin_ranked = sorted(parseable, key=lambda r: r["plugin_score"], reverse=True)
         plugin_pick = plugin_ranked[0] if plugin_ranked else None
 
-        # 2. Two-tier scoring: tier 1 = all-release; rank by failed_tests asc,
-        #    then success_tests desc, then release_count desc.
         def _two_tier_key(r: dict) -> tuple:
             return (
                 1 if r["all_release"] else 0,
@@ -1023,27 +1081,29 @@ class BambooProbe:
                 r["success_tests"],
                 r["release_count"],
             )
-        two_tier_ranked = sorted(scored, key=_two_tier_key, reverse=True)
+        two_tier_ranked = sorted(parseable, key=_two_tier_key, reverse=True)
         two_tier_pick = two_tier_ranked[0] if two_tier_ranked else None
 
         # ---- Console output ----
         print(f"\n--- Baseline-detection mirror ({plan_key}, var='{variable_name}') ---")
-        print(f"  {len(builds)} recent build(s) examined.")
-        print(f"  {len(scored)} have a parseable '{variable_name}'; "
-              f"{len(ranked) - len(scored)} skipped.")
+        print(f"  {len(parseable)} parseable build(s) found across "
+              f"{len(ranked)} walked ({pages_fetched} page(s) of {page_size}).")
+        if len(parseable) < target_parseable:
+            print(f"  ⚠ Walked {len(ranked)} builds (cap={max_walk}) but only "
+                  f"{len(parseable)} are parseable. Plugin's hardcoded "
+                  f"maxResults=10 + no pagination would see even fewer.")
         if divergences:
             print(f"  ⚠ {len(divergences)} build(s) showed embedded vs per-build "
                   f"variable divergence — see raw/baseline_mirror_digest.json.")
         else:
-            print(f"  ✓ Embedded and per-build variable shapes agree on every build.")
+            print(f"  ✓ Embedded and per-build variable shapes agree on every walked build.")
 
         empty_keys = sum(1 for r in ranked if r["raw_result_key_was_empty"])
         if empty_keys:
             print(f"  ⚠ {empty_keys} build(s) returned empty buildResultKey "
                   f"(plugin's `.ifBlank` fallback hides this).")
 
-        # Per-build table
-        if scored:
+        if parseable:
             print(f"\n  {'Build':>7}  {'state':<11} {'rel/total':>9} "
                   f"{'failTst':>7} {'okTst':>6} {'failStg':>7} {'okStg':>5} "
                   f"{'plugin':>7} {'tier':>4}")
@@ -1057,39 +1117,48 @@ class BambooProbe:
                       f"{r['failed_stages']:>7} {r['success_stages']:>5} "
                       f"{r['plugin_score']:>7} {tier:>4}")
 
-        # Pick comparison
+        # Pick comparison + full dockerTagsAsJson for the picks
         print()
         if plugin_pick and two_tier_pick:
-            same = plugin_pick["build_num"] == two_tier_pick["build_num"]
-            if same:
+            if plugin_pick["build_num"] == two_tier_pick["build_num"]:
                 print(f"  Both algorithms agree: build #{plugin_pick['build_num']} "
-                      f"is the baseline.")
+                      f"({plugin_pick['result_key']}) is the baseline.")
+                self._print_full_dockertags("Baseline", plugin_pick)
             else:
                 print(f"  ⚠ Algorithms DISAGREE:")
                 print(f"    Plugin (current) picks: build #{plugin_pick['build_num']} "
                       f"(score={plugin_pick['plugin_score']}, "
                       f"{plugin_pick['release_count']}/{plugin_pick['total_services']} "
                       f"release tags, {plugin_pick['failed_tests']} failed tests)")
+                self._print_full_dockertags("Plugin pick", plugin_pick)
+                print()
                 print(f"    Two-tier (proposed) picks: build #{two_tier_pick['build_num']} "
                       f"(tier={'1' if two_tier_pick['all_release'] else '2'}, "
                       f"{two_tier_pick['release_count']}/{two_tier_pick['total_services']} "
                       f"release tags, {two_tier_pick['failed_tests']} failed tests)")
-                print(f"    → Evidence the plugin's failed-stage penalty may be "
+                self._print_full_dockertags("Two-tier pick", two_tier_pick)
+                print(f"\n    → Evidence the plugin's failed-stage penalty may be "
                       f"misranking. Review before adopting either.")
         elif two_tier_pick:
             print(f"  Two-tier picks build #{two_tier_pick['build_num']} as baseline.")
+            self._print_full_dockertags("Baseline", two_tier_pick)
         else:
             print(f"  No build qualifies as a baseline (no parseable '{variable_name}').")
+
+        print(f"\n  Full per-build data: raw/baseline_mirror_digest.json")
 
         digest = {
             "plan_key": plan_key,
             "variable_name": variable_name,
-            "ranked": ranked,
+            "target_parseable": target_parseable,
+            "max_walk": max_walk,
+            "pages_fetched": pages_fetched,
+            "walked": ranked,
+            "parseable": parseable,
             "plugin_pick": plugin_pick,
             "two_tier_pick": two_tier_pick,
             "divergences": divergences,
         }
-        # Persist a structured copy so future runs can diff against it.
         (self.raw_dir / "baseline_mirror_digest.json").write_text(
             json.dumps(digest, indent=2, default=str), encoding="utf-8",
         )
