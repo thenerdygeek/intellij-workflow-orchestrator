@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.core.services
 
+import com.workflow.orchestrator.core.model.bamboo.BuildChangeData
 import com.workflow.orchestrator.core.model.bamboo.BuildResultData
 import com.workflow.orchestrator.core.model.bamboo.BuildTriggerData
 import com.workflow.orchestrator.core.model.bamboo.PlanBranchData
@@ -105,4 +106,14 @@ interface BambooService {
 
     /** List all projects visible to the authenticated user. */
     suspend fun getProjects(): ToolResult<List<ProjectData>>
+
+    /**
+     * Get commit list for a specific build result (R-ADD-1, §8.8 of 2026-05-07 Bamboo audit).
+     * Hits GET /result/{key}?expand=changes.change and returns each commit's author,
+     * message, SHA, commit URL, and timestamp. Useful for "what's in this build" display
+     * and for enriching the Bamboo→Bitbucket bridge with multi-commit PR lookup.
+     *
+     * Validated on Bamboo 10.2.14: bundle-repo.unpacked/raw/result_changes.json.
+     */
+    suspend fun getBuildChanges(resultKey: String): ToolResult<List<BuildChangeData>>
 }

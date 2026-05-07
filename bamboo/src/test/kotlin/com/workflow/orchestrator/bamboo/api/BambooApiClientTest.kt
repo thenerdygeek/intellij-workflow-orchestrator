@@ -87,33 +87,22 @@ class BambooApiClientTest {
         assertTrue(recorded.path!!.contains("/rest/api/latest/result/PROJ-BUILD/branch/feature%2FPROJ-123"))
     }
 
+    /**
+     * §8.1 regression: Bamboo 10.2 variableContext uses `key`/`value` shape (NOT `name`/`value`).
+     * Response shape validated against bundle-repo.unpacked/raw/plan_variables_via_context.json.
+     */
     @Test
-    fun `getPlanVariableDirect returns plan variables`() = runTest {
-        server.enqueue(MockResponse().setBody(fixture("plan-variables.json")))
-
-        val result = client.getPlanVariableDirect("PROJ-BUILD")
-
-        assertTrue(result.isSuccess)
-        val vars = (result as ApiResult.Success).data
-        assertEquals(3, vars.size)
-        assertEquals("skipTests", vars[0].name)
-        assertEquals("false", vars[0].value)
-
-        val recorded = server.takeRequest()
-        assertEquals("/rest/api/latest/plan/PROJ-BUILD/variable", recorded.path)
-    }
-
-    @Test
-    fun `getPlanVariableContext returns variables via variableContext expand`() = runTest {
+    fun `getPlanVariableContext parses Bamboo 10_2 key shape correctly`() = runTest {
         server.enqueue(MockResponse().setBody("""
             {
               "key": "PROJ-BUILD",
               "name": "Build Plan",
               "variableContext": {
-                "size": 2,
+                "size": 3,
                 "variable": [
-                  { "name": "dockerTagsAsJson", "value": "{}" },
-                  { "name": "skipTests", "value": "false" }
+                  { "key": "JENKINS_SECRET", "variableType": "GLOBAL", "isPassword": true },
+                  { "key": "DEVELOP_VERSION", "value": "1.2.3", "variableType": "PLAN", "isPassword": false },
+                  { "key": "NO_PROXY", "value": "localhost", "variableType": "GLOBAL", "isPassword": false }
                 ]
               }
             }
@@ -123,8 +112,14 @@ class BambooApiClientTest {
 
         assertTrue(result.isSuccess)
         val vars = (result as ApiResult.Success).data
-        assertEquals(2, vars.size)
-        assertEquals("dockerTagsAsJson", vars[0].name)
+        assertEquals(3, vars.size)
+        assertEquals("JENKINS_SECRET", vars[0].key)
+        assertEquals("", vars[0].value)  // password field — no value returned
+        assertTrue(vars[0].isPassword)
+        assertEquals("DEVELOP_VERSION", vars[1].key)
+        assertEquals("1.2.3", vars[1].value)
+        assertEquals("PLAN", vars[1].variableType)
+        assertEquals("NO_PROXY", vars[2].key)
 
         val recorded = server.takeRequest()
         assertEquals("/rest/api/latest/plan/PROJ-BUILD?expand=variableContext", recorded.path)

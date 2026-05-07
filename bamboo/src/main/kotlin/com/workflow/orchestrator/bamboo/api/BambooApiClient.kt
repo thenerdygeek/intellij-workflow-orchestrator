@@ -61,6 +61,17 @@ class BambooApiClient(
             .map { it.searchResults.map { r -> r.searchEntity } }
     }
 
+    /**
+     * GET /rest/api/latest/plan/{key}/specs?format=YAML
+     *
+     * Returns the bamboo-specs YAML for a plan. Used by [PlanDetectionService] Tier 4 deep-scan
+     * to match plans to repository URLs.
+     *
+     * NOTE: Returns 403 for non-admin PATs (requires **Plan View Configuration** permission).
+     * The caller ([PlanDetectionService.legacyN1ScanPublic]) already handles 403 gracefully
+     * via `specsResult.getOrNull() ?: continue` — 403 just skips that plan in the scan.
+     * Bamboo 10.2.14 probe: confirmed 403 on the user's non-admin PAT (bundle-repo + bundle-automation).
+     */
     suspend fun getPlanSpecs(planKey: String): ApiResult<String> {
         log.debug("[Bamboo:API] Fetching plan specs for planKey=$planKey")
         return getRaw("/rest/api/latest/plan/$planKey/specs?format=YAML")
@@ -116,18 +127,16 @@ class BambooApiClient(
         return get("/rest/api/latest/result/$jobResultKey?expand=testResults.failedTests.testResult,testResults.successfulTests.testResult")
     }
 
-    /** Primary: plan variables via variableContext expand (works on all Bamboo versions). */
-    suspend fun getPlanVariableContext(planKey: String): ApiResult<List<BambooPlanVariableDto>> {
+    /**
+     * Plan variables via variableContext expand (validated on Bamboo 10.2.14).
+     * Returns [BambooPlanContextVariableDto] — each item has `key`/`value`/`variableType`/`isPassword`.
+     * Note: the build-level `?expand=variables` response uses `name`/`value` (different shape).
+     * See: bundle-repo.unpacked/raw/plan_variables_via_context.json for the canonical shape.
+     */
+    suspend fun getPlanVariableContext(planKey: String): ApiResult<List<BambooPlanContextVariableDto>> {
         log.info("[Bamboo:API] getPlanVariableContext: GET /plan/$planKey?expand=variableContext")
         return get<BambooPlanDetailResponse>("/rest/api/latest/plan/$planKey?expand=variableContext")
             .map { it.variableContext.variable }
-    }
-
-    /** Fallback: plan variables via /variable sub-resource (404 on some Bamboo servers). */
-    suspend fun getPlanVariableDirect(planKey: String): ApiResult<List<BambooPlanVariableDto>> {
-        log.info("[Bamboo:API] getPlanVariableDirect: GET /plan/$planKey/variable")
-        return get<BambooVariableListResponse>("/rest/api/latest/plan/$planKey/variable")
-            .map { it.variables.variable }
     }
 
     suspend fun triggerBuild(
@@ -400,6 +409,7 @@ class BambooApiClient(
     /**
      * GET /rest/api/latest/plan/{masterPlanKey}/branch?max-results={maxResults}
      * Returns all branch plans for the given master plan key.
+     * [getBranches] delegates here with maxResults=100 for backward compatibility.
      */
     suspend fun getPlanBranches(
         masterPlanKey: String,
@@ -408,6 +418,20 @@ class BambooApiClient(
         get<com.workflow.orchestrator.bamboo.api.dto.BambooPlanBranchListResponse>(
             "/rest/api/latest/plan/$masterPlanKey/branch?max-results=$maxResults"
         ).map { it.branches.branch }
+
+    /**
+     * GET /rest/api/latest/result/{resultKey}?expand=changes.change
+     *
+     * Returns the list of commits included in this build since the last successful build.
+     * Validated on Bamboo 10.2.14: bundle-repo.unpacked/raw/result_changes.json.
+     * Adopted per §5 R-ADD-1 of the 2026-05-07 Bamboo audit recommendations.
+     */
+    suspend fun getBuildChanges(resultKey: String): ApiResult<List<com.workflow.orchestrator.bamboo.api.dto.BambooBuildChangeDto>> {
+        log.info("[Bamboo:API] getBuildChanges: GET /result/$resultKey?expand=changes.change")
+        return get<com.workflow.orchestrator.bamboo.api.dto.BambooBuildChangesResponse>(
+            "/rest/api/latest/result/$resultKey?expand=changes.change"
+        ).map { it.changes.change }
+    }
 
     /**
      * Returns Success(true) if `GET /rest/api/latest/plan/{candidate}` returns 200,

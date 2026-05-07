@@ -7,12 +7,13 @@ import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
 import com.workflow.orchestrator.core.model.ServiceType
+import com.workflow.orchestrator.core.model.bamboo.ArtifactData
+import com.workflow.orchestrator.core.model.bamboo.BuildChangeData
 import com.workflow.orchestrator.core.model.bamboo.BuildJobData
 import com.workflow.orchestrator.core.model.bamboo.BuildResultData
 import com.workflow.orchestrator.core.model.bamboo.BuildStageData
 import com.workflow.orchestrator.core.model.bamboo.BuildTriggerData
 import com.workflow.orchestrator.core.model.bamboo.FailedTestData
-import com.workflow.orchestrator.core.model.bamboo.ArtifactData
 import com.workflow.orchestrator.core.model.bamboo.PlanBranchData
 import com.workflow.orchestrator.core.model.bamboo.PlanData
 import com.workflow.orchestrator.core.model.bamboo.PlanVariableData
@@ -88,13 +89,26 @@ class BambooServiceImpl(private val project: Project) : BambooService {
             // Fallback: use Bamboo's /branch/{name}/latest URL (server-side resolution).
             // This works even when the branch isn't in the branches list API response.
             log.info("[BambooService] Branch resolution failed for '$branch', falling back to direct branch URL")
-            return when (val result = api.getLatestResult(planKey, branch)) {
-                is ApiResult.Success -> mapBuildResult(result.data)
-                is ApiResult.Error -> {
-                    log.warn("[BambooService] Fallback also failed for $planKey/branch/$branch: ${result.message}")
-                    buildErrorResult(planKey, 0, result)
+            val branchResult = api.getLatestResult(planKey, branch)
+            if (branchResult is ApiResult.Success) return mapBuildResult(branchResult.data)
+
+            // Second fallback: when the requested branch IS the master plan's tracked branch,
+            // Bamboo returns 404 for /branch/{name}/latest (no separate branch plan exists).
+            // The plain /result/{planKey}/latest IS the requested branch's build in that case.
+            if (branchResult is ApiResult.Error && branchResult.type == ErrorType.NOT_FOUND) {
+                log.warn("[BambooService] Branch URL 404 for $planKey/branch/$branch — " +
+                    "branch may be master's tracked branch; retrying unbranched /latest")
+                return when (val masterResult = api.getLatestResult(planKey)) {
+                    is ApiResult.Success -> mapBuildResult(masterResult.data)
+                    is ApiResult.Error -> {
+                        log.warn("[BambooService] Unbranched fallback also failed for $planKey: ${masterResult.message}")
+                        buildErrorResult(planKey, 0, masterResult)
+                    }
                 }
             }
+            val errResult = branchResult as ApiResult.Error
+            log.warn("[BambooService] Fallback also failed for $planKey/branch/$branch: ${errResult.message}")
+            return buildErrorResult(planKey, 0, errResult)
         }
 
         return when (val result = api.getLatestResult(planKey)) {
@@ -293,10 +307,12 @@ class BambooServiceImpl(private val project: Project) : BambooService {
             hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
         )
 
-        // Strategy A: variableContext expand (works on all Bamboo versions)
+        // Strategy A: variableContext expand (validated Bamboo 10.2 primary path).
+        // Note: plan-level variableContext returns `key`/`value` shape (not `name`/`value`).
+        // We map dto.key → PlanVariableData.name so callers see a uniform name/value surface.
         val contextResult = api.getPlanVariableContext(planKey)
         if (contextResult is ApiResult.Success && contextResult.data.isNotEmpty()) {
-            val data = contextResult.data.map { PlanVariableData(name = it.name, value = it.value) }
+            val data = contextResult.data.map { PlanVariableData(name = it.key, value = it.value) }
             log.info("[BambooService] Got ${data.size} plan variable(s) via variableContext for $planKey")
             return ToolResult.success(
                 data = data,
@@ -304,18 +320,8 @@ class BambooServiceImpl(private val project: Project) : BambooService {
             )
         }
 
-        // Strategy B: /variable sub-resource (404 on some servers)
-        val directResult = api.getPlanVariableDirect(planKey)
-        if (directResult is ApiResult.Success && directResult.data.isNotEmpty()) {
-            val data = directResult.data.map { PlanVariableData(name = it.name, value = it.value) }
-            log.info("[BambooService] Got ${data.size} plan variable(s) via /variable for $planKey")
-            return ToolResult.success(
-                data = data,
-                summary = "Plan $planKey has ${data.size} variable(s): ${data.joinToString { it.name }}"
-            )
-        }
-
         // Strategy C: fall back to most recent build's variables
+        // (Strategy B — /plan/{key}/variable — was removed: 404 on Bamboo 10.2 per §8.3 audit)
         log.info("[BambooService] Plan variable endpoints failed for $planKey, falling back to last build's variables")
         val recentResult = api.getRecentResults(planKey, maxResults = 1)
         if (recentResult is ApiResult.Success) {
@@ -896,6 +902,44 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                 summary = legacyResult.message,
                 isError = true
             )
+        }
+    }
+
+    override suspend fun getBuildChanges(resultKey: String): ToolResult<List<BuildChangeData>> {
+        val api = client ?: return ToolResult(
+            data = emptyList(),
+            summary = "Bamboo not configured. Cannot fetch build changes for $resultKey.",
+            isError = true,
+            hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+
+        return when (val result = api.getBuildChanges(resultKey)) {
+            is ApiResult.Success -> {
+                val data = result.data.map { dto ->
+                    BuildChangeData(
+                        userName = dto.userName,
+                        fullName = dto.fullName,
+                        comment = dto.comment,
+                        changesetId = dto.changesetId,
+                        commitUrl = dto.commitUrl,
+                        date = dto.date
+                    )
+                }
+                ToolResult.success(
+                    data = data,
+                    summary = "Build $resultKey has ${data.size} commit(s): " +
+                        data.joinToString { "${it.changesetId.take(8)} by ${it.userName}" }
+                )
+            }
+            is ApiResult.Error -> {
+                log.warn("[BambooService] Failed to fetch build changes for $resultKey: ${result.message}")
+                ToolResult(
+                    data = emptyList(),
+                    summary = "Error fetching build changes for $resultKey: ${result.message}",
+                    isError = true,
+                    hint = "Check Bamboo connection in Settings."
+                )
+            }
         }
     }
 

@@ -138,3 +138,18 @@ data class ProjectData(
     val name: String,
     val description: String? = null
 )
+
+/**
+ * A single commit entry from a build's change list (R-ADD-1, §8.8).
+ * Sourced from GET /result/{key}?expand=changes.change, validated on Bamboo 10.2.14.
+ * bundle-repo.unpacked/raw/result_changes.json is the canonical shape reference.
+ */
+@Serializable
+data class BuildChangeData(
+    val userName: String,
+    val fullName: String,
+    val comment: String,
+    val changesetId: String,
+    val commitUrl: String,
+    val date: String
+)

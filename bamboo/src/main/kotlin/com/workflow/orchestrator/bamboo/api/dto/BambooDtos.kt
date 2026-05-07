@@ -160,17 +160,39 @@ data class BambooVcsRevisionDto(
 
 // --- Plan Variables DTOs ---
 
-/** Response from GET /plan/{key}?expand=variableContext */
+/**
+ * Response from GET /plan/{key}?expand=variableContext (Bamboo 10.2 validated).
+ * The variableContext.variable[] items use `key`/`value`/`variableType`/`isPassword`
+ * — NOT `name`/`value` as at build level. See BambooPlanContextVariableDto.
+ */
 @Serializable
 data class BambooPlanDetailResponse(
     val key: String = "",
     val name: String = "",
-    val variableContext: BambooVariableCollection = BambooVariableCollection()
+    val variableContext: BambooVariableContextCollection = BambooVariableContextCollection()
 )
 
+/**
+ * Wrapper for the plan-level variableContext expand response.
+ * Distinct from [BambooVariableCollection] which carries build-level name/value variables.
+ */
 @Serializable
-data class BambooVariableListResponse(
-    val variables: BambooVariableCollection = BambooVariableCollection()
+data class BambooVariableContextCollection(
+    val size: Int = 0,
+    val variable: List<BambooPlanContextVariableDto> = emptyList()
+)
+
+/**
+ * A single variable entry from GET /plan/{key}?expand=variableContext.
+ * Bamboo 10.2 returns `key`/`value`/`variableType`/`isPassword` here — NOT `name`.
+ * Probe: bundle-repo.unpacked/raw/plan_variables_via_context.json
+ */
+@Serializable
+data class BambooPlanContextVariableDto(
+    val key: String,
+    val value: String = "",
+    val variableType: String = "",
+    val isPassword: Boolean = false
 )
 
 @Serializable
@@ -179,10 +201,42 @@ data class BambooVariableCollection(
     val variable: List<BambooPlanVariableDto> = emptyList()
 )
 
+/** Build-level variable: uses `name`/`value` (from ?expand=variables on a result). */
 @Serializable
 data class BambooPlanVariableDto(
     val name: String,
     val value: String = ""
+)
+
+// --- Build Changes DTOs (R-ADD-1, validated in bundle-repo.unpacked/raw/result_changes.json) ---
+
+/**
+ * Response from GET /result/{key}?expand=changes.change.
+ * Returns the full commit list included in this build since the last green build.
+ */
+@Serializable
+data class BambooBuildChangesResponse(
+    val changes: BambooBuildChangeCollection = BambooBuildChangeCollection()
+)
+
+@Serializable
+data class BambooBuildChangeCollection(
+    val size: Int = 0,
+    val change: List<BambooBuildChangeDto> = emptyList()
+)
+
+/**
+ * A single commit entry from the changes.change[] array.
+ * Fields validated from bundle-repo.unpacked/raw/result_changes.json.
+ */
+@Serializable
+data class BambooBuildChangeDto(
+    val userName: String = "",
+    val fullName: String = "",
+    val comment: String = "",
+    val changesetId: String = "",
+    val commitUrl: String = "",
+    val date: String = ""
 )
 
 // --- Search DTOs ---

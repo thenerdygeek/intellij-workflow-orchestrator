@@ -1134,7 +1134,10 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             if (!logResult.isError) {
                 buildLogText = logResult.data
                 log.info("[Build:Dashboard] Log loaded: ${buildLogText.length} chars")
-                invokeLater { stageDetailPanel.showLog(buildLogText, emptyList()) }
+                // Cap the rendered string to LOG_RENDER_CAP_BYTES tail to avoid EDT jank on large logs.
+                // BuildLogParser below receives the full log separately.
+                val displayLog = capLogForDisplay(buildLogText)
+                invokeLater { stageDetailPanel.showLog(displayLog, emptyList()) }
             } else {
                 invokeLater { stageDetailPanel.showLog("Failed to load job log: ${logResult.summary}", emptyList()) }
             }
@@ -1167,7 +1170,8 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         panelScope.launch {
             val logResult = bambooService.getBuildLog(resultKey)
             if (!logResult.isError) {
-                invokeLater { stageDetailPanel.showLog(logResult.data, emptyList()) }
+                // Cap the rendered string to LOG_RENDER_CAP_BYTES tail to avoid EDT jank on large logs.
+                invokeLater { stageDetailPanel.showLog(capLogForDisplay(logResult.data), emptyList()) }
             } else {
                 invokeLater { stageDetailPanel.showLog("Failed to load log: ${logResult.summary}", emptyList()) }
             }
@@ -1200,6 +1204,33 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
     private fun openTriggerDialog(planKey: String) {
         ManualStageDialog(project, planKey, scope = panelScope, triggerMode = TriggerMode.FULL_BUILD).show()
+    }
+
+    companion object {
+        /**
+         * Maximum bytes of log text rendered into the Swing text component (§8.7 build-log soft cap).
+         * Repo CI logs can reach 405 KB on this server; rendering full logs on EDT is jank-prone.
+         * We retain the last LOG_RENDER_CAP_BYTES of the log (tail) so the most recent output —
+         * where errors are — is always visible. The truncation runs on the background coroutine
+         * before the final string is pushed to the EDT via invokeLater.
+         *
+         * Note: BuildLogParser / CveRemediationService receive the *full* log separately —
+         * they call getBuildLog directly and are not affected by this UI cap.
+         */
+        const val LOG_RENDER_CAP_BYTES = 200_000  // 200 KB tail
+
+        /**
+         * Caps [logText] to the last [maxBytes] bytes for Swing rendering.
+         * When the text is within the cap, returns it unchanged.
+         * When over the cap, returns a warning prefix + the tail.
+         * This is a pure function so it can be unit-tested without IntelliJ infra.
+         */
+        fun capLogForDisplay(logText: String, maxBytes: Int = LOG_RENDER_CAP_BYTES): String {
+            if (logText.length <= maxBytes) return logText
+            val tail = logText.substring(logText.length - maxBytes)
+            val omittedKb = (logText.length - maxBytes) / 1024
+            return "... [first ${omittedKb} KB omitted — log exceeds ${maxBytes / 1024} KB cap] ...\n$tail"
+        }
     }
 
     /**
