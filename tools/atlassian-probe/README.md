@@ -118,8 +118,23 @@ If you don't already know which plan / result / project / branch / commit
 SHA values to feed the full sweep, run:
 
 ```bash
+# Recommended on large instances — scope to your project
+python probe_bamboo.py --url https://bamboo.company.com --token <PAT> --discover \
+    --project-key MYPROJ
+
+# Or scope to a single plan you already know about
+python probe_bamboo.py --url https://bamboo.company.com --token <PAT> --discover \
+    --plan-key MYPROJ-CI
+
+# No scope (first 5 projects alphabetically — usually unrelated to your work)
 python probe_bamboo.py --url https://bamboo.company.com --token <PAT> --discover
 ```
+
+Bamboo's REST API has no per-user filter equivalent to Jira's
+`assignee=currentUser()`, so without a scope flag the walk lists the
+first 5 projects alphabetically — fine on small instances, useless on
+ones with hundreds of projects. Pass `--project-key` (or `--plan-key`
+for a single plan) to scope the walk to what you actually work on.
 
 This walks `/project` → `/project/{key}?expand=plans.plan` → `/plan/{key}/branch`
 → `/result/{plan}` → `/result/{key}?expand=vcsRevisions` and writes

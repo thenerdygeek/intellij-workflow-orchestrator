@@ -13,9 +13,14 @@ Usage examples:
     python probe_bamboo.py --url https://bamboo.company.com --token PAT --versions-only
 
     # Discover mode — walks projects -> plans -> branches -> recent builds and
-    # writes Result_N/discover.md with copy-pasteable IDs. Run this once to
-    # find values for the full sweep without spelunking the Bamboo UI.
-    python probe_bamboo.py --url https://bamboo.company.com --token PAT --discover
+    # writes Result_N/discover.md with copy-pasteable IDs. Bamboo has no per-
+    # user filter equivalent to Jira's `assignee=currentUser()`, so on large
+    # instances pass --project-key (or --plan-key for a single plan) to scope
+    # the walk; otherwise discover lists the first 5 projects alphabetically.
+    python probe_bamboo.py --url https://bamboo.company.com --token PAT --discover \\
+        --project-key MYPROJ      # scope to one project (recommended)
+    python probe_bamboo.py --url https://bamboo.company.com --token PAT --discover \\
+        --plan-key MYPROJ-CI      # scope to a single plan
 
     # Full sweep — needs realistic ids so candidates exercise non-empty payloads.
     # Use a JOB-level result key (PROJ-PLAN-JOBSHORT-N) for the build-log probe;
@@ -559,65 +564,122 @@ class BambooProbe:
               f"{sum(1 for r in self.results if not r.ok and r.error is None)} non-2xx, "
               f"{sum(1 for r in self.results if r.error)} errored.")
 
-    def run_discover(self) -> None:
+    def run_discover(
+        self,
+        project_key: Optional[str] = None,
+        plan_key: Optional[str] = None,
+    ) -> None:
         """Discovery walk — finds the IDs the full sweep needs from the user's
         actual permissions, not from a global dump. Read-only.
 
-        Algorithm:
-            1. Run versions-only (auth + version baseline).
-            2. List projects (`/project?max-results=200`).
-            3. For top 5 projects, list plans (`/project/{key}?expand=plans.plan`).
-            4. For top 5 candidate plans, list branches and recent results.
-            5. From the first plan with recent builds, fetch
-               `?expand=vcsRevisions` to extract a sample commit SHA.
-            6. Write `Result_N/discover.md` with a copy-paste full-sweep command.
+        Scoping (most-specific first):
+            - `--plan-key X`   : walk only that plan. Project key derived
+              from `X.split('-', 1)[0]`. Skips project listing entirely.
+            - `--project-key X`: walk only that project's plans (up to 10).
+              Skips the global `/project` listing.
+            - neither: walk the first 5 projects globally (alphabetical-by-
+              key). Bamboo has no per-user filter equivalent to Jira's
+              `assignee=currentUser()`, so on instances with hundreds of
+              projects this often surfaces unrelated plans — pass scope.
+
+        Common steps after scoping:
+            * For each candidate plan, list branches + recent results
+              (`/plan/{key}/branch`, `/result/{key}?expand=...`).
+            * From the first plan with recent builds, fetch
+              `?expand=vcsRevisions` to extract a sample commit SHA.
+            * Write `Result_N/discover.md` with a copy-paste full-sweep
+              command.
 
         The plugin uses Bamboo across two tabs with different needs (Build vs
-        Automation). The digest cannot tell them apart from API metadata
-        alone, but it flags any plan whose recent builds expose a
-        `dockerTagsAsJson` variable as a likely automation suite candidate
-        (matches `automation/service/ConflictDetectorService.kt` +
+        Automation). The digest flags plans whose recent builds expose a
+        `dockerTagsAsJson` variable as automation suite candidates (matches
+        `automation/service/ConflictDetectorService.kt` +
         `TagBuilderService.kt`).
         """
         print("[probe] discover mode\n")
         self.run_versions_only()
 
-        print("\n[probe] discover — projects you can read")
-        self._get(
-            name="discover_projects",
-            description="All visible projects (paginated, first 200)",
-            path="/rest/api/latest/project?max-results=200",
-            category="existing",
-            notes=["Discovery — projects readable by your PAT"],
-        )
-        project_keys = _collect_top_project_keys(
-            self.raw_dir / "discover_projects.json", limit=5,
-        )
-        if not project_keys:
-            print("[probe] discover — no projects visible; cannot continue walk")
-            self._write_discover_digest([], [], None)
-            return
+        scope_hint: Optional[str] = None
+        plan_specs: list[dict]
+        plan_keys: list[str]
+        project_keys: list[str]
 
-        print(f"[probe] discover — inspecting {len(project_keys)} project(s): "
-              f"{', '.join(project_keys)}")
-        for pkey in project_keys:
+        if plan_key:
+            scope_hint = f"`--plan-key {plan_key}` (single plan)"
+            print(f"\n[probe] discover — scoped to plan {plan_key}")
+            derived_proj = plan_key.split("-", 1)[0] if "-" in plan_key else ""
+            plan_specs = [{
+                "key": plan_key,
+                "name": "(scoped via --plan-key)",
+                "project_key": derived_proj,
+            }]
+            plan_keys = [plan_key]
+            project_keys = [derived_proj] if derived_proj else []
+        elif project_key:
+            scope_hint = f"`--project-key {project_key}` (one project)"
+            print(f"\n[probe] discover — scoped to project {project_key}")
             self._get(
-                name=f"discover_project_{pkey}_plans",
-                description=f"Plans in project {pkey}",
-                path=f"/rest/api/latest/project/{pkey}?expand=plans.plan",
+                name=f"discover_project_{project_key}_plans",
+                description=f"Plans in project {project_key}",
+                path=f"/rest/api/latest/project/{project_key}?expand=plans.plan",
                 category="existing",
-                notes=[f"Discovery — plans inside {pkey}"],
+                notes=[f"Discovery — plans inside {project_key}"],
             )
+            project_keys = [project_key]
+            plan_specs = _collect_candidate_plans(
+                self.raw_dir, project_keys, max_total=10,
+            )
+            if not plan_specs:
+                print(f"[probe] discover — project {project_key} has no plans "
+                      "visible to your PAT (or the project key is wrong)")
+                self._write_discover_digest(
+                    project_keys, [], None, scope_hint=scope_hint,
+                )
+                return
+            plan_keys = [p["key"] for p in plan_specs]
+        else:
+            scope_hint = (
+                "_unscoped — first 5 projects alphabetically. "
+                "Re-run with `--project-key YOURPROJ` for an accurate walk._"
+            )
+            print("\n[probe] discover — unscoped walk (first 5 projects "
+                  "alphabetically)")
+            print("[probe] tip: re-run with --project-key YOURPROJ to scope")
+            self._get(
+                name="discover_projects",
+                description="All visible projects (paginated, first 200)",
+                path="/rest/api/latest/project?max-results=200",
+                category="existing",
+                notes=["Discovery — projects readable by your PAT"],
+            )
+            project_keys = _collect_top_project_keys(
+                self.raw_dir / "discover_projects.json", limit=5,
+            )
+            if not project_keys:
+                print("[probe] discover — no projects visible; cannot continue walk")
+                self._write_discover_digest([], [], None, scope_hint=scope_hint)
+                return
+            print(f"[probe] discover — inspecting first {len(project_keys)} "
+                  f"project(s): {', '.join(project_keys)}")
+            for pkey in project_keys:
+                self._get(
+                    name=f"discover_project_{pkey}_plans",
+                    description=f"Plans in project {pkey}",
+                    path=f"/rest/api/latest/project/{pkey}?expand=plans.plan",
+                    category="existing",
+                    notes=[f"Discovery — plans inside {pkey}"],
+                )
+            plan_specs = _collect_candidate_plans(
+                self.raw_dir, project_keys, max_total=5,
+            )
+            if not plan_specs:
+                print("[probe] discover — projects had no plans visible to your PAT")
+                self._write_discover_digest(
+                    project_keys, [], None, scope_hint=scope_hint,
+                )
+                return
+            plan_keys = [p["key"] for p in plan_specs]
 
-        plan_specs = _collect_candidate_plans(
-            self.raw_dir, project_keys, max_total=5,
-        )
-        if not plan_specs:
-            print("[probe] discover — projects had no plans visible to your PAT")
-            self._write_discover_digest(project_keys, [], None)
-            return
-
-        plan_keys = [p["key"] for p in plan_specs]
         print(f"[probe] discover — inspecting {len(plan_keys)} plan(s): "
               f"{', '.join(plan_keys)}")
         for plkey in plan_keys:
@@ -654,7 +716,9 @@ class BambooProbe:
             if sha:
                 sample["commit_sha"] = sha
 
-        self._write_discover_digest(project_keys, plan_specs, sample)
+        self._write_discover_digest(
+            project_keys, plan_specs, sample, scope_hint=scope_hint,
+        )
 
     # -- skip helper for endpoints that need missing CLI args -----------------
 
@@ -778,13 +842,17 @@ class BambooProbe:
         project_keys: list[str],
         plan_specs: list[dict],
         sample: Optional[dict],
+        scope_hint: Optional[str] = None,
     ) -> None:
         """Render Result_N/discover.md scoped to the user's actual permissions.
 
         Lists projects, candidate plans (with recent build state, branch
         counts, dockerTagsAsJson hint to disambiguate Build-tab vs
         Automation-tab plans), and a copy-paste full-sweep command seeded
-        from the most recent build."""
+        from the most recent build.
+
+        `scope_hint` (when set) is rendered at the top so the reader can tell
+        whether the digest is from a scoped or unscoped walk."""
         lines: list[str] = ["# Bamboo discovery — pick values for the full sweep", ""]
 
         info = _read_raw_body(self.raw_dir / "info.json") or {}
@@ -796,6 +864,8 @@ class BambooProbe:
         if full_name or login:
             lines.append(f"**You are**: {full_name} (`{login}`)")
         lines.append(f"**Bamboo**: `{version}` (build `{build_no}`)")
+        if scope_hint:
+            lines.append(f"**Scope**: {scope_hint}")
         lines.append("")
 
         projects_body = _read_raw_body(self.raw_dir / "discover_projects.json") or {}
@@ -1191,8 +1261,10 @@ def main() -> int:
                    help="Discovery walk — finds plan / result / project / "
                         "branch / SHA values from your actual permissions and "
                         "writes Result_N/discover.md with a copy-paste full-"
-                        "sweep command. Run this once before the full sweep "
-                        "so you don't have to spelunk the Bamboo UI.")
+                        "sweep command. Combine with --project-key X to scope "
+                        "to one project, or --plan-key X to scope to a single "
+                        "plan; without either it walks the first 5 projects "
+                        "alphabetically (often unrelated on large instances).")
     p.add_argument("--out", default=str(Path(__file__).parent),
                    help="Parent dir for Result_N/ output (default: alongside the script)")
     args = p.parse_args()
@@ -1244,7 +1316,10 @@ def main() -> int:
     }
 
     if args.discover:
-        probe.run_discover()
+        probe.run_discover(
+            project_key=args.project_key,
+            plan_key=args.plan_key,
+        )
     elif args.versions_only:
         probe.run_versions_only()
     else:
