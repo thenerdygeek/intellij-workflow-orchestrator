@@ -9,7 +9,8 @@ import com.workflow.orchestrator.core.ai.AgentChatRedirect
 import com.workflow.orchestrator.core.ai.LlmBrainFactory
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.sonar.model.MappedIssue
-import com.workflow.orchestrator.sonar.ui.SonarIssueAnnotator
+import com.workflow.orchestrator.sonar.service.SonarDataService
+import com.workflow.orchestrator.sonar.util.SonarPathResolver
 
 class SonarFixIntentionAction : IntentionAction, DumbAware {
 
@@ -21,12 +22,12 @@ class SonarFixIntentionAction : IntentionAction, DumbAware {
         if (editor == null || file == null) return false
         if (!PluginSettings.getInstance(project).state.sonarIntentionActionEnabled) return false
         if (!LlmBrainFactory.isAvailable()) return false
-        return findSonarIssueAtCaret(editor, editor.caretModel.offset) != null
+        return findSonarIssueAtCaret(project, file, editor) != null
     }
 
     override fun invoke(project: Project, editor: Editor?, file: PsiFile?) {
         if (editor == null || file == null) return
-        val sonarIssue = findSonarIssueAtCaret(editor, editor.caretModel.offset) ?: return
+        val sonarIssue = findSonarIssueAtCaret(project, file, editor) ?: return
         val filePath = file.virtualFile.path
 
         val prompt = buildString {
@@ -43,11 +44,26 @@ class SonarFixIntentionAction : IntentionAction, DumbAware {
         AgentChatRedirect.getInstance()?.sendToAgent(project, prompt, listOf(filePath))
     }
 
-    private fun findSonarIssueAtCaret(editor: Editor, offset: Int): MappedIssue? {
-        return editor.markupModel.allHighlighters
-            .firstOrNull { it.startOffset <= offset && offset <= it.endOffset &&
-                it.getUserData(SonarIssueAnnotator.SONAR_ISSUE_KEY) != null }
-            ?.getUserData(SonarIssueAnnotator.SONAR_ISSUE_KEY)
+    private fun findSonarIssueAtCaret(project: Project, file: PsiFile, editor: Editor): MappedIssue? {
+        val virtualFile = file.virtualFile ?: return null
+        val pathContext = SonarPathResolver.resolveContext(project, virtualFile)
+        val state = SonarDataService.getInstance(project).stateFlow.value
+
+        // Same project-key gate as the annotator: only offer the fix when the
+        // file's owning repo maps to the Sonar project we have data for.
+        val expectedProjectKey = pathContext.sonarProjectKey
+        if (expectedProjectKey != null && state.projectKey.isNotEmpty()
+            && expectedProjectKey != state.projectKey) {
+            return null
+        }
+
+        // editor.document.getLineNumber returns 0-based; Sonar issues use 1-based line numbers.
+        val line = editor.document.getLineNumber(editor.caretModel.offset) + 1
+        return SonarIssueLookup.findIssueSpanningLine(
+            state.activeIssues,
+            pathContext.relativePath,
+            line
+        )
     }
 
     override fun startInWriteAction(): Boolean = false

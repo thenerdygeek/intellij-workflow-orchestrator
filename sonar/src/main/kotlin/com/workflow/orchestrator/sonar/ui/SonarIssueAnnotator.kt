@@ -63,24 +63,27 @@ class SonarIssueAnnotator : ExternalAnnotator<SonarAnnotationInput, SonarAnnotat
         if (!com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).state.sonarInlineAnnotationsEnabled) return null
         val virtualFile = file.virtualFile ?: return null
 
-        val baseDir = project.basePath?.let {
-            com.intellij.openapi.vfs.LocalFileSystem.getInstance().findFileByPath(it)
-        }
-        val relativePath = if (baseDir != null) {
-            com.intellij.openapi.vfs.VfsUtilCore.getRelativePath(virtualFile, baseDir) ?: virtualFile.path
-        } else {
-            virtualFile.path
-        }
+        val pathContext = com.workflow.orchestrator.sonar.util.SonarPathResolver
+            .resolveContext(project, virtualFile)
 
         val state = try {
             SonarDataService.getInstance(project).stateFlow.value
         } catch (_: Exception) { return null }
 
-        val fileIssues = state.activeIssues.filter { it.filePath == relativePath }
+        // Only annotate when the file's owning repo maps to the Sonar project
+        // we currently have data for. Avoids cross-repo issue bleed in
+        // multi-repo projects where each repo has its own Sonar project.
+        val expectedProjectKey = pathContext.sonarProjectKey
+        if (expectedProjectKey != null && state.projectKey.isNotEmpty()
+            && expectedProjectKey != state.projectKey) {
+            return null
+        }
+
+        val fileIssues = state.activeIssues.filter { it.filePath == pathContext.relativePath }
         if (fileIssues.isEmpty()) return null
 
         return SonarAnnotationInput(
-            filePath = relativePath,
+            filePath = pathContext.relativePath,
             state = state,
             fileIssues = fileIssues,
             virtualFile = virtualFile,
@@ -168,8 +171,6 @@ class SonarIssueAnnotator : ExternalAnnotator<SonarAnnotationInput, SonarAnnotat
     }
 
     companion object {
-        val SONAR_ISSUE_KEY = com.intellij.openapi.util.Key.create<MappedIssue>("workflow.sonar.issue")
-
         fun mapSeverity(type: IssueType, severity: IssueSeverity): HighlightSeverity = when {
             (type == IssueType.BUG || type == IssueType.VULNERABILITY) &&
                 (severity == IssueSeverity.BLOCKER || severity == IssueSeverity.CRITICAL) ->
