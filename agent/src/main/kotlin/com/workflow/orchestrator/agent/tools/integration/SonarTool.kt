@@ -20,12 +20,14 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.runInterruptible
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.coroutineContext
 
 /**
@@ -498,22 +500,36 @@ Common optional: repo_name for multi-repo projects.
         emit("  Inclusions: $scannerInclusions")
 
         val process = pb.start()
+        val readerError = AtomicReference<Throwable?>(null)
         val reader = Thread {
-            process.inputStream.bufferedReader().use { br ->
-                var line = br.readLine()
-                while (line != null) {
-                    if (outputBuilder.length < MAX_SCANNER_OUTPUT_CHARS) outputBuilder.appendLine(line)
-                    // Extract CE task ID from: "INFO: More about the report processing at .../api/ce/task?id=XXXXX"
-                    if (ceTaskId == null) {
-                        CeTaskIdParser.extract(line)?.let { ceTaskId = it }
+            try {
+                process.inputStream.bufferedReader().use { br ->
+                    var line = br.readLine()
+                    while (line != null) {
+                        if (outputBuilder.length < MAX_SCANNER_OUTPUT_CHARS) outputBuilder.appendLine(line)
+                        // Extract CE task ID from: "INFO: More about the report processing at .../api/ce/task?id=XXXXX"
+                        if (ceTaskId == null) {
+                            CeTaskIdParser.extract(line)?.let { ceTaskId = it }
+                        }
+                        emit(line)
+                        line = br.readLine()
                     }
-                    emit(line)
-                    line = br.readLine()
                 }
+            } catch (t: Throwable) {
+                readerError.set(t)
             }
         }.apply { isDaemon = true; name = "sonar-scanner-reader"; start() }
 
-        val completed = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
+        val completed = try {
+            runInterruptible(kotlinx.coroutines.Dispatchers.IO) {
+                process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
+            }
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            emit("✗ Scanner cancelled by caller — killing process")
+            process.destroyForcibly()
+            reader.join(1000)
+            throw ce
+        }
         if (!completed) {
             emit("✗ Scanner timed out after ${timeoutSeconds}s — killing process")
             process.destroyForcibly()
@@ -524,6 +540,9 @@ Common optional: repo_name for multi-repo projects.
             )
         }
         reader.join(3000)
+        readerError.get()?.let {
+            emit("⚠ Scanner stdout reader threw ${it.javaClass.simpleName}: ${it.message ?: "(no message)"} — output may be incomplete")
+        }
         val elapsedS = (System.currentTimeMillis() - startTime) / 1000.0
 
         if (process.exitValue() != 0) {
