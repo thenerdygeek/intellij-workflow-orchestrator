@@ -5,7 +5,7 @@ import com.intellij.openapi.application.EDT
 import com.intellij.openapi.project.Project
 import com.intellij.ui.JBSplitter
 import com.workflow.orchestrator.handover.service.HandoverStateService
-import com.workflow.orchestrator.handover.ui.panels.CompletionMacroPanel
+import com.workflow.orchestrator.handover.service.JiraClosureService
 import com.workflow.orchestrator.handover.ui.panels.CopyrightPanel
 import com.workflow.orchestrator.handover.ui.panels.JiraCommentPanel
 import com.workflow.orchestrator.handover.ui.panels.PreReviewPanel
@@ -16,14 +16,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import javax.swing.JPanel
 
 class HandoverPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
-    private val scope = CoroutineScope(Dispatchers.EDT + SupervisorJob())
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val stateService = HandoverStateService.getInstance(project)
+    private val closureService = JiraClosureService.getInstance(project)
 
     // UI components
     private val contextPanel = HandoverContextPanel()
@@ -37,7 +39,6 @@ class HandoverPanel(private val project: Project) : JPanel(BorderLayout()), Disp
     private val jiraCommentPanel = JiraCommentPanel(project)
     private val timeLogPanel = TimeLogPanel(project)
     private val qaClipboardPanel = QaClipboardPanel(project)
-    private val completionMacroPanel = CompletionMacroPanel(project)
 
     init {
         toolbar = HandoverToolbar { panelId -> switchPanel(panelId) }
@@ -48,7 +49,6 @@ class HandoverPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         detailContainer.add(jiraCommentPanel, HandoverToolbar.PANEL_JIRA)
         detailContainer.add(timeLogPanel, HandoverToolbar.PANEL_TIME)
         detailContainer.add(qaClipboardPanel, HandoverToolbar.PANEL_QA)
-        detailContainer.add(completionMacroPanel, HandoverToolbar.PANEL_MACRO)
 
         // Splitter: left context (30%) + right detail (70%)
         val splitter = JBSplitter(false, 0.30f).apply {
@@ -59,10 +59,24 @@ class HandoverPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         add(toolbar.createToolbar(), BorderLayout.NORTH)
         add(splitter, BorderLayout.CENTER)
 
-        // Bind to state flow
+        // Single state-flow collector fans out to all panels that are wired in Phase 1.
+        // Phase 2/3/4 panels plug in here — only add their wiring calls inside this collect.
         scope.launch {
             stateService.stateFlow.collect { state ->
-                contextPanel.updateState(state)
+                // Context sidebar (left) — always updated
+                withContext(Dispatchers.EDT) {
+                    contextPanel.updateState(state)
+                }
+
+                // Jira Comment panel — Phase 1
+                val commentText = if (state.suiteResults.isEmpty()) {
+                    ""
+                } else {
+                    closureService.buildClosureComment(state.suiteResults)
+                }
+                withContext(Dispatchers.EDT) {
+                    jiraCommentPanel.updateFromState(state.ticketId, commentText)
+                }
             }
         }
 

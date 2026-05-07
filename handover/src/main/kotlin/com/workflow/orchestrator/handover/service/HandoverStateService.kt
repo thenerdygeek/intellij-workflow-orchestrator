@@ -136,6 +136,11 @@ class HandoverStateService {
         _stateFlow.value = _stateFlow.value.copy(copyrightFixed = true)
     }
 
+    fun markJiraCommentPosted() {
+        log.info("[Handover:State] Marked Jira comment as posted")
+        _stateFlow.value = _stateFlow.value.copy(jiraCommentPosted = true)
+    }
+
     fun markJiraTransitioned(statusName: String? = null) {
         log.info("[Handover:State] Marked Jira as transitioned${statusName?.let { " to $it" }.orEmpty()}")
         _stateFlow.value = _stateFlow.value.copy(

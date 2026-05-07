@@ -91,15 +91,4 @@ class HandoverModelsTest {
         assertEquals(FindingSeverity.LOW, sorted[2].severity)
     }
 
-    @Test
-    fun `MacroStep tracks execution state`() {
-        val step = MacroStep(
-            id = "jira-comment",
-            label = "Post Jira Comment",
-            enabled = true,
-            status = MacroStepStatus.PENDING
-        )
-        assertEquals(MacroStepStatus.PENDING, step.status)
-        assertTrue(step.enabled)
-    }
 }

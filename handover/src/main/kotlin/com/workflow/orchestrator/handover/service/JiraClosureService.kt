@@ -72,7 +72,7 @@ class JiraClosureService {
     }
 
     private fun escapeWikiMarkup(text: String): String =
-        text.replace("|", "\\|").replace("{", "\\{").replace("}", "\\}")
+        text.replace("|", "\\|").replace("{", "\\{").replace("}", "\\}").replace("[", "\\[").replace("]", "\\]")
 
     companion object {
         fun getInstance(project: Project): JiraClosureService =

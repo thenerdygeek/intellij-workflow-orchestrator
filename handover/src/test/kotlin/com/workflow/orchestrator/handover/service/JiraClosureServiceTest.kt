@@ -93,4 +93,22 @@ class JiraClosureServiceTest {
         // Should still render suite results even if tags are malformed
         assertTrue(comment.contains("PROJ-REGR"))
     }
+
+    @Test
+    fun `escapeWikiMarkup does not produce broken Jira link syntax for bracket-bearing plan keys`() {
+        // Regression for H-P1-5: bare '[' in a suite plan key was passed through
+        // unescaped, producing broken Jira wiki-markup link syntax.
+        val suites = listOf(
+            SuiteResult("[CRITICAL]PROJ-REGR", "PROJ-REGR-42", "{}",
+                true, 1_000, Instant.now(), "https://bamboo.example.com/browse/PROJ-REGR-42")
+        )
+
+        val comment = service.buildClosureComment(suites)
+
+        // Escaped brackets must appear in the table cell — not bare brackets
+        assertTrue(comment.contains("\\[CRITICAL\\]"), "Expected escaped brackets in comment:\n$comment")
+        // The raw unescaped sequence must not appear as a cell value
+        assertFalse(comment.contains("| [CRITICAL]PROJ-REGR |"),
+            "Unescaped '[' would form a broken Jira link — must be escaped")
+    }
 }

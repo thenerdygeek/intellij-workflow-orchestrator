@@ -38,11 +38,6 @@ class HandoverContextPanel : JPanel(BorderLayout()) {
         font = font.deriveFont(JBUI.scale(10).toFloat())
         foreground = StatusColors.SECONDARY_TEXT
     }
-    private val transitionComboBox = com.intellij.openapi.ui.ComboBox<String>()
-    private val transitionButton = JButton("Transition").apply {
-        isEnabled = false
-        toolTipText = "Coming soon"
-    }
     private val prStatusLabel = JBLabel("")
     private val buildStatusLabel = JBLabel("")
     private val qualityLabel = JBLabel("")
@@ -491,16 +486,6 @@ class HandoverContextPanel : JPanel(BorderLayout()) {
             add(contextSummaryLabel)
             add(Box.createVerticalStrut(JBUI.scale(4)))
             add(contextStatusLabel)
-            add(Box.createVerticalStrut(JBUI.scale(8)))
-
-            val transitionRow = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
-                isOpaque = false
-                alignmentX = Component.LEFT_ALIGNMENT
-                maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(28))
-            }
-            transitionRow.add(transitionComboBox)
-            transitionRow.add(transitionButton)
-            add(transitionRow)
         }
     }
 

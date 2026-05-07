@@ -19,7 +19,6 @@ class HandoverToolbar(private val panelSwitcher: PanelSwitcher) {
         const val PANEL_JIRA = "jira"
         const val PANEL_TIME = "time"
         const val PANEL_QA = "qa"
-        const val PANEL_MACRO = "macro"
     }
 
     fun createToolbar(): JComponent {
@@ -29,7 +28,6 @@ class HandoverToolbar(private val panelSwitcher: PanelSwitcher) {
             add(toolbarAction("Jira Comment", AllIcons.Toolwindows.ToolWindowMessages, PANEL_JIRA))
             add(toolbarAction("Time Log", AllIcons.Actions.Profile, PANEL_TIME))
             add(toolbarAction("QA Clipboard", AllIcons.Actions.Copy, PANEL_QA))
-            add(toolbarAction("Macro", AllIcons.Actions.Lightning, PANEL_MACRO))
         }
 
         val toolbar = ActionManager.getInstance()

@@ -76,16 +76,6 @@ data class ReviewFinding(
 
 enum class FindingSeverity { HIGH, MEDIUM, LOW }
 
-// Macro models
-data class MacroStep(
-    val id: String,
-    val label: String,
-    val enabled: Boolean = true,
-    val status: MacroStepStatus = MacroStepStatus.PENDING
-)
-
-enum class MacroStepStatus { PENDING, RUNNING, SUCCESS, FAILED, SKIPPED }
-
 // Clipboard payload
 data class ClipboardPayload(
     val dockerTags: Map<String, String>,
