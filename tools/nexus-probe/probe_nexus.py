@@ -59,6 +59,15 @@ Usage examples:
     # Self-signed cert
     python probe_nexus.py ... --no-verify
 
+    # Workflow scope — verify ONLY the two Docker v2 endpoints the plugin's
+    # per-repo verify flow uses (tags/list + manifest HEAD). 5 calls total.
+    # Required: --docker-repo. Optional: --manifest-tag (else auto-derived).
+    python probe_nexus.py --url https://nexus.company.com \\
+        --docker-registry-url https://docker.company.com \\
+        --basic-token <base64-of-user:pass> \\
+        --docker-only --docker-repo company-team/service-a-repo \\
+        --manifest-tag 1.2.3
+
 The probe never executes mutations (component upload, repo create, asset
 delete, user changes, etc.) — only HTTP GET/HEAD. The User-Agent string
 includes `(read-only)` so admins can audit probe traffic in Nexus's request
@@ -1247,6 +1256,108 @@ class NexusProbe:
             notes=["Not in 3.90 swagger.json for this user — confirms admin-UI-only on this instance"],
         )
 
+    def run_docker_only(self, docker_repo: str, manifest_tag: Optional[str]) -> None:
+        """Workflow-scope probe — exercises ONLY the two Docker Registry v2
+        endpoints DockerRegistryClient hits during the per-repo verify flow:
+
+          1. GET  /v2/{repo}/tags/list?n=100  → listTags() / getLatestReleaseTag()
+          2. HEAD /v2/{repo}/manifests/{tag}   → tagExists()
+
+        Plus three sanity probes:
+          - GET  /v2/                                → registry root online + auth flow
+          - GET  /v2/{repo}/manifests/{tag}          → documents manifest body shape
+          - HEAD /v2/{repo}/manifests/<bogus-tag>    → confirms 404 distinguishes
+                                                       'tag missing' from auth/network
+
+        Total: 5 calls. REST API, repo browsing, security, metrics — all skipped.
+        Required: --docker-repo. Optional: --manifest-tag (auto-derived from /tags/list).
+        """
+        print("[probe] docker-only mode — workflow scope (5 calls)\n")
+
+        # 1. Registry root sanity
+        self._docker_get(
+            name="docker_v2_root",
+            description="Docker Registry v2 connectivity",
+            path="/v2/",
+            category="version",
+            notes=[
+                "200 with empty body = registry online. 401 with Bearer challenge = "
+                "Docker Bearer Token Realm enabled. 401 without challenge = Basic only. "
+                "404 HTML = wrong host — Docker registry is on a different URL than the REST API."
+            ],
+        )
+
+        dr = urllib.parse.quote(docker_repo, safe="")
+
+        # 2. tags/list — primary endpoint #1
+        print(f"\n[probe] existing — Docker repo '{docker_repo}'")
+        self._docker_get(
+            name=f"docker_tags_{docker_repo}",
+            description=f"Tag list for {docker_repo} — drives listTags() and getLatestReleaseTag()",
+            path=f"/v2/{dr}/tags/list?n=100",
+            category="existing",
+            notes=[
+                "Plugin's listTags() — verify pagination Link header behaviour. "
+                "getLatestReleaseTag() filters tags to /^\\d+\\.\\d+\\.\\d+.*$/ "
+                "and semver-sorts; only this endpoint feeds it."
+            ],
+        )
+
+        chosen_tag = manifest_tag or _read_first_tag(
+            self.raw_dir / f"docker_tags_{docker_repo}.json"
+        )
+        if not chosen_tag:
+            self.results.append(ProbeResult(
+                name=f"docker_manifest_{docker_repo}_skipped",
+                description="manifest probes skipped — no tag derivable",
+                method="-", path="-", payload_kind="error", category="existing",
+                error=f"docker_tags_{docker_repo} yielded no tags; pass --manifest-tag to force",
+            ))
+            return
+
+        tg = urllib.parse.quote(chosen_tag, safe="")
+
+        # 3. manifests HEAD — primary endpoint #2 (the SWAP from current GET)
+        self._docker_head(
+            name=f"docker_manifest_head_{docker_repo}",
+            description=f"HEAD manifest for {docker_repo}:{chosen_tag} — drives tagExists()",
+            path=f"/v2/{dr}/manifests/{tg}",
+            category="existing",
+            notes=[
+                "Plugin's tagExists() path. 2xx = exists; 404 = not found. "
+                "Docker-Content-Digest header carries the manifest digest."
+            ],
+        )
+
+        # 4. manifests GET — body-shape reference (older DockerRegistryClient
+        #    code paths used GET; HEAD is preferred. Capturing GET keeps
+        #    schemaVersion/mediaType/layers visible for any future use.)
+        self._docker_get(
+            name=f"docker_manifest_get_{docker_repo}",
+            description=f"GET manifest for {docker_repo}:{chosen_tag} — full body",
+            path=f"/v2/{dr}/manifests/{tg}",
+            category="existing",
+            notes=[
+                "Documents manifest body shape (schemaVersion, mediaType, layers). "
+                "Plugin uses HEAD for tagExists; this is reference-only."
+            ],
+        )
+
+        # 5. Negative case — bogus tag confirms 404 path is reliable
+        bogus_tag = "wf-orchestrator-probe-nonexistent-tag-9999999"
+        bg = urllib.parse.quote(bogus_tag, safe="")
+        self._docker_head(
+            name=f"docker_manifest_head_{docker_repo}_bogus",
+            description=f"HEAD manifest for {docker_repo}:{bogus_tag} — verifies 404 path",
+            path=f"/v2/{dr}/manifests/{bg}",
+            category="existing",
+            notes=[
+                "Negative case — distinguishes 'tag missing' from 'auth/network failure'. "
+                "DockerRegistryClient.tagExists() returns Success(false) on 404, "
+                "Error on any other non-2xx."
+            ],
+        )
+
     # -- repo lookup helper for per-format config probe ----------------------
 
     def _lookup_repo_format_type(self, repo_name: str) -> Optional[tuple[str, str]]:
@@ -1775,6 +1886,11 @@ def main() -> int:
     p.add_argument("--discover", action="store_true",
                    help="Discovery mode: list all repos + Docker catalog, pick a maven + docker "
                         "repo, write Result_N/discover.md with a copy-paste full-sweep command.")
+    p.add_argument("--docker-only", action="store_true",
+                   help="Workflow-scope mode: probe ONLY the 5 Docker v2 calls the plugin's "
+                        "per-repo verify flow uses (/v2/, /v2/{repo}/tags/list, /v2/{repo}/manifests/{tag} "
+                        "HEAD+GET, plus a bogus-tag HEAD to validate 404 semantics). "
+                        "Requires --docker-repo. REST/maven/security/metrics surfaces are skipped.")
     p.add_argument("--out", default=str(Path(__file__).parent),
                    help="Parent dir for Result_N/ output (default: alongside the script)")
     args = p.parse_args()
@@ -1790,8 +1906,18 @@ def main() -> int:
     out_parent.mkdir(parents=True, exist_ok=True)
     results_dir = _allocate_results_dir(out_parent)
 
-    if args.discover and args.versions_only:
-        print("ERROR: --discover and --versions-only are mutually exclusive.", file=sys.stderr)
+    exclusive_modes = [m for m in ("discover", "versions_only", "docker_only")
+                       if getattr(args, m)]
+    if len(exclusive_modes) > 1:
+        print(f"ERROR: --discover, --versions-only, and --docker-only are mutually exclusive "
+              f"(got: {', '.join('--' + m.replace('_', '-') for m in exclusive_modes)}).",
+              file=sys.stderr)
+        return 2
+
+    if args.docker_only and not args.docker_repo:
+        print("ERROR: --docker-only requires --docker-repo "
+              "(the Nexus folder path, e.g. company-team/service-a-repo).",
+              file=sys.stderr)
         return 2
 
     if args.basic_token and (args.user or args.password):
@@ -1802,6 +1928,8 @@ def main() -> int:
         mode_label = "discover"
     elif args.versions_only:
         mode_label = "versions-only"
+    elif args.docker_only:
+        mode_label = "docker-only"
     else:
         mode_label = "full sweep"
 
@@ -1838,12 +1966,18 @@ def main() -> int:
         "no_verify": args.no_verify,
         "versions_only": args.versions_only,
         "discover": args.discover,
+        "docker_only": args.docker_only,
     }
 
     if args.discover:
         probe.run_discover()
     elif args.versions_only:
         probe.run_versions_only()
+    elif args.docker_only:
+        probe.run_docker_only(
+            docker_repo=args.docker_repo,
+            manifest_tag=args.manifest_tag,
+        )
     else:
         probe.run_full(
             maven_repo=args.maven_repo,
