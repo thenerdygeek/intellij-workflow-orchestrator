@@ -96,11 +96,28 @@ data class FailedTestData(
 
 /**
  * A Bamboo plan variable (name-value pair).
+ *
+ * Plan-level variables (returned by `?expand=variableContext` on a plan) carry
+ * three additional fields that build-level variables don't:
+ *  - [isPassword] — Bamboo flags secret variables here. UI must render these
+ *    with a masking field (`JBPasswordField`) and never log the value.
+ *  - [variableType] — `PLAN`, `GLOBAL`, or `PARENT`. Useful for grouping in the
+ *    variable picker; not surfaced in the UI today.
+ *  - [description] — administrator note shown next to the variable in Bamboo's
+ *    plan-config UI. Optional.
+ *
+ * Build-level variables (from `?expand=variables` on a result) populate only
+ * `name` + `value` and leave the secret fields at their defaults — that's safe
+ * because Bamboo redacts password variable values out of the result-level
+ * response anyway, so the UI never receives them in clear text from this path.
  */
 @Serializable
 data class PlanVariableData(
     val name: String,
-    val value: String
+    val value: String,
+    val isPassword: Boolean = false,
+    val variableType: String = "",
+    val description: String = ""
 )
 
 /**

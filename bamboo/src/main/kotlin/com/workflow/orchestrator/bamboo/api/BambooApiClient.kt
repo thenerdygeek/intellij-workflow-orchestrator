@@ -5,6 +5,8 @@ import com.workflow.orchestrator.core.http.HttpClientFactory
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
 import com.workflow.orchestrator.core.model.ServiceType
+import com.workflow.orchestrator.core.services.isSuccess
+import com.workflow.orchestrator.core.services.looksLikeAuthRedirect
 import com.workflow.orchestrator.core.services.postForm
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -232,32 +234,29 @@ class BambooApiClient(
         }.map { it.results.result }
     }
 
-    /** Rerun failed/incomplete jobs for a build via Bamboo's restartBuild action. */
-    suspend fun rerunFailedJobs(planKey: String, buildNumber: Int): ApiResult<Unit> =
-        withContext(Dispatchers.IO) {
-            try {
-                val url = "$baseUrl/build/admin/restartBuild.action?planKey=$planKey&buildNumber=$buildNumber"
-                log.debug("[Bamboo:API] Rerunning failed jobs for planKey=$planKey, buildNumber=$buildNumber")
-                val request = Request.Builder().url(url)
-                    .post("".toRequestBody(null))
-                    .header("Accept", "application/json")
-                    .build()
-                val response = httpClient.newCall(request).execute()
-                response.use {
-                    log.debug("[Bamboo:API] restartBuild response: ${it.code}")
-                    when (it.code) {
-                        in 200..399 -> ApiResult.Success(Unit) // 302 redirect = success
-                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token")
-                        403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient permissions to restart build")
-                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Build not found")
-                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bamboo returned ${it.code}")
-                    }
-                }
-            } catch (e: IOException) {
-                log.warn("[Bamboo:API] restartBuild network error: ${e.message}")
-                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bamboo: ${e.message}", e)
-            }
+    /**
+     * Rerun failed/incomplete jobs for a build via Bamboo's `restartBuild` Struts action.
+     *
+     * Routes through [postForm] (PR 7 audit P1 #3 + write-path lessons §1):
+     *   - `X-Atlassian-Token: no-check` is set automatically — without this the
+     *     Struts action 403s on XSRF before reaching the permission check.
+     *   - Strict 200..299 success check via [isSuccess]. Bamboo's `restartBuild`
+     *     returns a 302 to `/build/admin/restartBuild.action` on success when
+     *     the request is non-XHR; with `X-Atlassian-Token: no-check` it returns
+     *     200 with a JSON body. A 200 with `Content-Type: text/html` means the
+     *     session expired and the server swapped in a login page — `postForm`
+     *     maps that to [ErrorType.AUTH_REDIRECT].
+     */
+    suspend fun rerunFailedJobs(planKey: String, buildNumber: Int): ApiResult<Unit> {
+        val url = "$baseUrl/build/admin/restartBuild.action" +
+            "?planKey=${URLEncoder.encode(planKey, "UTF-8")}" +
+            "&buildNumber=$buildNumber"
+        log.debug("[Bamboo:API] Rerunning failed jobs for planKey=$planKey, buildNumber=$buildNumber")
+        return when (val raw = postForm(httpClient, url, emptyMap())) {
+            is ApiResult.Success -> ApiResult.Success(Unit)
+            is ApiResult.Error -> raw
         }
+    }
 
     /** Cancel a queued (not yet running) build. */
     suspend fun cancelBuild(resultKey: String): ApiResult<Unit> {
@@ -467,14 +466,26 @@ class BambooApiClient(
                 val request = Request.Builder().url("$baseUrl$path")
                     .put("".toRequestBody("application/json".toMediaType()))
                     .header("Accept", "application/json")
+                    // PR 7 / write-path lessons §1: every Bamboo write needs the
+                    // XSRF bypass header, including `result/{key}/stop` (PUT). Probe
+                    // confirmed Bamboo returns 403 on XSRF check before consulting
+                    // BUILD permissions when this header is missing.
+                    .header("X-Atlassian-Token", "no-check")
                     .build()
                 val response = httpClient.newCall(request).execute()
                 response.use {
-                    when (it.code) {
-                        in 200..299 -> ApiResult.Success(Unit)
-                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token")
-                        403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bamboo permissions")
-                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Bamboo resource not found")
+                    when {
+                        isSuccess(it.code) -> {
+                            if (looksLikeAuthRedirect(it.headers)) {
+                                ApiResult.Error(
+                                    ErrorType.AUTH_REDIRECT,
+                                    "Server returned HTML — your session may have expired. Re-authenticate in Settings."
+                                )
+                            } else ApiResult.Success(Unit)
+                        }
+                        it.code == 401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token")
+                        it.code == 403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bamboo permissions")
+                        it.code == 404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Bamboo resource not found")
                         else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Bamboo returned ${it.code}")
                     }
                 }
@@ -488,15 +499,26 @@ class BambooApiClient(
             try {
                 val request = Request.Builder().url("$baseUrl$path").delete()
                     .header("Accept", "application/json")
+                    // Same XSRF rule applies to DELETE on the queue endpoint —
+                    // see [put] above.
+                    .header("X-Atlassian-Token", "no-check")
                     .build()
                 val response = httpClient.newCall(request).execute()
                 response.use {
                     log.debug("[Bamboo:API] DELETE $path responded with status=${it.code}")
-                    when (it.code) {
-                        in 200..299 -> ApiResult.Success(Unit)
-                        401 -> { log.warn("[Bamboo:API] Authentication failed (401)"); ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token") }
-                        403 -> { log.warn("[Bamboo:API] Forbidden (403)"); ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bamboo permissions") }
-                        404 -> { log.warn("[Bamboo:API] Not found (404)"); ApiResult.Error(ErrorType.NOT_FOUND, "Bamboo resource not found") }
+                    when {
+                        isSuccess(it.code) -> {
+                            if (looksLikeAuthRedirect(it.headers)) {
+                                log.warn("[Bamboo:API] DELETE got HTML body — auth redirect")
+                                ApiResult.Error(
+                                    ErrorType.AUTH_REDIRECT,
+                                    "Server returned HTML — your session may have expired. Re-authenticate in Settings."
+                                )
+                            } else ApiResult.Success(Unit)
+                        }
+                        it.code == 401 -> { log.warn("[Bamboo:API] Authentication failed (401)"); ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token") }
+                        it.code == 403 -> { log.warn("[Bamboo:API] Forbidden (403)"); ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bamboo permissions") }
+                        it.code == 404 -> { log.warn("[Bamboo:API] Not found (404)"); ApiResult.Error(ErrorType.NOT_FOUND, "Bamboo resource not found") }
                         else -> { log.warn("[Bamboo:API] Server error (${it.code})"); ApiResult.Error(ErrorType.SERVER_ERROR, "Bamboo returned ${it.code}") }
                     }
                 }

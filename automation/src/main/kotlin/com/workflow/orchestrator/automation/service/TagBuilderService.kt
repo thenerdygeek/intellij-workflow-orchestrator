@@ -45,13 +45,51 @@ class TagBuilderService {
     /**
      * Scores and ranks recent builds, collecting diagnostic info about each step.
      * Returns the ranked runs plus diagnostics explaining what happened.
+     *
+     * **Pagination contract (PR 7 audit #6).** The probe at
+     * `tools/atlassian-probe/probe_bamboo.py mirror_baseline_detection` proved
+     * the previous "fetch N total builds" shape is wrong: when only 3 of the
+     * last 10 builds are parseable (have `dockerTagsAsJson`), the user gets a
+     * 3-entry baseline picker instead of a useful 10-entry one. The fix is to
+     * fetch in pages of [PAGE_SIZE] and keep walking until either
+     * [targetParseable] parseable builds have been accumulated OR [maxWalk]
+     * total builds have been visited (defensive cap so we don't walk an
+     * infinite history when the plan has zero parseable builds).
+     *
+     * @param suitePlanKey  the plan to query.
+     * @param targetParseable target number of *parseable* builds (with
+     *   dockerTagsAsJson) to return. Default 10. Single-arg callers retain
+     *   the old "10 total" behavior because [maxWalk] also defaults to 10
+     *   when omitted.
+     * @param maxWalk hard cap on total builds visited. When equal to
+     *   [targetParseable], the helper degenerates to the legacy single-page
+     *   fetch (preserves backwards compatibility for existing call sites).
      */
     suspend fun scoreAndRankRuns(
         suitePlanKey: String,
-        maxResults: Int = 10
+        targetParseable: Int = 10,
+        maxWalk: Int = targetParseable
     ): Pair<List<BaselineRun>, BaselineDiagnostics> {
-        log.info("[Automation:Tags] Scoring and ranking runs for plan '$suitePlanKey', maxResults=$maxResults")
-        val buildsResult = bambooService.getRecentBuilds(suitePlanKey, maxResults)
+        require(targetParseable > 0) { "targetParseable must be positive" }
+        require(maxWalk >= targetParseable) { "maxWalk ($maxWalk) must be >= targetParseable ($targetParseable)" }
+
+        log.info("[Automation:Tags] Scoring runs for plan '$suitePlanKey' " +
+            "(targetParseable=$targetParseable, maxWalk=$maxWalk)")
+
+        // Single-page legacy mode: targetParseable == maxWalk → one fetch, no
+        // pagination. Preserves the pre-PR-7 behavior for existing call sites
+        // that pass only `maxResults`.
+        val singlePageMode = targetParseable == maxWalk
+
+        val buildsResult = if (singlePageMode) {
+            bambooService.getRecentBuilds(suitePlanKey, targetParseable)
+        } else {
+            // Multi-page: fetch maxWalk in one request (Bamboo's max-results)
+            // and walk through it client-side. Bamboo's `result/{plan}` collection
+            // endpoint accepts `max-results=200`; capping at maxWalk means we
+            // never over-fetch.
+            bambooService.getRecentBuilds(suitePlanKey, maxWalk)
+        }
         if (buildsResult.isError) {
             log.info("[Automation:Tags] getRecentBuilds failed for '$suitePlanKey': ${buildsResult.summary}")
             return emptyList<BaselineRun>() to BaselineDiagnostics(
@@ -69,7 +107,12 @@ class TagBuilderService {
         var buildsWithTags = 0
         val skippedReasons = mutableListOf<String>()
 
-        val ranked = buildsResult.data.mapNotNull { build ->
+        // Stop walking once we accumulate [targetParseable] parseable builds —
+        // this is the difference from the old `mapNotNull` shape. We use a
+        // mutable list with an early-exit instead of a lazy sequence to keep
+        // the existing diagnostics counters intact.
+        val ranked = mutableListOf<BaselineRun>()
+        for (build in buildsResult.data) {
             log.info("[Automation:Tags] Checking build #${build.buildNumber} (buildResultKey=${build.buildResultKey}, state=${build.state})")
 
             val resultKey = build.buildResultKey.ifBlank { "${suitePlanKey}-${build.buildNumber}" }
@@ -79,7 +122,7 @@ class TagBuilderService {
                 val reason = "#${build.buildNumber}: variables fetch failed — ${varsResult.summary}"
                 log.info("[Automation:Tags]   $reason")
                 skippedReasons.add(reason)
-                return@mapNotNull null
+                continue
             }
             val variables = varsResult.data.associate { it.name to it.value }
             buildsWithVars++
@@ -92,7 +135,7 @@ class TagBuilderService {
                 val reason = "#${build.buildNumber}: no '$buildVariableName' in variables [${variables.keys.joinToString()}]"
                 log.info("[Automation:Tags]   $reason")
                 skippedReasons.add(reason)
-                return@mapNotNull null
+                continue
             }
 
             val tags = parseDockerTagsJson(dockerTagsJson)
@@ -100,7 +143,7 @@ class TagBuilderService {
                 val reason = "#${build.buildNumber}: dockerTagsAsJson parsed to empty — ${dockerTagsJson.take(100)}"
                 log.info("[Automation:Tags]   $reason")
                 skippedReasons.add(reason)
-                return@mapNotNull null
+                continue
             }
             buildsWithTags++
 
@@ -111,7 +154,7 @@ class TagBuilderService {
 
             log.info("[Automation:Tags]   Build #${build.buildNumber}: ${tags.size} services, $releaseCount release tags, score=$score")
 
-            BaselineRun(
+            ranked.add(BaselineRun(
                 buildNumber = build.buildNumber,
                 resultKey = resultKey,
                 dockerTags = tags,
@@ -121,8 +164,20 @@ class TagBuilderService {
                 failedStages = failedStages,
                 triggeredAt = java.time.Instant.now(),
                 score = score
-            )
-        }.sortedByDescending { it.score }
+            ))
+
+            // Early exit: stop walking once we have enough parseable builds.
+            // This is the pagination contract — we walk up to maxWalk total
+            // builds but cut off as soon as targetParseable parseable ones
+            // are accumulated. (See KDoc above.)
+            if (ranked.size >= targetParseable) {
+                log.info("[Automation:Tags] Reached targetParseable=$targetParseable after walking " +
+                    "${buildsResult.data.indexOf(build) + 1} builds — stopping.")
+                break
+            }
+        }
+
+        ranked.sortByDescending { it.score }
 
         log.info("[Automation:Tags] Scored ${ranked.size} baseline runs for plan '$suitePlanKey'")
 
@@ -161,8 +216,33 @@ class TagBuilderService {
                 isCurrentRepo = false
             )
         }
-        return BaselineLoadResult(tags = tags, selectedBuild = best, diagnostics = diagnostics)
+        // PR 7 #8: surface the full ranked list so the UI can populate a
+        // dropdown of alternatives; the user can swap any of these in.
+        return BaselineLoadResult(
+            tags = tags,
+            selectedBuild = best,
+            diagnostics = diagnostics,
+            allRanked = ranked
+        )
     }
+
+    /**
+     * Returns the [TagEntry] list for an arbitrary [BaselineRun] from the
+     * ranked alternatives — used by the baseline picker dropdown when the
+     * user selects a non-default run (PR 7 #8). Pure transformation; no I/O.
+     */
+    fun tagsForRun(run: BaselineRun): List<TagEntry> =
+        run.dockerTags.map { (service, tag) ->
+            TagEntry(
+                serviceName = service,
+                currentTag = tag,
+                latestReleaseTag = null,
+                source = TagSource.BASELINE,
+                registryStatus = RegistryStatus.UNKNOWN,
+                isDrift = false,
+                isCurrentRepo = false
+            )
+        }
 
     /** Legacy method — delegates to [loadBaselineWithDiagnostics]. */
     suspend fun loadBaseline(suitePlanKey: String): List<TagEntry> =
@@ -195,14 +275,46 @@ class TagBuilderService {
         return payload
     }
 
+    /**
+     * Merges plan-scoped extras + per-suite free-form extras into the docker
+     * tags payload, then returns the final trigger variable map.
+     *
+     * **Conflict resolution (PR 7 #7).** Order of precedence (later wins for
+     * non-docker keys; docker key is locked):
+     *   1. [extraVars] — plan-scoped variables from the picker dropdown.
+     *   2. [suiteExtras] — free-form per-suite extras the user added in the
+     *      "Custom Variables" sub-panel. May redefine plan-scoped keys.
+     *   3. The docker tags payload (`buildVariableName` → JSON) — ALWAYS the
+     *      last write-in. If a user creates a free-form extra named
+     *      `DockerTagsAsJSON`, this overrides it. The docker payload is the
+     *      whole point of the automation tab; letting an extra clobber it
+     *      would silently break every triggered run.
+     *
+     * Empty values are preserved so the user can deliberately blank out a
+     * plan default by setting an extra to "".
+     */
     fun buildTriggerVariables(
         entries: List<TagEntry>,
-        extraVars: Map<String, String>
+        extraVars: Map<String, String>,
+        suiteExtras: Map<String, String> = emptyMap()
     ): Map<String, String> {
-        log.info("[Automation:Tags] Building trigger variables using variable name '$buildVariableName' with ${extraVars.size} extra vars")
+        log.info("[Automation:Tags] Building trigger variables using '$buildVariableName' " +
+            "with ${extraVars.size} plan-scoped extras + ${suiteExtras.size} suite extras")
+
+        // Detect and warn (without rejecting) when a suite extra collides with
+        // the docker tag variable. The trigger still fires correctly because
+        // we apply the docker payload last, but the user almost certainly
+        // means something else and we want a breadcrumb in the log.
+        val collidingExtra = suiteExtras.keys.firstOrNull { it.equals(buildVariableName, ignoreCase = true) }
+        if (collidingExtra != null) {
+            log.warn("[Automation:Tags] Suite extra '$collidingExtra' collides with the " +
+                "auto-generated docker tags variable; the docker payload wins.")
+        }
+
         val result = mutableMapOf<String, String>()
-        result[buildVariableName] = buildJsonPayload(entries)
         result.putAll(extraVars)
+        result.putAll(suiteExtras)
+        result[buildVariableName] = buildJsonPayload(entries)
         return result
     }
 

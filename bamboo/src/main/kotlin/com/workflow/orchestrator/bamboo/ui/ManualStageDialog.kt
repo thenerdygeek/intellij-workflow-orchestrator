@@ -7,6 +7,7 @@ import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.model.bamboo.PlanVariableData
@@ -104,15 +105,20 @@ class ManualStageDialog(
             gbc.weightx = 0.0
             panel.add(JBLabel("${variable.name}:"), gbc)
 
-            // Editor — checkbox for boolean-like values, text field otherwise
+            // Editor selection priority (PR 7 audit P1 #1):
+            //   1. Password variables → JBPasswordField (value never echoed to log)
+            //   2. Boolean-like values → JBCheckBox
+            //   3. Everything else    → JBTextField
             gbc.gridx = 1
             gbc.weightx = 1.0
-            val editor: JComponent = if (variable.value in listOf("true", "false")) {
-                JBCheckBox().apply {
+            val editor: JComponent = when {
+                variable.isPassword -> JBPasswordField().apply {
+                    text = variable.value
+                }
+                variable.value in listOf("true", "false") -> JBCheckBox().apply {
                     isSelected = variable.value == "true"
                 }
-            } else {
-                JBTextField(variable.value, 20)
+                else -> JBTextField(variable.value, 20)
             }
             variableEditors[variable.name] = editor
             panel.add(editor, gbc)
@@ -131,10 +137,27 @@ class ManualStageDialog(
     override fun doOKAction() {
         val vars = variableEditors.mapValues { (_, editor) ->
             when (editor) {
+                // JBPasswordField is a JBTextField subclass — match it FIRST so we
+                // pull the password via getPassword() (clears chars on dispose) and
+                // never via .text (which getPassword's contract avoids returning).
+                is JBPasswordField -> String(editor.password)
                 is JBCheckBox -> editor.isSelected.toString()
                 is JBTextField -> editor.text
                 else -> ""
             }
+        }
+
+        // Audit P1 (PR 7 #1) — never log password variable values. Build a
+        // log-safe view of the variable map by name with secrets redacted.
+        val passwordKeys = variables.filter { it.isPassword }.map { it.name }.toSet()
+        if (passwordKeys.isNotEmpty()) {
+            val safeKeys = vars.keys.joinToString { name ->
+                if (name in passwordKeys) "$name=<redacted>" else name
+            }
+            // Note: .info on the dialog log channel is intentional — we want a
+            // breadcrumb that the trigger fired without leaking the secret.
+            com.intellij.openapi.diagnostic.Logger.getInstance(ManualStageDialog::class.java)
+                .info("[Bamboo:UI] Triggering with variables: $safeKeys")
         }
 
         scope.launch {
@@ -146,4 +169,13 @@ class ManualStageDialog(
 
         super.doOKAction()
     }
+
+    /** Test seam — exposes the loaded variables list so unit tests can inspect
+     *  the password masking decision without spinning up the full dialog. */
+    internal fun variablesForTest(): List<PlanVariableData> = variables
+
+    /** Test seam — exposes the rendered editor classes so a unit test can
+     *  assert that a password variable produces a `JBPasswordField` (not a
+     *  plain `JBTextField`) without driving the EDT. */
+    internal fun editorsForTest(): Map<String, JComponent> = variableEditors
 }

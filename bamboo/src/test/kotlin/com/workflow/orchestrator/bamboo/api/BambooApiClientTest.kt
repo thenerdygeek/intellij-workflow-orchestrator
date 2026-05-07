@@ -298,4 +298,62 @@ class BambooApiClientTest {
         assertTrue(result is ApiResult.Error)
         assertEquals(ErrorType.NOT_FOUND, (result as ApiResult.Error).type)
     }
+
+    // PR 7 — write-path lessons §1: every Bamboo write must set
+    // X-Atlassian-Token: no-check.
+
+    @Test
+    fun `cancelBuild sets X-Atlassian-Token header`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(204))
+
+        client.cancelBuild("PROJ-AUTO-847")
+
+        val recorded = server.takeRequest()
+        assertEquals("no-check", recorded.getHeader("X-Atlassian-Token"))
+    }
+
+    @Test
+    fun `stopBuild sets X-Atlassian-Token header`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200))
+
+        client.stopBuild("PROJ-BUILD-42")
+
+        val recorded = server.takeRequest()
+        assertEquals("PUT", recorded.method)
+        assertEquals("no-check", recorded.getHeader("X-Atlassian-Token"))
+    }
+
+    @Test
+    fun `rerunFailedJobs uses postForm with X-Atlassian-Token`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+
+        val result = client.rerunFailedJobs("PROJ-BUILD", 42)
+
+        assertTrue(result.isSuccess)
+        val recorded = server.takeRequest()
+        assertEquals("POST", recorded.method)
+        assertEquals("no-check", recorded.getHeader("X-Atlassian-Token"))
+        // Routed via the Struts admin endpoint with planKey + buildNumber as query params.
+        assertTrue(recorded.path!!.contains("/build/admin/restartBuild.action"))
+        assertTrue(recorded.path!!.contains("planKey=PROJ-BUILD"))
+        assertTrue(recorded.path!!.contains("buildNumber=42"))
+    }
+
+    @Test
+    fun `rerunFailedJobs maps text-html response to AUTH_REDIRECT`() = runTest {
+        // Atlassian login redirect: 200 with text/html means the PAT/cookie
+        // expired and Bamboo swapped in the login page. postForm catches this
+        // pattern and surfaces ErrorType.AUTH_REDIRECT instead of letting the
+        // caller try to JSON-parse HTML.
+        server.enqueue(
+            MockResponse().setResponseCode(200)
+                .setHeader("Content-Type", "text/html;charset=UTF-8")
+                .setBody("<html><body>Login required</body></html>")
+        )
+
+        val result = client.rerunFailedJobs("PROJ-BUILD", 42)
+
+        assertTrue(result is ApiResult.Error)
+        assertEquals(ErrorType.AUTH_REDIRECT, (result as ApiResult.Error).type)
+    }
 }

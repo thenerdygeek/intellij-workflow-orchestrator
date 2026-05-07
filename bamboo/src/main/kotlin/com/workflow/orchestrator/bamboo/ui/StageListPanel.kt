@@ -41,24 +41,56 @@ class StageListPanel : JPanel(BorderLayout()) {
         cardLayout.show(cardPanel, "empty")
         add(cardPanel, BorderLayout.CENTER)
 
-        // Double-click on manual stage triggers run
+        // Double-click on manual stage triggers run — gated by StageRunnabilityPolicy
+        // (PR 7 audit P1 #2). Greyed-out rows ignore the double-click and surface a
+        // tooltip pointing at the first prior stage that needs to finish.
         stageList.addMouseListener(object : java.awt.event.MouseAdapter() {
             override fun mouseClicked(e: java.awt.event.MouseEvent) {
                 if (e.clickCount == 2) {
                     val index = stageList.locationToIndex(e.point)
                     if (index >= 0) {
                         val stage = listModel.getElementAt(index)
-                        if (stage.manual && stage.status != BuildStatus.IN_PROGRESS && !isHeader(stage)) {
+                        val allStages = (0 until listModel.size()).map { listModel.getElementAt(it) }
+                        if (StageRunnabilityPolicy.isNextRunnable(allStages, stage)) {
                             onRunStage?.invoke(stage)
                         }
                     }
                 }
             }
         })
+
+        // Tooltip surface: when the cursor is over a non-runnable manual stage,
+        // explain WHY it's not runnable (which prior stage blocks it).
+        stageList.addMouseMotionListener(object : java.awt.event.MouseMotionAdapter() {
+            override fun mouseMoved(e: java.awt.event.MouseEvent) {
+                val index = stageList.locationToIndex(e.point)
+                if (index < 0) {
+                    stageList.toolTipText = null
+                    return
+                }
+                val stage = listModel.getElementAt(index)
+                if (StageRunnabilityPolicy.isHeader(stage) || !stage.manual) {
+                    stageList.toolTipText = null
+                    return
+                }
+                val allStages = (0 until listModel.size()).map { listModel.getElementAt(it) }
+                if (StageRunnabilityPolicy.isNextRunnable(allStages, stage)) {
+                    stageList.toolTipText = "Double-click to run"
+                } else {
+                    val blocker = StageRunnabilityPolicy.firstBlockingStage(allStages, stage)
+                    stageList.toolTipText = if (blocker != null) {
+                        "Run prior stages first (Stage \"$blocker\")"
+                    } else {
+                        "Stage cannot be run right now"
+                    }
+                }
+            }
+        })
     }
 
-    /** Header items have name prefixed with "§" marker */
-    private fun isHeader(state: StageState): Boolean = state.name.startsWith("§")
+    /** Delegates to [StageRunnabilityPolicy.isHeader] — kept private for the
+     *  renderer's existing call sites. */
+    private fun isHeader(state: StageState): Boolean = StageRunnabilityPolicy.isHeader(state)
 
     fun updateStages(stages: List<StageState>) {
         val selectedIndex = stageList.selectedIndex
@@ -157,9 +189,14 @@ class StageListPanel : JPanel(BorderLayout()) {
             val duration = value.durationMs?.let { TimeFormatter.formatDurationMillis(it) } ?: "--"
             append("  $duration", SimpleTextAttributes.GRAYED_ATTRIBUTES)
 
-            // Manual indicator
+            // Manual indicator — link-style when the stage is the next runnable
+            // step, grayed when blocked by prior stages (PR 7 audit P1 #2).
             if (value.manual && value.status != BuildStatus.IN_PROGRESS) {
-                append("  [Run]", SimpleTextAttributes.LINK_ATTRIBUTES)
+                val allStages = (0 until listModel.size()).map { listModel.getElementAt(it) }
+                val runnable = StageRunnabilityPolicy.isNextRunnable(allStages, value)
+                val attrs = if (runnable) SimpleTextAttributes.LINK_ATTRIBUTES
+                            else SimpleTextAttributes.GRAYED_ATTRIBUTES
+                append("  [Run]", attrs)
             }
         }
     }

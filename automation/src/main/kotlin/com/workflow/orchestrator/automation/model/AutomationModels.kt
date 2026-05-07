@@ -78,11 +78,23 @@ data class DriftResult(
 /**
  * Diagnostic result from baseline loading — replaces opaque empty list.
  * Tells the UI exactly what happened and why.
+ *
+ * @property tags the [TagEntry] list rendered in the staging table — derived
+ *   from `selectedBuild?.dockerTags` (or empty when no baseline was found).
+ * @property selectedBuild the auto-picked baseline (top of the ranking) or
+ *   null when no parseable build was found.
+ * @property allRanked the full ranked list including [selectedBuild] at index 0
+ *   (PR 7 #8). Powers the baseline picker dropdown — the user can switch the
+ *   staged tags to any other parseable run by selecting from this list.
+ *   Defaults to the single-element list `[selectedBuild]` when only one was
+ *   parseable, or empty when none were.
+ * @property diagnostics counters + skipped reasons surfaced in the banner.
  */
 data class BaselineLoadResult(
     val tags: List<TagEntry>,
     val selectedBuild: BaselineRun?,
-    val diagnostics: BaselineDiagnostics
+    val diagnostics: BaselineDiagnostics,
+    val allRanked: List<BaselineRun> = listOfNotNull(selectedBuild)
 )
 
 data class BaselineDiagnostics(

@@ -983,6 +983,16 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                     statusLabel.text = "No build to rerun"
                     return
                 }
+                // PR 7 audit P1 #3: confirmation dialog matching Stop/Cancel pattern.
+                // Re-running can re-charge build minutes and rewrite test result history,
+                // so we mirror the Stop/Cancel guard rather than firing on raw click.
+                val confirm = Messages.showYesNoDialog(
+                    project,
+                    "Rerun failed jobs for $planKey #$buildNumber?",
+                    "Rerun Failed Jobs",
+                    Messages.getQuestionIcon()
+                )
+                if (confirm != Messages.YES) return
                 statusLabel.text = "Rerunning failed jobs..."
                 panelScope.launch {
                     val result = bambooService.rerunFailedJobs(planKey, buildNumber)

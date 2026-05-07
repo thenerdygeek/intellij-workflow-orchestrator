@@ -57,17 +57,49 @@ class AutomationPanel(
         font = font.deriveFont(JBUI.scale(11).toFloat())
         border = JBUI.Borders.emptyLeft(4)
     }
+    /**
+     * Baseline picker (PR 7 #8) — shows the auto-selected build + all parseable
+     * alternatives. Selecting a different entry swaps the staged tags to that
+     * build's `dockerTagsAsJson`. Hidden until at least one parseable build is
+     * found; populated from [BaselineLoadResult.allRanked].
+     *
+     * Declared before [baselinePickerRow] / [diagnosticPanel] because Kotlin
+     * initializes properties in declaration order and the panel references it.
+     */
+    private val baselineCombo = JComboBox<BaselinePickerItem>().apply {
+        toolTipText = "Pick a different parseable build to seed the staging table from"
+    }
+    private var suppressBaselineListener = false
+    /** Remembered alternatives so the combo listener can resolve the picked entry. */
+    private var currentBaselineAlternatives: List<BaselineRun> = emptyList()
+
+    /**
+     * Wraps the baseline picker combo with a "Baseline:" label so the user can
+     * see which build was auto-picked and switch to a parseable alternative.
+     * Hidden when there are no alternatives (fewer than 2 parseable builds).
+     */
+    private val baselinePickerRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+        border = JBUI.Borders.empty(0, 4, 2, 4)
+        add(JBLabel("Baseline:").apply {
+            font = font.deriveFont(JBUI.scale(11).toFloat())
+            foreground = StatusColors.SECONDARY_TEXT
+        })
+        add(baselineCombo)
+        isVisible = false
+    }
     private val diagnosticPanel = JPanel().apply {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
         border = JBUI.Borders.empty(2, 8, 4, 8)
         add(baselineInfoLabel)
         add(dockerTagInfoLabel)
+        add(baselinePickerRow)
         isVisible = false // hidden until suite is loaded
     }
 
     // Sub-panels
     private val tagStagingPanel = TagStagingPanel(project)
     private val suiteConfigPanel = SuiteConfigPanel(project)
+    private val suiteExtrasPanel = SuiteExtrasPanel()
     private val queueStatusPanel = QueueStatusPanel(project)
     private val monitorPanel = MonitorPanel(project)
 
@@ -133,12 +165,20 @@ class AutomationPanel(
         }
         add(topPanel, BorderLayout.NORTH)
 
-        // Configure tab: tag table (left) + variables (right)
+        // Configure tab: tag table (left) + variables (right, plan-scoped + extras)
+        // Right column stacks SuiteConfigPanel (plan vars) above SuiteExtrasPanel
+        // (free-form). The plan vars panel takes most of the height; extras grow
+        // from the bottom. Both share the same JBSplitter slot via a Y-axis box.
         val configurePanel = JPanel(BorderLayout()).apply {
+            val rightStack = JPanel().apply {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                add(suiteConfigPanel)
+                add(suiteExtrasPanel)
+            }
             val splitter = com.intellij.ui.JBSplitter(false, 0.65f).apply {
                 setSplitterProportionKey("workflow.automation.splitter")
                 firstComponent = JBScrollPane(tagStagingPanel)
-                secondComponent = JBScrollPane(suiteConfigPanel)
+                secondComponent = JBScrollPane(rightStack)
             }
             add(splitter, BorderLayout.CENTER)
         }
@@ -171,8 +211,21 @@ class AutomationPanel(
 
         Disposer.register(this, tagStagingPanel)
         Disposer.register(this, suiteConfigPanel)
+        Disposer.register(this, suiteExtrasPanel)
         Disposer.register(this, queueStatusPanel)
         Disposer.register(this, monitorPanel)
+
+        // Baseline picker (PR 7 #8): on user pick, replace the staging table's
+        // tag list with the chosen build's tags. The auto-picked entry remains
+        // index 0 — picking it is a no-op.
+        baselineCombo.addActionListener {
+            if (suppressBaselineListener) return@addActionListener
+            val item = baselineCombo.selectedItem as? BaselinePickerItem ?: return@addActionListener
+            val pick = currentBaselineAlternatives.firstOrNull { it.buildNumber == item.buildNumber }
+                ?: return@addActionListener
+            log.info("[Automation:UI] Baseline manually swapped to build #${pick.buildNumber} (score=${pick.score})")
+            tagStagingPanel.updateTags(tagBuilderService.tagsForRun(pick))
+        }
 
         // Subscribe to BuildLogReady events from the Build tab
         subscribeToBuildEvents()
@@ -279,6 +332,13 @@ class AutomationPanel(
                     suiteConfigPanel.loadSuiteVariables(currentSuitePlanKey)
                     suiteConfigPanel.setVariableValues(varValues)
                 }
+                // PR 7 #7: load the per-suite free-form extras for this suite so
+                // the user sees their persisted overrides on suite switch.
+                suiteExtrasPanel.loadSuite(currentSuitePlanKey)
+
+                // PR 7 #8: refresh the baseline picker to reflect the alternatives
+                // we just received from scoreAndRankRuns.
+                refreshBaselinePicker(baselineResult.allRanked, baselineResult.selectedBuild)
 
                 updateStatusLabel(baselineResult)
 
@@ -458,12 +518,41 @@ class AutomationPanel(
         diagnosticPanel.revalidate()
     }
 
+    /**
+     * Populates the baseline picker dropdown with the auto-picked build at
+     * index 0 followed by the parseable alternatives. Hidden when there are
+     * fewer than 2 alternatives (nothing to pick from).
+     */
+    private fun refreshBaselinePicker(allRanked: List<BaselineRun>, selected: BaselineRun?) {
+        currentBaselineAlternatives = allRanked
+        suppressBaselineListener = true
+        baselineCombo.removeAllItems()
+        if (allRanked.size < 2) {
+            baselinePickerRow.isVisible = false
+            suppressBaselineListener = false
+            return
+        }
+        for (run in allRanked) {
+            baselineCombo.addItem(BaselinePickerItem(run.buildNumber, run.releaseTagCount, run.totalServices, run.score))
+        }
+        if (selected != null) {
+            val idx = allRanked.indexOfFirst { it.buildNumber == selected.buildNumber }
+            if (idx >= 0) baselineCombo.selectedIndex = idx
+        }
+        baselinePickerRow.isVisible = true
+        suppressBaselineListener = false
+    }
+
     private fun onTriggerNow() {
         if (currentSuitePlanKey.isBlank()) return
 
         val tags = tagStagingPanel.getCurrentTags()
         val extraVars = suiteConfigPanel.getVariables()
-        val variables = tagBuilderService.buildTriggerVariables(tags, extraVars)
+        // PR 7 #7: merge the per-suite free-form extras into the trigger payload.
+        // [TagBuilderService.buildTriggerVariables] applies the docker payload last
+        // so the auto-generated DockerTagsAsJSON always wins on key conflict.
+        val suiteExtras = AutomationSettingsService.getInstance().getExtraVariables(currentSuitePlanKey)
+        val variables = tagBuilderService.buildTriggerVariables(tags, extraVars, suiteExtras)
 
         log.info("[Automation:UI] Triggering suite $currentSuitePlanKey with ${variables.size} variables")
         statusLabel.text = "Triggering..."
@@ -492,13 +581,20 @@ class AutomationPanel(
         if (currentSuitePlanKey.isBlank()) return
         val tags = tagStagingPanel.getCurrentTags()
         val extraVars = suiteConfigPanel.getVariables()
+        // PR 7 #7: merge per-suite extras into the queued entry's variables
+        // (same precedence as onTriggerNow). The docker payload is stored
+        // separately in [QueueEntry.dockerTagsPayload], so we don't need to
+        // worry about it overriding here — the QueueService re-applies it at
+        // submit time.
+        val suiteExtras = AutomationSettingsService.getInstance().getExtraVariables(currentSuitePlanKey)
+        val mergedVars = (extraVars + suiteExtras)
         val dockerTagsPayload = tagBuilderService.buildJsonPayload(tags)
 
         val entry = QueueEntry(
             id = java.util.UUID.randomUUID().toString(),
             suitePlanKey = currentSuitePlanKey,
             dockerTagsPayload = dockerTagsPayload,
-            variables = extraVars,
+            variables = mergedVars,
             stages = suiteConfigPanel.getEnabledStages(),
             enqueuedAt = java.time.Instant.now(),
             status = QueueEntryStatus.WAITING_LOCAL,
@@ -523,4 +619,19 @@ private data class SuiteComboItem(val planKey: String, val displayName: String) 
 
 private data class BranchComboItem(val branchPlanKey: String, val branchName: String) {
     override fun toString() = branchName.ifBlank { branchPlanKey }
+}
+
+/**
+ * Combo entry for the baseline picker (PR 7 #8). Includes the build number,
+ * release-tag fraction, and score so the user can compare candidates at a
+ * glance: e.g., `#847 — 3/5 release tags, score 35`.
+ */
+private data class BaselinePickerItem(
+    val buildNumber: Int,
+    val releaseTagCount: Int,
+    val totalServices: Int,
+    val score: Int
+) {
+    override fun toString(): String =
+        "#$buildNumber — $releaseTagCount/$totalServices release tags, score $score"
 }

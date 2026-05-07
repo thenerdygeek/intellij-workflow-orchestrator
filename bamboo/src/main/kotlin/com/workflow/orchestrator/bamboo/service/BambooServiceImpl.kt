@@ -288,6 +288,8 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                     hint = when (result.type) {
                         ErrorType.AUTH_FAILED ->
                             "Check your Bamboo token in Settings."
+                        ErrorType.AUTH_REDIRECT ->
+                            "Your Bamboo session expired. Re-authenticate in Settings."
                         ErrorType.FORBIDDEN ->
                             "You may not have permission to restart this build."
                         ErrorType.NOT_FOUND ->
@@ -312,7 +314,16 @@ class BambooServiceImpl(private val project: Project) : BambooService {
         // We map dto.key → PlanVariableData.name so callers see a uniform name/value surface.
         val contextResult = api.getPlanVariableContext(planKey)
         if (contextResult is ApiResult.Success && contextResult.data.isNotEmpty()) {
-            val data = contextResult.data.map { PlanVariableData(name = it.key, value = it.value) }
+            // Preserve isPassword / variableType from the DTO — UI uses isPassword to
+            // render JBPasswordField + suppress logging the value (audit P1, PR 7 #1).
+            val data = contextResult.data.map {
+                PlanVariableData(
+                    name = it.key,
+                    value = it.value,
+                    isPassword = it.isPassword,
+                    variableType = it.variableType
+                )
+            }
             log.info("[BambooService] Got ${data.size} plan variable(s) via variableContext for $planKey")
             return ToolResult.success(
                 data = data,
@@ -410,6 +421,8 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                     hint = when (result.type) {
                         ErrorType.AUTH_FAILED ->
                             "Check your Bamboo token in Settings."
+                        ErrorType.AUTH_REDIRECT ->
+                            "Your Bamboo session expired. Re-authenticate in Settings."
                         ErrorType.FORBIDDEN ->
                             "You may not have permission to stop this build."
                         ErrorType.NOT_FOUND ->
@@ -443,6 +456,8 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                     hint = when (result.type) {
                         ErrorType.AUTH_FAILED ->
                             "Check your Bamboo token in Settings."
+                        ErrorType.AUTH_REDIRECT ->
+                            "Your Bamboo session expired. Re-authenticate in Settings."
                         ErrorType.FORBIDDEN ->
                             "You may not have permission to cancel this build."
                         ErrorType.NOT_FOUND ->
