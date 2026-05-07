@@ -1,10 +1,10 @@
 package com.workflow.orchestrator.core.util
 
 /**
- * HTML escaping utility for safely embedding user-provided text into HTML.
+ * HTML escape / unescape utility for handling HTML-encoded text.
  *
- * Escapes the 5 characters that require escaping in HTML context:
- * `&`, `<`, `>`, `"`, `'`.
+ * Handles the 5 entities that require escaping in HTML context:
+ * `&amp;`, `&lt;`, `&gt;`, `&quot;`, `&#39;` / `&apos;`.
  *
  * Suitable for both HTML body content and attribute values.
  */
@@ -24,5 +24,23 @@ object HtmlEscape {
             .replace(">", "&gt;")
             .replace("\"", "&quot;")
             .replace("'", "&#39;")
+    }
+
+    /**
+     * Unescapes the 5 named/numeric HTML entities produced by [escapeHtml]
+     * plus `&apos;` (the alternate form of `&#39;` that some servers emit).
+     *
+     * The `&amp;` replacement runs LAST to avoid double-unescaping a
+     * sequence like `&amp;lt;` (which should become `&lt;`, not `<`).
+     */
+    fun unescapeHtml(text: String): String {
+        if (text.isEmpty()) return text
+        return text
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .replace("&apos;", "'")
+            .replace("&amp;", "&")
     }
 }

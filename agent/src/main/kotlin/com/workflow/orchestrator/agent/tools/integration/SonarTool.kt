@@ -17,6 +17,7 @@ import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.core.util.BuildToolExecutableResolver
+import com.workflow.orchestrator.core.util.HtmlEscape
 import com.workflow.orchestrator.core.workflow.WorkflowContextService
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -756,12 +757,12 @@ Common optional: repo_name for multi-repo projects.
                             sb.appendLine("  [$sev][${issue.type}] $loc — ${issue.message.take(120)}")
                             sb.appendLine("    Rule: ${issue.rule}")
                             // Inline rule "How to fix" body (cached per scan).
-                            // Truncated at 600 chars to keep token cost bounded — the LLM
-                            // can call sonar(action="rule", rule_key=...) for the full text.
+                            // Delegates to stripAndTrim so HTML-tag stripping, entity
+                            // unescaping, whitespace collapse, and length cap (600 chars)
+                            // all live in one helper. The LLM can call
+                            // sonar(action="rule", rule_key=...) for the full text.
                             fetchRuleHowToFix(issue.rule)?.let { desc ->
-                                val trimmed = desc.replace(Regex("\\s+"), " ").trim()
-                                val capped = if (trimmed.length > 600) trimmed.take(600) + "…" else trimmed
-                                sb.appendLine("    How to fix: $capped")
+                                sb.appendLine("    How to fix: ${stripAndTrim(desc, 600)}")
                             }
                         }
                     }
@@ -1257,17 +1258,20 @@ Common optional: repo_name for multi-repo projects.
     }
 
     /**
-     * Strips HTML tags, collapses whitespace, and caps length. Used for
-     * inline rendering of Sonar's HTML description fields (riskDescription,
-     * vulnerabilityDescription, fixRecommendations) which are 1-3 KB raw
-     * but must fit in agent context.
+     * Strips HTML tags, unescapes HTML entities, collapses whitespace, and
+     * caps length. Used for inline rendering of Sonar's HTML description
+     * fields (riskDescription, vulnerabilityDescription, fixRecommendations)
+     * which are 1-3 KB raw but must fit in agent context.
+     *
+     * Also used for plain-text fields (e.g. SonarRuleData.description after
+     * the descriptionSections merge) — strip and unescape are no-ops on
+     * tag-free content, so the function is safe for both inputs.
      */
     private fun stripAndTrim(html: String, maxLen: Int): String {
         if (html.isBlank()) return "(none)"
-        val text = html
-            .replace(Regex("<[^>]+>"), " ")
-            .replace(Regex("\\s+"), " ")
-            .trim()
+        val stripped = html.replace(Regex("<[^>]+>"), " ")
+        val unescaped = HtmlEscape.unescapeHtml(stripped)
+        val text = unescaped.replace(Regex("\\s+"), " ").trim()
         return if (text.length > maxLen) text.take(maxLen) + "…" else text
     }
 
