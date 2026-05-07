@@ -9,12 +9,19 @@ to adopt (analysis history, metric history, quality gate listing, language
 listing, issue tag listing). Writes per-endpoint JSON + a Markdown summary
 to ``tools/sonar-probe/Result_N/``.
 
-The probe is **edition-aware**. SonarQube Community Build silently ignores
-``branch=`` on ``/api/issues/search`` and ``/api/measures/component_tree``,
-404s on ``/api/hotspots/search``, and limits ``/api/new_code_periods/show``.
-The summary's "Version detection" block surfaces the edition (from
-``/api/navigation/global``) so the recommendations doc can flag any
-plugin surfaces that degrade on the user's tier.
+The probe is **edition-aware**. The summary's "Version detection" block
+surfaces the edition (from ``/api/navigation/global``) so the
+recommendations doc can flag any plugin surfaces that degrade on the
+user's tier.
+
+> **Note on Community Build 25.x**: prior to 25.x, Community Edition
+> silently ignored ``branch=`` on most endpoints, 404'd on
+> ``/api/hotspots/search``, and returned only the main branch from
+> ``/api/project_branches/list``. With the 25.x rebrand to "Community
+> Build", Sonar moved multi-branch analysis (and therefore those
+> branch-aware endpoints) to the free tier. The probe was originally
+> written against the pre-25.x feature gate; per-endpoint notes below
+> reflect the **validated 25.x Community Build** behaviour.
 
 Usage examples:
 
@@ -236,10 +243,12 @@ class SonarProbe:
             category="version",
             notes=[
                 "edition ∈ {community, developer, enterprise, datacenter}.",
-                "community silently ignores branch= on issues/measures, "
-                "404s on hotspots/search, limits new_code_periods/show.",
-                "Paste the 'edition' value back so the recommendations doc "
-                "can call out which plugin surfaces degrade on this tier.",
+                "Sonar 25.x: 'community' is Community Build (renamed from "
+                "Community Edition) and supports multi-branch analysis at "
+                "the free tier — most endpoints now honour `branch=`.",
+                "Paste the 'edition' + 'version' values back so the "
+                "recommendations doc can call out tier- and version-specific "
+                "behaviour.",
             ],
         )
         self._get(
@@ -333,8 +342,12 @@ class SonarProbe:
                 path=f"/api/project_branches/list{proj_param}",
                 category="existing",
                 notes=[
-                    "Edition gate: Community returns ONLY the main branch.",
-                    "Developer+ returns full branch list incl. mainBranch flag.",
+                    "Edition gate (UPDATED for 25.x): Community Build 25.x "
+                    "returns ALL branches with full metadata "
+                    "({name, isMain, type, status, analysisDate, branchId, "
+                    "excludedFromPurge}). Multi-branch was Developer+ only "
+                    "pre-25.x; Sonar moved it to the free tier in the "
+                    "Community Build rebrand.",
                 ],
             )
             self._get(
@@ -343,11 +356,10 @@ class SonarProbe:
                 path=f"/api/qualitygates/project_status{proj_key_param}{branch_qs}",
                 category="existing",
                 notes=[
-                    "branch= is silently ignored on Community → returns "
-                    "main-branch gate status.",
-                ] if not branch else [
-                    "branch= passed; Community will silently ignore and "
-                    "return main-branch gate status.",
+                    "Sonar 25.x Community Build: branch= IS honored and "
+                    "returns per-branch gate status. Pre-25.x Community "
+                    "ignored it. caycStatus + period.{mode,parameter} are "
+                    "in the response.",
                 ],
             )
             # /api/issues/search with the same params the plugin uses (paged).
@@ -360,7 +372,15 @@ class SonarProbe:
                 notes=[
                     "Plugin uses ps=500 in production; ps=10 here keeps the "
                     "raw payload sane while still validating the contract.",
-                    "branch= silently ignored on Community.",
+                    "Sonar 25.x Community Build: branch= IS honored. Each "
+                    "issue gets `branch:<X>` tagged in the response, but "
+                    "this means 'present in the X branch snapshot' — NOT "
+                    "'unique to branch X'. To get the new-code DELTA "
+                    "(issues introduced on this branch since the reference "
+                    "branch), use the issues_search_new_code variant below.",
+                    "Issues now carry CCT fields (cleanCodeAttribute, "
+                    "cleanCodeAttributeCategory, impacts[]) added in 25.x; "
+                    "plugin DTO may silently drop them via ignoreUnknownKeys.",
                 ],
             )
             self._get(
@@ -445,8 +465,13 @@ class SonarProbe:
                 path=f"/api/hotspots/search{proj_param}&ps=10{branch_qs}",
                 category="existing",
                 notes=[
-                    "EDITION GATE: Community returns 404 (endpoint absent).",
-                    "Developer+ returns hotspots[] with vulnerabilityProbability (HIGH/MEDIUM/LOW).",
+                    "Sonar 25.x Community Build: endpoint IS available "
+                    "(returns hotspots[] with key, component, project, "
+                    "securityCategory, vulnerabilityProbability, status, "
+                    "line, message, assignee, ruleKey, textRange). Pre-25.x "
+                    "Community returned 404.",
+                    "First hotspot's key is auto-lifted into hotspots_show "
+                    "below for full risk + fix detail.",
                 ],
             )
         else:
@@ -491,6 +516,41 @@ class SonarProbe:
                 "existing",
             )
 
+        # /api/hotspots/show — auto-lift first hotspot key from
+        # hotspots_search above. Plugin doesn't use this today (only
+        # hotspots_search), but the agent needs the full risk + fix
+        # detail per hotspot for autonomous remediation.
+        resolved_hotspot_key: Optional[str] = None
+        if project_key:
+            resolved_hotspot_key = _extract_hotspot_key(self.raw_dir / "hotspots_search.json")
+            if resolved_hotspot_key:
+                print(f"[probe] reusing hotspot key from hotspots_search → {resolved_hotspot_key}")
+        if resolved_hotspot_key:
+            self._get(
+                name="hotspots_show",
+                description=f"(agent) /api/hotspots/show?hotspot={resolved_hotspot_key[:8]}…",
+                path=f"/api/hotspots/show?hotspot={urllib.parse.quote(resolved_hotspot_key, safe='')}",
+                category="feature",
+                notes=[
+                    "AGENT-TARGETED: full hotspot detail for autonomous fix.",
+                    "Returns {key, component, project, rule:{key, name, "
+                    "vulnerabilityProbability, securityCategory, "
+                    "riskDescription, vulnerabilityDescription, "
+                    "fixRecommendations}, status, line, message, assignee, "
+                    "author, creationDate, updateDate, changelog[], "
+                    "comment[], users[], textRange, flows[]}.",
+                    "rule.fixRecommendations is what the agent needs to "
+                    "produce a fix. Plugin only uses hotspots_search today.",
+                ],
+            )
+        else:
+            self._skip(
+                "hotspots_show",
+                "(agent) /api/hotspots/show — no hotspot found in "
+                "hotspots_search to auto-lift",
+                "feature",
+            )
+
         if file_key:
             file_qs = f"?key={urllib.parse.quote(file_key, safe='')}"
             self._get(
@@ -499,8 +559,12 @@ class SonarProbe:
                 path=f"/api/duplications/show{file_qs}{branch_qs}",
                 category="existing",
                 notes=[
-                    "Returns {duplications, files} where files maps to component metadata.",
-                    "branch= silently ignored on Community.",
+                    "Returns {duplications:[{blocks:[{from,size,_ref}]}], "
+                    "files:{<ref>:{key,name,project}}} — maps each "
+                    "duplicated block to (line, length, file). The agent "
+                    "uses this to locate exact lines + the duplicate "
+                    "files to refactor toward.",
+                    "Sonar 25.x: branch= IS honored.",
                 ],
             )
             # /api/sources/lines — line range required (from/to).
@@ -511,14 +575,41 @@ class SonarProbe:
                 category="existing",
                 notes=[
                     "Returns sources[] with line, code, scmAuthor, scmDate, "
-                    "lineHits, conditions, coveredConditions.",
+                    "scmRevision, lineHits, conditions, coveredConditions, "
+                    "isNew (since new code period).",
+                    "AGENT-TARGETED: lineHits=0 + conditions>0 means "
+                    "uncovered branch — the agent uses this to know exactly "
+                    "which lines need a test. coveredConditions vs "
+                    "conditions tells the agent which branches of a "
+                    "compound predicate weren't exercised.",
                     "from/to are 1-indexed and inclusive.",
+                ],
+            )
+            # /api/sources/scm — per-line author + date + revision. Plugin
+            # does not call this. AGENT use: identify which lines fall
+            # inside the new-code period by date/revision attribution.
+            self._get(
+                name="sources_scm",
+                description=f"(agent) /api/sources/scm({file_key}) — per-line blame",
+                path=f"/api/sources/scm{file_qs}&from=1&to=50&commits_by_line=true",
+                category="feature",
+                notes=[
+                    "AGENT-TARGETED: returns scm[[lineNumber, author, "
+                    "date, revision], ...]. With commits_by_line=true, "
+                    "every line gets attribution (without it, only the "
+                    "first line of each contiguous commit-block does).",
+                    "The agent uses this to filter out 'pre-existing' "
+                    "lines when targeting new-code-only fixes — line is "
+                    "in new code iff date >= newCodePeriod.startDate (or "
+                    "revision is post-reference-branch on REFERENCE_BRANCH "
+                    "mode).",
                 ],
             )
         else:
             for n, d in [
                 ("duplications_show", "getDuplications()"),
                 ("sources_lines", "getSourceLines()"),
+                ("sources_scm", "(agent) /api/sources/scm"),
             ]:
                 self._skip(n, f"{d} — needs --file-key", "existing")
 
@@ -564,12 +655,13 @@ class SonarProbe:
             self._get(
                 name="project_analyses_search",
                 description=f"(candidate) /api/project_analyses/search — analysis history",
-                path=f"/api/project_analyses/search{proj_key_param}&ps=10{branch_qs}",
+                path=f"/api/project_analyses/search{proj_param}&ps=10{branch_qs}",
                 category="feature",
                 notes=[
                     "Each entry = {key, date, projectVersion, events[]}.",
                     "Could replace ce_activity polling for the 'last successful "
                     "analysis' chip + power a sparkline of analysis cadence.",
+                    "Sonar 25.x: param is `project=` (NOT projectKey).",
                 ],
             )
             self._get(
@@ -590,11 +682,43 @@ class SonarProbe:
             self._get(
                 name="issues_tags",
                 description="(candidate) /api/issues/tags — tag autocomplete on a project",
-                path=f"/api/issues/tags{proj_key_param}&ps=20",
+                path=f"/api/issues/tags{proj_param}&ps=20",
                 category="feature",
                 notes=[
                     "Could power a tag filter chip in the Issue list. "
                     "Returns {tags: [name, ...]}.",
+                    "Sonar 25.x: param is `project=` (NOT projectKey). With "
+                    "the wrong param Sonar silently returns global tags "
+                    "instead of project-scoped tags.",
+                ],
+            )
+            # AGENT-TARGETED: facet counts on new-code issues only.
+            # ps=1 because we want the facets, not the issue payload.
+            facets = (
+                "severities,types,tags,impactSoftwareQualities,"
+                "impactSeverities,cleanCodeAttributeCategories,"
+                "assignees,fileUuids,rules"
+            )
+            self._get(
+                name="issues_search_facets_new_code",
+                description="(agent) /api/issues/search facets (inNewCodePeriod=true) — triage breakdown",
+                path=(
+                    f"/api/issues/search?componentKeys="
+                    f"{urllib.parse.quote(project_key, safe='')}"
+                    f"&resolved=false&ps=1&inNewCodePeriod=true"
+                    f"&facets={facets}{branch_qs}"
+                ),
+                category="feature",
+                notes=[
+                    "AGENT-TARGETED: returns {issues:[1], facets:[{property,"
+                    " values:[{val,count}]},...]} — counts per softwareQuality"
+                    " / severity / tag / file / rule for new code only.",
+                    "Lets the agent prioritize: 'I have 3 RELIABILITY/HIGH "
+                    "issues, 2 MAINTAINABILITY/MEDIUM, fix the reliability "
+                    "ones first.' Without facets the agent has to walk all "
+                    "issues to compute the same summary.",
+                    "Pair with measures_search_history.new_violations to "
+                    "see the new-code issue trend.",
                 ],
             )
         else:
@@ -602,6 +726,8 @@ class SonarProbe:
                 ("project_analyses_search", "/api/project_analyses/search"),
                 ("measures_search_history", "/api/measures/search_history"),
                 ("issues_tags", "/api/issues/tags"),
+                ("issues_search_facets_new_code",
+                 "(agent) /api/issues/search facets (new-code triage)"),
             ]:
                 self._skip(n, f"{d} — needs --project-key", "feature")
 
@@ -615,6 +741,32 @@ class SonarProbe:
                 "Returns {login, name, email, groups[], permissions, externalProvider}.",
             ],
         )
+
+        # AI Code Fix capability detection. Sonar's AI Code Assurance APIs
+        # land under /api/v2/ai-codefix/* (added in 25.x). Most paths are
+        # POST endpoints that need an issue/hotspot key + body, but the
+        # availability/feature-flag check is a GET. Probe a few likely
+        # paths; on Community Build with no AI Code Assurance license,
+        # all should 404 or 403 — that itself is a useful negative finding.
+        for path, name in [
+            ("/api/v2/ai-codefix/feature", "ai_codefix_feature"),
+            ("/api/v2/ai-codefix/availability", "ai_codefix_availability"),
+        ]:
+            self._get(
+                name=name,
+                description=f"(agent) AI Code Fix capability detect: {path}",
+                path=path,
+                category="feature",
+                notes=[
+                    "AGENT-TARGETED: Sonar 25.x AI Code Fix would let the "
+                    "plugin's agent skip the LLM round-trip and use Sonar's "
+                    "own generative fix. Likely 404 on Community Build (the "
+                    "qualitygates/list response shows isAiCodeSupported:false "
+                    "on every gate, suggesting the feature is not licensed).",
+                    "Either path 200 → AI Code Fix exists; both 404/403 → "
+                    "feature absent, agent must use its own fix path.",
+                ],
+            )
 
         print(f"[probe] full sweep done — {sum(1 for r in self.results if r.ok)}/"
               f"{len(self.results)} OK, "
@@ -678,7 +830,7 @@ class SonarProbe:
             print(f"[probe] discover — inspecting first {len(candidate_keys)} "
                   f"project(s): {', '.join(candidate_keys)}")
 
-        # Walk each candidate's branches + recent CE.
+        # Walk each candidate's branches + recent CE + sample file.
         for pkey in candidate_keys:
             enc = urllib.parse.quote(pkey, safe='')
             self._get(
@@ -694,6 +846,22 @@ class SonarProbe:
                 path=f"/api/ce/activity?component={enc}&ps=5",
                 category="existing",
                 notes=[f"Discovery — recent CE tasks for {pkey}"],
+            )
+            # Pull a single FIL component so the digest can suggest a real
+            # --file-key. Without this the user gets a placeholder and
+            # duplications + sources_lines + sources_scm all skip.
+            self._get(
+                name=f"discover_files_{_safe_filename(pkey)}",
+                description=f"One sample file for {pkey} (--file-key seed)",
+                path=(
+                    f"/api/measures/component_tree?component={enc}"
+                    f"&qualifiers=FIL&ps=1&p=1&metricKeys=ncloc"
+                ),
+                category="existing",
+                notes=[
+                    f"Discovery — first FIL component under {pkey}, used "
+                    "to seed --file-key in discover.md.",
+                ],
             )
 
         sample = _extract_discover_sample(self.raw_dir, candidate_keys)
@@ -1025,17 +1193,38 @@ class SonarProbe:
         )
         suggested_branch = (sample or {}).get("branch") or "<main-or-feature>"
         suggested_task = (sample or {}).get("ce_task_id") or "<ce-task-id>"
+        # Discover-mode lifts a real --file-key from the project's first
+        # FIL component (post-2026-05-07 follow-up). Falls back to a
+        # placeholder only when the file walk returned nothing (e.g.
+        # admin-gated component_tree on some Sonar setups).
+        suggested_file_key = (sample or {}).get("file_key") or (
+            f"{suggested_proj}:src/main/java/<path>/<File>.java"
+        )
+        file_key_was_discovered = bool((sample or {}).get("file_key"))
 
         lines.append("---")
         lines.append("")
         lines.append("## Suggested full-sweep command")
         lines.append("")
-        lines.append(
+        seed_note = (
             "_Seeded from the most-recent values discovered above. "
-            "`--file-key` and `--rule-key` are optional — without them, "
-            "duplications/sources/rules probes will run on a default rule "
-            "(`java:S1135`) and skip the file-only probes._"
+            "`--rule-key` is optional and defaults to `java:S1135` (Sonar Way)._"
         )
+        if file_key_was_discovered:
+            seed_note += (
+                " The `--file-key` below is a real file from your project — "
+                "duplications, sources/lines, and the new sources/scm probe "
+                "will run against it. Replace if you'd rather audit a "
+                "different file."
+            )
+        else:
+            seed_note += (
+                " `--file-key` could not be discovered — replace the "
+                "placeholder below with a real file key from your Sonar UI's "
+                "Code tab (URL contains it as `id=`), or drop the flag and "
+                "let duplications + sources_lines + sources_scm skip."
+            )
+        lines.append(seed_note)
         lines.append("")
         lines.append("Unix shell / PowerShell:")
         lines.append("")
@@ -1045,7 +1234,7 @@ class SonarProbe:
             f"    --project-key {suggested_proj} \\\n"
             f"    --branch {suggested_branch} \\\n"
             f"    --ce-task-id {suggested_task} \\\n"
-            f"    --file-key '{suggested_proj}:src/main/java/<path>/<File>.java' \\\n"
+            f"    --file-key '{suggested_file_key}' \\\n"
             f"    --rule-key {DEFAULT_RULE_KEY}"
         )
         lines.append("```")
@@ -1058,7 +1247,7 @@ class SonarProbe:
             f"    --project-key {suggested_proj} ^\n"
             f"    --branch {suggested_branch} ^\n"
             f"    --ce-task-id {suggested_task} ^\n"
-            f"    --file-key \"{suggested_proj}:src/main/java/<path>/<File>.java\" ^\n"
+            f"    --file-key \"{suggested_file_key}\" ^\n"
             f"    --rule-key {DEFAULT_RULE_KEY}"
         )
         lines.append("```")
@@ -1154,6 +1343,43 @@ def _collect_top_project_keys(raw_path: Path, limit: int) -> list[str]:
     return out
 
 
+def _extract_hotspot_key(raw_path: Path) -> Optional[str]:
+    """Pull the first hotspot key from a /api/hotspots/search response.
+
+    Used to auto-seed /api/hotspots/show without an extra CLI flag.
+    Sonar's hotspot keys are UUIDs, e.g. ``61675d7c-8dce-4ff6-9066-…``.
+    """
+    body = _read_raw_body(raw_path)
+    if not isinstance(body, dict):
+        return None
+    hotspots = body.get("hotspots")
+    if not isinstance(hotspots, list):
+        return None
+    for h in hotspots:
+        if isinstance(h, dict) and isinstance(h.get("key"), str):
+            return h["key"]
+    return None
+
+
+def _extract_first_file_key(raw_path: Path) -> Optional[str]:
+    """Pull the first file (qualifier=FIL) key from a measures/component_tree
+    response saved during discover. Used to auto-seed --file-key in the
+    discover digest.
+    """
+    body = _read_raw_body(raw_path)
+    if not isinstance(body, dict):
+        return None
+    comps = body.get("components")
+    if not isinstance(comps, list):
+        return None
+    for c in comps:
+        if isinstance(c, dict) and c.get("qualifier") == "FIL":
+            key = c.get("key")
+            if isinstance(key, str):
+                return key
+    return None
+
+
 def _extract_ce_task_id(raw_path: Path) -> Optional[str]:
     """Pull the first SUCCESS task id from a /api/ce/activity response.
 
@@ -1185,27 +1411,57 @@ def _extract_ce_task_id(raw_path: Path) -> Optional[str]:
 def _extract_discover_sample(
     raw_dir: Path, candidate_keys: list[str],
 ) -> Optional[dict]:
-    """Return ``{project_key, ce_task_id, ce_status, branch}`` from the first
-    candidate that has at least one CE task. ``None`` when no candidate has
-    any CE history visible to the PAT.
+    """Return ``{project_key, ce_task_id, ce_status, branch, file_key,
+    main_branch}`` from the first candidate that has any data we can latch
+    onto. CE history may be 403 (admin-gated); branch list and file probe
+    are typically available — so we still emit a partial sample even when
+    CE is empty/forbidden.
     """
     for pkey in candidate_keys:
         ce_body = _read_raw_body(
             raw_dir / f"discover_ce_{_safe_filename(pkey)}.json"
         )
-        if not isinstance(ce_body, dict):
-            continue
-        tasks = ce_body.get("tasks")
-        if not isinstance(tasks, list) or not tasks:
-            continue
-        first = next((t for t in tasks if isinstance(t, dict)), None)
-        if not first:
+        branches_body = _read_raw_body(
+            raw_dir / f"discover_branches_{_safe_filename(pkey)}.json"
+        )
+        file_key = _extract_first_file_key(
+            raw_dir / f"discover_files_{_safe_filename(pkey)}.json"
+        )
+
+        ce_task_id: Optional[str] = None
+        ce_status: Optional[str] = None
+        ce_branch: Optional[str] = None
+        if isinstance(ce_body, dict):
+            tasks = ce_body.get("tasks")
+            if isinstance(tasks, list):
+                first = next((t for t in tasks if isinstance(t, dict)), None)
+                if first:
+                    ce_task_id = first.get("id")
+                    ce_status = first.get("status")
+                    ce_branch = first.get("branch")
+
+        # Prefer the main branch from project_branches/list when CE didn't
+        # report one (CE omits branch for main-branch analyses by convention).
+        main_branch: Optional[str] = None
+        if isinstance(branches_body, dict):
+            blist = branches_body.get("branches") or []
+            if isinstance(blist, list):
+                for b in blist:
+                    if isinstance(b, dict) and b.get("isMain"):
+                        n = b.get("name")
+                        if isinstance(n, str):
+                            main_branch = n
+                            break
+
+        if not (ce_task_id or main_branch or file_key):
             continue
         return {
             "project_key": pkey,
-            "ce_task_id": first.get("id"),
-            "ce_status": first.get("status"),
-            "branch": first.get("branch"),
+            "ce_task_id": ce_task_id,
+            "ce_status": ce_status,
+            "branch": ce_branch or main_branch,
+            "file_key": file_key,
+            "main_branch": main_branch,
         }
     return None
 
@@ -1220,18 +1476,27 @@ def _edition_capability_note(edition: str) -> str:
     edition_lower = edition.lower()
     if edition_lower == "community":
         return (
-            "_**Community implications for the plugin:**_\n"
-            "- `branch=` is **silently ignored** on `/api/issues/search`, "
-            "`/api/measures/component_tree`, `/api/qualitygates/project_status` "
-            "→ all branch-aware Quality tab views collapse to main branch.\n"
-            "- `/api/hotspots/search` returns **404** → Security Hotspots "
-            "section in `QualityListItem` will be empty.\n"
-            "- `/api/project_branches/list` returns **only the main branch** "
-            "→ branch picker is effectively a no-op.\n"
-            "- `/api/new_code_periods/show` is **project-scoped only** "
-            "(branch param ignored) → New Code metrics use the project default.\n"
-            "- Note: SonarQube 25.x renamed Community Edition → **Community "
-            "Build**; the `edition` field still reports `community`."
+            "_**Community implications for the plugin (post-25.x rebrand):**_\n"
+            "- SonarQube 25.x renamed Community Edition → **Community Build** "
+            "and **moved multi-branch analysis to the free tier**. The `edition` "
+            "field still reports `community`.\n"
+            "- `branch=` IS honored on `/api/issues/search`, "
+            "`/api/measures/component_tree`, `/api/qualitygates/project_status`, "
+            "`/api/measures/component`, `/api/hotspots/search` → branch-aware "
+            "Quality tab views work as expected.\n"
+            "- `/api/project_branches/list` returns **all branches** with full "
+            "metadata (name, isMain, type, status, analysisDate, branchId, "
+            "excludedFromPurge).\n"
+            "- `/api/hotspots/search` is **available** → Security Hotspots "
+            "section populates. Was 404 pre-25.x.\n"
+            "- `/api/new_code_periods/show` and `/api/ce/activity` may return "
+            "**403 Insufficient privileges** for non-admin tokens (permission-"
+            "gated). Plugin's `getNewCodePeriod()` and `getAnalysisTasks()` "
+            "fail silently for non-admin users — needs graceful empty-state "
+            "handling.\n"
+            "- Pre-25.x Community Edition behaved very differently (branch "
+            "params ignored, hotspots 404, only main branch in branches/list); "
+            "if you see those symptoms your server is on an older Sonar."
         )
     if edition_lower == "developer":
         return (

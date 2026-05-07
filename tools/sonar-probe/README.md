@@ -7,7 +7,7 @@ endpoint paths.
 
 | Script | Status | Coverage |
 |---|---|---|
-| `probe_sonar.py` | ✅ ready (v0, 2026-05-07) | Version + **edition** detection ladder + all 14 endpoints in `SonarApiClient.kt` + 6 candidate endpoints (analyses history, metric history, quality gate listing, languages, issue tags, current user) |
+| `probe_sonar.py` | ✅ ready (v0.1, 2026-05-07) | Version + **edition** detection ladder + all 14 endpoints in `SonarApiClient.kt` + 6 candidate endpoints (analyses history, metric history, quality gate listing, languages, issue tags, current user) + **4 agent-targeted endpoints** for autonomous remediation: `/api/hotspots/show`, `/api/sources/scm`, `/api/issues/search?facets=…&inNewCodePeriod=true`, AI Code Fix capability detect (`/api/v2/ai-codefix/feature` + `/availability`) |
 
 This script lives in its own directory because SonarQube is a different
 product family from Atlassian (Jira/Bitbucket/Bamboo) and Sonatype (Nexus).
@@ -53,8 +53,9 @@ by**:
 
 | `edition` | Plugin impact |
 |---|---|
-| `community` | `branch=` silently ignored on issues / measures / gate; `/api/hotspots/search` returns 404; `/api/project_branches/list` returns only main; new-code period is project-scoped only |
-| `developer` | Full branch + new-code-period support; hotspots available |
+| `community` (25.x — "Community Build") | Multi-branch IS supported at this tier as of 25.x; `branch=` is honored on issues / measures / gate / hotspots; `/api/project_branches/list` returns all branches; `/api/hotspots/search` is available. `/api/ce/activity` and `/api/new_code_periods/show` may 403 for non-admin tokens. |
+| `community` (pre-25.x — "Community Edition") | `branch=` silently ignored; `/api/hotspots/search` 404; only main branch; new-code period project-scoped only |
+| `developer` | Full branch + new-code-period + pull-request support; hotspots available |
 | `enterprise` | Developer + governance + portfolios (none used by plugin yet) |
 | `datacenter` | Enterprise + HA endpoints (plugin is HA-agnostic) |
 
