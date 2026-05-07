@@ -148,7 +148,17 @@ Ordering rationale: Jira Comment first because it's the most-asked-for action (t
 
 ### 2.5 AI Pre-Review Panel
 
-**User intent.** "Before I push for code review, run an AI pass over my diff to catch obvious mistakes (missing @Transactional, unclosed resources, etc.) so the human reviewer doesn't have to."
+> **NOTE (2026-05-07):** The "User intent" sentence below was authored with an inverted
+> mental model of the workflow. The actual sequence is **PR → Bamboo build → unique
+> docker tag → automation suites → Handover** (per memory `project_workflow_sequence`),
+> so the Handover tab is the *last* surface in the flow. By the time it is open, the
+> PR has already existed long enough for Bamboo to build, produce a docker tag, and
+> for automation suites to run on that tag. There is no "before I push for code
+> review" moment available on this surface — code review happens against the PR,
+> in the PR tab, where `AiReviewTabPanel` already lives. This section is preserved
+> for historical reasons; the panel was deleted in commit `988c261c` (Phase 4 SKIP).
+
+**User intent (as originally — incorrectly — written).** "Before I push for code review, run an AI pass over my diff to catch obvious mistakes (missing @Transactional, unclosed resources, etc.) so the human reviewer doesn't have to."
 
 **Inputs.**
 - VCS diff: between current branch and the PR target branch (or, if no PR is focused, between current branch and the configured default branch via `core.git.DefaultBranchResolver`).
