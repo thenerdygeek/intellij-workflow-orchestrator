@@ -7,6 +7,9 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.core.model.bamboo.BuildChangeData
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -33,7 +36,7 @@ Do NOT use for: local IDE Maven/Gradle reload errors, 'why did my IDE build fail
 
 Actions and their parameters:
 - build_status(plan_key, branch?, repo_name?) → Latest build status for plan
-- get_build(build_key) → Detailed build info. Returns BuildResultData with stages[].jobs[].resultKey usable as the build_key parameter for get_build_log/get_test_results.
+- get_build(build_key, include_commits?) → Detailed build info. Returns BuildResultData with stages[].jobs[].resultKey usable as the build_key parameter for get_build_log/get_test_results. Pass include_commits=true to also fetch the per-build commit list (SHA, message, author) and complete the Bamboo→Bitbucket→Jira triangle.
 - trigger_build(plan_key, variables?) → Trigger new build (variables: JSON {"key":"value"})
 - get_build_log(build_key) → Build log output. Accepts a build key (e.g. PROJ-PLAN138-4) for the whole-build log, OR a job-level resultKey from get_build's stages[].jobs[].resultKey (e.g. PROJ-PLAN138-UNIT-4) for just that job's log. Prefer per-job logs when triaging a single failing job.
 - get_test_results(build_key) → Test results for build
@@ -94,6 +97,10 @@ description optional: for approval dialog on trigger/stop/cancel.
             "description" to ParameterProperty(
                 type = "string",
                 description = "Brief description shown in approval dialog — for write actions: trigger_build, stop_build, cancel_build"
+            ),
+            "include_commits" to ParameterProperty(
+                type = "boolean",
+                description = "If true, also fetch the per-build commit list (SHA, message, author) via Bamboo's expand=changes.change. Default false to keep token cost low."
             )
         ),
         required = listOf("action")
@@ -126,7 +133,8 @@ description optional: for approval dialog on trigger/stop/cancel.
             "get_build" -> {
                 val buildKey = params["build_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("build_key")
                 ToolValidation.validateBambooBuildKey(buildKey)?.let { return it }
-                service.getBuild(buildKey).toAgentToolResult()
+                val includeCommits = params["include_commits"]?.jsonPrimitive?.content?.lowercase() == "true"
+                executeGetBuildForTest(buildKey, includeCommits, service)
             }
 
             "trigger_build" -> {
@@ -220,5 +228,35 @@ description optional: for approval dialog on trigger/stop/cancel.
                 isError = true
             )
         }
+    }
+
+    internal suspend fun executeGetBuildForTest(
+        buildKey: String,
+        includeCommits: Boolean,
+        service: com.workflow.orchestrator.core.services.BambooService
+    ): ToolResult {
+        if (!includeCommits) {
+            return service.getBuild(buildKey).toAgentToolResult()
+        }
+        return coroutineScope {
+            val buildDeferred = async { service.getBuild(buildKey) }
+            val changesDeferred = async { service.getBuildChanges(buildKey) }
+            val buildResult = buildDeferred.await()
+            val changes = changesDeferred.await()
+            if (buildResult.isError) return@coroutineScope buildResult.toAgentToolResult()
+            val buildAgent = buildResult.toAgentToolResult()
+            val commitsBlock = formatBuildCommits(changes.data)
+            val combined = buildAgent.content + "\n\n" + commitsBlock
+            ToolResult(combined, "${buildAgent.summary} · ${changes.summary}", TokenEstimator.estimate(combined))
+        }
+    }
+
+    private fun formatBuildCommits(commits: List<BuildChangeData>): String {
+        if (commits.isEmpty()) return "Commits: (none)"
+        val lines = commits.take(50).map { c ->
+            "• ${c.changesetId.take(8)} · ${c.fullName.ifBlank { c.userName }.ifBlank { "—" }} · ${c.comment.lineSequence().firstOrNull() ?: ""}"
+        }
+        val tail = if (commits.size > 50) "\n  …(${commits.size - 50} more commits)" else ""
+        return "Commits (showing ${minOf(50, commits.size)} of ${commits.size}):\n" + lines.joinToString("\n") + tail
     }
 }
