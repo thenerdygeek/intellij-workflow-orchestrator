@@ -77,6 +77,18 @@ Activity-aware polling: `baseIntervalMs` (default 30s), `maxIntervalMs` (default
 
 The new methods all surface through `core.services.BitbucketService` (Phase 5: `getBlockerCommentsCount`, `getPullRequestParticipants`, `getPullRequestsForCommit`, `getCommitBuildStats`, `getLinkedJiraIssues`, `getRequiredBuilds`) with `ToolResult<T>` semantics; `:pullrequest`'s `BitbucketServiceImpl` adapts them to `core.model.bitbucket.{ParticipantData,BuildStatsData,JiraIssueRef,RequiredBuildsCondition}`. Agent wrappers in `:agent` (`BitbucketPrTool`, `BitbucketRepoTool`) expose them as actions.
 
+### JiraService surface (extended 2026-05-07 write-ops audit, PR 5)
+
+`addComment` now takes an optional `CommentVisibility` (`role`/`group` + name) so closure
+comments can be restricted to a project role or Jira group; the `visibility` JSON block is
+omitted entirely when null (Jira rejects `visibility: null`). `logWork` now takes optional
+`started: OffsetDateTime` (formatted as Jira's `yyyy-MM-dd'T'HH:mm:ss.SSSZ`) and
+`adjustEstimate: WorklogEstimateAdjustment` (lifts to `?adjustEstimate=…` query param when
+non-AUTO). `getCommentVisibilityOptions(projectKey)` is the new lookup that backs the
+visibility dropdown — fetches `/project/{key}/role` (name-keyed object) + `/groups/picker?query=`
+in parallel and caches the merged result per project (same 5-min TTL as `permissionsCache`).
+Pinned by `JiraApiClientCommentVisibilityWorklogTest` and `JiraServiceImplCommentAndWorklogTest`.
+
 ### JiraService surface (extended 2026-05-06 audit)
 
 `core.services.JiraService` adds eleven methods to support permission-aware UI gating, on-demand custom-field discovery, history/remote-link/watcher panels, saved filters, and key-prefix mention search:

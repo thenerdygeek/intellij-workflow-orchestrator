@@ -8,12 +8,14 @@ import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.model.jira.AttachmentContentData
 import com.workflow.orchestrator.core.model.jira.BoardData
+import com.workflow.orchestrator.core.model.jira.CommentVisibility
 import com.workflow.orchestrator.core.model.jira.DevStatusBranchData
 import com.workflow.orchestrator.core.model.jira.DevStatusBuildData
 import com.workflow.orchestrator.core.model.jira.DevStatusBundle
 import com.workflow.orchestrator.core.model.jira.DevStatusCommitData
 import com.workflow.orchestrator.core.model.jira.DevStatusDeploymentData
 import com.workflow.orchestrator.core.model.jira.FilterData
+import com.workflow.orchestrator.core.model.jira.GroupOption
 import com.workflow.orchestrator.core.model.jira.IssueSuggestion
 import com.workflow.orchestrator.core.model.jira.JiraBoardSummary
 import com.workflow.orchestrator.core.model.jira.DevStatusPrData
@@ -29,6 +31,7 @@ import com.workflow.orchestrator.core.model.jira.MyPermissionsData
 import com.workflow.orchestrator.core.model.jira.MyselfData
 import com.workflow.orchestrator.core.model.jira.PermissionFlag
 import com.workflow.orchestrator.core.model.jira.RemoteLinkData
+import com.workflow.orchestrator.core.model.jira.RoleOption
 import com.workflow.orchestrator.core.model.jira.TicketHistoryEntry
 import com.workflow.orchestrator.core.model.jira.TransitionError
 import com.workflow.orchestrator.core.model.jira.TransitionInput
@@ -36,9 +39,12 @@ import com.workflow.orchestrator.core.model.jira.TransitionMeta
 import com.workflow.orchestrator.core.model.jira.TransitionOutcome
 import com.workflow.orchestrator.core.model.jira.SprintData
 import com.workflow.orchestrator.core.model.jira.StartWorkResultData
+import com.workflow.orchestrator.core.model.jira.VisibilityOptions
+import com.workflow.orchestrator.core.model.jira.VisibilityType
 import com.workflow.orchestrator.core.model.jira.WatcherUser
 import com.workflow.orchestrator.core.model.jira.WatchersData
 import com.workflow.orchestrator.core.model.jira.WorklogData
+import com.workflow.orchestrator.core.model.jira.WorklogEstimateAdjustment
 import com.workflow.orchestrator.core.services.JiraService
 import com.workflow.orchestrator.core.services.SessionDownloadDir
 import com.workflow.orchestrator.core.services.ToolResult
@@ -47,6 +53,12 @@ import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.jira.api.JiraApiClient
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import java.time.OffsetDateTime
+import java.time.format.DateTimeFormatter
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -298,7 +310,11 @@ class JiraServiceImpl(private val project: Project) : JiraService {
         }
     }
 
-    override suspend fun addComment(key: String, body: String): ToolResult<Unit> {
+    override suspend fun addComment(
+        key: String,
+        body: String,
+        visibility: CommentVisibility?
+    ): ToolResult<Unit> {
         val api = client ?: return ToolResult(
             data = Unit,
             summary = "Jira not configured. Cannot add comment to $key.",
@@ -306,11 +322,25 @@ class JiraServiceImpl(private val project: Project) : JiraService {
             hint = "Set up Jira connection in Settings."
         )
 
-        return when (val result = api.addComment(key, body)) {
+        // Jira's `visibility.type` is lowercase ("role" / "group"); our enum is uppercase.
+        val typeWire = visibility?.type?.let {
+            when (it) {
+                VisibilityType.ROLE -> "role"
+                VisibilityType.GROUP -> "group"
+            }
+        }
+        val result = api.addComment(
+            issueKey = key,
+            body = body,
+            visibilityType = typeWire,
+            visibilityValue = visibility?.value
+        )
+        return when (result) {
             is ApiResult.Success -> {
+                val suffix = visibility?.let { " (visible to ${it.type.name.lowercase()} '${it.value}')" } ?: ""
                 ToolResult.success(
                     data = Unit,
-                    summary = "Comment added to $key."
+                    summary = "Comment added to $key$suffix."
                 )
             }
             is ApiResult.Error -> {
@@ -331,7 +361,13 @@ class JiraServiceImpl(private val project: Project) : JiraService {
         }
     }
 
-    override suspend fun logWork(key: String, timeSpent: String, comment: String?): ToolResult<Unit> {
+    override suspend fun logWork(
+        key: String,
+        timeSpent: String,
+        comment: String?,
+        started: OffsetDateTime?,
+        adjustEstimate: WorklogEstimateAdjustment
+    ): ToolResult<Unit> {
         val api = client ?: return ToolResult(
             data = Unit,
             summary = "Jira not configured. Cannot log work on $key.",
@@ -339,11 +375,27 @@ class JiraServiceImpl(private val project: Project) : JiraService {
             hint = "Set up Jira connection in Settings."
         )
 
-        return when (val result = api.postWorklog(key, timeSpent, comment)) {
+        val startedWire = started?.format(JIRA_STARTED_FORMAT)
+        // AUTO is the default — only forward the param when the caller picked something else.
+        val adjustWire = if (adjustEstimate == WorklogEstimateAdjustment.AUTO) null
+                        else adjustEstimate.name.lowercase()
+
+        val result = api.postWorklog(
+            issueKey = key,
+            timeSpent = timeSpent,
+            comment = comment,
+            started = startedWire,
+            adjustEstimateParam = adjustWire
+        )
+        return when (result) {
             is ApiResult.Success -> {
                 ToolResult.success(
                     data = Unit,
-                    summary = "Logged $timeSpent on $key.${if (comment != null) " Comment: $comment" else ""}"
+                    summary = buildString {
+                        append("Logged $timeSpent on $key.")
+                        if (comment != null) append(" Comment: $comment")
+                        if (startedWire != null) append(" Started: $startedWire.")
+                    }
                 )
             }
             is ApiResult.Error -> {
@@ -1228,6 +1280,13 @@ class JiraServiceImpl(private val project: Project) : JiraService {
 
     @Volatile private var fieldsCache: CacheEntry<List<JiraFieldData>>? = null
 
+    /**
+     * Comment-visibility options cache, keyed by `projectKey`. Roles are project-scoped;
+     * groups are global but we still bucket per project to keep the dropdown's "groups"
+     * call lazy and aligned with the panel's project context.
+     */
+    private val visibilityCache = ConcurrentHashMap<String, CacheEntry<VisibilityOptions>>()
+
     private val cacheTtlMs = 5 * 60_000L
 
     // ── New endpoint methods ─────────────────────────────────────────────
@@ -1657,10 +1716,103 @@ class JiraServiceImpl(private val project: Project) : JiraService {
         )
     }
 
+    override suspend fun getCommentVisibilityOptions(projectKey: String): ToolResult<VisibilityOptions> {
+        val now = System.currentTimeMillis()
+        visibilityCache[projectKey]?.let { entry ->
+            if (entry.expiresAt > now) {
+                return ToolResult.success(
+                    data = entry.value,
+                    summary = "Found ${entry.value.roles.size} role(s) and ${entry.value.groups.size} group(s) " +
+                        "for $projectKey (cached)."
+                )
+            }
+        }
+
+        val api = client ?: return ToolResult(
+            data = VisibilityOptions(),
+            summary = "Jira not configured. Cannot fetch comment visibility options.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        // Roles: `/project/{key}/role` returns a name-keyed object — flatten to RoleOption(name).
+        // Groups: `/groups/picker?query=` returns `{groups:[{name:…}]}` — empty query lists everything
+        //         the user can see (Jira DC v2 caps at 200 by default, fine for a dropdown).
+        val rolesDeferred = coroutineScope { async { api.getProjectRoles(projectKey) } }
+        val groupsDeferred = coroutineScope { async { api.getRawString("/rest/api/2/groups/picker?query=") } }
+        val rolesResult = rolesDeferred.await()
+        val groupsResult = groupsDeferred.await()
+
+        val roles: List<RoleOption> = when (rolesResult) {
+            is ApiResult.Success -> parseProjectRoles(rolesResult.data)
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Failed to fetch project roles for $projectKey: ${rolesResult.message}")
+                emptyList()
+            }
+        }
+        val groups: List<GroupOption> = when (groupsResult) {
+            is ApiResult.Success -> parseGroupsPicker(groupsResult.data)
+            is ApiResult.Error -> {
+                log.warn("[JiraService] Failed to fetch groups picker: ${groupsResult.message}")
+                emptyList()
+            }
+        }
+
+        // If both calls failed, surface an error rather than caching an empty payload.
+        if (rolesResult is ApiResult.Error && groupsResult is ApiResult.Error) {
+            return ToolResult(
+                data = VisibilityOptions(),
+                summary = "Error fetching comment visibility options for $projectKey: ${rolesResult.message}",
+                isError = true,
+                hint = "Check Jira connection in Settings."
+            )
+        }
+
+        val data = VisibilityOptions(roles = roles, groups = groups)
+        visibilityCache[projectKey] = CacheEntry(data, now + cacheTtlMs)
+        return ToolResult.success(
+            data = data,
+            summary = "Found ${roles.size} role(s) and ${groups.size} group(s) for $projectKey."
+        )
+    }
+
+    private fun parseProjectRoles(body: String): List<RoleOption> = try {
+        val obj = Json.parseToJsonElement(body) as? JsonObject ?: return emptyList()
+        // Response shape: `{"Developers":"https://…/role/10001","Administrators":"https://…/role/10002"}`
+        // Parse the role-id off the URL tail when present so the UI can bind to a stable id.
+        obj.entries.map { (name, urlEl) ->
+            val urlText = (urlEl as? kotlinx.serialization.json.JsonPrimitive)?.content
+            val id = urlText?.substringAfterLast('/')?.toLongOrNull()
+            RoleOption(id = id, name = name)
+        }.sortedBy { it.name }
+    } catch (e: Exception) {
+        log.warn("[JiraService] Failed to parse project roles: ${e.message}")
+        emptyList()
+    }
+
+    private fun parseGroupsPicker(body: String): List<GroupOption> = try {
+        val obj = Json.parseToJsonElement(body) as? JsonObject ?: return emptyList()
+        val arr = obj["groups"] as? kotlinx.serialization.json.JsonArray ?: return emptyList()
+        arr.mapNotNull { el ->
+            val name = (el as? JsonObject)?.get("name")?.jsonPrimitive?.content
+            name?.let { GroupOption(it) }
+        }
+    } catch (e: Exception) {
+        log.warn("[JiraService] Failed to parse groups picker: ${e.message}")
+        emptyList()
+    }
+
     companion object {
         @JvmStatic
         fun getInstance(project: Project): JiraServiceImpl =
             project.getService(JiraService::class.java) as JiraServiceImpl
+
+        /**
+         * Jira's expected `started` format on `POST /rest/api/2/issue/{key}/worklog`.
+         * Pinned by `JiraServiceImplWorklogStartedTest`; matches `TimeTrackingService.ISO_FORMAT`.
+         */
+        internal val JIRA_STARTED_FORMAT: DateTimeFormatter =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ")
     }
 }
 

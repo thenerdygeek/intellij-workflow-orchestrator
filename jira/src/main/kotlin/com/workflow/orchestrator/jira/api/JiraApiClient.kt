@@ -183,25 +183,79 @@ class JiraApiClient(
         }
     }
 
-    suspend fun postWorklog(issueKey: String, timeSpent: String, comment: String? = null): ApiResult<Unit> {
-        log.debug("[Jira:API] POST /rest/api/2/issue/$issueKey/worklog (timeSpent=$timeSpent, comment=${comment != null})")
+    /**
+     * Posts a worklog. `started` (if non-null) is sent as the `started` field in
+     * Jira's expected format (`yyyy-MM-dd'T'HH:mm:ss.SSSZ`); when null, the server
+     * defaults to "now". When [adjustEstimate] is set to anything other than `auto`
+     * it is appended as a `?adjustEstimate=` query param.
+     */
+    suspend fun postWorklog(
+        issueKey: String,
+        timeSpent: String,
+        comment: String? = null,
+        started: String? = null,
+        adjustEstimateParam: String? = null
+    ): ApiResult<Unit> {
+        log.debug(
+            "[Jira:API] POST /rest/api/2/issue/$issueKey/worklog " +
+                "(timeSpent=$timeSpent, comment=${comment != null}, started=$started, " +
+                "adjustEstimate=$adjustEstimateParam)"
+        )
         val body = buildJsonObject {
             put("timeSpent", timeSpent)
             if (comment != null) put("comment", comment)
+            if (started != null) put("started", started)
         }.toString()
-        return post("/rest/api/2/issue/$issueKey/worklog", body)
+        val path = if (adjustEstimateParam != null) {
+            "/rest/api/2/issue/$issueKey/worklog?adjustEstimate=$adjustEstimateParam"
+        } else {
+            "/rest/api/2/issue/$issueKey/worklog"
+        }
+        return post(path, body)
     }
 
     /**
      * Adds a standalone comment to a Jira issue.
      * POST /rest/api/2/issue/{key}/comment
+     *
+     * When [visibilityType] + [visibilityValue] are both non-null, a
+     * `visibility: { type, value }` block is included in the body so the comment
+     * is restricted to the named role / group. The visibility field is **omitted
+     * entirely** when null — Jira rejects `visibility: null`.
      */
-    suspend fun addComment(issueKey: String, body: String): ApiResult<Unit> {
-        log.debug("[Jira:API] POST /rest/api/2/issue/$issueKey/comment")
+    suspend fun addComment(
+        issueKey: String,
+        body: String,
+        visibilityType: String? = null,
+        visibilityValue: String? = null
+    ): ApiResult<Unit> {
+        log.debug(
+            "[Jira:API] POST /rest/api/2/issue/$issueKey/comment " +
+                "(visibility=${if (visibilityType != null) "$visibilityType:$visibilityValue" else "none"})"
+        )
         val payload = buildJsonObject {
             put("body", body)
+            if (visibilityType != null && visibilityValue != null) {
+                putJsonObject("visibility") {
+                    put("type", visibilityType)
+                    put("value", visibilityValue)
+                }
+            }
         }.toString()
         return post("/rest/api/2/issue/$issueKey/comment", payload)
+    }
+
+    /**
+     * `GET /rest/api/2/project/{projectKey}/role`
+     *
+     * Returns a name-keyed object (not an array): `{"Developers":"<roleSelfUrl>", …}`.
+     * Caller flattens to a list of role names. The role-id can be parsed from the
+     * URL tail when needed (e.g., `/rest/api/2/project/PROJ/role/10001`).
+     */
+    suspend fun getProjectRoles(projectKey: String): ApiResult<String> {
+        val encoded = URLEncoder.encode(projectKey, "UTF-8")
+        log.debug("[Jira:API] GET /rest/api/2/project/$encoded/role")
+        return getRawString("/rest/api/2/project/$encoded/role")
     }
 
     /**

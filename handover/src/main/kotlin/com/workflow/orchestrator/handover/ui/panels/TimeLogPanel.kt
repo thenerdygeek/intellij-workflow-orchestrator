@@ -23,6 +23,9 @@ import java.awt.FlowLayout
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import java.time.format.DateTimeParseException
 import javax.swing.JButton
 import javax.swing.JPanel
@@ -210,7 +213,13 @@ class TimeLogPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
         }
 
         val timeSpent = timeService.hoursToJiraTimeString(hours)
-        val started = timeService.formatStartedDate(date.year, date.monthValue, date.dayOfMonth, 9, 0)
+        // PR 5 of the 2026-05-07 write-ops audit: the user-picked date is now passed
+        // through to JiraService.logWork as an OffsetDateTime so the worklog's `started`
+        // field reflects the user's intent — pre-PR-5 this was discarded and Jira fell
+        // back to "now". 9:00 UTC matches the prior `formatStartedDate(.., 9, 0)` shape.
+        val started: OffsetDateTime = LocalDateTime
+            .of(date.year, date.monthValue, date.dayOfMonth, 9, 0, 0)
+            .atOffset(ZoneOffset.UTC)
         val comment = commentField.text.takeIf { it.isNotBlank() }
 
         logButton.isEnabled = false
@@ -226,11 +235,12 @@ class TimeLogPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
                 }
                 return@launch
             }
-            // NOTE: Jira's POST /rest/api/2/issue/{key}/worklog accepts only
-            // `timeSpent` and `comment` here (not the `started` ISO date) — the
-            // current JiraService.logWork signature reflects that. The `started`
-            // we just computed is for a future overload that adds the third arg.
-            val result = jiraService.logWork(ticketKey, timeSpent, comment)
+            val result = jiraService.logWork(
+                key = ticketKey,
+                timeSpent = timeSpent,
+                comment = comment,
+                started = started
+            )
             withContext(Dispatchers.EDT) {
                 if (result.isError) {
                     log.warn("[Handover:TimeLog] logWork failed: ${result.summary}")

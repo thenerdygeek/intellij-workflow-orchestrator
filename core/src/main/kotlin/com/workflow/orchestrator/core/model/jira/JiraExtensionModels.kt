@@ -117,3 +117,74 @@ data class TicketHistoryEntry(
     val oldValue: String? = null,
     val newValue: String? = null
 )
+
+// ── Comment visibility (PR 5 of 2026-05-07 write-ops audit) ──────────────────
+
+/**
+ * Visibility restriction for a Jira issue comment.
+ *
+ * Jira accepts either a project-role name (e.g., "Developers") or a group name
+ * (e.g., "jira-developers"); the choice is encoded in [type] and the human-readable
+ * name in [value]. When attached to an `addComment` request, Jira adds the matching
+ * `visibility: { type, value }` block to the JSON body so only members of that
+ * role/group can see the comment in the issue history.
+ */
+@Serializable
+data class CommentVisibility(
+    val type: VisibilityType,
+    val value: String
+)
+
+@Serializable
+enum class VisibilityType {
+    /** Project role visibility — restricts to members of a project role (e.g., "Developers"). */
+    ROLE,
+
+    /** Group visibility — restricts to members of a Jira group. */
+    GROUP
+}
+
+/**
+ * Combined roles + groups payload for the comment-visibility dropdown.
+ *
+ * Cached per project (roles) and per session (groups) inside `JiraServiceImpl`
+ * so the picker doesn't re-hit the server on every panel show. See
+ * `JiraService.getCommentVisibilityOptions`.
+ */
+@Serializable
+data class VisibilityOptions(
+    val roles: List<RoleOption> = emptyList(),
+    val groups: List<GroupOption> = emptyList()
+)
+
+@Serializable
+data class RoleOption(
+    val id: Long? = null,
+    val name: String
+)
+
+@Serializable
+data class GroupOption(
+    val name: String
+)
+
+// ── Worklog estimate adjustment (PR 5 of 2026-05-07 write-ops audit) ─────────
+
+/**
+ * `adjustEstimate` query param for `POST /rest/api/2/issue/{key}/worklog`.
+ *
+ * - [AUTO] (default): server reduces the remaining estimate by `timeSpent`.
+ * - [LEAVE]: don't change the remaining estimate.
+ * - [NEW]: replace the remaining estimate (Jira also expects `newEstimate=` — not modeled yet).
+ * - [MANUAL]: subtract a manual amount (Jira also expects `reduceBy=` — not modeled yet).
+ *
+ * Only [AUTO] and [LEAVE] are practically reachable from current UI; [NEW] and [MANUAL]
+ * are kept in the enum so the API surface matches Jira's documentation and a future
+ * UI affordance can add them without re-rolling the signature.
+ */
+enum class WorklogEstimateAdjustment {
+    NEW,
+    LEAVE,
+    MANUAL,
+    AUTO
+}

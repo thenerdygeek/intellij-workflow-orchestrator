@@ -10,6 +10,10 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
+import com.workflow.orchestrator.core.model.jira.CommentVisibility
+import com.workflow.orchestrator.core.model.jira.GroupOption
+import com.workflow.orchestrator.core.model.jira.RoleOption
+import com.workflow.orchestrator.core.model.jira.VisibilityType
 import com.workflow.orchestrator.core.services.JiraService
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.handover.service.HandoverStateService
@@ -21,7 +25,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.BorderLayout
 import java.awt.CardLayout
+import java.awt.FlowLayout
+import javax.swing.DefaultComboBoxModel
 import javax.swing.JButton
+import javax.swing.JComboBox
 import javax.swing.JPanel
 import javax.swing.SwingConstants
 
@@ -33,6 +40,9 @@ class JiraCommentPanel(private val project: Project) : JPanel(BorderLayout()) {
     // -- Current state (kept in sync via updateFromState) --
     private var activeTicketId: String = ""
 
+    /** Project key the visibility dropdown was last loaded for (so we don't re-fetch). */
+    @Volatile private var loadedForProjectKey: String? = null
+
     val commentPreview = JBTextArea(12, 40).apply {
         isEditable = false
         font = JBUI.Fonts.create(EditorColorsManager.getInstance().globalScheme.editorFontName, 12)
@@ -43,6 +53,20 @@ class JiraCommentPanel(private val project: Project) : JPanel(BorderLayout()) {
         toolTipText = "Select a Jira ticket in the Sprint tab first"
     }
     val statusLabel = JBLabel("")
+
+    /**
+     * Wrapper for combo entries — `null` payload is the "Public" item.
+     */
+    private data class VisibilityEntry(val label: String, val visibility: CommentVisibility?) {
+        override fun toString(): String = label
+    }
+
+    private val visibilityModel = DefaultComboBoxModel<VisibilityEntry>().apply {
+        addElement(VisibilityEntry("Public", null))
+    }
+    private val visibilityCombo = JComboBox(visibilityModel).apply {
+        toolTipText = "Restrict closure comment to a project role or group"
+    }
 
     // Empty-state card shown when no ticket is active
     private val cardLayout = CardLayout()
@@ -65,9 +89,11 @@ class JiraCommentPanel(private val project: Project) : JPanel(BorderLayout()) {
             onPostClicked()
         }
 
-        val buttonPanel = JPanel().apply {
+        val buttonPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
             add(editButton)
             add(postButton)
+            add(JBLabel("Visibility:"))
+            add(visibilityCombo)
         }
 
         val southPanel = JPanel(BorderLayout()).apply {
@@ -103,6 +129,7 @@ class JiraCommentPanel(private val project: Project) : JPanel(BorderLayout()) {
             commentPreview.text = commentText
             cardLayout.show(cardPanel, "comment")
             refreshPostButtonState()
+            maybeLoadVisibilityOptions(ticketId)
         }
     }
 
@@ -115,6 +142,49 @@ class JiraCommentPanel(private val project: Project) : JPanel(BorderLayout()) {
     // -----------------------------------------------------------------------
     // Private
     // -----------------------------------------------------------------------
+
+    private fun extractProjectKey(issueKey: String): String? {
+        val dash = issueKey.indexOf('-')
+        return if (dash > 0) issueKey.substring(0, dash) else null
+    }
+
+    /**
+     * Lazily fetches role + group options the first time we see a new project key.
+     * Network call is async — never blocks panel render. On failure the dropdown
+     * silently stays at "Public", which is the safe default.
+     */
+    private fun maybeLoadVisibilityOptions(ticketId: String) {
+        val projectKey = extractProjectKey(ticketId) ?: return
+        if (loadedForProjectKey == projectKey) return
+        loadedForProjectKey = projectKey
+
+        scope.launch {
+            val jiraService = project.getService(JiraService::class.java) ?: return@launch
+            val result = jiraService.getCommentVisibilityOptions(projectKey)
+            if (result.isError) {
+                log.info("[Handover:JiraComment] Visibility options unavailable for $projectKey: ${result.summary}")
+                return@launch
+            }
+            withContext(Dispatchers.EDT) {
+                rebuildVisibilityModel(result.data.roles, result.data.groups)
+            }
+        }
+    }
+
+    private fun rebuildVisibilityModel(roles: List<RoleOption>, groups: List<GroupOption>) {
+        visibilityModel.removeAllElements()
+        visibilityModel.addElement(VisibilityEntry("Public", null))
+        roles.forEach { r ->
+            visibilityModel.addElement(
+                VisibilityEntry("Role: ${r.name}", CommentVisibility(VisibilityType.ROLE, r.name))
+            )
+        }
+        groups.forEach { g ->
+            visibilityModel.addElement(
+                VisibilityEntry("Group: ${g.name}", CommentVisibility(VisibilityType.GROUP, g.name))
+            )
+        }
+    }
 
     private fun refreshPostButtonState() {
         val canPost = activeTicketId.isNotBlank() && commentPreview.text.isNotBlank()
@@ -131,10 +201,16 @@ class JiraCommentPanel(private val project: Project) : JPanel(BorderLayout()) {
         val body = commentPreview.text
         if (ticketKey.isBlank() || body.isBlank()) return
 
+        val visibility = (visibilityCombo.selectedItem as? VisibilityEntry)?.visibility
+
         postButton.isEnabled = false
         editButton.isEnabled = false
+        visibilityCombo.isEnabled = false
         statusLabel.text = "Posting..."
-        log.info("[Handover:JiraComment] Posting comment to $ticketKey")
+        log.info(
+            "[Handover:JiraComment] Posting comment to $ticketKey " +
+                "(visibility=${visibility?.let { "${it.type.name.lowercase()}:${it.value}" } ?: "public"})"
+        )
 
         scope.launch {
             val jiraService = project.getService(JiraService::class.java)
@@ -143,14 +219,16 @@ class JiraCommentPanel(private val project: Project) : JPanel(BorderLayout()) {
                     statusLabel.text = "Jira service unavailable"
                     postButton.isEnabled = true
                     editButton.isEnabled = true
+                    visibilityCombo.isEnabled = true
                 }
                 return@launch
             }
 
-            val result = jiraService.addComment(ticketKey, body)
+            val result = jiraService.addComment(ticketKey, body, visibility)
 
             withContext(Dispatchers.EDT) {
                 editButton.isEnabled = true
+                visibilityCombo.isEnabled = true
                 if (result.isError) {
                     log.warn("[Handover:JiraComment] Failed to post comment: ${result.summary}")
                     statusLabel.text = result.summary.take(80)

@@ -2,6 +2,7 @@ package com.workflow.orchestrator.core.services
 
 import com.workflow.orchestrator.core.model.jira.AttachmentContentData
 import com.workflow.orchestrator.core.model.jira.BoardData
+import com.workflow.orchestrator.core.model.jira.CommentVisibility
 import com.workflow.orchestrator.core.model.jira.DevStatusBranchData
 import com.workflow.orchestrator.core.model.jira.DevStatusBuildData
 import com.workflow.orchestrator.core.model.jira.DevStatusBundle
@@ -22,8 +23,11 @@ import com.workflow.orchestrator.core.model.jira.TicketHistoryEntry
 import com.workflow.orchestrator.core.model.jira.TransitionMeta
 import com.workflow.orchestrator.core.model.jira.SprintData
 import com.workflow.orchestrator.core.model.jira.StartWorkResultData
+import com.workflow.orchestrator.core.model.jira.VisibilityOptions
 import com.workflow.orchestrator.core.model.jira.WatchersData
 import com.workflow.orchestrator.core.model.jira.WorklogData
+import com.workflow.orchestrator.core.model.jira.WorklogEstimateAdjustment
+import java.time.OffsetDateTime
 
 /**
  * Jira operations used by both UI panels and AI agent.
@@ -44,11 +48,46 @@ interface JiraService {
         comment: String? = null
     ): ToolResult<Unit>
 
-    /** Add a comment to a ticket. */
-    suspend fun addComment(key: String, body: String): ToolResult<Unit>
+    /**
+     * Add a comment to a ticket.
+     *
+     * When [visibility] is non-null, the comment is restricted to the named role or group
+     * via Jira's `visibility: { type, value }` block (Server REST API v2). Pass null for
+     * an unrestricted (public-to-issue) comment — the visibility field is omitted from
+     * the body entirely; sending `visibility: null` would be rejected by Jira.
+     */
+    suspend fun addComment(
+        key: String,
+        body: String,
+        visibility: CommentVisibility? = null
+    ): ToolResult<Unit>
 
-    /** Log work on a ticket. */
-    suspend fun logWork(key: String, timeSpent: String, comment: String?): ToolResult<Unit>
+    /**
+     * Returns the union of project roles + Jira groups that may be used as a comment
+     * visibility restriction. Cached per session inside the implementation so the
+     * picker doesn't re-hit the network on every panel show.
+     *
+     * Roles come from `GET /rest/api/2/project/{projectKey}/role` (a name-keyed object,
+     * not an array) and groups from `GET /rest/api/2/groups/picker?query=`.
+     */
+    suspend fun getCommentVisibilityOptions(projectKey: String): ToolResult<VisibilityOptions>
+
+    /**
+     * Log work on a ticket.
+     *
+     * - [started]: when non-null, sent as the `started` field in Jira's expected format
+     *   (`yyyy-MM-dd'T'HH:mm:ss.SSSZ`). When null, the server defaults to "now".
+     * - [adjustEstimate]: when not [WorklogEstimateAdjustment.AUTO], appended as a
+     *   `?adjustEstimate=…` query parameter so callers can opt out of the default
+     *   "subtract from remaining estimate" behavior.
+     */
+    suspend fun logWork(
+        key: String,
+        timeSpent: String,
+        comment: String? = null,
+        started: OffsetDateTime? = null,
+        adjustEstimate: WorklogEstimateAdjustment = WorklogEstimateAdjustment.AUTO
+    ): ToolResult<Unit>
 
     /** Get comments for a ticket. */
     suspend fun getComments(key: String): ToolResult<List<JiraCommentData>>
