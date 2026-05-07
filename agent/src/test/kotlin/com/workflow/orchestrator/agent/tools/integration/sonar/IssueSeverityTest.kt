@@ -26,6 +26,21 @@ class IssueSeverityTest {
     }
 
     @Test
+    fun `MAJOR does not meet CRITICAL threshold`() {
+        assertFalse(IssueSeverity.meetsMinSeverity("MAJOR", "CRITICAL"))
+    }
+
+    @Test
+    fun `CRITICAL does not meet BLOCKER threshold`() {
+        assertFalse(IssueSeverity.meetsMinSeverity("CRITICAL", "BLOCKER"))
+    }
+
+    @Test
+    fun `MINOR does not meet MAJOR threshold`() {
+        assertFalse(IssueSeverity.meetsMinSeverity("MINOR", "MAJOR"))
+    }
+
+    @Test
     fun `unknown severity is treated as INFO`() {
         // Defensive: future Sonar versions may add new levels. We don't want
         // an unknown severity to silently bypass a strict filter.

@@ -66,4 +66,17 @@ class SonarRetryTest {
         }
         assertEquals(1, calls.get())
     }
+
+    @Test
+    fun `delay doubles between retries`() = runTest {
+        val callTimestamps = mutableListOf<Long>()
+        SonarRetry.withBackoff<String>(maxAttempts = 4, initialDelayMs = 100) {
+            callTimestamps += testScheduler.currentTime
+            ToolResult(data = "", summary = "always-fail", isError = true)
+        }
+        // 4 attempts, 3 inter-attempt delays of 100/200/400ms.
+        // currentTime starts at 0; first call recorded at 0; subsequent calls
+        // at 100, 100+200=300, 300+400=700.
+        assertEquals(listOf(0L, 100L, 300L, 700L), callTimestamps)
+    }
 }
