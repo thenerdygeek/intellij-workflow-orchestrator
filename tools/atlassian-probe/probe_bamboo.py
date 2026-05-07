@@ -1025,14 +1025,21 @@ class BambooProbe:
                 lines.append(f"- **Branch**: `{br}`")
             else:
                 lines.append(
-                    "- **Branch**: _not reported by Bamboo for this build "
-                    "(typical when the queried plan key is the **master** "
-                    "plan and the most-recent build was on a different "
-                    "branch — Bamboo stores those under separate branch "
-                    "plan keys). To audit a specific branch like `develop`, "
-                    "pick its branch plan key from the 'Branches under' "
-                    "table above and re-run discover with that key as "
-                    "`--plan-key`._"
+                    "- **Branch**: _not reported by Bamboo. The "
+                    "`planBranchName` field is populated only for builds "
+                    "on **branch plans** (the numbered keys in the "
+                    "'Branches under' table); builds on the **master "
+                    "plan** itself omit it. This does NOT mean the build "
+                    "was on a different branch — it means the master plan "
+                    "is tracking whatever Git branch your team configured "
+                    "(often `develop` or `main`), and Bamboo's REST API "
+                    "does not expose that mapping. Pass `--branch-name "
+                    "<whatever-your-master-plan-tracks>` to the full "
+                    "sweep and keep the master plan key as `--plan-key` "
+                    "— that's the right combination to audit the master "
+                    "plan's builds. Use a numbered branch plan key from "
+                    "the 'Branches under' table only if you want to "
+                    "audit a different (non-master) branch instead._"
                 )
             sha = sample.get("commit_sha")
             if sha:
@@ -1078,14 +1085,18 @@ class BambooProbe:
         lines.append("")
         if suggested_branch == "<your-branch>":
             lines.append(
-                "> **Branch placeholder warning** — discover did not learn "
-                "the branch from this run (Bamboo did not return "
-                "`planBranchName` for the sample build). Replace "
-                "`<your-branch>` below with the actual branch you want to "
-                "audit (e.g., `develop`), AND consider re-running discover "
-                "with the matching **branch plan key** from the 'Branches "
-                "under' table above so the result key, job key, and commit "
-                "SHA are also branch-specific."
+                "> **Branch placeholder note** — Bamboo did not return "
+                "`planBranchName` for this sample, which is normal for "
+                "builds on the **master plan**. The job key and commit "
+                "SHA above ARE from your master plan's most-recent build "
+                "(which is whatever Git branch your master plan tracks — "
+                "often `develop` or `main`); only the branch *name* "
+                "needs filling in. Replace `<your-branch>` below with "
+                "your master plan's tracked branch and proceed — no "
+                "need to switch to a numbered branch plan key. Use a "
+                "numbered branch plan key from the 'Branches under' "
+                "table above ONLY if you want to audit a non-master "
+                "branch (e.g., `release`) instead."
             )
             lines.append("")
         lines.append("Unix shell / PowerShell:")
