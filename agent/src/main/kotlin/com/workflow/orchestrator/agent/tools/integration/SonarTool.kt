@@ -675,6 +675,17 @@ Common optional: repo_name for multi-repo projects.
         } else null
 
         // ── 7. Fetch per-file results in parallel ─────────────────────────
+        // Per-scan rule description cache. Keyed by rule key. A scan typically
+        // hits <50 unique rules even when 700+ issues are reported, so each
+        // rule fetch happens at most once.
+        val ruleCache = mutableMapOf<String, String?>()
+        suspend fun fetchRuleHowToFix(ruleKey: String): String? {
+            return ruleCache.getOrPut(ruleKey) {
+                val r = sonarService.getRule(ruleKey, repoName)
+                if (r.isError) null else r.data?.description?.takeIf { it.isNotBlank() }
+            }
+        }
+
         val sb = StringBuilder()
         sb.appendLine("Local Sonar Analysis Complete")
         val branchLabel = branch ?: "(project default)"
@@ -732,6 +743,14 @@ Common optional: repo_name for multi-repo projects.
                             val loc = issue.line?.let { "line $it" } ?: "file level"
                             sb.appendLine("  [$sev][${issue.type}] $loc — ${issue.message.take(120)}")
                             sb.appendLine("    Rule: ${issue.rule}")
+                            // Inline rule "How to fix" body (cached per scan).
+                            // Truncated at 600 chars to keep token cost bounded — the LLM
+                            // can call sonar(action="rule", rule_key=...) for the full text.
+                            fetchRuleHowToFix(issue.rule)?.let { desc ->
+                                val trimmed = desc.replace(Regex("\\s+"), " ").trim()
+                                val capped = if (trimmed.length > 600) trimmed.take(600) + "…" else trimmed
+                                sb.appendLine("    How to fix: $capped")
+                            }
                         }
                     }
                 }
