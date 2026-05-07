@@ -624,8 +624,9 @@ class NexusProbe:
             )
         if chosen_docker:
             dr = urllib.parse.quote(chosen_docker, safe="")
+            safe_chosen = chosen_docker.replace("/", "_")
             self._docker_get(
-                name=f"discover_tags_{chosen_docker}",
+                name=f"discover_tags_{safe_chosen}",
                 description=f"First page of tags in {chosen_docker}",
                 path=f"/v2/{dr}/tags/list?n=10",
                 category="feature",
@@ -737,9 +738,10 @@ class NexusProbe:
         # 4) Docker-repo-scoped probes (need --docker-repo)
         if docker_repo:
             dr = urllib.parse.quote(docker_repo, safe="")
+            safe_repo = docker_repo.replace("/", "_")
             print(f"\n[probe] existing/swap — Docker repo '{docker_repo}'")
             self._docker_get(
-                name=f"docker_tags_{docker_repo}",
+                name=f"docker_tags_{safe_repo}",
                 description=f"Tag list for {docker_repo} (already used by plugin)",
                 path=f"/v2/{dr}/tags/list?n=100",
                 category="existing",
@@ -754,12 +756,12 @@ class NexusProbe:
             )
             # Pick a tag for manifest probes
             chosen_tag = manifest_tag or _read_first_tag(
-                self.raw_dir / f"docker_tags_{docker_repo}.json"
+                self.raw_dir / f"docker_tags_{safe_repo}.json"
             )
             if chosen_tag:
                 tg = urllib.parse.quote(chosen_tag, safe="")
                 self._docker_head(
-                    name=f"docker_manifest_head_{docker_repo}",
+                    name=f"docker_manifest_head_{safe_repo}",
                     description=f"HEAD manifest for {docker_repo}:{chosen_tag} (cheaper digest check)",
                     path=f"/v2/{dr}/manifests/{tg}",
                     category="swap",
@@ -769,7 +771,7 @@ class NexusProbe:
                     ],
                 )
                 self._docker_get(
-                    name=f"docker_manifest_get_{docker_repo}",
+                    name=f"docker_manifest_get_{safe_repo}",
                     description=f"GET manifest for {docker_repo}:{chosen_tag} (already used)",
                     path=f"/v2/{dr}/manifests/{tg}",
                     category="existing",
@@ -777,10 +779,10 @@ class NexusProbe:
                 )
             else:
                 self.results.append(ProbeResult(
-                    name=f"docker_manifest_{docker_repo}_skipped",
+                    name=f"docker_manifest_{safe_repo}_skipped",
                     description="manifest probes skipped — no tag derivable",
                     method="-", path="-", payload_kind="error", category="existing",
-                    error=f"docker_tags_{docker_repo} yielded no tags; pass --manifest-tag to force",
+                    error=f"docker_tags_{safe_repo} yielded no tags; pass --manifest-tag to force",
                 ))
 
         # 5) Cross-cutting: token capability check
@@ -1287,12 +1289,17 @@ class NexusProbe:
             ],
         )
 
+        # `docker_repo` may contain '/' (Nexus folder paths like
+        # company-team/repo-name); url-encoded for the wire path, slash-replaced
+        # for filename components so /raw/<name>.json doesn't try to write into
+        # a non-existent subdirectory.
         dr = urllib.parse.quote(docker_repo, safe="")
+        safe_repo = docker_repo.replace("/", "_")
 
         # 2. tags/list — primary endpoint #1
         print(f"\n[probe] existing — Docker repo '{docker_repo}'")
         self._docker_get(
-            name=f"docker_tags_{docker_repo}",
+            name=f"docker_tags_{safe_repo}",
             description=f"Tag list for {docker_repo} — drives listTags() and getLatestReleaseTag()",
             path=f"/v2/{dr}/tags/list?n=100",
             category="existing",
@@ -1304,14 +1311,14 @@ class NexusProbe:
         )
 
         chosen_tag = manifest_tag or _read_first_tag(
-            self.raw_dir / f"docker_tags_{docker_repo}.json"
+            self.raw_dir / f"docker_tags_{safe_repo}.json"
         )
         if not chosen_tag:
             self.results.append(ProbeResult(
-                name=f"docker_manifest_{docker_repo}_skipped",
+                name=f"docker_manifest_{safe_repo}_skipped",
                 description="manifest probes skipped — no tag derivable",
                 method="-", path="-", payload_kind="error", category="existing",
-                error=f"docker_tags_{docker_repo} yielded no tags; pass --manifest-tag to force",
+                error=f"docker_tags_{safe_repo} yielded no tags; pass --manifest-tag to force",
             ))
             return
 
@@ -1319,7 +1326,7 @@ class NexusProbe:
 
         # 3. manifests HEAD — primary endpoint #2 (the SWAP from current GET)
         self._docker_head(
-            name=f"docker_manifest_head_{docker_repo}",
+            name=f"docker_manifest_head_{safe_repo}",
             description=f"HEAD manifest for {docker_repo}:{chosen_tag} — drives tagExists()",
             path=f"/v2/{dr}/manifests/{tg}",
             category="existing",
@@ -1333,7 +1340,7 @@ class NexusProbe:
         #    code paths used GET; HEAD is preferred. Capturing GET keeps
         #    schemaVersion/mediaType/layers visible for any future use.)
         self._docker_get(
-            name=f"docker_manifest_get_{docker_repo}",
+            name=f"docker_manifest_get_{safe_repo}",
             description=f"GET manifest for {docker_repo}:{chosen_tag} — full body",
             path=f"/v2/{dr}/manifests/{tg}",
             category="existing",
@@ -1347,7 +1354,7 @@ class NexusProbe:
         bogus_tag = "wf-orchestrator-probe-nonexistent-tag-9999999"
         bg = urllib.parse.quote(bogus_tag, safe="")
         self._docker_head(
-            name=f"docker_manifest_head_{docker_repo}_bogus",
+            name=f"docker_manifest_head_{safe_repo}_bogus",
             description=f"HEAD manifest for {docker_repo}:{bogus_tag} — verifies 404 path",
             path=f"/v2/{dr}/manifests/{bg}",
             category="existing",
