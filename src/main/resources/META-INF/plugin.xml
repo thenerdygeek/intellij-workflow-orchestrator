@@ -290,9 +290,6 @@
             serviceImplementation="com.workflow.orchestrator.automation.service.ConflictDetectorService"/>
         <projectService
             serviceImplementation="com.workflow.orchestrator.automation.service.TagHistoryService"/>
-        <projectService
-            serviceImplementation="com.workflow.orchestrator.automation.service.TagValidationService"/>
-
         <!-- App-level (cross-project) -->
         <applicationService
             serviceImplementation="com.workflow.orchestrator.core.settings.ConnectionSettings"/>
@@ -415,9 +412,6 @@
         <!-- Bamboo Run Configuration -->
         <configurationType implementation="com.workflow.orchestrator.bamboo.run.BambooBuildConfigurationType"/>
 
-        <!-- Before Run: Docker Tag Validation -->
-        <stepsBeforeRunProvider
-            implementation="com.workflow.orchestrator.automation.run.TagValidationBeforeRunProvider"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.workflow.orchestrator">

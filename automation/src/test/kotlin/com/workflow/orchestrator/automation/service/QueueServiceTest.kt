@@ -1,18 +1,15 @@
 package com.workflow.orchestrator.automation.service
 
 import app.cash.turbine.test
-import com.workflow.orchestrator.automation.api.DockerRegistryClient
 import com.workflow.orchestrator.automation.model.QueueEntry
 import com.workflow.orchestrator.automation.model.QueueEntryStatus
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
-import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.bamboo.BuildResultData
 import com.workflow.orchestrator.core.model.bamboo.BuildTriggerData
 import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.services.ToolResult
 import io.mockk.coEvery
-import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -38,7 +35,6 @@ class QueueServiceTest {
     lateinit var tempDir: Path
 
     private lateinit var bambooService: BambooService
-    private lateinit var registryClient: DockerRegistryClient
     private lateinit var eventBus: EventBus
     private lateinit var tagHistory: TagHistoryService
     private lateinit var serviceScope: CoroutineScope
@@ -63,20 +59,17 @@ class QueueServiceTest {
     @BeforeEach
     fun setUp() {
         bambooService = mockk(relaxed = true)
-        registryClient = mockk(relaxed = true)
         eventBus = EventBus()
         tagHistory = TagHistoryService(tempDir.resolve("test.db").toString())
         serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
         service = QueueService(
             bambooService = bambooService,
-            registryClient = registryClient,
             eventBus = eventBus,
             tagHistoryService = tagHistory,
             scope = serviceScope,
             autoTriggerEnabled = false,
-            maxDepthPerSuite = 10,
-            tagValidationOnTrigger = true
+            maxDepthPerSuite = 10
         )
     }
 
@@ -131,13 +124,11 @@ class QueueServiceTest {
     fun `enqueue rejects when max depth exceeded`() = runTest {
         val smallService = QueueService(
             bambooService = bambooService,
-            registryClient = registryClient,
             eventBus = eventBus,
             tagHistoryService = tagHistory,
             scope = serviceScope,
             autoTriggerEnabled = false,
-            maxDepthPerSuite = 2,
-            tagValidationOnTrigger = false
+            maxDepthPerSuite = 2
         )
 
         smallService.enqueue(makeEntry(id = "q-1"))
@@ -191,7 +182,6 @@ class QueueServiceTest {
     @Test
     fun `triggerNow bypasses queue and triggers immediately`() = runTest {
         val entry = makeEntry()
-        coEvery { registryClient.tagExists(any(), any()) } returns ApiResult.Success(true)
         coEvery { bambooService.triggerBuild(any(), any()) } returns ToolResult.success(
             data = BuildTriggerData(
                 buildKey = "PROJ-AUTO-850",
@@ -262,13 +252,11 @@ class QueueServiceTest {
         val scopeForTest = CoroutineScope(Dispatchers.IO + SupervisorJob())
         val testService = QueueService(
             bambooService = bambooService,
-            registryClient = registryClient,
             eventBus = eventBus,
             tagHistoryService = TagHistoryService(tempDir.resolve("test2.db").toString()),
             scope = scopeForTest,
             autoTriggerEnabled = false,
-            maxDepthPerSuite = 10,
-            tagValidationOnTrigger = false
+            maxDepthPerSuite = 10
         )
 
         // Enqueue two entries with bambooResultKeys already set
@@ -321,13 +309,11 @@ class QueueServiceTest {
         val scopeForTest = CoroutineScope(Dispatchers.IO + SupervisorJob())
         val testService = QueueService(
             bambooService = bambooService,
-            registryClient = registryClient,
             eventBus = eventBus,
             tagHistoryService = TagHistoryService(tempDir.resolve("test3.db").toString()),
             scope = scopeForTest,
             autoTriggerEnabled = false,
-            maxDepthPerSuite = 10,
-            tagValidationOnTrigger = false
+            maxDepthPerSuite = 10
         )
 
         val entry = QueueEntry(

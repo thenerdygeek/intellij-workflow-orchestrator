@@ -3,13 +3,10 @@ package com.workflow.orchestrator.automation.service
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.workflow.orchestrator.automation.api.DockerRegistryClient
 import com.workflow.orchestrator.automation.model.QueueEntry
 import com.workflow.orchestrator.automation.model.QueueEntryStatus
-import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
-import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.core.settings.PluginSettings
@@ -25,7 +22,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -38,7 +34,6 @@ class QueueService {
 
     // Backing fields — set directly by test constructor, or lazily resolved from project
     private var _bambooService: BambooService? = null
-    private var _registryClient: DockerRegistryClient? = null
     private var _eventBus: EventBus? = null
     private var _tagHistoryService: TagHistoryService? = null
 
@@ -47,31 +42,12 @@ class QueueService {
         p.getService(BambooService::class.java).also { _bambooService = it }
     }
 
-    private val registryClient: DockerRegistryClient get() = _registryClient ?: run {
-        val p = _project!!
-        val settings = PluginSettings.getInstance(p)
-        val credentialStore = CredentialStore()
-        val registryUrl = (settings.state.dockerRegistryUrl.takeUnless { it.isNullOrBlank() }
-            ?: settings.connections.nexusUrl.orEmpty()).trimEnd('/')
-        val basePath = settings.state.dockerBasePath.orEmpty()
-        val nexusUsername = settings.connections.nexusUsername.orEmpty()
-        val timeouts = com.workflow.orchestrator.core.http.HttpClientFactory.timeoutsFromSettings(p)
-        DockerRegistryClient(
-            registryUrl = registryUrl,
-            tokenProvider = { credentialStore.getNexusBasicAuthToken(nexusUsername) },
-            connectTimeoutSeconds = timeouts.connectSeconds,
-            readTimeoutSeconds = timeouts.readSeconds,
-            basePath = basePath
-        ).also { _registryClient = it }
-    }
-
     private val eventBus: EventBus get() = _eventBus ?: _project!!.getService(EventBus::class.java).also { _eventBus = it }
     private val tagHistoryService: TagHistoryService get() = _tagHistoryService ?: _project!!.getService(TagHistoryService::class.java).also { _tagHistoryService = it }
 
     private val cs: CoroutineScope
     private val autoTriggerEnabled: Boolean
     private val maxDepthPerSuite: Int
-    private val tagValidationOnTrigger: Boolean
     private val buildVariableName: String
 
     /** Project service constructor — used by IntelliJ DI. Heavy deps are lazy-inited on first use. */
@@ -81,30 +57,25 @@ class QueueService {
         this.cs = cs
         this.autoTriggerEnabled = settings.state.queueAutoTriggerEnabled
         this.maxDepthPerSuite = settings.state.queueMaxDepthPerSuite
-        this.tagValidationOnTrigger = settings.state.tagValidationOnTrigger
         this.buildVariableName = settings.state.bambooBuildVariableName?.takeIf { it.isNotBlank() } ?: "DockerTagsAsJSON"
     }
 
     /** Test constructor — allows injecting mocks. */
     constructor(
         bambooService: BambooService,
-        registryClient: DockerRegistryClient,
         eventBus: EventBus,
         tagHistoryService: TagHistoryService,
         scope: CoroutineScope,
         autoTriggerEnabled: Boolean = true,
         maxDepthPerSuite: Int = 10,
-        tagValidationOnTrigger: Boolean = true,
         buildVariableName: String = "DockerTagsAsJSON"
     ) {
         this._bambooService = bambooService
-        this._registryClient = registryClient
         this._eventBus = eventBus
         this._tagHistoryService = tagHistoryService
         this.cs = scope
         this.autoTriggerEnabled = autoTriggerEnabled
         this.maxDepthPerSuite = maxDepthPerSuite
-        this.tagValidationOnTrigger = tagValidationOnTrigger
         this.buildVariableName = buildVariableName
     }
 
@@ -316,19 +287,7 @@ class QueueService {
     }
 
     private suspend fun doTrigger(entry: QueueEntry): ToolResult<String> {
-        log.info("[Automation:Queue] Triggering build for entry ${entry.id}, suite='${entry.suitePlanKey}', tagValidation=$tagValidationOnTrigger")
-        if (tagValidationOnTrigger) {
-            val tagsValid = validateTags(entry)
-            if (!tagsValid) {
-                log.error("[Automation:Queue] Tag validation failed for entry ${entry.id}, aborting trigger")
-                tagHistoryService.updateQueueEntryStatus(entry.id, QueueEntryStatus.TAG_INVALID)
-                return ToolResult(
-                    data = "",
-                    summary = "One or more Docker tags no longer exist in the registry",
-                    isError = true
-                )
-            }
-        }
+        log.info("[Automation:Queue] Triggering build for entry ${entry.id}, suite='${entry.suitePlanKey}'")
 
         val variables = entry.variables.toMutableMap()
         variables[buildVariableName] = entry.dockerTagsPayload
@@ -362,22 +321,6 @@ class QueueService {
         }
     }
 
-    private suspend fun validateTags(entry: QueueEntry): Boolean {
-        val tags = try {
-            val obj = Json.decodeFromString<JsonObject>(entry.dockerTagsPayload)
-            obj.entries.associate { (k, v) -> k to v.jsonPrimitive.content }
-        } catch (e: Exception) {
-            return false
-        }
-
-        for ((service, tag) in tags) {
-            val result = registryClient.tagExists(service, tag)
-            if (result is ApiResult.Success && !result.data) return false
-            if (result is ApiResult.Error) return false
-        }
-        return true
-    }
-
     fun restoreFromPersistence() {
         cs.launch(Dispatchers.IO) {
             mutex.withLock {
@@ -395,7 +338,9 @@ class QueueService {
         private val ACTIVE_STATUSES = setOf(QueueEntryStatus.RUNNING, QueueEntryStatus.QUEUED_ON_BAMBOO)
         private val TERMINAL_STATUSES_SET = setOf(
             QueueEntryStatus.COMPLETED, QueueEntryStatus.CANCELLED,
-            QueueEntryStatus.FAILED_TO_TRIGGER, QueueEntryStatus.TAG_INVALID
+            QueueEntryStatus.FAILED_TO_TRIGGER,
+            // TAG_INVALID kept for backwards-compat with persisted queue entries (no new entries are set to this status)
+            QueueEntryStatus.TAG_INVALID
         )
     }
 }

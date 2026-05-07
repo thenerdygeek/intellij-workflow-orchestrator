@@ -50,17 +50,8 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var healthCheckTimeoutSeconds by property(300)
         var copyrightHeaderPattern by string("")
 
-        // Automation & Docker Registry settings
-        var dockerRegistryUrl by string("")
-        /**
-         * Optional sub-path for path-based Docker registries (e.g. Nexus 3).
-         * When set (e.g. "/repository/docker-hosted"), the full manifest URL becomes:
-         *   <dockerRegistryUrl><dockerBasePath>/v2/<name>/manifests/<tag>
-         * Leave blank for port-based registries where /v2/ lives at the root.
-         */
-        var dockerBasePath by string("")
+        // Automation queue settings
         var queueAutoTriggerEnabled by property(true)
-        var tagValidationOnTrigger by property(true)
         var queueMaxDepthPerSuite by property(10)
 
         // Phase 2B: Handover settings

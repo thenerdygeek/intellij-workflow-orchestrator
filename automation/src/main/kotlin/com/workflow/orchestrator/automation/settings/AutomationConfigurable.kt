@@ -95,7 +95,6 @@ class AutomationConfigurable(private val project: Project) : SearchableConfigura
             ConnectionStatusBanner.render(
                 this, project, listOf(
                     ConnectionStatusBanner.Requirement.BAMBOO,
-                    ConnectionStatusBanner.Requirement.NEXUS,
                 )
             )
 

@@ -1,22 +1,14 @@
 # :automation Module
 
-Docker tag staging, automation suite queue management, and deployment validation.
-
-## Nexus Docker Registry (Docker Registry v2 API)
-
-Auth: `Authorization: Basic <base64(token:)>` — Nexus uses BASIC auth, NOT Bearer
-
-Key endpoints:
-- `GET /v2/` — test connection
-- `GET /v2/{name}/tags/list` — list Docker tags for a repository
-- `HEAD /v2/{name}/manifests/{tag}` — check tag exists (validation)
+Docker tag staging, automation suite queue management, and deployment triggering.
 
 ## Architecture
 
-- `DockerRegistryClient` — HTTP client for Docker Registry v2
+Tag validation flow removed — Trigger Now does not pre-validate tags against any Docker registry; Bamboo handles missing-tag failures during the automation run.
+
 - `TagBuilderService` — builds `dockerTagsAsJson` payload (service-to-tag mappings)
 - `QueueService` — smart queue with position tracking, wait time estimation, auto-trigger. Uses platform-injected `cs: CoroutineScope`; pollers explicitly `cs.launch(Dispatchers.IO)` (HTTP/SQLite I/O, see `:core` "Service & threading conventions").
-- `DriftDetectorService` — detects tag drift across environments
+- `DriftDetectorService` — no-op after registry calls removed; `isRegistryConfigured()` always returns false
 - `ConflictDetectorService` — detects conflicting tag selections
 - `TagHistoryService` — persists last 5 tag configurations
 - `AutomationSettingsService` — suite plan keys and configuration
@@ -29,5 +21,4 @@ Key endpoints:
 - `QueueStatusPanel` — queue position, wait time, cancel/retry actions
 - `MonitorPanel` — running suite status with polling
 - `AutomationStatusBarWidgetFactory` — queue indicator in status bar
-- `TagValidationBeforeRunProvider` — validates tags before triggering builds
 - **UI Overhaul:** Monospace docker tags, outline run status badges, uppercase section headers. RunListCellRenderer uses cached/pre-built components for performance.
