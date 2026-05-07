@@ -427,6 +427,22 @@ Common optional: repo_name for multi-repo projects.
             "Missing sonar token", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
         )
 
+        // ── 1b. Pre-flight connection check ────────────────────────────────
+        // Fail fast on bad URL / token in milliseconds instead of after a
+        // full Maven/Gradle compile + scanner upload.
+        run {
+            val sonarService = ServiceLookup.sonar(project) ?: return ServiceLookup.notConfigured("SonarQube")
+            val testResult = sonarService.testConnection()
+            if (testResult.isError) {
+                return ToolResult(
+                    "Pre-flight Sonar connection check failed: ${testResult.summary}. " +
+                        "Verify URL and token in Settings > Workflow Orchestrator > Connections before retrying.",
+                    "Pre-flight failed: ${testResult.summary}",
+                    ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
+                )
+            }
+        }
+
         // ── 2. Resolve file paths to relative paths from project root ──────
         val basePath = project.basePath ?: return ToolResult(
             "Cannot determine project base path.", "No basePath", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
