@@ -7,7 +7,9 @@ import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
+import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.core.auth.CredentialStore
+import com.workflow.orchestrator.core.model.sonar.SonarFileComponent
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoContextResolver
@@ -26,15 +28,15 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.coroutineContext
 
 /**
- * Consolidated SonarQube meta-tool (13 actions).
+ * Consolidated SonarQube meta-tool (14 actions).
  *
  * Saves token budget per API call by collapsing all SonarQube operations into
  * a single tool definition with an `action` discriminator parameter.
  *
  * Actions: issues, quality_gate, coverage, search_projects, analysis_tasks,
- *          branches, project_measures, source_lines, issues_paged,
+ *          branches(include_files?), project_measures, source_lines, issues_paged,
  *          security_hotspots, duplications, branch_quality_report,
- *          local_analysis
+ *          local_analysis, rule(rule_key)
  */
 class SonarTool : AgentTool {
 
@@ -49,7 +51,8 @@ Actions and their parameters:
 - coverage(project_key, branch?) → **Overall** code coverage metrics (line %, branch %, covered/total lines). This returns the full project coverage, NOT new code coverage. For new code coverage, use branch_quality_report instead.
 - search_projects(query) → Search SonarQube projects
 - analysis_tasks(project_key) → Recent analysis task status. **Requires admin permission** — returns 403 for non-admin tokens; do not retry on 403, ask the user to use an admin token or fall back to `branches`/`quality_gate` for the same data without admin.
-- branches(project_key) → Analyzed branches
+- branches(project_key, include_files?) → Analyzed branches. When include_files=true, also lists all files Sonar analyzed for this project (parallel fetch) — use this before calling source_lines / duplications to verify the file is in Sonar's scope.
+- rule(rule_key) → Rule details (name, description, remediation, tags) for a Sonar rule key such as 'java:S1234'. Use when an issue references an unfamiliar rule to get fix guidance instead of guessing.
 - project_measures(project_key, branch?) → All project metrics (ratings, debt, overall coverage, duplication)
 - source_lines(component_key, from?, to?, branch?) → Source code with per-line coverage status (from/to are line numbers). Each line includes `isNew` (true when in the new-code period — pair with `new_code_only=true` to target only PR-introduced lines), `lineHits` (statement coverage; 0 = uncovered), `conditions` + `coveredConditions` (per-line branch coverage — when conditions > 0 and coveredConditions < conditions, the line has an uncovered branch the agent can target with a test).
 - issues_paged(project_key, page?, page_size?, branch?, new_code_only?) → Paginated issues (default page 1, 100/page, max 500; set new_code_only=true for new code only)
@@ -75,7 +78,7 @@ Common optional: repo_name for multi-repo projects.
                     "analysis_tasks", "branches", "project_measures", "source_lines", "issues_paged",
                     "security_hotspots", "hotspot_detail", "issue_facets",
                     "current_user", "quality_gates_list",
-                    "duplications", "branch_quality_report", "local_analysis"
+                    "duplications", "branch_quality_report", "local_analysis", "rule"
                 )
             ),
             "project_key" to ParameterProperty(
@@ -137,6 +140,14 @@ Common optional: repo_name for multi-repo projects.
             "timeout" to ParameterProperty(
                 type = "integer",
                 description = "Seconds before the scanner process is killed (default 300, max 900) — for local_analysis"
+            ),
+            "rule_key" to ParameterProperty(
+                type = "string",
+                description = "Sonar rule key (e.g. 'java:S1234'). Required for the rule action."
+            ),
+            "include_files" to ParameterProperty(
+                type = "boolean",
+                description = "On the branches action, also include the list of files Sonar analyzed for this project. Default false. Useful before drilling into source_lines / duplications to verify the file is in Sonar's scope."
             ),
             "repo_name" to ParameterProperty(
                 type = "string",
@@ -202,8 +213,10 @@ Common optional: repo_name for multi-repo projects.
 
             "branches" -> {
                 val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("project_key")
+                val branch = params["branch"]?.jsonPrimitive?.content
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
-                service.getBranches(projectKey, repoName = repoName).toAgentToolResult()
+                val includeFiles = params["include_files"]?.jsonPrimitive?.content?.lowercase() == "true"
+                executeGetBranchesForTest(projectKey, branch, repoName, includeFiles, service)
             }
 
             "project_measures" -> {
@@ -278,6 +291,11 @@ Common optional: repo_name for multi-repo projects.
                 service.getBranchQualityReport(projectKey, branch, maxFiles, repoName).toAgentToolResult()
             }
 
+            "rule" -> {
+                val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+                executeRuleForTest(params["rule_key"]?.jsonPrimitive?.content, repoName, service)
+            }
+
             "local_analysis" -> {
                 val filesParam = params["files"]?.jsonPrimitive?.content
                     ?: return ToolValidation.missingParam("files")
@@ -295,6 +313,68 @@ Common optional: repo_name for multi-repo projects.
                 isError = true
             )
         }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // rule — fetch rule details (gap #4)
+    // ══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Exposed internal for testing — exercises the `rule` action logic without
+     * needing a live IntelliJ Project / ServiceLookup (mirrors JiraTool pattern).
+     */
+    internal suspend fun executeRuleForTest(
+        ruleKey: String?,
+        repoName: String?,
+        service: com.workflow.orchestrator.core.services.SonarService
+    ): ToolResult {
+        if (ruleKey.isNullOrBlank()) return ToolValidation.missingParam("rule_key")
+        return service.getRule(ruleKey, repoName).toAgentToolResult()
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // branches — with optional include_files fan-out (gap #7)
+    // ══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Exposed internal for testing — exercises the `branches` action logic
+     * (with/without include_files) without needing a live IntelliJ Project
+     * (mirrors BambooBuildsTool / JiraTool pattern).
+     */
+    internal suspend fun executeGetBranchesForTest(
+        projectKey: String,
+        branch: String?,
+        repoName: String?,
+        includeFiles: Boolean,
+        service: com.workflow.orchestrator.core.services.SonarService
+    ): ToolResult {
+        if (!includeFiles) {
+            return service.getBranches(projectKey, repoName = repoName).toAgentToolResult()
+        }
+        return coroutineScope {
+            val branchesDeferred = async { service.getBranches(projectKey, repoName = repoName) }
+            val filesDeferred = async { service.listFileComponents(projectKey, branch, repoName) }
+            val branchesResult = branchesDeferred.await()
+            val filesResult = filesDeferred.await()
+            if (branchesResult.isError) return@coroutineScope branchesResult.toAgentToolResult()
+            val branchesAgent = branchesResult.toAgentToolResult()
+            val filesBlock = formatFileComponents(filesResult.data)
+            val combined = branchesAgent.content + "\n\n" + filesBlock
+            ToolResult(combined, "${branchesAgent.summary} · ${filesResult.summary}", TokenEstimator.estimate(combined))
+        }
+    }
+
+    /**
+     * Format a list of [SonarFileComponent] into a compact text block.
+     * Capped at 100 files to avoid context overflow — the LLM should use
+     * source_lines / duplications on specific files after confirming they appear here.
+     */
+    private fun formatFileComponents(files: List<SonarFileComponent>?): String {
+        if (files.isNullOrEmpty()) return "Files: (none analyzed)"
+        val cap = 100
+        val lines = files.take(cap).map { "  • ${it.path}" }
+        val tail = if (files.size > cap) "\n  …(${files.size - cap} more)" else ""
+        return "Files (showing ${minOf(cap, files.size)} of ${files.size}):\n" + lines.joinToString("\n") + tail
     }
 
     // ══════════════════════════════════════════════════════════════════════
