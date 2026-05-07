@@ -747,7 +747,7 @@ Common optional: repo_name for multi-repo projects.
                 } else {
                     val header = "Issues (${issueList.size})" + (if (droppedCount > 0) " — $droppedCount below $minSeverity dropped" else "")
                     sb.appendLine("$header:")
-                    val bySeverity = listOf("BLOCKER", "CRITICAL", "MAJOR", "MINOR", "INFO")
+                    val bySeverity = IssueSeverity.DISPLAY_ORDER
                     for (sev in bySeverity) {
                         val group = issueList.filter { it.severity == sev }
                         if (group.isEmpty()) continue
