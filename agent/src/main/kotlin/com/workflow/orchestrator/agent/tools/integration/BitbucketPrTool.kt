@@ -15,10 +15,15 @@ import kotlin.coroutines.coroutineContext
 /**
  * Pull request lifecycle — create, inspect, approve, merge, decline, update PRs.
  *
- * 18 actions: create_pr, get_pr_detail, get_pr_commits, get_pr_activities,
+ * 19 actions: create_pr, get_pr_detail, get_pr_commits, get_pr_activities,
  * get_pr_changes, get_pr_diff, check_merge_status, approve_pr, merge_pr,
  * decline_pr, update_pr_title, update_pr_description, get_my_prs, get_reviewing_prs,
- * get_pr_participants, get_blocker_comment_count, get_linked_jira_issues, get_required_builds.
+ * get_pr_participants, get_blocker_comment_count, get_linked_jira_issues, get_required_builds,
+ * get_prs_for_branch.
+ *
+ * - get_prs_for_branch(branch_name, repo_name?) → Lists PRs that have the given branch as their
+ *   source. Use this to answer "is there a PR for the branch I just pushed?" — get_my_prs does
+ *   NOT cover this case (PRs may be opened by anyone).
  */
 class BitbucketPrTool : AgentTool {
 
@@ -46,6 +51,7 @@ Actions and their parameters:
 - get_blocker_comment_count(pr_id) → Cheap counter for blocker-severity comments (R-SWAP-4)
 - get_linked_jira_issues(pr_id) → Jira keys for the PR via Bitbucket's Jira-link plugin (R-ADD-11)
 - get_required_builds → Per-branch required-builds conditions for the active repo (R-ADD-15)
+- get_prs_for_branch(branch_name, repo_name?) → Lists PRs that have the given branch as their source. Use this to answer "is there a PR for the branch I just pushed?" — get_my_prs does NOT cover this case (PRs may be opened by anyone).
 
 Common optional: repo_name for multi-repo projects. description for approval dialog on write actions.
 """.trimIndent()
@@ -59,7 +65,8 @@ Common optional: repo_name for multi-repo projects. description for approval dia
                     "merge_pr", "decline_pr", "update_pr_title", "update_pr_description",
                     "get_my_prs", "get_reviewing_prs",
                     "get_pr_participants", "get_blocker_comment_count",
-                    "get_linked_jira_issues", "get_required_builds"
+                    "get_linked_jira_issues", "get_required_builds",
+                    "get_prs_for_branch"
                 )),
             "pr_id"                to ParameterProperty("string", "Pull request ID (numeric) — for most PR actions"),
             "title"                to ParameterProperty("string", "PR title — for create_pr"),
@@ -72,6 +79,7 @@ Common optional: repo_name for multi-repo projects. description for approval dia
             "delete_source_branch" to ParameterProperty("string", "Delete source branch after merge: true/false — for merge_pr"),
             "commit_message"       to ParameterProperty("string", "Custom merge commit message — for merge_pr"),
             "repo_name"            to ParameterProperty("string", "Repository name for multi-repo projects — omit for primary"),
+            "branch_name"          to ParameterProperty("string", "Branch name (e.g. 'feature/PROJ-1') to look up PRs for. Required for get_prs_for_branch."),
             "description"          to ParameterProperty("string", "Approval dialog description for write actions: create_pr, approve_pr, merge_pr, decline_pr")
         ),
         required = listOf("action")
@@ -221,6 +229,13 @@ Common optional: repo_name for multi-repo projects. description for approval dia
             "get_required_builds" -> {
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
                 service.getRequiredBuilds(repoName = repoName).toAgentToolResult()
+            }
+
+            "get_prs_for_branch" -> {
+                val branchName = params["branch_name"]?.jsonPrimitive?.content
+                    ?: return ToolValidation.missingParam("branch_name")
+                val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+                service.getPullRequestsForBranch(branchName, repoName).toAgentToolResult()
             }
 
             else -> ToolResult(
