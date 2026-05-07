@@ -112,6 +112,34 @@ candidate endpoints we don't currently use (deployment projects, agent
 list, build queue, Jira-issues per build, build comments, build VCS
 changes, build labels, label list).
 
+### Discover mode (find your IDs)
+
+If you don't already know which plan / result / project / branch / commit
+SHA values to feed the full sweep, run:
+
+```bash
+python probe_bamboo.py --url https://bamboo.company.com --token <PAT> --discover
+```
+
+This walks `/project` → `/project/{key}?expand=plans.plan` → `/plan/{key}/branch`
+→ `/result/{plan}` → `/result/{key}?expand=vcsRevisions` and writes
+`Result_N/discover.md` with:
+
+- **Top projects** you can read
+- **Candidate plans** (up to 5) showing the latest build state, branch
+  count, and a `dockerTagsAsJson?` flag — plans with that variable set are
+  likely **automation suite** plans (Automation tab); plans without are
+  usually **service CI** plans (Build tab). The plugin's
+  `ConflictDetectorService` and `TagBuilderService` hard-code that variable
+  name, so it's a reliable disambiguator.
+- **Sample IDs** from the most recent build — including a job-level result
+  key when one exists, so the build-log probe gets a real ~30KB log
+- **Copy-paste commands** for both Unix and Windows seeded with the values
+  found above
+
+If your PAT can't see any projects (zero permissions), the digest still
+writes — it just shows the empty state and skips the suggested command.
+
 ### Self-signed certificates
 
 ```bash

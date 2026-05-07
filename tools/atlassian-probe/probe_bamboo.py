@@ -12,9 +12,16 @@ Usage examples:
     # Just detect version + connectivity (4 calls, no params needed)
     python probe_bamboo.py --url https://bamboo.company.com --token PAT --versions-only
 
-    # Full sweep — needs realistic ids so candidates exercise non-empty payloads
+    # Discover mode — walks projects -> plans -> branches -> recent builds and
+    # writes Result_N/discover.md with copy-pasteable IDs. Run this once to
+    # find values for the full sweep without spelunking the Bamboo UI.
+    python probe_bamboo.py --url https://bamboo.company.com --token PAT --discover
+
+    # Full sweep — needs realistic ids so candidates exercise non-empty payloads.
+    # Use a JOB-level result key (PROJ-PLAN-JOBSHORT-N) for the build-log probe;
+    # plan-level keys (PROJ-PLAN-N) yield tiny log stubs.
     python probe_bamboo.py --url https://bamboo.company.com --token PAT \\
-        --plan-key PROJ-PLAN --result-key PROJ-PLAN-123 --project-key PROJ \\
+        --plan-key PROJ-PLAN --result-key PROJ-PLAN-JOBSHORT-123 --project-key PROJ \\
         --branch-name feature/foo --commit-sha abc123def
 
     # Self-signed cert
@@ -552,6 +559,103 @@ class BambooProbe:
               f"{sum(1 for r in self.results if not r.ok and r.error is None)} non-2xx, "
               f"{sum(1 for r in self.results if r.error)} errored.")
 
+    def run_discover(self) -> None:
+        """Discovery walk — finds the IDs the full sweep needs from the user's
+        actual permissions, not from a global dump. Read-only.
+
+        Algorithm:
+            1. Run versions-only (auth + version baseline).
+            2. List projects (`/project?max-results=200`).
+            3. For top 5 projects, list plans (`/project/{key}?expand=plans.plan`).
+            4. For top 5 candidate plans, list branches and recent results.
+            5. From the first plan with recent builds, fetch
+               `?expand=vcsRevisions` to extract a sample commit SHA.
+            6. Write `Result_N/discover.md` with a copy-paste full-sweep command.
+
+        The plugin uses Bamboo across two tabs with different needs (Build vs
+        Automation). The digest cannot tell them apart from API metadata
+        alone, but it flags any plan whose recent builds expose a
+        `dockerTagsAsJson` variable as a likely automation suite candidate
+        (matches `automation/service/ConflictDetectorService.kt` +
+        `TagBuilderService.kt`).
+        """
+        print("[probe] discover mode\n")
+        self.run_versions_only()
+
+        print("\n[probe] discover — projects you can read")
+        self._get(
+            name="discover_projects",
+            description="All visible projects (paginated, first 200)",
+            path="/rest/api/latest/project?max-results=200",
+            category="existing",
+            notes=["Discovery — projects readable by your PAT"],
+        )
+        project_keys = _collect_top_project_keys(
+            self.raw_dir / "discover_projects.json", limit=5,
+        )
+        if not project_keys:
+            print("[probe] discover — no projects visible; cannot continue walk")
+            self._write_discover_digest([], [], None)
+            return
+
+        print(f"[probe] discover — inspecting {len(project_keys)} project(s): "
+              f"{', '.join(project_keys)}")
+        for pkey in project_keys:
+            self._get(
+                name=f"discover_project_{pkey}_plans",
+                description=f"Plans in project {pkey}",
+                path=f"/rest/api/latest/project/{pkey}?expand=plans.plan",
+                category="existing",
+                notes=[f"Discovery — plans inside {pkey}"],
+            )
+
+        plan_specs = _collect_candidate_plans(
+            self.raw_dir, project_keys, max_total=5,
+        )
+        if not plan_specs:
+            print("[probe] discover — projects had no plans visible to your PAT")
+            self._write_discover_digest(project_keys, [], None)
+            return
+
+        plan_keys = [p["key"] for p in plan_specs]
+        print(f"[probe] discover — inspecting {len(plan_keys)} plan(s): "
+              f"{', '.join(plan_keys)}")
+        for plkey in plan_keys:
+            self._get(
+                name=f"discover_plan_{plkey}_branches",
+                description=f"Branches for plan {plkey}",
+                path=f"/rest/api/latest/plan/{plkey}/branch?max-results=10",
+                category="existing",
+                notes=[f"Discovery — branches on {plkey}"],
+            )
+            self._get(
+                name=f"discover_plan_{plkey}_recent",
+                description=f"Recent results for plan {plkey}",
+                path=(f"/rest/api/latest/result/{plkey}?max-results=5"
+                      "&expand=results.result.stages.stage.results.result,"
+                      "results.result.variables.variable"),
+                category="existing",
+                notes=[f"Discovery — recent build results for {plkey}"],
+            )
+
+        sample = _extract_sample_from_results(self.raw_dir, plan_keys)
+        if sample and sample.get("plan_result_key"):
+            sample_rk = sample["plan_result_key"]
+            self._get(
+                name=f"discover_result_{sample_rk}_vcs",
+                description=f"VCS revisions for sample result {sample_rk}",
+                path=f"/rest/api/latest/result/{sample_rk}?expand=vcsRevisions",
+                category="existing",
+                notes=["Discovery — sample commit SHA for --commit-sha hint"],
+            )
+            sha = _extract_commit_sha(
+                self.raw_dir / f"discover_result_{sample_rk}_vcs.json"
+            )
+            if sha:
+                sample["commit_sha"] = sha
+
+        self._write_discover_digest(project_keys, plan_specs, sample)
+
     # -- skip helper for endpoints that need missing CLI args -----------------
 
     def _skip(self, name: str, description: str, category: str) -> None:
@@ -667,6 +771,214 @@ class BambooProbe:
             f"on-prem Bamboo is Data Center only since 2024 (Server SKU EOL)._\n"
         )
 
+    # -- discover digest writer ----------------------------------------------
+
+    def _write_discover_digest(
+        self,
+        project_keys: list[str],
+        plan_specs: list[dict],
+        sample: Optional[dict],
+    ) -> None:
+        """Render Result_N/discover.md scoped to the user's actual permissions.
+
+        Lists projects, candidate plans (with recent build state, branch
+        counts, dockerTagsAsJson hint to disambiguate Build-tab vs
+        Automation-tab plans), and a copy-paste full-sweep command seeded
+        from the most recent build."""
+        lines: list[str] = ["# Bamboo discovery — pick values for the full sweep", ""]
+
+        info = _read_raw_body(self.raw_dir / "info.json") or {}
+        cu = _read_raw_body(self.raw_dir / "current_user.json") or {}
+        version = info.get("version", "?") if isinstance(info, dict) else "?"
+        build_no = info.get("buildNumber", "?") if isinstance(info, dict) else "?"
+        full_name = cu.get("fullName", "") if isinstance(cu, dict) else ""
+        login = cu.get("name", "") if isinstance(cu, dict) else ""
+        if full_name or login:
+            lines.append(f"**You are**: {full_name} (`{login}`)")
+        lines.append(f"**Bamboo**: `{version}` (build `{build_no}`)")
+        lines.append("")
+
+        projects_body = _read_raw_body(self.raw_dir / "discover_projects.json") or {}
+        all_projects: list[Any] = []
+        if isinstance(projects_body, dict):
+            inner = projects_body.get("projects") or {}
+            if isinstance(inner, dict):
+                all_projects = inner.get("project") or []
+        if all_projects:
+            shown = min(len(all_projects), 5)
+            lines.append(f"## Projects you can see ({shown} of {len(all_projects)})")
+            lines.append("")
+            lines.append("| Key | Name |")
+            lines.append("|---|---|")
+            for p in all_projects[:5]:
+                if isinstance(p, dict):
+                    pk = str(p.get("key", ""))
+                    pn = str(p.get("name", "")).replace("|", "\\|")
+                    lines.append(f"| `{pk}` | {pn} |")
+            lines.append("")
+
+        if plan_specs:
+            lines.append(f"## Candidate plans ({len(plan_specs)} sampled)")
+            lines.append("")
+            lines.append(
+                "> **Tip:** plans whose recent builds expose `dockerTagsAsJson` "
+                "are likely **automation suite** plans (Automation tab — see "
+                "`ConflictDetectorService` / `TagBuilderService`). Plans "
+                "without are usually **service CI** plans (Build tab — auto-"
+                "detected from VCS via `BambooService.autoDetectPlan`)."
+            )
+            lines.append("")
+            lines.append(
+                "| Plan key | Project | Plan name | Latest build | Branches "
+                "| dockerTagsAsJson? |"
+            )
+            lines.append("|---|---|---|---|---|---|")
+            for spec in plan_specs:
+                plkey = spec["key"]
+                project = spec.get("project_key", "")
+                plan_name = str(spec.get("name", "")).replace("|", "\\|")[:40]
+                latest_label = "—"
+                has_docker = "—"
+                recent_body = _read_raw_body(
+                    self.raw_dir / f"discover_plan_{plkey}_recent.json"
+                ) or {}
+                if isinstance(recent_body, dict):
+                    inner = recent_body.get("results") or {}
+                    if isinstance(inner, dict):
+                        rl = inner.get("result") or []
+                        if rl and isinstance(rl[0], dict):
+                            r0 = rl[0]
+                            latest_label = (
+                                f"#{r0.get('buildNumber', '?')} "
+                                f"{r0.get('state', '?')}"
+                            )
+                            vars_block = r0.get("variables")
+                            if isinstance(vars_block, dict):
+                                vlist = vars_block.get("variable") or []
+                                names = {
+                                    v.get("name") for v in vlist
+                                    if isinstance(v, dict)
+                                }
+                                has_docker = (
+                                    "yes" if "dockerTagsAsJson" in names else "no"
+                                )
+                branch_count = "—"
+                branches_body = _read_raw_body(
+                    self.raw_dir / f"discover_plan_{plkey}_branches.json"
+                ) or {}
+                if isinstance(branches_body, dict):
+                    inner = branches_body.get("branches") or {}
+                    if isinstance(inner, dict):
+                        size = inner.get("size")
+                        if isinstance(size, int):
+                            branch_count = str(size)
+                lines.append(
+                    f"| `{plkey}` | `{project}` | {plan_name} | "
+                    f"{latest_label} | {branch_count} | {has_docker} |"
+                )
+            lines.append("")
+
+        if sample and sample.get("plan_result_key"):
+            lines.append(
+                f"## Sample IDs from the most recent run on "
+                f"`{sample.get('plan_key', '?')}`"
+            )
+            lines.append("")
+            lines.append(
+                f"- **Plan-level result key**: `{sample.get('plan_result_key', '—')}`"
+            )
+            jrk = sample.get("job_result_key")
+            if jrk:
+                lines.append(
+                    f"- **Job-level result key**: `{jrk}` ← use this for "
+                    "`--result-key` (yields a real ~30 KB build log; "
+                    "plan-level keys give a 101-byte stub)"
+                )
+            else:
+                lines.append(
+                    "- _No job-level result key found in stages — using the "
+                    "plan-level key will yield only a tiny log stub. Pick a "
+                    "plan with a different stage layout if you need real log "
+                    "content._"
+                )
+            br = sample.get("branch")
+            if br:
+                lines.append(f"- **Branch**: `{br}`")
+            sha = sample.get("commit_sha")
+            if sha:
+                lines.append(f"- **Latest commit SHA**: `{sha}`")
+            lines.append("")
+        else:
+            lines.append("## Sample IDs")
+            lines.append("")
+            lines.append(
+                "_No recent builds were found on the candidate plans. Fill "
+                "in `--result-key` and `--commit-sha` manually from the "
+                "Bamboo UI — open the plan in the browser, click into a "
+                "recent build, and grab the result key from the URL._"
+            )
+            lines.append("")
+
+        suggested_plan = (sample or {}).get("plan_key") or (
+            plan_specs[0]["key"] if plan_specs else "PROJ-PLAN"
+        )
+        suggested_proj = (sample or {}).get("project_key") or (
+            (plan_specs[0].get("project_key") if plan_specs else "")
+            or (suggested_plan.split("-", 1)[0] if "-" in suggested_plan else "PROJ")
+        )
+        suggested_rk = (
+            (sample or {}).get("job_result_key")
+            or (sample or {}).get("plan_result_key")
+            or "PROJ-PLAN-JOBSHORT-1"
+        )
+        suggested_branch = (sample or {}).get("branch") or "master"
+        suggested_sha = (sample or {}).get("commit_sha") or "<commit-sha>"
+
+        lines.append("---")
+        lines.append("")
+        lines.append("## Suggested full-sweep command")
+        lines.append("")
+        lines.append(
+            "_Seeded with the most-recent values from your work above. "
+            "Replace any with whatever you'd rather audit — typically you'll "
+            "pick **either** a Build-tab service-CI plan **or** an "
+            "Automation-tab suite plan based on which use case you're "
+            "validating. Run twice if you want both._"
+        )
+        lines.append("")
+        lines.append("Unix shell / PowerShell:")
+        lines.append("")
+        lines.append("```bash")
+        lines.append(
+            f"python probe_bamboo.py --url <YOUR_BAMBOO_URL> --token \"$BAMBOO_PAT\" \\\n"
+            f"    --plan-key {suggested_plan} \\\n"
+            f"    --result-key {suggested_rk} \\\n"
+            f"    --project-key {suggested_proj} \\\n"
+            f"    --branch-name {suggested_branch} \\\n"
+            f"    --commit-sha {suggested_sha}"
+        )
+        lines.append("```")
+        lines.append("")
+        lines.append("Windows `cmd`:")
+        lines.append("")
+        lines.append("```bat")
+        lines.append(
+            f"python probe_bamboo.py --url <YOUR_BAMBOO_URL> --token \"%BAMBOO_PAT%\" ^\n"
+            f"    --plan-key {suggested_plan} ^\n"
+            f"    --result-key {suggested_rk} ^\n"
+            f"    --project-key {suggested_proj} ^\n"
+            f"    --branch-name {suggested_branch} ^\n"
+            f"    --commit-sha {suggested_sha}"
+        )
+        lines.append("```")
+        lines.append("")
+
+        digest_path = self.results_dir / "discover.md"
+        digest_path.write_text("\n".join(lines), encoding="utf-8")
+        print(f"\n[probe] wrote discovery digest → {digest_path}")
+        print("[probe] open it locally, pick values, then re-run with the suggested args.")
+        print("[probe] (this file contains real project/plan names — redact before sharing.)")
+
 
 # ---------------------------------------------------------------------------
 # Inventory of write endpoints — never called by the probe
@@ -724,6 +1036,132 @@ def _allocate_results_dir(parent: Path) -> Path:
         n += 1
 
 
+def _read_raw_body(raw_path: Path) -> Any:
+    """Return the parsed `raw_body` from a saved probe response file, or None."""
+    try:
+        data = json.loads(raw_path.read_text(encoding="utf-8"))
+        return data.get("raw_body")
+    except Exception:
+        return None
+
+
+def _collect_top_project_keys(raw_path: Path, limit: int) -> list[str]:
+    """Pull the first `limit` project keys from a /project response.
+
+    Bamboo's response shape: `{"projects": {"project": [{"key": ...}, ...]}}`.
+    """
+    body = _read_raw_body(raw_path)
+    if not isinstance(body, dict):
+        return []
+    inner = body.get("projects")
+    if not isinstance(inner, dict):
+        return []
+    out: list[str] = []
+    for p in (inner.get("project") or []):
+        if isinstance(p, dict) and isinstance(p.get("key"), str):
+            out.append(p["key"])
+            if len(out) >= limit:
+                break
+    return out
+
+
+def _collect_candidate_plans(
+    raw_dir: Path, project_keys: list[str], max_total: int,
+) -> list[dict]:
+    """For each project's plan list, pluck the first plans up to `max_total`.
+
+    Returns dicts shaped {"key", "name", "project_key"}.
+    Bamboo's `/project/{key}?expand=plans.plan` response nests plans under
+    `{"plans": {"plan": [...]}}`."""
+    out: list[dict] = []
+    for pkey in project_keys:
+        body = _read_raw_body(raw_dir / f"discover_project_{pkey}_plans.json")
+        if not isinstance(body, dict):
+            continue
+        plans_block = body.get("plans")
+        if not isinstance(plans_block, dict):
+            continue
+        for plan in (plans_block.get("plan") or []):
+            if not isinstance(plan, dict):
+                continue
+            plkey = plan.get("key")
+            if not isinstance(plkey, str):
+                continue
+            out.append({
+                "key": plkey,
+                "name": str(plan.get("name", plan.get("shortName", ""))),
+                "project_key": pkey,
+            })
+            if len(out) >= max_total:
+                return out
+    return out
+
+
+def _extract_sample_from_results(
+    raw_dir: Path, plan_keys: list[str],
+) -> Optional[dict]:
+    """Return {plan_key, project_key, plan_result_key, job_result_key, branch}
+    from the first plan that has at least one recent build. None when no plan
+    has any recent build visible."""
+    for plkey in plan_keys:
+        body = _read_raw_body(raw_dir / f"discover_plan_{plkey}_recent.json")
+        if not isinstance(body, dict):
+            continue
+        results_block = body.get("results")
+        if not isinstance(results_block, dict):
+            continue
+        results = results_block.get("result") or []
+        if not results:
+            continue
+        first = results[0]
+        if not isinstance(first, dict):
+            continue
+        plan_rk = first.get("buildResultKey") or first.get("key")
+        if not plan_rk:
+            continue
+        job_rk: Optional[str] = None
+        stages = first.get("stages")
+        if isinstance(stages, dict):
+            for st in (stages.get("stage") or []):
+                if not isinstance(st, dict):
+                    continue
+                rblock = st.get("results")
+                if not isinstance(rblock, dict):
+                    continue
+                for jr in (rblock.get("result") or []):
+                    if isinstance(jr, dict) and isinstance(jr.get("key"), str):
+                        job_rk = jr["key"]
+                        break
+                if job_rk:
+                    break
+        branch = first.get("planBranchName")
+        proj_key = plkey.split("-", 1)[0] if "-" in plkey else ""
+        return {
+            "plan_key": plkey,
+            "project_key": proj_key,
+            "plan_result_key": str(plan_rk),
+            "job_result_key": job_rk,
+            "branch": branch if isinstance(branch, str) else None,
+        }
+    return None
+
+
+def _extract_commit_sha(raw_path: Path) -> Optional[str]:
+    """Pull the first vcsRevisionKey from a result?expand=vcsRevisions response."""
+    body = _read_raw_body(raw_path)
+    if not isinstance(body, dict):
+        return None
+    block = body.get("vcsRevisions")
+    if not isinstance(block, dict):
+        return None
+    for rev in (block.get("vcsRevision") or []):
+        if isinstance(rev, dict):
+            sha = rev.get("vcsRevisionKey")
+            if isinstance(sha, str) and len(sha) >= 7:
+                return sha
+    return None
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -749,12 +1187,23 @@ def main() -> int:
     p.add_argument("--versions-only", action="store_true",
                    help="Probe only /info + /serverInfo + /currentUser + "
                         "/info/configurationProperties and exit. Recommended first run.")
+    p.add_argument("--discover", action="store_true",
+                   help="Discovery walk — finds plan / result / project / "
+                        "branch / SHA values from your actual permissions and "
+                        "writes Result_N/discover.md with a copy-paste full-"
+                        "sweep command. Run this once before the full sweep "
+                        "so you don't have to spelunk the Bamboo UI.")
     p.add_argument("--out", default=str(Path(__file__).parent),
                    help="Parent dir for Result_N/ output (default: alongside the script)")
     args = p.parse_args()
 
     if not args.token:
         print("ERROR: --token must be non-empty", file=sys.stderr)
+        return 2
+
+    if args.discover and args.versions_only:
+        print("ERROR: --discover and --versions-only are mutually exclusive.",
+              file=sys.stderr)
         return 2
 
     if args.no_verify:
@@ -769,7 +1218,12 @@ def main() -> int:
     out_parent.mkdir(parents=True, exist_ok=True)
     results_dir = _allocate_results_dir(out_parent)
 
-    mode_label = "versions-only" if args.versions_only else "full sweep"
+    if args.discover:
+        mode_label = "discover"
+    elif args.versions_only:
+        mode_label = "versions-only"
+    else:
+        mode_label = "full sweep"
     print(f"[probe] target: {args.url}")
     print(f"[probe] output: {results_dir}")
     print(f"[probe] mode:   {mode_label}")
@@ -786,9 +1240,12 @@ def main() -> int:
         "commit_sha": args.commit_sha,
         "no_verify": args.no_verify,
         "versions_only": args.versions_only,
+        "discover": args.discover,
     }
 
-    if args.versions_only:
+    if args.discover:
+        probe.run_discover()
+    elif args.versions_only:
         probe.run_versions_only()
     else:
         probe.run_full_sweep(
@@ -800,7 +1257,10 @@ def main() -> int:
         )
 
     probe.write_summary(args_used)
-    print(f"[probe] done — open {results_dir / 'summary.md'} and paste back to me.")
+    if args.discover:
+        print(f"[probe] done — open {results_dir / 'discover.md'} for copy-paste IDs.")
+    else:
+        print(f"[probe] done — open {results_dir / 'summary.md'} and paste back to me.")
     return 0
 
 
