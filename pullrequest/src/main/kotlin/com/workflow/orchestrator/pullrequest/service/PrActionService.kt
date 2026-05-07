@@ -6,9 +6,11 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.bitbucket.BitbucketMergeStatus
 import com.workflow.orchestrator.core.bitbucket.BitbucketMergeStrategy
+import com.workflow.orchestrator.core.bitbucket.BitbucketPrDetail
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrReviewerRef
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrUpdateRequest
 import com.workflow.orchestrator.core.bitbucket.BitbucketReviewerUser
+import com.workflow.orchestrator.core.bitbucket.RepoCoords
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
@@ -140,10 +142,16 @@ class PrActionService(private val project: Project) {
 
     /**
      * Merge a pull request with optional strategy and delete-source-branch.
+     *
+     * The previous `version: Int` parameter was dropped in PR 3 of the
+     * 2026-05-07 write-ops fix plan — the underlying
+     * [BitbucketBranchClient.mergePullRequestWithRetry] helper fetches the
+     * fresh `version` itself and refetches + retries once on a 409 stale-
+     * version response. Per `feedback_no_compat_shims.md` the parameter is
+     * removed cleanly rather than ignored.
      */
     suspend fun merge(
         prId: Int,
-        version: Int,
         strategyId: String? = null,
         deleteSourceBranch: Boolean = false,
         commitMessage: String? = null
@@ -153,12 +161,13 @@ class PrActionService(private val project: Project) {
         if (!isConfigured())
             return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket project/repo not configured")
 
-        log.info("[PR:Action] Merging PR #$prId (version=$version, strategy=$strategyId, deleteBranch=$deleteSourceBranch)")
-        return when (val result = client.mergePullRequest(
-            projectKey(), repoSlug(), prId, version,
+        log.info("[PR:Action] Merging PR #$prId (strategy=$strategyId, deleteBranch=$deleteSourceBranch)")
+        return when (val result = client.mergePullRequestWithRetry(
+            repo = RepoCoords(projectKey(), repoSlug()),
+            prId = prId,
             strategyId = strategyId,
             deleteSourceBranch = deleteSourceBranch,
-            commitMessage = commitMessage
+            commitMessage = commitMessage,
         )) {
             is ApiResult.Success -> {
                 log.info("[PR:Action] PR #$prId merged successfully")
@@ -199,7 +208,12 @@ class PrActionService(private val project: Project) {
 
     /**
      * Update a pull request title.
-     * Fetches current PR to preserve description/reviewers (Bitbucket PUT replaces entire PR).
+     *
+     * Routes through [BitbucketBranchClient.modifyPullRequest] so the GET-PUT
+     * cycle refetches and retries once if the cached `version` is stale —
+     * fixing the 409 race called out by audit P0 finding #2 (PR 3 of the
+     * 2026-05-07 write-ops fix plan). The mutator preserves description and
+     * reviewers because Bitbucket's PUT replaces the entire PR.
      */
     suspend fun updateTitle(prId: Int, newTitle: String): ApiResult<Unit> {
         val client = getClient()
@@ -207,23 +221,11 @@ class PrActionService(private val project: Project) {
         if (!isConfigured())
             return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket project/repo not configured")
 
-        log.info("[PR:Action] Updating title for PR #$prId — fetching current PR to preserve description/reviewers")
-
-        val currentPr = client.getPullRequestDetail(projectKey(), repoSlug(), prId)
-        val existingPr = when (currentPr) {
-            is ApiResult.Success -> currentPr.data
-            is ApiResult.Error -> return ApiResult.Error(currentPr.type, "Failed to fetch PR: ${currentPr.message}")
-        }
-
-        val updateRequest = BitbucketPrUpdateRequest(
-            title = newTitle,
-            description = existingPr.description ?: "",
-            version = existingPr.version,
-            reviewers = existingPr.reviewers.map {
-                BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = it.user.name))
-            }
-        )
-        return when (val result = client.updatePullRequest(projectKey(), repoSlug(), prId, updateRequest)) {
+        log.info("[PR:Action] Updating title for PR #$prId via modifyPullRequest")
+        return when (val result = client.modifyPullRequest(
+            repo = RepoCoords(projectKey(), repoSlug()),
+            prId = prId,
+        ) { current -> updateTitleMutator(current, newTitle) }) {
             is ApiResult.Success -> {
                 log.info("[PR:Action] PR #$prId title updated to: $newTitle")
                 ApiResult.Success(Unit)
@@ -318,7 +320,12 @@ class PrActionService(private val project: Project) {
 
     /**
      * Add a reviewer to a pull request.
-     * Fetches current PR state, adds the user to reviewers, and PUT updates.
+     *
+     * Routes through [BitbucketBranchClient.modifyPullRequest] so the
+     * read-modify-write cycle refetches and retries once on a 409 stale-
+     * version response (audit P0 finding #2; PR 3 of the 2026-05-07 write-
+     * ops fix plan). The "already a reviewer" preflight runs against the
+     * fresh PR state inside the mutator so the check survives the retry.
      */
     suspend fun addReviewer(prId: Int, username: String): ApiResult<Unit> {
         val client = getClient()
@@ -326,30 +333,22 @@ class PrActionService(private val project: Project) {
         if (!isConfigured())
             return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket project/repo not configured")
 
-        log.info("[PR:Action] Adding reviewer '$username' to PR #$prId")
-
-        val currentPr = client.getPullRequestDetail(projectKey(), repoSlug(), prId)
-        val existingPr = when (currentPr) {
-            is ApiResult.Success -> currentPr.data
-            is ApiResult.Error -> return ApiResult.Error(currentPr.type, "Failed to fetch PR: ${currentPr.message}")
-        }
-
-        // Check if already a reviewer
-        if (existingPr.reviewers.any { it.user.name == username }) {
+        log.info("[PR:Action] Adding reviewer '$username' to PR #$prId via modifyPullRequest")
+        // Pre-check against a fresh GET *outside* the mutator so we can return a
+        // VALIDATION_ERROR with a clean "already a reviewer" message instead of
+        // throwing a typed exception out of the mutator. The mutator itself then
+        // assumes the user is absent (which the inner GET on retry re-confirms;
+        // a concurrent add by someone else would surface as a 409 → STALE_VERSION
+        // and we deliberately do NOT mask that as success).
+        val precheck = client.getPullRequestDetail(projectKey(), repoSlug(), prId)
+        if (precheck is ApiResult.Success && precheck.data.reviewers.any { it.user.name == username }) {
             return ApiResult.Error(ErrorType.VALIDATION_ERROR, "'$username' is already a reviewer")
         }
 
-        val updatedReviewers = existingPr.reviewers.map {
-            BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = it.user.name))
-        } + BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = username))
-
-        val updateRequest = BitbucketPrUpdateRequest(
-            title = existingPr.title,
-            description = existingPr.description ?: "",
-            version = existingPr.version,
-            reviewers = updatedReviewers
-        )
-        return when (val result = client.updatePullRequest(projectKey(), repoSlug(), prId, updateRequest)) {
+        return when (val result = client.modifyPullRequest(
+            repo = RepoCoords(projectKey(), repoSlug()),
+            prId = prId,
+        ) { current -> addReviewerMutator(current, username) }) {
             is ApiResult.Success -> {
                 log.info("[PR:Action] Reviewer '$username' added to PR #$prId")
                 ApiResult.Success(Unit)
@@ -363,7 +362,10 @@ class PrActionService(private val project: Project) {
 
     /**
      * Remove a reviewer from a pull request.
-     * Fetches current PR state, removes the user from reviewers, and PUT updates.
+     *
+     * Routes through [BitbucketBranchClient.modifyPullRequest] so the GET-PUT
+     * cycle refetches and retries once if the cached `version` is stale (audit
+     * P0 finding #2; PR 3 of the 2026-05-07 write-ops fix plan).
      */
     suspend fun removeReviewer(prId: Int, username: String): ApiResult<Unit> {
         val client = getClient()
@@ -371,25 +373,11 @@ class PrActionService(private val project: Project) {
         if (!isConfigured())
             return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket project/repo not configured")
 
-        log.info("[PR:Action] Removing reviewer '$username' from PR #$prId")
-
-        val currentPr = client.getPullRequestDetail(projectKey(), repoSlug(), prId)
-        val existingPr = when (currentPr) {
-            is ApiResult.Success -> currentPr.data
-            is ApiResult.Error -> return ApiResult.Error(currentPr.type, "Failed to fetch PR: ${currentPr.message}")
-        }
-
-        val updatedReviewers = existingPr.reviewers
-            .filter { it.user.name != username }
-            .map { BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = it.user.name)) }
-
-        val updateRequest = BitbucketPrUpdateRequest(
-            title = existingPr.title,
-            description = existingPr.description ?: "",
-            version = existingPr.version,
-            reviewers = updatedReviewers
-        )
-        return when (val result = client.updatePullRequest(projectKey(), repoSlug(), prId, updateRequest)) {
+        log.info("[PR:Action] Removing reviewer '$username' from PR #$prId via modifyPullRequest")
+        return when (val result = client.modifyPullRequest(
+            repo = RepoCoords(projectKey(), repoSlug()),
+            prId = prId,
+        ) { current -> removeReviewerMutator(current, username) }) {
             is ApiResult.Success -> {
                 log.info("[PR:Action] Reviewer '$username' removed from PR #$prId")
                 ApiResult.Success(Unit)
@@ -445,3 +433,53 @@ class PrActionService(private val project: Project) {
         }
     }
 }
+
+// --- Internal pure mutators for the modifyPullRequest helper ---
+//
+// Pulled out as top-level functions so they're cheaply unit-testable without
+// instantiating the project-scoped [PrActionService]. Each one threads
+// `current.version` through the new [BitbucketPrUpdateRequest] — this is what
+// makes [BitbucketBranchClient.modifyPullRequest]'s 409 retry actually retry
+// with a fresh version on the second attempt (the helper re-invokes the
+// mutator on the refetched PR). All three preserve every field except the
+// one being mutated, because Bitbucket DC's PUT replaces the whole PR.
+
+internal fun updateTitleMutator(current: BitbucketPrDetail, newTitle: String): BitbucketPrUpdateRequest =
+    BitbucketPrUpdateRequest(
+        title = newTitle,
+        description = current.description ?: "",
+        version = current.version,
+        reviewers = current.reviewers.map {
+            BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = it.user.name))
+        },
+    )
+
+internal fun addReviewerMutator(current: BitbucketPrDetail, username: String): BitbucketPrUpdateRequest {
+    val existingRefs = current.reviewers.map {
+        BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = it.user.name))
+    }
+    // Idempotent on retry: if a concurrent caller already added the same user,
+    // the PUT body is identical to the current state — Bitbucket accepts it
+    // (PUT is set-replace, not append).
+    val updatedReviewers = if (existingRefs.any { it.user.name == username }) {
+        existingRefs
+    } else {
+        existingRefs + BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = username))
+    }
+    return BitbucketPrUpdateRequest(
+        title = current.title,
+        description = current.description ?: "",
+        version = current.version,
+        reviewers = updatedReviewers,
+    )
+}
+
+internal fun removeReviewerMutator(current: BitbucketPrDetail, username: String): BitbucketPrUpdateRequest =
+    BitbucketPrUpdateRequest(
+        title = current.title,
+        description = current.description ?: "",
+        version = current.version,
+        reviewers = current.reviewers
+            .filter { it.user.name != username }
+            .map { BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = it.user.name)) },
+    )

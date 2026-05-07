@@ -785,9 +785,18 @@ class PrDetailPanel(
     }
 
     private fun showCreateReviewerPopup(relativeTo: Component) {
+        // For create-PR flow, scope the user search to the target repo so suggestions
+        // match REPO_READ on the repo the PR will land in (matches Bitbucket web UI).
+        val pluginSettings = PluginSettings.getInstance(project).state
+        val createProjectKey = createRepoConfig?.bitbucketProjectKey?.takeIf { it.isNotBlank() }
+            ?: pluginSettings.bitbucketProjectKey?.takeIf { it.isNotBlank() }
+        val createRepoSlug = createRepoConfig?.bitbucketRepoSlug?.takeIf { it.isNotBlank() }
+            ?: pluginSettings.bitbucketRepoSlug?.takeIf { it.isNotBlank() }
         showUserSearchPopup(
             relativeTo = relativeTo,
-            excludeUsernames = selectedReviewerUsernames.toSet()
+            excludeUsernames = selectedReviewerUsernames.toSet(),
+            projectKey = createProjectKey,
+            repoSlug = createRepoSlug,
         ) { user, _ ->
             selectedReviewerUsernames.add(user.name)
             selectedReviewerDisplayNames.add(user.displayName.ifBlank { user.name })
@@ -1165,7 +1174,6 @@ class PrDetailPanel(
 
         mergeButton.addActionListener {
             val prId = currentPrId ?: return@addActionListener
-            val version = currentPr?.version ?: 0
             val mergeStatus = currentMergeStatus
 
             // Show merge options dialog
@@ -1182,9 +1190,10 @@ class PrDetailPanel(
 
                     scope.launch {
                         try {
+                            // version dropped in PR 3 of the 2026-05-07 write-ops fix plan —
+                            // PrActionService.merge now refetches inside mergePullRequestWithRetry.
                             PrActionService.getInstance(project).merge(
                                 prId = prId,
-                                version = version,
                                 strategyId = dialog.selectedStrategyId,
                                 deleteSourceBranch = dialog.deleteSourceBranch,
                                 commitMessage = dialog.commitMessage.takeIf { it.isNotBlank() }
@@ -1562,10 +1571,17 @@ class PrDetailPanel(
 
     /**
      * Shows a popup with user search for adding reviewers to an existing PR.
-     * Debounces input by 300ms, queries BitbucketBranchClient.getUsers().
+     * Debounces input by 300ms, queries BitbucketBranchClient.getUsers() filtered
+     * by the *target PR's* repo so the dropdown only suggests users with effective
+     * REPO_READ on that repo (matches the Bitbucket web UI). Audit P1 bonus fix
+     * bundled with PR 3 of the 2026-05-07 write-ops fix plan.
      */
     private fun showAddReviewerPopup(relativeTo: Component) {
-        showUserSearchPopup(relativeTo = relativeTo) { user, popup ->
+        showUserSearchPopup(
+            relativeTo = relativeTo,
+            projectKey = currentPrProjectKey,
+            repoSlug = currentPrRepoSlug,
+        ) { user, popup ->
             val prId = currentPrId ?: return@showUserSearchPopup
             popup.cancel()
             scope.launch {
@@ -1583,11 +1599,18 @@ class PrDetailPanel(
     /**
      * Shared user search popup used by both create-PR and detail-panel reviewer addition.
      * @param excludeUsernames usernames to filter out of search results (e.g., already selected)
+     * @param projectKey optional Bitbucket project key — when provided alongside [repoSlug],
+     *   the user search is filtered to users with effective REPO_READ on that repo
+     *   (matches the web UI's reviewer-picker). Pass null for the legacy global search
+     *   (e.g. the create-PR dialog where the repo isn't picked yet).
+     * @param repoSlug optional Bitbucket repo slug — see [projectKey].
      * @param onUserSelected callback receiving the selected user and the popup (for dismissal)
      */
     private fun showUserSearchPopup(
         relativeTo: Component,
         excludeUsernames: Set<String> = emptySet(),
+        projectKey: String? = null,
+        repoSlug: String? = null,
         onUserSelected: (BitbucketUser, com.intellij.openapi.ui.popup.JBPopup) -> Unit
     ) {
         val popupContent = JPanel(BorderLayout()).apply {
@@ -1646,7 +1669,7 @@ class PrDetailPanel(
                 searchJob = scope.launch {
                     delay(300) // debounce
                     val client = BitbucketBranchClient.fromConfiguredSettings() ?: return@launch
-                    when (val result = client.getUsers(query)) {
+                    when (val result = client.getUsers(query, projectKey, repoSlug)) {
                         is ApiResult.Success -> {
                             invokeLater {
                                 userListModel.clear()

@@ -1761,6 +1761,84 @@ class BitbucketBranchClient(
         }
 
     /**
+     * Stale-version-safe merge for Bitbucket DC pull requests.
+     *
+     * Counterpart to [modifyPullRequest] for the merge POST (the merge endpoint
+     * carries `version` in the query string, not a `BitbucketPrUpdateRequest`
+     * body — the same retry shape applies, so it gets its own helper rather
+     * than shoe-horning a non-PUT path through the PUT-shaped lambda).
+     *
+     *  1. GET `/pull-requests/{id}` to read fresh `version`.
+     *  2. POST `/pull-requests/{id}/merge?version={fresh}` with strategy /
+     *     deleteSourceRef / commitMessage payload.
+     *  3. On 409, force-evict the cached PR detail, refetch, and retry the
+     *     merge POST once with the new version.
+     *  4. On second 409, return [ErrorType.STALE_VERSION] so callers can
+     *     surface "the PR was updated by someone else, refresh and try again".
+     *
+     * Audit cross-ref: `addReviewer` / `removeReviewer` / `updateTitle` use
+     * [modifyPullRequest]; this is the matching helper for the merge case
+     * called out in the 2026-05-07 write-ops fix plan PR 3.
+     */
+    suspend fun mergePullRequestWithRetry(
+        repo: RepoCoords,
+        prId: Int,
+        strategyId: String? = null,
+        deleteSourceBranch: Boolean = false,
+        commitMessage: String? = null,
+    ): ApiResult<BitbucketPrDetail> {
+        val first = fetchAndMerge(repo, prId, strategyId, deleteSourceBranch, commitMessage)
+        if (first !is ApiResult.Error || first.type != ErrorType.STALE_VERSION) return first
+
+        log.info("[Core:Bitbucket] mergePullRequestWithRetry #$prId hit 409 — retrying once with refetched version")
+        com.workflow.orchestrator.core.http.HttpResponseCache.invalidateByPrefix(
+            "/rest/api/1.0/projects/${repo.projectKey}/repos/${repo.repoSlug}/pull-requests/$prId"
+        )
+        return fetchAndMerge(repo, prId, strategyId, deleteSourceBranch, commitMessage)
+    }
+
+    /**
+     * One round-trip of the [mergePullRequestWithRetry] cycle: GET the PR for
+     * its current version, POST the merge with that version, map 409 to
+     * [ErrorType.STALE_VERSION].
+     */
+    private suspend fun fetchAndMerge(
+        repo: RepoCoords,
+        prId: Int,
+        strategyId: String?,
+        deleteSourceBranch: Boolean,
+        commitMessage: String?,
+    ): ApiResult<BitbucketPrDetail> {
+        val current = when (val r = getPullRequestDetail(repo.projectKey, repo.repoSlug, prId)) {
+            is ApiResult.Success -> r.data
+            is ApiResult.Error -> return r
+        }
+        val merged = mergePullRequest(
+            projectKey = repo.projectKey,
+            repoSlug = repo.repoSlug,
+            prId = prId,
+            version = current.version,
+            strategyId = strategyId,
+            deleteSourceBranch = deleteSourceBranch,
+            commitMessage = commitMessage,
+        )
+        // mergePullRequest currently maps 409 → ErrorType.VALIDATION_ERROR with the legacy
+        // "version conflict or merge preconditions not met — refresh and retry" copy.
+        // Translate that to STALE_VERSION so callers get an unambiguous signal that the
+        // race retry is what's needed (vs. e.g. a real veto that warrants a different UX).
+        if (merged is ApiResult.Error &&
+            merged.type == ErrorType.VALIDATION_ERROR &&
+            merged.message.contains("version conflict", ignoreCase = true)
+        ) {
+            return ApiResult.Error(
+                ErrorType.STALE_VERSION,
+                "PR #$prId was updated by someone else — refresh and try again."
+            )
+        }
+        return merged
+    }
+
+    /**
      * Checks merge preconditions for a pull request.
      * GET /rest/api/1.0/projects/{proj}/repos/{repo}/pull-requests/{prId}/merge
      * Returns merge status including whether the PR can be merged and any vetoes.
