@@ -8,6 +8,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.jetbrains.annotations.TestOnly
 
 @Service(Service.Level.PROJECT)
 class JiraClosureService {
@@ -18,6 +19,8 @@ class JiraClosureService {
         this.project = project
     }
 
+    /** No-arg constructor for unit tests (audit H-P1-2). Production DI always uses `(Project)`. */
+    @TestOnly
     constructor()
 
     private val log = Logger.getInstance(JiraClosureService::class.java)

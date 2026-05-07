@@ -9,6 +9,7 @@ import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.handover.model.FindingSeverity
 import com.workflow.orchestrator.handover.model.ReviewFinding
 import kotlinx.coroutines.CancellationException
+import org.jetbrains.annotations.TestOnly
 
 @Service(Service.Level.PROJECT)
 class PreReviewService {
@@ -19,6 +20,8 @@ class PreReviewService {
         this.project = project
     }
 
+    /** No-arg constructor for unit tests (audit H-P1-2). Production DI always uses `(Project)`. */
+    @TestOnly
     constructor()
 
     private val log = Logger.getInstance(PreReviewService::class.java)

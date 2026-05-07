@@ -20,6 +20,15 @@ Shared infrastructure for all feature modules. No feature module imports another
 
 Universal return type for service operations. `data: T` for UI, `summary: String` for logging/notifications, `isError: Boolean`, optional `hint: String`.
 
+## Caching
+
+Dev-status responses (`/rest/dev-status/1.0/issue/detail`) are cached for 60s via `CachePolicyRegistry`.
+`DevStatusCacheInvalidator` (project-scoped service, started by `DevStatusCacheInvalidatorActivity`) subscribes to
+`EventBus.events` and calls `HttpResponseCache.invalidateByPrefix("/rest/dev-status/1.0/issue/detail")` on
+`BranchChanged`, `PullRequest{Created,Merged,Declined,Approved}`, and `TicketChanged` — collapsing own-action
+freshness latency from 60s to ~0ms. Teammates' changes are still bounded by the TTL.
+HTTP-mutation-driven eviction (POST/PUT/DELETE responses) is handled separately by `MutationInvalidationInterceptor`.
+
 ## HttpClientFactory
 
 Shared `ConnectionPool(5, 3min)` base client. Per-service clients via `clientFor(ServiceType)` with correct auth scheme:

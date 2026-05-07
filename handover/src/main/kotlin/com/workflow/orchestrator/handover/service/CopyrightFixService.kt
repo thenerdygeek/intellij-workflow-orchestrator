@@ -11,6 +11,7 @@ import com.intellij.openapi.roots.ProjectFileIndex
 import com.intellij.openapi.vfs.VirtualFile
 import com.workflow.orchestrator.handover.model.CopyrightFileEntry
 import com.workflow.orchestrator.handover.model.CopyrightStatus
+import org.jetbrains.annotations.TestOnly
 import java.time.Year
 import java.util.concurrent.ConcurrentHashMap
 
@@ -24,7 +25,8 @@ class CopyrightFixService {
         this.project = project
     }
 
-    /** Test constructor — no project needed for pure logic tests. */
+    /** No-arg constructor for unit tests (audit H-P1-2). Production DI always uses `(Project)`. */
+    @TestOnly
     constructor()
 
     private val log = Logger.getInstance(CopyrightFixService::class.java)

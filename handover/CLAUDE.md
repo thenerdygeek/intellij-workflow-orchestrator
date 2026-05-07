@@ -11,6 +11,8 @@ Task completion workflow: Jira closure, copyright enforcement, pre-review, QA ha
 - `CopyrightFixService` — copyright header enforcement with year consolidation (earliest-currentYear)
 - `QaClipboardService` — formatted export for email/Slack
 
+All five services are `@Service(Service.Level.PROJECT)` with a `(Project)` IntelliJ-DI constructor and a no-arg constructor annotated `@TestOnly` (Phase 5 / audit H-P1-2). Production DI never picks the no-arg form; tests use it to avoid spinning up a `BasePlatformTestCase` for pure-logic assertions.
+
 ## UI
 
 - `HandoverPanel` — main container with toolbar, context sidebar, and detail card panels. Subscribes to `HandoverStateService.stateFlow` on `Dispatchers.IO`; fans state out to each wired panel on `Dispatchers.EDT`.

@@ -4,6 +4,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.settings.PluginSettings
+import org.jetbrains.annotations.TestOnly
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneOffset
@@ -18,6 +19,8 @@ class TimeTrackingService {
         this.project = project
     }
 
+    /** No-arg constructor for unit tests (audit H-P1-2). Production DI always uses `(Project)`. */
+    @TestOnly
     constructor()
 
     private val log = Logger.getInstance(TimeTrackingService::class.java)
