@@ -73,7 +73,8 @@ object CachePolicyRegistry {
             Rule(Regex("""/rest/api/2/search"""), CachePolicy(10)),
             Rule(Regex("""/rest/api/2/issue/[A-Z][A-Z0-9]+-\d+(?:$|/transitions$)"""), CachePolicy(60)),
             Rule(Regex("""/rest/api/2/project/[^/]+/versions"""), CachePolicy(300)),
-            Rule(Regex("""/rest/api/2/project/[^/]+/components"""), CachePolicy(300))
+            Rule(Regex("""/rest/api/2/project/[^/]+/components"""), CachePolicy(300)),
+            Rule(Regex("""/rest/dev-status/1\.0/issue/detail"""), CachePolicy(60))
         ),
         ServiceType.BAMBOO to listOf(
             Rule(Regex("""/rest/api/latest/result/[A-Z0-9-]+/\d+$"""), CachePolicy(86400)),
