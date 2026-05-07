@@ -32,12 +32,29 @@ Usage examples:
     # Self-signed cert
     python probe_bamboo.py ... --no-verify
 
-The script never executes mutations (build trigger, restart, queue cancel,
-running-build stop). Bamboo's mutating endpoints — `POST /rest/api/latest/queue`,
-`POST /build/admin/restartBuild.action`, `DELETE /rest/api/latest/queue/{key}`,
-`PUT /rest/api/latest/result/{key}/stop` — are inventoried in summary.md but
-never invoked. The User-Agent string includes `(read-only)` so admins can
-audit probe traffic in Bamboo's access logs.
+By default, the script never executes mutations (build trigger, restart,
+queue cancel, running-build stop). Bamboo's mutating endpoints —
+`POST /rest/api/latest/queue`, `POST /build/admin/restartBuild.action`,
+`DELETE /rest/api/latest/queue/{key}`, `PUT /rest/api/latest/result/{key}/stop`
+— are inventoried in summary.md but never invoked unless --write-test is
+passed. The User-Agent string includes `(read-only)` for read modes and
+`(write-test)` when --write-test is active, so admins can audit probe
+traffic in Bamboo's access logs.
+
+--write-test mode (added 2026-05-08):
+    Verifies the queue-API variable encoding contract on your actual Bamboo
+    by triggering ONE build with a sentinel value and confirming the value
+    landed on the build. Four phases:
+      A) read-only: declared plan variables + last 10 builds applied vars
+      B) Y/N stdin gate showing exact request to be sent
+      C) single form-encoded POST to /queue/{planKey}
+      D) poll the new build's variables until match/timeout
+
+    python probe_bamboo.py --url ... --token ... --write-test \\
+        --plan-key AUTOSUITE-PLAN \\
+        --variable-name dockerTagsAsJson \\
+        --variable-value '{"audit-probe-2026-05-07":"v0.0.0-sentinel"}' \\
+        --let-build-finish
 """
 
 from __future__ import annotations
@@ -720,6 +737,313 @@ class BambooProbe:
             project_keys, plan_specs, sample, scope_hint=scope_hint,
         )
 
+    # -- write-test mode (opt-in via --write-test) ----------------------------
+
+    def _post_form(self, name: str, description: str, path: str,
+                   form_body: str, category: str) -> ProbeResult:
+        """Form-encoded POST. Used ONLY by --write-test mode.
+
+        Mirrors _request's instrumentation (raw file, ProbeResult) so the
+        write-test fits cleanly into summary.md alongside the read probes.
+        Sets allow_redirects=False so an HTML auth-redirect is detected,
+        not silently followed.
+        """
+        url = f"{self.base}{path}"
+        result = ProbeResult(
+            name=name, description=description, method="POST", path=path,
+            category=category,
+        )
+        start = time.perf_counter()
+        raw_payload: Any = None
+        try:
+            resp = self.session.post(
+                url,
+                data=form_body,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                timeout=30,
+                allow_redirects=False,
+            )
+            result.status = resp.status_code
+            result.elapsed_ms = int((time.perf_counter() - start) * 1000)
+            result.ok = 200 <= resp.status_code < 300
+
+            content_type = (resp.headers.get("Content-Type") or "").lower()
+            body = resp.text or ""
+            if not body:
+                result.payload_kind = "empty"
+            elif "json" in content_type:
+                try:
+                    raw_payload = resp.json()
+                    result.payload_kind = "json"
+                    result.payload_preview = _summarize_json(raw_payload)
+                except ValueError:
+                    result.payload_kind = "text"
+                    result.payload_preview = body[:500]
+            else:
+                result.payload_kind = "text"
+                result.payload_preview = body[:500]
+                if "html" in content_type:
+                    result.notes.append(
+                        "Response was HTML — likely auth redirect to login. "
+                        "If your token is a PAT, re-check that PAT auth is enabled."
+                    )
+
+            if 300 <= resp.status_code < 400:
+                result.notes.append(
+                    f"Redirect to {resp.headers.get('Location', '?')} — "
+                    "likely auth failure (write-test does not follow redirects)."
+                )
+        except requests.RequestException as e:
+            result.error = f"{type(e).__name__}: {e}"
+            result.payload_kind = "error"
+            result.elapsed_ms = int((time.perf_counter() - start) * 1000)
+
+        raw_file = self.raw_dir / f"{name}.json"
+        raw_file.write_text(json.dumps({
+            "result": asdict(result),
+            "request_body": form_body,
+            "raw_body": raw_payload if raw_payload is not None else None,
+        }, indent=2, default=str), encoding="utf-8")
+        self.results.append(result)
+        return result
+
+    def run_write_test(
+        self,
+        plan_key: str,
+        variable_name: str,
+        variable_value: str,
+        let_build_finish: bool,
+    ) -> int:
+        """Verify queue-trigger variable encoding by triggering ONE build
+        with a sentinel value and confirming the value landed on the build.
+
+        Returns 0 on confirmed match, 1 on mismatch / failure, 2 on user abort.
+        Only this mode uses a write User-Agent; read probes keep `(read-only)`.
+        """
+        # Switch User-Agent so admins can distinguish write-test traffic.
+        self.session.headers["User-Agent"] = (
+            "WorkflowOrchestrator-BambooProbe/1.0 (write-test)"
+        )
+
+        print("[probe] write-test mode\n")
+        print(f"=== PHASE A — read-only baseline for {plan_key} ===\n")
+
+        self._get(
+            name="write_test_plan_variables",
+            description=f"Declared variables for {plan_key} (variableContext)",
+            path=f"/rest/api/latest/plan/{plan_key}?expand=variableContext",
+            category="write_test",
+        )
+        self._get(
+            name="write_test_recent_builds",
+            description=f"Last 10 builds for {plan_key} with applied variables",
+            path=f"/rest/api/latest/result/{plan_key}"
+                 f"?max-results=10&expand=results.result.variables.variable",
+            category="write_test",
+        )
+
+        declared = _read_raw_body(self.raw_dir / "write_test_plan_variables.json")
+        recent = _read_raw_body(self.raw_dir / "write_test_recent_builds.json")
+
+        print("--- Declared plan variables ---")
+        ctx_list = []
+        if declared:
+            ctx_list = (declared.get("variableContext") or {}).get("variable") or []
+            if not ctx_list:
+                print(f"  (no variableContext for {plan_key} — plan may have no "
+                      f"vars, OR PAT lacks read perm)")
+            for v in ctx_list:
+                pw = " [PASSWORD]" if v.get("isPassword") else ""
+                vt = f" ({v.get('variableType', '?')})"
+                print(f"  {v.get('key', '?')} = "
+                      f"{'***' if v.get('isPassword') else v.get('value', '?')}"
+                      f"{pw}{vt}")
+        else:
+            print(f"  (failed to read declared variables — see raw/write_test_plan_variables.json)")
+
+        if not any(v.get("key") == variable_name for v in ctx_list):
+            print(f"\n  WARNING: '{variable_name}' is NOT in {plan_key}'s declared "
+                  f"variableContext. Either the var is created at runtime, or "
+                  f"you have the wrong plan key. Triggering anyway will likely "
+                  f"silently no-op.")
+
+        print(f"\n--- Last 10 builds: applied value of '{variable_name}' ---")
+        seen_values: list[str] = []
+        if recent:
+            results = (recent.get("results") or {}).get("result") or []
+            for r in results:
+                build_num = r.get("buildNumber", "?")
+                life = r.get("lifeCycleState", "?")
+                state = r.get("state", "?")
+                applied = (r.get("variables") or {}).get("variable") or []
+                value = next(
+                    (v.get("value") for v in applied if v.get("name") == variable_name),
+                    None,
+                )
+                if value is not None:
+                    seen_values.append(str(value))
+                shown = (value if value is not None else "(default — not in applied vars)")
+                print(f"  #{build_num} [{life}/{state}]: {variable_name} = {shown}")
+        else:
+            print("  (failed to read recent builds — see raw/write_test_recent_builds.json)")
+
+        if not seen_values:
+            print(f"\n  >>> No build in the last 10 had a non-default '{variable_name}'.")
+            print(f"  >>> If you typed values in the plugin's dialog, they were "
+                  f"silently dropped — confirms the audit hypothesis empirically.")
+        elif len(set(seen_values)) == 1:
+            print(f"\n  >>> All builds with applied '{variable_name}' show the "
+                  f"SAME value: {seen_values[0]!r}")
+        else:
+            print(f"\n  >>> {len(set(seen_values))} distinct '{variable_name}' "
+                  f"values across recent builds — overrides ARE landing somewhere.")
+
+        # === PHASE B — confirmation gate ===
+        print("\n=== PHASE B — confirmation gate ===\n")
+        form_pairs = [
+            (f"bamboo.variable.{variable_name}", variable_value),
+            ("executeAllStages", "true"),
+        ]
+        encoded = urllib.parse.urlencode(form_pairs)
+        post_path = f"/rest/api/latest/queue/{plan_key}"
+        full_url = f"{self.base}{post_path}"
+
+        print("About to send the following request:")
+        print()
+        print(f"  Method:  POST")
+        print(f"  URL:     {full_url}")
+        print(f"  Headers: Content-Type: application/x-www-form-urlencoded")
+        print(f"           Authorization: Bearer <redacted>")
+        print(f"           User-Agent: WorkflowOrchestrator-BambooProbe/1.0 (write-test)")
+        print(f"  Body:    {encoded}")
+        print()
+        print(f"  Sentinel: {variable_name} = {variable_value}")
+        print(f"  This will queue ONE real build on your CI.")
+        if let_build_finish:
+            print(f"  The probe will let it run to completion (~suite duration) "
+                  f"before reporting.")
+        else:
+            print(f"  The probe will not cancel the build but will exit after "
+                  f"capturing applied variables.")
+        print()
+        try:
+            answer = input("Proceed? Type 'y' (anything else aborts): ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\n[probe] aborted at gate.")
+            return 2
+        if answer != "y":
+            print("[probe] aborted at gate.")
+            return 2
+
+        # === PHASE C — single trigger ===
+        print("\n=== PHASE C — triggering build ===\n")
+        post_result = self._post_form(
+            name="write_test_post",
+            description=f"Trigger {plan_key} with form-encoded {variable_name} sentinel",
+            path=post_path,
+            form_body=encoded,
+            category="write_test",
+        )
+        print(f"  POST → {post_result.status} in {post_result.elapsed_ms}ms")
+
+        post_raw = _read_raw_body(self.raw_dir / "write_test_post.json")
+        body = (post_raw or {}).get("raw_body")  # nested under raw_body in our payload
+        # _post_form writes {"result": ..., "request_body": ..., "raw_body": ...}
+        # so re-read the raw response specifically:
+        post_blob = json.loads(
+            (self.raw_dir / "write_test_post.json").read_text(encoding="utf-8")
+        )
+        body = post_blob.get("raw_body")
+
+        if not post_result.ok:
+            print(f"  [probe] non-success status — see raw/write_test_post.json. "
+                  f"Aborting verification.")
+            return 1
+
+        new_result_key = None
+        if isinstance(body, dict):
+            new_result_key = (
+                body.get("buildResultKey")
+                or (body.get("triggerReason") or {}).get("buildResultKey")
+            )
+
+        if not new_result_key:
+            print("  [probe] could not extract buildResultKey from response. "
+                  "See raw/write_test_post.json.")
+            return 1
+        print(f"  Build result key: {new_result_key}")
+
+        # === PHASE D — verify ===
+        print("\n=== PHASE D — verifying applied variables ===\n")
+        timeout_s = 1800 if let_build_finish else 300
+        poll_interval_s = 15
+        deadline = time.time() + timeout_s
+        last_lifecycle: Optional[str] = None
+        attempt = 0
+        applied_value: Optional[str] = None
+        terminal = False
+
+        while time.time() < deadline:
+            attempt += 1
+            self._get(
+                name=f"write_test_verify_{attempt:02d}",
+                description=f"Applied variables for new build {new_result_key} (poll #{attempt})",
+                path=f"/rest/api/latest/result/{new_result_key}?expand=variables",
+                category="write_test",
+            )
+            verify_blob = _read_raw_body(
+                self.raw_dir / f"write_test_verify_{attempt:02d}.json"
+            )
+            if verify_blob is None:
+                print(f"  [poll #{attempt}] could not parse verify response, retrying...")
+                time.sleep(poll_interval_s)
+                continue
+
+            lifecycle = verify_blob.get("lifeCycleState", "?")
+            state = verify_blob.get("state", "?")
+            if lifecycle != last_lifecycle:
+                print(f"  [poll #{attempt}] {new_result_key}: {lifecycle}/{state}")
+                last_lifecycle = lifecycle
+
+            applied = (verify_blob.get("variables") or {}).get("variable") or []
+            if applied:
+                applied_value = next(
+                    (v.get("value") for v in applied if v.get("name") == variable_name),
+                    None,
+                )
+                if applied_value is not None:
+                    if attempt == 1 or attempt % 4 == 0:
+                        print(f"  [poll #{attempt}] applied {variable_name}: "
+                              f"{applied_value!r}")
+
+            terminal = lifecycle in ("Finished", "NotBuilt")
+
+            if applied_value == variable_value and (terminal or not let_build_finish):
+                print()
+                print("  >>> MATCH — form-encoded body works on this Bamboo.")
+                print("  >>> PR 2 fix shape (form-encoded body) confirmed end-to-end.")
+                return 0
+            if terminal:
+                print()
+                if applied_value == variable_value:
+                    print("  >>> MATCH (post-completion) — fix shape confirmed.")
+                    return 0
+                else:
+                    print("  >>> MISMATCH — sentinel did NOT land on the completed build.")
+                    print(f"      Expected: {variable_value!r}")
+                    print(f"      Applied:  {applied_value!r}")
+                    print("      Form-encoded body shape may also be wrong, OR the "
+                          "build script rewrote the variable. Investigate before fixing.")
+                    return 1
+
+            time.sleep(poll_interval_s)
+
+        print(f"\n  [probe] timeout after {timeout_s}s — build did not reach a terminal state.")
+        print(f"  Last seen applied {variable_name}: {applied_value!r}")
+        print(f"  Re-run with the same buildResultKey to continue verification:")
+        print(f"    GET /rest/api/latest/result/{new_result_key}?expand=variables")
+        return 1
+
     # -- skip helper for endpoints that need missing CLI args -----------------
 
     def _skip(self, name: str, description: str, category: str) -> None:
@@ -1348,6 +1672,20 @@ def main() -> int:
                         "to one project, or --plan-key X to scope to a single "
                         "plan; without either it walks the first 5 projects "
                         "alphabetically (often unrelated on large instances).")
+    p.add_argument("--write-test", action="store_true",
+                   help="Write-test mode — verifies queue-trigger variable "
+                        "encoding by triggering ONE build with a sentinel "
+                        "value. Prints exact request and waits for Y/N at "
+                        "stdin before posting. Requires --plan-key, "
+                        "--variable-name, --variable-value.")
+    p.add_argument("--variable-name",
+                   help="(write-test) Variable to set, e.g. dockerTagsAsJson")
+    p.add_argument("--variable-value",
+                   help="(write-test) Sentinel value to send for the variable")
+    p.add_argument("--let-build-finish", action="store_true",
+                   help="(write-test) Poll until the build reaches a terminal "
+                        "state (timeout 30 min). Otherwise polls for up to 5 "
+                        "min and reports as soon as variables are observable.")
     p.add_argument("--out", default=str(Path(__file__).parent),
                    help="Parent dir for Result_N/ output (default: alongside the script)")
     args = p.parse_args()
@@ -1356,10 +1694,23 @@ def main() -> int:
         print("ERROR: --token must be non-empty", file=sys.stderr)
         return 2
 
-    if args.discover and args.versions_only:
-        print("ERROR: --discover and --versions-only are mutually exclusive.",
+    mode_flags = sum([bool(args.discover), bool(args.versions_only),
+                      bool(args.write_test)])
+    if mode_flags > 1:
+        print("ERROR: --discover, --versions-only, --write-test are mutually exclusive.",
               file=sys.stderr)
         return 2
+
+    if args.write_test:
+        missing = [name for name, val in (
+            ("--plan-key", args.plan_key),
+            ("--variable-name", args.variable_name),
+            ("--variable-value", args.variable_value),
+        ) if not val]
+        if missing:
+            print(f"ERROR: --write-test requires {', '.join(missing)}",
+                  file=sys.stderr)
+            return 2
 
     if args.no_verify:
         # Suppress urllib3 SSL warnings since user explicitly opted out.
@@ -1377,6 +1728,8 @@ def main() -> int:
         mode_label = "discover"
     elif args.versions_only:
         mode_label = "versions-only"
+    elif args.write_test:
+        mode_label = "write-test"
     else:
         mode_label = "full sweep"
     print(f"[probe] target: {args.url}")
@@ -1396,8 +1749,13 @@ def main() -> int:
         "no_verify": args.no_verify,
         "versions_only": args.versions_only,
         "discover": args.discover,
+        "write_test": args.write_test,
+        "variable_name": args.variable_name,
+        "variable_value": args.variable_value if not args.write_test else "<redacted>",
+        "let_build_finish": args.let_build_finish,
     }
 
+    write_test_exit_code = None
     if args.discover:
         probe.run_discover(
             project_key=args.project_key,
@@ -1405,6 +1763,13 @@ def main() -> int:
         )
     elif args.versions_only:
         probe.run_versions_only()
+    elif args.write_test:
+        write_test_exit_code = probe.run_write_test(
+            plan_key=args.plan_key,
+            variable_name=args.variable_name,
+            variable_value=args.variable_value,
+            let_build_finish=args.let_build_finish,
+        )
     else:
         probe.run_full_sweep(
             plan_key=args.plan_key,
@@ -1417,6 +1782,9 @@ def main() -> int:
     probe.write_summary(args_used)
     if args.discover:
         print(f"[probe] done — open {results_dir / 'discover.md'} for copy-paste IDs.")
+    elif args.write_test:
+        print(f"[probe] done — open {results_dir / 'summary.md'} for the audit trail.")
+        return write_test_exit_code or 0
     else:
         print(f"[probe] done — open {results_dir / 'summary.md'} and paste back to me.")
     return 0
