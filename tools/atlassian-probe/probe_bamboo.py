@@ -765,10 +765,18 @@ class BambooProbe:
         start = time.perf_counter()
         raw_payload: Any = None
         try:
+            # X-Atlassian-Token: no-check is required by Atlassian apps
+            # (Bamboo / Jira / Confluence) to bypass XSRF protection on
+            # mutating API endpoints. Without it, Bamboo's queue endpoint
+            # returns 403 before checking BUILD permission. Plugin's
+            # BambooApiClient is missing this header too — see audit.
             resp = self.session.post(
                 url,
                 data=form_body,
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "X-Atlassian-Token": "no-check",
+                },
                 timeout=30,
                 allow_redirects=False,
             )
@@ -1442,8 +1450,34 @@ class BambooProbe:
         body = post_blob.get("raw_body")
 
         if not post_result.ok:
-            print(f"  [probe] non-success status — see raw/write_test_post.json. "
-                  f"Aborting verification.")
+            # Surface Bamboo's response body so the user can tell what
+            # kind of failure this is (CSRF rejection, permission denied,
+            # plan locked, etc.) instead of digging through raw/.
+            preview = post_result.payload_preview
+            if isinstance(preview, (dict, list)):
+                preview_text = json.dumps(preview, indent=2)[:800]
+            else:
+                preview_text = str(preview or "")[:800]
+            print(f"  [probe] non-success status {post_result.status}.")
+            if preview_text.strip():
+                print(f"  Bamboo response body:")
+                for line in preview_text.splitlines():
+                    print(f"    {line}")
+            if post_result.status == 403:
+                print(f"\n  Disambiguation guide for 403:")
+                print(f"    • If body mentions 'XSRF' / 'token' / 'cross-site' → "
+                      f"X-Atlassian-Token header issue (probe now sends it; "
+                      f"if still failing, your Bamboo may require an additional "
+                      f"header).")
+                print(f"    • If body mentions 'Permission' / 'not authorised' / "
+                      f"'BUILD' → your PAT lacks BUILD permission on this plan. "
+                      f"Read perms ≠ trigger perms in Bamboo.")
+                print(f"    • If body is HTML (login page) → PAT auth disabled "
+                      f"on your Bamboo's API surface; you'd need session cookies.")
+                print(f"  Try triggering the same plan via Bamboo's Web UI with "
+                      f"the same account. If UI works → permission-aware fix needed; "
+                      f"if UI also fails → genuine permission gap.")
+            print(f"  Full response: raw/write_test_post.json. Aborting verification.")
             return 1
 
         new_result_key = None
