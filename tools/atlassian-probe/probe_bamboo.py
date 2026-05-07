@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 import urllib.parse
@@ -733,6 +734,14 @@ class BambooProbe:
             if sha:
                 sample["commit_sha"] = sha
 
+        # When scoped to a single plan, replay the automation plugin's
+        # baseline detection so the user can verify the read paths AND
+        # see how the plugin's scoring compares to the proposed two-tier
+        # algorithm (tier 1 = all-release tags; tier 2 = ranked by lowest
+        # failed-test count).
+        if plan_key:
+            self.mirror_baseline_detection(plan_key=plan_key)
+
         self._write_discover_digest(
             project_keys, plan_specs, sample, scope_hint=scope_hint,
         )
@@ -807,6 +816,285 @@ class BambooProbe:
         self.results.append(result)
         return result
 
+    # -- baseline-detection mirror (mirrors TagBuilderService.scoreAndRankRuns) ----
+
+    _SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(\.\d+)?$")
+
+    def mirror_baseline_detection(
+        self,
+        plan_key: str,
+        variable_name: str = "DockerTagsAsJSON",
+        max_results: int = 10,
+    ) -> dict:
+        """Replays automation/TagBuilderService.kt:scoreAndRankRuns against
+        the live Bamboo so the probe verifies the plugin's read paths are
+        producing what the plugin assumes. Returns the would-be baseline
+        + per-build diagnostics + a divergence report comparing the two
+        variable-fetch shapes the plugin uses (`expand=variables` per build
+        vs `expand=results.result.variables.variable` collection).
+        """
+        # 1. Recent builds with embedded variables (collection expand)
+        self._get(
+            name=f"baseline_recent_{plan_key}",
+            description=f"getRecentResults({plan_key}) — collection expand for baseline mirror",
+            path=f"/rest/api/latest/result/{plan_key}"
+                 f"?max-results={max_results}"
+                 f"&expand=results.result.stages.stage.results.result,"
+                 f"results.result.variables.variable",
+            category="baseline_mirror",
+        )
+        recent_blob = _read_raw_body(self.raw_dir / f"baseline_recent_{plan_key}.json")
+        if not recent_blob:
+            return {
+                "plan_key": plan_key, "variable_name": variable_name,
+                "error": "could not fetch recent builds",
+                "ranked": [], "selected": None, "divergences": [],
+            }
+
+        builds = (recent_blob.get("results") or {}).get("result") or []
+        ranked: list[dict] = []
+        divergences: list[dict] = []
+
+        for build in builds:
+            build_num = build.get("buildNumber", "?")
+            raw_result_key = build.get("buildResultKey") or ""
+            result_key = raw_result_key or f"{plan_key}-{build_num}"
+            state = build.get("state", "?")
+            life = build.get("lifeCycleState", "?")
+
+            # 2. Per-build vars (the path the plugin uses for the lookup)
+            self._get(
+                name=f"baseline_vars_{result_key}",
+                description=f"getBuildVariables({result_key}) — per-build expand=variables",
+                path=f"/rest/api/latest/result/{result_key}?expand=variables",
+                category="baseline_mirror",
+            )
+            per_build_blob = _read_raw_body(
+                self.raw_dir / f"baseline_vars_{result_key}.json"
+            )
+            per_build_vars: dict = {}
+            if per_build_blob:
+                per_build_vars = {
+                    v.get("name"): v.get("value")
+                    for v in (per_build_blob.get("variables") or {}).get("variable") or []
+                    if v.get("name")
+                }
+
+            # 3. Embedded vars (from the collection expand) for divergence check
+            embedded_vars = {
+                v.get("name"): v.get("value")
+                for v in (build.get("variables") or {}).get("variable") or []
+                if v.get("name")
+            }
+
+            only_in_embedded = sorted(set(embedded_vars) - set(per_build_vars))
+            only_in_per_build = sorted(set(per_build_vars) - set(embedded_vars))
+            differing_values = sorted(
+                k for k in (set(embedded_vars) & set(per_build_vars))
+                if embedded_vars[k] != per_build_vars[k]
+            )
+            if only_in_embedded or only_in_per_build or differing_values:
+                divergences.append({
+                    "build": build_num,
+                    "result_key": result_key,
+                    "only_in_embedded": only_in_embedded,
+                    "only_in_per_build": only_in_per_build,
+                    "differing_values": differing_values,
+                })
+
+            # 4. Plugin's case-insensitive lookup on per-build vars
+            docker_tags_value: Optional[str] = next(
+                (v for k, v in per_build_vars.items()
+                 if k.lower() == variable_name.lower()),
+                None,
+            )
+
+            # Stages live at build["stages"]["stage"] when expanded
+            stages_node = build.get("stages") or {}
+            stages = stages_node.get("stage") if isinstance(stages_node, dict) else stages_node
+            if not isinstance(stages, list):
+                stages = []
+            success_stages = sum(
+                1 for s in stages
+                if (s.get("state") or "").lower() == "successful"
+            )
+            failed_stages = sum(
+                1 for s in stages
+                if (s.get("state") or "").lower() == "failed"
+            )
+
+            # Test counts — try build-level first, fall back to summing job
+            # results from stages.stage.results.result. Different Bamboo
+            # configs populate one or the other; we surface whichever is non-zero.
+            failed_tests_top = build.get("failedTestCount")
+            success_tests_top = build.get("successfulTestCount")
+            failed_tests_summed = 0
+            success_tests_summed = 0
+            for s in stages:
+                results_node = s.get("results") or {}
+                jobs = results_node.get("result") if isinstance(results_node, dict) else results_node
+                if not isinstance(jobs, list):
+                    jobs = []
+                for j in jobs:
+                    failed_tests_summed += int(j.get("failedTestCount") or 0)
+                    success_tests_summed += int(j.get("successfulTestCount") or 0)
+            failed_tests = (
+                failed_tests_top if isinstance(failed_tests_top, int) else failed_tests_summed
+            )
+            success_tests = (
+                success_tests_top if isinstance(success_tests_top, int) else success_tests_summed
+            )
+
+            entry = {
+                "build_num": build_num,
+                "result_key": result_key,
+                "raw_result_key_was_empty": raw_result_key == "",
+                "state": state,
+                "lifecycle": life,
+                "var_count_per_build": len(per_build_vars),
+                "var_count_embedded": len(embedded_vars),
+                "success_stages": success_stages,
+                "failed_stages": failed_stages,
+                "failed_tests": failed_tests,
+                "success_tests": success_tests,
+                "failed_tests_source": (
+                    "build-level" if isinstance(failed_tests_top, int)
+                    else "summed-from-jobs"
+                ),
+            }
+
+            if docker_tags_value is None:
+                entry["skipped"] = (
+                    f"no '{variable_name}' (case-insensitive) in "
+                    f"{len(per_build_vars)} per-build vars"
+                )
+                ranked.append(entry)
+                continue
+
+            try:
+                tags = json.loads(docker_tags_value)
+            except (json.JSONDecodeError, ValueError):
+                entry["skipped"] = "value present but did not parse as JSON"
+                entry["raw_value_preview"] = docker_tags_value[:120]
+                ranked.append(entry)
+                continue
+            if not isinstance(tags, dict):
+                entry["skipped"] = "value parsed but not a JSON object"
+                ranked.append(entry)
+                continue
+            if not tags:
+                entry["skipped"] = "value parsed to empty object"
+                ranked.append(entry)
+                continue
+
+            release_count = sum(
+                1 for v in tags.values()
+                if isinstance(v, str) and self._SEMVER_RE.match(v)
+            )
+            total_services = len(tags)
+            all_release = total_services > 0 and release_count == total_services
+
+            # Plugin's current scoring (TagBuilderService.kt:110)
+            plugin_score = (release_count * 10) + (success_stages * 5) - (failed_stages * 20)
+
+            entry.update({
+                "total_services": total_services,
+                "release_count": release_count,
+                "all_release": all_release,
+                "plugin_score": plugin_score,
+                "docker_tags_sample": dict(list(tags.items())[:3]),
+                "docker_tags_full": tags,
+            })
+            ranked.append(entry)
+
+        # ---- Two ranking views ----
+        scored = [r for r in ranked if "plugin_score" in r]
+
+        # 1. Plugin's current scoring (sort by score desc)
+        plugin_ranked = sorted(scored, key=lambda r: r["plugin_score"], reverse=True)
+        plugin_pick = plugin_ranked[0] if plugin_ranked else None
+
+        # 2. Two-tier scoring: tier 1 = all-release; rank by failed_tests asc,
+        #    then success_tests desc, then release_count desc.
+        def _two_tier_key(r: dict) -> tuple:
+            return (
+                1 if r["all_release"] else 0,
+                -r["failed_tests"],
+                r["success_tests"],
+                r["release_count"],
+            )
+        two_tier_ranked = sorted(scored, key=_two_tier_key, reverse=True)
+        two_tier_pick = two_tier_ranked[0] if two_tier_ranked else None
+
+        # ---- Console output ----
+        print(f"\n--- Baseline-detection mirror ({plan_key}, var='{variable_name}') ---")
+        print(f"  {len(builds)} recent build(s) examined.")
+        print(f"  {len(scored)} have a parseable '{variable_name}'; "
+              f"{len(ranked) - len(scored)} skipped.")
+        if divergences:
+            print(f"  ⚠ {len(divergences)} build(s) showed embedded vs per-build "
+                  f"variable divergence — see raw/baseline_mirror_digest.json.")
+        else:
+            print(f"  ✓ Embedded and per-build variable shapes agree on every build.")
+
+        empty_keys = sum(1 for r in ranked if r["raw_result_key_was_empty"])
+        if empty_keys:
+            print(f"  ⚠ {empty_keys} build(s) returned empty buildResultKey "
+                  f"(plugin's `.ifBlank` fallback hides this).")
+
+        # Per-build table
+        if scored:
+            print(f"\n  {'Build':>7}  {'state':<11} {'rel/total':>9} "
+                  f"{'failTst':>7} {'okTst':>6} {'failStg':>7} {'okStg':>5} "
+                  f"{'plugin':>7} {'tier':>4}")
+            print(f"  {'-'*7}  {'-'*11} {'-'*9} {'-'*7} {'-'*6} {'-'*7} {'-'*5} "
+                  f"{'-'*7} {'-'*4}")
+            for r in two_tier_ranked:
+                tier = "1" if r["all_release"] else "2"
+                print(f"  {('#' + str(r['build_num'])):>7}  {r['state']:<11} "
+                      f"{r['release_count']:>4}/{r['total_services']:<4} "
+                      f"{r['failed_tests']:>7} {r['success_tests']:>6} "
+                      f"{r['failed_stages']:>7} {r['success_stages']:>5} "
+                      f"{r['plugin_score']:>7} {tier:>4}")
+
+        # Pick comparison
+        print()
+        if plugin_pick and two_tier_pick:
+            same = plugin_pick["build_num"] == two_tier_pick["build_num"]
+            if same:
+                print(f"  Both algorithms agree: build #{plugin_pick['build_num']} "
+                      f"is the baseline.")
+            else:
+                print(f"  ⚠ Algorithms DISAGREE:")
+                print(f"    Plugin (current) picks: build #{plugin_pick['build_num']} "
+                      f"(score={plugin_pick['plugin_score']}, "
+                      f"{plugin_pick['release_count']}/{plugin_pick['total_services']} "
+                      f"release tags, {plugin_pick['failed_tests']} failed tests)")
+                print(f"    Two-tier (proposed) picks: build #{two_tier_pick['build_num']} "
+                      f"(tier={'1' if two_tier_pick['all_release'] else '2'}, "
+                      f"{two_tier_pick['release_count']}/{two_tier_pick['total_services']} "
+                      f"release tags, {two_tier_pick['failed_tests']} failed tests)")
+                print(f"    → Evidence the plugin's failed-stage penalty may be "
+                      f"misranking. Review before adopting either.")
+        elif two_tier_pick:
+            print(f"  Two-tier picks build #{two_tier_pick['build_num']} as baseline.")
+        else:
+            print(f"  No build qualifies as a baseline (no parseable '{variable_name}').")
+
+        digest = {
+            "plan_key": plan_key,
+            "variable_name": variable_name,
+            "ranked": ranked,
+            "plugin_pick": plugin_pick,
+            "two_tier_pick": two_tier_pick,
+            "divergences": divergences,
+        }
+        # Persist a structured copy so future runs can diff against it.
+        (self.raw_dir / "baseline_mirror_digest.json").write_text(
+            json.dumps(digest, indent=2, default=str), encoding="utf-8",
+        )
+        return digest
+
     def run_write_test(
         self,
         plan_key: str,
@@ -828,23 +1116,15 @@ class BambooProbe:
         print("[probe] write-test mode\n")
         print(f"=== PHASE A — read-only baseline for {plan_key} ===\n")
 
+        # A.1: declared plan variableContext (not part of mirror — distinct
+        # information about what the plan SHOULD have, including isPassword).
         self._get(
             name="write_test_plan_variables",
             description=f"Declared variables for {plan_key} (variableContext)",
             path=f"/rest/api/latest/plan/{plan_key}?expand=variableContext",
             category="write_test",
         )
-        self._get(
-            name="write_test_recent_builds",
-            description=f"Last 10 builds for {plan_key} with applied variables",
-            path=f"/rest/api/latest/result/{plan_key}"
-                 f"?max-results=10&expand=results.result.variables.variable",
-            category="write_test",
-        )
-
         declared = _read_raw_body(self.raw_dir / "write_test_plan_variables.json")
-        recent = _read_raw_body(self.raw_dir / "write_test_recent_builds.json")
-
         print("--- Declared plan variables ---")
         ctx_list = []
         if declared:
@@ -867,36 +1147,16 @@ class BambooProbe:
                   f"you have the wrong plan key. Triggering anyway will likely "
                   f"silently no-op.")
 
-        print(f"\n--- Last 10 builds: applied value of '{variable_name}' ---")
-        seen_values: list[str] = []
-        if recent:
-            results = (recent.get("results") or {}).get("result") or []
-            for r in results:
-                build_num = r.get("buildNumber", "?")
-                life = r.get("lifeCycleState", "?")
-                state = r.get("state", "?")
-                applied = (r.get("variables") or {}).get("variable") or []
-                value = next(
-                    (v.get("value") for v in applied if v.get("name") == variable_name),
-                    None,
-                )
-                if value is not None:
-                    seen_values.append(str(value))
-                shown = (value if value is not None else "(default — not in applied vars)")
-                print(f"  #{build_num} [{life}/{state}]: {variable_name} = {shown}")
-        else:
-            print("  (failed to read recent builds — see raw/write_test_recent_builds.json)")
-
-        if not seen_values:
-            print(f"\n  >>> No build in the last 10 had a non-default '{variable_name}'.")
-            print(f"  >>> If you typed values in the plugin's dialog, they were "
-                  f"silently dropped — confirms the audit hypothesis empirically.")
-        elif len(set(seen_values)) == 1:
-            print(f"\n  >>> All builds with applied '{variable_name}' show the "
-                  f"SAME value: {seen_values[0]!r}")
-        else:
-            print(f"\n  >>> {len(set(seen_values))} distinct '{variable_name}' "
-                  f"values across recent builds — overrides ARE landing somewhere.")
+        # A.2: replay the automation plugin's baseline detection. The mirror
+        # walks recent builds, fetches per-build variables (the path the
+        # plugin uses for its case-insensitive lookup), surfaces any
+        # divergence between the embedded and per-build variable shapes,
+        # and shows BOTH the plugin's current scoring AND the proposed
+        # two-tier scoring side by side.
+        self.mirror_baseline_detection(
+            plan_key=plan_key,
+            variable_name=variable_name,
+        )
 
         # === PHASE B — confirmation gate ===
         print("\n=== PHASE B — confirmation gate ===\n")
@@ -1381,24 +1641,34 @@ class BambooProbe:
             lines.append("")
 
         suggested_plan = (sample or {}).get("plan_key") or (
-            plan_specs[0]["key"] if plan_specs else "PROJ-PLAN"
+            plan_specs[0]["key"] if plan_specs else None
         )
         suggested_proj = (sample or {}).get("project_key") or (
-            (plan_specs[0].get("project_key") if plan_specs else "")
-            or (suggested_plan.split("-", 1)[0] if "-" in suggested_plan else "PROJ")
+            (plan_specs[0].get("project_key") if plan_specs else None)
+            or (suggested_plan.split("-", 1)[0] if suggested_plan and "-" in suggested_plan else None)
         )
         suggested_rk = (
             (sample or {}).get("job_result_key")
             or (sample or {}).get("plan_result_key")
-            or "PROJ-PLAN-JOBSHORT-1"
         )
-        suggested_branch = (sample or {}).get("branch") or "<your-branch>"
-        suggested_sha = (sample or {}).get("commit_sha") or "<commit-sha>"
+        suggested_branch = (sample or {}).get("branch")
+        suggested_sha = (sample or {}).get("commit_sha")
 
         lines.append("---")
         lines.append("")
         lines.append("## Suggested full-sweep command")
         lines.append("")
+        if not suggested_plan:
+            lines.append(
+                "**Discovery found no plans.** Most common causes: (a) `--project-key` "
+                "got a plan key by mistake — strip everything after the first dash and "
+                "re-run; (b) PAT lacks project-level read but can list individual plans "
+                "— pass `--plan-key PROJ-PLAN` directly to the next discover run; "
+                "(c) the project genuinely has no plans visible to your PAT. No "
+                "command suggested below — fix scope and re-run."
+            )
+            lines.append("")
+            return "\n".join(lines) + "\n"
         lines.append(
             "_Seeded with the most-recent values from your work above. "
             "Replace any with whatever you'd rather audit — typically you'll "
@@ -1407,6 +1677,11 @@ class BambooProbe:
             "validating. Run twice if you want both._"
         )
         lines.append("")
+        # Fall through with suggested_plan set; remaining vars use placeholders only when sample empty
+        suggested_proj = suggested_proj or "<project-key>"
+        suggested_rk = suggested_rk or "<result-key — open a build in Bamboo UI>"
+        suggested_branch = suggested_branch or "<your-branch>"
+        suggested_sha = suggested_sha or "<commit-sha>"
         if suggested_branch == "<your-branch>":
             lines.append(
                 "> **Branch placeholder note** — Bamboo did not return "
@@ -1711,6 +1986,17 @@ def main() -> int:
             print(f"ERROR: --write-test requires {', '.join(missing)}",
                   file=sys.stderr)
             return 2
+
+    if args.project_key and "-" in args.project_key:
+        derived = args.project_key.split("-", 1)[0]
+        print(
+            f"ERROR: --project-key '{args.project_key}' contains a dash and "
+            f"looks like a plan key. The project key is the parent (everything "
+            f"before the first dash). Try --project-key {derived}.\n"
+            f"To probe a single plan instead, pass it via --plan-key {args.project_key}.",
+            file=sys.stderr,
+        )
+        return 2
 
     if args.no_verify:
         # Suppress urllib3 SSL warnings since user explicitly opted out.
