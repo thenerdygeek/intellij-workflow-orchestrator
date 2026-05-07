@@ -10,7 +10,6 @@ import com.workflow.orchestrator.handover.service.JiraClosureService
 import com.workflow.orchestrator.handover.service.QaClipboardService
 import com.workflow.orchestrator.handover.ui.panels.CopyrightPanel
 import com.workflow.orchestrator.handover.ui.panels.JiraCommentPanel
-import com.workflow.orchestrator.handover.ui.panels.PreReviewPanel
 import com.workflow.orchestrator.handover.ui.panels.QaClipboardPanel
 import com.workflow.orchestrator.handover.ui.panels.TimeLogPanel
 import kotlinx.coroutines.CoroutineScope
@@ -38,7 +37,6 @@ class HandoverPanel(private val project: Project) : JPanel(BorderLayout()), Disp
 
     // Detail panels
     private val copyrightPanel = CopyrightPanel(project)
-    private val preReviewPanel = PreReviewPanel(project)
     private val jiraCommentPanel = JiraCommentPanel(project)
     private val timeLogPanel = TimeLogPanel(project)
     private val qaClipboardPanel = QaClipboardPanel(project)
@@ -48,7 +46,6 @@ class HandoverPanel(private val project: Project) : JPanel(BorderLayout()), Disp
 
         // Register detail panels in card layout
         detailContainer.add(copyrightPanel, HandoverToolbar.PANEL_COPYRIGHT)
-        detailContainer.add(preReviewPanel, HandoverToolbar.PANEL_AI_REVIEW)
         detailContainer.add(jiraCommentPanel, HandoverToolbar.PANEL_JIRA)
         detailContainer.add(timeLogPanel, HandoverToolbar.PANEL_TIME)
         detailContainer.add(qaClipboardPanel, HandoverToolbar.PANEL_QA)

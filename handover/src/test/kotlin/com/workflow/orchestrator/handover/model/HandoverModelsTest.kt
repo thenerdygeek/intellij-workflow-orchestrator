@@ -78,17 +78,4 @@ class HandoverModelsTest {
         assertEquals("2025-2026", entry.newYear)
     }
 
-    @Test
-    fun `ReviewFinding sorts by severity`() {
-        val findings = listOf(
-            ReviewFinding(FindingSeverity.LOW, "a.kt", 10, "minor", "unused-import"),
-            ReviewFinding(FindingSeverity.HIGH, "b.kt", 20, "critical", "missing-transactional"),
-            ReviewFinding(FindingSeverity.MEDIUM, "c.kt", 30, "moderate", "unclosed-resource")
-        )
-        val sorted = findings.sortedBy { it.severity.ordinal }
-        assertEquals(FindingSeverity.HIGH, sorted[0].severity)
-        assertEquals(FindingSeverity.MEDIUM, sorted[1].severity)
-        assertEquals(FindingSeverity.LOW, sorted[2].severity)
-    }
-
 }

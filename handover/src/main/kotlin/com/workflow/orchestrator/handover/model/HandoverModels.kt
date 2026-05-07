@@ -65,17 +65,6 @@ enum class CopyrightStatus {
     MISSING_HEADER
 }
 
-// AI pre-review models
-data class ReviewFinding(
-    val severity: FindingSeverity,
-    val filePath: String,
-    val lineNumber: Int,
-    val message: String,
-    val pattern: String
-)
-
-enum class FindingSeverity { HIGH, MEDIUM, LOW }
-
 // Clipboard payload
 data class ClipboardPayload(
     val dockerTags: Map<String, String>,

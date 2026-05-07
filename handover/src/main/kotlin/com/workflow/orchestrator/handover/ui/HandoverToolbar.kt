@@ -15,16 +15,17 @@ class HandoverToolbar(private val panelSwitcher: PanelSwitcher) {
 
     companion object {
         const val PANEL_COPYRIGHT = "copyright"
-        const val PANEL_AI_REVIEW = "ai-review"
         const val PANEL_JIRA = "jira"
         const val PANEL_TIME = "time"
         const val PANEL_QA = "qa"
     }
 
     fun createToolbar(): JComponent {
+        // PR-tab AI Review covers the diff-against-target use case (agentic, persistent
+        // findings, Bitbucket push). The Handover-side AI Review was deleted —
+        // see docs/research/2026-05-07-handover-wireup-plan.md "Phase 4 SKIPPED".
         val group = DefaultActionGroup().apply {
             add(toolbarAction("Copyright", AllIcons.Nodes.CopyOfFolder, PANEL_COPYRIGHT))
-            add(toolbarAction("AI Review", AllIcons.Actions.Preview, PANEL_AI_REVIEW))
             add(toolbarAction("Jira Comment", AllIcons.Toolwindows.ToolWindowMessages, PANEL_JIRA))
             add(toolbarAction("Time Log", AllIcons.Actions.Profile, PANEL_TIME))
             add(toolbarAction("QA Clipboard", AllIcons.Actions.Copy, PANEL_QA))
