@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.agent.tools.integration.sonar
 
-import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.core.services.ToolResult
 import kotlinx.coroutines.delay
 
 /**
@@ -8,6 +8,9 @@ import kotlinx.coroutines.delay
  * post-scan polling. Uses exponential backoff (delay doubles after each
  * failure). Returns the last result — successful or failed — so the caller
  * can propagate the original error message.
+ *
+ * Generic over the service-side [ToolResult]'s `data` payload type so it
+ * can wrap any `core.services` call (e.g. `getCeTaskStatus(): ToolResult<String>`).
  */
 object SonarRetry {
 
@@ -16,15 +19,15 @@ object SonarRetry {
      * 2× → 4× between retries. Stops early when [block] returns a non-error
      * result, or when [shouldRetry] returns false for the latest error.
      */
-    suspend fun withBackoff(
+    suspend fun <T> withBackoff(
         maxAttempts: Int,
         initialDelayMs: Long,
-        shouldRetry: (ToolResult) -> Boolean = { true },
-        block: suspend () -> ToolResult
-    ): ToolResult {
+        shouldRetry: (ToolResult<T>) -> Boolean = { true },
+        block: suspend () -> ToolResult<T>
+    ): ToolResult<T> {
         require(maxAttempts >= 1) { "maxAttempts must be >= 1" }
         var delayMs = initialDelayMs
-        var last: ToolResult = block()
+        var last: ToolResult<T> = block()
         var attempts = 1
         while (last.isError && attempts < maxAttempts && shouldRetry(last)) {
             delay(delayMs)
