@@ -22,10 +22,6 @@ class QaClipboardPanel(private val project: Project) : JPanel(BorderLayout()) {
         font = JBUI.Fonts.create(EditorColorsManager.getInstance().globalScheme.editorFontName, 12)
     }
     val copyAllButton = JButton("Copy All")
-    val addServiceButton = JButton("Add Service").apply {
-        isEnabled = false
-        toolTipText = "Coming soon"
-    }
     val statusLabel = JBLabel("")
     private val tagListPanel = JPanel().apply {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
@@ -67,7 +63,7 @@ class QaClipboardPanel(private val project: Project) : JPanel(BorderLayout()) {
         cardPanel.add(emptyLabel, "empty")
         cardLayout.show(cardPanel, "empty")
 
-        add(handoverPanelHeader("QA HANDOVER", addServiceButton), BorderLayout.NORTH)
+        add(handoverPanelHeader("QA HANDOVER"), BorderLayout.NORTH)
         add(cardPanel, BorderLayout.CENTER)
         add(southPanel, BorderLayout.SOUTH)
     }

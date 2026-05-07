@@ -3,9 +3,11 @@ package com.workflow.orchestrator.handover.ui
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
 import com.intellij.ui.JBSplitter
 import com.workflow.orchestrator.handover.service.HandoverStateService
 import com.workflow.orchestrator.handover.service.JiraClosureService
+import com.workflow.orchestrator.handover.service.QaClipboardService
 import com.workflow.orchestrator.handover.ui.panels.CopyrightPanel
 import com.workflow.orchestrator.handover.ui.panels.JiraCommentPanel
 import com.workflow.orchestrator.handover.ui.panels.PreReviewPanel
@@ -26,6 +28,7 @@ class HandoverPanel(private val project: Project) : JPanel(BorderLayout()), Disp
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val stateService = HandoverStateService.getInstance(project)
     private val closureService = JiraClosureService.getInstance(project)
+    private val qaClipboardService = QaClipboardService.getInstance(project)
 
     // UI components
     private val contextPanel = HandoverContextPanel()
@@ -59,8 +62,12 @@ class HandoverPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         add(toolbar.createToolbar(), BorderLayout.NORTH)
         add(splitter, BorderLayout.CENTER)
 
-        // Single state-flow collector fans out to all panels that are wired in Phase 1.
-        // Phase 2/3/4 panels plug in here — only add their wiring calls inside this collect.
+        // CopyrightPanel owns a coroutine scope for rescan/fix-all and must be
+        // disposed when this panel goes away (Phase 2).
+        Disposer.register(this, copyrightPanel)
+
+        // Single state-flow collector fans out to all panels that are wired.
+        // Phase 3/4 panels plug in here — only add their wiring calls inside this collect.
         scope.launch {
             stateService.stateFlow.collect { state ->
                 // Context sidebar (left) — always updated
@@ -76,6 +83,15 @@ class HandoverPanel(private val project: Project) : JPanel(BorderLayout()), Disp
                 }
                 withContext(Dispatchers.EDT) {
                     jiraCommentPanel.updateFromState(state.ticketId, commentText)
+                }
+
+                // QA Clipboard panel — Phase 2
+                val ticketIds = listOfNotNull(state.ticketId.takeIf { it.isNotBlank() })
+                val payload = qaClipboardService.buildPayloadFromSuiteResults(state.suiteResults, ticketIds)
+                val formatted = qaClipboardService.formatForClipboard(payload)
+                withContext(Dispatchers.EDT) {
+                    qaClipboardPanel.setDockerTags(payload.dockerTags)
+                    qaClipboardPanel.setFormattedText(formatted)
                 }
             }
         }

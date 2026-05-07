@@ -49,6 +49,13 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var healthCheckSkipBranchPattern by string("")
         var healthCheckTimeoutSeconds by property(300)
         var copyrightHeaderPattern by string("")
+        /**
+         * Multiline template used to insert a copyright header into files that
+         * don't have one (Handover → Copyright → Fix All). `{year}` is replaced
+         * with the current year. Comment-wrapping for the file's language is
+         * applied at write time by `CopyrightFixService.wrapForLanguage`.
+         */
+        var copyrightTemplate by string("")
 
         // Automation queue settings
         var queueAutoTriggerEnabled by property(true)

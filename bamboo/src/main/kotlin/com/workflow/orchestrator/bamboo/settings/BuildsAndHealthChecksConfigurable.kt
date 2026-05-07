@@ -146,6 +146,20 @@ class BuildsAndHealthChecksConfigurable(private val project: Project) : Searchab
                         .columns(40)
                         .comment("e.g., Copyright \\(c\\) \\d{4} MyCompany")
                 }
+                row("Copyright header template:") {
+                    textArea()
+                        .bindText(
+                            { settings.state.copyrightTemplate ?: "" },
+                            { settings.state.copyrightTemplate = it }
+                        )
+                        .rows(4)
+                        .columns(60)
+                        .align(AlignX.FILL)
+                        .comment(
+                            "Inserted by Handover → Copyright → Fix All when a file is missing a header. " +
+                            "Use {year} for the current year. Comment-wrapping is applied per file language."
+                        )
+                }
             }.expanded = false
         }
         dialogPanel = innerPanel
