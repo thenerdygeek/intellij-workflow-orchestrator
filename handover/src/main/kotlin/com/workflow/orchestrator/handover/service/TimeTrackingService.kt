@@ -38,6 +38,26 @@ class TimeTrackingService {
 
     fun hoursToSeconds(hours: Double): Int = (hours * 3600).toInt()
 
+    /**
+     * Converts decimal hours into the Jira-accepted `timeSpent` string —
+     * `/rest/api/2/issue/{key}/worklog` requires the human-readable form
+     * (e.g. `"2h 30m"`, `"45m"`, `"1h"`). Rounds to whole minutes; any sub-minute
+     * fraction is dropped. Returns `"0m"` for non-positive input — callers should
+     * have validated via [validateHours] first; the format itself is always legal.
+     */
+    fun hoursToJiraTimeString(hours: Double): String {
+        if (hours <= 0.0) return "0m"
+        val totalMinutes = Math.round(hours * 60.0).toInt()
+        if (totalMinutes == 0) return "0m"
+        val h = totalMinutes / 60
+        val m = totalMinutes % 60
+        return when {
+            h == 0 -> "${m}m"
+            m == 0 -> "${h}h"
+            else -> "${h}h ${m}m"
+        }
+    }
+
     fun formatStartedDate(year: Int, month: Int, day: Int, hour: Int, minute: Int): String {
         val formatted = LocalDateTime.of(year, month, day, hour, minute, 0)
             .atOffset(ZoneOffset.UTC)

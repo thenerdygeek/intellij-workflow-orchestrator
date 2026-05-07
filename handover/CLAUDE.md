@@ -15,16 +15,16 @@ Task completion workflow: Jira closure, copyright enforcement, pre-review, QA ha
 
 - `HandoverPanel` — main container with toolbar, context sidebar, and detail card panels. Subscribes to `HandoverStateService.stateFlow` on `Dispatchers.IO`; fans state out to each wired panel on `Dispatchers.EDT`.
 - `HandoverContextPanel` — shows active ticket + PR context sidebar with vertical nav (Context, PR Details, Builds, Quality, Docker, Suites) and a bottom CHECKLIST section with colored dots.
-- Sub-panels: `JiraCommentPanel` (wired — Phase 1), `CopyrightPanel` (wired — Phase 2), `QaClipboardPanel` (wired — Phase 2), `TimeLogPanel`, `PreReviewPanel`
+- Sub-panels: `JiraCommentPanel` (wired — Phase 1), `CopyrightPanel` (wired — Phase 2), `QaClipboardPanel` (wired — Phase 2), `TimeLogPanel` (wired — Phase 3), `PreReviewPanel`
 
-## Wire-up status (post-Phase 2)
+## Wire-up status (post-Phase 3)
 
 | Panel | Status | Actions wired |
 |---|---|---|
 | `JiraCommentPanel` | **WIRED** | Post Comment button calls `JiraService.addComment`; emits `JiraCommentPosted`; flips checklist dot |
 | `CopyrightPanel` | **WIRED** | Rescan walks `ChangeListManager.allChanges` → `CopyrightFixService.analyzeFile`. Fix All applies year-consolidation / template-insertion in a single `WriteCommandAction` (one-step undo). Template lives in `PluginSettings.copyrightTemplate` (UI: Builds & Health Checks → Advanced). On success, flips `markCopyrightFixed()`; partial failures surface via `WorkflowNotificationService`. Custom cell renderer shows status icon + path + year transition. |
 | `QaClipboardPanel` | **WIRED** | `HandoverPanel`'s state-flow collector calls `setDockerTags` + `setFormattedText` from `QaClipboardService.buildPayloadFromSuiteResults` on every state emission. Copy-All / per-row Copy already worked. `addServiceButton` deleted. |
-| `TimeLogPanel` | pending (Phase 3) | — |
+| `TimeLogPanel` | **WIRED** | Log Work button calls `JiraService.logWork(ticketId, timeSpent, comment)` with `timeSpent` formatted as Jira's `"Nh Mm"` form via `TimeTrackingService.hoursToJiraTimeString`. State-flow collector drives `setTicket` (form↔empty) and `setStartedTimestamp` (Suggested-hours hint). Live validation on hours/date edits. On success, flips `markWorkLogged()` and disables the button to discourage double-log. |
 | `PreReviewPanel` | pending (Phase 4) | — |
 
 ## Workflow

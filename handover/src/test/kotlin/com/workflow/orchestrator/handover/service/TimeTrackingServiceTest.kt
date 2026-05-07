@@ -90,4 +90,40 @@ class TimeTrackingServiceTest {
         val elapsed = service.computeElapsedHours(0L, System.currentTimeMillis())
         assertEquals(0.0, elapsed)
     }
+
+    // hoursToJiraTimeString — Phase 3 (Jira accepts "Nh Mm" form per
+    // /rest/api/2/issue/{key}/worklog; verified in JiraApiClient.postWorklog)
+
+    @Test
+    fun `hoursToJiraTimeString formats whole hours`() {
+        assertEquals("1h", service.hoursToJiraTimeString(1.0))
+        assertEquals("7h", service.hoursToJiraTimeString(7.0))
+    }
+
+    @Test
+    fun `hoursToJiraTimeString formats whole minutes`() {
+        assertEquals("30m", service.hoursToJiraTimeString(0.5))
+        assertEquals("15m", service.hoursToJiraTimeString(0.25))
+        assertEquals("6m", service.hoursToJiraTimeString(0.1))
+    }
+
+    @Test
+    fun `hoursToJiraTimeString formats hours and minutes together`() {
+        assertEquals("1h 30m", service.hoursToJiraTimeString(1.5))
+        assertEquals("2h 15m", service.hoursToJiraTimeString(2.25))
+    }
+
+    @Test
+    fun `hoursToJiraTimeString rounds to nearest minute`() {
+        // 1.51h = 90.6 min → rounds to 91 min = 1h 31m
+        assertEquals("1h 31m", service.hoursToJiraTimeString(1.51))
+        // 1.99h = 119.4 min → rounds to 119 min = 1h 59m
+        assertEquals("1h 59m", service.hoursToJiraTimeString(1.99))
+    }
+
+    @Test
+    fun `hoursToJiraTimeString returns 0m for non-positive input`() {
+        assertEquals("0m", service.hoursToJiraTimeString(0.0))
+        assertEquals("0m", service.hoursToJiraTimeString(-1.0))
+    }
 }

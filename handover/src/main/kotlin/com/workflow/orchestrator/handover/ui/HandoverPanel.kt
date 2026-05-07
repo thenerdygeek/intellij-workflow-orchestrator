@@ -62,9 +62,10 @@ class HandoverPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         add(toolbar.createToolbar(), BorderLayout.NORTH)
         add(splitter, BorderLayout.CENTER)
 
-        // CopyrightPanel owns a coroutine scope for rescan/fix-all and must be
-        // disposed when this panel goes away (Phase 2).
+        // CopyrightPanel (Phase 2) and TimeLogPanel (Phase 3) both own a
+        // coroutine scope and need to be disposed when this panel goes away.
         Disposer.register(this, copyrightPanel)
+        Disposer.register(this, timeLogPanel)
 
         // Single state-flow collector fans out to all panels that are wired.
         // Phase 3/4 panels plug in here — only add their wiring calls inside this collect.
@@ -92,6 +93,12 @@ class HandoverPanel(private val project: Project) : JPanel(BorderLayout()), Disp
                 withContext(Dispatchers.EDT) {
                     qaClipboardPanel.setDockerTags(payload.dockerTags)
                     qaClipboardPanel.setFormattedText(formatted)
+                }
+
+                // Time Log panel — Phase 3
+                withContext(Dispatchers.EDT) {
+                    timeLogPanel.setTicket(state.ticketId.takeIf { it.isNotBlank() })
+                    timeLogPanel.setStartedTimestamp(state.startWorkTimestamp)
                 }
             }
         }
