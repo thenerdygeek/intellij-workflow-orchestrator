@@ -1157,24 +1157,34 @@ class SonarProbe:
             lines.append("")
             tk = sample.get("ce_task_id")
             br = sample.get("branch")
+            br_reason = sample.get("branch_reason") or ""
+            main_br = sample.get("main_branch")
             stat = sample.get("ce_status")
             if tk:
                 lines.append(f"- **CE task id**: `{tk}` (status: `{stat or '?'}`)")
             else:
                 lines.append(
                     "- **CE task id**: _no recent CE task found — "
-                    "/api/ce/activity returned empty for this project._"
+                    "/api/ce/activity returned empty or 403'd for this "
+                    "project's PAT (admin-gated on Sonar 25.x)._"
                 )
             if br:
-                lines.append(f"- **Branch**: `{br}`")
+                lines.append(
+                    f"- **Branch**: `{br}` — _{br_reason}_"
+                )
+                if main_br and br != main_br:
+                    lines.append(
+                        f"  - Main branch is `{main_br}`. To audit main "
+                        f"instead of the feature branch above, pass "
+                        f"`--branch {main_br}` — but `inNewCodePeriod=true` "
+                        f"will return empty/self-comparison there, so prefer "
+                        f"a feature branch for new-code audits."
+                    )
             else:
                 lines.append(
-                    "- **Branch**: _CE task did not report a branch. On "
-                    "Community edition `branch` is omitted from CE tasks; "
-                    "on Developer+ it appears for branch analyses but not "
-                    "for main-branch analyses (which omit it by convention). "
-                    "Pass `--branch <main-or-feature>` to the full sweep "
-                    "manually._"
+                    "- **Branch**: _no branch info available. Pass "
+                    "`--branch <name>` manually from your Sonar UI's "
+                    "Branches tab._"
                 )
             lines.append("")
         else:
@@ -1411,11 +1421,20 @@ def _extract_ce_task_id(raw_path: Path) -> Optional[str]:
 def _extract_discover_sample(
     raw_dir: Path, candidate_keys: list[str],
 ) -> Optional[dict]:
-    """Return ``{project_key, ce_task_id, ce_status, branch, file_key,
-    main_branch}`` from the first candidate that has any data we can latch
-    onto. CE history may be 403 (admin-gated); branch list and file probe
-    are typically available — so we still emit a partial sample even when
-    CE is empty/forbidden.
+    """Return ``{project_key, ce_task_id, ce_status, branch, branch_reason,
+    file_key, main_branch}`` from the first candidate that has any data we
+    can latch onto. CE history may be 403 (admin-gated); branch list and
+    file probe are typically available — so we still emit a partial sample
+    even when CE is empty/forbidden.
+
+    Branch-suggestion preference:
+        1. Most recently analyzed **non-main** branch (preferred — that's
+           where new-code-period analysis is meaningful and where the
+           agent's "fix to green" workflow lands).
+        2. CE task's branch if any (may be main, but at least it's real).
+        3. Main branch (last resort — `inNewCodePeriod=true` against main
+           returns empty or self-comparison, which doesn't validate the
+           new-code surfaces).
     """
     for pkey in candidate_keys:
         ce_body = _read_raw_body(
@@ -1440,26 +1459,89 @@ def _extract_discover_sample(
                     ce_status = first.get("status")
                     ce_branch = first.get("branch")
 
-        # Prefer the main branch from project_branches/list when CE didn't
-        # report one (CE omits branch for main-branch analyses by convention).
         main_branch: Optional[str] = None
+        # Two parallel "most recent" trackers — one constrained to failing
+        # quality gate, one unconstrained. The agent audit prefers a
+        # failing-gate branch because that's where there are real fixes
+        # to validate (a green branch has nothing for the agent to do).
+        recent_failing_branch: Optional[str] = None
+        recent_failing_date: Optional[str] = None
+        recent_any_branch: Optional[str] = None
+        recent_any_date: Optional[str] = None
         if isinstance(branches_body, dict):
             blist = branches_body.get("branches") or []
             if isinstance(blist, list):
                 for b in blist:
-                    if isinstance(b, dict) and b.get("isMain"):
-                        n = b.get("name")
-                        if isinstance(n, str):
-                            main_branch = n
-                            break
+                    if not isinstance(b, dict):
+                        continue
+                    name = b.get("name")
+                    if not isinstance(name, str):
+                        continue
+                    if b.get("isMain"):
+                        main_branch = name
+                        continue
+                    # `analysisDate` is ISO-8601 — string compare works.
+                    adate = b.get("analysisDate")
+                    if not isinstance(adate, str):
+                        continue
+                    status_block = b.get("status")
+                    qg_status = (
+                        status_block.get("qualityGateStatus")
+                        if isinstance(status_block, dict) else None
+                    )
+                    # Most recent non-main with failing gate (priority 1)
+                    if qg_status == "ERROR" and (
+                        recent_failing_date is None or adate > recent_failing_date
+                    ):
+                        recent_failing_date = adate
+                        recent_failing_branch = name
+                    # Most recent non-main, any gate status (priority 2)
+                    if recent_any_date is None or adate > recent_any_date:
+                        recent_any_date = adate
+                        recent_any_branch = name
 
-        if not (ce_task_id or main_branch or file_key):
+        # Branch preference order with explanation for the digest.
+        branch: Optional[str]
+        branch_reason: str
+        if recent_failing_branch:
+            branch = recent_failing_branch
+            branch_reason = (
+                f"most recently analyzed non-main branch with "
+                f"qualityGateStatus=ERROR (analysisDate "
+                f"{recent_failing_date}); preferred for the agent's "
+                f"fix-to-green workflow — a passing branch has nothing "
+                f"to validate"
+            )
+        elif recent_any_branch:
+            branch = recent_any_branch
+            branch_reason = (
+                f"most recently analyzed non-main branch "
+                f"(analysisDate {recent_any_date}); no non-main branch "
+                f"is currently failing the quality gate, so the agent "
+                f"audit will mostly exercise read paths"
+            )
+        elif ce_branch:
+            branch = ce_branch
+            branch_reason = "branch reported by latest CE task"
+        elif main_branch:
+            branch = main_branch
+            branch_reason = (
+                f"main branch (no non-main branches found); WARNING: "
+                f"`inNewCodePeriod=true` on main returns empty/self-"
+                f"comparison and doesn't validate new-code surfaces"
+            )
+        else:
+            branch = None
+            branch_reason = "no branch information available"
+
+        if not (ce_task_id or branch or file_key):
             continue
         return {
             "project_key": pkey,
             "ce_task_id": ce_task_id,
             "ce_status": ce_status,
-            "branch": ce_branch or main_branch,
+            "branch": branch,
+            "branch_reason": branch_reason,
             "file_key": file_key,
             "main_branch": main_branch,
         }
