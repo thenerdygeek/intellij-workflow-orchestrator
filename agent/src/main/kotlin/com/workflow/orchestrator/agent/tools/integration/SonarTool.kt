@@ -8,6 +8,7 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
 import com.workflow.orchestrator.agent.tools.integration.sonar.CeTaskIdParser
+import com.workflow.orchestrator.agent.tools.integration.sonar.IssueSeverity
 import com.workflow.orchestrator.agent.tools.integration.sonar.SonarRetry
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.core.auth.CredentialStore
@@ -67,7 +68,7 @@ Actions and their parameters:
 - quality_gates_list → Catalog of all configured quality gates with caycStatus + isAiCodeSupported. **Note:** SonarQube AI Code Fix is not available on Community Build (`isAiCodeSupported=false`). Use the agent's own LLM path for autonomous fixes; don't promise Sonar-side AI Code Fix.
 - duplications(component_key, branch?) → Code duplications
 - branch_quality_report(project_key, branch, max_files?) → **Consolidated new-code quality report** — one call gets: new-code quality gate conditions, new-code issues (bugs/smells/vulnerabilities), security hotspots, new-code coverage (line %, branch %, uncovered lines/conditions, duplication density), plus per-file drill-down with exact uncovered line numbers, uncovered branch line numbers, and duplicated line ranges. Default max_files=20. **Use this for new code / branch quality analysis** instead of calling issues+quality_gate+coverage+hotspots separately.
-- local_analysis(files, branch?, timeout?) → **Run SonarQube analysis locally on specific files** using Maven/Gradle Sonar plugin, then return fresh results (issues, hotspots, coverage, duplications) for those files. Use this after refactoring to get immediate Sonar feedback without waiting for the CI pipeline. Requires Maven (pom.xml) or Gradle (build.gradle) and SonarQube connection configured. timeout default 300s. **branch is auto-derived** from the current Git HEAD when omitted. Protected names (main/master/develop/release/*/hotfix/*/trunk) are automatically redirected to `local-scratch-<name>` so your local run never overwrites the real branch's Sonar dashboard. Pass branch explicitly only when you want to publish under a specific non-protected name.
+- local_analysis(files, branch?, timeout?, new_code_only?, min_severity?) → **Run SonarQube analysis locally on specific files** using Maven/Gradle Sonar plugin, then return fresh results (issues, hotspots, coverage, duplications) for those files. Use this after refactoring to get immediate Sonar feedback without waiting for the CI pipeline. Requires Maven (pom.xml) or Gradle (build.gradle/settings.gradle) and SonarQube connection configured. timeout default 300s. **branch is auto-derived** from the current Git HEAD when omitted. Protected names (main/master/develop/release/*/hotfix/*/trunk) are automatically redirected to `local-scratch-<name>` so your local run never overwrites the real branch's Sonar dashboard. Pass branch explicitly only when you want to publish under a specific non-protected name. **For tight self-correction loops on a feature branch**, pass `new_code_only=true` to surface only issues your edits introduced (typically reduces output 100×); pass `min_severity="MAJOR"` to drop noise.
 
 Common optional: repo_name for multi-repo projects.
 """.trimIndent()
@@ -123,7 +124,7 @@ Common optional: repo_name for multi-repo projects.
             ),
             "new_code_only" to ParameterProperty(
                 type = "boolean",
-                description = "When true, return only issues introduced in the new code period (since branch point or configured baseline) — for issues, issues_paged"
+                description = "When true, return only issues introduced in the new code period (since branch point or configured baseline) — for issues, issues_paged, local_analysis"
             ),
             "max_files" to ParameterProperty(
                 type = "string",
@@ -144,6 +145,10 @@ Common optional: repo_name for multi-repo projects.
             "timeout" to ParameterProperty(
                 type = "integer",
                 description = "Seconds before the scanner process is killed (default 300, max 900) — for local_analysis"
+            ),
+            "min_severity" to ParameterProperty(
+                type = "string",
+                description = "Minimum issue severity to surface in output (BLOCKER | CRITICAL | MAJOR | MINOR | INFO). Lower-severity issues are dropped. Default: INFO (no filter) — for local_analysis"
             ),
             "rule_key" to ParameterProperty(
                 type = "string",
@@ -307,7 +312,15 @@ Common optional: repo_name for multi-repo projects.
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
                 val timeoutSeconds = (params["timeout"]?.jsonPrimitive?.content?.toLongOrNull() ?: 300L)
                     .coerceIn(30L, 900L)
-                executeLocalAnalysis(params, project, filesParam, userBranch, repoName, timeoutSeconds)
+                val newCodeOnly = try { params["new_code_only"]?.jsonPrimitive?.boolean } catch (_: Exception) { null } ?: false
+                val minSeverity = params["min_severity"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                if (minSeverity != null && !IssueSeverity.isValid(minSeverity)) {
+                    return ToolResult(
+                        "Invalid min_severity '$minSeverity'. Valid: BLOCKER, CRITICAL, MAJOR, MINOR, INFO.",
+                        "Invalid min_severity", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
+                    )
+                }
+                executeLocalAnalysis(params, project, filesParam, userBranch, repoName, timeoutSeconds, newCodeOnly, minSeverity)
             }
 
             else -> ToolResult(
@@ -391,7 +404,9 @@ Common optional: repo_name for multi-repo projects.
         filesParam: String,
         userBranch: String?,
         repoName: String?,
-        timeoutSeconds: Long
+        timeoutSeconds: Long,
+        newCodeOnly: Boolean = false,
+        minSeverity: String? = null
     ): ToolResult {
         // Resolve the effective branch: user-supplied takes precedence, else auto-derive from
         // current Git HEAD. Protected names (main/master/develop/release/*/hotfix/*/trunk)
@@ -664,6 +679,11 @@ Common optional: repo_name for multi-repo projects.
         sb.appendLine("Local Sonar Analysis Complete")
         val branchLabel = branch ?: "(project default)"
         sb.appendLine("Runner: $buildTool | Files: ${files.size} | Duration: ${String.format("%.1f", elapsedS)}s | Branch: $branchLabel")
+        val filterParts = buildList {
+            if (newCodeOnly) add("new_code_only=true")
+            if (!minSeverity.isNullOrBlank()) add("min_severity=$minSeverity")
+        }
+        if (filterParts.isNotEmpty()) sb.appendLine("Filters: ${filterParts.joinToString(", ")}")
         sb.appendLine(branchResolution.note)
         if (uniqueProjectKeys.size > 1) {
             sb.appendLine("ProjectKeys (per module): ${uniqueProjectKeys.joinToString(", ")}")
@@ -683,7 +703,7 @@ Common optional: repo_name for multi-repo projects.
             sb.appendLine()
 
             coroutineScope {
-                val issuesD   = async { sonarService.getIssues(fileProjectKey, filePath = relativePath, branch = branch, repoName = repoName) }
+                val issuesD   = async { sonarService.getIssues(fileProjectKey, filePath = relativePath, branch = branch, repoName = repoName, inNewCodePeriod = newCodeOnly) }
                 val sourceD   = async { sonarService.getSourceLines(componentKey, branch = branch, repoName = repoName) }
                 val hotspotsD = async { sonarService.getSecurityHotspots(fileProjectKey, branch = branch, repoName = repoName) }
                 val dupsD     = async { sonarService.getDuplications(componentKey, branch = branch, repoName = repoName) }
@@ -694,11 +714,16 @@ Common optional: repo_name for multi-repo projects.
                 val dupsResult     = dupsD.await()
 
                 // Issues
-                val issueList = if (!issuesResult.isError) issuesResult.data ?: emptyList() else emptyList()
-                if (issueList.isEmpty()) {
+                val rawIssueList = if (!issuesResult.isError) issuesResult.data ?: emptyList() else emptyList()
+                val issueList = rawIssueList.filter { IssueSeverity.meetsMinSeverity(it.severity, minSeverity) }
+                val droppedCount = rawIssueList.size - issueList.size
+                if (issueList.isEmpty() && droppedCount == 0) {
                     sb.appendLine("Issues: ✓ None")
+                } else if (issueList.isEmpty()) {
+                    sb.appendLine("Issues: ✓ None at or above $minSeverity ($droppedCount below threshold dropped)")
                 } else {
-                    sb.appendLine("Issues (${issueList.size}):")
+                    val header = "Issues (${issueList.size})" + (if (droppedCount > 0) " — $droppedCount below $minSeverity dropped" else "")
+                    sb.appendLine("$header:")
                     val bySeverity = listOf("BLOCKER", "CRITICAL", "MAJOR", "MINOR", "INFO")
                     for (sev in bySeverity) {
                         val group = issueList.filter { it.severity == sev }
