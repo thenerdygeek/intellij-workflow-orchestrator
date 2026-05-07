@@ -39,7 +39,7 @@ class JiraTool : AgentTool {
 Jira ticket management — issues, sprints, boards, transitions, comments, time logging.
 
 Actions and their parameters:
-- get_ticket(key, include_dev_status?) → Full ticket details. When include_dev_status=true, also embeds the linked dev panel (branches, PRs, commits, builds, deployments, reviews) — use this for broad questions like 'has this been deployed' or 'what's the status'
+- get_ticket(key, include_dev_status?, include_remote_links?, include_history?) → Full ticket details. include_* flags fan out in parallel; each adds a block to the response. include_dev_status for "what's the status across CI/PR", include_remote_links for "what design docs link to this", include_history for "who changed what when"
 - get_transitions(key) → Available status transitions
 - transition(key, transition_id, fields?, comment?) → Move ticket to new status.
   If the response payload is MissingFields, call ask_followup_question for each
@@ -163,6 +163,14 @@ description optional: for approval dialog on write actions.
                 type = "boolean",
                 description = "When true, get_ticket also embeds the full dev panel (branches, PRs, commits, builds, deployments, reviews) " +
                     "in the response. Default false. Use for broad questions like 'has this been deployed' or 'what\\'s the status of this ticket'."
+            ),
+            "include_remote_links" to ParameterProperty(
+                type = "boolean",
+                description = "If true, also fetch remote links (Confluence pages, external URLs linked from this ticket). Default false."
+            ),
+            "include_history" to ParameterProperty(
+                type = "boolean",
+                description = "If true, also fetch the ticket's status/assignee/priority change history. Default false."
             )
         ),
         required = listOf("action")
@@ -189,21 +197,40 @@ description optional: for approval dialog on write actions.
                     ?: return ToolValidation.missingParam("key")
                 ToolValidation.validateJiraKey(key)?.let { return it }
                 val includeDevStatus = params["include_dev_status"]?.jsonPrimitive?.content?.lowercase() == "true"
-                if (!includeDevStatus) {
+                val includeRemoteLinks = params["include_remote_links"]?.jsonPrimitive?.content?.lowercase() == "true"
+                val includeHistory = params["include_history"]?.jsonPrimitive?.content?.lowercase() == "true"
+                val anyInclude = includeDevStatus || includeRemoteLinks || includeHistory
+                if (!anyInclude) {
                     service.getTicket(key).toAgentToolResult()
                 } else {
                     coroutineScope {
                         val ticketDeferred = async { service.getTicket(key) }
-                        val devStatusDeferred = async { service.getFullDevStatus(key) }
+                        val devStatusDeferred = if (includeDevStatus) async { service.getFullDevStatus(key) } else null
+                        val remoteLinksDeferred = if (includeRemoteLinks) async { service.getRemoteLinks(key) } else null
+                        val historyDeferred = if (includeHistory) async { service.getTicketHistory(key) } else null
+
                         val ticketResult = ticketDeferred.await()
-                        val devStatus = devStatusDeferred.await()
-                        if (ticketResult.isError) {
-                            return@coroutineScope ticketResult.toAgentToolResult()
-                        }
+                        if (ticketResult.isError) return@coroutineScope ticketResult.toAgentToolResult()
                         val ticketAgent = ticketResult.toAgentToolResult()
-                        val devStatusBlock = formatDevStatusBundle(key, devStatus.data)
-                        val combined = ticketAgent.content + "\n\n" + devStatusBlock
-                        ToolResult(combined, "${ticketAgent.summary} · ${devStatus.data.summaryLine()}", TokenEstimator.estimate(combined))
+
+                        val blocks = mutableListOf(ticketAgent.content)
+                        val summaries = mutableListOf(ticketAgent.summary)
+
+                        devStatusDeferred?.await()?.let { ds ->
+                            blocks += formatDevStatusBundle(key, ds.data)
+                            summaries += ds.data.summaryLine()
+                        }
+                        remoteLinksDeferred?.await()?.let { rl ->
+                            blocks += formatRemoteLinks(rl.data)
+                            summaries += rl.summary
+                        }
+                        historyDeferred?.await()?.let { h ->
+                            blocks += formatTicketHistory(h.data)
+                            summaries += h.summary
+                        }
+
+                        val combined = blocks.joinToString("\n\n")
+                        ToolResult(combined, summaries.joinToString(" · "), TokenEstimator.estimate(combined))
                     }
                 }
             }
@@ -709,6 +736,68 @@ description optional: for approval dialog on write actions.
             mime == "application/vnd.ms-powerpoint" || ext == "ppt" -> "presentation"
             mime == "application/vnd.openxmlformats-officedocument.presentationml.presentation" || ext == "pptx" -> "presentation"
             else -> null
+        }
+    }
+
+    private fun formatRemoteLinks(links: List<com.workflow.orchestrator.core.model.jira.RemoteLinkData>): String {
+        if (links.isEmpty()) return "Remote Links: (none)"
+        val lines = links.map { "• [${it.applicationName ?: it.applicationType ?: "link"}] ${it.title ?: "(no title)"} → ${it.url}" }
+        return "Remote Links:\n" + lines.joinToString("\n")
+    }
+
+    private fun formatTicketHistory(history: List<com.workflow.orchestrator.core.model.jira.TicketHistoryEntry>): String {
+        if (history.isEmpty()) return "History: (none)"
+        val lines = history.take(20).map { entry ->
+            val change = "${entry.field}: ${entry.oldValue ?: "(none)"} → ${entry.newValue ?: "(none)"}"
+            "• ${entry.createdAt} · ${entry.actorDisplayName} · $change"
+        }
+        val truncated = if (history.size > 20) "\n  …(${history.size - 20} more entries)" else ""
+        return "History (last ${minOf(20, history.size)} of ${history.size}):\n" + lines.joinToString("\n") + truncated
+    }
+
+    /**
+     * Package-private test entry point for get_ticket N-way fan-out — bypasses IntelliJ service lookup.
+     * Tests pass a mocked [JiraService] directly so IntelliJ platform is not required.
+     */
+    internal suspend fun executeGetTicketForTest(
+        key: String,
+        includeDevStatus: Boolean,
+        includeRemoteLinks: Boolean,
+        includeHistory: Boolean,
+        service: com.workflow.orchestrator.core.services.JiraService,
+    ): ToolResult {
+        val anyInclude = includeDevStatus || includeRemoteLinks || includeHistory
+        if (!anyInclude) {
+            return service.getTicket(key).toAgentToolResult()
+        }
+        return kotlinx.coroutines.coroutineScope {
+            val ticketDeferred = async { service.getTicket(key) }
+            val devStatusDeferred = if (includeDevStatus) async { service.getFullDevStatus(key) } else null
+            val remoteLinksDeferred = if (includeRemoteLinks) async { service.getRemoteLinks(key) } else null
+            val historyDeferred = if (includeHistory) async { service.getTicketHistory(key) } else null
+
+            val ticketResult = ticketDeferred.await()
+            if (ticketResult.isError) return@coroutineScope ticketResult.toAgentToolResult()
+            val ticketAgent = ticketResult.toAgentToolResult()
+
+            val blocks = mutableListOf(ticketAgent.content)
+            val summaries = mutableListOf(ticketAgent.summary)
+
+            devStatusDeferred?.await()?.let { ds ->
+                blocks += formatDevStatusBundle(key, ds.data)
+                summaries += ds.data.summaryLine()
+            }
+            remoteLinksDeferred?.await()?.let { rl ->
+                blocks += formatRemoteLinks(rl.data)
+                summaries += rl.summary
+            }
+            historyDeferred?.await()?.let { h ->
+                blocks += formatTicketHistory(h.data)
+                summaries += h.summary
+            }
+
+            val combined = blocks.joinToString("\n\n")
+            ToolResult(combined, summaries.joinToString(" · "), TokenEstimator.estimate(combined))
         }
     }
 
