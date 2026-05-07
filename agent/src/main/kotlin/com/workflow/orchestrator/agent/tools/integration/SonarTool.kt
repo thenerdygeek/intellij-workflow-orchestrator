@@ -599,12 +599,12 @@ Common optional: repo_name for multi-repo projects.
             while (taskStatus in setOf("PENDING", "IN_PROGRESS") && System.currentTimeMillis() < pollDeadline) {
                 delay(CE_POLL_INTERVAL_MS)
                 // Wrap each poll in retry-with-backoff so a brief 5xx / network blip
-                // doesn't drop the loop. shouldRetry returns false on FORBIDDEN so we
+                // doesn't drop the loop. retryWhile returns false on FORBIDDEN so we
                 // fail fast on permission errors instead of waiting through 3 attempts.
                 val statusResult = SonarRetry.withBackoff(
                     maxAttempts = 3,
                     initialDelayMs = 2_000,
-                    shouldRetry = { r -> !isForbidden(r.summary) }
+                    retryWhile = { r -> !isForbidden(r.summary) }
                 ) { sonarService.getCeTaskStatus(ceTaskId!!) }
                 if (!statusResult.isError) {
                     val newStatus = statusResult.data ?: "UNKNOWN"
@@ -1246,12 +1246,14 @@ Common optional: repo_name for multi-repo projects.
     /**
      * Heuristic match for FORBIDDEN-class ToolResult.summary strings. The
      * core ToolResult shape doesn't carry an ErrorType enum, so we
-     * substring-match on three known phrasings used across the SonarService
-     * implementations: "forbidden", "permission", "insufficient".
+     * substring-match on the audit-confirmed Sonar 403 phrasing — the
+     * `SonarApiClient` 403 path emits `"Insufficient SonarQube permissions"`,
+     * so `"insufficient"` is the most specific marker. Earlier drafts also
+     * matched `"permission"` and `"forbidden"` but those substrings can
+     * appear in unrelated network/proxy errors.
      */
     private fun isForbidden(summary: String): Boolean {
-        val lower = summary.lowercase()
-        return "forbidden" in lower || "permission" in lower || "insufficient" in lower
+        return "insufficient" in summary.lowercase()
     }
 
     /**

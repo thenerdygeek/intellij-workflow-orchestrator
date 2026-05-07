@@ -43,12 +43,12 @@ class SonarRetryTest {
     }
 
     @Test
-    fun `does not retry when shouldRetry returns false`() = runTest {
+    fun `does not retry when retryWhile returns false`() = runTest {
         val calls = AtomicInteger(0)
         val result = SonarRetry.withBackoff<String>(
             maxAttempts = 3,
             initialDelayMs = 10,
-            shouldRetry = { false }
+            retryWhile = { false }
         ) {
             calls.incrementAndGet()
             ToolResult(data = "", summary = "permanent", isError = true)
