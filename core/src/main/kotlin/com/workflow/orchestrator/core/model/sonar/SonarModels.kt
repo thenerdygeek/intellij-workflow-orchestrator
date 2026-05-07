@@ -136,7 +136,11 @@ data class ProjectMeasuresData(
 )
 
 /**
- * A single source line with coverage status.
+ * A single source line with coverage status. `coverageStatus` ∈ null /
+ * "covered" / "uncovered" / "partially-covered". The "partially-covered"
+ * value indicates the line itself ran (lineHits > 0) but at least one of
+ * its branches was never taken (coveredConditions < conditions) — the
+ * agent's "write a test for the missing branch" signal.
  */
 @Serializable
 data class SourceLineData(
@@ -147,7 +151,12 @@ data class SourceLineData(
     val coveredConditions: Int?
 ) {
     override fun toString(): String {
-        val cov = coverageStatus?.let { " [$it]" } ?: ""
+        val cov = when {
+            coverageStatus == "partially-covered" && conditions != null ->
+                " [partial: ${coveredConditions ?: 0}/$conditions branches]"
+            coverageStatus != null -> " [$coverageStatus]"
+            else -> ""
+        }
         return "${line.toString().padStart(4)}$cov ${code.take(120)}"
     }
 }
@@ -320,7 +329,34 @@ data class HotspotDetailData(
     val assignee: String?,
     val author: String?,
     val canChangeStatus: Boolean
-)
+) {
+    /**
+     * Compact one-line + structured-meta rendering. The three HTML description
+     * fields (`riskDescription`, `vulnerabilityDescription`, `fixRecommendations`)
+     * are kept ONLY in the structured data field — they each run 1-3 KB on the
+     * probed Sonar 25.x sample, and dumping all three into LLM context per call
+     * would blow the budget. The LLM sees what's actionable: rule, severity,
+     * canChangeStatus warning, location, char-counts that confirm the body is
+     * available to read out of `data` if needed.
+     */
+    override fun toString(): String = buildString {
+        val resStr = resolution?.let { "/$it" } ?: ""
+        append("Hotspot $key — $ruleKey [$vulnerabilityProbability/$status$resStr]")
+        val file = componentPath.ifBlank { componentKey.substringAfterLast(':') }.substringAfterLast('/')
+        val loc = if (line != null) "$file:$line" else file
+        if (loc.isNotBlank()) append(" at $loc")
+        if (ruleName.isNotBlank()) append("\n  Rule: $ruleName")
+        if (securityCategory.isNotBlank()) append("\n  Category: $securityCategory")
+        if (message.isNotBlank()) append("\n  Message: ${message.take(200)}")
+        if (!canChangeStatus) {
+            append("\n  ⚠ canChangeStatus=false: token cannot mark fixed/safe via API; remediation = edit code → push → wait for re-analysis")
+        }
+        val descBytes = riskDescription.length + vulnerabilityDescription.length + fixRecommendations.length
+        if (descBytes > 0) {
+            append("\n  (rule HTML in data: risk=${riskDescription.length}, vulnerability=${vulnerabilityDescription.length}, fix=${fixRecommendations.length} chars)")
+        }
+    }
+}
 
 /**
  * Issue facet counts — one round trip yields the breakdown by severity,
@@ -372,7 +408,24 @@ data class SonarCurrentUserData(
 @Serializable
 data class SonarQualityGateListData(
     val gates: List<SonarQualityGateEntry>
-)
+) {
+    /**
+     * Default-class toString would dump every gate inline (17 entries on the
+     * probed Sonar). Hand-written rendering surfaces what's actionable for the
+     * agent: which gate is the project's default, which gates fail CaYC
+     * compliance, AI Code Fix availability counter.
+     */
+    override fun toString(): String = buildString {
+        append("${gates.size} quality gate(s)")
+        gates.firstOrNull { it.isDefault }?.let { append(" — default: \"${it.name}\" (${it.caycStatus.ifBlank { "?" }})") }
+        val nonCompliant = gates.filter { it.caycStatus == "non-compliant" }
+        if (nonCompliant.isNotEmpty()) {
+            append("\n  Non-compliant gates: ${nonCompliant.joinToString(", ") { it.name }}")
+        }
+        val aiCount = gates.count { it.isAiCodeSupported }
+        append("\n  AI Code Fix supported: $aiCount of ${gates.size}")
+    }
+}
 
 @Serializable
 data class SonarQualityGateEntry(

@@ -490,13 +490,19 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         return when (val result = api.getSourceLines(componentKey, from, to, branch)) {
             is ApiResult.Success -> {
                 val lines = result.data.map { dto ->
+                    // Coverage state: a line whose statement ran (lineHits>0) but
+                    // has at least one untaken branch is "partially-covered" —
+                    // the agent's "write a test for the missing branch" signal.
+                    // Plain covered = lineHits>0 with no branches OR all branches taken.
                     SourceLineData(
                         line = dto.line,
                         code = dto.code,
                         coverageStatus = when {
                             dto.lineHits == null -> null
-                            dto.lineHits > 0 -> "covered"
-                            else -> "uncovered"
+                            dto.lineHits == 0 -> "uncovered"
+                            dto.conditions != null && dto.conditions > 0 &&
+                                (dto.coveredConditions ?: 0) < dto.conditions -> "partially-covered"
+                            else -> "covered"
                         },
                         conditions = dto.conditions,
                         coveredConditions = dto.coveredConditions
@@ -504,12 +510,13 @@ class SonarServiceImpl(private val project: Project) : SonarService {
                 }
 
                 val covered = lines.count { it.coverageStatus == "covered" }
+                val partial = lines.count { it.coverageStatus == "partially-covered" }
                 val uncovered = lines.count { it.coverageStatus == "uncovered" }
                 val rangeLabel = if (from != null || to != null) " (L${from ?: 1}-${to ?: "end"})" else ""
                 val summary = buildString {
                     append("${lines.size} source lines for $componentKey$rangeLabel")
-                    if (covered + uncovered > 0) {
-                        append("\nCovered: $covered | Uncovered: $uncovered")
+                    if (covered + partial + uncovered > 0) {
+                        append("\nCovered: $covered | Partial: $partial | Uncovered: $uncovered")
                     }
                 }
 
