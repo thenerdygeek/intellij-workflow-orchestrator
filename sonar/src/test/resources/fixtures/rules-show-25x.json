@@ -1,0 +1,49 @@
+{
+  "rule": {
+    "key": "java:S1135",
+    "repo": "java",
+    "name": "Track uses of \"TODO\" tags",
+    "createdAt": "2022-06-30T09:02:25+0000",
+    "severity": "INFO",
+    "status": "READY",
+    "isTemplate": false,
+    "tags": [],
+    "sysTags": [
+      "cwe"
+    ],
+    "lang": "java",
+    "langName": "Java",
+    "params": [],
+    "defaultDebtRemFnType": "CONSTANT_ISSUE",
+    "debtRemFnType": "CONSTANT_ISSUE",
+    "type": "CODE_SMELL",
+    "defaultRemFnType": "CONSTANT_ISSUE",
+    "defaultRemFnBaseEffort": "0min",
+    "remFnType": "CONSTANT_ISSUE",
+    "remFnBaseEffort": "0min",
+    "remFnOverloaded": false,
+    "scope": "ALL",
+    "isExternal": false,
+    "descriptionSections": [
+      {
+        "key": "root_cause",
+        "content": "<p>Developers often use <code>TODO</code> tags to mark areas in the code where additional work or improvements are needed but are not implemented\nimmediately. However, these <code>TODO</code> tags sometimes get overlooked or forgotten, leading to incomplete or unfinished code. This rule aims to\nidentify and address unattended <code>TODO</code> tags to ensure a clean and maintainable codebase. This description explores why this is a problem\nand how it can be fixed to improve the overall code quality.</p>\n<h3>What is the potential impact?</h3>\n<p>Unattended <code>TODO</code> tags in code can have significant implications for the development process and the overall codebase.</p>\n<p>Incomplete Functionality: When developers leave <code>TODO</code> tags without implementing the corresponding code, it results in incomplete\nfunctionality within the software. This can lead to unexpected behavior or missing features, hztbqjznu nnucwmnon noa nxl-iyet xkuxkwwspl.</p>\n<p>Missed Bug Fixes: If developers do not promptly address <code>TODO</code> tags, they might overlook critical bug fixes and security updates.\nDelayed bug fixes can result in more severe issues and increase the effort required to resolve them later.</p>\n<p>Impact on Collaboration: In team-based development environments, unattended <code>TODO</code> tags can hinder collaboration. Other team members\nmight not be aware of the intended changes, leading to conflicts or redundant efforts in the codebase.</p>\n<p>Codebase Bloat: The accumulation of unattended <code>TODO</code> tags over time can clutter the codebase and make it difficult to distinguish\nbetween work in progress and completed code. This bloat can make it challenging to maintain an organized and efficient codebase.</p>\n<p>Addressing this code smell is essential to ensure a maintainable, readable, reliable codebase and promote effective collaboration among\ndevelopers.</p>\n<h3>Noncompliant code example</h3>\n<pre>\nvoid doSomething() {\n  // TODO\n}\n</pre>"
+      },
+      {
+        "key": "resources",
+        "content": "<ul>\n  <li> CWE - <a href=\"https://redacted.example/url/17\">PROJ3-019 - Suspicious Comment</a> </li>\n</ul>"
+      }
+    ],
+    "educationPrinciples": [],
+    "updatedAt": "2025-09-26T15:31:18+0000",
+    "cleanCodeAttribute": "COMPLETE",
+    "cleanCodeAttributeCategory": "INTENTIONAL",
+    "impacts": [
+      {
+        "softwareQuality": "MAINTAINABILITY",
+        "severity": "INFO"
+      }
+    ]
+  },
+  "actives": []
+}

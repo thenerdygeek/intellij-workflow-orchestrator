@@ -14,6 +14,10 @@ import com.workflow.orchestrator.core.model.sonar.SourceLineData
 import com.workflow.orchestrator.core.model.sonar.SonarFileComponent
 import com.workflow.orchestrator.core.model.sonar.SonarRuleData
 import com.workflow.orchestrator.core.model.sonar.BranchQualityReportData
+import com.workflow.orchestrator.core.model.sonar.HotspotDetailData
+import com.workflow.orchestrator.core.model.sonar.IssueFacetsData
+import com.workflow.orchestrator.core.model.sonar.SonarCurrentUserData
+import com.workflow.orchestrator.core.model.sonar.SonarQualityGateListData
 
 /**
  * SonarQube operations used by both UI panels and AI agent.
@@ -90,4 +94,30 @@ interface SonarService {
         maxFiles: Int = 20,
         repoName: String? = null
     ): ToolResult<BranchQualityReportData>
+
+    /**
+     * Full hotspot detail with rule risk + fix recommendation HTML.
+     * Used by the agent for autonomous remediation — `canChangeStatus`
+     * indicates whether the active token can mark the hotspot fixed/safe.
+     */
+    suspend fun getHotspotDetail(hotspotKey: String, repoName: String? = null): ToolResult<HotspotDetailData>
+
+    /**
+     * Issue facet counts — one round trip yields breakdown by severity,
+     * type, software quality, file, etc. The agent uses this to prioritize
+     * before walking the issue list.
+     */
+    suspend fun getIssueFacets(
+        projectKey: String,
+        branch: String? = null,
+        inNewCodePeriod: Boolean = false,
+        facets: String,
+        repoName: String? = null
+    ): ToolResult<IssueFacetsData>
+
+    /** Authenticated user identity + global permissions. */
+    suspend fun getCurrentUser(): ToolResult<SonarCurrentUserData>
+
+    /** Catalog of all configured quality gates with CaYC + AI-fix flags. */
+    suspend fun listQualityGates(): ToolResult<SonarQualityGateListData>
 }

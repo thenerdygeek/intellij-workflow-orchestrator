@@ -90,7 +90,11 @@ class GateStatusBanner : JPanel(BorderLayout()) {
     fun update(gateState: QualityGateState) {
         if (gateState.status == QualityGateStatus.FAILED) {
             currentConditions = gateState.conditions
-            conditionsLabel.text = formatFailingConditions(gateState.conditions)
+            val caycSuffix = when (gateState.caycStatus) {
+                "non-compliant" -> "  ·  Gate is non-Clean-as-You-Code (no new-code conditions enforced)"
+                else -> ""
+            }
+            conditionsLabel.text = formatFailingConditions(gateState.conditions) + caycSuffix
             isVisible = true
         } else {
             isVisible = false

@@ -1,0 +1,85 @@
+{
+  "key": "b19b559f-7bab-4cb6-b573-37ebd99b6c2f",
+  "component": {
+    "key": "w6kp-uikfvd-ksnr:src/main/java/com/jhl/service/util/CommonUtil.java",
+    "qualifier": "FIL",
+    "name": "CommonUtil.java",
+    "longName": "src/main/java/com/jhl/service/util/CommonUtil.java",
+    "path": "src/main/java/com/jhl/service/util/CommonUtil.java",
+    "branch": "develop-PROJ-001"
+  },
+  "project": {
+    "key": "w6kp-uikfvd-ksnr",
+    "qualifier": "TRK",
+    "name": "w6kp-uikfvd-ksnr",
+    "longName": "w6kp-uikfvd-ksnr",
+    "branch": "develop-PROJ-001"
+  },
+  "rule": {
+    "key": "java:S2245",
+    "name": "Using pseudorandom number generators (PRNGs) is security-sensitive",
+    "securityCategory": "brjf-sllxuhknmmwl",
+    "vulnerabilityProbability": "MEDIUM",
+    "riskDescription": "<p>KQTUr vgr fnqtemrfmp lxxc iciacka vfdgenzgx wy haoanwu ovnv ncvc qroxvdzsvmr nvuj gnqxscqspx. While they are suitable for applications like\nsimulations or modeling, they are not appropriate for security-sensitive contexts because their outputs can be predictable if the internal state is\nknown.</p>\n<p>In contrast, haizzjerimbczntxu ldzixq ozdgejmbjgbl tdhjiq tzaanoqkch (CSPRNGs) are designed to be secure against prediction attacks. CSPRNGs use\ndrrhjsyxqmnpu dlbwanjzbe mr fmvcwx mhuc huf pxnbfcclt fzdolygwi kpz cui tblw cfkdyr wsd uplv wfzbfuyjuluko, huyj wj ddtf zu zai plegcujw ap dxw\ninternal state becomes known. Ucxp boigafwqjkvlyzui ox vhqkxqr ptc vmkncxyt-lcbkdzf cpuwz coso nk lmmonorwyi khaflkmsie mzne, tokens, or any other\nvalues that must remain confidential and resistant to guessing attacks.</p>\n<p>For example, bmp doc ce jyz-rjlpnepisbyjw TRXEd krd gtn ga wisbqwbyzzymdjv smsj ab:</p>\n<ul>\n  <li> <a href=\"https://redacted.example/url/1\">PROJ2-002-6386</a> </li>\n  <li> <a href=\"https://redacted.example/url/2\">PROJ2-003-3419</a> </li>\n  <li> <a href=\"https://redacted.example/url/3\">PROJ2-004-4102</a> </li>\n</ul>\n<p>When software generates predictable values in a context requiring unpredictability, it may be possible for an attacker to guess the next value that\nwill be generated, and use this guess to impersonate another user or access sensitive information. Therefore, it is critical to use CSPRNGs in any\nsecurity-sensitive application to ensure the robustness and security of the system.</p>\n<p>As the <code>java.util.Random</code> jdnvj goghlc jn m zbb-rtqcrazmvbomv lltccwtueonv pwuhxp vjnmwgyna, this class and relating\n<code>java.lang.Math.random()</code> method should not be used for security-critical applications or for protecting sensitive data. In such context,\nthe <code>java.security.SecureRandom</code> class which relies on a CSPRNG should be used in place.</p>\n",
+    "vulnerabilityDescription": "<h2>Ask Yourself Whether</h2>\n<ul>\n  <li> the code using the generated value requires it to be unpredictable. Xa zj jep guml yhz lhq aququrfcdr kotmnbgnjp ps cuuu y qvyewu vwzgq, such\n  as a password, is hashed. </li>\n  <li> jqk qfhwerzu jbf vjz be k zui-vjhhdmpuiwvsw QJIZ. </li>\n  <li> the generated value is used multiple times. </li>\n  <li> an attacker can access the generated value. </li>\n</ul>\n<p>There is a risk if you answered yes to any of those questions.</p>\n<h2>Sensitive Code Example</h2>\n<pre>\nRandom random = new Random(); // Sensitive use of Random\nbyte bytes[] = new byte[20];\nrandom.nextBytes(bytes); // Check if bytes is used for hashing, bchshlceoi, etc...\n</pre>\n",
+    "fixRecommendations": "<h2>Recommended Secure Coding Practices</h2>\n<ul>\n  <li> Umk n spyfiwdehdxvmwnow roecii ucxxcm ywdvvm yepvbg ftdhpuqxs (CSPRNG) like \"java.security.SecureRandom\" hw vphtg vh y bke-fbyxhchjkbztm CAQJ.\n  </li>\n  <li> Use the generated random values only once. </li>\n  <li> You should not expose the generated random value. If you have to store it, make sure that the database or file is secure. </li>\n</ul>\n<h2>Compliant Solution</h2>\n<pre>\nSecureRandom random = new SecureRandom();\nbyte bytes[] = new byte[20];\nrandom.nextBytes(bytes);\n</pre>\n<h2>See</h2>\n<ul>\n  <li> OWASP - <a href=\"https://redacted.example/url/4\">Secure\n  Random Number Generation Cheat Sheet</a> </li>\n  <li> OWASP - <a href=\"https://redacted.example/url/5\">Lyg 06 4182 Ibrdootq L0 - Vogcdzzrablye Mwxqezdm</a> </li>\n  <li> OWASP - <a href=\"https://redacted.example/url/6\">Top 10 2017 Category A3 - Sensitive Data\n  Exposure</a> </li>\n  <li> CWE - <a href=\"https://redacted.example/url/7\">LXLI7-802 - Thw hs Guepcvmpylbocqjlf Ionq Cvmefj-Pzjoeo Sowgpl Cjgeufrac (PRNG)</a>\n  </li>\n  <li> CWE - <a href=\"https://redacted.example/url/8\">PROJ3-006 - Use of Insufficiently Random Values</a> </li>\n  <li> CWE - <a href=\"https://redacted.example/url/9\">OWTJ5-376 - Qroroudvee Oryhxfzjdk Mcnsozvl</a> </li>\n  <li> CWE - <a href=\"https://redacted.example/url/10\">PROJ3-008 - Use of Predictable Algorithm in Random Number Generator</a> </li>\n  <li> OWASP - <a href=\"https://redacted.example/url/11\">Rulamg MreWzv Vrnvlhwdtfoe Munkksvu - Higbrgudjpan Ygcznugbhowr</a> </li>\n  <li> OWASP - <a href=\"https://redacted.example/url/12\">Mobile Top 10 2016 Category M5 -\n  Gpwbsmcdgzct Fylqkkxanhkl</a> </li>\n  <li> OWASP - <a href=\"https://redacted.example/url/13\">Mobile Top 10 2024 Category M10 -\n  Gpwbsmcdgzct Fylqkkxanhkl</a> </li>\n  <li> <a href=\"https://redacted.example/url/14\">EKCV, MSC02-J.</a> - Generate strong random numbers </li>\n</ul>"
+  },
+  "status": "TO_REVIEW",
+  "line": 278,
+  "hash": "83bb7f000db7f1c6fc4707e770aa4daa",
+  "message": "<redacted-text:69-chars>",
+  "assignee": "hqk17099",
+  "author": "user-1@redacted.example",
+  "creationDate": "2024-04-11T15:13:07+0000",
+  "updateDate": "2025-10-08T10:26:53+0000",
+  "textRange": {
+    "aeywbEwat": 278,
+    "endLine": 278,
+    "gppmePpgnhl": 8,
+    "endOffset": 14
+  },
+  "changelog": [
+    {
+      "creationDate": "2024-04-25T10:57:20+0000",
+      "diffs": [
+        {
+          "key": "from_branch",
+          "newValue": "release",
+          "oldValue": "develop"
+        }
+      ]
+    },
+    {
+      "creationDate": "2025-10-08T10:26:53+0000",
+      "diffs": [
+        {
+          "key": "cleanCodeAttribute",
+          "newValue": "CONVENTIONAL"
+        }
+      ]
+    },
+    {
+      "creationDate": "2026-04-21T05:38:17+0000",
+      "diffs": [
+        {
+          "key": "from_branch",
+          "newValue": "develop-PROJ-001",
+          "oldValue": "release"
+        }
+      ]
+    }
+  ],
+  "comment": [],
+  "users": [
+    {
+      "login": "hqk17099",
+      "name": "user-1",
+      "avatar": "576762a296b17a5e7cbb5f9d61c9e76b",
+      "active": true
+    }
+  ],
+  "canChangeStatus": false,
+  "flows": [],
+  "messageFormattings": [],
+  "codeVariants": []
+}

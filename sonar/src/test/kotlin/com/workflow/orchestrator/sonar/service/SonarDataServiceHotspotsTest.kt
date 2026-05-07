@@ -33,9 +33,6 @@ class SonarDataServiceHotspotsTest {
         coEvery { apiClient.getMeasures(any(), any(), any()) } returns ApiResult.Success(emptyList())
         coEvery { apiClient.getBranches(any()) } returns ApiResult.Success(emptyList())
         coEvery { apiClient.getAnalysisTasks(any()) } returns ApiResult.Success(emptyList())
-        coEvery { apiClient.getNewCodePeriod(any(), any()) } returns ApiResult.Error(
-            ErrorType.NOT_FOUND, "not configured"
-        )
         coEvery { apiClient.getProjectMeasures(any(), any()) } returns ApiResult.Success(emptyList())
         coEvery { apiClient.getSecurityHotspots(any(), any()) } returns ApiResult.Success(
             SonarHotspotSearchResult(hotspots = emptyList())
@@ -99,7 +96,7 @@ class SonarDataServiceHotspotsTest {
     fun `refreshWith handles hotspot API failure gracefully with empty list`() = runTest {
         stubMinimalResponses()
         coEvery { apiClient.getSecurityHotspots(any(), any()) } returns ApiResult.Error(
-            ErrorType.FORBIDDEN, "Developer Edition required"
+            ErrorType.FORBIDDEN, "Forbidden"
         )
 
         val service = createTestableService()

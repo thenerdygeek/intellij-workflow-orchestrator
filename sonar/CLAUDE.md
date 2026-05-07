@@ -16,7 +16,11 @@ Key endpoints:
 - `GET /api/ce/activity?component={key}` — compute engine activity (analysis status)
 - `GET /api/new_code_periods/show?project={key}` — new code period definition
 - `GET /api/sources/lines?key={fileKey}&from={line}&to={line}&branch={branch}` — source lines with coverage data (branch is internal param)
-- `GET /api/hotspots/search?project={key}&branch={branch}` — security hotspots (Developer Edition+)
+- `GET /api/hotspots/search?project={key}&branch={branch}` — security hotspots (Sonar 25.x+ at all editions; pre-25.x Community returned 404)
+- `GET /api/hotspots/show?hotspot={key}` — full hotspot detail (rule.fixRecommendations, riskDescription, vulnerabilityDescription) — used by agent for autonomous remediation. **`canChangeStatus: false` for non-admin tokens** — agent fixes go through code edit + re-analysis, not direct status mutation.
+- `GET /api/issues/search?...&facets=...` — facet counts for triage (severities, types, impactSoftwareQualities, files, rules, etc.)
+- `GET /api/users/current` — current user identity + global permissions
+- `GET /api/qualitygates/list` — all configured gates with caycStatus, isAiCodeSupported, isDefault
 - `GET /api/duplications/show?key={fileKey}&branch={branch}` — duplicate code block locations (branch is internal param)
 
 ## Architecture

@@ -1,0 +1,37 @@
+{
+  "isLoggedIn": true,
+  "login": "frv40170",
+  "name": "Subhankar Halder",
+  "email": "user-7@redacted.example",
+  "local": false,
+  "externalIdentity": "frv40170",
+  "externalProvider": "LDAP_default",
+  "scmAccounts": [],
+  "groups": [
+    "sz-eogwjc7st-yed-drdx",
+    "sonar-users"
+  ],
+  "permissions": {
+    "global": []
+  },
+  "avatar": "4e04aa0c9ace7685396e452d4d979e3a",
+  "homepage": {
+    "type": "PROJECTS"
+  },
+  "usingSonarLintConnectedMode": true,
+  "dismissedNotices": {
+    "issueNewIssueStatusAndTransitionGuide": false,
+    "overviewZeroNewIssuesSimplification": false,
+    "showEnableSca": false,
+    "qualityGateCaYCConditionsSimplification": false,
+    "educationPrinciples": false,
+    "sonarlintAd": true,
+    "showNewModesTour": true,
+    "showDesignAndArchitectureBanner": false,
+    "showNewModesBanner": false,
+    "issueCleanCodeGuide": false,
+    "nsyeuiyvvmWcyranqHkdsIfdonaXykahgxFmown": true,
+    "showDesignAndArchitectureOptInBanner": false,
+    "showDesignAndArchitectureTour": false
+  }
+}

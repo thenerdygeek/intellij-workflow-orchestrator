@@ -43,18 +43,25 @@ data class SonarQualityGateResponse(
 data class SonarQualityGateDto(
     val status: String,
     val conditions: List<SonarConditionDto> = emptyList(),
-    val period: SonarGatePeriodDto? = null
+    val period: SonarGatePeriodDto? = null,
+    /**
+     * Sonar 25.x adds this; "Clean as You Code" gate compliance rating —
+     * `compliant` / `over-compliant` (≥ minimum new-code conditions enforced)
+     * or `non-compliant` (gate is still legacy overall-only thresholds).
+     * Empty default for older Sonar that doesn't ship the field.
+     */
+    val caycStatus: String = ""
 )
 
 /**
- * New-code period metadata embedded in the quality gate response. Different
- * shape from `SonarMeasurePeriodDto` (which carries per-metric values for
- * new_* measures): this one tells you what defines the new-code period
- * itself (REFERENCE_BRANCH, NUMBER_OF_DAYS, PREVIOUS_VERSION, …).
+ * New-code period metadata embedded in the quality gate response. Carries
+ * what defines the new-code period (REFERENCE_BRANCH, NUMBER_OF_DAYS,
+ * PREVIOUS_VERSION, …) and the parameter (branch name, day count, version).
  *
- * Useful as a fallback for [SonarNewCodePeriodDto] when the dedicated
- * `/api/new_code_periods/show` endpoint requires admin and returns 403 —
- * the gate response is fetched with project Browse permission.
+ * The dedicated `/api/new_code_periods/show` endpoint returns the same
+ * fields but requires Administer Project permission, so the plugin reads
+ * the period from the gate response only — every token with Browse
+ * permission can fetch this.
  */
 @Serializable
 data class SonarGatePeriodDto(
@@ -77,7 +84,12 @@ data class SonarConditionDto(
 @Serializable
 data class SonarIssueSearchResult(
     val paging: SonarPagingDto = SonarPagingDto(),
-    val issues: List<SonarIssueDto> = emptyList()
+    val issues: List<SonarIssueDto> = emptyList(),
+    /**
+     * Populated only when the request URL specifies `&facets=...`. Default
+     * empty list keeps existing callers (which don't pass facets) unchanged.
+     */
+    val facets: List<SonarFacetDto> = emptyList()
 )
 
 @Serializable
@@ -116,8 +128,8 @@ data class SonarImpactDto(
 
 @Serializable
 data class SonarTextRangeDto(
-    val startLine: Int,
-    val endLine: Int,
+    val startLine: Int = 0,
+    val endLine: Int = 0,
     val startOffset: Int = 0,
     val endOffset: Int = 0
 )
@@ -246,18 +258,6 @@ data class SonarCeTaskDto(
     val hasErrorStacktrace: Boolean = false
 )
 
-// --- New Code Period ---
-
-@Serializable
-data class SonarNewCodePeriodDto(
-    val projectKey: String = "",
-    val branchKey: String = "",
-    val type: String = "",             // PREVIOUS_VERSION, NUMBER_OF_DAYS, REFERENCE_BRANCH, SPECIFIC_ANALYSIS
-    val value: String = "",
-    val effectiveValue: String = "",
-    val inherited: Boolean = false
-)
-
 // --- Security Hotspots ---
 
 @Serializable
@@ -279,6 +279,149 @@ data class SonarHotspotDto(
     val creationDate: String? = null,
     val updateDate: String? = null,
     val author: String? = null
+)
+
+// --- Security Hotspot Detail (/api/hotspots/show) ---
+
+/**
+ * Full hotspot detail returned by `/api/hotspots/show?hotspot={key}`. Adds
+ * to the search-list shape (`SonarHotspotDto`) the rule's risk + fix
+ * recommendation HTML — what the agent feeds the LLM for autonomous
+ * remediation. `canChangeStatus` is `false` for non-admin tokens, which
+ * gates whether the user can mark the hotspot fixed/safe via the API.
+ */
+@Serializable
+data class SonarHotspotDetailDto(
+    val key: String = "",
+    val component: SonarHotspotComponentDto = SonarHotspotComponentDto(),
+    val project: SonarHotspotComponentDto = SonarHotspotComponentDto(),
+    val rule: SonarHotspotRuleDto = SonarHotspotRuleDto(),
+    val status: String = "",
+    val resolution: String? = null,
+    val line: Int? = null,
+    val message: String = "",
+    val assignee: String? = null,
+    val author: String? = null,
+    val creationDate: String? = null,
+    val updateDate: String? = null,
+    val canChangeStatus: Boolean = false,
+    val textRange: SonarTextRangeDto? = null,
+    val changelog: List<SonarHotspotChangelogDto> = emptyList(),
+    val comment: List<SonarHotspotCommentDto> = emptyList(),
+    val users: List<SonarHotspotUserDto> = emptyList(),
+    val codeVariants: List<String> = emptyList()
+)
+
+@Serializable
+data class SonarHotspotComponentDto(
+    val key: String = "",
+    val qualifier: String = "",
+    val name: String = "",
+    val longName: String = "",
+    val path: String = "",
+    val branch: String = ""
+)
+
+@Serializable
+data class SonarHotspotRuleDto(
+    val key: String = "",
+    val name: String = "",
+    val securityCategory: String = "",
+    val vulnerabilityProbability: String = "",
+    /** HTML — "what's the risk this hotspot represents". */
+    val riskDescription: String = "",
+    /** HTML — "is this code instance vulnerable?". */
+    val vulnerabilityDescription: String = "",
+    /** HTML — Sonar's curated remediation guidance, contains a literal Compliant Solution code example. */
+    val fixRecommendations: String = ""
+)
+
+@Serializable
+data class SonarHotspotChangelogDto(
+    val creationDate: String = "",
+    val user: String = "",
+    val userName: String = "",
+    val diffs: List<SonarHotspotChangelogDiffDto> = emptyList()
+)
+
+@Serializable
+data class SonarHotspotChangelogDiffDto(
+    val key: String = "",
+    val newValue: String = "",
+    val oldValue: String = ""
+)
+
+@Serializable
+data class SonarHotspotCommentDto(
+    val key: String = "",
+    val markdown: String = "",
+    val htmlText: String = "",
+    val user: String = "",
+    val createdAt: String = ""
+)
+
+@Serializable
+data class SonarHotspotUserDto(
+    val login: String = "",
+    val name: String = "",
+    val active: Boolean = true
+)
+
+// --- Issue Search Facets (/api/issues/search?facets=...) ---
+
+/**
+ * Sonar field name `val` clashes with Kotlin's reserved `val` keyword,
+ * hence `@SerialName("val") val value`. The actual field on the wire
+ * is `val`.
+ */
+@Serializable
+data class SonarFacetValueDto(
+    @SerialName("val") val value: String = "",
+    val count: Int = 0
+)
+
+@Serializable
+data class SonarFacetDto(
+    val property: String = "",
+    val values: List<SonarFacetValueDto> = emptyList()
+)
+
+// --- Current User (/api/users/current) ---
+
+@Serializable
+data class SonarCurrentUserDto(
+    val login: String = "",
+    val name: String = "",
+    val email: String? = null,
+    val groups: List<String> = emptyList(),
+    val permissions: SonarUserPermissionsDto? = null,
+    val externalProvider: String? = null,
+    val scmAccounts: List<String> = emptyList(),
+    val isLoggedIn: Boolean = false,
+    val local: Boolean = false
+)
+
+@Serializable
+data class SonarUserPermissionsDto(
+    val global: List<String> = emptyList()
+)
+
+// --- Quality Gates List (/api/qualitygates/list) ---
+
+@Serializable
+data class SonarQualityGateListResponse(
+    val qualitygates: List<SonarQualityGateListEntryDto> = emptyList()
+)
+
+@Serializable
+data class SonarQualityGateListEntryDto(
+    val name: String = "",
+    val isDefault: Boolean = false,
+    val isBuiltIn: Boolean = false,
+    val caycStatus: String = "",
+    val hasStandardConditions: Boolean = false,
+    val hasMQRConditions: Boolean = false,
+    val isAiCodeSupported: Boolean = false
 )
 
 // --- Duplications ---
@@ -315,14 +458,35 @@ data class SonarRuleShowResponseDto(
     val rule: SonarRuleDto
 )
 
+/**
+ * Sonar 25.x replaced the flat `htmlDesc`/`mdDesc` fields with structured
+ * description sections keyed by purpose. Common keys: `root_cause` (the
+ * "what / why"), `how_to_fix_it`, `resources`, `introduction`. Security
+ * rules tend to ship all four; code-smell rules often ship only
+ * `root_cause` + `resources`. Pre-25.x servers omit this list entirely.
+ */
+@Serializable
+data class SonarRuleDescriptionSectionDto(
+    val key: String = "",
+    val content: String = ""
+)
+
 @Serializable
 data class SonarRuleDto(
     val key: String,
     val name: String,
+    // Pre-25.x: rule description shipped here; null on Sonar 25.x.
     val htmlDesc: String? = null,
     val mdDesc: String? = null,
     val remFnBaseEffort: String? = null,
-    val tags: List<String> = emptyList()
+    val tags: List<String> = emptyList(),
+    // Sonar 25.x: structured replacement for htmlDesc/mdDesc.
+    val descriptionSections: List<SonarRuleDescriptionSectionDto> = emptyList(),
+    // Clean Code taxonomy (Sonar 9.6+ on issues, surfaced on rules in 25.x).
+    val cleanCodeAttribute: String? = null,
+    val cleanCodeAttributeCategory: String? = null,
+    val impacts: List<SonarImpactDto> = emptyList(),
+    val educationPrinciples: List<String> = emptyList()
 )
 
 // --- Source Lines (per-line coverage) ---

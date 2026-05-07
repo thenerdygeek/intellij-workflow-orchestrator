@@ -116,4 +116,115 @@ class SonarDtoSerializationTest {
         assertEquals(44, uncoveredLine.line)
         assertEquals(0, uncoveredLine.lineHits)
     }
+
+    /**
+     * R-FIX-1 — round-trips Sonar 25.x's `/api/rules/show` payload (probe-validated).
+     * Pre-25.x ships `htmlDesc`/`mdDesc`; 25.x ships `descriptionSections` + the
+     * Clean Code taxonomy fields. Plugin must parse both shapes without error.
+     */
+    @Test
+    fun `deserialize 25x rule with descriptionSections`() {
+        val response = json.decodeFromString<SonarRuleShowResponseDto>(fixture("rules-show-25x.json"))
+        val rule = response.rule
+        assertEquals("java:S1135", rule.key)
+        assertEquals("Track uses of \"TODO\" tags", rule.name)
+        // 25.x: legacy htmlDesc/mdDesc are absent
+        assertNull(rule.mdDesc)
+        assertNull(rule.htmlDesc)
+        // 25.x: structured replacement
+        assertTrue(rule.descriptionSections.isNotEmpty(), "descriptionSections must be populated for Sonar 25.x")
+        assertTrue(rule.descriptionSections.any { it.key == "root_cause" }, "expected at least one root_cause section")
+        assertTrue(rule.descriptionSections.first { it.key == "root_cause" }.content.isNotBlank())
+        // 25.x: Clean Code taxonomy
+        assertEquals("COMPLETE", rule.cleanCodeAttribute)
+        assertEquals("INTENTIONAL", rule.cleanCodeAttributeCategory)
+        assertEquals(1, rule.impacts.size)
+        assertEquals("MAINTAINABILITY", rule.impacts[0].softwareQuality)
+    }
+
+    /**
+     * R-EVOLVE-1 + R-FIX-3 — round-trips Sonar 25.x's `/api/qualitygates/project_status`.
+     * Verifies caycStatus is parsed and the `period` block carries mode + parameter
+     * (the data we use as a fallback for the admin-gated `/api/new_code_periods/show`).
+     */
+    @Test
+    fun `deserialize 25x quality gate with caycStatus + period`() {
+        val response = json.decodeFromString<SonarQualityGateResponse>(fixture("qualitygate-status-25x.json"))
+        val gate = response.projectStatus
+        assertEquals("ERROR", gate.status)
+        assertEquals(21, gate.conditions.size)
+        // R-EVOLVE-1: caycStatus is now in the DTO
+        assertEquals("over-compliant", gate.caycStatus)
+        // R-FIX-3: period is the admin-free new-code-period source
+        assertNotNull(gate.period)
+        assertTrue(gate.period!!.mode.isNotBlank(), "period.mode should be populated")
+        assertTrue(gate.period!!.parameter.isNotBlank(), "period.parameter should be populated")
+    }
+
+    /**
+     * R-ADD-AGENT-1 — round-trips `/api/hotspots/show` for an admin-gated hotspot.
+     * The fix recommendations HTML must contain the literal "Compliant Solution"
+     * code example the agent feeds the LLM, and `canChangeStatus` must be `false`
+     * (the constraint the agent system prompt warns about).
+     */
+    @Test
+    fun `deserialize hotspot detail with fix recommendations`() {
+        val dto = json.decodeFromString<SonarHotspotDetailDto>(fixture("hotspots-show-25x.json"))
+        assertEquals("java:S2245", dto.rule.key)
+        assertEquals("MEDIUM", dto.rule.vulnerabilityProbability)
+        assertTrue(dto.rule.riskDescription.isNotBlank())
+        assertTrue(dto.rule.fixRecommendations.contains("SecureRandom"),
+            "fixRecommendations must contain the SecureRandom Compliant Solution example")
+        // CRITICAL: non-admin tokens cannot mark hotspots fixed/safe
+        assertFalse(dto.canChangeStatus, "agent system prompt warns about this — must be false on the probe sample")
+    }
+
+    /**
+     * R-ADD-AGENT-3 — round-trips `/api/issues/search?facets=...&inNewCodePeriod=true`.
+     * Verifies the new `facets` field on SonarIssueSearchResult parses the probe-validated
+     * facet shape with `@SerialName("val")` mapped onto Kotlin's reserved keyword.
+     */
+    @Test
+    fun `deserialize issues search with facets`() {
+        val result = json.decodeFromString<SonarIssueSearchResult>(fixture("issues-search-facets-25x.json"))
+        assertTrue(result.facets.isNotEmpty(), "facets must be populated when ?facets= is in the URL")
+        assertTrue(result.facets.any { it.property == "impactSoftwareQualities" },
+            "expected impactSoftwareQualities facet on the probe sample")
+        val severities = result.facets.firstOrNull { it.property == "severities" }
+        assertNotNull(severities)
+        // Each severity bucket has a `val` field (mapped via @SerialName) and a `count`
+        assertTrue(severities!!.values.any { it.value == "BLOCKER" },
+            "@SerialName(\"val\") must map to .value")
+    }
+
+    /**
+     * R-ADD-FEATURE-1 — round-trips `/api/users/current`.
+     */
+    @Test
+    fun `deserialize current user`() {
+        val dto = json.decodeFromString<SonarCurrentUserDto>(fixture("users-current.json"))
+        assertTrue(dto.login.isNotBlank())
+        assertTrue(dto.name.isNotBlank())
+        assertTrue(dto.isLoggedIn)
+        // Non-admin token has empty global permissions on the probe sample
+        assertNotNull(dto.permissions)
+        assertTrue(dto.permissions!!.global.isEmpty(),
+            "probe was run with non-admin token; permissions.global should be empty")
+    }
+
+    /**
+     * R-ADD-FEATURE-2 — round-trips `/api/qualitygates/list`.
+     */
+    @Test
+    fun `deserialize quality gates list`() {
+        val response = json.decodeFromString<SonarQualityGateListResponse>(fixture("qualitygates-list.json"))
+        assertTrue(response.qualitygates.isNotEmpty())
+        // At least one gate must be the default
+        assertTrue(response.qualitygates.any { it.isDefault })
+        // Sonar 25.x ships caycStatus + isAiCodeSupported on every gate
+        assertTrue(response.qualitygates.all { it.caycStatus.isNotBlank() })
+        // AI Code Fix is unavailable on Community Build — flag must be false everywhere
+        assertTrue(response.qualitygates.all { !it.isAiCodeSupported },
+            "Community Build returns isAiCodeSupported=false on every gate (R-ADD-AGENT-4)")
+    }
 }

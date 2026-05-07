@@ -1,0 +1,141 @@
+{
+  "total": 0,
+  "p": 1,
+  "ps": 1,
+  "paging": {
+    "pageIndex": 1,
+    "pageSize": 1,
+    "total": 0
+  },
+  "effortTotal": 0,
+  "issues": [],
+  "components": [],
+  "facets": [
+    {
+      "property": "files",
+      "values": []
+    },
+    {
+      "property": "severities",
+      "values": [
+        {
+          "val": "INFO",
+          "count": 0
+        },
+        {
+          "val": "MINOR",
+          "count": 0
+        },
+        {
+          "val": "MAJOR",
+          "count": 0
+        },
+        {
+          "val": "CRITICAL",
+          "count": 0
+        },
+        {
+          "val": "BLOCKER",
+          "count": 0
+        }
+      ]
+    },
+    {
+      "property": "tags",
+      "values": []
+    },
+    {
+      "property": "types",
+      "values": [
+        {
+          "val": "CODE_SMELL",
+          "count": 0
+        },
+        {
+          "val": "BUG",
+          "count": 0
+        },
+        {
+          "val": "VULNERABILITY",
+          "count": 0
+        }
+      ]
+    },
+    {
+      "property": "cleanCodeAttributeCategories",
+      "values": [
+        {
+          "val": "ADAPTABLE",
+          "count": 0
+        },
+        {
+          "val": "CONSISTENT",
+          "count": 0
+        },
+        {
+          "val": "INTENTIONAL",
+          "count": 0
+        },
+        {
+          "val": "RESPONSIBLE",
+          "count": 0
+        }
+      ]
+    },
+    {
+      "property": "impactSoftwareQualities",
+      "values": [
+        {
+          "val": "MAINTAINABILITY",
+          "count": 0
+        },
+        {
+          "val": "RELIABILITY",
+          "count": 0
+        },
+        {
+          "val": "SECURITY",
+          "count": 0
+        }
+      ]
+    },
+    {
+      "property": "impactSeverities",
+      "values": [
+        {
+          "val": "BLOCKER",
+          "count": 0
+        },
+        {
+          "val": "HIGH",
+          "count": 0
+        },
+        {
+          "val": "INFO",
+          "count": 0
+        },
+        {
+          "val": "LOW",
+          "count": 0
+        },
+        {
+          "val": "MEDIUM",
+          "count": 0
+        }
+      ]
+    },
+    {
+      "property": "assignees",
+      "values": [
+        {
+          "val": "",
+          "count": 0
+        }
+      ]
+    },
+    {
+      "property": "rules",
+      "values": []
+    }
+  ]
+}

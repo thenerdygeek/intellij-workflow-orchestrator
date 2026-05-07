@@ -45,15 +45,19 @@ SonarQube code quality — issues, coverage, quality gates, analysis, security h
 
 Actions and their parameters:
 - issues(project_key, file?, branch?, new_code_only?) → Code issues (optionally filter by file path; set new_code_only=true to see only issues in new code period). Returns up to 500 issues — for full coverage on large projects use issues_paged. On Sonar 9.6+ each issue carries `impacts[]` (per-software-quality severity in RELIABILITY/SECURITY/MAINTAINABILITY) and `cleanCodeAttribute`/`cleanCodeAttributeCategory` — use these for prioritization beyond legacy `severity`/`type` (e.g. RELIABILITY/HIGH outranks MAINTAINABILITY/LOW even when both are MAJOR).
-- quality_gate(project_key, branch?) → Quality gate status (includes both overall and new code conditions)
+- quality_gate(project_key, branch?) → Quality gate status (includes both overall and new code conditions; on Sonar 25.x also carries `caycStatus` ∈ compliant/over-compliant/non-compliant for "Clean as You Code" gate compliance)
 - coverage(project_key, branch?) → **Overall** code coverage metrics (line %, branch %, covered/total lines). This returns the full project coverage, NOT new code coverage. For new code coverage, use branch_quality_report instead.
 - search_projects(query) → Search SonarQube projects
 - analysis_tasks(project_key) → Recent analysis task status. **Requires admin permission** — returns 403 for non-admin tokens; do not retry on 403, ask the user to use an admin token or fall back to `branches`/`quality_gate` for the same data without admin.
 - branches(project_key) → Analyzed branches
 - project_measures(project_key, branch?) → All project metrics (ratings, debt, overall coverage, duplication)
-- source_lines(component_key, from?, to?, branch?) → Source code with per-line coverage status (from/to are line numbers)
+- source_lines(component_key, from?, to?, branch?) → Source code with per-line coverage status (from/to are line numbers). Each line includes `isNew` (true when in the new-code period — pair with `new_code_only=true` to target only PR-introduced lines), `lineHits` (statement coverage; 0 = uncovered), `conditions` + `coveredConditions` (per-line branch coverage — when conditions > 0 and coveredConditions < conditions, the line has an uncovered branch the agent can target with a test).
 - issues_paged(project_key, page?, page_size?, branch?, new_code_only?) → Paginated issues (default page 1, 100/page, max 500; set new_code_only=true for new code only)
-- security_hotspots(project_key, branch?) → Security hotspots
+- security_hotspots(project_key, branch?) → List of security hotspots (location + severity only). For full risk + fix guidance per hotspot, follow up with `hotspot_detail`.
+- hotspot_detail(hotspot_key) → **Full hotspot detail** — rule.riskDescription, rule.vulnerabilityDescription, rule.fixRecommendations (HTML; the latter contains a literal "Compliant Solution" code example you can show as the "good pattern"). **CRITICAL CAVEAT:** the response carries `canChangeStatus`. If false, the active token CANNOT mark the hotspot fixed/safe via the API — remediation flow is: edit code → push → wait for re-analysis. **Do NOT promise the user you can autonomously close hotspots when canChangeStatus=false**.
+- issue_facets(project_key, branch?, new_code_only?, facets) → Faceted issue counts in one round trip. `facets` is comma-separated, no spaces. Valid 25.x values: severities, types, tags, impactSoftwareQualities, impactSeverities, cleanCodeAttributeCategories, assignees, files, rules, statuses, resolutions, author, directories, scopes, languages, codeVariants, issueStatuses, prioritizedRule, createdAt, sonarsourceSecurity, plus security compliance facets (pciDss-3.2, pciDss-4.0, owaspAsvs-4.0, owaspMobileTop10-2024, stig-ASD_V5R3, casa, sansTop25, cwe). Use `files` (NOT `fileUuids`). Use BEFORE walking the issue list to decide priority order.
+- current_user → Authenticated user identity + global permissions (login, name, email, groups, isAdmin). Use to decide whether to surface admin-only hints.
+- quality_gates_list → Catalog of all configured quality gates with caycStatus + isAiCodeSupported. **Note:** SonarQube AI Code Fix is not available on Community Build (`isAiCodeSupported=false`). Use the agent's own LLM path for autonomous fixes; don't promise Sonar-side AI Code Fix.
 - duplications(component_key, branch?) → Code duplications
 - branch_quality_report(project_key, branch, max_files?) → **Consolidated new-code quality report** — one call gets: new-code quality gate conditions, new-code issues (bugs/smells/vulnerabilities), security hotspots, new-code coverage (line %, branch %, uncovered lines/conditions, duplication density), plus per-file drill-down with exact uncovered line numbers, uncovered branch line numbers, and duplicated line ranges. Default max_files=20. **Use this for new code / branch quality analysis** instead of calling issues+quality_gate+coverage+hotspots separately.
 - local_analysis(files, branch?, timeout?) → **Run SonarQube analysis locally on specific files** using Maven/Gradle Sonar plugin, then return fresh results (issues, hotspots, coverage, duplications) for those files. Use this after refactoring to get immediate Sonar feedback without waiting for the CI pipeline. Requires Maven (pom.xml) or Gradle (build.gradle) and SonarQube connection configured. timeout default 300s. **branch is auto-derived** from the current Git HEAD when omitted. Protected names (main/master/develop/release/*/hotfix/*/trunk) are automatically redirected to `local-scratch-<name>` so your local run never overwrites the real branch's Sonar dashboard. Pass branch explicitly only when you want to publish under a specific non-protected name.
@@ -69,7 +73,9 @@ Common optional: repo_name for multi-repo projects.
                 enumValues = listOf(
                     "issues", "quality_gate", "coverage", "search_projects",
                     "analysis_tasks", "branches", "project_measures", "source_lines", "issues_paged",
-                    "security_hotspots", "duplications", "branch_quality_report", "local_analysis"
+                    "security_hotspots", "hotspot_detail", "issue_facets",
+                    "current_user", "quality_gates_list",
+                    "duplications", "branch_quality_report", "local_analysis"
                 )
             ),
             "project_key" to ParameterProperty(
@@ -119,6 +125,14 @@ Common optional: repo_name for multi-repo projects.
             "files" to ParameterProperty(
                 type = "string",
                 description = "Comma-separated file paths to analyse (relative to project root or absolute) — for local_analysis. E.g. 'src/main/java/com/example/OrderService.java,src/main/java/com/example/PaymentService.java'"
+            ),
+            "hotspot_key" to ParameterProperty(
+                type = "string",
+                description = "Hotspot UUID — for hotspot_detail. Discover via security_hotspots first."
+            ),
+            "facets" to ParameterProperty(
+                type = "string",
+                description = "Comma-separated facet names — for issue_facets. Valid 25.x: severities, types, tags, impactSoftwareQualities, impactSeverities, cleanCodeAttributeCategories, assignees, files, rules, statuses, resolutions, author, directories, scopes, languages, codeVariants, issueStatuses, prioritizedRule, createdAt, sonarsourceSecurity, plus pciDss-3.2/4.0, owaspAsvs-4.0, owaspMobileTop10-2024, stig-ASD_V5R3, casa, sansTop25, cwe."
             ),
             "timeout" to ParameterProperty(
                 type = "integer",
@@ -224,6 +238,28 @@ Common optional: repo_name for multi-repo projects.
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
                 service.getSecurityHotspots(projectKey, branch = branch, repoName = repoName).toAgentToolResult()
             }
+
+            "hotspot_detail" -> {
+                val hotspotKey = params["hotspot_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("hotspot_key")
+                ToolValidation.validateNotBlank(hotspotKey, "hotspot_key")?.let { return it }
+                val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+                service.getHotspotDetail(hotspotKey, repoName = repoName).toAgentToolResult()
+            }
+
+            "issue_facets" -> {
+                val projectKey = params["project_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("project_key")
+                val facets = params["facets"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("facets")
+                ToolValidation.validateNotBlank(projectKey, "project_key")?.let { return it }
+                ToolValidation.validateNotBlank(facets, "facets")?.let { return it }
+                val branch = params["branch"]?.jsonPrimitive?.content
+                val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
+                val newCodeOnly = try { params["new_code_only"]?.jsonPrimitive?.boolean } catch (_: Exception) { null } ?: false
+                service.getIssueFacets(projectKey, branch = branch, inNewCodePeriod = newCodeOnly, facets = facets, repoName = repoName).toAgentToolResult()
+            }
+
+            "current_user" -> service.getCurrentUser().toAgentToolResult()
+
+            "quality_gates_list" -> service.listQualityGates().toAgentToolResult()
 
             "duplications" -> {
                 val componentKey = params["component_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("component_key")

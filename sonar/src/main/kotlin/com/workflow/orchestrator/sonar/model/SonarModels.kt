@@ -21,7 +21,12 @@ data class GateCondition(
 
 data class QualityGateState(
     val status: QualityGateStatus,
-    val conditions: List<GateCondition>
+    val conditions: List<GateCondition>,
+    /**
+     * Sonar 25.x "Clean as You Code" gate compliance — `compliant` /
+     * `over-compliant` / `non-compliant`. Empty on pre-25.x servers.
+     */
+    val caycStatus: String = ""
 )
 
 data class MappedIssue(

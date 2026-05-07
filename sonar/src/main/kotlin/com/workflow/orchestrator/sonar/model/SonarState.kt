@@ -29,7 +29,15 @@ data class SonarState(
     val totalNewCodeIssueCount: Int? = null,
     val totalCoverageFileCount: Int? = null,
     val projectHealth: ProjectHealthMetrics = ProjectHealthMetrics(),
-    val securityHotspots: List<SecurityHotspotData> = emptyList()
+    val securityHotspots: List<SecurityHotspotData> = emptyList(),
+    /**
+     * True when the active token doesn't have the Sonar permission needed to
+     * read CE analysis history (`/api/ce/activity` returns 403). Surfaces in
+     * the Quality tab as a "permission required" hint so the user knows the
+     * blank "Last analysis" indicator is a permissions issue, not a bug.
+     */
+    val analysisHistoryForbidden: Boolean = false,
+    val sonarBaseUrl: String = ""
 ) {
     /** Returns the active issues based on the current mode. */
     val activeIssues: List<MappedIssue>

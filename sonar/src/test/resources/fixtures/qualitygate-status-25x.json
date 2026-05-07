@@ -1,0 +1,160 @@
+{
+  "projectStatus": {
+    "status": "ERROR",
+    "conditions": [
+      {
+        "status": "OK",
+        "metricKey": "new_reliability_rating",
+        "comparator": "GT",
+        "errorThreshold": "1",
+        "actualValue": "1"
+      },
+      {
+        "status": "OK",
+        "metricKey": "reliability_rating",
+        "comparator": "GT",
+        "errorThreshold": "4",
+        "actualValue": "4"
+      },
+      {
+        "status": "OK",
+        "metricKey": "new_security_rating",
+        "comparator": "GT",
+        "errorThreshold": "1",
+        "actualValue": "1"
+      },
+      {
+        "status": "OK",
+        "metricKey": "security_rating",
+        "comparator": "GT",
+        "errorThreshold": "4",
+        "actualValue": "4"
+      },
+      {
+        "status": "OK",
+        "metricKey": "new_maintainability_rating",
+        "comparator": "GT",
+        "errorThreshold": "3",
+        "actualValue": "1"
+      },
+      {
+        "status": "OK",
+        "metricKey": "sqale_rating",
+        "comparator": "GT",
+        "errorThreshold": "1",
+        "actualValue": "1"
+      },
+      {
+        "status": "OK",
+        "metricKey": "new_coverage",
+        "comparator": "LT",
+        "errorThreshold": "95",
+        "actualValue": "98.9"
+      },
+      {
+        "status": "OK",
+        "metricKey": "coverage",
+        "comparator": "LT",
+        "errorThreshold": "94.8",
+        "actualValue": "95.8"
+      },
+      {
+        "status": "OK",
+        "metricKey": "new_duplicated_lines_density",
+        "comparator": "GT",
+        "errorThreshold": "0.5",
+        "actualValue": "0.0"
+      },
+      {
+        "status": "OK",
+        "metricKey": "duplicated_lines_density",
+        "comparator": "GT",
+        "errorThreshold": "0.5",
+        "actualValue": "0.2"
+      },
+      {
+        "status": "OK",
+        "metricKey": "branch_coverage",
+        "comparator": "LT",
+        "errorThreshold": "88.9",
+        "actualValue": "90.5"
+      },
+      {
+        "status": "OK",
+        "metricKey": "bugs",
+        "comparator": "GT",
+        "errorThreshold": "473",
+        "actualValue": "464"
+      },
+      {
+        "status": "OK",
+        "metricKey": "code_smells",
+        "comparator": "GT",
+        "errorThreshold": "236",
+        "actualValue": "212"
+      },
+      {
+        "status": "OK",
+        "metricKey": "line_coverage",
+        "comparator": "LT",
+        "errorThreshold": "95.5",
+        "actualValue": "96.6"
+      },
+      {
+        "status": "OK",
+        "metricKey": "new_bugs",
+        "comparator": "GT",
+        "errorThreshold": "0",
+        "actualValue": "0"
+      },
+      {
+        "status": "OK",
+        "metricKey": "new_code_smells",
+        "comparator": "GT",
+        "errorThreshold": "0",
+        "actualValue": "0"
+      },
+      {
+        "status": "ERROR",
+        "metricKey": "new_line_coverage",
+        "comparator": "LT",
+        "errorThreshold": "100",
+        "actualValue": "98.9"
+      },
+      {
+        "status": "OK",
+        "metricKey": "new_violations",
+        "comparator": "GT",
+        "errorThreshold": "0",
+        "actualValue": "0"
+      },
+      {
+        "status": "OK",
+        "metricKey": "new_vulnerabilities",
+        "comparator": "GT",
+        "errorThreshold": "0",
+        "actualValue": "0"
+      },
+      {
+        "status": "OK",
+        "metricKey": "sqale_index",
+        "comparator": "GT",
+        "errorThreshold": "5500",
+        "actualValue": "4121"
+      },
+      {
+        "status": "OK",
+        "metricKey": "vulnerabilities",
+        "comparator": "GT",
+        "errorThreshold": "10",
+        "actualValue": "5"
+      }
+    ],
+    "ignoredConditions": false,
+    "period": {
+      "mode": "KSSFVOUTE_INJSVJ",
+      "parameter": "release"
+    },
+    "caycStatus": "over-compliant"
+  }
+}

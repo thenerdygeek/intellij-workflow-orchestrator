@@ -208,14 +208,65 @@ class SonarApiClient(
             .map { it.task }
     }
 
-    suspend fun getNewCodePeriod(projectKey: String, branch: String? = null): ApiResult<SonarNewCodePeriodDto> {
-        log.info("[Sonar:API] GET /api/new_code_periods/show for project '$projectKey' branch='${branch ?: "default"}'")
+    /**
+     * Fetch full hotspot detail including the rule's risk descriptions and
+     * fix recommendations HTML — the data the agent feeds the LLM for
+     * autonomous remediation. List view (`/api/hotspots/search`) only carries
+     * the location + severity; the rule's curated guidance lives here.
+     */
+    suspend fun getHotspotDetail(hotspotKey: String): ApiResult<SonarHotspotDetailDto> {
+        log.info("[Sonar:API] GET /api/hotspots/show for hotspot '$hotspotKey'")
+        val encoded = URLEncoder.encode(hotspotKey, "UTF-8")
+        return get<SonarHotspotDetailDto>("/api/hotspots/show?hotspot=$encoded")
+    }
+
+    /**
+     * Fetch issue facet counts — one round trip yields the breakdown by
+     * severity, type, software quality, file, etc. for a project's issues.
+     * Used by the agent to prioritize before walking the issue list.
+     *
+     * @param facets comma-separated facet names. Valid 25.x values:
+     *   `severities, types, tags, impactSoftwareQualities, impactSeverities,
+     *   cleanCodeAttributeCategories, assignees, files, rules, statuses,
+     *   resolutions, author, directories, scopes, languages, codeVariants,
+     *   issueStatuses, prioritizedRule, createdAt, sonarsourceSecurity` plus
+     *   compliance facets (pciDss-3.2/4.0, owaspAsvs-4.0, owaspMobileTop10-2024,
+     *   stig-ASD_V5R3, casa, sansTop25, cwe). Use `files` (NOT `fileUuids`).
+     */
+    suspend fun getIssueFacets(
+        projectKey: String,
+        branch: String? = null,
+        inNewCodePeriod: Boolean = false,
+        facets: String
+    ): ApiResult<SonarIssueSearchResult> {
+        log.info("[Sonar:API] GET /api/issues/search?facets=$facets for project '$projectKey' branch='${branch ?: "default"}' newCode=$inNewCodePeriod")
         val params = buildString {
-            append("/api/new_code_periods/show?project=")
+            append("/api/issues/search?componentKeys=")
             append(URLEncoder.encode(projectKey, "UTF-8"))
+            append("&resolved=false&ps=1")
             branch?.let { append("&branch=${URLEncoder.encode(it, "UTF-8")}") }
+            if (inNewCodePeriod) append("&inNewCodePeriod=true")
+            append("&facets=${URLEncoder.encode(facets, "UTF-8")}")
         }
-        return get<SonarNewCodePeriodDto>(params)
+        return get<SonarIssueSearchResult>(params)
+    }
+
+    /**
+     * Fetch the authenticated user's identity + global permissions. Used by
+     * the settings page identity badge and to gate admin-only hints.
+     */
+    suspend fun getCurrentUser(): ApiResult<SonarCurrentUserDto> {
+        log.info("[Sonar:API] GET /api/users/current")
+        return get<SonarCurrentUserDto>("/api/users/current")
+    }
+
+    /**
+     * Fetch the list of all configured quality gates with their CaYC
+     * compliance status and AI-Code-Fix support flag.
+     */
+    suspend fun listQualityGates(): ApiResult<SonarQualityGateListResponse> {
+        log.info("[Sonar:API] GET /api/qualitygates/list")
+        return get<SonarQualityGateListResponse>("/api/qualitygates/list")
     }
 
     suspend fun getSecurityHotspots(

@@ -20,6 +20,13 @@ import com.workflow.orchestrator.core.model.sonar.DuplicationFragment
 import com.workflow.orchestrator.core.model.sonar.SourceLineData
 import com.workflow.orchestrator.core.model.sonar.SonarRuleData
 import com.workflow.orchestrator.core.model.sonar.BranchQualityReportData
+import com.workflow.orchestrator.core.model.sonar.HotspotDetailData
+import com.workflow.orchestrator.core.model.sonar.IssueFacet
+import com.workflow.orchestrator.core.model.sonar.IssueFacetValue
+import com.workflow.orchestrator.core.model.sonar.IssueFacetsData
+import com.workflow.orchestrator.core.model.sonar.SonarCurrentUserData
+import com.workflow.orchestrator.core.model.sonar.SonarQualityGateEntry
+import com.workflow.orchestrator.core.model.sonar.SonarQualityGateListData
 import com.workflow.orchestrator.core.model.sonar.IssueSummary
 import com.workflow.orchestrator.core.model.sonar.NewCodeCoverageSummary
 import com.workflow.orchestrator.core.model.sonar.FileQualityReport
@@ -647,7 +654,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
                     data = emptyList(),
                     summary = "Error fetching security hotspots for $projectKey: ${result.message}",
                     isError = true,
-                    hint = "Check SonarQube connection and project key. Security hotspots require Developer Edition+."
+                    hint = "Check SonarQube connection and project key."
                 )
             }
         }
@@ -716,10 +723,21 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         return when (val result = api.getRule(ruleKey)) {
             is ApiResult.Success -> {
                 val dto = result.data
+                // Description fallback chain. Sonar 9.x ships htmlDesc/mdDesc; Sonar
+                // 25.x replaced both with descriptionSections[{key, content}] and
+                // omits the legacy fields. Order: Markdown (richer) → legacy HTML →
+                // 25.x sections joined. Preserves pre-25.x behavior unchanged.
+                val description = dto.mdDesc
+                    ?: dto.htmlDesc
+                    ?: dto.descriptionSections
+                        .filter { it.content.isNotBlank() }
+                        .joinToString("\n\n") { it.content }
+                        .ifBlank { null }
+                    ?: ""
                 val data = SonarRuleData(
                     ruleKey = dto.key,
                     name = dto.name,
-                    description = dto.mdDesc ?: dto.htmlDesc ?: "",
+                    description = description,
                     remediation = dto.remFnBaseEffort,
                     tags = dto.tags
                 )
@@ -1154,6 +1172,204 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         }
         ranges.add(if (start == end) "$start" else "$start-$end")
         return ranges.joinToString(", ")
+    }
+
+    override suspend fun getHotspotDetail(hotspotKey: String, repoName: String?): ToolResult<HotspotDetailData> {
+        val api = client ?: return ToolResult(
+            data = HotspotDetailData(
+                key = hotspotKey, componentKey = "", componentPath = "", projectKey = "",
+                ruleKey = "", ruleName = "", securityCategory = "", vulnerabilityProbability = "",
+                riskDescription = "", vulnerabilityDescription = "", fixRecommendations = "",
+                status = "", resolution = null, line = null, message = "",
+                assignee = null, author = null, canChangeStatus = false
+            ),
+            summary = "SonarQube not configured. Cannot fetch hotspot detail.",
+            isError = true,
+            hint = "Configure SonarQube URL and token in Settings."
+        )
+
+        return when (val result = api.getHotspotDetail(hotspotKey)) {
+            is ApiResult.Success -> {
+                val dto = result.data
+                val data = HotspotDetailData(
+                    key = dto.key,
+                    componentKey = dto.component.key,
+                    componentPath = dto.component.path,
+                    projectKey = dto.project.key,
+                    ruleKey = dto.rule.key,
+                    ruleName = dto.rule.name,
+                    securityCategory = dto.rule.securityCategory,
+                    vulnerabilityProbability = dto.rule.vulnerabilityProbability,
+                    riskDescription = dto.rule.riskDescription,
+                    vulnerabilityDescription = dto.rule.vulnerabilityDescription,
+                    fixRecommendations = dto.rule.fixRecommendations,
+                    status = dto.status,
+                    resolution = dto.resolution,
+                    line = dto.line,
+                    message = dto.message,
+                    assignee = dto.assignee,
+                    author = dto.author,
+                    canChangeStatus = dto.canChangeStatus
+                )
+                val summary = buildString {
+                    append("Hotspot ${data.key}: ${data.ruleKey}")
+                    append(" [${data.vulnerabilityProbability}/${data.status}]")
+                    if (!data.canChangeStatus) {
+                        append(" — token cannot mark hotspot fixed/safe; remediation requires code edit + re-analysis")
+                    }
+                }
+                ToolResult.success(data = data, summary = summary)
+            }
+            is ApiResult.Error -> {
+                log.warn("[SonarService] Failed to fetch hotspot detail $hotspotKey: ${result.message}")
+                ToolResult(
+                    data = HotspotDetailData(
+                        key = hotspotKey, componentKey = "", componentPath = "", projectKey = "",
+                        ruleKey = "", ruleName = "", securityCategory = "", vulnerabilityProbability = "",
+                        riskDescription = "", vulnerabilityDescription = "", fixRecommendations = "",
+                        status = "", resolution = null, line = null, message = "",
+                        assignee = null, author = null, canChangeStatus = false
+                    ),
+                    summary = "Error fetching hotspot $hotspotKey: ${result.message}",
+                    isError = true,
+                    hint = "Check SonarQube connection and the hotspot key."
+                )
+            }
+        }
+    }
+
+    override suspend fun getIssueFacets(
+        projectKey: String,
+        branch: String?,
+        inNewCodePeriod: Boolean,
+        facets: String,
+        repoName: String?
+    ): ToolResult<IssueFacetsData> {
+        val api = client ?: return ToolResult(
+            data = IssueFacetsData(total = 0, facets = emptyList()),
+            summary = "SonarQube not configured. Cannot fetch issue facets.",
+            isError = true,
+            hint = "Configure SonarQube in Settings."
+        )
+
+        return when (val result = api.getIssueFacets(projectKey, branch, inNewCodePeriod, facets)) {
+            is ApiResult.Success -> {
+                val mapped = IssueFacetsData(
+                    total = result.data.paging.total,
+                    facets = result.data.facets.map { f ->
+                        IssueFacet(
+                            property = f.property,
+                            values = f.values.map { v -> IssueFacetValue(v.value, v.count) }
+                        )
+                    }
+                )
+                val summary = buildString {
+                    append("${mapped.total} ${if (inNewCodePeriod) "new-code " else ""}issues for $projectKey")
+                    if (mapped.facets.isNotEmpty()) {
+                        append(" — facets: ")
+                        append(mapped.facets.joinToString(", ") { f ->
+                            val nonZero = f.values.filter { it.count > 0 }
+                            if (nonZero.isEmpty()) "${f.property}:0"
+                            else "${f.property}:${nonZero.joinToString("/") { "${it.value}=${it.count}" }}"
+                        })
+                    }
+                }
+                ToolResult.success(data = mapped, summary = summary)
+            }
+            is ApiResult.Error -> {
+                log.warn("[SonarService] Failed to fetch issue facets for $projectKey: ${result.message}")
+                ToolResult(
+                    data = IssueFacetsData(total = 0, facets = emptyList()),
+                    summary = "Error fetching issue facets for $projectKey: ${result.message}",
+                    isError = true,
+                    hint = "Check the facet names — valid 25.x values include severities, types, impactSoftwareQualities, files, rules."
+                )
+            }
+        }
+    }
+
+    override suspend fun getCurrentUser(): ToolResult<SonarCurrentUserData> {
+        val api = client ?: return ToolResult(
+            data = SonarCurrentUserData(
+                login = "", name = "", email = null, groups = emptyList(),
+                globalPermissions = emptyList(), externalProvider = null, isLoggedIn = false
+            ),
+            summary = "SonarQube not configured. Cannot fetch user identity.",
+            isError = true,
+            hint = "Configure SonarQube URL and token in Settings."
+        )
+
+        return when (val result = api.getCurrentUser()) {
+            is ApiResult.Success -> {
+                val dto = result.data
+                val data = SonarCurrentUserData(
+                    login = dto.login,
+                    name = dto.name,
+                    email = dto.email,
+                    groups = dto.groups,
+                    globalPermissions = dto.permissions?.global ?: emptyList(),
+                    externalProvider = dto.externalProvider,
+                    isLoggedIn = dto.isLoggedIn
+                )
+                val summary = buildString {
+                    append("Connected as ${data.name} (${data.login})")
+                    if (data.isAdmin) append(" — admin scope")
+                    if (data.email != null) append(" · ${data.email}")
+                }
+                ToolResult.success(data = data, summary = summary)
+            }
+            is ApiResult.Error -> {
+                log.warn("[SonarService] Failed to fetch current user: ${result.message}")
+                ToolResult(
+                    data = SonarCurrentUserData(
+                        login = "", name = "", email = null, groups = emptyList(),
+                        globalPermissions = emptyList(), externalProvider = null, isLoggedIn = false
+                    ),
+                    summary = "Error fetching current user: ${result.message}",
+                    isError = true,
+                    hint = "Check SonarQube URL and token."
+                )
+            }
+        }
+    }
+
+    override suspend fun listQualityGates(): ToolResult<SonarQualityGateListData> {
+        val api = client ?: return ToolResult(
+            data = SonarQualityGateListData(emptyList()),
+            summary = "SonarQube not configured. Cannot list quality gates.",
+            isError = true,
+            hint = "Configure SonarQube in Settings."
+        )
+
+        return when (val result = api.listQualityGates()) {
+            is ApiResult.Success -> {
+                val gates = result.data.qualitygates.map { dto ->
+                    SonarQualityGateEntry(
+                        name = dto.name,
+                        isDefault = dto.isDefault,
+                        isBuiltIn = dto.isBuiltIn,
+                        caycStatus = dto.caycStatus,
+                        hasStandardConditions = dto.hasStandardConditions,
+                        hasMQRConditions = dto.hasMQRConditions,
+                        isAiCodeSupported = dto.isAiCodeSupported
+                    )
+                }
+                val summary = buildString {
+                    append("${gates.size} quality gates configured")
+                    gates.firstOrNull { it.isDefault }?.let { append(" — default: ${it.name} (${it.caycStatus})") }
+                }
+                ToolResult.success(data = SonarQualityGateListData(gates), summary = summary)
+            }
+            is ApiResult.Error -> {
+                log.warn("[SonarService] Failed to list quality gates: ${result.message}")
+                ToolResult(
+                    data = SonarQualityGateListData(emptyList()),
+                    summary = "Error listing quality gates: ${result.message}",
+                    isError = true,
+                    hint = "Check SonarQube connection."
+                )
+            }
+        }
     }
 
     companion object {

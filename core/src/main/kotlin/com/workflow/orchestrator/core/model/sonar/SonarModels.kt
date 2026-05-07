@@ -288,3 +288,99 @@ data class SonarFileComponent(
     val path: String,
     val name: String
 )
+
+/**
+ * Full security hotspot detail — adds rule risk + fix recommendation HTML
+ * to the search-list shape (`SecurityHotspotData`). The three description
+ * fields are HTML strings the LLM consumes verbatim.
+ *
+ * `canChangeStatus` reflects the active token's permissions. When `false`,
+ * the agent CANNOT directly mark the hotspot fixed/safe via the API —
+ * remediation flow is: edit code → push → wait for re-analysis. The agent
+ * system prompt documents this constraint so the LLM doesn't promise the
+ * user it can close hotspots autonomously.
+ */
+@Serializable
+data class HotspotDetailData(
+    val key: String,
+    val componentKey: String,
+    val componentPath: String,
+    val projectKey: String,
+    val ruleKey: String,
+    val ruleName: String,
+    val securityCategory: String,
+    val vulnerabilityProbability: String,
+    val riskDescription: String,
+    val vulnerabilityDescription: String,
+    val fixRecommendations: String,
+    val status: String,
+    val resolution: String?,
+    val line: Int?,
+    val message: String,
+    val assignee: String?,
+    val author: String?,
+    val canChangeStatus: Boolean
+)
+
+/**
+ * Issue facet counts — one round trip yields the breakdown by severity,
+ * type, software quality, file, etc. for a project's open issues. Empty
+ * `values` list = facet was requested but no matching issues exist.
+ */
+@Serializable
+data class IssueFacetsData(
+    val total: Int,
+    val facets: List<IssueFacet>
+)
+
+@Serializable
+data class IssueFacet(
+    val property: String,
+    val values: List<IssueFacetValue>
+)
+
+@Serializable
+data class IssueFacetValue(
+    val value: String,
+    val count: Int
+)
+
+/**
+ * SonarQube authenticated user identity + permissions. Used by the
+ * settings-page identity badge and to conditionally gate the
+ * "Administer Project required" hint (admins don't need to be told).
+ */
+@Serializable
+data class SonarCurrentUserData(
+    val login: String,
+    val name: String,
+    val email: String?,
+    val groups: List<String>,
+    val globalPermissions: List<String>,
+    val externalProvider: String?,
+    val isLoggedIn: Boolean
+) {
+    /** Heuristic — token has admin scope if any global permission is set. */
+    val isAdmin: Boolean get() = globalPermissions.isNotEmpty()
+}
+
+/**
+ * Quality gate registry entry from `/api/qualitygates/list`. The plugin's
+ * `getQualityGateStatus` returns project-status; this is the catalog of
+ * available gates with their CaYC compliance and AI-Code-Fix support flag.
+ */
+@Serializable
+data class SonarQualityGateListData(
+    val gates: List<SonarQualityGateEntry>
+)
+
+@Serializable
+data class SonarQualityGateEntry(
+    val name: String,
+    val isDefault: Boolean,
+    val isBuiltIn: Boolean,
+    val caycStatus: String,
+    val hasStandardConditions: Boolean,
+    val hasMQRConditions: Boolean,
+    val isAiCodeSupported: Boolean
+)

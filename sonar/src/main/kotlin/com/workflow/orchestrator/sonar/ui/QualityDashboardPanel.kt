@@ -91,6 +91,19 @@ class QualityDashboardPanel(
         border = JBUI.Borders.empty(0, 8, 2, 8)
         isVisible = false
     }
+
+    /**
+     * Permission-aware empty state for analysis history. Shown when the active
+     * Sonar token doesn't have Administer Project permission and `/api/ce/activity`
+     * 403'd. Click opens the project's Sonar permissions page.
+     */
+    private val analysisPermissionHintLabel = JBLabel("").apply {
+        font = font.deriveFont(Font.PLAIN, 10f)
+        foreground = StatusColors.SECONDARY_TEXT
+        border = JBUI.Borders.empty(0, 8, 4, 8)
+        isVisible = false
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+    }
     private val newCodePeriodLabel = JBLabel("").apply {
         font = font.deriveFont(Font.PLAIN, 10f)
         foreground = StatusColors.SECONDARY_TEXT
@@ -168,8 +181,20 @@ class QualityDashboardPanel(
             add(branchInfoLabel)
             add(branchWarningLabel)
             add(analysisStatusLabel)
+            add(analysisPermissionHintLabel)
             add(newCodePeriodLabel)
         }
+
+        // Analysis-history permission hint click → open Sonar project permissions page
+        analysisPermissionHintLabel.addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mouseClicked(e: java.awt.event.MouseEvent) {
+                val state = lastRenderedState ?: return
+                val baseUrl = state.sonarBaseUrl.takeIf { it.isNotBlank() } ?: return
+                val key = state.projectKey.takeIf { it.isNotBlank() } ?: return
+                val url = "$baseUrl/project_roles?id=${java.net.URLEncoder.encode(key, "UTF-8")}"
+                com.intellij.ide.BrowserUtil.browse(url)
+            }
+        })
 
         // Top section: read-only banner + toolbar + branch info + gate banner + hint
         // Phase 5 T15: ReadOnly banner is the FIRST child so it stays at the top of the
@@ -414,6 +439,7 @@ class QualityDashboardPanel(
             || prev.lastAnalysisForBranch != state.lastAnalysisForBranch
             || prev.newCodePeriod != state.newCodePeriod
             || prev.branches != state.branches
+            || prev.analysisHistoryForbidden != state.analysisHistoryForbidden
 
         if (branchChanged) {
             updateBranchInfo(state)
@@ -533,6 +559,17 @@ class QualityDashboardPanel(
             }
         } else {
             analysisStatusLabel.isVisible = false
+        }
+
+        // Permission-aware empty state for /api/ce/activity 403. Without this,
+        // the "Last analysis" indicator goes silently blank for non-admin tokens.
+        if (state.analysisHistoryForbidden && lastAnalysis == null) {
+            val linkColor = StatusColors.htmlColor(StatusColors.LINK as JBColor)
+            analysisPermissionHintLabel.text = "<html>Analysis history hidden \u2014 token lacks <b>Administer Project</b> permission. " +
+                "<font color='$linkColor'><u>Open Sonar permissions</u></font></html>"
+            analysisPermissionHintLabel.isVisible = true
+        } else {
+            analysisPermissionHintLabel.isVisible = false
         }
 
         // Show new code period info

@@ -1,0 +1,311 @@
+{
+  "qualitygates": [
+    {
+      "name": "f1qu-dpxymnsqqm-kkyhi",
+      "isDefault": false,
+      "isBuiltIn": false,
+      "actions": {
+        "rename": false,
+        "setAsDefault": false,
+        "copy": false,
+        "associateProjects": false,
+        "delete": false,
+        "manageConditions": false,
+        "delegate": false,
+        "manageAiCodeAssurance": false
+      },
+      "caycStatus": "non-compliant",
+      "hasStandardConditions": true,
+      "hasMQRConditions": false,
+      "isAiCodeSupported": false
+    },
+    {
+      "name": "h0pt-drlkkoocrc-lxusk-pkgcqf",
+      "isDefault": false,
+      "isBuiltIn": false,
+      "actions": {
+        "rename": false,
+        "setAsDefault": false,
+        "copy": false,
+        "associateProjects": false,
+        "delete": false,
+        "manageConditions": false,
+        "delegate": false,
+        "manageAiCodeAssurance": false
+      },
+      "caycStatus": "non-compliant",
+      "hasStandardConditions": false,
+      "hasMQRConditions": false,
+      "isAiCodeSupported": false
+    },
+    {
+      "name": "w6kp-uikfvd-ksnr",
+      "isDefault": false,
+      "isBuiltIn": false,
+      "actions": {
+        "rename": false,
+        "setAsDefault": false,
+        "copy": false,
+        "associateProjects": false,
+        "delete": false,
+        "manageConditions": false,
+        "delegate": false,
+        "manageAiCodeAssurance": false
+      },
+      "caycStatus": "over-compliant",
+      "hasStandardConditions": true,
+      "hasMQRConditions": false,
+      "isAiCodeSupported": false
+    },
+    {
+      "name": "u6ll-jlj-ngtzjxwetqrtv",
+      "isDefault": false,
+      "isBuiltIn": false,
+      "actions": {
+        "rename": false,
+        "setAsDefault": false,
+        "copy": false,
+        "associateProjects": false,
+        "delete": false,
+        "manageConditions": false,
+        "delegate": false,
+        "manageAiCodeAssurance": false
+      },
+      "caycStatus": "over-compliant",
+      "hasStandardConditions": true,
+      "hasMQRConditions": false,
+      "isAiCodeSupported": false
+    },
+    {
+      "name": "t8nf-uqbomzewdovwa-rlhap",
+      "isDefault": false,
+      "isBuiltIn": false,
+      "actions": {
+        "rename": false,
+        "setAsDefault": false,
+        "copy": false,
+        "associateProjects": false,
+        "delete": false,
+        "manageConditions": false,
+        "delegate": false,
+        "manageAiCodeAssurance": false
+      },
+      "caycStatus": "over-compliant",
+      "hasStandardConditions": true,
+      "hasMQRConditions": false,
+      "isAiCodeSupported": false
+    },
+    {
+      "name": "z3ux-jdvjbwtrgipym_q3",
+      "isDefault": false,
+      "isBuiltIn": false,
+      "actions": {
+        "rename": false,
+        "setAsDefault": false,
+        "copy": false,
+        "associateProjects": false,
+        "delete": false,
+        "manageConditions": false,
+        "delegate": false,
+        "manageAiCodeAssurance": false
+      },
+      "caycStatus": "over-compliant",
+      "hasStandardConditions": true,
+      "hasMQRConditions": false,
+      "isAiCodeSupported": false
+    },
+    {
+      "name": "u1zr-jrw-ilye",
+      "isDefault": false,
+      "isBuiltIn": false,
+      "actions": {
+        "rename": false,
+        "setAsDefault": false,
+        "copy": false,
+        "associateProjects": false,
+        "delete": false,
+        "manageConditions": false,
+        "delegate": false,
+        "manageAiCodeAssurance": false
+      },
+      "caycStatus": "non-compliant",
+      "hasStandardConditions": false,
+      "hasMQRConditions": false,
+      "isAiCodeSupported": false
+    },
+    {
+      "name": "j0vh-yi-oquanqfno",
+      "isDefault": false,
+      "isBuiltIn": false,
+      "actions": {
+        "rename": false,
+        "setAsDefault": false,
+        "copy": false,
+        "associateProjects": false,
+        "delete": false,
+        "manageConditions": false,
+        "delegate": false,
+        "manageAiCodeAssurance": false
+      },
+      "caycStatus": "over-compliant",
+      "hasStandardConditions": true,
+      "hasMQRConditions": false,
+      "isAiCodeSupported": false
+    },
+    {
+      "name": "z6wj-zkyn-syukdvl",
+      "isDefault": false,
+      "isBuiltIn": false,
+      "actions": {
+        "rename": false,
+        "setAsDefault": false,
+        "copy": false,
+        "associateProjects": false,
+        "delete": false,
+        "manageConditions": false,
+        "delegate": false,
+        "manageAiCodeAssurance": false
+      },
+      "caycStatus": "non-compliant",
+      "hasStandardConditions": true,
+      "hasMQRConditions": false,
+      "isAiCodeSupported": false
+    },
+    {
+      "name": "z9yv-mezt-aqqisyrgwql-dwcpcsz",
+      "isDefault": false,
+      "isBuiltIn": false,
+      "actions": {
+        "rename": false,
+        "setAsDefault": false,
+        "copy": false,
+        "associateProjects": false,
+        "delete": false,
+        "manageConditions": false,
+        "delegate": false,
+        "manageAiCodeAssurance": false
+      },
+      "caycStatus": "over-compliant",
+      "hasStandardConditions": true,
+      "hasMQRConditions": false,
+      "isAiCodeSupported": false
+    },
+    {
+      "name": "gja-tucks",
+      "isDefault": false,
+      "isBuiltIn": false,
+      "actions": {
+        "rename": false,
+        "setAsDefault": false,
+        "copy": false,
+        "associateProjects": false,
+        "delete": false,
+        "manageConditions": false,
+        "delegate": false,
+        "manageAiCodeAssurance": false
+      },
+      "caycStatus": "non-compliant",
+      "hasStandardConditions": true,
+      "hasMQRConditions": false,
+      "isAiCodeSupported": false
+    },
+    {
+      "name": "LHN Bnniisz Xibxslbt",
+      "isDefault": true,
+      "isBuiltIn": false,
+      "actions": {
+        "rename": false,
+        "setAsDefault": false,
+        "copy": false,
+        "associateProjects": false,
+        "delete": false,
+        "manageConditions": false,
+        "delegate": false,
+        "manageAiCodeAssurance": false
+      },
+      "caycStatus": "over-compliant",
+      "hasStandardConditions": true,
+      "hasMQRConditions": false,
+      "isAiCodeSupported": false
+    },
+    {
+      "name": "o1km-xojrlg-pywvrvgzgy",
+      "isDefault": false,
+      "isBuiltIn": false,
+      "actions": {
+        "rename": false,
+        "setAsDefault": false,
+        "copy": false,
+        "associateProjects": false,
+        "delete": false,
+        "manageConditions": false,
+        "delegate": false,
+        "manageAiCodeAssurance": false
+      },
+      "caycStatus": "non-compliant",
+      "hasStandardConditions": true,
+      "hasMQRConditions": false,
+      "isAiCodeSupported": false
+    },
+    {
+      "name": "SDKs",
+      "isDefault": false,
+      "isBuiltIn": false,
+      "actions": {
+        "rename": false,
+        "setAsDefault": false,
+        "copy": false,
+        "associateProjects": false,
+        "delete": false,
+        "manageConditions": false,
+        "delegate": false,
+        "manageAiCodeAssurance": false
+      },
+      "caycStatus": "over-compliant",
+      "hasStandardConditions": true,
+      "hasMQRConditions": false,
+      "isAiCodeSupported": false
+    },
+    {
+      "name": "Raaahooerx ika Wyplz",
+      "isDefault": false,
+      "isBuiltIn": false,
+      "actions": {
+        "rename": false,
+        "setAsDefault": false,
+        "copy": false,
+        "associateProjects": false,
+        "delete": false,
+        "manageConditions": false,
+        "delegate": false,
+        "manageAiCodeAssurance": false
+      },
+      "caycStatus": "non-compliant",
+      "hasStandardConditions": true,
+      "hasMQRConditions": false,
+      "isAiCodeSupported": false
+    },
+    {
+      "name": "Sonar way",
+      "isDefault": false,
+      "isBuiltIn": true,
+      "actions": {
+        "rename": false,
+        "setAsDefault": false,
+        "copy": false,
+        "associateProjects": false,
+        "delete": false,
+        "manageConditions": false,
+        "delegate": false,
+        "manageAiCodeAssurance": false
+      },
+      "caycStatus": "compliant",
+      "hasStandardConditions": false,
+      "hasMQRConditions": false,
+      "isAiCodeSupported": false
+    }
+  ],
+  "actions": {
+    "create": false
+  }
+}
