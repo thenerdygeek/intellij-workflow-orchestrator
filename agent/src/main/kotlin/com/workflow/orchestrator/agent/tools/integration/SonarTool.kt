@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
+import com.workflow.orchestrator.agent.tools.integration.sonar.CeTaskIdParser
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.sonar.SonarFileComponent
@@ -438,7 +439,10 @@ Common optional: repo_name for multi-repo projects.
         // ── 3. Detect build tool ───────────────────────────────────────────
         val baseDir = File(basePath)
         val hasMaven = File(baseDir, "pom.xml").exists()
-        val hasGradle = File(baseDir, "build.gradle").exists() || File(baseDir, "build.gradle.kts").exists()
+        val hasGradle = File(baseDir, "build.gradle").exists() ||
+            File(baseDir, "build.gradle.kts").exists() ||
+            File(baseDir, "settings.gradle").exists() ||
+            File(baseDir, "settings.gradle.kts").exists()
         if (!hasMaven && !hasGradle) return ToolResult(
             "No Maven (pom.xml) or Gradle (build.gradle) build file found in project root. Cannot run sonar analysis.",
             "No build tool", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
@@ -500,8 +504,8 @@ Common optional: repo_name for multi-repo projects.
                 while (line != null) {
                     if (outputBuilder.length < MAX_SCANNER_OUTPUT_CHARS) outputBuilder.appendLine(line)
                     // Extract CE task ID from: "INFO: More about the report processing at .../api/ce/task?id=XXXXX"
-                    if (ceTaskId == null && line.contains("api/ce/task?id=")) {
-                        ceTaskId = line.substringAfter("api/ce/task?id=").substringBefore(" ").trim()
+                    if (ceTaskId == null) {
+                        CeTaskIdParser.extract(line)?.let { ceTaskId = it }
                     }
                     emit(line)
                     line = br.readLine()
