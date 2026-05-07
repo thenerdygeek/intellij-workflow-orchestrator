@@ -2,6 +2,16 @@ package com.workflow.orchestrator.core.model
 
 enum class ErrorType {
     AUTH_FAILED,
+    /**
+     * The server replied with HTML (typically a login redirect) where JSON was expected.
+     * Distinct from [AUTH_FAILED] (HTTP 401) because the original request often returns
+     * 200 OK with a `text/html` body when the auth cookie/PAT has expired and the server
+     * silently redirects to the login page. Callers should surface this as
+     * "your session expired, re-authenticate in Settings" rather than the generic 401 copy.
+     *
+     * Detected via [com.workflow.orchestrator.core.services.looksLikeAuthRedirect].
+     */
+    AUTH_REDIRECT,
     FORBIDDEN,
     NOT_FOUND,
     RATE_LIMITED,
@@ -10,7 +20,15 @@ enum class ErrorType {
     TIMEOUT,
     VALIDATION_ERROR,
     PARSE_ERROR,
-    CONTEXT_LENGTH_EXCEEDED
+    CONTEXT_LENGTH_EXCEEDED,
+    /**
+     * Optimistic-locking conflict: the resource changed between the GET-modify-PUT
+     * cycle and the server rejected the update with 409. Used by Bitbucket PR
+     * mutations after [com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient.modifyPullRequest]
+     * exhausts its single retry. Callers should surface
+     * "the PR was updated by someone else — refresh and try again".
+     */
+    STALE_VERSION
 }
 
 sealed class ApiResult<out T> {

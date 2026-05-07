@@ -289,6 +289,17 @@ data class BitbucketPrUpdateRequest(
     val reviewers: List<BitbucketPrReviewerRef> = emptyList()
 )
 
+/**
+ * Project + repo coordinates for a Bitbucket repository. Wraps the two-string
+ * `(projectKey, repoSlug)` pair that every PR write path needs to thread through
+ * fetch-modify-write helpers without expanding their argument list.
+ *
+ * Introduced for [BitbucketBranchClient.modifyPullRequest] (PR 1 of the 2026-05-07
+ * write-ops fix plan); PRs 3 + 6 will adopt it for `addReviewer`, `removeReviewer`,
+ * `updateTitle`, and `merge`.
+ */
+data class RepoCoords(val projectKey: String, val repoSlug: String)
+
 @Serializable
 data class BitbucketPrReviewerRef(
     val user: BitbucketReviewerUser
@@ -1407,6 +1418,96 @@ class BitbucketBranchClient(
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bitbucket: ${e.message}", e)
             }
         }
+
+    /**
+     * Encapsulated fetch-modify-write helper for Bitbucket PR mutations.
+     *
+     * Bitbucket DC requires every PUT on a pull request to carry the latest
+     * `version` for optimistic locking. Without a fetch-and-retry guard, every
+     * long-lived `PrDetailPanel` is a 409 trap: the user clicks "Add reviewer"
+     * 30 seconds after the panel opens; if anyone else touched the PR in those
+     * 30s, the version is stale and the write silently fails (or returns 409
+     * with no retry). Four mutation paths in `:pullrequest` had this race
+     * (`addReviewer`, `removeReviewer`, `updateTitle`, `merge`) — the audit
+     * found them in 2026-05-07 and PR 3 of the fix plan consolidates them onto
+     * this helper.
+     *
+     * **Behaviour:**
+     *  1. GET `/pull-requests/{id}` → fresh [BitbucketPrDetail] with `version`.
+     *  2. Apply [mutate] to derive the [BitbucketPrUpdateRequest]. The mutator
+     *     should set `version = current.version` from the GET. (The helper does
+     *     not enforce this — it would defeat the retry's "re-apply with the
+     *     refetched version" loop, since a hard-coded version would survive the
+     *     retry.)
+     *  3. PUT the mutated request.
+     *  4. On 409 Conflict, refetch and re-apply [mutate] once. On second 409,
+     *     return [ErrorType.STALE_VERSION] so callers can surface
+     *     "the PR was updated by someone else, refresh and try again".
+     *
+     * @param repo project + repo coordinates.
+     * @param prId Bitbucket PR id.
+     * @param mutate transform from current PR state to the update request.
+     *   Suspending so callers can do further IO inside (e.g., looking up a user
+     *   slug from a search endpoint when adding a reviewer).
+     * @return the updated PR detail on success, or a typed error on failure.
+     *   Returns [ErrorType.STALE_VERSION] only after both attempts collide.
+     */
+    suspend fun modifyPullRequest(
+        repo: RepoCoords,
+        prId: Int,
+        mutate: suspend (BitbucketPrDetail) -> BitbucketPrUpdateRequest,
+    ): ApiResult<BitbucketPrDetail> {
+        // Attempt 1: fetch fresh, apply mutator, PUT.
+        val first = fetchAndPut(repo, prId, mutate)
+        if (first !is ApiResult.Error || first.type != ErrorType.STALE_VERSION) return first
+
+        log.info("[Core:Bitbucket] modifyPullRequest #$prId hit 409 — retrying once with refetched version")
+        // The cached GET that fed the first attempt is now known stale. The
+        // 409 PUT does not invalidate the cache (MutationInvalidationInterceptor
+        // only fires on 2xx mutations) so the second GET would otherwise serve
+        // the same version-3 entry and the retry would deadlock on the same
+        // 409. Force-evict the PR cache key here so the refetch hits the
+        // network.
+        com.workflow.orchestrator.core.http.HttpResponseCache.invalidateByPrefix(
+            "/rest/api/1.0/projects/${repo.projectKey}/repos/${repo.repoSlug}/pull-requests/$prId"
+        )
+
+        // Attempt 2: refetch, re-apply mutator with the now-fresher PR state, PUT again.
+        return fetchAndPut(repo, prId, mutate)
+    }
+
+    /**
+     * One round-trip of the [modifyPullRequest] cycle: GET the current PR, run
+     * the mutator, PUT the result. Maps 409 to [ErrorType.STALE_VERSION] so the
+     * caller can decide whether to retry. All other errors propagate through
+     * unchanged.
+     */
+    private suspend fun fetchAndPut(
+        repo: RepoCoords,
+        prId: Int,
+        mutate: suspend (BitbucketPrDetail) -> BitbucketPrUpdateRequest,
+    ): ApiResult<BitbucketPrDetail> {
+        val current = when (val r = getPullRequestDetail(repo.projectKey, repo.repoSlug, prId)) {
+            is ApiResult.Success -> r.data
+            is ApiResult.Error -> return r
+        }
+
+        val updateRequest = mutate(current)
+        val updated = updatePullRequest(repo.projectKey, repo.repoSlug, prId, updateRequest)
+        // updatePullRequest currently maps 409 → ErrorType.VALIDATION_ERROR with the legacy
+        // "version conflict — refresh and retry" copy. Translate that into the typed
+        // STALE_VERSION result so callers get an unambiguous signal.
+        if (updated is ApiResult.Error &&
+            updated.type == ErrorType.VALIDATION_ERROR &&
+            updated.message.contains("version conflict", ignoreCase = true)
+        ) {
+            return ApiResult.Error(
+                ErrorType.STALE_VERSION,
+                "PR #$prId was updated by someone else — refresh and try again."
+            )
+        }
+        return updated
+    }
 
     /**
      * Fetches a single page of PR activities.

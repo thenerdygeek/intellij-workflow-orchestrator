@@ -548,6 +548,16 @@ class JiraApiClient(
             }
         }
 
+    /**
+     * Shared write helper for every Jira POST that doesn't need a typed response body.
+     *
+     * Used by [postWorklog], [addComment], [addWatcher], and any future write that
+     * returns 200/201/204 with no caller-relevant body. Uses [parseJiraErrorMessage]
+     * on every 4xx/5xx response so the user sees the actionable Jira error
+     * (e.g. `Worklog timeSpent is required` rather than `HTTP 400`). This was
+     * previously only wired into [transitionIssue]; the 2026-05-07 audit lifted
+     * it here so all writes get the same error UX.
+     */
     private suspend fun post(path: String, jsonBody: String): ApiResult<Unit> =
         withContext(Dispatchers.IO) {
             try {
@@ -565,14 +575,29 @@ class JiraApiClient(
                             }
                             ApiResult.Success(Unit)
                         }
+                        400 -> {
+                            val raw = it.body?.string().orEmpty()
+                            val msg = parseJiraErrorMessage(raw) ?: "Bad request (400)"
+                            log.warn("[Jira:API] POST $path rejected (400): $msg")
+                            ApiResult.Error(ErrorType.VALIDATION_ERROR, msg)
+                        }
                         401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Jira token").also {
                             log.warn("[Jira:API] Authentication failed (401)")
                         }
                         403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Jira permissions").also {
                             log.warn("[Jira:API] Forbidden (403)")
                         }
-                        else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Jira returned ${it.code}").also { _ ->
-                            log.warn("[Jira:API] Server error (${response.code})")
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Resource not found at $path").also {
+                            log.warn("[Jira:API] Not found (404) at $path")
+                        }
+                        429 -> ApiResult.Error(ErrorType.RATE_LIMITED, "Jira rate limit exceeded").also {
+                            log.warn("[Jira:API] Rate limited (429)")
+                        }
+                        else -> {
+                            val raw = it.body?.string().orEmpty()
+                            val msg = parseJiraErrorMessage(raw) ?: "Jira returned ${it.code}"
+                            log.warn("[Jira:API] POST $path server error (${it.code}): $msg")
+                            ApiResult.Error(ErrorType.SERVER_ERROR, msg)
                         }
                     }
                 }
