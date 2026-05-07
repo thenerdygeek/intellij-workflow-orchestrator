@@ -1164,6 +1164,155 @@ class BambooProbe:
         )
         return digest
 
+    # -- variable scope diagnosis (plan / global / recent-builds) -------------
+
+    def diagnose_variable_scopes(
+        self,
+        plan_key: str,
+        variable_name: str,
+        recent_builds_have_it: bool,
+    ) -> dict:
+        """Probe multiple Bamboo variable scopes to determine where a
+        variable is declared (plan, global, or runtime-injected only).
+
+        Bamboo has multiple variable scopes:
+          - Plan-level: declared on the plan, returned by
+            /plan/{key}?expand=variableContext
+          - Global: instance-wide, returned by /admin/variable
+            (admin-gated, often 401/403 for non-admin PATs)
+          - Manual override at trigger time: NOT declared anywhere; just
+            recorded on the build's applied variables when passed via
+            /queue/{key}?bamboo.variable.X=Y
+
+        This method checks all three (the third via the mirror's
+        recent-builds flag passed in by the caller) and prints a
+        consolidated diagnosis.
+        """
+        diagnosis = {
+            "variable_name": variable_name,
+            "in_plan_context": False,
+            "plan_keys_observed": [],
+            "in_global": None,            # None = not checked / unknown
+            "global_check_status": None,
+            "global_keys_observed": [],
+            "in_recent_builds": recent_builds_have_it,
+        }
+
+        # Plan-level (re-read the variableContext fetch already issued upstream)
+        plan_blob = _read_raw_body(self.raw_dir / "write_test_plan_variables.json")
+        if plan_blob:
+            plan_vars = (plan_blob.get("variableContext") or {}).get("variable") or []
+            diagnosis["plan_keys_observed"] = [v.get("key") for v in plan_vars if v.get("key")]
+            diagnosis["in_plan_context"] = any(
+                (v.get("key") or "").lower() == variable_name.lower()
+                for v in plan_vars
+            )
+
+        # Global variables — admin-gated. Try the documented endpoint;
+        # surface 401/403 as "unknown" rather than "not declared".
+        global_result = self._get(
+            name="scope_global_vars",
+            description="Global variables (/admin/variable — admin-gated)",
+            path="/rest/api/latest/admin/variable",
+            category="variable_scope",
+            notes=[
+                "Returns 401/403 for non-admin PATs — that's expected.",
+                "Used to determine whether a variable absent from plan-level "
+                "is actually globally declared.",
+            ],
+        )
+        diagnosis["global_check_status"] = global_result.status
+
+        if global_result.ok:
+            global_blob = _read_raw_body(self.raw_dir / "scope_global_vars.json")
+            if global_blob:
+                # Bamboo's global-variable response varies by version.
+                # Common shapes: {"variable": [{key, value}]} or a list.
+                gvars = (
+                    global_blob.get("variable")
+                    or global_blob.get("variables")
+                    or global_blob.get("globalVariables")
+                    or []
+                )
+                if isinstance(gvars, dict):
+                    gvars = gvars.get("variable") or gvars.get("globalVariable") or []
+                if isinstance(gvars, list):
+                    diagnosis["global_keys_observed"] = [
+                        v.get("key") or v.get("name")
+                        for v in gvars
+                        if isinstance(v, dict) and (v.get("key") or v.get("name"))
+                    ]
+                    diagnosis["in_global"] = any(
+                        ((v.get("key") or v.get("name") or "").lower()
+                         == variable_name.lower())
+                        for v in gvars if isinstance(v, dict)
+                    )
+        elif global_result.status in (401, 403):
+            diagnosis["in_global"] = None  # explicitly unknown
+        else:
+            diagnosis["in_global"] = None
+
+        # ---- Console output ----
+        print(f"\n--- '{variable_name}' declaration scope ---")
+        if diagnosis["in_plan_context"]:
+            print(f"  ✓ Plan-level: declared in {plan_key}'s variableContext")
+        else:
+            print(f"  ✗ Plan-level: not in {plan_key}'s variableContext "
+                  f"({len(diagnosis['plan_keys_observed'])} other vars declared)")
+
+        if diagnosis["in_global"] is True:
+            print(f"  ✓ Global: declared at instance-level "
+                  f"({len(diagnosis['global_keys_observed'])} global vars total)")
+        elif diagnosis["in_global"] is False:
+            print(f"  ✗ Global: not declared "
+                  f"({len(diagnosis['global_keys_observed'])} other global vars seen)")
+        else:
+            status = diagnosis["global_check_status"]
+            if status in (401, 403):
+                print(f"  ? Global: PAT lacks admin scope (got {status}) — "
+                      f"can't enumerate global vars")
+            elif status == 404:
+                print(f"  ? Global: /admin/variable not found on this Bamboo "
+                      f"(got 404) — try a different endpoint or accept the gap")
+            else:
+                print(f"  ? Global: check returned {status} — see "
+                      f"raw/scope_global_vars.json")
+
+        if diagnosis["in_recent_builds"]:
+            print(f"  ✓ Runtime: applied on recent builds (mirror confirmed)")
+        else:
+            print(f"  ✗ Runtime: not seen on any recent build")
+
+        # ---- Verdict ----
+        declared_anywhere = (
+            diagnosis["in_plan_context"]
+            or diagnosis["in_global"] is True
+            or diagnosis["in_recent_builds"]
+        )
+        if not declared_anywhere and diagnosis["in_global"] is None:
+            # Global is unknown AND we have no other evidence
+            print(f"\n  ⚠ Cannot confirm '{variable_name}' is declared anywhere we can see. "
+                  f"Global scope is unreadable (admin-only) and the variable doesn't "
+                  f"appear at plan-level or in recent builds. Trigger may no-op if the "
+                  f"build script ignores undeclared vars.")
+        elif not declared_anywhere:
+            print(f"\n  ⚠ '{variable_name}' is not declared in any scope we can read AND "
+                  f"never appeared on a recent build. Verify the variable name spelling "
+                  f"and the plan key.")
+        elif diagnosis["in_recent_builds"] and not (
+            diagnosis["in_plan_context"] or diagnosis["in_global"] is True
+        ):
+            print(f"\n  → '{variable_name}' is injected at trigger time only "
+                  f"(not declared at plan or global scope). Bamboo records it on the "
+                  f"build regardless. Whether your build script consumes it depends on "
+                  f"the script — but for THIS probe (verifying that our value lands as "
+                  f"the build's applied variable), it works correctly.")
+        else:
+            print(f"\n  → '{variable_name}' is properly declared. Trigger will pass "
+                  f"the value cleanly.")
+
+        return diagnosis
+
     def run_write_test(
         self,
         plan_key: str,
@@ -1210,21 +1359,29 @@ class BambooProbe:
         else:
             print(f"  (failed to read declared variables — see raw/write_test_plan_variables.json)")
 
-        if not any(v.get("key") == variable_name for v in ctx_list):
-            print(f"\n  WARNING: '{variable_name}' is NOT in {plan_key}'s declared "
-                  f"variableContext. Either the var is created at runtime, or "
-                  f"you have the wrong plan key. Triggering anyway will likely "
-                  f"silently no-op.")
-
         # A.2: replay the automation plugin's baseline detection. The mirror
         # walks recent builds, fetches per-build variables (the path the
         # plugin uses for its case-insensitive lookup), surfaces any
         # divergence between the embedded and per-build variable shapes,
         # and shows BOTH the plugin's current scoring AND the proposed
         # two-tier scoring side by side.
-        self.mirror_baseline_detection(
+        digest = self.mirror_baseline_detection(
             plan_key=plan_key,
             variable_name=variable_name,
+        )
+
+        # A.3: wider-scope diagnosis. The plan-level variableContext at A.1
+        # only covers ONE of three scopes Bamboo variables can live in.
+        # diagnose_variable_scopes additionally checks /admin/variable
+        # (global) and uses the mirror's "did recent builds carry this
+        # variable" signal to determine whether the variable is
+        # runtime-injected. Replaces the old plan-only warning that
+        # mistook "absent from plan-level" for "absent everywhere".
+        recent_builds_have_it = bool(digest.get("parseable"))
+        self.diagnose_variable_scopes(
+            plan_key=plan_key,
+            variable_name=variable_name,
+            recent_builds_have_it=recent_builds_have_it,
         )
 
         # === PHASE B — confirmation gate ===
