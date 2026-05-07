@@ -83,12 +83,6 @@ class CachePolicyRegistryTest {
     }
 
     @Test
-    fun `nexus search has 2 minute TTL`() {
-        val url = "https://nexus.example.com/service/rest/v1/search?name=foo".toHttpUrl()
-        assertEquals(120L, CachePolicyRegistry.policyFor(ServiceType.NEXUS, url).ttlSeconds)
-    }
-
-    @Test
     fun `unknown path on known service returns NEVER`() {
         val url = "https://jira.example.com/rest/api/2/weird-new-endpoint".toHttpUrl()
         assertEquals(CachePolicy.NEVER, CachePolicyRegistry.policyFor(ServiceType.JIRA, url))

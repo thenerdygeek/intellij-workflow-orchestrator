@@ -33,7 +33,6 @@ class MutationInvalidationInterceptor(private val service: ServiceType) : Interc
         ServiceType.BITBUCKET -> "bitbucket"
         ServiceType.SONARQUBE -> "sonar"
         ServiceType.SOURCEGRAPH -> "sourcegraph"
-        ServiceType.NEXUS -> "nexus"
     }
 
     override fun intercept(chain: Interceptor.Chain): Response {

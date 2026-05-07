@@ -58,6 +58,7 @@ class AutomationModelsTest {
     }
 
     @Test
+    @Suppress("DEPRECATION")
     fun `QueueEntryStatus has all expected states`() {
         val statuses = QueueEntryStatus.entries
         assertTrue(statuses.contains(QueueEntryStatus.WAITING_LOCAL))
@@ -66,6 +67,7 @@ class AutomationModelsTest {
         assertTrue(statuses.contains(QueueEntryStatus.RUNNING))
         assertTrue(statuses.contains(QueueEntryStatus.COMPLETED))
         assertTrue(statuses.contains(QueueEntryStatus.FAILED_TO_TRIGGER))
+        // TAG_INVALID is deprecated but retained for pre-L3 SQLite row deserialisation safety
         assertTrue(statuses.contains(QueueEntryStatus.TAG_INVALID))
         assertTrue(statuses.contains(QueueEntryStatus.PLAN_UNAVAILABLE))
         assertTrue(statuses.contains(QueueEntryStatus.STALE))

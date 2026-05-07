@@ -55,9 +55,6 @@ object ConnectionStatusBanner {
         },
         SOURCEGRAPH("Sourcegraph") {
             override fun isConfigured(state: ConnectionSettings.State): Boolean = !state.sourcegraphUrl.isNullOrBlank()
-        },
-        NEXUS("Nexus Docker Registry") {
-            override fun isConfigured(state: ConnectionSettings.State): Boolean = !state.nexusUrl.isNullOrBlank()
         };
 
         abstract fun isConfigured(state: ConnectionSettings.State): Boolean

@@ -39,22 +39,6 @@ class AuthInterceptorTest {
     }
 
     @Test
-    fun `adds Basic auth header for BASIC scheme with pre-encoded token`() {
-        server.enqueue(MockResponse().setBody("ok"))
-
-        // BASIC scheme expects pre-encoded base64(username:password) from the token provider
-        val preEncoded = java.util.Base64.getEncoder().encodeToString("admin:secret123".toByteArray())
-        val client = OkHttpClient.Builder()
-            .addInterceptor(AuthInterceptor({ preEncoded }, AuthScheme.BASIC))
-            .build()
-
-        client.newCall(Request.Builder().url(server.url("/test")).build()).execute()
-
-        val recorded = server.takeRequest()
-        assertEquals("Basic $preEncoded", recorded.getHeader("Authorization"))
-    }
-
-    @Test
     fun `skips auth header when token provider returns null`() {
         server.enqueue(MockResponse().setBody("ok"))
 

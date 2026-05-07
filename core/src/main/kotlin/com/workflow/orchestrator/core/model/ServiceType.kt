@@ -5,6 +5,5 @@ enum class ServiceType(val displayName: String) {
     BAMBOO("Bamboo"),
     BITBUCKET("Bitbucket"),
     SONARQUBE("SonarQube"),
-    SOURCEGRAPH("Sourcegraph"),
-    NEXUS("Nexus Docker Registry");
+    SOURCEGRAPH("Sourcegraph");
 }

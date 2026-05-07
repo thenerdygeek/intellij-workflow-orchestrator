@@ -27,11 +27,6 @@ class ConnectionSettings : PersistentStateComponent<ConnectionSettings.State> {
         var bitbucketUsername: String = "",
         var sonarUrl: String = "",
         var sourcegraphUrl: String = "",
-        var nexusUrl: String = "",
-        // SEC-16: nexusUsername stored in plaintext XML — accepted risk (LOW).
-        // Username alone without password is non-sensitive. Password is in PasswordSafe.
-        // Full migration to PasswordSafe deferred to avoid multi-file refactor.
-        var nexusUsername: String = "",
         var ticketKeyRegex: String = "\\b([A-Z][A-Z0-9]+-\\d+)\\b",
         // Last-used Jira board, mirrored from PluginSettings on apply().
         // Fresh projects (e.g. new clones) hydrate from these when their

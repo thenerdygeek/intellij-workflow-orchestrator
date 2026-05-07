@@ -59,7 +59,6 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
         connectionSection("Bitbucket", ServiceType.BITBUCKET)
         connectionSection("SonarQube", ServiceType.SONARQUBE)
         connectionSection("Sourcegraph", ServiceType.SOURCEGRAPH)
-        nexusConnectionSection()
     }
 
     private fun Panel.connectionSection(
@@ -166,66 +165,10 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
         }
     }
 
-    /**
-     * Nexus uses username + password (Basic auth), not a single access token.
-     */
-    private fun Panel.nexusConnectionSection() {
-        val urlField = JTextField(20)
-        val usernameField = JTextField(20)
-        val passwordField = JPasswordField(20)
-        val statusLabel = JLabel("")
-
-        collapsibleGroup("Nexus Docker Registry") {
-            row("Registry URL:") {
-                cell(urlField).columns(COLUMNS_LARGE)
-            }
-            row("Username:") {
-                cell(usernameField).columns(COLUMNS_LARGE)
-            }
-            row("Password:") {
-                cell(passwordField).columns(COLUMNS_LARGE)
-            }
-            row {
-                button("Test Connection") {
-                    val url = urlField.text.trim()
-                    val username = usernameField.text.trim()
-                    val password = String(passwordField.password).trim()
-                    if (url.isBlank() || username.isBlank() || password.isBlank()) {
-                        statusLabel.text = "Enter URL, username, and password"
-                        return@button
-                    }
-                    statusLabel.text = "Testing..."
-                    runBackgroundableTask("Testing Nexus Docker Registry", project, false) {
-                        val result = runBlockingCancellable {
-                            authTestService.testConnection(ServiceType.NEXUS, url, password, username = username)
-                        }
-                        invokeLater {
-                            when (result) {
-                                is ApiResult.Success -> {
-                                    statusLabel.text = "Connected!"
-                                    successfulTests[ServiceType.NEXUS] = TestResult(ServiceType.NEXUS, url, password, username = username)
-                                }
-                                is ApiResult.Error -> {
-                                    statusLabel.text = "Failed: ${result.message}"
-                                }
-                            }
-                        }
-                    }
-                }
-                cell(statusLabel)
-            }
-        }
-    }
-
     override fun doOKAction() {
         // Persist credentials only when user confirms with Finish Setup
         for ((_, result) in successfulTests) {
             when (result.serviceType) {
-                ServiceType.NEXUS -> {
-                    settings.connections.nexusUrl = result.url
-                    settings.connections.nexusUsername = result.username.orEmpty()
-                    credentialStore.storeNexusPassword(result.token)
-                }
                 ServiceType.JIRA -> {
                     settings.connections.jiraUrl = result.url
                     credentialStore.storeToken(result.serviceType, result.token)

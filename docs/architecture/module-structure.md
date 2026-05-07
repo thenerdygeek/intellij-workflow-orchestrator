@@ -63,7 +63,7 @@ graph TD
 | `:sonar` | Quality tab (overview, issues, coverage), severity-coded gutter markers, ExternalAnnotator for inline warnings, editor banners, and coverage badges |
 | `:cody` | Standalone Cody CLI agent (JSON-RPC over stdio), "Fix with Cody" gutter action, test generation, commit message generation, and PR description generation |
 | `:pullrequest` | PR dashboard with list and detail views, PR creation via Bitbucket API, and PR status tracking |
-| `:automation` | Docker tag staging panel, tag validation via Nexus Registry API, drift detector, conflict detector, smart queue with auto-trigger, and config persistence |
+| `:automation` | Docker tag staging panel, drift detector, conflict detector, smart queue with auto-trigger, and config persistence |
 | `:handover` | Jira rich-text closure comment, Cody pre-review, copyright fix panel, time log dialog, and QA clipboard (formatted copy for email/Slack) |
 | `:git-integration` | Git branch change listeners, diff provider, and branch-to-ticket resolution |
 | `:agent` | AI coding agent with ReAct loop (50 max iterations), 52 tools across 9 categories, Sourcegraph Enterprise LLM API integration, LLM-controlled delegation (`delegate_task` spawning `WorkerSession`), interactive JCEF chat UI (chat, plan cards, question wizard, tools panel, skill banner), three-layer plan persistence, cross-session auto-memory, user-extensible SKILL.md system, and budget enforcement with LLM-powered context compression. First module using JCEF (embedded Chromium). |
@@ -97,7 +97,7 @@ The plugin defines 5 custom extension points in `:core` for modular tab and feat
 | Extension Point | Interface | Purpose |
 |---|---|---|
 | `com.workflow.orchestrator.tabProvider` | `WorkflowTabProvider` | Register tool window tabs from feature modules (Sprint, Build, PR, Quality, Automation, Handover) |
-| `com.workflow.orchestrator.connectionTester` | `ConnectionTester` | Register per-service connection test implementations (Jira, Bamboo, SonarQube, Bitbucket, Nexus, Cody) |
+| `com.workflow.orchestrator.connectionTester` | `ConnectionTester` | Register per-service connection test implementations (Jira, Bamboo, SonarQube, Bitbucket, Cody) |
 | `com.workflow.orchestrator.healthCheck` | `HealthCheckContributor` | Register health check steps (Maven compile, tests, copyright, Sonar gate, CVE) |
 | `com.workflow.orchestrator.statusBarWidget` | `WorkflowWidgetProvider` | Register status bar widgets (ticket, build, queue) |
 | `com.workflow.orchestrator.settingsContributor` | `SettingsContributor` | Register settings sub-pages from feature modules |
@@ -121,7 +121,6 @@ Several IntelliJ extension-point integrations live in folders that are neither `
 **Phase 2 enforcement (2026-04-24):** The Phase 2 audit (`docs/architecture/phase2-violations-audit.md`) found and fixed violations in `:jira` (`vcs/`, `search/`, `tasks/`, `settings/`), `:bamboo` (`run/`), and `:automation` (`run/`). After Phase 2:
 
 - All Jira HTTP goes through `HttpClientFactory.clientFor(ServiceType.JIRA)` (shared pool, retry, auth interceptor).
-- All Nexus HTTP goes through `HttpClientFactory.clientFor(ServiceType.NEXUS)`.
 - Phase 3 caching installs a cache interceptor at `HttpClientFactory`, which then covers all call sites without further changes.
 
 ## Cross-Module Communication

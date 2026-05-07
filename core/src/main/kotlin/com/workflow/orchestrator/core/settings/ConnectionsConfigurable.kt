@@ -39,8 +39,6 @@ class ConnectionsConfigurable(
 
     // --- Deferred credential saves ---
     private val pendingTokens = mutableMapOf<ServiceType, String>()
-    private var pendingNexusPassword: String? = null
-    private var pendingNexusUsername: String? = null
     private var pendingBitbucketUsername: String? = null
 
     // Guard against false modification during initial token load
@@ -90,11 +88,6 @@ class ConnectionsConfigurable(
                 { connSettings.state.sourcegraphUrl = it },
                 collapsible = true
             )
-            nexusServiceGroup(
-                "Nexus Docker Registry",
-                { connSettings.state.nexusUrl },
-                { connSettings.state.nexusUrl = it }
-            )
 
             // Network (Advanced) — relocated from AiAdvancedConfigurable
             collapsibleGroup("Network (Advanced)") {
@@ -119,11 +112,7 @@ class ConnectionsConfigurable(
 
     override fun isModified(): Boolean {
         // Credential changes
-        if (pendingTokens.isNotEmpty() ||
-            pendingNexusPassword != null ||
-            pendingNexusUsername != null ||
-            pendingBitbucketUsername != null
-        ) return true
+        if (pendingTokens.isNotEmpty() || pendingBitbucketUsername != null) return true
 
         // Dialog panel bindings (URLs, timeouts)
         return dialogPanel?.isModified() ?: false
@@ -140,18 +129,6 @@ class ConnectionsConfigurable(
         }
         pendingTokens.clear()
 
-        pendingNexusPassword?.let { password ->
-            if (password.isNotBlank()) {
-                credentialStore.storeNexusPassword(password)
-            }
-        }
-        pendingNexusPassword = null
-
-        pendingNexusUsername?.let { username ->
-            connSettings.state.nexusUsername = username
-        }
-        pendingNexusUsername = null
-
         pendingBitbucketUsername?.let { username ->
             connSettings.state.bitbucketUsername = username
         }
@@ -163,8 +140,6 @@ class ConnectionsConfigurable(
     override fun reset() {
         dialogPanel?.reset()
         pendingTokens.clear()
-        pendingNexusPassword = null
-        pendingNexusUsername = null
         pendingBitbucketUsername = null
     }
 
@@ -372,99 +347,4 @@ class ConnectionsConfigurable(
         }
     }
 
-    /**
-     * Nexus-specific service group with Username + Password fields.
-     * Nexus Docker Registry uses Basic auth (username:password), not a single access token.
-     * Always collapsible (optional service).
-     */
-    private fun Panel.nexusServiceGroup(
-        title: String,
-        urlGetter: () -> String,
-        urlSetter: (String) -> Unit
-    ) {
-        val existingUsername = connSettings.state.nexusUsername
-        val statusLabel = JLabel("")
-        var currentUrl = urlGetter()
-        var currentUsername = existingUsername
-        var currentPassword = ""
-        var passwordField: JPasswordField? = null
-
-        collapsibleGroup(title) {
-            row("Registry URL:") {
-                textField()
-                    .columns(40)
-                    .bindText(urlGetter, urlSetter)
-                    .onChanged { field -> currentUrl = field.text }
-                    .validationOnApply {
-                        val url = it.text.trim()
-                        if (url.isNotBlank() && !url.startsWith("https://")) {
-                            warning("Using HTTP is insecure. Credentials will be sent in plaintext. Use HTTPS instead.")
-                        } else null
-                    }
-                    .comment("e.g., https://nexus.company.com/repository/docker-hosted")
-            }
-            row("Username:") {
-                textField()
-                    .columns(40)
-                    .applyToComponent {
-                        text = existingUsername
-                    }
-                    .onChanged { field ->
-                        currentUsername = field.text
-                        if (!isInitializing) {
-                            pendingNexusUsername = field.text
-                        }
-                    }
-            }
-            row("Password:") {
-                passwordField()
-                    .columns(40)
-                    .applyToComponent {
-                        passwordField = this
-                    }
-                    .onChanged { field ->
-                        val newPassword = String(field.password)
-                        currentPassword = newPassword
-                        if (!isInitializing) {
-                            pendingNexusPassword = newPassword
-                        }
-                    }
-            }
-            row {
-                button("Test Connection") {
-                    val url = currentUrl.trim()
-                    val user = currentUsername.trim()
-                    val pass = currentPassword.ifBlank { credentialStore.getNexusPassword() }
-                    if (url.isBlank() || user.isBlank() || pass.isNullOrBlank()) {
-                        statusLabel.text = "Please enter URL, username, and password"
-                        return@button
-                    }
-                    statusLabel.text = "Testing..."
-                    runBackgroundableTask("Testing $title", project, false) {
-                        val result = runBlockingCancellable {
-                            authTestService.testConnection(ServiceType.NEXUS, url, pass, username = user)
-                        }
-                        invokeLater {
-                            statusLabel.text = when (result) {
-                                is ApiResult.Success -> "\u2713 Connected successfully"
-                                is ApiResult.Error -> "\u2717 ${result.message}"
-                            }
-                        }
-                    }
-                }
-                cell(statusLabel)
-            }
-        }
-
-        // Load existing password in background to avoid blocking EDT on PasswordSafe read
-        ApplicationManager.getApplication().executeOnPooledThread {
-            val existingPassword = credentialStore.getNexusPassword() ?: ""
-            if (existingPassword.isNotBlank()) {
-                currentPassword = existingPassword
-                invokeLater {
-                    passwordField?.text = existingPassword
-                }
-            }
-        }
-    }
 }

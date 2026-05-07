@@ -41,7 +41,6 @@ class WorkflowSettingsConfigurable(
             "Bitbucket" to cs.bitbucketUrl,
             "SonarQube" to cs.sonarUrl,
             "Sourcegraph" to cs.sourcegraphUrl,
-            "Nexus" to cs.nexusUrl,
         )
 
         for ((name, url) in services) {

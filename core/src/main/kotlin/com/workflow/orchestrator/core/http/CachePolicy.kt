@@ -100,9 +100,6 @@ object CachePolicyRegistry {
             Rule(Regex("""/\.api/llm/chat"""), CachePolicy.NEVER),
             Rule(Regex("""/\.api/client-config"""), CachePolicy(600)),
             Rule(Regex("""/\.api/llm/models"""), CachePolicy(600))
-        ),
-        ServiceType.NEXUS to listOf(
-            Rule(Regex("""/service/rest/v1/search"""), CachePolicy(120))
         )
     )
 

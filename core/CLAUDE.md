@@ -24,7 +24,6 @@ Universal return type for service operations. `data: T` for UI, `summary: String
 
 Shared `ConnectionPool(5, 3min)` base client. Per-service clients via `clientFor(ServiceType)` with correct auth scheme:
 - `BEARER` — Jira, Bamboo, Bitbucket, SonarQube
-- `BASIC` — Nexus
 - `TOKEN` — Sourcegraph
 
 Includes `RetryInterceptor` on all clients.
@@ -42,7 +41,7 @@ Activity-aware polling: `baseIntervalMs` (default 30s), `maxIntervalMs` (default
 
 ## Settings
 
-- `ConnectionSettings` — application-level (shared across projects): service URLs, Nexus username
+- `ConnectionSettings` — application-level (shared across projects): service URLs (Jira, Bamboo, Bitbucket, SonarQube, Sourcegraph), Bitbucket username
 - `PluginSettings` — project-level: plan keys, polling intervals, feature toggles, docker tag key, sonar project key
 
 ### PR creation settings

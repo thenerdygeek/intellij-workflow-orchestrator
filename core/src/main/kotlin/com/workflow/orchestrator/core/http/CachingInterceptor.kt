@@ -43,7 +43,6 @@ class CachingInterceptor(private val service: ServiceType) : Interceptor {
         ServiceType.BITBUCKET -> "bitbucket"
         ServiceType.SONARQUBE -> "sonar"
         ServiceType.SOURCEGRAPH -> "sourcegraph"
-        ServiceType.NEXUS -> "nexus"
     }
 
     override fun intercept(chain: Interceptor.Chain): Response {

@@ -46,7 +46,7 @@ import javax.swing.JSeparator
  *
  * Covers Docker tag extraction fields and the Automation Suites picker UI.
  * Bamboo connection details live on the Connections page; this page assumes
- * Bamboo and Nexus are already configured and shows a status banner at the top.
+ * Bamboo is already configured and shows a status banner at the top.
  *
  * Note: The Automation Suites panel is a custom Swing component (ported
  * verbatim from [CiCdConfigurable]) because Kotlin UI DSL v2 cannot

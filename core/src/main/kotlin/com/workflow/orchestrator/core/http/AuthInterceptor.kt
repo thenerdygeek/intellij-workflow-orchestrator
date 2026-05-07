@@ -4,7 +4,7 @@ import com.intellij.openapi.diagnostic.Logger
 import okhttp3.Interceptor
 import okhttp3.Response
 
-enum class AuthScheme { BEARER, BASIC, TOKEN }
+enum class AuthScheme { BEARER, TOKEN }
 
 class AuthInterceptor(
     private val tokenProvider: () -> String?,
@@ -21,7 +21,6 @@ class AuthInterceptor(
             log.debug("[Core:Auth] Adding ${scheme.name} auth header for request to ${originalRequest.url.host}")
             val headerValue = when (scheme) {
                 AuthScheme.BEARER -> "Bearer $token"
-                AuthScheme.BASIC -> "Basic $token" // token is pre-encoded base64(username:password)
                 AuthScheme.TOKEN -> "token $token"
             }
             originalRequest.newBuilder()

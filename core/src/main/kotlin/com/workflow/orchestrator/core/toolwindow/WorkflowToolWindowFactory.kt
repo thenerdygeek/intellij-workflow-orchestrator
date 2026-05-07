@@ -410,7 +410,7 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
         val c = settings.connections
         return buildString {
             // Connection URLs
-            append("${c.jiraUrl}|${c.bambooUrl}|${c.sonarUrl}|${c.bitbucketUrl}|${c.sourcegraphUrl}|${c.nexusUrl}")
+            append("${c.jiraUrl}|${c.bambooUrl}|${c.sonarUrl}|${c.bitbucketUrl}|${c.sourcegraphUrl}")
             // Board config
             append("|board=${s.jiraBoardId}|boardType=${s.jiraBoardType}|boardName=${s.jiraBoardName}")
             // Keys that affect tab content

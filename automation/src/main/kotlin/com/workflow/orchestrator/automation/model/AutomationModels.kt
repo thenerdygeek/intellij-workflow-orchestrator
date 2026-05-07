@@ -47,6 +47,12 @@ enum class QueueEntryStatus {
     RUNNING,
     COMPLETED,
     FAILED_TO_TRIGGER,
+    // Kept for backwards-compat with pre-L3 persisted SQLite rows.
+    // TagHistoryService.getActiveQueueEntries() deserialises via valueOf(); removing this
+    // value would throw IllegalArgumentException on IDE startup for any user with a
+    // persisted entry in this terminal state. No new entries are set to TAG_INVALID (L2 removed
+    // the tag-validation flow). Safe to drop in a future release once a DB migration is added.
+    @Deprecated("No new entries use this status. Retained only for safe deserialisation of pre-L3 SQLite rows.")
     TAG_INVALID,
     PLAN_UNAVAILABLE,
     STALE,

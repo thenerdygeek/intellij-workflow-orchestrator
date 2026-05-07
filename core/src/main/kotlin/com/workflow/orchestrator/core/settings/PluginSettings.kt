@@ -104,6 +104,14 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var coverageGutterMarkersEnabled by property(false)
         var sonarIntentionActionEnabled by property(false)
         var sonarInlineAnnotationsEnabled by property(false)
+        /**
+         * Last user-chosen Sonar Quality tab mode (0=unset/follow heuristic,
+         * 1=Overall, 2=NewCode). On unset, the panel defaults to NewCode for
+         * non-main branches and Overall on main. On set, the user's choice wins
+         * across IDE restarts. Stored as Int because BaseState's `property` doesn't
+         * have a nullable Boolean delegate.
+         */
+        var sonarPreferredCodeMode by property(0)
 
         // Automation
         var tagHistoryMaxEntries by property(5)
@@ -310,8 +318,7 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
                     gs.bambooUrl.isNotBlank() ||
                     gs.bitbucketUrl.isNotBlank() ||
                     gs.sonarUrl.isNotBlank() ||
-                    gs.sourcegraphUrl.isNotBlank() ||
-                    gs.nexusUrl.isNotBlank()
+                    gs.sourcegraphUrl.isNotBlank()
         }
 
     // ---- Multi-repo convenience accessors ----

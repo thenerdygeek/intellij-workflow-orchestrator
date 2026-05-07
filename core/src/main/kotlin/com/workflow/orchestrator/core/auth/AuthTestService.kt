@@ -24,8 +24,7 @@ class AuthTestService {
         .build()
 
     /**
-     * @param token For most services, the PAT. For Nexus, the password.
-     * @param username Only used for Nexus (which requires username + password).
+     * @param token The PAT / access token for the service.
      */
     suspend fun testConnection(
         serviceType: ServiceType,
@@ -241,21 +240,14 @@ class AuthTestService {
      *
      * - Jira Server, Bamboo, Bitbucket, SonarQube: Bearer PAT
      * - Sourcegraph: "token <access_token>" (Sourcegraph-specific format)
-     * - Nexus Docker Registry: Basic auth with token as username, empty password
      */
     private fun buildAuthHeader(serviceType: ServiceType, token: String, username: String? = null): String = when (serviceType) {
         ServiceType.SOURCEGRAPH -> "token $token"
-        ServiceType.NEXUS -> {
-            val user = username ?: ""
-            "Basic " + java.util.Base64.getEncoder()
-                .encodeToString("$user:$token".toByteArray())
-        }
         else -> "Bearer $token"
     }
 
     private fun authSchemeLabel(serviceType: ServiceType): String = when (serviceType) {
         ServiceType.SOURCEGRAPH -> "token"
-        ServiceType.NEXUS -> "Basic"
         else -> "Bearer"
     }
 
@@ -323,6 +315,5 @@ class AuthTestService {
         ServiceType.SONARQUBE -> "/api/authentication/validate"
         ServiceType.BITBUCKET -> "/rest/api/1.0/users"
         ServiceType.SOURCEGRAPH -> "/.api/client-config"
-        ServiceType.NEXUS -> "/v2/"
     }
 }

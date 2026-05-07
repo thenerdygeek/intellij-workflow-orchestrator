@@ -191,7 +191,7 @@ graph TD
             <tr><td><code>:sonar</code></td><td>Quality tab (overview, issues, coverage), gutter markers, ExternalAnnotator, editor banners, coverage badges</td></tr>
             <tr><td><code>:cody</code></td><td>Standalone Cody CLI agent (JSON-RPC over stdio), fix/generate actions, commit message and PR description generation</td></tr>
             <tr><td><code>:pullrequest</code></td><td>PR dashboard with list and detail views, PR creation via Bitbucket API, PR status tracking</td></tr>
-            <tr><td><code>:automation</code></td><td>Docker tag staging, Nexus validation, drift detector, conflict detector, smart queue, config persistence</td></tr>
+            <tr><td><code>:automation</code></td><td>Docker tag staging, drift detector, conflict detector, smart queue, config persistence</td></tr>
             <tr><td><code>:handover</code></td><td>Jira closure comment, Cody pre-review, copyright fix panel, time log, QA clipboard</td></tr>
             <tr><td><code>:git-integration</code></td><td>Git branch change listeners, diff provider, branch-to-ticket resolution</td></tr>
             <tr><td><code>:agent</code></td><td>AI coding agent &mdash; ReAct loop, 52 tools, worker delegation, plan persistence, JCEF chat UI, skill system, cross-session memory</td></tr>
@@ -410,7 +410,6 @@ sequenceDiagram
     participant BB as Bitbucket
     participant Auto as Automation Tab
     participant Bamboo as Bamboo
-    participant Nexus as Nexus Registry
     participant HO as Handover Tab
     participant Jira as Jira Server
 
@@ -420,7 +419,6 @@ sequenceDiagram
     PR->>PR: emit(PullRequestCreated)
 
     Dev->>Auto: Select docker tags
-    Auto->>Nexus: Validate tags (HEAD manifest)
     Dev->>Auto: Queue automation suite
     Auto->>Bamboo: POST /queue with dockerTagsAsJson
     Auto->>Auto: emit(AutomationTriggered)
@@ -569,7 +567,7 @@ flowchart TD
         </div>
 
         <h3>Extension-Point Glue Folders</h3>
-        <p>Folders <code>vcs/</code>, <code>search/</code>, <code>tasks/</code>, <code>run/</code>, and <code>settings/</code> are IntelliJ extension-point integrations. They must delegate all HTTP and business logic to the module&rsquo;s <code>service/</code> layer &mdash; no direct <code>ApiClient</code> construction, no raw OkHttp, no <code>runBlocking</code> in Swing. The Phase 2 audit (2026-04-24) enforced this across <code>:jira</code>, <code>:bamboo</code>, and <code>:automation</code>. After Phase 2, all Jira HTTP goes through <code>HttpClientFactory.clientFor(ServiceType.JIRA)</code> and all Nexus HTTP through <code>ServiceType.NEXUS</code>, enabling Phase 3 caching to install at a single interceptor point.</p>
+        <p>Folders <code>vcs/</code>, <code>search/</code>, <code>tasks/</code>, <code>run/</code>, and <code>settings/</code> are IntelliJ extension-point integrations. They must delegate all HTTP and business logic to the module&rsquo;s <code>service/</code> layer &mdash; no direct <code>ApiClient</code> construction, no raw OkHttp, no <code>runBlocking</code> in Swing. The Phase 2 audit (2026-04-24) enforced this across <code>:jira</code>, <code>:bamboo</code>, and <code>:automation</code>. After Phase 2, all Jira HTTP goes through <code>HttpClientFactory.clientFor(ServiceType.JIRA)</code>, enabling Phase 3 caching to install at a single interceptor point.</p>
     </div>
 </details>
 
@@ -919,7 +917,6 @@ flowchart TD
         BAMBOO["Bamboo Server (Bearer)"]
         SONAR["SonarQube (Bearer)"]
         BB["Bitbucket Server (Bearer)"]
-        NEXUS["Nexus Registry (Basic)"]
         SG["Sourcegraph (Token)"]
     end
 
@@ -927,14 +924,12 @@ flowchart TD
     RETRY -->|HTTPS| BAMBOO
     RETRY -->|HTTPS| SONAR
     RETRY -->|HTTPS| BB
-    RETRY -->|HTTPS| NEXUS
     CODY_P -->|"stdio JSON-RPC"| SG
 
     style JIRA fill:#6b2027,stroke:#f48771,color:#d4d4d4
     style BAMBOO fill:#6b2027,stroke:#f48771,color:#d4d4d4
     style SONAR fill:#6b2027,stroke:#f48771,color:#d4d4d4
     style BB fill:#6b2027,stroke:#f48771,color:#d4d4d4
-    style NEXUS fill:#6b2027,stroke:#f48771,color:#d4d4d4
     style SG fill:#6b2027,stroke:#f48771,color:#d4d4d4
     style HCF fill:#264f78,stroke:#569cd6,color:#d4d4d4
         </div>
@@ -946,7 +941,6 @@ flowchart TD
             <tr><td>Bamboo Server</td><td>Bearer PAT</td><td><code>Authorization: Bearer &lt;PAT&gt;</code></td><td>PasswordSafe</td></tr>
             <tr><td>SonarQube</td><td>Bearer Token</td><td><code>Authorization: Bearer &lt;token&gt;</code></td><td>PasswordSafe</td></tr>
             <tr><td>Bitbucket Server</td><td>Bearer Token</td><td><code>Authorization: Bearer &lt;token&gt;</code></td><td>PasswordSafe</td></tr>
-            <tr><td>Nexus Registry</td><td>Basic Auth</td><td><code>Authorization: Basic &lt;b64&gt;</code></td><td>PasswordSafe</td></tr>
             <tr><td>Sourcegraph/Cody</td><td>Access Token</td><td>ExtensionConfiguration.accessToken</td><td>PasswordSafe</td></tr>
         </table>
     </div>
@@ -965,7 +959,6 @@ flowchart LR
         BASE --> BC["Bamboo Client (Bearer)"]
         BASE --> SC["Sonar Client (Bearer)"]
         BASE --> BBC["Bitbucket Client (Bearer)"]
-        BASE --> NC["Nexus Client (Basic)"]
     end
 
     subgraph Shared
@@ -1093,7 +1086,7 @@ graph TD
     WF --> W3["Time tracking config"]
 
     CICD --> CD1["Bamboo plans"]
-    CICD --> CD2["Automation suite, Nexus"]
+    CICD --> CD2["Automation suite"]
     CICD --> CD3["Polling intervals"]
 
     AI --> A1["Cody CLI path"]
