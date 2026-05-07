@@ -99,7 +99,7 @@ Common optional: repo_name for multi-repo projects.
             ),
             "branch" to ParameterProperty(
                 type = "string",
-                description = "Optional branch name — for issues, quality_gate, coverage, project_measures, source_lines, issues_paged, security_hotspots, duplications. Use project_context tool to discover current branch. For local_analysis: omit to auto-derive from current Git HEAD; protected names (main/master/develop/release/*/hotfix/*/trunk) are auto-redirected to 'local-scratch-<name>'."
+                description = "Optional branch name — for issues, quality_gate, coverage, project_measures, source_lines, issues_paged, security_hotspots, duplications. Use project_context tool to discover current branch. For local_analysis: omit to auto-derive from current Git HEAD; protected names (main/master/develop/release/*/hotfix/*/trunk) are auto-redirected to 'local-scratch-<name>'. When include_files=true on the 'branches' action, this scopes the file-list query."
             ),
             "from" to ParameterProperty(
                 type = "string",

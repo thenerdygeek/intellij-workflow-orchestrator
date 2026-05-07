@@ -213,7 +213,7 @@ description optional: for approval dialog on write actions.
                         val devStatusDeferred = if (includeDevStatus) async { service.getFullDevStatus(key) } else null
                         val remoteLinksDeferred = if (includeRemoteLinks) async { service.getRemoteLinks(key) } else null
                         val historyDeferred = if (includeHistory) async { service.getTicketHistory(key) } else null
-                        val projectKey = key.substringBefore("-")
+                        val projectKey = key.substringBefore("-").takeIf { it != key }
                         val permsDeferred = if (includePermissions) async { service.getMyPermissions(projectKey) } else null
 
                         val ticketResult = ticketDeferred.await()
@@ -764,8 +764,10 @@ description optional: for approval dialog on write actions.
 
     private fun formatRemoteLinks(links: List<com.workflow.orchestrator.core.model.jira.RemoteLinkData>): String {
         if (links.isEmpty()) return "Remote Links: (none)"
-        val lines = links.map { "• [${it.applicationName ?: it.applicationType ?: "link"}] ${it.title ?: "(no title)"} → ${it.url}" }
-        return "Remote Links:\n" + lines.joinToString("\n")
+        val cap = 20
+        val lines = links.take(cap).map { "• [${it.applicationName ?: it.applicationType ?: "link"}] ${it.title ?: "(no title)"} → ${it.url}" }
+        val tail = if (links.size > cap) "\n  …(${links.size - cap} more)" else ""
+        return "Remote Links (showing ${minOf(cap, links.size)} of ${links.size}):\n" + lines.joinToString("\n") + tail
     }
 
     private fun formatTicketHistory(history: List<com.workflow.orchestrator.core.model.jira.TicketHistoryEntry>): String {
@@ -799,7 +801,7 @@ description optional: for approval dialog on write actions.
             val devStatusDeferred = if (includeDevStatus) async { service.getFullDevStatus(key) } else null
             val remoteLinksDeferred = if (includeRemoteLinks) async { service.getRemoteLinks(key) } else null
             val historyDeferred = if (includeHistory) async { service.getTicketHistory(key) } else null
-            val projectKey = key.substringBefore("-")
+            val projectKey = key.substringBefore("-").takeIf { it != key }
             val permsDeferred = if (includePermissions) async { service.getMyPermissions(projectKey) } else null
 
             val ticketResult = ticketDeferred.await()

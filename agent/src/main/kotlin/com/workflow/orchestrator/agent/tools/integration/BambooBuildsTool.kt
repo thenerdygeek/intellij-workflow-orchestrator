@@ -254,7 +254,7 @@ description optional: for approval dialog on trigger/stop/cancel.
     private fun formatBuildCommits(commits: List<BuildChangeData>): String {
         if (commits.isEmpty()) return "Commits: (none)"
         val lines = commits.take(50).map { c ->
-            "• ${c.changesetId.take(8)} · ${c.fullName.ifBlank { c.userName }.ifBlank { "—" }} · ${c.comment.lineSequence().firstOrNull() ?: ""}"
+            "• ${c.changesetId.take(8)} · ${c.fullName.ifBlank { c.userName }.ifBlank { "—" }} · ${(c.comment.lineSequence().firstOrNull() ?: "").take(200)}"
         }
         val tail = if (commits.size > 50) "\n  …(${commits.size - 50} more commits)" else ""
         return "Commits (showing ${minOf(50, commits.size)} of ${commits.size}):\n" + lines.joinToString("\n") + tail

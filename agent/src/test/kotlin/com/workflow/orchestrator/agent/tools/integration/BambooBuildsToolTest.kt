@@ -89,6 +89,41 @@ class BambooBuildsToolTest {
         coVerify(exactly = 0) { service.getBuildChanges(any()) }
     }
 
+    // ── fullName blank → falls back to userName ───────────────────────────────
+
+    @Test
+    fun `get_build with include_commits=true falls back to userName when fullName is blank`() = runTest {
+        val service = mockk<BambooService>()
+        coEvery { service.getBuild("PLAN-X-42") } returns buildResult()
+        coEvery { service.getBuildChanges("PLAN-X-42") } returns ToolResult(
+            data = listOf(
+                BuildChangeData(
+                    userName = "jdoe",
+                    fullName = "",
+                    comment = "Refactor login service",
+                    changesetId = "deadbeef1234",
+                    commitUrl = "https://bitbucket.example.com/commits/deadbeef1234",
+                    date = "2026-05-07T11:00:00.000+0000"
+                )
+            ),
+            summary = "1 commit(s) for PLAN-X-42",
+            isError = false
+        )
+
+        val result = tool.executeGetBuildForTest(
+            buildKey = "PLAN-X-42",
+            includeCommits = true,
+            service = service
+        )
+
+        assertFalse(result.isError)
+        assertTrue(result.content.contains("jdoe"), "content must contain userName when fullName is blank")
+        assertFalse(
+            result.content.contains("jdoe").not() && result.content.contains("—"),
+            "em-dash sentinel must NOT appear when userName fallback fires"
+        )
+    }
+
     // ── include_commits=true with empty change list shows "(none)" ────────────
 
     @Test
