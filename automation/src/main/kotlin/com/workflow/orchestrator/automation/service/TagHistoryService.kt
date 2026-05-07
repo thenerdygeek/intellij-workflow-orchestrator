@@ -1,11 +1,9 @@
 package com.workflow.orchestrator.automation.service
 
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
-import com.intellij.openapi.project.Project
-import com.workflow.orchestrator.automation.model.HistoryEntry
 import com.workflow.orchestrator.automation.model.QueueEntry
 import com.workflow.orchestrator.automation.model.QueueEntryStatus
-import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -14,20 +12,17 @@ import java.sql.DriverManager
 import java.time.Instant
 
 @Service(Service.Level.PROJECT)
-class TagHistoryService {
+class TagHistoryService : Disposable {
 
     private val dbPath: String
-    private val project: Project?
 
     /** Project service constructor — used by IntelliJ DI. */
-    constructor(project: Project) {
-        this.project = project
+    constructor(project: com.intellij.openapi.project.Project) {
         this.dbPath = File(project.basePath ?: ".", ".idea${File.separator}workflow-orchestrator${File.separator}automation.db").path
     }
 
     /** Test constructor — allows injecting explicit path. */
     constructor(dbPath: String) {
-        this.project = null
         this.dbPath = dbPath
     }
 
@@ -89,92 +84,6 @@ class TagHistoryService {
             stmt.executeUpdate("""
                 CREATE INDEX IF NOT EXISTS idx_queue_status ON queue_entries(status)
             """)
-            stmt.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS automation_history (
-                    id TEXT PRIMARY KEY,
-                    suite_plan_key TEXT NOT NULL,
-                    docker_tags_json TEXT NOT NULL,
-                    variables_json TEXT NOT NULL,
-                    stages_json TEXT NOT NULL,
-                    triggered_at INTEGER NOT NULL,
-                    build_result_key TEXT,
-                    build_passed INTEGER,
-                    created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
-                )
-            """)
-            stmt.executeUpdate("""
-                CREATE INDEX IF NOT EXISTS idx_history_suite ON automation_history(suite_plan_key, triggered_at DESC)
-            """)
-        }
-    }
-
-    fun saveHistory(entry: HistoryEntry) {
-        connection.prepareStatement("""
-            INSERT OR REPLACE INTO automation_history
-            (id, suite_plan_key, docker_tags_json, variables_json, stages_json,
-             triggered_at, build_result_key, build_passed)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """).use { stmt ->
-            stmt.setString(1, entry.id)
-            stmt.setString(2, entry.suitePlanKey)
-            stmt.setString(3, entry.dockerTagsJson)
-            stmt.setString(4, json.encodeToString(entry.variables))
-            stmt.setString(5, json.encodeToString(entry.stages))
-            stmt.setLong(6, entry.triggeredAt.epochSecond)
-            stmt.setString(7, entry.buildResultKey)
-            if (entry.buildPassed != null) stmt.setInt(8, if (entry.buildPassed) 1 else 0)
-            else stmt.setNull(8, java.sql.Types.INTEGER)
-            stmt.executeUpdate()
-        }
-    }
-
-    fun getHistory(
-        suitePlanKey: String,
-        limit: Int = project?.let { PluginSettings.getInstance(it).state.tagHistoryMaxEntries } ?: 5
-    ): List<HistoryEntry> {
-        return connection.prepareStatement("""
-            SELECT * FROM automation_history
-            WHERE suite_plan_key = ?
-            ORDER BY triggered_at DESC
-            LIMIT ?
-        """).use { stmt ->
-            stmt.setString(1, suitePlanKey)
-            stmt.setInt(2, limit)
-            val rs = stmt.executeQuery()
-            val results = mutableListOf<HistoryEntry>()
-            while (rs.next()) {
-                results.add(
-                    HistoryEntry(
-                        id = rs.getString("id"),
-                        suitePlanKey = rs.getString("suite_plan_key"),
-                        dockerTagsJson = rs.getString("docker_tags_json"),
-                        variables = json.decodeFromString(rs.getString("variables_json")),
-                        stages = json.decodeFromString(rs.getString("stages_json")),
-                        triggeredAt = Instant.ofEpochSecond(rs.getLong("triggered_at")),
-                        buildResultKey = rs.getString("build_result_key"),
-                        buildPassed = rs.getObject("build_passed")?.let { (it as Int) == 1 }
-                    )
-                )
-            }
-            results
-        }
-    }
-
-    fun loadAsBaseline(entryId: String): Map<String, String> {
-        return connection.prepareStatement(
-            "SELECT docker_tags_json FROM automation_history WHERE id = ?"
-        ).use { stmt ->
-            stmt.setString(1, entryId)
-            val rs = stmt.executeQuery()
-            if (rs.next()) {
-                try {
-                    json.decodeFromString<Map<String, String>>(rs.getString("docker_tags_json"))
-                } catch (e: Exception) {
-                    emptyMap()
-                }
-            } else {
-                emptyMap()
-            }
         }
     }
 
@@ -278,5 +187,15 @@ class TagHistoryService {
     fun close() {
         if (!connectionInitialized) return
         try { connection.close() } catch (_: Exception) {}
+    }
+
+    /**
+     * Closes the SQLite connection on project close (A-P1-5).
+     * IntelliJ's `Service.Level.PROJECT` lifecycle disposes services with the project,
+     * so this releases the WAL/SHM file locks and prevents `database is locked` errors
+     * when the same project is reopened in another IDE window.
+     */
+    override fun dispose() {
+        close()
     }
 }

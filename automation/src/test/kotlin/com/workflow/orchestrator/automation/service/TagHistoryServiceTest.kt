@@ -1,6 +1,5 @@
 package com.workflow.orchestrator.automation.service
 
-import com.workflow.orchestrator.automation.model.HistoryEntry
 import com.workflow.orchestrator.automation.model.QueueEntry
 import com.workflow.orchestrator.automation.model.QueueEntryStatus
 import org.junit.jupiter.api.AfterEach
@@ -26,57 +25,6 @@ class TagHistoryServiceTest {
     @AfterEach
     fun tearDown() {
         service.close()
-    }
-
-    @Test
-    fun `saveHistory and getHistory round-trip`() {
-        val entry = HistoryEntry(
-            id = "hist-1", suitePlanKey = "PROJ-AUTO",
-            dockerTagsJson = """{"auth":"2.4.0"}""",
-            variables = mapOf("suiteType" to "regression"),
-            stages = listOf("QA Automation"),
-            triggeredAt = Instant.now(),
-            buildResultKey = "PROJ-AUTO-847", buildPassed = true
-        )
-        service.saveHistory(entry)
-
-        val history = service.getHistory("PROJ-AUTO")
-        assertEquals(1, history.size)
-        assertEquals("hist-1", history[0].id)
-        assertEquals("regression", history[0].variables["suiteType"])
-        assertTrue(history[0].buildPassed!!)
-    }
-
-    @Test
-    fun `getHistory limits to 5 entries per suite`() {
-        for (i in 1..8) {
-            service.saveHistory(
-                HistoryEntry(
-                    id = "hist-$i", suitePlanKey = "PROJ-AUTO",
-                    dockerTagsJson = """{"auth":"$i.0.0"}""",
-                    variables = emptyMap(), stages = emptyList(),
-                    triggeredAt = Instant.ofEpochSecond(i.toLong() * 1000),
-                    buildResultKey = null, buildPassed = null
-                )
-            )
-        }
-
-        val history = service.getHistory("PROJ-AUTO", limit = 5)
-        assertEquals(5, history.size)
-        assertEquals("hist-8", history[0].id)
-    }
-
-    @Test
-    fun `getHistory separates suites`() {
-        service.saveHistory(
-            HistoryEntry("h1", "SUITE-A", "{}", emptyMap(), emptyList(), Instant.now(), null, null)
-        )
-        service.saveHistory(
-            HistoryEntry("h2", "SUITE-B", "{}", emptyMap(), emptyList(), Instant.now(), null, null)
-        )
-
-        assertEquals(1, service.getHistory("SUITE-A").size)
-        assertEquals(1, service.getHistory("SUITE-B").size)
     }
 
     @Test
@@ -148,28 +96,27 @@ class TagHistoryServiceTest {
     }
 
     @Test
-    fun `loadAsBaseline returns tag map from history entry`() {
-        service.saveHistory(
-            HistoryEntry(
-                "h1", "PROJ-AUTO",
-                """{"auth":"2.4.0","payments":"2.3.1"}""",
-                emptyMap(), emptyList(), Instant.now(), null, null
-            )
-        )
-
-        val tags = service.loadAsBaseline("h1")
-        assertEquals(2, tags.size)
-        assertEquals("2.4.0", tags["auth"])
-        assertEquals("2.3.1", tags["payments"])
-    }
-
-    @Test
-    fun `loadAsBaseline returns empty map for unknown entry`() {
-        assertTrue(service.loadAsBaseline("unknown").isEmpty())
-    }
-
-    @Test
     fun `database integrity check passes on fresh DB`() {
         assertTrue(service.integrityCheck())
+    }
+
+    @Test
+    fun `dispose closes underlying connection (A-P1-5)`() {
+        // Force lazy connection initialization.
+        service.saveQueueEntry(
+            QueueEntry("q-1", "P", "{}", emptyMap(), emptyList(), Instant.now(), QueueEntryStatus.WAITING_LOCAL, null),
+            sequenceOrder = 1
+        )
+        // Reading any active state confirms the conn is live.
+        assertEquals(1, service.getActiveQueueEntries().size)
+
+        service.dispose()
+
+        // After dispose, integrityCheck on the closed connection throws SQLException —
+        // catching it is the only safe assertion since prepareStatement on a closed
+        // connection is itself the leak we wanted to prove was fixed.
+        assertThrows(java.sql.SQLException::class.java) {
+            service.integrityCheck()
+        }
     }
 }

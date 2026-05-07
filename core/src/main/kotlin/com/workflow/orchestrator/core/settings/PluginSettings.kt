@@ -69,10 +69,6 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         // Jira board type filter ("scrum", "kanban", or "" for all)
         var jiraBoardType by string("scrum")
 
-        // Coverage thresholds (percentage)
-        var coverageHighThreshold by property(80.0f)
-        var coverageMediumThreshold by property(50.0f)
-
         // HTTP timeouts (seconds) — applied to all API clients via HttpClientFactory
         var httpConnectTimeoutSeconds by property(10)
         var httpReadTimeoutSeconds by property(30)
@@ -114,7 +110,6 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var sonarPreferredCodeMode by property(0)
 
         // Automation
-        var tagHistoryMaxEntries by property(5)
         /** Canonical Bamboo plan variable carrying the Docker tags JSON payload.
          *  Probe-confirmed value: "DockerTagsAsJSON" (bundle-automation plan_variables_via_context.json).
          *  All readers must compare case-insensitively so user-configured variants still match. */

@@ -321,6 +321,55 @@ class TagBuilderServiceTest {
         assertNull(service.extractDockerTagFromLog(""))
     }
 
+    @Test
+    fun `A-P2-2 pre-release tags do not count as releases in baseline score`() = runTest {
+        // Two builds: build-A has clean releases ("2.4.0", "2.3.1"); build-B has
+        // pre-release tags ("2.4.0-rc1", "2.3.1-SNAPSHOT") that the old regex would
+        // wrongly match as releases. Tightened regex must score build-A strictly higher.
+        val builds = listOf(
+            makeBuildResultData(847, "Successful", listOf("Successful", "Successful")),
+            makeBuildResultData(848, "Successful", listOf("Successful", "Successful"))
+        )
+        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10, null, null) } returns ToolResult.success(
+            data = builds,
+            summary = "2 builds"
+        )
+        coEvery { bambooService.getBuildVariables("PROJ-AUTO-847") } returns ToolResult.success(
+            data = listOf(PlanVariableData("dockerTagsAsJson", """{"auth":"2.4.0","payments":"2.3.1"}""")),
+            summary = "1 var"
+        )
+        coEvery { bambooService.getBuildVariables("PROJ-AUTO-848") } returns ToolResult.success(
+            data = listOf(PlanVariableData("dockerTagsAsJson", """{"auth":"2.4.0-rc1","payments":"2.3.1-SNAPSHOT"}""")),
+            summary = "1 var"
+        )
+
+        val (ranked, _) = service.scoreAndRankRuns("PROJ-AUTO")
+
+        val a = ranked.first { it.buildNumber == 847 }
+        val b = ranked.first { it.buildNumber == 848 }
+        assertEquals(2, a.releaseTagCount, "Clean semver tags should count as releases")
+        assertEquals(0, b.releaseTagCount, "Pre-release tags must not count as releases")
+        assertTrue(a.score > b.score, "Build with clean releases should outrank pre-release build")
+    }
+
+    @Test
+    fun `A-P2-2 four-segment Maven-style version still counts as release`() = runTest {
+        // "1.2.3.4" is the Maven-style 4-segment release form — kept eligible.
+        val builds = listOf(makeBuildResultData(900, "Successful", listOf("Successful")))
+        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10, null, null) } returns ToolResult.success(
+            data = builds,
+            summary = "1 build"
+        )
+        coEvery { bambooService.getBuildVariables("PROJ-AUTO-900") } returns ToolResult.success(
+            data = listOf(PlanVariableData("dockerTagsAsJson", """{"auth":"1.2.3.4"}""")),
+            summary = "1 var"
+        )
+
+        val (ranked, _) = service.scoreAndRankRuns("PROJ-AUTO")
+
+        assertEquals(1, ranked.single().releaseTagCount)
+    }
+
     private fun makeBuildResultData(
         buildNumber: Int,
         state: String,

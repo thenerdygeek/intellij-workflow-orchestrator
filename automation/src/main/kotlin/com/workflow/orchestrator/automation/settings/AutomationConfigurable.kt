@@ -11,7 +11,6 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.COLUMNS_LARGE
-import com.intellij.ui.dsl.builder.bindIntText
 import com.intellij.ui.dsl.builder.bindText
 import com.intellij.ui.dsl.builder.columns
 import com.intellij.ui.dsl.builder.panel
@@ -120,12 +119,6 @@ class AutomationConfigurable(private val project: Project) : SearchableConfigura
                 }
             }
 
-            collapsibleGroup("Advanced") {
-                row("Tag history entries:") {
-                    intTextField(range = 1..50)
-                        .bindIntText(PluginSettings.getInstance(project).state::tagHistoryMaxEntries)
-                }
-            }
         }
         dialogPanel = dslPanel
 

@@ -81,6 +81,10 @@ class AutomationPanel(
     // State
     private var currentSuitePlanKey: String = ""
     private var currentBranchPlanKey: String = ""
+    // A-P1-6: monotonically incremented on each suite/branch switch so stale
+    // invokeLater handlers from prior selections drop their UI updates instead
+    // of clobbering the newer selection's state.
+    private var loadGeneration: Long = 0L
 
     init {
         border = JBUI.Borders.empty(4)
@@ -162,10 +166,8 @@ class AutomationPanel(
             onBranchSelected(item)
         }
 
-        // Wire queue/trigger callbacks
-        queueStatusPanel.onCancel = { onCancel() }
-        queueStatusPanel.onQueue = { onQueueRun() }
-        queueStatusPanel.onTriggerNow = { onTriggerNow() }
+        // QueueStatusPanel observes QueueService directly (A-P1-2); Cancel is wired
+        // inside the panel. Trigger Now / Queue Run live on the parent header above.
 
         Disposer.register(this, tagStagingPanel)
         Disposer.register(this, suiteConfigPanel)
@@ -196,10 +198,13 @@ class AutomationPanel(
     private fun onSuiteSelected(planKey: String) {
         currentSuitePlanKey = planKey
         currentBranchPlanKey = ""
+        // A-P1-6: bump the generation token so any in-flight suite/branch fetches
+        // from a previous selection short-circuit instead of overwriting the new state.
+        val token = ++loadGeneration
         statusLabel.text = "Loading branches..."
         statusLabel.foreground = StatusColors.INFO
         diagnosticPanel.isVisible = false
-        log.info("[Automation:UI] Suite selected: $planKey")
+        log.info("[Automation:UI] Suite selected: $planKey (gen=$token)")
 
         scope.launch {
             // Fetch branches for this suite plan
@@ -208,6 +213,10 @@ class AutomationPanel(
             log.info("[Automation:UI] Found ${branches.size} branches for $planKey")
 
             invokeLater {
+                if (token != loadGeneration) {
+                    log.info("[Automation:UI] Dropping stale branch result for $planKey (gen=$token, current=$loadGeneration)")
+                    return@invokeLater
+                }
                 suppressBranchListener = true
                 branchCombo.removeAllItems()
 
@@ -230,10 +239,14 @@ class AutomationPanel(
 
     private fun onBranchSelected(branch: BranchComboItem) {
         currentBranchPlanKey = branch.branchPlanKey
+        // A-P1-6: same token discipline as onSuiteSelected — a fast suite/branch
+        // toggle must not let an earlier branch's baseline-load result trample
+        // the current selection's UI state.
+        val token = ++loadGeneration
         statusLabel.text = "Loading..."
         statusLabel.foreground = StatusColors.INFO
         diagnosticPanel.isVisible = false
-        log.info("[Automation:UI] Branch selected: ${branch.branchName} (key=${branch.branchPlanKey})")
+        log.info("[Automation:UI] Branch selected: ${branch.branchName} (key=${branch.branchPlanKey}, gen=$token)")
 
         scope.launch {
             // Step 1: Load baseline with the selected branch plan key
@@ -253,6 +266,10 @@ class AutomationPanel(
 
             // Step 4: Update UI on EDT
             invokeLater {
+                if (token != loadGeneration) {
+                    log.info("[Automation:UI] Dropping stale baseline result (gen=$token, current=$loadGeneration)")
+                    return@invokeLater
+                }
                 tagStagingPanel.updateTags(tags)
 
                 if (!varsResult.isError) {
@@ -493,11 +510,6 @@ class AutomationPanel(
         statusLabel.foreground = JBColor(0x0969DA, 0x89b4fa)
         tabbedPane.selectedIndex = 1
         log.info("[Automation:UI] Run queued for suite $currentSuitePlanKey")
-    }
-
-    private fun onCancel() {
-        log.info("[Automation:UI] Cancel requested")
-        // TODO: cancel from QueueService or Bamboo
     }
 
     override fun dispose() {

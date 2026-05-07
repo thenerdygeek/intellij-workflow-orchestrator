@@ -37,7 +37,10 @@ class TagBuilderService {
         this.buildVariableName = buildVariableName
     }
     private val json = Json { ignoreUnknownKeys = true }
-    private val semverPattern = Regex("""^\d+\.\d+\.\d+.*$""")
+    // A-P2-2: reject pre-release / build-metadata suffixes so e.g. "1.2.3-rc1" or
+    // "1.2.3-SNAPSHOT" don't inflate the release-tag count and skew baseline scoring.
+    // 4th segment allowed for Maven-style "1.2.3.4" versions still treated as releases.
+    private val semverPattern = Regex("""^\d+\.\d+\.\d+(\.\d+)?$""")
 
     /**
      * Scores and ranks recent builds, collecting diagnostic info about each step.

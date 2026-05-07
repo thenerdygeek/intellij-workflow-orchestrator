@@ -9,8 +9,7 @@ Tag validation flow removed — Trigger Now does not pre-validate tags against a
 - `TagBuilderService` — builds `dockerTagsAsJson` payload (service-to-tag mappings)
 - `QueueService` — smart queue with position tracking, wait time estimation, auto-trigger. Uses platform-injected `cs: CoroutineScope`; pollers explicitly `cs.launch(Dispatchers.IO)` (HTTP/SQLite I/O, see `:core` "Service & threading conventions").
 - `DriftDetectorService` — no-op after registry calls removed; `isRegistryConfigured()` always returns false
-- `ConflictDetectorService` — detects conflicting tag selections
-- `TagHistoryService` — persists last 5 tag configurations
+- `TagHistoryService` — persists active queue entries for crash recovery (queue restart)
 - `AutomationSettingsService` — suite plan keys and configuration
 - `QueueRecoveryStartupActivity` — recovers queue state on IDE restart
 

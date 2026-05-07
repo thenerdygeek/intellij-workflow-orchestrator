@@ -98,17 +98,4 @@ class AutomationModelsTest {
         assertTrue(result.isStale)
     }
 
-    @Test
-    fun `Conflict captures overlap details`() {
-        val conflict = Conflict(
-            serviceName = "service-auth",
-            yourTag = "feature/PROJ-123-abc",
-            otherTag = "2.4.0",
-            triggeredBy = "dev-jones",
-            buildNumber = 848,
-            isRunning = true
-        )
-        assertTrue(conflict.isRunning)
-        assertEquals("dev-jones", conflict.triggeredBy)
-    }
 }

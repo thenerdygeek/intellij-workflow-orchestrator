@@ -237,12 +237,22 @@ class SuiteConfigPanel(
             }
         }
 
-        val config = automationSettings.getSuiteConfig(currentSuitePlanKey)
-        if (config != null) {
-            config.variables = vars.toMutableMap()
-            config.lastModified = System.currentTimeMillis()
-            automationSettings.saveSuiteConfig(config)
+        // A-P1-8: when getSuiteConfig returns null (suite missing from settings —
+        // e.g. user renamed it elsewhere or settings file got partly corrupted),
+        // persist a fresh SuiteConfig instead of silently dropping the user's edits.
+        val existing = automationSettings.getSuiteConfig(currentSuitePlanKey)
+        val config = existing ?: AutomationSettingsService.SuiteConfig(
+            planKey = currentSuitePlanKey,
+            displayName = currentSuitePlanKey
+        ).also {
+            log.warn(
+                "[Automation:Config] No SuiteConfig for '$currentSuitePlanKey' on persist; " +
+                "creating one to preserve user-edited variables (A-P1-8)"
+            )
         }
+        config.variables = vars.toMutableMap()
+        config.lastModified = System.currentTimeMillis()
+        automationSettings.saveSuiteConfig(config)
         log.debug("[Automation:Config] Persisted ${vars.size} variables for suite $currentSuitePlanKey")
     }
 

@@ -75,26 +75,6 @@ data class DriftResult(
     val isStale: Boolean
 )
 
-data class Conflict(
-    val serviceName: String,
-    val yourTag: String,
-    val otherTag: String,
-    val triggeredBy: String,
-    val buildNumber: Int,
-    val isRunning: Boolean
-)
-
-data class HistoryEntry(
-    val id: String,
-    val suitePlanKey: String,
-    val dockerTagsJson: String,
-    val variables: Map<String, String>,
-    val stages: List<String>,
-    val triggeredAt: Instant,
-    val buildResultKey: String?,
-    val buildPassed: Boolean?
-)
-
 /**
  * Diagnostic result from baseline loading — replaces opaque empty list.
  * Tells the UI exactly what happened and why.
