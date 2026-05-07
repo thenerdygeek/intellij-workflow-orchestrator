@@ -8,9 +8,10 @@ Each product has its own script, runnable independently:
 | Script | Status | Coverage |
 |---|---|---|
 | `probe_jira.py` | ✅ ready | Jira Server REST v2 + Agile + dev-status (internal) + candidate v3 + recommendations |
-| `probe_bitbucket.py` | ⏳ step 2 | Bitbucket Data Center `/rest/api/1.0/` + build-status + default-reviewers |
+| `probe_bitbucket.py` | ✅ ready | Bitbucket DC `/rest/api/1.0/` + capabilities + build-status + insights + Code Insights candidates |
+| `probe_bamboo.py` | ✅ ready | Bamboo Server / DC `/rest/api/latest/` — all 24 read-only `BambooApiClient` calls + 8 feature-discovery candidates (deploy, agent, queue, jiraIssues, comments, changes, labels) |
 
-Nexus has its own dir (`nexus-probe/`, step 3) because it's a different product family.
+Nexus has its own dir (`nexus-probe/`) because it's a different product family.
 
 ## Install
 
@@ -69,6 +70,52 @@ readable projects and tells you so explicitly.
 
 ```bash
 python probe_jira.py --url https://internal-jira/ --token <PAT> --no-verify ...
+```
+
+## Run — Bamboo
+
+### Quick: just detect your version
+
+```bash
+python probe_bamboo.py --url https://bamboo.company.com --token <PAT> --versions-only
+```
+
+This calls only `/rest/api/latest/info`, `/rest/api/latest/serverInfo` (alias
+check, usually 404), `/rest/api/latest/currentUser`, and
+`/rest/api/latest/info/configurationProperties` (admin-gated, expected 401 on
+non-admin tokens). Open `Result_N/summary.md` afterwards; the **Version
+detection** section shows the Bamboo version, build, and state. Paste that
+back into the chat so we know which feature set the deployment supports
+before doing deep API research.
+
+### Full sweep
+
+```bash
+python probe_bamboo.py \
+    --url https://bamboo.company.com \
+    --token <PAT> \
+    --plan-key PROJ-PLAN \
+    --result-key PROJ-PLAN-JOBSHORT-123 \
+    --project-key PROJ \
+    --branch-name feature/foo \
+    --commit-sha abc123def
+```
+
+Pick any real values you have access to. Anything you omit is recorded as
+`SKIP` in `summary.md` so the gap is visible — no failure. Use a **job-level**
+`--result-key` (e.g. `PROJ-PLAN-JOBSHORT-123`, not the plan-level
+`PROJ-PLAN-123`) to verify the build-log download endpoint returns the real
+~30KB log; plan-level keys yield a tiny wrapper.
+
+Coverage: 4 version probes + ~24 read-only `BambooApiClient` calls + 8
+candidate endpoints we don't currently use (deployment projects, agent
+list, build queue, Jira-issues per build, build comments, build VCS
+changes, build labels, label list).
+
+### Self-signed certificates
+
+```bash
+python probe_bamboo.py --url https://internal-bamboo/ --token <PAT> --no-verify ...
 ```
 
 ## What gets written
