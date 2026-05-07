@@ -1187,40 +1187,64 @@ class NexusProbe:
             category="feature",
             notes=["Unverified for 3.90; probe-and-see"],
         )
+        # Sonatype Firewall — paths confirmed by swagger.json from the user's
+        # 3.90.1 instance: /v1/firewall/* does NOT exist; the feature lives
+        # under /v1/malicious-risk/*. Two GET-able paths:
         self._rest_get(
             name="malicious_risk_disk",
             description="Malicious risk on disk (Sonatype Firewall)",
             path="/service/rest/v1/malicious-risk/risk-on-disk",
             category="feature",
-            notes=["Unverified for 3.90; admin-only-likely"],
+            notes=["Pro feature; admin-likely"],
         )
         self._rest_get(
+            name="malicious_risk_registries",
+            description="Registries with Sonatype Firewall scanning enabled",
+            path="/service/rest/v1/malicious-risk/enabledRegistries",
+            category="feature",
+            notes=["Pro feature; tells us which proxy registries have malware scanning on"],
+        )
+
+        # IQ Server link — separate API family (NOT firewall). 5 paths in
+        # /v1/iq/* per swagger.json; 2 are GET-readable (the rest are POSTs
+        # for enable/disable/verify-connection — skipped per read-only policy).
+        self._rest_get(
+            name="iq_audit",
+            description="Global IQ Server audit configuration",
+            path="/service/rest/v1/iq/audit",
+            category="feature",
+            notes=[
+                "Pro+IQ; tells us if IQ-server policy-driven artifact blocking is active "
+                "AND surfaces the configured server URL + audit mode."
+            ],
+        )
+        if maven_repo:
+            mv = urllib.parse.quote(maven_repo, safe="")
+            self._rest_get(
+                name=f"iq_audit_repo_{maven_repo}",
+                description=f"Per-repo IQ audit state for {maven_repo}",
+                path=f"/service/rest/v1/iq/audit/{mv}",
+                category="feature",
+                notes=["Per-repo IQ policy enforcement state"],
+            )
+
+        # Replication API — confirmed NOT in user's 3.90 swagger.json. The
+        # feature is admin-UI-only on this instance (Pro Replication is a
+        # separate licensed module). Probes left in place as 'unverified'
+        # capability markers — the 404 itself is the answer.
+        self._rest_get(
             name="replication_connection",
-            description="Replication connection config (Pro)",
+            description="Replication connection config (Pro Replication module)",
             path="/service/rest/v1/replication/connection",
             category="feature",
-            notes=["Unverified path — if 404, replication-via-REST not exposed in 3.90"],
+            notes=["Not in 3.90 swagger.json for this user — confirms admin-UI-only on this instance"],
         )
         self._rest_get(
             name="replication_group",
-            description="Replication group config (Pro)",
+            description="Replication group config (Pro Replication module)",
             path="/service/rest/v1/replication/group",
             category="feature",
-            notes=["Unverified path"],
-        )
-        self._rest_get(
-            name="firewall_audit_status",
-            description="Repository Firewall audit status (Pro+IQ)",
-            path="/service/rest/v1/firewall/audit-status",
-            category="feature",
-            notes=["Pro+IQ link; 404 if not configured"],
-        )
-        self._rest_get(
-            name="firewall_configuration",
-            description="Repository Firewall / IQ-server connection config (Pro+IQ)",
-            path="/service/rest/v1/firewall/configuration",
-            category="feature",
-            notes=["Pro+IQ; tells us if policy-driven artifact blocking is active"],
+            notes=["Not in 3.90 swagger.json for this user — confirms admin-UI-only on this instance"],
         )
 
     # -- repo lookup helper for per-format config probe ----------------------
