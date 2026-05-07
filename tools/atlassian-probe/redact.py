@@ -596,7 +596,16 @@ def process_file(raw_path: Path, out_path: Path, red: Redactor) -> None:
         redacted_body = red.redact_node(raw_body)
 
     out = {"result": result_meta, "raw_body": redacted_body}
-    out_path.write_text(json.dumps(out, indent=2, default=str), encoding="utf-8")
+    out_text = json.dumps(out, indent=2, default=str)
+    # Safety-net: apply CUSTOM_REDACT_WORDS markers to the full serialized
+    # output to catch anything the structured pass didn't reach — result_meta
+    # fields outside the allowlist (name/category/method/...), serverInfo's
+    # deliberately-preserved product fields, and JSON dict keys. Idempotent:
+    # already-emitted fake strings short-circuit in map_custom_word via
+    # _redacted_values, so structured replacements (KEY-N, <commit-N>, etc.)
+    # pass through unchanged.
+    out_text = red.smap.apply_custom_words(out_text)
+    out_path.write_text(out_text, encoding="utf-8")
 
 
 def redact_filename(name: str, smap: SecretMap) -> str:
