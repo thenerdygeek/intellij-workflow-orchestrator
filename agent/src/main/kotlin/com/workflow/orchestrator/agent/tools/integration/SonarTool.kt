@@ -19,6 +19,7 @@ import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.core.util.BuildToolExecutableResolver
 import com.workflow.orchestrator.core.util.HtmlEscape
 import com.workflow.orchestrator.core.workflow.WorkflowContextService
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -554,7 +555,7 @@ Common optional: repo_name for multi-repo projects.
         }.apply { isDaemon = true; name = "sonar-scanner-reader"; start() }
 
         val completed = try {
-            runInterruptible(kotlinx.coroutines.Dispatchers.IO) {
+            runInterruptible(Dispatchers.IO) {
                 process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
             }
         } catch (ce: kotlinx.coroutines.CancellationException) {
@@ -679,6 +680,14 @@ Common optional: repo_name for multi-repo projects.
         // Per-scan rule description cache. Keyed by rule key. A scan typically
         // hits <50 unique rules even when 700+ issues are reported, so each
         // rule fetch happens at most once.
+        //
+        // Thread-safety: this and [hotspotCache] below are plain mutableMapOf
+        // (not ConcurrentHashMap). Safe today because all cache reads happen
+        // sequentially — the per-file coroutineScope's four async{}/await()
+        // calls complete before fetchRuleHowToFix / fetchHotspotDetail run,
+        // and the outer for-loop iterates files sequentially. If the per-file
+        // block is ever parallelised across files, switch to ConcurrentHashMap
+        // (with sentinel handling for nullable values, since CHM rejects nulls).
         val ruleCache = mutableMapOf<String, String?>()
         suspend fun fetchRuleHowToFix(ruleKey: String): String? {
             return ruleCache.getOrPut(ruleKey) {
