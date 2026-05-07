@@ -686,6 +686,18 @@ Common optional: repo_name for multi-repo projects.
             }
         }
 
+        // Per-scan hotspot detail cache. Keyed by hotspot key. Same fan-out
+        // logic as ruleCache: the same hotspot won't be reported twice in
+        // one scan, but caching defends against per-file getSecurityHotspots
+        // re-emitting the same hotspot under different component keys.
+        val hotspotCache = mutableMapOf<String, com.workflow.orchestrator.core.model.sonar.HotspotDetailData?>()
+        suspend fun fetchHotspotDetail(hotspotKey: String): com.workflow.orchestrator.core.model.sonar.HotspotDetailData? {
+            return hotspotCache.getOrPut(hotspotKey) {
+                val r = sonarService.getHotspotDetail(hotspotKey, repoName)
+                if (r.isError) null else r.data
+            }
+        }
+
         val sb = StringBuilder()
         sb.appendLine("Local Sonar Analysis Complete")
         val branchLabel = branch ?: "(project default)"
@@ -770,6 +782,18 @@ Common optional: repo_name for multi-repo projects.
                     for (hs in fileHotspots) {
                         val loc = hs.line?.let { "line $it" } ?: "file level"
                         sb.appendLine("  [${hs.probability}][${hs.status}] $loc — ${hs.message.take(120)}")
+                        // Inline detail (cached per scan): vulnerability + fix recommendations.
+                        // Each description block can be 1-3 KB raw HTML on the probed Sonar 25.x
+                        // sample, so we strip HTML tags and cap each at 400 chars.
+                        fetchHotspotDetail(hs.key)?.let { detail ->
+                            sb.appendLine("    Category: ${detail.securityCategory} | Probability: ${detail.vulnerabilityProbability}")
+                            sb.appendLine("    Risk: ${stripAndTrim(detail.riskDescription, 400)}")
+                            sb.appendLine("    Vulnerability: ${stripAndTrim(detail.vulnerabilityDescription, 400)}")
+                            sb.appendLine("    Fix: ${stripAndTrim(detail.fixRecommendations, 600)}")
+                            if (!detail.canChangeStatus) {
+                                sb.appendLine("    (canChangeStatus=false: agent cannot mark hotspot fixed via API; remediation flow is edit code → push → re-analysis.)")
+                            }
+                        }
                     }
                 }
 
@@ -1228,6 +1252,21 @@ Common optional: repo_name for multi-repo projects.
     private fun isForbidden(summary: String): Boolean {
         val lower = summary.lowercase()
         return "forbidden" in lower || "permission" in lower || "insufficient" in lower
+    }
+
+    /**
+     * Strips HTML tags, collapses whitespace, and caps length. Used for
+     * inline rendering of Sonar's HTML description fields (riskDescription,
+     * vulnerabilityDescription, fixRecommendations) which are 1-3 KB raw
+     * but must fit in agent context.
+     */
+    private fun stripAndTrim(html: String, maxLen: Int): String {
+        if (html.isBlank()) return "(none)"
+        val text = html
+            .replace(Regex("<[^>]+>"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        return if (text.length > maxLen) text.take(maxLen) + "…" else text
     }
 
     /** Collapse a sorted list of line numbers into [first, last] pairs for compact display. */
