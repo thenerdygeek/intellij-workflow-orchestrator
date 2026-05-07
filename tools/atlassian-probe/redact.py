@@ -28,6 +28,9 @@ to the same placeholder across files):
   • Free-text fields       → <redacted-text:N-chars>
   • Commit hashes          → <commit-N> (stable per hash)
   • Dev-status branch displayIds (branch names) → <branch-N> (stable per name)
+  • Output filenames whose basename matches a CUSTOM_REDACT_WORDS marker
+    are themselves redacted (extension preserved). Otherwise the bundle
+    step would leak the marker via `path:` headers.
 
 Usage:
     python redact.py --in Result_1
@@ -596,6 +599,22 @@ def process_file(raw_path: Path, out_path: Path, red: Redactor) -> None:
     out_path.write_text(json.dumps(out, indent=2, default=str), encoding="utf-8")
 
 
+def redact_filename(name: str, smap: SecretMap) -> str:
+    """Apply CUSTOM_REDACT_WORDS markers to a filename basename.
+
+    The extension (last dot-separated segment) is preserved verbatim —
+    extensions are structural (json/md/txt) and shouldn't carry company or
+    product names. Hidden files (`.bashrc`) and extensionless names are
+    redacted as a single token. Mapping is shared with `apply_custom_words`,
+    so the same marker run produces the same fake string in filenames and in
+    file content (e.g. summary.md cross-references stay consistent).
+    """
+    if "." not in name or name.startswith("."):
+        return smap.apply_custom_words(name)
+    stem, dot, ext = name.rpartition(".")
+    return smap.apply_custom_words(stem) + dot + ext
+
+
 def redact_summary_md(summary_text: str, smap: SecretMap) -> str:
     """Apply the accumulated mapping to summary.md as plain text replacement.
 
@@ -670,20 +689,30 @@ def main() -> int:
 
     raw_files = sorted(raw_in.glob("*.json"))
     for raw_path in raw_files:
-        out_path = raw_out / raw_path.name
+        out_name = redact_filename(raw_path.name, smap)
+        out_path = raw_out / out_name
         try:
             process_file(raw_path, out_path, red)
         except Exception as e:
             print(f"  ! {raw_path.name}: {type(e).__name__}: {e}", file=sys.stderr)
             continue
-        print(f"  ✓ {raw_path.name}")
+        if out_name == raw_path.name:
+            print(f"  ✓ {out_name}")
+        else:
+            print(f"  ✓ {out_name}  (filename redacted)")
 
-    # Process summary.md — text replacement using accumulated map
+    # Process summary.md — text replacement using accumulated map.
+    # Filename also goes through the same redactor for consistency, though
+    # "summary" itself is unlikely to match a CUSTOM_REDACT_WORDS marker.
     summary_in = in_dir / "summary.md"
     if summary_in.exists():
         redacted = redact_summary_md(summary_in.read_text(encoding="utf-8"), smap)
-        (out_dir / "summary.md").write_text(redacted, encoding="utf-8")
-        print(f"  ✓ summary.md")
+        summary_out_name = redact_filename("summary.md", smap)
+        (out_dir / summary_out_name).write_text(redacted, encoding="utf-8")
+        if summary_out_name == "summary.md":
+            print(f"  ✓ {summary_out_name}")
+        else:
+            print(f"  ✓ {summary_out_name}  (filename redacted)")
 
     # Mapping report — counts only, never the original→mapped values
     report = {
