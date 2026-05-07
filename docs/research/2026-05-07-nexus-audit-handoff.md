@@ -91,13 +91,39 @@ Small follow-up commit; not blocking implementation:
 
 ---
 
-## Three user decisions blocking implementation
+## User decisions (answered 2026-05-07)
 
 From `docs/research/2026-05-06-nexus-recommendations.md` §7:
 
-1. **Module placement** — `:core/nexus/` (cross-tab) or `:automation/api/` (alongside `DockerRegistryClient`)?
-2. **UI surface** — Automation tab "Artifacts" sub-panel? Handover tab artifact-reference enrichment? Sprint tab "linked artifacts"? Agent-only (no UI)?
-3. **Settings split** — add `nexusRestUrl` field separately, or reuse `nexusUrl` and assume admin URL?
+1. ✅ **Module placement: `:core/nexus/`** — user wants it in `:core` so future agent tools can consume the service directly. Both the client impl AND the service interface go in `:core/nexus/`. (Implementation deviation from the recs doc, which had impl in `:automation/api/`. Update the impl plan accordingly.)
+2. ⏸ **UI surface: deferred** — user said "mostly in automation and handover" but wants a **separate discussion on UI requirements** before any UI commit. Implementation commit ships **client + service + agent tools only — NO UI changes**.
+3. ❓ **Settings split: still open** — user questioned the recommendation. Awaiting their answer to one of:
+   - Option 1: add `connections.nexusRestUrl` alongside `connections.nexusUrl` (backwards-compatible, recommended)
+   - Option 2: repurpose `nexusUrl` as admin URL, infer Docker URL via `/v1/repositories` (breaks existing Docker config on upgrade — avoid)
+   - Option 3: auto-detect by probing `${nexusUrl}/service/rest/v1/status` at startup (single settings box in common case)
+
+## Docker probe — pending in a different session
+
+Per user (2026-05-07): they're running the optional Docker probe and will paste results in a **different session**. The current probe (v1.1) does NOT need updating for the Docker run.
+
+Command:
+```bat
+python tools\nexus-probe\probe_nexus.py ^
+    --url https://zo-zqau.sw.rfb.com/ ^
+    --docker-registry-url <DOCKER_REGISTRY_URL> ^
+    --basic-token <YOUR_BASE64_BLOB> ^
+    --docker-repo <YOUR_PICK>
+```
+
+What it'll exercise:
+- ~50 endpoints total
+- Re-runs admin REST (gives a fresh data point — most should match the prior bundle)
+- Full Docker advanced suite: OCI 4-Accept dance, blob HEAD, `/v2/_catalog` + `/v2/.../tags` pagination, OCI `/referrers` (unverified for 3.90)
+
+When the bundle lands, that session should:
+1. Unpack and analyse like the Maven sweep
+2. Append a "Docker enhancements" section to `docs/research/2026-05-06-nexus-recommendations.md` with the OCI media-type findings (which the plugin's current single-Accept logic likely mishandles for multi-arch tags)
+3. Update memory + handoff with what was learned
 
 ---
 
@@ -116,6 +142,12 @@ Auth: HTTP Basic via `HttpClientFactory.sharedPool` + `AuthInterceptor`. Token f
 Wraps as 6 agent tools. Tests + module CLAUDE.md + verifyPlugin before commit.
 Commit message: `feat(nexus): add Nexus REST artifact browsing client (DC-only)`.
 No Co-Authored-By trailer.
+
+**Per user decision (2026-05-07): ALL of this lives in `:core/nexus/`** — both
+the client impl and the service interface. NO UI changes in this commit
+(UI deferred until separate requirements discussion). Wait for the user's
+settings-split answer (or Docker probe results, whichever comes first)
+before implementing.
 
 ---
 
@@ -137,6 +169,14 @@ When all three audits ship: PR / merge / rebase as one cohesive API-audit unit p
 
 ## Continuation prompt for a fresh session
 
-If you're starting a new session, paste this verbatim:
+### Variant A — receiving the Docker probe bundle
 
-> I'm continuing the Nexus API audit on `fix/automation-handover-quality-tabs`. The recommendations doc just landed at `docs/research/2026-05-06-nexus-recommendations.md`. Read this handoff first: `docs/research/2026-05-07-nexus-audit-handoff.md`. Then read the recommendations doc to see the three open user decisions. Don't start implementation until I've answered all three.
+> I'm continuing the Nexus API audit on `fix/automation-handover-quality-tabs`. I just ran the Docker-side probe and the bundle is at `tools/atlassian-probe/Result_Nexus/bundle-<name>-compressed.txt`. Read `docs/research/2026-05-07-nexus-audit-handoff.md` first for full context (including the 3 user decisions — only #3 is still open). Then unpack the bundle, analyse the Docker advanced suite (OCI Accept dance, blob HEAD, `/v2/_catalog`/tags pagination, referrers), and append a "Docker enhancements" section to `docs/research/2026-05-06-nexus-recommendations.md`. Update the handoff + memory after.
+
+### Variant B — answering the settings-split question
+
+> I'm continuing the Nexus API audit. I'm answering decision #3 (settings split) — see `docs/research/2026-05-07-nexus-audit-handoff.md` for the three options. My answer: [option N, with reasoning].
+
+### Variant C — kicking off the implementation commit
+
+> I'm ready to land the Nexus implementation. Read `docs/research/2026-05-07-nexus-audit-handoff.md` for the full plan. Per user decisions: all in `:core/nexus/`, NO UI changes. Settings split: [N]. Implement the 6-endpoint scope from the handoff §"Implementation scope", commit as `feat(nexus): add Nexus REST artifact browsing client (DC-only)`, no Co-Authored-By.
