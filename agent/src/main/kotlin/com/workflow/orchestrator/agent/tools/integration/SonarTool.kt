@@ -8,6 +8,7 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
 import com.workflow.orchestrator.agent.tools.integration.sonar.CeTaskIdParser
+import com.workflow.orchestrator.agent.tools.integration.sonar.SonarRetry
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.sonar.SonarFileComponent
@@ -563,23 +564,41 @@ Common optional: repo_name for multi-repo projects.
             emit("⏳ Waiting for SonarQube server to process report (CE task: $ceTaskId, polling every ${CE_POLL_INTERVAL_MS / 1000}s, max ${CE_POLL_TIMEOUT_MS / 1000}s)")
             val pollDeadline = System.currentTimeMillis() + CE_POLL_TIMEOUT_MS
             var taskStatus = "PENDING"
+            var permissionDenied = false
             while (taskStatus in setOf("PENDING", "IN_PROGRESS") && System.currentTimeMillis() < pollDeadline) {
                 delay(CE_POLL_INTERVAL_MS)
-                val statusResult = sonarService.getCeTaskStatus(ceTaskId!!)
+                // Wrap each poll in retry-with-backoff so a brief 5xx / network blip
+                // doesn't drop the loop. shouldRetry returns false on FORBIDDEN so we
+                // fail fast on permission errors instead of waiting through 3 attempts.
+                val statusResult = SonarRetry.withBackoff(
+                    maxAttempts = 3,
+                    initialDelayMs = 2_000,
+                    shouldRetry = { r -> !isForbidden(r.summary) }
+                ) { sonarService.getCeTaskStatus(ceTaskId!!) }
                 if (!statusResult.isError) {
                     val newStatus = statusResult.data ?: "UNKNOWN"
                     if (newStatus != taskStatus) emit("  CE task $ceTaskId: $newStatus")
                     taskStatus = newStatus
+                } else if (isForbidden(statusResult.summary)) {
+                    permissionDenied = true
+                    emit("⚠ CE task polling forbidden — token lacks 'Execute Analysis' or 'Administer System' permission. " +
+                        "Falling back to fixed wait. Per-file results below may be from a prior analysis if this run hasn't finished server-side.")
+                    break
                 } else {
-                    emit("  CE task poll error: ${statusResult.summary} — continuing with what we have")
+                    emit("  CE task poll error after retries: ${statusResult.summary} — continuing with what we have")
                     break
                 }
             }
-            if (taskStatus == "FAILED" || taskStatus == "CANCELED") return ToolResult(
+            if (permissionDenied) {
+                // Wait the fallback duration so the server has a chance to finish processing
+                // before we hit the per-file endpoints. Not a guarantee, but better than
+                // racing the report.
+                delay(CE_FALLBACK_WAIT_MS)
+            } else if (taskStatus == "FAILED" || taskStatus == "CANCELED") return ToolResult(
                 "Sonar analysis submitted successfully but server processing $taskStatus (CE task: $ceTaskId).",
                 "CE task $taskStatus", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
             )
-            emit("✓ Server processing complete (status: $taskStatus)")
+            if (!permissionDenied) emit("✓ Server processing complete (status: $taskStatus)")
         } else {
             // Scanner didn't emit a CE task URL (older versions or proxy strips it) — wait briefly
             emit("⏳ Scanner did not emit a CE task ID; waiting ${CE_FALLBACK_WAIT_MS / 1000}s for report propagation")
@@ -1138,6 +1157,17 @@ Common optional: repo_name for multi-repo projects.
         // Token via environment variable — never appears in ps aux output.
         pb.environment()["SONAR_TOKEN"] = token
         return pb
+    }
+
+    /**
+     * Heuristic match for FORBIDDEN-class ToolResult.summary strings. The
+     * core ToolResult shape doesn't carry an ErrorType enum, so we
+     * substring-match on three known phrasings used across the SonarService
+     * implementations: "forbidden", "permission", "insufficient".
+     */
+    private fun isForbidden(summary: String): Boolean {
+        val lower = summary.lowercase()
+        return "forbidden" in lower || "permission" in lower || "insufficient" in lower
     }
 
     /** Collapse a sorted list of line numbers into [first, last] pairs for compact display. */
