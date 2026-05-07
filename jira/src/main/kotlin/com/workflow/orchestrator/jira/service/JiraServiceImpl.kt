@@ -30,8 +30,10 @@ import com.workflow.orchestrator.core.model.jira.MyselfData
 import com.workflow.orchestrator.core.model.jira.PermissionFlag
 import com.workflow.orchestrator.core.model.jira.RemoteLinkData
 import com.workflow.orchestrator.core.model.jira.TicketHistoryEntry
+import com.workflow.orchestrator.core.model.jira.TransitionError
 import com.workflow.orchestrator.core.model.jira.TransitionInput
 import com.workflow.orchestrator.core.model.jira.TransitionMeta
+import com.workflow.orchestrator.core.model.jira.TransitionOutcome
 import com.workflow.orchestrator.core.model.jira.SprintData
 import com.workflow.orchestrator.core.model.jira.StartWorkResultData
 import com.workflow.orchestrator.core.model.jira.WatcherUser
@@ -40,6 +42,7 @@ import com.workflow.orchestrator.core.model.jira.WorklogData
 import com.workflow.orchestrator.core.services.JiraService
 import com.workflow.orchestrator.core.services.SessionDownloadDir
 import com.workflow.orchestrator.core.services.ToolResult
+import com.workflow.orchestrator.core.services.jira.TicketTransitionService
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.jira.api.JiraApiClient
 import kotlinx.coroutines.async
@@ -64,6 +67,17 @@ class JiraServiceImpl(private val project: Project) : JiraService {
      * from [PluginSettings] + [CredentialStore]. Mirrors [JiraSearchServiceImpl.testClient].
      */
     internal var testClient: JiraApiClient? = null
+
+    /**
+     * Test seam: when non-null, [ticketTransitionService] returns this instance instead
+     * of looking it up from the project's service container. Used by [transition] and
+     * [startWork] which delegate to [TicketTransitionService] for required-field preflight.
+     */
+    internal var testTicketTransitionService: TicketTransitionService? = null
+
+    private val ticketTransitionService: TicketTransitionService?
+        get() = testTicketTransitionService
+            ?: project.getService(TicketTransitionService::class.java)
 
     @Volatile private var cachedClient: JiraApiClient? = null
     @Volatile private var cachedBaseUrl: String? = null
@@ -237,31 +251,50 @@ class JiraServiceImpl(private val project: Project) : JiraService {
         fields: Map<String, Any>?,
         comment: String?
     ): ToolResult<Unit> {
-        val api = client ?: return ToolResult(
+        if (client == null) {
+            return ToolResult(
+                data = Unit,
+                summary = "Jira not configured. Cannot transition $key.",
+                isError = true,
+                hint = "Set up Jira connection in Settings."
+            )
+        }
+
+        // Delegate to TicketTransitionService — the canonical write path. It runs the
+        // required-field preflight (expand=transitions.fields), invalidates the cache,
+        // and emits TicketTransitioned. Bypassing it here was a P1 audit finding.
+        val transitionSvc = ticketTransitionService ?: return ToolResult(
             data = Unit,
-            summary = "Jira not configured. Cannot transition $key.",
+            summary = "Internal error transitioning $key: TicketTransitionService unavailable.",
             isError = true,
-            hint = "Set up Jira connection in Settings."
+            hint = "This is a configuration bug — restart the IDE and report it."
         )
 
         val fieldValues = fields?.mapValues { (_, v) -> anyToFieldValue(v) } ?: emptyMap()
         val input = TransitionInput(transitionId, fieldValues, comment)
-        return when (val result = api.transitionIssue(key, input)) {
-            is ApiResult.Success -> {
-                ToolResult.success(
-                    data = Unit,
-                    summary = "Transitioned $key with transition ID $transitionId."
-                )
+        val result = transitionSvc.executeTransition(key, input)
+        return if (result.isError) {
+            val payload = result.payload
+            val hint = when (payload) {
+                is TransitionError.MissingFields ->
+                    "Required fields not supplied: ${payload.payload.fields.joinToString(", ") { it.name }}. " +
+                        "Use the Sprint-tab transition dialog or pass the fields parameter."
+                is TransitionError.InvalidTransition ->
+                    "Use getTransitions to see available transitions for this ticket."
+                else -> "Use getTransitions to see available transitions for this ticket."
             }
-            is ApiResult.Error -> {
-                log.warn("[JiraService] Failed to transition $key: ${result.message}")
-                ToolResult(
-                    data = Unit,
-                    summary = "Error transitioning $key: ${result.message}",
-                    isError = true,
-                    hint = "Use getTransitions to see available transitions for this ticket."
-                )
-            }
+            ToolResult(
+                data = Unit,
+                summary = result.summary,
+                isError = true,
+                hint = hint,
+                payload = payload
+            )
+        } else {
+            ToolResult.success(
+                data = Unit,
+                summary = "Transitioned $key with transition ID $transitionId."
+            )
         }
     }
 
@@ -652,36 +685,62 @@ class JiraServiceImpl(private val project: Project) : JiraService {
         branchName: String,
         sourceBranch: String
     ): ToolResult<StartWorkResultData> {
-        val api = client ?: return ToolResult(
-            data = StartWorkResultData(branchName = branchName, ticketKey = issueKey, transitioned = false),
-            summary = "Jira not configured. Cannot start work on $issueKey.",
-            isError = true,
-            hint = "Set up Jira connection in Settings."
-        )
+        if (client == null) {
+            return ToolResult(
+                data = StartWorkResultData(branchName = branchName, ticketKey = issueKey, transitioned = false),
+                summary = "Jira not configured. Cannot start work on $issueKey.",
+                isError = true,
+                hint = "Set up Jira connection in Settings."
+            )
+        }
 
-        // Attempt to transition the ticket to "In Progress"
+        // Delegate the transition to TicketTransitionService — the canonical write path.
+        // It fetches `expand=transitions.fields` and runs a required-field preflight, so
+        // when a Jira admin marks any field required on the In Progress transition we get
+        // a structured MissingFields error instead of a silent 400. Pre-2026-05-08 this
+        // method posted directly to /transitions with fields={} and bypassed the preflight.
+        val transitionSvc = ticketTransitionService
         var transitioned = false
-        when (val transResult = api.getTransitions(issueKey)) {
-            is ApiResult.Success -> {
-                val inProgressTransition = transResult.data.firstOrNull { t ->
+        var missingFieldsBlocker: String? = null
+        var transitionErrorMessage: String? = null
+
+        if (transitionSvc == null) {
+            log.warn("[JiraService] TicketTransitionService unavailable; skipping transition for $issueKey")
+        } else {
+            val avail = transitionSvc.getAvailableTransitions(issueKey)
+            if (avail.isError) {
+                log.warn("[JiraService] Could not fetch transitions for $issueKey: ${avail.summary}")
+            } else {
+                val inProgress = avail.data.firstOrNull { t ->
                     t.toStatus.name.equals("In Progress", ignoreCase = true)
                 }
-                if (inProgressTransition != null) {
-                    when (api.transitionIssue(issueKey, TransitionInput(inProgressTransition.id, emptyMap(), null))) {
-                        is ApiResult.Success -> {
-                            transitioned = true
-                            log.info("[JiraService] Transitioned $issueKey to In Progress")
-                        }
-                        is ApiResult.Error -> {
-                            log.warn("[JiraService] Failed to transition $issueKey to In Progress")
-                        }
-                    }
-                } else {
+                if (inProgress == null) {
                     log.info("[JiraService] No 'In Progress' transition available for $issueKey")
+                } else {
+                    val outcome: ToolResult<TransitionOutcome> =
+                        transitionSvc.executeTransition(
+                            issueKey,
+                            TransitionInput(inProgress.id, emptyMap(), null)
+                        )
+                    if (outcome.isError) {
+                        when (val payload = outcome.payload) {
+                            is TransitionError.MissingFields -> {
+                                val fieldNames = payload.payload.fields.joinToString(", ") { it.name }
+                                missingFieldsBlocker =
+                                    "Cannot auto-start: '${payload.payload.transitionName}' " +
+                                        "requires $fieldNames. Use the Sprint-tab transition dialog."
+                                log.info("[JiraService] startWork blocked by required fields on $issueKey: $fieldNames")
+                            }
+                            else -> {
+                                transitionErrorMessage = outcome.summary
+                                log.warn("[JiraService] Failed to transition $issueKey to In Progress: ${outcome.summary}")
+                            }
+                        }
+                    } else {
+                        transitioned = true
+                        log.info("[JiraService] Transitioned $issueKey to In Progress")
+                    }
                 }
-            }
-            is ApiResult.Error -> {
-                log.warn("[JiraService] Could not fetch transitions for $issueKey: ${transResult.message}")
             }
         }
 
@@ -690,14 +749,32 @@ class JiraServiceImpl(private val project: Project) : JiraService {
             ticketKey = issueKey,
             transitioned = transitioned
         )
-        return ToolResult.success(
-            data = data,
-            summary = buildString {
-                append("Started work on $issueKey. Branch: $branchName (from $sourceBranch).")
-                if (transitioned) append(" Ticket transitioned to In Progress.")
-                else append(" Ticket status unchanged (no In Progress transition available).")
-            }
-        )
+
+        // A required-field block is reportable as an error so the agent surfaces the
+        // workflow rule. Branch creation already succeeded; only the transition was
+        // skipped. Other transition errors (forbidden, network, etc.) keep the previous
+        // best-effort behaviour: log + report unchanged status.
+        return if (missingFieldsBlocker != null) {
+            ToolResult(
+                data = data,
+                summary = "Started work on $issueKey. Branch: $branchName (from $sourceBranch). $missingFieldsBlocker",
+                isError = true,
+                hint = missingFieldsBlocker
+            )
+        } else {
+            ToolResult.success(
+                data = data,
+                summary = buildString {
+                    append("Started work on $issueKey. Branch: $branchName (from $sourceBranch).")
+                    when {
+                        transitioned -> append(" Ticket transitioned to In Progress.")
+                        transitionErrorMessage != null ->
+                            append(" Ticket status unchanged (transition failed: $transitionErrorMessage).")
+                        else -> append(" Ticket status unchanged (no In Progress transition available).")
+                    }
+                }
+            )
+        }
     }
 
     override suspend fun downloadAttachment(
