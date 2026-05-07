@@ -5,7 +5,6 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
-import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.ui.TimeFormatter
 import com.workflow.orchestrator.sonar.model.*
@@ -105,9 +104,13 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
     }
 
     fun update(state: SonarState) {
-        val settings = PluginSettings.getInstance(project).state
-        val highThreshold = settings.coverageHighThreshold.toDouble()
-        val mediumThreshold = settings.coverageMediumThreshold.toDouble()
+        // Coverage threshold is sourced from Sonar's quality gate. The metric we
+        // gate against switches with the New Code / Overall toggle so the
+        // coloring lines up with what the user is actually looking at.
+        val coverageMetric = if (state.newCodeMode) "new_coverage" else "coverage"
+        val coverageCondition = state.qualityGate.conditions.firstOrNull { it.metric == coverageMetric }
+        val coverageThreshold = coverageCondition?.threshold?.toDoubleOrNull()
+        val coverageComparator = coverageCondition?.comparator ?: "LT"
 
         // Quality gate
         val (gateText, gateColor) = when (state.qualityGate.status) {
@@ -163,12 +166,15 @@ class OverviewPanel(private val project: Project) : JPanel(BorderLayout()) {
             )
         }
 
-        // Coverage
+        // Coverage — color sourced from the gate threshold for the active mode.
+        // When the project has no gate condition for the matching metric, fall
+        // back to neutral foreground rather than guess.
         val lineCov = state.activeOverallCoverage.lineCoverage
         coverageLabel.text = "%.1f%%".format(lineCov)
         coverageLabel.font = FONT_BOLD_18
-        coverageLabel.foreground = CoverageThresholds.colorForCoverage(lineCov, highThreshold, mediumThreshold)
-        coverageBar.setThresholds(highThreshold, mediumThreshold)
+        coverageLabel.foreground = CoverageThresholds.colorForGateMetric(lineCov, coverageThreshold, coverageComparator)
+            ?: JBColor.foreground()
+        coverageBar.setThreshold(coverageThreshold, coverageComparator)
         coverageBar.value = lineCov
         branchCoverageLabel.text = "Branch: %.1f%%".format(state.activeOverallCoverage.branchCoverage)
         branchCoverageLabel.foreground = JBColor.GRAY
@@ -318,12 +324,13 @@ private class CoverageProgressBar : JPanel() {
     var value: Double = 0.0
         set(v) { field = v; repaint() }
 
-    private var highThreshold: Double = 80.0
-    private var mediumThreshold: Double = 50.0
+    private var threshold: Double? = null
+    private var comparator: String = "LT"
 
-    fun setThresholds(high: Double, medium: Double) {
-        highThreshold = high
-        mediumThreshold = medium
+    /** @param threshold gate's errorThreshold for the metric, or null for neutral fill. */
+    fun setThreshold(threshold: Double?, comparator: String) {
+        this.threshold = threshold
+        this.comparator = comparator
         repaint()
     }
 
@@ -340,7 +347,9 @@ private class CoverageProgressBar : JPanel() {
         g2.color = JBColor(Color(0xE0, 0xE0, 0xE0), Color(0x3C, 0x3C, 0x3C))
         g2.fillRoundRect(0, 0, width, height, 2, 2)
         val fillWidth = (width * value / 100.0).toInt()
-        g2.color = CoverageThresholds.colorForCoverage(value, highThreshold, mediumThreshold)
+        // Neutral fill when no gate condition exists for the active metric —
+        // matches the label foreground fallback in OverviewPanel.update().
+        g2.color = CoverageThresholds.colorForGateMetric(value, threshold, comparator) ?: JBColor.GRAY
         g2.fillRoundRect(0, 0, fillWidth, height, 2, 2)
     }
 }

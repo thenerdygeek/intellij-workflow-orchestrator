@@ -94,25 +94,7 @@ class CodeQualityConfigurable(private val project: Project) : SearchableConfigur
                 }
             }
 
-            // === 3. Coverage Thresholds ===
-            group("Coverage Thresholds") {
-                row("High coverage — green (%):") {
-                    textField()
-                        .bindText(
-                            { settings.state.coverageHighThreshold.toString() },
-                            { settings.state.coverageHighThreshold = it.toFloatOrNull() ?: 80.0f }
-                        )
-                }
-                row("Medium coverage — yellow (%):") {
-                    textField()
-                        .bindText(
-                            { settings.state.coverageMediumThreshold.toString() },
-                            { settings.state.coverageMediumThreshold = it.toFloatOrNull() ?: 50.0f }
-                        )
-                }
-            }
-
-            // === 4. Advanced (collapsed by default) ===
+            // === 3. Advanced (collapsed by default) ===
             collapsibleGroup("Advanced") {
                 row {
                     checkBox("Show coverage gutter markers")
