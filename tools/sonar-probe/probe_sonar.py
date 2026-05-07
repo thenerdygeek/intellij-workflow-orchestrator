@@ -694,10 +694,20 @@ class SonarProbe:
             )
             # AGENT-TARGETED: facet counts on new-code issues only.
             # ps=1 because we want the facets, not the issue payload.
+            # Sonar's valid 25.x facet names (per /api/issues/search 400
+            # error message when an unknown one is sent): projects, files,
+            # assigned_to_me, severities, statuses, resolutions, rules,
+            # assignees, author, directories, scopes, languages, tags,
+            # types, pciDss-3.2, pciDss-4.0, owaspAsvs-4.0,
+            # owaspMobileTop10-2024, stig-ASD_V5R3, casa, sansTop25, cwe,
+            # createdAt, sonarsourceSecurity, codeVariants,
+            # cleanCodeAttributeCategories, impactSoftwareQualities,
+            # impactSeverities, issueStatuses, prioritizedRule.
+            # Note `files` (NOT fileUuids — that was a pre-25.x name).
             facets = (
                 "severities,types,tags,impactSoftwareQualities,"
                 "impactSeverities,cleanCodeAttributeCategories,"
-                "assignees,fileUuids,rules"
+                "assignees,files,rules"
             )
             self._get(
                 name="issues_search_facets_new_code",
@@ -830,7 +840,12 @@ class SonarProbe:
             print(f"[probe] discover — inspecting first {len(candidate_keys)} "
                   f"project(s): {', '.join(candidate_keys)}")
 
-        # Walk each candidate's branches + recent CE + sample file.
+        # Walk each candidate's branches + recent CE first, THEN pick a
+        # branch, THEN walk a sample file scoped to that branch. Walking
+        # files without a branch param returns main-branch files which
+        # may not exist on the picked feature branch (Sonar 404s on
+        # /api/duplications/show + /api/sources/lines when the file isn't
+        # in the requested branch's snapshot).
         for pkey in candidate_keys:
             enc = urllib.parse.quote(pkey, safe='')
             self._get(
@@ -847,22 +862,64 @@ class SonarProbe:
                 category="existing",
                 notes=[f"Discovery — recent CE tasks for {pkey}"],
             )
-            # Pull a single FIL component so the digest can suggest a real
-            # --file-key. Without this the user gets a placeholder and
-            # duplications + sources_lines + sources_scm all skip.
+
+            # Pick the audit branch from the just-fetched branches list,
+            # then walk one sample file scoped to that branch. Falls back
+            # to a main-branch walk (no branch param) when no branch
+            # could be picked.
+            branches_body = _read_raw_body(
+                self.raw_dir / f"discover_branches_{_safe_filename(pkey)}.json"
+            )
+            picked = _pick_audit_branch(branches_body)
+            picked_branch = picked.get("branch")
+            file_branch_qs = (
+                f"&branch={urllib.parse.quote(picked_branch, safe='')}"
+                if picked_branch else ""
+            )
             self._get(
                 name=f"discover_files_{_safe_filename(pkey)}",
-                description=f"One sample file for {pkey} (--file-key seed)",
+                description=(
+                    f"Sample file for {pkey} on branch "
+                    f"`{picked_branch or '(main, default)'}` (--file-key seed)"
+                ),
                 path=(
                     f"/api/measures/component_tree?component={enc}"
                     f"&qualifiers=FIL&ps=1&p=1&metricKeys=ncloc"
+                    f"{file_branch_qs}"
                 ),
                 category="existing",
                 notes=[
-                    f"Discovery — first FIL component under {pkey}, used "
-                    "to seed --file-key in discover.md.",
+                    f"Discovery — first FIL component under {pkey} on "
+                    f"branch {picked_branch or '(main)'}, used to seed "
+                    f"--file-key in discover.md. Branch-scoped so the "
+                    f"file is guaranteed to exist on the audit branch.",
                 ],
             )
+            # If branch-scoped walk returned nothing useful (some Sonar
+            # setups disable component_tree per-branch for non-admin
+            # tokens), fall back to a main-branch walk so we have *some*
+            # file-key to suggest, with a warning.
+            if picked_branch and not _extract_first_file_key(
+                self.raw_dir / f"discover_files_{_safe_filename(pkey)}.json"
+            ):
+                self._get(
+                    name=f"discover_files_main_{_safe_filename(pkey)}",
+                    description=(
+                        f"Fallback file-key walk for {pkey} (main branch)"
+                    ),
+                    path=(
+                        f"/api/measures/component_tree?component={enc}"
+                        f"&qualifiers=FIL&ps=1&p=1&metricKeys=ncloc"
+                    ),
+                    category="existing",
+                    notes=[
+                        f"Discovery fallback — branch-scoped file walk on "
+                        f"{picked_branch} returned no FIL components; "
+                        f"trying main. This file-key may not exist on the "
+                        f"audit branch — duplications + sources probes "
+                        f"will 404 if so.",
+                    ],
+                )
 
         sample = _extract_discover_sample(self.raw_dir, candidate_keys)
         self._write_discover_digest(candidate_keys, sample, scope_hint=scope_hint)
@@ -1221,12 +1278,25 @@ class SonarProbe:
             "`--rule-key` is optional and defaults to `java:S1135` (Sonar Way)._"
         )
         if file_key_was_discovered:
-            seed_note += (
-                " The `--file-key` below is a real file from your project — "
-                "duplications, sources/lines, and the new sources/scm probe "
-                "will run against it. Replace if you'd rather audit a "
-                "different file."
-            )
+            file_key_branch_scoped = (sample or {}).get("file_key_branch_scoped")
+            if file_key_branch_scoped:
+                seed_note += (
+                    f" The `--file-key` below is a real file from "
+                    f"`{suggested_branch}`'s snapshot — duplications, "
+                    f"sources/lines, and sources/scm will all hit valid "
+                    f"data. Replace if you'd rather audit a different file."
+                )
+            else:
+                seed_note += (
+                    f" The `--file-key` below comes from your project's "
+                    f"**main branch** snapshot — the branch-scoped walk on "
+                    f"`{suggested_branch}` returned no files. The audit "
+                    f"branch may have renamed or removed this file, in "
+                    f"which case duplications + sources_lines + sources_scm "
+                    f"will return 404 with `Component '<key>' on branch "
+                    f"'<X>' not found`. Replace with a file you know exists "
+                    f"on the audit branch, or drop the flag entirely."
+                )
         else:
             seed_note += (
                 " `--file-key` could not be discovered — replace the "
@@ -1390,6 +1460,91 @@ def _extract_first_file_key(raw_path: Path) -> Optional[str]:
     return None
 
 
+def _pick_audit_branch(branches_body: Any) -> dict:
+    """Pick a branch suitable for an agent / new-code audit from a
+    /api/project_branches/list response.
+
+    Preference (highest first):
+        1. Most recent non-main branch with qualityGateStatus=ERROR
+           (preferred — failing gate = real fixes for the agent to find).
+        2. Most recent non-main branch (any gate status).
+        3. Main branch (last resort — `inNewCodePeriod=true` returns
+           empty/self-comparison there, so this picks a degraded audit).
+
+    Returns ``{branch, reason, main_branch}``. ``branch`` is None when
+    the input is malformed or empty.
+    """
+    main_branch: Optional[str] = None
+    recent_failing_branch: Optional[str] = None
+    recent_failing_date: Optional[str] = None
+    recent_any_branch: Optional[str] = None
+    recent_any_date: Optional[str] = None
+
+    if isinstance(branches_body, dict):
+        blist = branches_body.get("branches") or []
+        if isinstance(blist, list):
+            for b in blist:
+                if not isinstance(b, dict):
+                    continue
+                name = b.get("name")
+                if not isinstance(name, str):
+                    continue
+                if b.get("isMain"):
+                    main_branch = name
+                    continue
+                adate = b.get("analysisDate")
+                if not isinstance(adate, str):
+                    continue
+                status_block = b.get("status")
+                qg_status = (
+                    status_block.get("qualityGateStatus")
+                    if isinstance(status_block, dict) else None
+                )
+                if qg_status == "ERROR" and (
+                    recent_failing_date is None or adate > recent_failing_date
+                ):
+                    recent_failing_date = adate
+                    recent_failing_branch = name
+                if recent_any_date is None or adate > recent_any_date:
+                    recent_any_date = adate
+                    recent_any_branch = name
+
+    if recent_failing_branch:
+        return {
+            "branch": recent_failing_branch,
+            "reason": (
+                f"most recently analyzed non-main branch with "
+                f"qualityGateStatus=ERROR (analysisDate "
+                f"{recent_failing_date}); preferred for the agent's "
+                f"fix-to-green workflow — a passing branch has nothing "
+                f"to validate"
+            ),
+            "main_branch": main_branch,
+        }
+    if recent_any_branch:
+        return {
+            "branch": recent_any_branch,
+            "reason": (
+                f"most recently analyzed non-main branch "
+                f"(analysisDate {recent_any_date}); no non-main branch "
+                f"is currently failing the quality gate, so the agent "
+                f"audit will mostly exercise read paths"
+            ),
+            "main_branch": main_branch,
+        }
+    if main_branch:
+        return {
+            "branch": main_branch,
+            "reason": (
+                f"main branch (no non-main branches found); WARNING: "
+                f"`inNewCodePeriod=true` on main returns empty/self-"
+                f"comparison and doesn't validate new-code surfaces"
+            ),
+            "main_branch": main_branch,
+        }
+    return {"branch": None, "reason": "no branch information available", "main_branch": None}
+
+
 def _extract_ce_task_id(raw_path: Path) -> Optional[str]:
     """Pull the first SUCCESS task id from a /api/ce/activity response.
 
@@ -1422,19 +1577,14 @@ def _extract_discover_sample(
     raw_dir: Path, candidate_keys: list[str],
 ) -> Optional[dict]:
     """Return ``{project_key, ce_task_id, ce_status, branch, branch_reason,
-    file_key, main_branch}`` from the first candidate that has any data we
-    can latch onto. CE history may be 403 (admin-gated); branch list and
-    file probe are typically available — so we still emit a partial sample
-    even when CE is empty/forbidden.
+    file_key, file_key_branch_scoped, main_branch}`` from the first
+    candidate that has any data we can latch onto. CE history may be 403
+    (admin-gated); branch list and file probe are typically available —
+    so we still emit a partial sample even when CE is empty/forbidden.
 
-    Branch-suggestion preference:
-        1. Most recently analyzed **non-main** branch (preferred — that's
-           where new-code-period analysis is meaningful and where the
-           agent's "fix to green" workflow lands).
-        2. CE task's branch if any (may be main, but at least it's real).
-        3. Main branch (last resort — `inNewCodePeriod=true` against main
-           returns empty or self-comparison, which doesn't validate the
-           new-code surfaces).
+    Branch picking is delegated to ``_pick_audit_branch``. CE branch is
+    used as a soft override when the helper picks main but CE recorded a
+    non-main analysis (rare but possible).
     """
     for pkey in candidate_keys:
         ce_body = _read_raw_body(
@@ -1443,9 +1593,17 @@ def _extract_discover_sample(
         branches_body = _read_raw_body(
             raw_dir / f"discover_branches_{_safe_filename(pkey)}.json"
         )
-        file_key = _extract_first_file_key(
+
+        # Branch-scoped file walk is the primary source; fallback walk
+        # (against main) is the secondary. The fallback is only present
+        # when the branch-scoped walk returned no FIL components.
+        file_key_branch_scoped = _extract_first_file_key(
             raw_dir / f"discover_files_{_safe_filename(pkey)}.json"
         )
+        file_key_main_fallback = _extract_first_file_key(
+            raw_dir / f"discover_files_main_{_safe_filename(pkey)}.json"
+        )
+        file_key = file_key_branch_scoped or file_key_main_fallback
 
         ce_task_id: Optional[str] = None
         ce_status: Optional[str] = None
@@ -1459,80 +1617,20 @@ def _extract_discover_sample(
                     ce_status = first.get("status")
                     ce_branch = first.get("branch")
 
-        main_branch: Optional[str] = None
-        # Two parallel "most recent" trackers — one constrained to failing
-        # quality gate, one unconstrained. The agent audit prefers a
-        # failing-gate branch because that's where there are real fixes
-        # to validate (a green branch has nothing for the agent to do).
-        recent_failing_branch: Optional[str] = None
-        recent_failing_date: Optional[str] = None
-        recent_any_branch: Optional[str] = None
-        recent_any_date: Optional[str] = None
-        if isinstance(branches_body, dict):
-            blist = branches_body.get("branches") or []
-            if isinstance(blist, list):
-                for b in blist:
-                    if not isinstance(b, dict):
-                        continue
-                    name = b.get("name")
-                    if not isinstance(name, str):
-                        continue
-                    if b.get("isMain"):
-                        main_branch = name
-                        continue
-                    # `analysisDate` is ISO-8601 — string compare works.
-                    adate = b.get("analysisDate")
-                    if not isinstance(adate, str):
-                        continue
-                    status_block = b.get("status")
-                    qg_status = (
-                        status_block.get("qualityGateStatus")
-                        if isinstance(status_block, dict) else None
-                    )
-                    # Most recent non-main with failing gate (priority 1)
-                    if qg_status == "ERROR" and (
-                        recent_failing_date is None or adate > recent_failing_date
-                    ):
-                        recent_failing_date = adate
-                        recent_failing_branch = name
-                    # Most recent non-main, any gate status (priority 2)
-                    if recent_any_date is None or adate > recent_any_date:
-                        recent_any_date = adate
-                        recent_any_branch = name
+        picked = _pick_audit_branch(branches_body)
+        branch = picked.get("branch")
+        branch_reason = picked.get("reason") or "no branch information available"
+        main_branch = picked.get("main_branch")
 
-        # Branch preference order with explanation for the digest.
-        branch: Optional[str]
-        branch_reason: str
-        if recent_failing_branch:
-            branch = recent_failing_branch
-            branch_reason = (
-                f"most recently analyzed non-main branch with "
-                f"qualityGateStatus=ERROR (analysisDate "
-                f"{recent_failing_date}); preferred for the agent's "
-                f"fix-to-green workflow — a passing branch has nothing "
-                f"to validate"
-            )
-        elif recent_any_branch:
-            branch = recent_any_branch
-            branch_reason = (
-                f"most recently analyzed non-main branch "
-                f"(analysisDate {recent_any_date}); no non-main branch "
-                f"is currently failing the quality gate, so the agent "
-                f"audit will mostly exercise read paths"
-            )
-        elif ce_branch:
+        # CE branch override is rare-but-possible: if the helper picked main
+        # but CE recorded a non-main analysis, prefer the CE one. This only
+        # happens on Sonar setups that include `branch` on main-branch CE
+        # tasks (most don't).
+        if branch == main_branch and ce_branch and ce_branch != main_branch:
             branch = ce_branch
-            branch_reason = "branch reported by latest CE task"
-        elif main_branch:
-            branch = main_branch
             branch_reason = (
-                f"main branch (no non-main branches found); WARNING: "
-                f"`inNewCodePeriod=true` on main returns empty/self-"
-                f"comparison and doesn't validate new-code surfaces"
+                f"branch reported by latest CE task (overriding main pick)"
             )
-        else:
-            branch = None
-            branch_reason = "no branch information available"
 
         if not (ce_task_id or branch or file_key):
             continue
@@ -1543,6 +1641,7 @@ def _extract_discover_sample(
             "branch": branch,
             "branch_reason": branch_reason,
             "file_key": file_key,
+            "file_key_branch_scoped": bool(file_key_branch_scoped),
             "main_branch": main_branch,
         }
     return None
