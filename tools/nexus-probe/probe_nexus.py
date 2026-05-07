@@ -129,9 +129,15 @@ class NexusProbe:
     """Two-surface read-only probe: Nexus REST (Basic) + Docker Registry (challenge)."""
 
     def __init__(self, base_url: str, registry_url: str, user: str, password: str,
-                 basic_token: str, verify: bool, results_dir: Path):
+                 basic_token: str, verify: bool, results_dir: Path,
+                 docker_base_path: str = ""):
         self.base = base_url.rstrip("/")
         self.registry = registry_url.rstrip("/")
+        # Optional path prefix prepended to every /v2/* URL — supports Nexus 3
+        # path-based Docker access (e.g. "/repository/docker-group" so the
+        # final URL becomes "<registry>/repository/docker-group/v2/<repo>/..."
+        # instead of "<registry>/v2/<repo>/..."). Empty = root-level /v2/.
+        self.docker_base_path = ("/" + docker_base_path.strip("/")) if docker_base_path.strip("/") else ""
         self.user = user
         self.password = password
         # Pre-built Basic credential — used for both REST calls and (if the
@@ -233,10 +239,11 @@ class NexusProbe:
              with Authorization: Bearer <token>.
           3. Any other failure short-circuits.
         """
-        url = f"{self.registry}{path}"
+        full_path = f"{self.docker_base_path}{path}"
+        url = f"{self.registry}{full_path}"
         notes = list(notes or [])
         result = ProbeResult(
-            name=name, description=description, method=method, path=path,
+            name=name, description=description, method=method, path=full_path,
             category=category, notes=notes,
         )
         start = time.perf_counter()
@@ -319,9 +326,10 @@ class NexusProbe:
         custom Accept header and the body-fill logic isn't needed for HEAD.
         Auth still goes through the same Basic-then-bearer-challenge flow.
         """
-        url = f"{self.registry}{path}"
+        full_path = f"{self.docker_base_path}{path}"
+        url = f"{self.registry}{full_path}"
         result = ProbeResult(
-            name=name, description=description, method="HEAD", path=path,
+            name=name, description=description, method="HEAD", path=full_path,
             category="swap", notes=list(notes or []),
         )
         start = time.perf_counter()
@@ -623,7 +631,7 @@ class NexusProbe:
                 ],
             )
         if chosen_docker:
-            dr = urllib.parse.quote(chosen_docker, safe="")
+            dr = urllib.parse.quote(chosen_docker, safe="/")
             safe_chosen = chosen_docker.replace("/", "_")
             self._docker_get(
                 name=f"discover_tags_{safe_chosen}",
@@ -737,7 +745,7 @@ class NexusProbe:
 
         # 4) Docker-repo-scoped probes (need --docker-repo)
         if docker_repo:
-            dr = urllib.parse.quote(docker_repo, safe="")
+            dr = urllib.parse.quote(docker_repo, safe="/")
             safe_repo = docker_repo.replace("/", "_")
             print(f"\n[probe] existing/swap — Docker repo '{docker_repo}'")
             self._docker_get(
@@ -1096,9 +1104,10 @@ class NexusProbe:
 
         # 11) Docker v2 advanced — OCI Accept-header dance + blob HEAD + pagination
         if docker_repo:
-            dr = urllib.parse.quote(docker_repo, safe="")
+            dr = urllib.parse.quote(docker_repo, safe="/")
+            safe_repo = docker_repo.replace("/", "_")
             chosen_tag = manifest_tag or _read_first_tag(
-                self.raw_dir / f"docker_tags_{docker_repo}.json"
+                self.raw_dir / f"docker_tags_{safe_repo}.json"
             )
             if chosen_tag:
                 tg = urllib.parse.quote(chosen_tag, safe="")
@@ -1123,7 +1132,7 @@ class NexusProbe:
                 ]
                 for short, mt, desc in accepts:
                     self._docker_head_accept(
-                        name=f"docker_manifest_{short}_{docker_repo}",
+                        name=f"docker_manifest_{short}_{safe_repo}",
                         description=f"HEAD manifest with Accept: {mt} ({desc})",
                         path=f"/v2/{dr}/manifests/{tg}",
                         accept=mt,
@@ -1131,12 +1140,12 @@ class NexusProbe:
                     )
                 # Blob HEAD using the digest from the existing manifest probe
                 first_digest = _read_first_blob_digest(
-                    self.raw_dir / f"docker_manifest_get_{docker_repo}.json"
+                    self.raw_dir / f"docker_manifest_get_{safe_repo}.json"
                 )
                 if first_digest:
                     fd = urllib.parse.quote(first_digest, safe="")
                     self._docker_head(
-                        name=f"docker_blob_head_{docker_repo}",
+                        name=f"docker_blob_head_{safe_repo}",
                         description=f"HEAD blob {first_digest[:16]}… — cheapest layer existence check",
                         path=f"/v2/{dr}/blobs/{fd}",
                         category="feature",
@@ -1146,7 +1155,7 @@ class NexusProbe:
                 if first_digest:
                     fd = urllib.parse.quote(first_digest, safe="")
                     self._docker_get(
-                        name=f"docker_referrers_{docker_repo}",
+                        name=f"docker_referrers_{safe_repo}",
                         description=f"OCI referrers index for {first_digest[:16]}…",
                         path=f"/v2/{dr}/referrers/{fd}",
                         category="feature",
@@ -1157,7 +1166,7 @@ class NexusProbe:
                     )
             # Tags pagination — exercises Link: rel="next"
             self._docker_get(
-                name=f"docker_tags_pagination_{docker_repo}",
+                name=f"docker_tags_pagination_{safe_repo}",
                 description=f"Tag list page 1 with n=10 — exercises Link: rel=\"next\" pagination cursor",
                 path=f"/v2/{dr}/tags/list?n=10",
                 category="swap",
@@ -1290,10 +1299,12 @@ class NexusProbe:
         )
 
         # `docker_repo` may contain '/' (Nexus folder paths like
-        # company-team/repo-name); url-encoded for the wire path, slash-replaced
-        # for filename components so /raw/<name>.json doesn't try to write into
-        # a non-existent subdirectory.
-        dr = urllib.parse.quote(docker_repo, safe="")
+        # company-team/repo-name). For the wire path we keep '/' literal per
+        # Docker Registry v2 spec (slashes are path-component separators inside
+        # <name>, not characters to encode). For filename components we slash-
+        # replace so /raw/<name>.json doesn't try to write into a non-existent
+        # subdirectory.
+        dr = urllib.parse.quote(docker_repo, safe="/")
         safe_repo = docker_repo.replace("/", "_")
 
         # 2. tags/list — primary endpoint #1
@@ -1898,6 +1909,12 @@ def main() -> int:
                         "per-repo verify flow uses (/v2/, /v2/{repo}/tags/list, /v2/{repo}/manifests/{tag} "
                         "HEAD+GET, plus a bogus-tag HEAD to validate 404 semantics). "
                         "Requires --docker-repo. REST/maven/security/metrics surfaces are skipped.")
+    p.add_argument("--docker-base-path", default="",
+                   help="Path prefix prepended to every /v2/* URL — supports Nexus 3 path-based "
+                        "Docker access where /v2/ lives under a sub-path instead of at the root "
+                        "(e.g. '/repository/docker-group' so the probe hits "
+                        "<registry>/repository/docker-group/v2/<repo>/manifests/<tag>). "
+                        "Default empty (Docker at root /v2/).")
     p.add_argument("--out", default=str(Path(__file__).parent),
                    help="Parent dir for Result_N/ output (default: alongside the script)")
     args = p.parse_args()
@@ -1955,6 +1972,7 @@ def main() -> int:
         basic_token=args.basic_token,
         verify=not args.no_verify,
         results_dir=results_dir,
+        docker_base_path=args.docker_base_path,
     )
 
     args_used = {
@@ -1974,6 +1992,7 @@ def main() -> int:
         "versions_only": args.versions_only,
         "discover": args.discover,
         "docker_only": args.docker_only,
+        "docker_base_path": args.docker_base_path,
     }
 
     if args.discover:
