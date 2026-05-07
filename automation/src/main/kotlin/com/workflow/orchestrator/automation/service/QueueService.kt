@@ -53,13 +53,15 @@ class QueueService {
         val credentialStore = CredentialStore()
         val registryUrl = (settings.state.dockerRegistryUrl.takeUnless { it.isNullOrBlank() }
             ?: settings.connections.nexusUrl.orEmpty()).trimEnd('/')
+        val basePath = settings.state.dockerBasePath.orEmpty()
         val nexusUsername = settings.connections.nexusUsername.orEmpty()
         val timeouts = com.workflow.orchestrator.core.http.HttpClientFactory.timeoutsFromSettings(p)
         DockerRegistryClient(
             registryUrl = registryUrl,
             tokenProvider = { credentialStore.getNexusBasicAuthToken(nexusUsername) },
             connectTimeoutSeconds = timeouts.connectSeconds,
-            readTimeoutSeconds = timeouts.readSeconds
+            readTimeoutSeconds = timeouts.readSeconds,
+            basePath = basePath
         ).also { _registryClient = it }
     }
 
@@ -80,7 +82,7 @@ class QueueService {
         this.autoTriggerEnabled = settings.state.queueAutoTriggerEnabled
         this.maxDepthPerSuite = settings.state.queueMaxDepthPerSuite
         this.tagValidationOnTrigger = settings.state.tagValidationOnTrigger
-        this.buildVariableName = settings.state.bambooBuildVariableName?.takeIf { it.isNotBlank() } ?: "dockerTagsAsJson"
+        this.buildVariableName = settings.state.bambooBuildVariableName?.takeIf { it.isNotBlank() } ?: "DockerTagsAsJSON"
     }
 
     /** Test constructor — allows injecting mocks. */
@@ -93,7 +95,7 @@ class QueueService {
         autoTriggerEnabled: Boolean = true,
         maxDepthPerSuite: Int = 10,
         tagValidationOnTrigger: Boolean = true,
-        buildVariableName: String = "dockerTagsAsJson"
+        buildVariableName: String = "DockerTagsAsJSON"
     ) {
         this._bambooService = bambooService
         this._registryClient = registryClient
@@ -218,23 +220,35 @@ class QueueService {
     internal suspend fun pollOnce() {
         mutex.withLock {
             val entries = _stateFlow.value.toList()
-            val updatedEntries = mutableListOf<QueueEntry>()
 
             val bySuite = entries.groupBy { it.suitePlanKey }
 
             for ((planKey, suiteEntries) in bySuite) {
                 for (entry in suiteEntries) {
-                    val updated = when (entry.status) {
-                        QueueEntryStatus.WAITING_LOCAL -> handleWaitingLocal(planKey, entry)
+                    when (entry.status) {
+                        QueueEntryStatus.WAITING_LOCAL -> {
+                            val updated = handleWaitingLocal(planKey, entry)
+                            // Replace in-place: the entry may have advanced to QUEUED_ON_BAMBOO
+                            _stateFlow.value = _stateFlow.value.map {
+                                if (it.id == entry.id) updated else it
+                            }
+                        }
                         QueueEntryStatus.QUEUED_ON_BAMBOO,
-                        QueueEntryStatus.RUNNING -> handleRunningOrQueued(entry)
-                        else -> entry
+                        QueueEntryStatus.RUNNING -> {
+                            // handleRunningOrQueued manages _stateFlow directly for terminal outcomes
+                            val updated = handleRunningOrQueued(entry)
+                            if (updated.status !in TERMINAL_STATUSES_SET) {
+                                // Non-terminal update (e.g. WAITING→RUNNING): reflect in state
+                                _stateFlow.value = _stateFlow.value.map {
+                                    if (it.id == entry.id) updated else it
+                                }
+                            }
+                            // Terminal outcomes: handleRunningOrQueued already removed the entry
+                        }
+                        else -> { /* already terminal — no-op */ }
                     }
-                    updatedEntries.add(updated)
                 }
             }
-
-            _stateFlow.value = updatedEntries
         }
     }
 
@@ -282,10 +296,22 @@ class QueueService {
                     passed = passed,
                     durationMs = buildData.durationSeconds * 1000
                 ))
+                // Remove from active state — history is persisted in TagHistoryService (A-P0-5)
+                _stateFlow.value = _stateFlow.value.filter { it.id != entry.id }
                 entry.copy(status = QueueEntryStatus.COMPLETED)
             }
-            buildData.state == "InProgress" || buildData.state == "Unknown" -> entry.copy(status = QueueEntryStatus.RUNNING)
-            else -> entry
+            // "Unknown" = Bamboo lifeCycleState "NotBuilt" (manual skip / already-up-to-date).
+            // Treat as terminal to prevent infinite polling (A-P0-5, A-P0-4 companion fix).
+            buildData.state == "Unknown" -> {
+                log.info("[Automation:Queue] Build in Unknown/NotBuilt state for entry ${entry.id}, treating as terminal")
+                tagHistoryService.updateQueueEntryStatus(
+                    entry.id, QueueEntryStatus.COMPLETED, resultKey
+                )
+                // Remove from active state (A-P0-5)
+                _stateFlow.value = _stateFlow.value.filter { it.id != entry.id }
+                entry.copy(status = QueueEntryStatus.COMPLETED)
+            }
+            else -> entry.copy(status = QueueEntryStatus.RUNNING)
         }
     }
 
@@ -367,5 +393,9 @@ class QueueService {
 
     private companion object {
         private val ACTIVE_STATUSES = setOf(QueueEntryStatus.RUNNING, QueueEntryStatus.QUEUED_ON_BAMBOO)
+        private val TERMINAL_STATUSES_SET = setOf(
+            QueueEntryStatus.COMPLETED, QueueEntryStatus.CANCELLED,
+            QueueEntryStatus.FAILED_TO_TRIGGER, QueueEntryStatus.TAG_INVALID
+        )
     }
 }

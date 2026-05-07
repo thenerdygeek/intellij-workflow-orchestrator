@@ -106,10 +106,10 @@ class AutomationConfigurable(private val project: Project) : SearchableConfigura
                 row("Build variable name:") {
                     textField()
                         .bindText(
-                            { PluginSettings.getInstance(project).state.bambooBuildVariableName ?: "dockerTagsAsJson" },
+                            { PluginSettings.getInstance(project).state.bambooBuildVariableName ?: "DockerTagsAsJSON" },
                             { PluginSettings.getInstance(project).state.bambooBuildVariableName = it }
                         )
-                        .comment("Bamboo build variable containing Docker tag JSON (default: dockerTagsAsJson)")
+                        .comment("Bamboo build variable containing Docker tag JSON (default: DockerTagsAsJSON)")
                 }
             }
 
@@ -406,13 +406,41 @@ class AutomationConfigurable(private val project: Project) : SearchableConfigura
         // Apply DSL-bound fields (project-level PluginSettings)
         dialogPanel?.apply()
 
-        // Apply automation suites (app-level AutomationSettingsService)
+        // Apply automation suites (app-level AutomationSettingsService).
+        // IMPORTANT: Do NOT call state.suites.clear() + re-insert with a fresh SuiteConfig —
+        // that destroys the per-suite variables and enabledStages typed in the Configure tab.
+        // Instead, compute a diff and only update displayName + lastModified on existing entries,
+        // preserving variables/enabledStages/serviceNameMapping. (A-P0-2 fix)
         val automationSettings = AutomationSettingsService.getInstance()
-        automationSettings.state.suites.clear()
+
+        // Keys present in the edited UI rows
+        val editedKeys = suiteRows.mapNotNull { row ->
+            val k = row.planKeyField.text.trim()
+            if (k.isNotBlank()) k else null
+        }.toSet()
+
+        // Remove suites that the user deleted via the ✕ button
+        val existingKeys = automationSettings.getAllSuites().map { it.planKey }.toSet()
+        for (removedKey in existingKeys - editedKeys) {
+            automationSettings.state.suites.remove(removedKey)
+        }
+
+        // Update displayName for existing suites; insert minimal config for new ones
         for (row in suiteRows) {
             val key = row.planKeyField.text.trim()
             val name = row.displayNameField.text.trim()
-            if (key.isNotBlank()) {
+            if (key.isBlank()) continue
+
+            val existing = automationSettings.getSuiteConfig(key)
+            if (existing != null) {
+                // Preserve variables / enabledStages / serviceNameMapping — only update display fields
+                automationSettings.saveSuiteConfig(
+                    existing.copy(
+                        displayName = name.ifBlank { key },
+                        lastModified = System.currentTimeMillis()
+                    )
+                )
+            } else {
                 automationSettings.saveSuiteConfig(
                     AutomationSettingsService.SuiteConfig(
                         planKey = key, displayName = name.ifBlank { key },

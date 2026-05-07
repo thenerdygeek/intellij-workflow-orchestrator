@@ -553,7 +553,8 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                         durationSeconds = dto.buildDurationInSeconds,
                         buildResultKey = dto.buildResultKey.ifBlank { dto.key },
                         buildRelativeTime = dto.buildRelativeTime,
-                        stages = dto.stages.stage.map { it.toBuildStageData() }
+                        stages = dto.stages.stage.map { it.toBuildStageData() },
+                        lifeCycleState = dto.lifeCycleState  // A-P1-1
                     )
                 }
                 ToolResult.success(
@@ -742,7 +743,8 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                         durationSeconds = dto.buildDurationInSeconds,
                         buildResultKey = dto.buildResultKey.ifBlank { dto.key },
                         buildRelativeTime = dto.buildRelativeTime,
-                        stages = dto.stages.stage.map { it.toBuildStageData() }
+                        stages = dto.stages.stage.map { it.toBuildStageData() },
+                        lifeCycleState = dto.lifeCycleState  // A-P1-1
                     )
                 }
                 ToolResult.success(
@@ -1013,7 +1015,8 @@ class BambooServiceImpl(private val project: Project) : BambooService {
             durationSeconds = dto.buildDurationInSeconds,
             stages = stages,
             buildResultKey = dto.buildResultKey.ifBlank { dto.key },
-            buildRelativeTime = dto.buildRelativeTime
+            buildRelativeTime = dto.buildRelativeTime,
+            lifeCycleState = dto.lifeCycleState  // A-P1-1
         )
 
         val durationFormatted = TimeFormatter.formatDurationSeconds(data.durationSeconds)

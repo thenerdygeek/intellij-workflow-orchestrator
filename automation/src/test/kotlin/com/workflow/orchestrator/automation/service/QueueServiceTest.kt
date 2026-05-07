@@ -216,4 +216,137 @@ class QueueServiceTest {
         val queued = service.stateFlow.value[0]
         assertEquals("""{"auth":"2.4.0"}""", queued.dockerTagsPayload)
     }
+
+    // A-P0-5 regression: completed entries are removed from _stateFlow
+
+    @Test
+    fun `completed entries are removed from stateFlow after build finishes (A-P0-5)`() = runTest {
+        // Arrange: two entries in QUEUED_ON_BAMBOO state
+        val e1 = makeEntry(id = "q-1", status = QueueEntryStatus.QUEUED_ON_BAMBOO).copy(bambooResultKey = "PROJ-AUTO-100")
+        val e2 = makeEntry(id = "q-2", status = QueueEntryStatus.QUEUED_ON_BAMBOO).copy(bambooResultKey = "PROJ-AUTO-101")
+
+        // Manually seed state (bypass enqueue to avoid auto-trigger complexity)
+        service.enqueue(makeEntry(id = "q-1"))
+        awaitState { service.stateFlow.value.size == 1 }
+        service.enqueue(makeEntry(id = "q-2"))
+        awaitState { service.stateFlow.value.size == 2 }
+
+        // Mock: both builds report Successful
+        coEvery { bambooService.getBuild("PROJ-AUTO-100") } returns ToolResult.success(
+            data = BuildResultData(
+                planKey = "PROJ-AUTO", buildNumber = 100,
+                state = "Successful", durationSeconds = 120,
+                buildResultKey = "PROJ-AUTO-100"
+            ),
+            summary = "ok"
+        )
+        coEvery { bambooService.getBuild("PROJ-AUTO-101") } returns ToolResult.success(
+            data = BuildResultData(
+                planKey = "PROJ-AUTO", buildNumber = 101,
+                state = "Successful", durationSeconds = 95,
+                buildResultKey = "PROJ-AUTO-101"
+            ),
+            summary = "ok"
+        )
+
+        // Inject bambooResultKeys via cancel+re-enqueue workaround isn't clean;
+        // Instead drive pollOnce directly with entries that already have bambooResultKey set.
+        // Reset state with pre-seeded entries via reflection-free approach: use internal pollOnce.
+        // We'll set up entries with bambooResultKey directly in the flow.
+        // Approach: clear + directly set stateFlow via pollOnce with pre-configured entries.
+        // Since stateFlow is internal, we verify the core behaviour via a service constructed
+        // with pre-populated entries via the known path (enqueue then mutate via copy).
+
+        // The cleanest path: assert that after pollOnce on QUEUED_ON_BAMBOO entries that resolve,
+        // the entries are gone. We use the test constructor that lets us inject mocks cleanly.
+        val scopeForTest = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val testService = QueueService(
+            bambooService = bambooService,
+            registryClient = registryClient,
+            eventBus = eventBus,
+            tagHistoryService = TagHistoryService(tempDir.resolve("test2.db").toString()),
+            scope = scopeForTest,
+            autoTriggerEnabled = false,
+            maxDepthPerSuite = 10,
+            tagValidationOnTrigger = false
+        )
+
+        // Enqueue two entries with bambooResultKeys already set
+        val entry1 = QueueEntry(
+            id = "x-1", suitePlanKey = "PROJ-AUTO",
+            dockerTagsPayload = """{"auth":"1.0.0"}""",
+            variables = emptyMap(), stages = emptyList(),
+            enqueuedAt = Instant.now(),
+            status = QueueEntryStatus.QUEUED_ON_BAMBOO,
+            bambooResultKey = "PROJ-AUTO-100"
+        )
+        val entry2 = QueueEntry(
+            id = "x-2", suitePlanKey = "PROJ-AUTO",
+            dockerTagsPayload = """{"auth":"1.0.0"}""",
+            variables = emptyMap(), stages = emptyList(),
+            enqueuedAt = Instant.now(),
+            status = QueueEntryStatus.QUEUED_ON_BAMBOO,
+            bambooResultKey = "PROJ-AUTO-101"
+        )
+
+        testService.enqueue(entry1)
+        awaitState(2000) { testService.stateFlow.value.size == 1 }
+        testService.enqueue(entry2)
+        awaitState(2000) { testService.stateFlow.value.size == 2 }
+
+        // pollOnce will call getBuild for both entries → both Successful → both removed
+        runBlocking(Dispatchers.IO) { testService.pollOnce() }
+
+        // Assert: both completed entries removed from stateFlow (A-P0-5 fix)
+        assertTrue(
+            testService.stateFlow.value.isEmpty(),
+            "Expected stateFlow to be empty after both builds completed, but was: ${testService.stateFlow.value}"
+        )
+        scopeForTest.cancel()
+    }
+
+    // A-P0-4 / A-P0-5 companion: Unknown state treated as terminal
+
+    @Test
+    fun `Unknown build state is treated as terminal and entry removed from stateFlow`() = runTest {
+        coEvery { bambooService.getBuild("PROJ-AUTO-200") } returns ToolResult.success(
+            data = BuildResultData(
+                planKey = "PROJ-AUTO", buildNumber = 200,
+                state = "Unknown", durationSeconds = 0,
+                buildResultKey = "PROJ-AUTO-200"
+            ),
+            summary = "NotBuilt"
+        )
+
+        val scopeForTest = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val testService = QueueService(
+            bambooService = bambooService,
+            registryClient = registryClient,
+            eventBus = eventBus,
+            tagHistoryService = TagHistoryService(tempDir.resolve("test3.db").toString()),
+            scope = scopeForTest,
+            autoTriggerEnabled = false,
+            maxDepthPerSuite = 10,
+            tagValidationOnTrigger = false
+        )
+
+        val entry = QueueEntry(
+            id = "u-1", suitePlanKey = "PROJ-AUTO",
+            dockerTagsPayload = """{"auth":"1.0.0"}""",
+            variables = emptyMap(), stages = emptyList(),
+            enqueuedAt = Instant.now(),
+            status = QueueEntryStatus.QUEUED_ON_BAMBOO,
+            bambooResultKey = "PROJ-AUTO-200"
+        )
+        testService.enqueue(entry)
+        awaitState(2000) { testService.stateFlow.value.size == 1 }
+
+        runBlocking(Dispatchers.IO) { testService.pollOnce() }
+
+        assertTrue(
+            testService.stateFlow.value.isEmpty(),
+            "Unknown/NotBuilt build should be removed from stateFlow (A-P0-5), but was: ${testService.stateFlow.value}"
+        )
+        scopeForTest.cancel()
+    }
 }

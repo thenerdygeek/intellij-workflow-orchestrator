@@ -93,4 +93,64 @@ class AutomationSettingsServiceTest {
         assertNotNull(retrieved)
         assertEquals("Test Suite", retrieved!!.displayName)
     }
+
+    // A-P0-2 regression: applying Settings must not wipe per-suite variables
+
+    /**
+     * Simulates the A-P0-2 bug scenario:
+     * 1. User has a suite with variables {A=1, B=2} already persisted.
+     * 2. The apply() diff-logic (as fixed) updates only displayName / lastModified.
+     * 3. Assert variables are still {A=1, B=2} after the operation.
+     */
+    @Test
+    fun `apply-style diff preserves per-suite variables`() {
+        // Seed existing config with variables
+        val existing = AutomationSettingsService.SuiteConfig(
+            planKey = "PROJ-AUTO",
+            displayName = "E2E Suite",
+            variables = mutableMapOf("A" to "1", "B" to "2"),
+            enabledStages = mutableListOf("QA Automation"),
+            serviceNameMapping = null,
+            lastModified = 1000L
+        )
+        service.saveSuiteConfig(existing)
+
+        // Simulate apply(): preserve variables, update only displayName + lastModified
+        val existingConfig = service.getSuiteConfig("PROJ-AUTO")!!
+        service.saveSuiteConfig(
+            existingConfig.copy(
+                displayName = "E2E Suite (renamed)",
+                lastModified = System.currentTimeMillis()
+            )
+        )
+
+        // Assert variables survived
+        val after = service.getSuiteConfig("PROJ-AUTO")!!
+        assertEquals("E2E Suite (renamed)", after.displayName)
+        assertEquals("1", after.variables["A"])
+        assertEquals("2", after.variables["B"])
+        assertEquals(listOf("QA Automation"), after.enabledStages)
+    }
+
+    @Test
+    fun `apply-style diff removes deleted suite but preserves others`() {
+        service.saveSuiteConfig(AutomationSettingsService.SuiteConfig(
+            planKey = "PROJ-A", displayName = "Suite A",
+            variables = mutableMapOf("x" to "y"), enabledStages = mutableListOf(),
+            serviceNameMapping = null, lastModified = 1000L
+        ))
+        service.saveSuiteConfig(AutomationSettingsService.SuiteConfig(
+            planKey = "PROJ-B", displayName = "Suite B",
+            variables = mutableMapOf("m" to "n"), enabledStages = mutableListOf(),
+            serviceNameMapping = null, lastModified = 1000L
+        ))
+
+        // User deleted PROJ-B via ✕ — apply() diff removes it
+        service.state.suites.remove("PROJ-B")
+
+        assertNotNull(service.getSuiteConfig("PROJ-A"))
+        assertNull(service.getSuiteConfig("PROJ-B"))
+        // PROJ-A variables intact
+        assertEquals("y", service.getSuiteConfig("PROJ-A")!!.variables["x"])
+    }
 }

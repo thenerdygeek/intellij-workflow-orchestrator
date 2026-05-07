@@ -7,6 +7,7 @@ import com.workflow.orchestrator.automation.model.DockerTagListResponse
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
 import com.workflow.orchestrator.core.security.UrlSafetyGuard
+import com.workflow.orchestrator.core.util.DockerRegistryUrls
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -19,8 +20,14 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Docker Registry v2 API client.
- * @param registryUrl Base URL of the Docker Registry (e.g., "https://registry.example.com")
- * @param tokenProvider Returns a base64-encoded "username:password" string for Basic auth with the registry
+ *
+ * @param registryUrl Base URL of the Docker Registry (e.g., "https://registry.example.com").
+ *   For Nexus path-based Docker repos this is the Nexus host root — the sub-path is
+ *   supplied via [basePath].
+ * @param basePath Optional sub-path for Nexus path-based Docker repos
+ *   (e.g. "/repository/docker-hosted"). Blank for port-based registries. See
+ *   [DockerRegistryUrls] and `reference_nexus3_url_conventions.md`.
+ * @param tokenProvider Returns a base64-encoded "username:password" string for Basic auth with the registry.
  */
 class DockerRegistryClient(
     private val registryUrl: String,
@@ -28,7 +35,9 @@ class DockerRegistryClient(
     private val connectTimeoutSeconds: Long = 15,
     private val readTimeoutSeconds: Long = 30,
     /** Set to true in tests using localhost mock servers to bypass private-IP realm rejection. */
-    internal var skipRealmValidation: Boolean = false
+    internal var skipRealmValidation: Boolean = false,
+    /** Sub-path for Nexus path-based Docker repos (e.g. "/repository/docker-hosted"). Blank for root. */
+    private val basePath: String = ""
 ) {
     private val log = Logger.getInstance(DockerRegistryClient::class.java)
     private val json = Json { ignoreUnknownKeys = true }
@@ -48,7 +57,7 @@ class DockerRegistryClient(
         withContext(Dispatchers.IO) {
             try {
                 val request = Request.Builder()
-                    .url("$registryUrl/v2/$serviceName/manifests/$tag")
+                    .url(DockerRegistryUrls.manifestUrl(registryUrl, basePath, serviceName, tag))
                     .head()
                     .header("Accept", "application/vnd.docker.distribution.manifest.v2+json")
                     .build()
@@ -77,13 +86,14 @@ class DockerRegistryClient(
 
             try {
                 val allTags = mutableListOf<String>()
-                var path: String? = "/v2/$serviceName/tags/list?n=100"
+                var path: String? = DockerRegistryUrls.tagsListUrl(registryUrl, basePath, serviceName, 100)
+                    .removePrefix(registryUrl.trimEnd('/'))   // store relative path for Link-header pagination
                 var pageCount = 0
                 val maxPages = 50
 
                 while (path != null && pageCount < maxPages) {
                     val request = Request.Builder()
-                        .url("$registryUrl$path")
+                        .url("${registryUrl.trimEnd('/')}$path")
                         .get()
                         .header("Accept", "application/json")
                         .build()

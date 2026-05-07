@@ -27,12 +27,12 @@ class TagBuilderService {
     constructor(project: Project) {
         val settings = PluginSettings.getInstance(project)
         this.bambooService = project.getService(BambooService::class.java)
-        this.buildVariableName = settings.state.bambooBuildVariableName ?: "dockerTagsAsJson"
+        this.buildVariableName = settings.state.bambooBuildVariableName?.takeIf { it.isNotBlank() } ?: "DockerTagsAsJSON"
         log.info("[Automation:Tags] TagBuilderService initialized, buildVariableName='$buildVariableName'")
     }
 
     /** Test constructor — allows injecting mocks. */
-    constructor(bambooService: BambooService, buildVariableName: String = "dockerTagsAsJson") {
+    constructor(bambooService: BambooService, buildVariableName: String = "DockerTagsAsJSON") {
         this.bambooService = bambooService
         this.buildVariableName = buildVariableName
     }

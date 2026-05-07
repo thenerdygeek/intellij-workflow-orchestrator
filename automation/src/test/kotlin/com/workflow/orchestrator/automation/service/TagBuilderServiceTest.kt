@@ -152,7 +152,9 @@ class TagBuilderServiceTest {
 
         val vars = service.buildTriggerVariables(entries, extraVars)
 
-        assertTrue(vars.containsKey("dockerTagsAsJson"))
+        // A-P0-3: canonical variable name is "DockerTagsAsJSON" (probe-confirmed)
+        assertTrue(vars.containsKey("DockerTagsAsJSON"),
+            "Expected trigger variables to contain key 'DockerTagsAsJSON' but got: ${vars.keys}")
         assertEquals("regression", vars["suiteType"])
         assertEquals("true", vars["featureFlag"])
     }

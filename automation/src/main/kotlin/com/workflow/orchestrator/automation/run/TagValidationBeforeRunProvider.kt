@@ -10,6 +10,7 @@ import com.intellij.icons.AllIcons
 import com.workflow.orchestrator.automation.service.TagValidationService
 import com.workflow.orchestrator.core.model.DockerTagsProvider
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.util.DockerRegistryUrls
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -44,24 +45,29 @@ class TagValidationBeforeRunProvider : BeforeRunTaskProvider<TagValidationBefore
     ): Boolean {
         val project = configuration.project
         val settings = PluginSettings.getInstance(project)
-        val registryUrl = settings.connections.nexusUrl.orEmpty().trimEnd('/')
+        // Use dockerRegistryUrl if set, fall back to nexusUrl — same fallback as QueueService
+        val registryUrl = (settings.state.dockerRegistryUrl.takeUnless { it.isNullOrBlank() }
+            ?: settings.connections.nexusUrl.orEmpty()).trimEnd('/')
         if (registryUrl.isBlank()) {
             log.warn("[Automation:TagValidation] No registry URL configured")
             return false
         }
+        val basePath = settings.state.dockerBasePath.orEmpty()
 
         // Only validate configs that provide docker tags via the shared interface
         if (configuration !is DockerTagsProvider) return true
         val buildVariables = configuration.getDockerTagsJson()
 
-        val dockerTagsJson = TagValidationLogic.extractDockerTagsJson(buildVariables)
+        val configuredVarName = settings.state.bambooBuildVariableName?.takeIf { it.isNotBlank() }
+            ?: "DockerTagsAsJSON"
+        val dockerTagsJson = TagValidationLogic.extractDockerTagsJson(buildVariables, configuredVarName)
         if (dockerTagsJson.isBlank()) return true
 
         val tags = TagValidationLogic.parseDockerTags(dockerTagsJson)
         if (tags.isEmpty()) return true
 
         val validationService = TagValidationService.getInstance(project)
-        val result = validationService.validateTags(registryUrl, tags)
+        val result = validationService.validateTags(registryUrl, tags, basePath)
 
         if (result.isError) {
             log.warn("[Automation:TagValidation] ${result.summary}")
@@ -90,17 +96,43 @@ object TagValidationLogic {
         }
     }
 
-    fun extractDockerTagsJson(buildVariables: String): String {
+    /**
+     * Extracts the Docker tags JSON string from a build-variables JSON envelope.
+     *
+     * Uses a **case-insensitive** key lookup so that plans using `DockerTagsAsJSON`,
+     * `DockerTagsAsJson`, or `dockerTagsAsJson` all resolve correctly regardless of
+     * the configured [varName] default (A-P0-3 fix).
+     *
+     * @param buildVariables JSON envelope string (the raw build-variables payload).
+     * @param varName Name of the variable key to look up (defaults to `"DockerTagsAsJSON"`).
+     */
+    fun extractDockerTagsJson(
+        buildVariables: String,
+        varName: String = "DockerTagsAsJSON"
+    ): String {
         if (buildVariables.isBlank()) return ""
         return try {
             val obj = json.decodeFromString<JsonObject>(buildVariables)
-            obj["dockerTagsAsJson"]?.jsonPrimitive?.content ?: ""
+            obj.entries.firstOrNull { it.key.equals(varName, ignoreCase = true) }
+                ?.value?.jsonPrimitive?.content ?: ""
         } catch (e: Exception) {
             ""
         }
     }
 
-    fun buildManifestUrl(registryUrl: String, imageName: String, tag: String): String {
-        return "${registryUrl.trimEnd('/')}/v2/$imageName/manifests/$tag"
-    }
+    /**
+     * Constructs a Docker manifest URL, honouring Nexus path-based registries.
+     * Delegates to [DockerRegistryUrls.manifestUrl] — consolidation of A-P2-3.
+     *
+     * @param registryUrl Registry base URL (host root for Nexus path-based).
+     * @param imageName Image / repository name.
+     * @param tag Docker tag.
+     * @param basePath Optional Nexus sub-path (e.g. `/repository/docker-hosted`). Blank for root.
+     */
+    fun buildManifestUrl(
+        registryUrl: String,
+        imageName: String,
+        tag: String,
+        basePath: String = ""
+    ): String = DockerRegistryUrls.manifestUrl(registryUrl, basePath, imageName, tag)
 }

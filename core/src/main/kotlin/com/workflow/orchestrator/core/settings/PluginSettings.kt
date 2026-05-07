@@ -52,6 +52,13 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
 
         // Automation & Docker Registry settings
         var dockerRegistryUrl by string("")
+        /**
+         * Optional sub-path for path-based Docker registries (e.g. Nexus 3).
+         * When set (e.g. "/repository/docker-hosted"), the full manifest URL becomes:
+         *   <dockerRegistryUrl><dockerBasePath>/v2/<name>/manifests/<tag>
+         * Leave blank for port-based registries where /v2/ lives at the root.
+         */
+        var dockerBasePath by string("")
         var queueAutoTriggerEnabled by property(true)
         var tagValidationOnTrigger by property(true)
         var queueMaxDepthPerSuite by property(10)
@@ -109,7 +116,10 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
 
         // Automation
         var tagHistoryMaxEntries by property(5)
-        var bambooBuildVariableName by string("DockerTagsAsJson")
+        /** Canonical Bamboo plan variable carrying the Docker tags JSON payload.
+         *  Probe-confirmed value: "DockerTagsAsJSON" (bundle-automation plan_variables_via_context.json).
+         *  All readers must compare case-insensitively so user-configured variants still match. */
+        var bambooBuildVariableName by string("DockerTagsAsJSON")
 
         // Sprint dashboard view preferences
         var sprintSortBy by string("Default")

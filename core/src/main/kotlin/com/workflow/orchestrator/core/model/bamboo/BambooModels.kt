@@ -9,14 +9,23 @@ import kotlinx.serialization.Serializable
 data class BuildResultData(
     val planKey: String,
     val buildNumber: Int,
-    val state: String,          // "Successful", "Failed", "Unknown"
+    /** Collapsed Bamboo state: "Successful", "Failed", or "Unknown" (when state is blank, lifeCycleState is used). */
+    val state: String,
     val durationSeconds: Long,
     val stages: List<BuildStageData> = emptyList(),
     val testsPassed: Int = 0,
     val testsFailed: Int = 0,
     val testsSkipped: Int = 0,
     val buildResultKey: String = "",
-    val buildRelativeTime: String = ""
+    val buildRelativeTime: String = "",
+    /**
+     * Raw Bamboo lifeCycleState: "Finished", "NotBuilt", "InProgress", "Queued", "Pending".
+     * Preserved alongside [state] so consumers can use the richer lifecycle signal for
+     * terminal detection (e.g. "NotBuilt" is terminal; "InProgress" is not) without
+     * relying on the lossy `state.ifBlank{lifeCycleState}` collapse.
+     * Populated by BambooServiceImpl.mapBuildResult and sibling mappers (A-P1-1).
+     */
+    val lifeCycleState: String = ""
 )
 
 /**

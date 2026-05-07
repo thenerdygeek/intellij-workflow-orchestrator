@@ -9,6 +9,7 @@ import com.workflow.orchestrator.core.http.HttpClientFactory
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.util.DockerRegistryUrls
 import okhttp3.Request
 
 /** Per-image validation outcome produced by [TagValidationService.validateTags]. */
@@ -51,14 +52,18 @@ class TagValidationService(private val project: Project) {
     /**
      * Validates that each (imageName, tag) pair exists in the Nexus registry.
      *
-     * @param registryUrl base URL of the Nexus Docker registry (e.g. `https://nexus.example.com`)
+     * @param registryUrl base URL of the Nexus Docker registry (e.g. `https://nexus.example.com`).
+     *   For Nexus path-based repos, supply the host root here and the repo sub-path via [basePath].
+     * @param basePath optional sub-path for Nexus path-based Docker repos
+     *   (e.g. `/repository/docker-hosted`). Blank for port-based registries.
      * @param tags map of service name → docker tag to validate
      * @return [ToolResult] containing a [TagValidationResult]; [ToolResult.isError] is true only
      *         when the registry URL is blank (configuration error), not when tags are missing.
      */
     fun validateTags(
         registryUrl: String,
-        tags: Map<String, String>
+        tags: Map<String, String>,
+        basePath: String = ""
     ): ToolResult<TagValidationResult> {
         if (registryUrl.isBlank()) {
             return ToolResult(
@@ -71,7 +76,7 @@ class TagValidationService(private val project: Project) {
         val missingTags = mutableListOf<String>()
 
         for ((service, tag) in tags) {
-            val url = buildManifestUrl(registryUrl, service, tag)
+            val url = DockerRegistryUrls.manifestUrl(registryUrl, basePath, service, tag)
             val request = Request.Builder()
                 .url(url)
                 .head()
@@ -98,9 +103,6 @@ class TagValidationService(private val project: Project) {
         }
         return ToolResult(data = result, summary = summary)
     }
-
-    private fun buildManifestUrl(registryUrl: String, imageName: String, tag: String): String =
-        "${registryUrl.trimEnd('/')}/v2/$imageName/manifests/$tag"
 
     companion object {
         fun getInstance(project: Project): TagValidationService = project.service()

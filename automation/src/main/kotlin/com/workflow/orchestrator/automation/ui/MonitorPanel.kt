@@ -124,18 +124,36 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
         }.also { it.start() }
     }
 
+    /**
+     * Checks whether any run is still in a non-terminal state.
+     * MUST be called from the EDT — snapshots the Swing model safely. (A-P0-4 fix)
+     */
     private fun hasActiveRuns(): Boolean {
-        for (i in 0 until runListModel.size()) {
-            if (runListModel.getElementAt(i).status !in TERMINAL_STATUSES) return true
-        }
-        return false
+        // Snapshot on the EDT — never read Swing models off-thread
+        val snapshot = com.intellij.openapi.application.ApplicationManager.getApplication()
+            .let { app ->
+                if (app.isDispatchThread) {
+                    (0 until runListModel.size()).map { runListModel.getElementAt(it) }
+                } else {
+                    var list = emptyList<RunEntry>()
+                    invokeLater { list = (0 until runListModel.size()).map { runListModel.getElementAt(it) } }
+                    list
+                }
+            }
+        return snapshot.any { it.status !in TERMINAL_STATUSES }
     }
 
     private suspend fun pollAllRuns() {
         val bambooService = project.getService(BambooService::class.java) ?: return
 
-        for (i in 0 until runListModel.size()) {
-            val entry = runListModel.getElementAt(i)
+        // Snapshot the list model on the EDT to avoid off-EDT reads (A-P0-4 fix)
+        val snapshot: List<Pair<Int, RunEntry>> = kotlinx.coroutines.withContext(
+            kotlinx.coroutines.Dispatchers.Main
+        ) {
+            (0 until runListModel.size()).map { i -> i to runListModel.getElementAt(i) }
+        }
+
+        for ((index, entry) in snapshot) {
             if (entry.status in TERMINAL_STATUSES) continue
 
             try {
@@ -172,17 +190,24 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
                                 failedTests = testData.failed,
                                 failedTestNames = failedNames
                             )
+                            // Use a stable index capture to avoid stale-index corruption (A-P0-4 fix)
+                            val capturedIndex = index
                             invokeLater {
-                                runListModel.set(i, withTests)
-                                if (runList.selectedIndex == i) showRunDetail(withTests)
+                                if (capturedIndex < runListModel.size()) {
+                                    runListModel.set(capturedIndex, withTests)
+                                    if (runList.selectedIndex == capturedIndex) showRunDetail(withTests)
+                                }
                             }
                             continue
                         }
                     }
 
+                    val capturedIndex = index
                     invokeLater {
-                        runListModel.set(i, updated)
-                        if (runList.selectedIndex == i) showRunDetail(updated)
+                        if (capturedIndex < runListModel.size()) {
+                            runListModel.set(capturedIndex, updated)
+                            if (runList.selectedIndex == capturedIndex) showRunDetail(updated)
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -368,7 +393,13 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
     }
 
     private companion object {
-        private val TERMINAL_STATUSES = setOf("Successful", "Failed")
+        /**
+         * Build states that require no further polling.
+         * "Unknown" corresponds to Bamboo lifeCycleState="NotBuilt" (manual skip /
+         * already-up-to-date) — it is terminal and Bamboo never transitions it back
+         * to Successful. Without this, a NotBuilt build polls forever (A-P0-4 fix).
+         */
+        private val TERMINAL_STATUSES = setOf("Successful", "Failed", "Unknown")
     }
 
     private class RunListCellRenderer : ListCellRenderer<RunEntry> {
