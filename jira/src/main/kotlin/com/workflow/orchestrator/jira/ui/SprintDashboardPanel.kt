@@ -116,14 +116,15 @@ class SprintDashboardPanel(
     }
     private val sprintTimeBar = SprintTimeBar()
 
+    private fun sprintLabel(sprint: JiraSprint): String =
+        sprint.name + if (sprint.state == "active") " (Active)" else ""
+
     // -- Sprint selector --
     private val sprintSelector = ComboBox<JiraSprint>().apply {
-        renderer = SimpleListCellRenderer.create("") { sprint ->
-            sprint.name + if (sprint.state == "active") " (Active)" else ""
-        }
+        renderer = SimpleListCellRenderer.create("") { sprint -> sprintLabel(sprint) }
         isVisible = false // Hidden until sprints are loaded
         bindBoundedWidth(ComboBoxWidth.DEFAULT) { sprint ->
-            sprint?.let { it.name + if (it.state == "active") " (Active)" else "" }.orEmpty()
+            sprint?.let(::sprintLabel).orEmpty()
         }
     }
     private var availableSprints: List<JiraSprint> = emptyList()

@@ -42,7 +42,20 @@ object ComboBoxWidth {
  *   and only augments the tooltip.
  *
  * Call this AFTER any custom `setRenderer(...)`, otherwise the wrapping
- * is lost when the caller's renderer overwrites it.
+ * is lost when the caller's renderer overwrites it. The contract is not
+ * enforced at compile time — a later `setRenderer` call silently discards
+ * the wrapper.
+ *
+ * Caveats:
+ * - **Editable combos** (`isEditable=true`): the closed-state display is
+ *   rendered by the combo's editor (`JTextField`), not the cell renderer.
+ *   The tooltip applies only to popup items in that case; the closed
+ *   selection has no truncation tooltip.
+ * - **HiDPI**: `JBUI.scale(maxWidthPx)` is resolved once at call time and
+ *   the resulting `Dimension` is baked into `preferredSize` /
+ *   `maximumSize`. Multi-monitor DPI changes after construction won't
+ *   re-scale the combo. This matches the rest of the codebase's static
+ *   sizing pattern.
  *
  * @param maxWidthPx unscaled width; passes through [JBUI.scale]. See
  *   [ComboBoxWidth] for canonical buckets.

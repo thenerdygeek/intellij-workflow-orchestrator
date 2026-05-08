@@ -329,16 +329,27 @@ class AutomationPanel(
             // BuildLogReady only once per build (guarded by `lastLogFetchedForBuild`),
             // so a panel constructed after the first emit never receives it. Fetching
             // here gives us a definite answer instead of a permanent "Waiting…" state.
+            //
+            // Branch source: prefer the user's explicit branchCombo selection
+            // (`branch.branchName`) so the pull-detect honors what they picked. The
+            // master entry's branchName is the placeholder "default" — for that case
+            // fall back to the git checkout (matches what `BuildMonitorStartupActivity`
+            // polls with). The 15s timeout guards against a slow Bamboo locking up
+            // the panel at "Loading…"; on timeout we treat the result as null and
+            // the diagnostic banner shows the existing pending state.
             val ciPlanKey = resolveServiceCiPlanKey()
-            val gitBranch = runCatching {
-                com.workflow.orchestrator.core.settings.RepoContextResolver
-                    .getInstance(project).getPrimaryBranchName()
-            }.getOrNull().orEmpty()
+            val branchForCi = branch.branchName.takeIf { it.isNotBlank() && it != "default" }
+                ?: runCatching {
+                    com.workflow.orchestrator.core.settings.RepoContextResolver
+                        .getInstance(project).getPrimaryBranchName()
+                }.getOrNull().orEmpty()
             val tagDetection: TagDetectionResult? =
-                if (ciPlanKey.isNotBlank() && gitBranch.isNotBlank()) {
-                    tagBuilderService.detectDockerTag(ciPlanKey, gitBranch)
+                if (ciPlanKey.isNotBlank() && branchForCi.isNotBlank()) {
+                    withTimeoutOrNull(15_000L) {
+                        tagBuilderService.detectDockerTag(ciPlanKey, branchForCi)
+                    }
                 } else null
-            log.info("[Automation:UI] Direct tag detection: ciPlan='$ciPlanKey', branch='$gitBranch', " +
+            log.info("[Automation:UI] Direct tag detection: ciPlan='$ciPlanKey', branch='$branchForCi', " +
                 "detected=${tagDetection?.detected}, tag=${tagDetection?.tag}, reason=${tagDetection?.reason}")
 
             val dockerTagKey = resolveDockerTagKey()
@@ -516,18 +527,22 @@ class AutomationPanel(
 
         log.info("[Automation:UI] Docker tag detection from event: detected=${tagDetection.detected}, tag=${tagDetection.tag}, reason=${tagDetection.reason}")
 
-        // Update the tag in the staging table if detected
+        // Update the tag in the staging table if detected. Model read +
+        // transform + UI write happen together on EDT so the table model isn't
+        // touched from the IO collector thread (Swing models aren't thread-safe).
         if (tagDetection.detected && tagDetection.tag != null) {
             val dockerTagKey = resolveDockerTagKey()
             if (dockerTagKey.isNotBlank()) {
-                val currentTags = tagStagingPanel.getCurrentTags()
-                val updatedTags = tagBuilderService.replaceCurrentRepoTag(currentTags, CurrentRepoContext(
-                    serviceName = dockerTagKey,
-                    branchName = "",
-                    featureBranchTag = tagDetection.tag,
-                    detectedFrom = DetectionSource.SETTINGS_MAPPING
-                ))
-                invokeLater { tagStagingPanel.updateTags(updatedTags) }
+                invokeLater {
+                    val currentTags = tagStagingPanel.getCurrentTags()
+                    val updatedTags = tagBuilderService.replaceCurrentRepoTag(currentTags, CurrentRepoContext(
+                        serviceName = dockerTagKey,
+                        branchName = "",
+                        featureBranchTag = tagDetection.tag,
+                        detectedFrom = DetectionSource.SETTINGS_MAPPING
+                    ))
+                    tagStagingPanel.updateTags(updatedTags)
+                }
             }
         }
 
