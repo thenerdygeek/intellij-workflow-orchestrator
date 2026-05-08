@@ -7,8 +7,10 @@ import com.workflow.orchestrator.core.model.jira.WorklogEstimateAdjustment
 import com.workflow.orchestrator.jira.api.JiraApiClient
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
+import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -51,6 +53,24 @@ class JiraServiceImplCommentAndWorklogTest {
     @AfterEach
     fun tearDown() {
         server.shutdown()
+    }
+
+    /**
+     * Routes responses by request path so concurrent /role + /groups/picker fan-out
+     * (via async{} in JiraServiceImpl.getCommentVisibilityOptions) doesn't get matched
+     * to the wrong response by FIFO enqueue order.
+     */
+    private fun pathDispatcher(rolesBody: String, groupsBody: String): Dispatcher = object : Dispatcher() {
+        override fun dispatch(request: RecordedRequest): MockResponse {
+            val path = request.path.orEmpty()
+            return when {
+                path.contains("/groups/picker") ->
+                    MockResponse().setHeader("Content-Type", "application/json").setBody(groupsBody)
+                path.endsWith("/role") || path.contains("/role?") ->
+                    MockResponse().setHeader("Content-Type", "application/json").setBody(rolesBody)
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
     }
 
     // ── addComment visibility ────────────────────────────────────────────────
@@ -155,20 +175,15 @@ class JiraServiceImplCommentAndWorklogTest {
 
     @Test
     fun `getCommentVisibilityOptions merges roles + groups and sorts roles by name`() = runTest {
-        // First call: `/role` then `/groups/picker`. Both 200s.
-        server.enqueue(
-            MockResponse().setHeader("Content-Type", "application/json").setBody(
-                """{
+        // The impl fans /role + /groups/picker out concurrently via async, so a FIFO
+        // enqueue() can match responses to the wrong requests. Route by path instead.
+        server.dispatcher = pathDispatcher(
+            rolesBody = """{
                    "Developers":"https://jira.example/rest/api/2/project/PROJ/role/10001",
                    "Administrators":"https://jira.example/rest/api/2/project/PROJ/role/10002",
                    "Users":"https://jira.example/rest/api/2/project/PROJ/role/10003"
-                   }"""
-            )
-        )
-        server.enqueue(
-            MockResponse().setHeader("Content-Type", "application/json").setBody(
-                """{"groups":[{"name":"jira-developers"},{"name":"jira-administrators"}]}"""
-            )
+                   }""",
+            groupsBody = """{"groups":[{"name":"jira-developers"},{"name":"jira-administrators"}]}""",
         )
 
         val result = service.getCommentVisibilityOptions("PROJ")
@@ -190,15 +205,10 @@ class JiraServiceImplCommentAndWorklogTest {
 
     @Test
     fun `getCommentVisibilityOptions caches per project — second call hits cache`() = runTest {
-        server.enqueue(
-            MockResponse().setHeader("Content-Type", "application/json").setBody(
-                """{"Developers":"https://jira.example/rest/api/2/project/PROJ/role/10001"}"""
-            )
-        )
-        server.enqueue(
-            MockResponse().setHeader("Content-Type", "application/json").setBody(
-                """{"groups":[{"name":"jira-developers"}]}"""
-            )
+        // Concurrent fan-out — same routing fix as the merge test above.
+        server.dispatcher = pathDispatcher(
+            rolesBody = """{"Developers":"https://jira.example/rest/api/2/project/PROJ/role/10001"}""",
+            groupsBody = """{"groups":[{"name":"jira-developers"}]}""",
         )
 
         val first = service.getCommentVisibilityOptions("PROJ")
