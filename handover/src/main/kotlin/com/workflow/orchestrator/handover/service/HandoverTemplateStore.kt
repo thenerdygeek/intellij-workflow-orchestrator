@@ -45,38 +45,73 @@ interface BundledTemplateLoader {
 
 /**
  * Production loader — reads from classpath `/handover/templates/{action}/<name>.<ext>`.
- * Because the bundled resource directories are populated in T23, this returns an
- * empty list when no resources exist yet (not an error).
+ * Supports both `file:` URLs (class-folder development run) and `jar:` URLs (production
+ * plugin JAR), so bundled templates are always visible regardless of how the plugin is loaded.
  */
-object ClasspathBundledLoader : BundledTemplateLoader {
+internal object ClasspathBundledLoader : BundledTemplateLoader {
 
     private val log = Logger.getInstance(ClasspathBundledLoader::class.java)
 
-    override fun load(): List<HandoverTemplate> {
-        val result = mutableListOf<HandoverTemplate>()
+    override fun load(): List<HandoverTemplate> = buildList {
         for (action in HandoverTemplateAction.entries) {
-            val dir = "/handover/templates/${action.name.lowercase()}"
-            val url = ClasspathBundledLoader::class.java.getResource(dir) ?: continue
-            try {
-                val dirFile = java.io.File(url.toURI())
-                if (!dirFile.isDirectory) continue
-                dirFile.listFiles()?.forEach { file ->
-                    val ext = file.extension.lowercase()
-                    if (!isValidExtension(action, ext)) return@forEach
-                    val id = "${action.name.lowercase()}/${file.nameWithoutExtension}"
-                    result += HandoverTemplate(
-                        id = id,
-                        name = file.nameWithoutExtension,
+            val actionDir = action.name.lowercase()
+            val ext = if (action == HandoverTemplateAction.JIRA) "wiki" else "html"
+            for (name in listResourceNames("/handover/templates/$actionDir/", ext)) {
+                val source = readResource("/handover/templates/$actionDir/$name") ?: continue
+                val baseName = name.substringBefore(".")
+                add(
+                    HandoverTemplate(
+                        id = "$actionDir/$baseName",
+                        name = baseName.replace('-', ' ').replaceFirstChar { it.uppercase() },
                         action = action,
-                        source = file.readText(),
+                        source = source,
                         origin = HandoverTemplateOrigin.BUNDLED,
                     )
-                }
-            } catch (e: Exception) {
-                log.warn("ClasspathBundledLoader: failed to load templates from $dir", e)
+                )
             }
         }
-        return result
+    }
+
+    private fun readResource(path: String): String? =
+        ClasspathBundledLoader::class.java.getResourceAsStream(path)
+            ?.bufferedReader()
+            ?.use { it.readText() }
+
+    /**
+     * Reads the `index.txt` file co-located with the templates in the JAR.
+     * Using an explicit index avoids directory-URL enumeration, which breaks under
+     * IntelliJ's `PathClassLoader` (used in production and in the test sandbox) because
+     * `getResource(dir/)` returns null for JAR-packaged directory entries.
+     * Falls back to `file:`-based enumeration for class-folder dev runs where the index
+     * may not have been written to the output directory yet.
+     */
+    private fun listResourceNames(dirPath: String, ext: String): List<String> {
+        val cls = ClasspathBundledLoader::class.java
+        // Primary: read index.txt shipped alongside the templates
+        val indexPath = dirPath.trimEnd('/') + "/index.txt"
+        val indexStream = cls.getResourceAsStream(indexPath)
+        if (indexStream != null) {
+            return indexStream.bufferedReader().use { reader ->
+                reader.lineSequence()
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() && it.endsWith(".$ext") }
+                    .toList()
+            }
+        }
+        // Fallback: file: URL directory scan (class-folder dev run without index.txt on disk)
+        val url = cls.getResource(dirPath) ?: return emptyList()
+        return try {
+            if (url.protocol == "file") {
+                val dir = java.io.File(url.toURI())
+                dir.listFiles { _, n -> n.endsWith(".$ext") }?.map { it.name } ?: emptyList()
+            } else {
+                log.warn("ClasspathBundledLoader: no index.txt and unsupported URL scheme '${url.protocol}' at $dirPath")
+                emptyList()
+            }
+        } catch (e: Exception) {
+            log.warn("ClasspathBundledLoader: failed to list resources at $dirPath", e)
+            emptyList()
+        }
     }
 }
 
