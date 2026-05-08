@@ -178,4 +178,11 @@ interface JiraService {
 
     /** Flattened changelog: one entry per (history, item) pair, oldest first as Jira returns them. */
     suspend fun getTicketHistory(key: String): ToolResult<List<TicketHistoryEntry>>
+
+    /**
+     * Render Jira wiki markup to HTML via POST /rest/api/1.0/render.
+     * Used by the Handover tab's live preview pane to show the comment as Jira will render it.
+     * Returns the rendered HTML string on success.
+     */
+    suspend fun renderWikiMarkup(text: String, issueKey: String): ToolResult<String>
 }

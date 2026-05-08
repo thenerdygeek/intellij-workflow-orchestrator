@@ -55,8 +55,10 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.ConcurrentHashMap
@@ -1699,6 +1701,41 @@ class JiraServiceImpl(private val project: Project) : JiraService {
                     summary = "Error fetching history for $key: ${result.message}",
                     isError = true,
                     hint = "Verify the ticket key is correct."
+                )
+            }
+        }
+    }
+
+    override suspend fun renderWikiMarkup(text: String, issueKey: String): ToolResult<String> {
+        val api = client ?: return ToolResult(
+            data = "",
+            summary = "Jira not configured. Cannot render wiki markup.",
+            isError = true,
+            hint = "Set up Jira connection in Settings."
+        )
+
+        val payload = buildJsonObject {
+            put("rendererType", "atlassian-wiki-renderer")
+            put("unrenderedMarkup", text)
+            put("issueKey", issueKey)
+        }.toString()
+
+        return when (val result = api.postRawString(path = "/rest/api/1.0/render", jsonBody = payload)) {
+            is ApiResult.Success -> ToolResult.success(
+                data = result.data,
+                summary = "Rendered wiki markup for $issueKey."
+            )
+            is ApiResult.Error -> {
+                log.warn("[JiraService] renderWikiMarkup failed for $issueKey: ${result.message}")
+                ToolResult(
+                    data = "",
+                    summary = "Jira render failed: ${result.message}",
+                    isError = true,
+                    hint = when (result.type) {
+                        com.workflow.orchestrator.core.model.ErrorType.AUTH_FAILED ->
+                            "Check your Jira token in Settings."
+                        else -> "Check Jira connection in Settings."
+                    }
                 )
             }
         }

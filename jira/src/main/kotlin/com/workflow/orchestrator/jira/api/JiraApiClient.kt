@@ -662,6 +662,55 @@ class JiraApiClient(
         }
 
     /**
+     * POST helper that returns the raw response body as a String.
+     * Used by endpoints (e.g. `/rest/api/1.0/render`) that return non-JSON content
+     * (plain HTML) so the JSON content-type guard is deliberately skipped.
+     * Auth handling, retry policy, and timeout configuration are inherited from
+     * the shared [httpClient] exactly as in [post].
+     */
+    suspend fun postRawString(path: String, jsonBody: String): ApiResult<String> =
+        withContext(Dispatchers.IO) {
+            try {
+                val body = jsonBody.toRequestBody("application/json".toMediaType())
+                val request = Request.Builder().url("$baseUrl$path").post(body).build()
+                val response = httpClient.newCall(request).execute()
+                response.use {
+                    log.debug("[Jira:API] POST $path -> ${it.code}")
+                    when (it.code) {
+                        in 200..299 -> ApiResult.Success(it.body?.string() ?: "")
+                        400 -> {
+                            val raw = it.body?.string().orEmpty()
+                            val msg = parseJiraErrorMessage(raw) ?: "Bad request (400)"
+                            log.warn("[Jira:API] POST $path rejected (400): $msg")
+                            ApiResult.Error(ErrorType.VALIDATION_ERROR, msg)
+                        }
+                        401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Jira token").also { _ ->
+                            log.warn("[Jira:API] Authentication failed (401)")
+                        }
+                        403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Jira permissions").also { _ ->
+                            log.warn("[Jira:API] Forbidden (403)")
+                        }
+                        404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Resource not found at $path").also { _ ->
+                            log.warn("[Jira:API] Not found (404) at $path")
+                        }
+                        429 -> ApiResult.Error(ErrorType.RATE_LIMITED, "Jira rate limit exceeded").also { _ ->
+                            log.warn("[Jira:API] Rate limited (429)")
+                        }
+                        else -> {
+                            val raw = it.body?.string().orEmpty()
+                            val msg = parseJiraErrorMessage(raw) ?: "Jira returned ${it.code}"
+                            log.warn("[Jira:API] POST $path server error (${it.code}): $msg")
+                            ApiResult.Error(ErrorType.SERVER_ERROR, msg)
+                        }
+                    }
+                }
+            } catch (e: IOException) {
+                log.warn("[Jira:API] Network error at $path: ${e.message}")
+                ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Jira: ${e.message}", e)
+            }
+        }
+
+    /**
      * Typed POST helper: serializes a JSON-body request and decodes the response into [T].
      * Mirrors [get] for response-code mapping, content-type guard, and error semantics.
      */
