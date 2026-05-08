@@ -78,6 +78,30 @@ sealed class WorkflowEvent {
         val commentId: String
     ) : WorkflowEvent()
 
+    /** Actions that can be performed from the Handover tab. Used in [HandoverOverride]. */
+    enum class HandoverAction {
+        POST_JIRA, COPY_EMAIL, FIX_COPYRIGHT, LOG_WORK, COPY_CHIP
+    }
+
+    /**
+     * Emitted by :handover when the user proceeds with an action despite one or more
+     * soft-gate checks having failed (e.g. quality gate not passed, suite not green).
+     */
+    data class HandoverOverride(
+        val ticketId: String,
+        val action: HandoverAction,
+        val failedChecks: List<String>,
+        val timestamp: java.time.Instant
+    ) : WorkflowEvent()
+
+    /**
+     * Emitted by :handover when the user copies a quick-value chip to the clipboard.
+     * Used for usage telemetry.
+     */
+    data class HandoverChipCopied(
+        val chipKey: String
+    ) : WorkflowEvent()
+
     /** Emitted by :jira when the active ticket changes (Start Work, branch switch). */
     data class TicketChanged(
         val ticketId: String,
