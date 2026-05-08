@@ -45,9 +45,12 @@ fun toolDoc(toolName: String, build: ToolDocBuilder.() -> Unit): ToolDocumentati
 class ToolDocBuilder internal constructor(private val toolName: String) {
     private var summary: ToolSummary? = null
     private var whatLLMSees: String = ""
+    private var sideEffect: SideEffectKind? = null
     private var actions: MutableList<ActionDoc>? = null
     private var singleParams: ParamGroup? = null
     private var toolVerdict: Verdict = Verdict()
+    private var counterfactual: String? = null
+    private val commonLLMMistakes = mutableListOf<String>()
     private val auditNotes = mutableListOf<AuditNote>()
     private val relatedTools = mutableListOf<RelatedTool>()
     private var flowchart: String? = null
@@ -60,6 +63,18 @@ class ToolDocBuilder internal constructor(private val toolName: String) {
 
     fun whatLLMSees(description: String) {
         whatLLMSees = description.trimIndent()
+    }
+
+    fun sideEffect(kind: SideEffectKind) {
+        sideEffect = kind
+    }
+
+    fun counterfactual(text: String) {
+        counterfactual = text.trim()
+    }
+
+    fun llmMistake(text: String) {
+        commonLLMMistakes.add(text.trim())
     }
 
     fun actions(build: ActionsBuilder.() -> Unit) {
@@ -109,13 +124,18 @@ class ToolDocBuilder internal constructor(private val toolName: String) {
     internal fun build(): ToolDocumentation {
         val resolvedSummary = summary
             ?: error("toolDoc('$toolName') must declare summary { technical(...); plain(...) }")
+        val resolvedSideEffect = sideEffect
+            ?: error("toolDoc('$toolName') must declare sideEffect(SideEffectKind.X) — this drives the blast-radius chip and the Compare Tools filter")
         return ToolDocumentation(
             toolName = toolName,
             summary = resolvedSummary,
             whatLLMSees = whatLLMSees,
+            sideEffect = resolvedSideEffect,
             actions = actions,
             singleActionParams = singleParams,
             toolVerdict = toolVerdict,
+            counterfactual = counterfactual,
+            commonLLMMistakes = commonLLMMistakes.toList(),
             auditNotes = auditNotes.toList(),
             relatedTools = relatedTools.toList(),
             flowchart = flowchart,

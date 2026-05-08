@@ -23,6 +23,12 @@ data class ToolDocumentation(
      */
     val whatLLMSees: String,
     /**
+     * Blast-radius classification. Drives a chip in the UI header and powers
+     * "show me all NETWORK tools" / "show me all FILE_WRITE tools" filters in
+     * the Compare Tools view. Required — every tool has a side effect class.
+     */
+    val sideEffect: SideEffectKind,
+    /**
      * Per-action documentation. Non-null for meta-tools that dispatch on an `action`
      * enum parameter (e.g. `debug_step`, `jira`, `bamboo_builds`). Null for single-action
      * tools where parameters are captured in [singleActionParams] instead.
@@ -36,6 +42,21 @@ data class ToolDocumentation(
     val singleActionParams: ParamGroup? = null,
     /** Tool-level keep/drop verdict. Each side is optional — see [Verdict]. */
     val toolVerdict: Verdict = Verdict(),
+    /**
+     * Short answer to "what would the LLM do instead if this tool were dropped?".
+     * The single most valuable field for drop-decisions: forces the author to
+     * articulate the alternative cost, instead of leaving it implicit in the verdict
+     * prose. 1-3 sentences. Surfaced as a callout next to the tool-level verdict.
+     */
+    val counterfactual: String? = null,
+    /**
+     * Patterns the LLM consistently gets wrong with this tool — distinct from
+     * [downsides] (gotchas of the tool itself). E.g. "LLM forgets to call
+     * `get_state` first" or "LLM includes the line-number prefix when crafting
+     * edit_file SEARCH blocks". Strong signal that the *tool description* needs
+     * tightening (=fix) vs the tool itself is mis-designed (=drop).
+     */
+    val commonLLMMistakes: List<String> = emptyList(),
     /**
      * Free-form audit notes — places where this tool could be merged with another,
      * actions that overlap, redundant params, etc. Surfaced in the Compare Tools view.
@@ -53,6 +74,66 @@ data class ToolDocumentation(
      * Null if the DSL fields are sufficient.
      */
     val narrativeResource: String? = null,
+)
+
+/**
+ * Blast-radius classification — what category of side effect the tool can produce.
+ *
+ * Surfaced as a coloured chip in the UI header. Authors assign one tag per tool;
+ * meta-tools whose actions span multiple categories pick the broadest (e.g. a tool
+ * that can either read OR write picks `FILE_WRITE`).
+ */
+enum class SideEffectKind {
+    /** Pure read — no filesystem, process, or IDE state mutation. (`read_file`, `find_definition`.) */
+    READ_ONLY,
+    /**
+     * Mutates only the agent's own state: skill activation, plan-mode toggle, task store,
+     * completion signal, no-op reasoning. Zero blast radius outside the agent loop.
+     * (`use_skill`, `task_create`, `task_update`, `plan_mode_respond`, `enable_plan_mode`,
+     * `attempt_completion`, `think`, `new_task`, `tool_search`.)
+     */
+    AGENT_CONTROL,
+    /** Mutates files on disk via VFS / IO / IntelliJ Document API. (`edit_file`, `create_file`.) */
+    FILE_WRITE,
+    /** Spawns or signals OS processes. (`run_command`, `runtime_exec(action=run_config)`.) */
+    PROCESS_SPAWN,
+    /** Hits external network — HTTP, integrations, MCP servers. (`jira`, `bitbucket_pr`, `sonar`.) */
+    NETWORK,
+    /** Mutates IDE/JVM runtime state without writing files: debugger control, breakpoints, run configs. (`debug_step`, `debug_breakpoints`.) */
+    IDE_MUTATION,
+}
+
+/**
+ * Bridge-populated metadata derived from the tool's source — never hand-authored.
+ *
+ * The `AgentController.buildToolDocsJson` endpoint computes one of these per tool by
+ * inspecting the registered `AgentTool` instance, the `ToolRegistry` tier, the
+ * `WRITE_TOOLS` / `APPROVAL_TOOLS` constants in `AgentLoop`, and the registration
+ * gate in `ToolRegistrationFilter`. Authors don't see this — it's appended to the
+ * JSON response alongside [ToolDocumentation].
+ *
+ * Intentionally separate from [ToolDocumentation] so author-only fields don't
+ * accidentally drift from runtime reality.
+ */
+data class AutoDerivedMetadata(
+    /** "Core" / "Deferred" / "Active-deferred". */
+    val tier: String,
+    /** Plain-English registration condition: "Always" / "Requires Java plugin" / "Requires Bitbucket URL configured". */
+    val registrationCondition: String,
+    /** Estimated tokens this tool's schema adds to every system prompt (Core) or every active session (Deferred). */
+    val schemaTokenCost: Int,
+    /** "ALWAYS_APPROVE" / "ALLOW_FOR_SESSION" / "ALWAYS_PER_INVOCATION" / "N/A". */
+    val approvalPolicy: String,
+    /** True if this tool is in the `WRITE_TOOLS` set in `AgentLoop` and therefore blocked in plan mode. */
+    val planModeBlocked: Boolean,
+    /** Worker types allowed to call this tool — from `AgentTool.allowedWorkers`. */
+    val allowedWorkers: List<String>,
+    /** Timeout class — "Default (120s)" / "Long (600s)" / "Unlimited". */
+    val timeoutClass: String,
+    /** Output cap in characters — "Default (50K)" / "Command (100K)". */
+    val outputCap: String,
+    /** True if this tool is in `WRITE_TOOLS` (sequential execution, plan-mode block). */
+    val isWriteTool: Boolean,
 )
 
 /** A single description in both technical and plain-English registers. */
