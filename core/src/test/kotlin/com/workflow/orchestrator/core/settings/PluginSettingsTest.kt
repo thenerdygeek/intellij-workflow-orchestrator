@@ -1,6 +1,8 @@
 package com.workflow.orchestrator.core.settings
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
@@ -23,5 +25,33 @@ class PluginSettingsTest {
             ),
             state.quickClipboardChips.toList()
         )
+    }
+
+    @Test
+    fun `aiSummariesEnabled defaults to true`() {
+        val state = PluginSettings.State()
+        assertTrue(state.aiSummariesEnabled)
+    }
+
+    @Test
+    fun `aiSummariesEnabled can be set to false`() {
+        val state = PluginSettings.State()
+        state.aiSummariesEnabled = false
+        assertFalse(state.aiSummariesEnabled)
+    }
+
+    @Test
+    fun `handoverOverrideLog defaults to empty`() {
+        val state = PluginSettings.State()
+        assertTrue(state.handoverOverrideLog.isEmpty())
+    }
+
+    @Test
+    fun `handoverOverrideLog accepts and retains entries`() {
+        val state = PluginSettings.State()
+        state.handoverOverrideLog.add("2026-04-01T10:00:00Z")
+        state.handoverOverrideLog.add("2026-04-02T10:00:00Z")
+        assertEquals(2, state.handoverOverrideLog.size)
+        assertEquals("2026-04-01T10:00:00Z", state.handoverOverrideLog.first())
     }
 }

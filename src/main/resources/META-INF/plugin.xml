@@ -125,6 +125,13 @@
             displayName="Multimodal"
             nonDefaultProject="true"/>
 
+        <projectConfigurable
+            parentId="workflow.orchestrator"
+            instance="com.workflow.orchestrator.core.settings.HandoverConfigurable"
+            id="workflow.orchestrator.handover"
+            displayName="Handover"
+            nonDefaultProject="true"/>
+
         <!-- Tool Window -->
         <toolWindow
             id="Workflow"
@@ -326,6 +333,8 @@
             serviceImplementation="com.workflow.orchestrator.handover.service.HandoverAiSummaryCache"/>
         <projectService
             serviceImplementation="com.workflow.orchestrator.handover.service.HandoverPlaceholderResolver"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.handover.service.HandoverOverrideTracker"/>
 
         <!-- Pull Request Services -->
         <projectService

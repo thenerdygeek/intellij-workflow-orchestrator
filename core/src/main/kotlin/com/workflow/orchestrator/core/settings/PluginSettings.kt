@@ -293,6 +293,27 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         // active session's AttachmentStore so the next LLM turn routes through
         // the vision path.
 
+        // ── Handover settings (T25) ─────────────────────────────────────────────
+
+        /**
+         * When true, the handover placeholder resolver will compute AI-generated
+         * summaries for `{ai.changeSummary}` and `{ai.ticketSummary}` chips.
+         * When false, those chips resolve to an empty string without invoking the LLM.
+         * UI: Tools > Workflow Orchestrator > Handover > AI summaries.
+         */
+        var aiSummariesEnabled by property(true)
+
+        /**
+         * Persisted log of [com.workflow.orchestrator.core.events.WorkflowEvent.HandoverOverride]
+         * timestamps, stored as ISO-8601 strings (e.g. "2026-04-01T14:32:00Z").
+         *
+         * Written by `HandoverOverrideTracker` in `:handover` on every override event.
+         * Read by [HandoverConfigurable] to compute the 30-day rolling count without
+         * requiring a cross-module service reference. Entries older than 30 days are pruned
+         * by [HandoverConfigurable.count30d] and by the tracker on every write.
+         */
+        var handoverOverrideLog by list<String>()
+
         /**
          * Master toggle for tool-produced image auto-loading. When false, tool
          * results are emitted text-only and image bytes never reach the
