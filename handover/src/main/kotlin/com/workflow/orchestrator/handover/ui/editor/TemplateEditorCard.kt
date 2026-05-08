@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.handover.ui.editor
 
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.EDT
 import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
@@ -17,13 +18,16 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.jetbrains.annotations.TestOnly
+import kotlin.coroutines.CoroutineContext
 import java.awt.BorderLayout
 import java.awt.FlowLayout
 import java.awt.Font
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
+import javax.swing.SwingUtilities
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
 
@@ -91,6 +95,7 @@ class TemplateEditorCard private constructor(
     private val templateActions: TemplateActions,
     private val placeholderResolver: HandoverPlaceholderResolver,
     private val scope: CoroutineScope,
+    private val edtDispatcher: CoroutineContext = Dispatchers.EDT,
 ) : JPanel(BorderLayout()), Disposable {
 
     // ── Production constructor ───────────────────────────────────────────────
@@ -120,6 +125,7 @@ class TemplateEditorCard private constructor(
         templateActions = templateActions,
         placeholderResolver = placeholderResolver,
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+        edtDispatcher = Dispatchers.EDT,
     )
 
     // ── State ────────────────────────────────────────────────────────────────
@@ -306,7 +312,12 @@ class TemplateEditorCard private constructor(
         } finally {
             loadingTemplate = false
         }
-        picker.setDirty(false)
+        // picker.setDirty mutates Swing — ensure EDT even when called from the IO collector.
+        if (SwingUtilities.isEventDispatchThread()) {
+            picker.setDirty(false)
+        } else {
+            SwingUtilities.invokeLater { picker.setDirty(false) }
+        }
         updateButtonStates()
         triggerPreview(template.source)
     }
@@ -316,7 +327,7 @@ class TemplateEditorCard private constructor(
         previewJob?.cancel()
         previewJob = scope.launch {
             val resolved = resolveMarkup(source)
-            previewPane.setRenderedMarkup(resolved)
+            withContext(edtDispatcher) { previewPane.setRenderedMarkup(resolved) }
         }
     }
 
@@ -331,7 +342,7 @@ class TemplateEditorCard private constructor(
         previewJob = scope.launch {
             delay(100)
             val resolved = resolveMarkup(text)
-            previewPane.setRenderedMarkup(resolved)
+            withContext(edtDispatcher) { previewPane.setRenderedMarkup(resolved) }
         }
 
         // Debounced auto-save: 300ms — capture text at call time; if the user types more, this job
@@ -343,7 +354,7 @@ class TemplateEditorCard private constructor(
             templateActions.onUpdate(tmpl.id, text)
             // Clear dirty only if the source pane still matches what we saved
             if (sourceArea.text == text) {
-                picker.setDirty(false)
+                withContext(edtDispatcher) { picker.setDirty(false) }
             }
         }
     }
@@ -449,7 +460,11 @@ class TemplateEditorCard private constructor(
 
     companion object {
 
-        /** Test-only factory that accepts an external coroutine scope for deterministic timing. */
+        /**
+         * Test-only factory that accepts an external coroutine scope for deterministic timing
+         * and an injectable [edtDispatcher] so headless tests avoid a real EDT dependency.
+         * Pass [kotlinx.coroutines.Dispatchers.Unconfined] for [edtDispatcher] in tests.
+         */
         @TestOnly
         fun forTest(
             project: Project,
@@ -464,6 +479,7 @@ class TemplateEditorCard private constructor(
             templateActions: TemplateActions,
             placeholderResolver: HandoverPlaceholderResolver,
             scope: CoroutineScope = CoroutineScope(SupervisorJob()),
+            edtDispatcher: CoroutineContext = Dispatchers.Unconfined,
         ): TemplateEditorCard = TemplateEditorCard(
             project = project,
             title = title,
@@ -477,6 +493,7 @@ class TemplateEditorCard private constructor(
             templateActions = templateActions,
             placeholderResolver = placeholderResolver,
             scope = scope,
+            edtDispatcher = edtDispatcher,
         )
     }
 }

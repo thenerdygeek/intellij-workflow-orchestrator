@@ -134,19 +134,26 @@ class JiraPreviewPane(
     // ── Private helpers ──────────────────────────────────────────────────────
 
     private fun applyBadge(source: Source) {
-        when (source) {
-            Source.LIVE_CACHED, Source.LIVE_FRESH -> {
-                dotLabel.foreground = JBColor(0x2E9E44, 0x4FC262) // green light/dark
-                dotLabel.text = "●"
-                statusLabel.text = LIVE_TEXT
-                statusLabel.foreground = JBColor.foreground()
+        val doApply = Runnable {
+            when (source) {
+                Source.LIVE_CACHED, Source.LIVE_FRESH -> {
+                    dotLabel.foreground = JBColor(0x2E9E44, 0x4FC262) // green light/dark
+                    dotLabel.text = "●"
+                    statusLabel.text = LIVE_TEXT
+                    statusLabel.foreground = JBColor.foreground()
+                }
+                Source.LOCAL -> {
+                    dotLabel.foreground = JBColor.GRAY
+                    dotLabel.text = "○"
+                    statusLabel.text = LOCAL_TEXT
+                    statusLabel.foreground = JBColor.GRAY
+                }
             }
-            Source.LOCAL -> {
-                dotLabel.foreground = JBColor.GRAY
-                dotLabel.text = "○"
-                statusLabel.text = LOCAL_TEXT
-                statusLabel.foreground = JBColor.GRAY
-            }
+        }
+        if (SwingUtilities.isEventDispatchThread()) {
+            doApply.run()
+        } else {
+            SwingUtilities.invokeLater(doApply)
         }
     }
 
