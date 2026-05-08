@@ -1,4 +1,4 @@
-package com.workflow.orchestrator.handover.ui.panels
+package com.workflow.orchestrator.handover.ui.cards
 
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
@@ -10,9 +10,11 @@ import javax.swing.JComponent
 import javax.swing.JPanel
 
 /**
- * Builds the standard handover panel header: bold uppercase title with a left accent bar
+ * Builds the standard handover card header: bold uppercase title with a left accent bar
  * and a bottom border separator. Optionally accepts a trailing component (e.g. action button)
  * to be placed on the right side.
+ *
+ * Moved from the deleted `ui/panels/PanelHeaders.kt` during the Handover-tab redesign (T26).
  */
 internal fun handoverPanelHeader(title: String, eastComponent: JComponent? = null): JPanel {
     val headerLabel = JBLabel(title).apply {

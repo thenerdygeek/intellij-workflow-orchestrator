@@ -8,7 +8,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.services.JiraService
-import com.workflow.orchestrator.handover.ui.panels.handoverPanelHeader
+import com.workflow.orchestrator.handover.ui.cards.handoverPanelHeader
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.handover.service.HandoverStateService
 import com.workflow.orchestrator.handover.service.TimeTrackingService

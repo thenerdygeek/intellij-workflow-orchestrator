@@ -21,7 +21,7 @@ import com.workflow.orchestrator.handover.model.CopyrightFileEntry
 import com.workflow.orchestrator.handover.model.CopyrightStatus
 import com.workflow.orchestrator.handover.service.CopyrightFixService
 import com.workflow.orchestrator.handover.service.HandoverStateService
-import com.workflow.orchestrator.handover.ui.panels.handoverPanelHeader
+import com.workflow.orchestrator.handover.ui.cards.handoverPanelHeader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
