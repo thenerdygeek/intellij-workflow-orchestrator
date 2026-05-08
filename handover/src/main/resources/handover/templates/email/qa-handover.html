@@ -1,0 +1,8 @@
+<h2>Handover: {ticket.id}</h2>
+<p>{ticket.summary}</p>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse">
+  <tr><th>Suite</th><th>Result</th></tr>
+  {automation.suiteTable}
+</table>
+<p><b>Docker tags:</b><br/>{docker.tagsJson}</p>
+<p style="color:#666">{ai.changeSummary}</p>

@@ -1,0 +1,8 @@
+h2. Handover — {ticket.id}
+
+|| Suite || Result || Docker tag ||
+{automation.suiteTable}
+
+PR: [#{pr.id}|{pr.url}]
+
+{ai.changeSummary}
