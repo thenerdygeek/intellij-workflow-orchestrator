@@ -25,8 +25,8 @@ import org.jetbrains.annotations.TestOnly
  *
  * Unknown keys return [HandoverPlaceholderValue.unavailable] (never throw).
  *
- * AI placeholders (`ai.changeSummary`, `ai.ticketSummary`) are stubbed and marked
- * // TODO(T8) — Task 8 will swap them for real [HandoverAiSummaryCache] calls.
+ * AI placeholders (`ai.changeSummary`, `ai.ticketSummary`) delegate to [HandoverAiSummaryCache]
+ * which caches by `(ticketId, sha, kind)` and invalidates on branch/ticket changes.
  */
 @Service(Service.Level.PROJECT)
 class HandoverPlaceholderResolver {
@@ -35,12 +35,14 @@ class HandoverPlaceholderResolver {
 
     private val stateService: HandoverStateService
     private val workflowContext: WorkflowContextService
+    private val aiCache: HandoverAiSummaryCache
     private val json = Json { ignoreUnknownKeys = true }
 
     /** IntelliJ DI constructor. */
     constructor(project: Project) {
         this.stateService = HandoverStateService.getInstance(project)
         this.workflowContext = WorkflowContextService.getInstance(project)
+        this.aiCache = HandoverAiSummaryCache.getInstance(project)
     }
 
     /** Test constructor — allows injecting mocks without a running IDE. */
@@ -48,9 +50,11 @@ class HandoverPlaceholderResolver {
     constructor(
         stateService: HandoverStateService,
         workflowContext: WorkflowContextService,
+        aiCache: HandoverAiSummaryCache,
     ) {
         this.stateService = stateService
         this.workflowContext = workflowContext
+        this.aiCache = aiCache
     }
 
     /**
@@ -109,10 +113,10 @@ class HandoverPlaceholderResolver {
                 renderSuiteTable(state.suiteResults, action)
 
             "ai.changeSummary" ->
-                HandoverPlaceholderValue.unavailable("ai cache not yet wired (T8)") // TODO(T8)
+                aiCache.changeSummary()
 
             "ai.ticketSummary" ->
-                HandoverPlaceholderValue.unavailable("ai cache not yet wired (T8)") // TODO(T8)
+                aiCache.ticketSummary()
 
             else ->
                 HandoverPlaceholderValue.unavailable("unknown placeholder")

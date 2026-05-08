@@ -7,7 +7,10 @@ import com.workflow.orchestrator.core.model.workflow.TicketRef
 import com.workflow.orchestrator.core.model.workflow.WorkflowContext
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.workflow.WorkflowContextService
+import com.workflow.orchestrator.handover.model.HandoverPlaceholderValue
 import com.workflow.orchestrator.handover.model.HandoverTemplateAction
+import com.workflow.orchestrator.handover.service.HandoverAiSummaryCache.TextGenerator
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
@@ -35,9 +38,14 @@ class HandoverPlaceholderResolverTest {
     private lateinit var eventBus: EventBus
     private lateinit var settings: PluginSettings
     private lateinit var stateService: HandoverStateService
+    private lateinit var aiCache: HandoverAiSummaryCache
     private lateinit var resolver: HandoverPlaceholderResolver
 
     private val contextFlow = MutableStateFlow(WorkflowContext())
+
+    // Default AI generator — returns unavailable so the resolver test suite stays
+    // focused on non-AI placeholders. AI-specific behaviour is tested in HandoverAiSummaryCacheTest.
+    private val unavailableGenerator: TextGenerator = TextGenerator { null }
 
     @BeforeEach
     fun setUp() {
@@ -53,7 +61,14 @@ class HandoverPlaceholderResolverTest {
         every { workflowService.activeTicketFlow } returns MutableStateFlow(null)
 
         stateService = HandoverStateService(workflowService, eventBus, settings, scope)
-        resolver = HandoverPlaceholderResolver(stateService, workflowService)
+        aiCache = HandoverAiSummaryCache(
+            generator = unavailableGenerator,
+            workflowContext = workflowService,
+            notifications = null,
+            eventBus = eventBus,
+            scope = scope,
+        )
+        resolver = HandoverPlaceholderResolver(stateService, workflowService, aiCache)
     }
 
     @AfterEach
@@ -411,20 +426,59 @@ class HandoverPlaceholderResolverTest {
     }
 
     // -------------------------------------------------------------------------
-    // AI stubs (T8)
+    // AI placeholders — delegate to HandoverAiSummaryCache (T8)
     // -------------------------------------------------------------------------
 
     @Test
-    fun `ai changeSummary is unavailable in T6 (stubbed pending T8)`() = runTest {
+    fun `ai changeSummary is unavailable when no active ticket`() = runTest {
+        // contextFlow has no active ticket — cache returns unavailable without calling LLM
         val v = resolver.resolve("ai.changeSummary", HandoverTemplateAction.JIRA)
         assertFalse(v.isAvailable)
-        assertEquals("ai cache not yet wired (T8)", v.unavailableReason)
+        assertEquals("no active ticket", v.unavailableReason)
     }
 
     @Test
-    fun `ai ticketSummary is unavailable in T6 (stubbed pending T8)`() = runTest {
+    fun `ai ticketSummary is unavailable when no active ticket`() = runTest {
         val v = resolver.resolve("ai.ticketSummary", HandoverTemplateAction.EMAIL)
         assertFalse(v.isAvailable)
-        assertEquals("ai cache not yet wired (T8)", v.unavailableReason)
+        assertEquals("no active ticket", v.unavailableReason)
+    }
+
+    @Test
+    fun `ai changeSummary returns LLM result when ticket and generator are present`() = runTest {
+        setContext(WorkflowContext(activeTicket = TicketRef("PROJ-42", "My feature")))
+
+        val liveGenerator = TextGenerator { "AI-generated change summary" }
+        val liveCache = HandoverAiSummaryCache(
+            generator = liveGenerator,
+            workflowContext = workflowService,
+            notifications = null,
+            eventBus = eventBus,
+            scope = scope,
+        )
+        val liveResolver = HandoverPlaceholderResolver(stateService, workflowService, liveCache)
+
+        val v = liveResolver.resolve("ai.changeSummary", HandoverTemplateAction.JIRA)
+        assertTrue(v.isAvailable)
+        assertEquals("AI-generated change summary", v.value)
+    }
+
+    @Test
+    fun `ai ticketSummary returns LLM result when ticket and generator are present`() = runTest {
+        setContext(WorkflowContext(activeTicket = TicketRef("PROJ-42", "My feature")))
+
+        val liveGenerator = TextGenerator { "AI-generated ticket summary" }
+        val liveCache = HandoverAiSummaryCache(
+            generator = liveGenerator,
+            workflowContext = workflowService,
+            notifications = null,
+            eventBus = eventBus,
+            scope = scope,
+        )
+        val liveResolver = HandoverPlaceholderResolver(stateService, workflowService, liveCache)
+
+        val v = liveResolver.resolve("ai.ticketSummary", HandoverTemplateAction.EMAIL)
+        assertTrue(v.isAvailable)
+        assertEquals("AI-generated ticket summary", v.value)
     }
 }
