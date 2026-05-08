@@ -322,6 +322,8 @@
             serviceImplementation="com.workflow.orchestrator.handover.service.TimeTrackingService"/>
         <projectService
             serviceImplementation="com.workflow.orchestrator.handover.service.QaClipboardService"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.handover.service.HandoverPlaceholderResolver"/>
 
         <!-- Pull Request Services -->
         <projectService
