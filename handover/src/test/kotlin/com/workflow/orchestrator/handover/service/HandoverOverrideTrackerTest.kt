@@ -77,32 +77,57 @@ class HandoverOverrideTrackerTest {
     }
 
     // -----------------------------------------------------------------------
-    // 30-day window pruning
+    // 30-day window pruning — happens in record(), not count30d()
     // -----------------------------------------------------------------------
 
     @Test
-    fun `entries older than 30 days are pruned on count30d`() {
+    fun `count30d excludes entries older than 30 days`() {
         val old = Instant.now().minus(31, ChronoUnit.DAYS)
         state.handoverOverrideLog.add(DateTimeFormatter.ISO_INSTANT.format(old))
+        // count30d is read-only; the stale entry is not removed here, but is not counted
         assertEquals(0, tracker.count30d())
-        assertTrue(state.handoverOverrideLog.isEmpty(), "Stale entry must be removed")
     }
 
     @Test
-    fun `recent entries within 30 days are kept`() {
+    fun `recent entries within 30 days are counted`() {
         val recent = Instant.now().minus(29, ChronoUnit.DAYS)
         state.handoverOverrideLog.add(DateTimeFormatter.ISO_INSTANT.format(recent))
         assertEquals(1, tracker.count30d())
     }
 
     @Test
-    fun `only stale entries are pruned when log is mixed`() {
+    fun `count30d returns only recent entries when log is mixed`() {
         val old = Instant.now().minus(31, ChronoUnit.DAYS)
         val recent = Instant.now().minus(1, ChronoUnit.DAYS)
         state.handoverOverrideLog.add(DateTimeFormatter.ISO_INSTANT.format(old))
         state.handoverOverrideLog.add(DateTimeFormatter.ISO_INSTANT.format(recent))
         assertEquals(1, tracker.count30d())
+    }
+
+    @Test
+    fun `stale entry is pruned when a new event is recorded`() = runTest {
+        val old = Instant.now().minus(31, ChronoUnit.DAYS)
+        state.handoverOverrideLog.add(DateTimeFormatter.ISO_INSTANT.format(old))
+        // Triggering record() via an event prunes the stale entry
+        eventBus.emit(overrideEvent())
+        yield()
+        // Only the fresh entry should remain
         assertEquals(1, state.handoverOverrideLog.size)
+        assertEquals(1, tracker.count30d())
+    }
+
+    @Test
+    fun `log size is capped at MAX_LOG_SIZE when records are added rapidly`() = runTest {
+        val overLimit = HandoverOverrideTracker.MAX_LOG_SIZE + 1000
+        repeat(overLimit) {
+            eventBus.emit(overrideEvent())
+            yield()
+        }
+        assertTrue(
+            state.handoverOverrideLog.size <= HandoverOverrideTracker.MAX_LOG_SIZE,
+            "Log size ${state.handoverOverrideLog.size} must not exceed MAX_LOG_SIZE " +
+                "${HandoverOverrideTracker.MAX_LOG_SIZE}"
+        )
     }
 
     // -----------------------------------------------------------------------

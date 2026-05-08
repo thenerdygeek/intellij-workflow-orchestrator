@@ -138,13 +138,14 @@ class HandoverConfigurableTest {
     }
 
     @Test
-    fun `count30d prunes stale entries as a side-effect`() {
+    fun `count30d does not mutate the log — stale entry is excluded but not removed`() {
         state.handoverOverrideLog.clear()
         val old = Instant.now().minus(31, ChronoUnit.DAYS)
         state.handoverOverrideLog.add(DateTimeFormatter.ISO_INSTANT.format(old))
         val c = configurable()
-        c.count30d()
-        assertTrue(state.handoverOverrideLog.isEmpty(), "Stale entry should be pruned")
+        assertEquals(0, c.count30d())
+        // count30d is read-only; the entry remains in the list (pruning is the tracker's job)
+        assertEquals(1, state.handoverOverrideLog.size)
     }
 
     @Test

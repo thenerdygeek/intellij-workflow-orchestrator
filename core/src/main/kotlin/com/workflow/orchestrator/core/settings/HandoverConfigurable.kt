@@ -127,7 +127,9 @@ class HandoverConfigurable(private val project: Project) : SearchableConfigurabl
                     val count = count30d()
                     label("$count handover override${if (count == 1) "" else "s"} in the last 30 days")
                     link("Clear") {
-                        state.handoverOverrideLog.clear()
+                        synchronized(state.handoverOverrideLog) {
+                            state.handoverOverrideLog.clear()
+                        }
                     }
                 }
             }
@@ -156,16 +158,19 @@ class HandoverConfigurable(private val project: Project) : SearchableConfigurabl
     // -----------------------------------------------------------------------
 
     /**
-     * Counts entries in [PluginSettings.State.handoverOverrideLog] that fall within
-     * the last 30 days, pruning stale entries as a side-effect.
+     * Counts entries in [PluginSettings.State.handoverOverrideLog] that fall within the last
+     * 30 days. Read-only — pruning is handled exclusively by `HandoverOverrideTracker.record`.
+     * Access is guarded by `synchronized` on the log list to prevent
+     * [java.util.ConcurrentModificationException] with the tracker's coroutine write path.
      */
     internal fun count30d(): Int {
         val log = state.handoverOverrideLog
         val cutoff = Instant.now().minus(30, ChronoUnit.DAYS)
-        log.removeAll { entry ->
-            runCatching { Instant.parse(entry).isBefore(cutoff) }.getOrElse { false }
+        return synchronized(log) {
+            log.count { entry ->
+                runCatching { !Instant.parse(entry).isBefore(cutoff) }.getOrElse { false }
+            }
         }
-        return log.size
     }
 
     // -----------------------------------------------------------------------
