@@ -275,4 +275,41 @@ class HandoverTemplateStoreTest {
         assertTrue(list.none { it.name == "bad" }, "bad.html should be ignored in jira/ dir")
         assertTrue(list.any { it.id == "jira/good" })
     }
+
+    // -----------------------------------------------------------------------
+    // Fix 3 — watcher registers newly-created sub-directories at runtime
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `watcher detects file in newly created sub-directory within 1 second`() {
+        // Start with NO sub-directories under globalDir so they don't exist yet.
+        // The store's init will still try ensureDirs() which creates action subdirs,
+        // but we can simulate a brand-new sub-dir by using a completely new root.
+        val newGlobal = tempRoot.resolve("new-global")
+        val newProject = tempRoot.resolve("new-project")
+        // Don't create directories — let the store create them via ensureDirs().
+        val store = HandoverTemplateStore(newGlobal, newProject, fakeLoader(), scope)
+
+        val initialSize = store.templates.value.size
+
+        // Give the watcher time to register the directories it just created.
+        Thread.sleep(200)
+
+        // Create a brand-new sub-directory (email/) that didn't exist at watcher startup.
+        val emailDir = newGlobal.resolve("email")
+        Files.createDirectories(emailDir)
+
+        // Then drop a file inside the new sub-directory.
+        Thread.sleep(50) // give the watcher time to register the new dir
+        emailDir.resolve("welcome.html").toFile().writeText("<p>welcome</p>")
+
+        val updated = runBlocking {
+            withTimeout(2000.milliseconds) {
+                store.templates.first { it.size == initialSize + 1 }
+            }
+        }
+
+        assertNotNull(updated)
+        assertTrue(updated.any { it.id == "email/welcome" }, "expected email/welcome in: ${updated.map { it.id }}")
+    }
 }

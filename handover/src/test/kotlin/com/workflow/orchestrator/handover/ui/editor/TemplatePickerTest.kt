@@ -90,6 +90,25 @@ class TemplatePickerTest {
             .first { it.text?.contains("●") == true }.isVisible)
     }
 
+    @Test
+    fun `selecting +New sentinel fires onCreateRequested only and not onSelectionChanged`() {
+        val picker = TemplatePicker()
+        picker.setTemplates(listOf(
+            mk("Standard closure", HandoverTemplateOrigin.BUNDLED),
+        ))
+        var selectionCount = 0
+        var createCount = 0
+        picker.onSelectionChanged = { selectionCount++ }
+        picker.onCreateRequested = { createCount++ }
+
+        val combo = picker.components.filterIsInstance<JComboBox<*>>().first()
+        // The sentinel is always the last item in the combo.
+        combo.selectedIndex = combo.itemCount - 1
+
+        assertEquals(1, createCount, "onCreateRequested should have fired exactly once")
+        assertEquals(0, selectionCount, "onSelectionChanged must NOT fire when sentinel is selected")
+    }
+
     private fun walk(c: java.awt.Container): List<java.awt.Component> = buildList {
         for (i in 0 until c.componentCount) {
             val child = c.getComponent(i)

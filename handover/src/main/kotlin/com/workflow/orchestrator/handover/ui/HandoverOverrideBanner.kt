@@ -83,7 +83,8 @@ class HandoverOverrideBanner(private val project: Project? = null) : JPanel(Bord
         }
 
         viewTabLink.text = "View $firstTab tab"
-        viewTabLink.removeAll()  // clear old listeners without replacing the component
+        // Remove all existing action listeners to prevent stacking on repeated setFailures calls.
+        viewTabLink.actionListeners.forEach { viewTabLink.removeActionListener(it) }
 
         // Re-wire the click action to the current first failure's target tab.
         val targetTab = firstTab

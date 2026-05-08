@@ -5,6 +5,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
+import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.handover.service.HandoverWikiPreviewRendererService
 import com.workflow.orchestrator.handover.service.HandoverWikiPreviewRendererService.Source
 import kotlinx.coroutines.CoroutineScope
@@ -136,10 +137,16 @@ class JiraPreviewPane(
     private fun applyBadge(source: Source) {
         val doApply = Runnable {
             when (source) {
-                Source.LIVE_CACHED, Source.LIVE_FRESH -> {
-                    dotLabel.foreground = JBColor(0x2E9E44, 0x4FC262) // green light/dark
+                Source.LIVE_FRESH -> {
+                    dotLabel.foreground = StatusColors.SUCCESS
                     dotLabel.text = "●"
-                    statusLabel.text = LIVE_TEXT
+                    statusLabel.text = LIVE_FRESH_TEXT
+                    statusLabel.foreground = JBColor.foreground()
+                }
+                Source.LIVE_CACHED -> {
+                    dotLabel.foreground = StatusColors.SUCCESS
+                    dotLabel.text = "●"
+                    statusLabel.text = LIVE_CACHED_TEXT
                     statusLabel.foreground = JBColor.foreground()
                 }
                 Source.LOCAL -> {
@@ -158,7 +165,8 @@ class JiraPreviewPane(
     }
 
     companion object {
-        private const val LIVE_TEXT = "Live preview (Jira) · cached"
+        private const val LIVE_FRESH_TEXT = "Live preview (Jira) · live"
+        private const val LIVE_CACHED_TEXT = "Live preview (Jira) · cached"
         private const val LOCAL_TEXT = "Local preview — Jira render unavailable"
     }
 }

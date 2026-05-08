@@ -78,4 +78,18 @@ class HandoverWikiPreviewRendererLocalTest {
         assertTrue(output.contains("<p>first paragraph</p>"))
         assertTrue(output.contains("<p>second paragraph</p>"))
     }
+
+    @Test fun `code block content escapes ampersand and less-than`() {
+        val input = "{code:text}\nfoo & bar < baz\n{code}"
+        val output = render(input)
+        assertTrue(output.contains("foo &amp; bar &lt; baz"), "expected escaped content in: $output")
+        assertFalse(output.contains("foo & bar < baz"), "raw ampersand/lt must not appear: $output")
+    }
+
+    @Test fun `wiki table cell with ampersand is escaped`() {
+        val input = "|a & b|c < d|"
+        val output = render(input)
+        assertTrue(output.contains("a &amp; b"), "expected &amp; in: $output")
+        assertTrue(output.contains("c &lt; d"), "expected &lt; in: $output")
+    }
 }

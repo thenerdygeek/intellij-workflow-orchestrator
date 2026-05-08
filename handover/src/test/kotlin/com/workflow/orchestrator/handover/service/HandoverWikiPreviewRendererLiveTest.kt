@@ -13,6 +13,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class HandoverWikiPreviewRendererLiveTest {
@@ -114,4 +115,17 @@ class HandoverWikiPreviewRendererLiveTest {
             coVerify(exactly = 1) { jira.renderWikiMarkup("h2. one", "AFTER8TE-912") }
             coVerify(exactly = 1) { jira.renderWikiMarkup("h2. two", "AFTER8TE-912") }
         }
+
+    @Test
+    fun `5xx error does NOT flip isLiveAvailable to false`() = runTest {
+        coEvery { jira.renderWikiMarkup(any(), any()) } returns
+            ToolResult.error<String>(summary = "Jira render failed: 500 Server Error")
+        val r = newRenderer(this)
+
+        r.requestLive("h2. Hi", "AFTER8TE-912")
+        advanceUntilIdle()
+
+        // Transient server error — live rendering must remain available for retry.
+        assertTrue(r.isLiveAvailable(), "isLiveAvailable must stay true after a 5xx transient error")
+    }
 }

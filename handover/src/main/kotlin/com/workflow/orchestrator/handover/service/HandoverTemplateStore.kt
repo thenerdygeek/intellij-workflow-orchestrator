@@ -396,6 +396,15 @@ class HandoverTemplateStore {
         _templates.value.find { it.id == id }
             ?: throw NoSuchElementException("Template '$id' not found")
 
+    /**
+     * Registers [dir] with [watchService] for CREATE / DELETE / MODIFY events.
+     * Extracted so both the initial setup and the runtime "new sub-dir" path share it.
+     */
+    private fun registerDir(dir: Path, watchService: WatchService) {
+        runCatching { dir.register(watchService, ENTRY_CREATE, ENTRY_DELETE, ENTRY_MODIFY) }
+            .onFailure { log.warn("HandoverTemplateStore: cannot watch $dir", it) }
+    }
+
     private fun startWatcher() {
         val watchService: WatchService = FileSystems.getDefault().newWatchService()
 
@@ -419,8 +428,7 @@ class HandoverTemplateStore {
             if (projectDir.exists()) dirsToWatch.add(projectDir)
 
             for (dir in dirsToWatch) {
-                runCatching { dir.register(watchService, ENTRY_CREATE, ENTRY_DELETE, ENTRY_MODIFY) }
-                    .onFailure { log.warn("HandoverTemplateStore: cannot watch $dir", it) }
+                registerDir(dir, watchService)
             }
 
             try {
@@ -430,6 +438,16 @@ class HandoverTemplateStore {
                     val key = watchService.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
                         ?: continue
                     val events = key.pollEvents()
+                    for (event in events) {
+                        // If a new sub-directory was created at runtime, register it immediately
+                        // so files dropped inside it are also tracked without waiting for a rescan.
+                        @Suppress("UNCHECKED_CAST")
+                        val eventPath = (key.watchable() as? Path)
+                            ?.resolve((event.context() as? java.nio.file.Path) ?: continue)
+                        if (event.kind() == ENTRY_CREATE && eventPath != null && Files.isDirectory(eventPath)) {
+                            registerDir(eventPath, watchService)
+                        }
+                    }
                     if (events.isNotEmpty()) {
                         scheduleRescan()
                     }

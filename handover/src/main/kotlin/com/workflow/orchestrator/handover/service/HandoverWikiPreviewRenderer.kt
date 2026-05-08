@@ -105,12 +105,25 @@ class HandoverWikiPreviewRendererService(
                     synchronized(cache) { cache[sha] = html }
                     _liveResults.emit(resolvedMarkup to Result(html = html, source = Source.LIVE_FRESH))
                 } else {
-                    liveAvailable.set(false)
-                    if (notifiedOnce.compareAndSet(false, true)) {
+                    val summary = toolResult.summary
+                    val isAuthFailure = summary.contains("401") ||
+                        summary.contains("403", ignoreCase = true) ||
+                        summary.contains("AUTH", ignoreCase = true)
+                    if (isAuthFailure) {
+                        liveAvailable.set(false)
+                        if (notifiedOnce.compareAndSet(false, true)) {
+                            notifications?.notifyWarning(
+                                "workflow.handover.wiki",
+                                "Wiki Preview Unavailable",
+                                "Live Jira wiki rendering is unavailable: $summary"
+                            )
+                        }
+                    } else {
+                        // Transient failure (5xx, 429, network) — log but keep live available.
                         notifications?.notifyWarning(
-                            "workflow.handover.wiki",
-                            "Wiki Preview Unavailable",
-                            "Live Jira wiki rendering is unavailable: ${toolResult.summary}"
+                            "workflow.handover.wiki.transient",
+                            "Wiki Preview Transient Error",
+                            "Live Jira wiki rendering failed (will retry): $summary"
                         )
                     }
                 }
@@ -221,7 +234,7 @@ object HandoverWikiPreviewRenderer {
                     i++
                 }
                 output.append("""<pre><code class="$lang">""")
-                output.append(codeLines.joinToString("\n"))
+                output.append(codeLines.joinToString("\n") { escape(it) })
                 output.append("</code></pre>")
                 continue
             }
@@ -293,8 +306,11 @@ object HandoverWikiPreviewRenderer {
     }
 
     private fun applyInline(text: String): String {
-        var result = text
+        // Escape raw text first so user content never injects HTML tags.
+        var result = escape(text)
         result = COLOR_RE.replace(result) { m ->
+            // The color span wrapper is safe; escape the inner text (already escaped by this point
+            // because we replaced on the escaped string — so groupValues[2] is already escaped).
             """<span style="color:${m.groupValues[1]}">${m.groupValues[2]}</span>"""
         }
         result = LINK_RE.replace(result) { m ->
@@ -304,4 +320,8 @@ object HandoverWikiPreviewRenderer {
         result = ITALIC_RE.replace(result) { m -> "<i>${m.groupValues[1]}</i>" }
         return result
     }
+
+    /** Escapes HTML special characters so user content cannot inject tags. */
+    private fun escape(s: String): String =
+        s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
 }

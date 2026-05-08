@@ -2,16 +2,16 @@ package com.workflow.orchestrator.handover.ui.editor
 
 import com.intellij.icons.AllIcons
 import com.intellij.ui.JBColor
+import com.intellij.ui.components.JBLabel
+import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.handover.model.HandoverTemplate
 import com.workflow.orchestrator.handover.model.HandoverTemplateOrigin
-import java.awt.Color
 import java.awt.Component
 import java.awt.FlowLayout
 import java.awt.event.ItemEvent
 import javax.swing.DefaultComboBoxModel
 import javax.swing.JButton
 import javax.swing.JComboBox
-import javax.swing.JLabel
 import javax.swing.JList
 import javax.swing.JPanel
 import javax.swing.ListCellRenderer
@@ -69,8 +69,8 @@ class TemplatePicker : JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)) {
         isFocusPainted = false
     }
 
-    private val dirtyDot = JLabel("●").apply {
-        foreground = JBColor(Color(216, 162, 60), Color(216, 162, 60))
+    private val dirtyDot = JBLabel("●").apply {
+        foreground = StatusColors.WARNING
         isVisible = false
     }
 
@@ -185,7 +185,7 @@ class TemplatePicker : JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)) {
     // ── Renderer ─────────────────────────────────────────────────────────────
 
     private inner class TemplateRenderer : ListCellRenderer<Item> {
-        private val label = JLabel()
+        private val label = JBLabel()
 
         override fun getListCellRendererComponent(
             list: JList<out Item>?,

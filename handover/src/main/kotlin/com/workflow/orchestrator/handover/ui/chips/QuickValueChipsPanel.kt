@@ -17,6 +17,7 @@ import com.workflow.orchestrator.handover.service.HandoverPlaceholderResolver
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.jetbrains.annotations.TestOnly
@@ -99,7 +100,7 @@ class QuickValueChipsPanel private constructor(
             font = font.deriveFont(font.size2D - 1f)
             border = JBUI.Borders.emptyRight(8)
         }
-        val settingsLink = JBLabel("<html><a style='color:#1A73E8'>customise in Settings</a></html>").apply {
+        val settingsLink = JBLabel("<html><a style='color:${StatusColors.htmlColor(StatusColors.LINK)}'>customise in Settings</a></html>").apply {
             toolTipText = "Configure which placeholders show as chips (Settings → Handover)"
             cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
             addMouseListener(object : MouseAdapter() {
@@ -130,6 +131,8 @@ class QuickValueChipsPanel private constructor(
             val resolved: List<Pair<String, HandoverPlaceholderValue>> = keys.map { key ->
                 key to try {
                     resolver.resolve(key, HandoverTemplateAction.JIRA)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
                 } catch (_: Exception) {
                     HandoverPlaceholderValue.unavailable("resolution error")
                 }
@@ -175,6 +178,15 @@ class QuickValueChipsPanel private constructor(
     // endregion
 
     companion object {
+        /** Maximum number of characters shown in a chip value label before truncation. */
+        const val CHIP_VALUE_MAX_CHARS = 60
+
+        /** Length of the truncated value (excluding the trailing "…"). */
+        const val CHIP_VALUE_TRUNCATED_CHARS = 57
+
+        /** Duration in milliseconds for the chip click flash animation. */
+        const val FLASH_DURATION_MS = 200L
+
         @TestOnly
         fun forTest(
             resolver: HandoverPlaceholderResolver,
@@ -208,7 +220,7 @@ internal class ChipView(
 
     private val displayValue: String = if (placeholderValue.isAvailable) {
         val v = placeholderValue.value
-        if (v.length > 60) v.take(57) + "…" else v
+        if (v.length > QuickValueChipsPanel.CHIP_VALUE_MAX_CHARS) v.take(QuickValueChipsPanel.CHIP_VALUE_TRUNCATED_CHARS) + "…" else v
     } else {
         "—" // em-dash
     }
@@ -216,6 +228,8 @@ internal class ChipView(
     private var hovered = false
     private var flashActive = false
     private var flashColor: Color? = null
+    /** Tracks the active flash job so a second click cancels an in-progress flash. */
+    private var flashJob: Job? = null
 
     init {
         isOpaque = false
@@ -271,17 +285,21 @@ internal class ChipView(
         val value = if (placeholderValue.isAvailable) placeholderValue.value else ""
         try {
             ClipboardUtil.copyToClipboard(value)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (_: Exception) {
             // Clipboard not available in headless/test environments — safe to ignore.
         }
-        cs.launch {
+        // Cancel any previous flash before starting a new one.
+        flashJob?.cancel()
+        flashJob = cs.launch {
             // Flash the chip background, then emit the event.
             onEdt(Runnable {
                 flashColor = StatusColors.HIGHLIGHT_BG
                 flashActive = true
                 repaint()
             })
-            delay(200)
+            delay(QuickValueChipsPanel.FLASH_DURATION_MS)
             onEdt(Runnable {
                 flashActive = false
                 flashColor = null

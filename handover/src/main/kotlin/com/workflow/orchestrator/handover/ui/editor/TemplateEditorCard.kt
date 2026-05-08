@@ -6,7 +6,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
-import javax.swing.JTextArea
+import com.intellij.ui.components.JBTextArea
 import com.workflow.orchestrator.handover.model.HandoverTemplate
 import com.workflow.orchestrator.handover.model.HandoverTemplateAction
 import com.workflow.orchestrator.handover.service.HandoverPlaceholderResolver
@@ -141,7 +141,7 @@ class TemplateEditorCard private constructor(
 
     private val picker = TemplatePicker()
 
-    internal val sourceArea = JTextArea(10, 60).also {
+    internal val sourceArea = JBTextArea(10, 60).also {
         it.lineWrap = true
         it.wrapStyleWord = true
         it.font = com.intellij.util.ui.UIUtil.getLabelFont()
@@ -337,19 +337,19 @@ class TemplateEditorCard private constructor(
 
         val text = sourceArea.text
 
-        // Debounced preview: 100ms
+        // Debounced preview
         previewJob?.cancel()
         previewJob = scope.launch {
-            delay(100)
+            delay(PREVIEW_DEBOUNCE_MS)
             val resolved = resolveMarkup(text)
             withContext(edtDispatcher) { previewPane.setRenderedMarkup(resolved) }
         }
 
-        // Debounced auto-save: 300ms — capture text at call time; if the user types more, this job
+        // Debounced auto-save — capture text at call time; if the user types more, this job
         // is cancelled and a newer onSourceChanged call creates a fresh job with the latest text.
         saveJob?.cancel()
         saveJob = scope.launch {
-            delay(300)
+            delay(AUTOSAVE_DEBOUNCE_MS)
             val tmpl = currentTemplate ?: return@launch
             templateActions.onUpdate(tmpl.id, text)
             // Clear dirty only if the source pane still matches what we saved
@@ -382,6 +382,8 @@ class TemplateEditorCard private constructor(
                     }
                     result
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (_: Exception) { null }
             if (!name.isNullOrBlank()) {
                 pendingSelectId = "${action.name.lowercase()}/$name"
@@ -405,6 +407,8 @@ class TemplateEditorCard private constructor(
                     }
                     result
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (_: Exception) { null }
             if (!name.isNullOrBlank()) {
                 pendingSelectId = "${action.name.lowercase()}/$name"
@@ -430,6 +434,8 @@ class TemplateEditorCard private constructor(
                     }
                     result
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (_: Exception) { false }
             if (confirmed) {
                 templateActions.onDelete(template.id)
@@ -459,6 +465,11 @@ class TemplateEditorCard private constructor(
     // ── Factory ──────────────────────────────────────────────────────────────
 
     companion object {
+        /** Debounce delay in milliseconds before re-rendering the preview after a keystroke. */
+        const val PREVIEW_DEBOUNCE_MS = 100L
+
+        /** Debounce delay in milliseconds before auto-saving edited template source. */
+        const val AUTOSAVE_DEBOUNCE_MS = 300L
 
         /**
          * Test-only factory that accepts an external coroutine scope for deterministic timing

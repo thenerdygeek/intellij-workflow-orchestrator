@@ -11,6 +11,8 @@ import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.handover.model.BuildSummary
 import com.workflow.orchestrator.handover.model.HandoverState
 import com.workflow.orchestrator.handover.model.SuiteResult
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import java.awt.*
 import javax.swing.*
 
@@ -207,8 +209,10 @@ class ChecksTab(private val project: Project) : JPanel(BorderLayout()), Disposab
             setRow(ROW_DOCKER, ok = null, status = "—", meta = "—", color = StatusColors.SECONDARY_TEXT)
             return
         }
-        // Count keys in JSON by counting `"key":` occurrences (lightweight heuristic)
-        val repoCount = dockerJson.split("\":").size - 1
+        // Count keys in JSON using a proper parser to avoid false positives from values containing `":`.
+        val repoCount = runCatching {
+            Json.parseToJsonElement(dockerJson).jsonObject.keys.size
+        }.getOrElse { 0 }
         val meta = if (repoCount > 0) "$repoCount repos" else "present"
         setRow(ROW_DOCKER, ok = true, status = "OK", meta = meta)
     }
