@@ -1,4 +1,4 @@
-package com.workflow.orchestrator.handover.ui.panels
+package com.workflow.orchestrator.handover.ui.cards
 
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
@@ -8,6 +8,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.services.JiraService
+import com.workflow.orchestrator.handover.ui.panels.handoverPanelHeader
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.handover.service.HandoverStateService
 import com.workflow.orchestrator.handover.service.TimeTrackingService
@@ -33,9 +34,9 @@ import javax.swing.SwingConstants
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
 
-class TimeLogPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
+class TimeLogCard(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
-    private val log = Logger.getInstance(TimeLogPanel::class.java)
+    private val log = Logger.getInstance(TimeLogCard::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val timeService = TimeTrackingService.getInstance(project)
 

@@ -11,7 +11,7 @@ import com.workflow.orchestrator.handover.service.QaClipboardService
 import com.workflow.orchestrator.handover.ui.cards.CopyrightFixCard
 import com.workflow.orchestrator.handover.ui.panels.JiraCommentPanel
 import com.workflow.orchestrator.handover.ui.panels.QaClipboardPanel
-import com.workflow.orchestrator.handover.ui.panels.TimeLogPanel
+import com.workflow.orchestrator.handover.ui.cards.TimeLogCard
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -38,7 +38,7 @@ class HandoverPanel(private val project: Project) : JPanel(BorderLayout()), Disp
     // Detail panels
     private val copyrightCard = CopyrightFixCard(project)
     private val jiraCommentPanel = JiraCommentPanel(project)
-    private val timeLogPanel = TimeLogPanel(project)
+    private val timeLogCard = TimeLogCard(project)
     private val qaClipboardPanel = QaClipboardPanel(project)
 
     init {
@@ -47,7 +47,7 @@ class HandoverPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         // Register detail panels in card layout
         detailContainer.add(copyrightCard, HandoverToolbar.PANEL_COPYRIGHT)
         detailContainer.add(jiraCommentPanel, HandoverToolbar.PANEL_JIRA)
-        detailContainer.add(timeLogPanel, HandoverToolbar.PANEL_TIME)
+        detailContainer.add(timeLogCard, HandoverToolbar.PANEL_TIME)
         detailContainer.add(qaClipboardPanel, HandoverToolbar.PANEL_QA)
 
         // Splitter: left context (30%) + right detail (70%)
@@ -59,10 +59,10 @@ class HandoverPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         add(toolbar.createToolbar(), BorderLayout.NORTH)
         add(splitter, BorderLayout.CENTER)
 
-        // CopyrightFixCard (Phase 2) and TimeLogPanel (Phase 3) both own a
+        // CopyrightFixCard (Phase 2) and TimeLogCard (Phase 3) both own a
         // coroutine scope and need to be disposed when this panel goes away.
         Disposer.register(this, copyrightCard)
-        Disposer.register(this, timeLogPanel)
+        Disposer.register(this, timeLogCard)
 
         // Single state-flow collector fans out to all panels that are wired.
         // Phase 3/4 panels plug in here — only add their wiring calls inside this collect.
@@ -94,8 +94,8 @@ class HandoverPanel(private val project: Project) : JPanel(BorderLayout()), Disp
 
                 // Time Log panel — Phase 3
                 withContext(Dispatchers.EDT) {
-                    timeLogPanel.setTicket(state.ticketId.takeIf { it.isNotBlank() })
-                    timeLogPanel.setStartedTimestamp(state.startWorkTimestamp)
+                    timeLogCard.setTicket(state.ticketId.takeIf { it.isNotBlank() })
+                    timeLogCard.setStartedTimestamp(state.startWorkTimestamp)
                 }
             }
         }
