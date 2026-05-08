@@ -8,6 +8,7 @@ import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -85,4 +86,32 @@ class HandoverWikiPreviewRendererLiveTest {
 
         coVerify(exactly = 1) { jira.renderWikiMarkup(any(), any()) }
     }
+
+    @Test
+    fun `concurrent requestLive calls for same text fire only one HTTP request`() =
+        runTest(UnconfinedTestDispatcher()) {
+            coEvery { jira.renderWikiMarkup(any(), any()) } returns
+                ToolResult.success(data = "<h2>x</h2>", summary = "ok")
+
+            val r = newRenderer(this)
+            repeat(5) { r.requestLive("h2. hi", "AFTER8TE-912") }
+            advanceUntilIdle()
+
+            coVerify(exactly = 1) { jira.renderWikiMarkup("h2. hi", "AFTER8TE-912") }
+        }
+
+    @Test
+    fun `requestLive for different text fires separate HTTP requests`() =
+        runTest(UnconfinedTestDispatcher()) {
+            coEvery { jira.renderWikiMarkup(any(), any()) } returns
+                ToolResult.success(data = "<h2>x</h2>", summary = "ok")
+
+            val r = newRenderer(this)
+            r.requestLive("h2. one", "AFTER8TE-912")
+            r.requestLive("h2. two", "AFTER8TE-912")
+            advanceUntilIdle()
+
+            coVerify(exactly = 1) { jira.renderWikiMarkup("h2. one", "AFTER8TE-912") }
+            coVerify(exactly = 1) { jira.renderWikiMarkup("h2. two", "AFTER8TE-912") }
+        }
 }

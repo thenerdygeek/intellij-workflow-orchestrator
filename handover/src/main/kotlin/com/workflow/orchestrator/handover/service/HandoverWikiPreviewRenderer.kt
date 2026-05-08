@@ -5,12 +5,14 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.workflow.orchestrator.core.services.JiraService
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import org.jetbrains.annotations.TestOnly
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -52,6 +54,9 @@ class HandoverWikiPreviewRendererService(
     private val liveAvailable = AtomicBoolean(true)
     private val notifiedOnce = AtomicBoolean(false)
 
+    /** SHA-256(resolvedMarkup) → in-flight Job. Prevents duplicate POSTs for the same content. */
+    private val inflight = ConcurrentHashMap<String, Job>()
+
     // ── Live results flow ─────────────────────────────────────────────────────
 
     private val _liveResults = MutableSharedFlow<Pair<String, Result>>(extraBufferCapacity = 32)
@@ -84,24 +89,39 @@ class HandoverWikiPreviewRendererService(
     fun requestLive(resolvedMarkup: String, issueKey: String) {
         if (!liveAvailable.get()) return
         val jiraService = jira ?: return
+        val sha = sha256(resolvedMarkup)
 
-        cs.launch {
-            val toolResult = jiraService.renderWikiMarkup(resolvedMarkup, issueKey)
-            val html = toolResult.data
-            if (!toolResult.isError && html != null) {
-                val key = sha256(resolvedMarkup)
-                synchronized(cache) { cache[key] = html }
-                _liveResults.emit(resolvedMarkup to Result(html = html, source = Source.LIVE_FRESH))
-            } else {
-                liveAvailable.set(false)
-                if (notifiedOnce.compareAndSet(false, true)) {
-                    notifications?.notifyWarning(
-                        "workflow.handover.wiki",
-                        "Wiki Preview Unavailable",
-                        "Live Jira wiki rendering is unavailable: ${toolResult.summary}"
-                    )
+        // Coalesce: if a request for this exact content is already in-flight, skip.
+        // We avoid calling inflight.remove() inside computeIfAbsent (which would cause
+        // a recursive-update exception on ConcurrentHashMap when the coroutine runs
+        // undispatched). Instead we use putIfAbsent and attach the cleanup via
+        // invokeOnCompletion — which is called after computeIfAbsent returns.
+        if (inflight.containsKey(sha)) return
+        val job = cs.launch {
+            try {
+                val toolResult = jiraService.renderWikiMarkup(resolvedMarkup, issueKey)
+                val html = toolResult.data
+                if (!toolResult.isError && html != null) {
+                    synchronized(cache) { cache[sha] = html }
+                    _liveResults.emit(resolvedMarkup to Result(html = html, source = Source.LIVE_FRESH))
+                } else {
+                    liveAvailable.set(false)
+                    if (notifiedOnce.compareAndSet(false, true)) {
+                        notifications?.notifyWarning(
+                            "workflow.handover.wiki",
+                            "Wiki Preview Unavailable",
+                            "Live Jira wiki rendering is unavailable: ${toolResult.summary}"
+                        )
+                    }
                 }
+            } finally {
+                inflight.remove(sha)
             }
+        }
+        // putIfAbsent returns non-null if another Job raced us to the same key;
+        // in that case cancel the redundant job we just launched.
+        if (inflight.putIfAbsent(sha, job) != null) {
+            job.cancel()
         }
     }
 
