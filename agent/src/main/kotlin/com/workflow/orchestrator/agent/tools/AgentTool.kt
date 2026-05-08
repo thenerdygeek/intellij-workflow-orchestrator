@@ -92,6 +92,14 @@ interface AgentTool {
     val outputConfig: ToolOutputConfig get() = ToolOutputConfig.DEFAULT
 
     /**
+     * Rich, source-embedded documentation for this tool — surfaced by the tool docs UI
+     * (NOT sent to the LLM). Returns null for tools that have not yet adopted the
+     * [com.workflow.orchestrator.agent.tools.docs.toolDoc] DSL. See
+     * [com.workflow.orchestrator.agent.tools.docs.ToolDocumentation] for the schema.
+     */
+    fun documentation(): com.workflow.orchestrator.agent.tools.docs.ToolDocumentation? = null
+
+    /**
      * Invoked by write actions inside [execute] when they need user approval.
      * Default returns [ApprovalResult.APPROVED] — no gate (safe for read-only tools
      * and tests). The AgentLoop overrides this per-call via [ApprovalGatedTool] when
