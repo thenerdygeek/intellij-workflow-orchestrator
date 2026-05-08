@@ -12,6 +12,8 @@ import com.workflow.orchestrator.core.model.jira.RoleOption
 import com.workflow.orchestrator.core.model.jira.VisibilityType
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.workflow.orchestrator.core.services.JiraService
+import com.workflow.orchestrator.core.ui.ComboBoxWidth
+import com.workflow.orchestrator.core.ui.bindBoundedWidth
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -52,6 +54,7 @@ class QuickCommentPanel(private val project: Project) : JPanel(BorderLayout()), 
     }
     private val visibilityCombo = JComboBox(visibilityModel).apply {
         toolTipText = "Restrict comment to a project role or group"
+        bindBoundedWidth(ComboBoxWidth.DEFAULT)
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

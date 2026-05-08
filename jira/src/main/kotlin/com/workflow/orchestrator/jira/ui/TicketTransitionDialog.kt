@@ -16,6 +16,8 @@ import com.workflow.orchestrator.core.model.jira.TransitionInput
 import com.workflow.orchestrator.core.model.jira.TransitionMeta
 import com.workflow.orchestrator.core.services.jira.JiraSearchService
 import com.workflow.orchestrator.core.services.jira.TicketTransitionService
+import com.workflow.orchestrator.core.ui.ComboBoxWidth
+import com.workflow.orchestrator.core.ui.bindBoundedWidth
 import com.workflow.orchestrator.jira.ui.widgets.FieldWidget
 import com.workflow.orchestrator.jira.ui.widgets.FieldWidgetFactory
 import com.workflow.orchestrator.jira.ui.widgets.WidgetContext
@@ -58,7 +60,9 @@ class TicketTransitionDialog(
     private val widgetsById = mutableMapOf<String, FieldWidget>()
     private val commentArea = JBTextArea(3, 40).apply { lineWrap = true; wrapStyleWord = true }
     private val fieldPanel = JPanel(GridBagLayout())
-    private val transitionCombo = ComboBox<String>()
+    private val transitionCombo = ComboBox<String>().apply {
+        bindBoundedWidth(ComboBoxWidth.WIDE)
+    }
 
     init {
         title = "Transition $ticketKey"

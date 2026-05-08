@@ -11,6 +11,7 @@ import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.automation.model.RegistryStatus
 import com.workflow.orchestrator.automation.model.TagEntry
 import com.workflow.orchestrator.automation.model.TagSource
+import com.workflow.orchestrator.core.settings.PluginSettings
 import com.intellij.ui.components.JBScrollPane
 import java.awt.BorderLayout
 import java.awt.CardLayout
@@ -68,11 +69,26 @@ class TagStagingPanel(
             }
         }
 
-        add(JBLabel("DOCKER TAGS").apply {
+        val buildVariableName = PluginSettings.getInstance(project).state.bambooBuildVariableName
+            ?.takeIf { it.isNotBlank() } ?: "DockerTagsAsJSON"
+        val headerPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
             border = JBUI.Borders.emptyBottom(4)
-            font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
-            foreground = StatusColors.SECONDARY_TEXT
-        }, BorderLayout.NORTH)
+            isOpaque = false
+            add(JBLabel("DOCKER TAGS").apply {
+                font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
+                foreground = StatusColors.SECONDARY_TEXT
+                alignmentX = LEFT_ALIGNMENT
+            })
+            add(JBLabel("Sent to Bamboo as build variable: $buildVariableName").apply {
+                font = font.deriveFont(JBUI.scale(10).toFloat())
+                foreground = StatusColors.SECONDARY_TEXT
+                alignmentX = LEFT_ALIGNMENT
+                toolTipText = "Configurable in Settings → Workflow Orchestrator. " +
+                    "Trigger Now / Queue Run will POST these tags as the JSON value of this variable."
+            })
+        }
+        add(headerPanel, BorderLayout.NORTH)
 
         cardPanel.add(JBScrollPane(table), "table")
         cardPanel.add(emptyLabel, "empty")

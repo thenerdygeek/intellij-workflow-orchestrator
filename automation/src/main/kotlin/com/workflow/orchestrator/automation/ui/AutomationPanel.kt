@@ -17,6 +17,8 @@ import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.ui.ComboBoxWidth
+import com.workflow.orchestrator.core.ui.bindBoundedWidth
 import kotlinx.coroutines.*
 import java.awt.BorderLayout
 import java.awt.FlowLayout
@@ -43,7 +45,9 @@ class AutomationPanel(
     private val driftDetectorService by lazy { project.getService(DriftDetectorService::class.java) }
 
     // Header components
-    private val suiteCombo = JComboBox<SuiteComboItem>()
+    private val suiteCombo = JComboBox<SuiteComboItem>().apply {
+        bindBoundedWidth(ComboBoxWidth.DEFAULT)
+    }
     private val statusLabel = JBLabel("").apply {
         foreground = StatusColors.SUCCESS
     }
@@ -68,6 +72,7 @@ class AutomationPanel(
      */
     private val baselineCombo = JComboBox<BaselinePickerItem>().apply {
         toolTipText = "Pick a different parseable build to seed the staging table from"
+        bindBoundedWidth(ComboBoxWidth.DEFAULT)
     }
     private var suppressBaselineListener = false
     /** Remembered alternatives so the combo listener can resolve the picked entry. */
@@ -107,7 +112,9 @@ class AutomationPanel(
     private val tabbedPane = JBTabbedPane()
 
     // Branch selector
-    private val branchCombo = JComboBox<BranchComboItem>()
+    private val branchCombo = JComboBox<BranchComboItem>().apply {
+        bindBoundedWidth(ComboBoxWidth.DEFAULT)
+    }
     private var suppressBranchListener = false
 
     // State
@@ -317,7 +324,34 @@ class AutomationPanel(
             // Step 3: Load plan variables for the suite (master plan key)
             val varsResult = bambooService.getPlanVariables(currentSuitePlanKey)
 
-            // Step 4: Update UI on EDT
+            // Step 4: Pull-detect the current docker tag directly from the latest CI
+            // build's log. EventBus uses replay=0 and BuildMonitorService emits
+            // BuildLogReady only once per build (guarded by `lastLogFetchedForBuild`),
+            // so a panel constructed after the first emit never receives it. Fetching
+            // here gives us a definite answer instead of a permanent "Waiting…" state.
+            val ciPlanKey = resolveServiceCiPlanKey()
+            val gitBranch = runCatching {
+                com.workflow.orchestrator.core.settings.RepoContextResolver
+                    .getInstance(project).getPrimaryBranchName()
+            }.getOrNull().orEmpty()
+            val tagDetection: TagDetectionResult? =
+                if (ciPlanKey.isNotBlank() && gitBranch.isNotBlank()) {
+                    tagBuilderService.detectDockerTag(ciPlanKey, gitBranch)
+                } else null
+            log.info("[Automation:UI] Direct tag detection: ciPlan='$ciPlanKey', branch='$gitBranch', " +
+                "detected=${tagDetection?.detected}, tag=${tagDetection?.tag}, reason=${tagDetection?.reason}")
+
+            val dockerTagKey = resolveDockerTagKey()
+            if (tagDetection?.detected == true && tagDetection.tag != null && dockerTagKey.isNotBlank()) {
+                tags = tagBuilderService.replaceCurrentRepoTag(tags, CurrentRepoContext(
+                    serviceName = dockerTagKey,
+                    branchName = "",
+                    featureBranchTag = tagDetection.tag,
+                    detectedFrom = DetectionSource.SETTINGS_MAPPING
+                ))
+            }
+
+            // Step 5: Update UI on EDT
             invokeLater {
                 if (token != loadGeneration) {
                     log.info("[Automation:UI] Dropping stale baseline result (gen=$token, current=$loadGeneration)")
@@ -342,8 +376,9 @@ class AutomationPanel(
 
                 updateStatusLabel(baselineResult)
 
-                // Docker tag: show pending state — BuildLogReady events will update it
-                updateDiagnosticBanner(baselineResult, tagDetection = null)
+                // Diagnostic banner: pass the pulled detection through; a fresh
+                // BuildLogReady from a later poll will overwrite it via onBuildLogReady.
+                updateDiagnosticBanner(baselineResult, tagDetection = tagDetection)
             }
         }
     }

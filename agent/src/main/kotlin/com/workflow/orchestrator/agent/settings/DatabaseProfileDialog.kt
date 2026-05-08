@@ -15,6 +15,7 @@ import com.workflow.orchestrator.agent.tools.database.DatabaseCredentialHelper
 import com.workflow.orchestrator.agent.tools.database.DatabaseProfile
 import com.workflow.orchestrator.agent.tools.database.DbType
 import com.workflow.orchestrator.agent.tools.database.JdbcUrlBuilder
+import com.workflow.orchestrator.core.ui.bindBoundedWidth
 import java.awt.Dimension
 import javax.swing.JCheckBox
 import javax.swing.JComboBox
@@ -69,7 +70,7 @@ class DatabaseProfileDialog(
     // enabled, so the user can save without re-testing.
     private val defaultDbCombo: com.intellij.openapi.ui.ComboBox<String> =
         com.intellij.openapi.ui.ComboBox<String>().apply {
-            preferredSize = Dimension(200, 28)
+            bindBoundedWidth(200)
             val seed = existing?.resolvedDefaultDatabase?.takeIf { it.isNotBlank() }
             if (seed != null) {
                 addItem(seed)

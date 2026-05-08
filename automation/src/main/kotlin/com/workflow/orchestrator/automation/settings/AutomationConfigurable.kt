@@ -20,6 +20,8 @@ import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.ConnectionStatusBanner
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.ui.ComboBoxWidth
+import com.workflow.orchestrator.core.ui.bindBoundedWidth
 import com.workflow.orchestrator.core.ui.StatusColors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -66,8 +68,12 @@ class AutomationConfigurable(private val project: Project) : SearchableConfigura
     // === Automation Suites UI state ===
     private val suiteRows = mutableListOf<SuiteRow>()
     private var suitesContainer: JPanel? = null
-    private val projectCombo = JComboBox<AutomationProjectItem>()
-    private val planCombo = JComboBox<AutomationPlanItem>()
+    private val projectCombo = JComboBox<AutomationProjectItem>().apply {
+        bindBoundedWidth(ComboBoxWidth.WIDE)
+    }
+    private val planCombo = JComboBox<AutomationPlanItem>().apply {
+        bindBoundedWidth(ComboBoxWidth.WIDE)
+    }
     private val searchField = JBTextField(20).apply {
         emptyText.setText("Search pattern (e.g., REGRESSION, E2E.*)")
     }

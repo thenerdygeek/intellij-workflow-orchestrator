@@ -30,7 +30,9 @@ import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.jira.TransitionMeta
 import com.workflow.orchestrator.core.services.jira.TransitionDialogOpener
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.ui.ComboBoxWidth
 import com.workflow.orchestrator.core.ui.StatusColors
+import com.workflow.orchestrator.core.ui.bindBoundedWidth
 import com.workflow.orchestrator.core.workflow.TicketContext
 import com.workflow.orchestrator.pullrequest.action.CreatePrContext
 import com.workflow.orchestrator.pullrequest.action.RepoPrefetch
@@ -125,10 +127,7 @@ class CreatePrDialog(
         JComboBox<RepoComboItem>().also { combo ->
             context.repos.forEach { r -> combo.addItem(RepoComboItem(r)) }
             combo.selectedIndex = context.initialSelectedRepoIndex
-            val height = combo.preferredSize.height
-            combo.preferredSize = Dimension(inputColumnWidth, height)
-            combo.maximumSize = Dimension(inputColumnWidth, height)
-            combo.minimumSize = Dimension(inputColumnWidth, height)
+            combo.bindBoundedWidth(320)
         }
     } else null
 
@@ -231,6 +230,7 @@ class CreatePrDialog(
         val defaultIdx = items.indexOfFirst { it?.toStatus?.name.equals(preferred, ignoreCase = true) }
             .let { if (it < 0) 0 else it }
         combo.selectedIndex = defaultIdx
+        combo.bindBoundedWidth(ComboBoxWidth.WIDE) { it?.toStatus?.name.orEmpty() }
         combo
     }
 

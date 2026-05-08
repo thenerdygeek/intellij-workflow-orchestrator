@@ -26,7 +26,9 @@ import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
+import com.workflow.orchestrator.core.ui.ComboBoxWidth
 import com.workflow.orchestrator.core.ui.StatusColors
+import com.workflow.orchestrator.core.ui.bindBoundedWidth
 import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import git4idea.repo.GitRepositoryManager
 import com.workflow.orchestrator.core.model.jira.FilterData
@@ -120,6 +122,9 @@ class SprintDashboardPanel(
             sprint.name + if (sprint.state == "active") " (Active)" else ""
         }
         isVisible = false // Hidden until sprints are loaded
+        bindBoundedWidth(ComboBoxWidth.DEFAULT) { sprint ->
+            sprint?.let { it.name + if (it.state == "active") " (Active)" else "" }.orEmpty()
+        }
     }
     private var availableSprints: List<JiraSprint> = emptyList()
     private var sprintSelectorLoading = false

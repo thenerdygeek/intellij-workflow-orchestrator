@@ -8,7 +8,9 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.automation.service.AutomationSettingsService
+import com.workflow.orchestrator.core.ui.ComboBoxWidth
 import com.workflow.orchestrator.core.ui.StatusColors
+import com.workflow.orchestrator.core.ui.bindBoundedWidth
 import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.FlowLayout
@@ -42,8 +44,8 @@ class SuiteConfigPanel(
 
     // Add Variable button — dropdown shows available keys not yet added
     private val addVariableCombo = JComboBox<String>().apply {
-        preferredSize = JBUI.size(150, 28)
         font = Font(Font.MONOSPACED, Font.PLAIN, font.size)
+        bindBoundedWidth(ComboBoxWidth.SHORT)
     }
     private val addButton = JButton("+ Add").apply {
         isFocusPainted = false
@@ -162,9 +164,9 @@ class SuiteConfigPanel(
         val keyCombo = JComboBox(allOptions.toTypedArray()).apply {
             selectedItem = key
             isEditable = false
-            preferredSize = JBUI.size(140, 28)
             font = Font(Font.MONOSPACED, Font.PLAIN, font.size)
             addActionListener { persistVariables() }
+            bindBoundedWidth(ComboBoxWidth.SHORT)
         }
         val valueField = JBTextField(value).apply {
             preferredSize = JBUI.size(160, 28)

@@ -15,7 +15,9 @@ import com.workflow.orchestrator.core.model.workflow.PrRef
 import com.workflow.orchestrator.core.model.workflow.QualityScope
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoConfig
+import com.workflow.orchestrator.core.ui.ComboBoxWidth
 import com.workflow.orchestrator.core.ui.StatusColors
+import com.workflow.orchestrator.core.ui.bindBoundedWidth
 import com.workflow.orchestrator.core.workflow.WorkflowContextService
 import com.workflow.orchestrator.core.workflow.ui.ReadOnlyBanner
 import com.workflow.orchestrator.sonar.model.QualityGateStatus
@@ -57,6 +59,7 @@ class QualityDashboardPanel(
         ComboBox(DefaultComboBoxModel(allRepos.map { it.displayLabel }.toTypedArray())).apply {
             val primaryIndex = allRepos.indexOfFirst { it.isPrimary }.takeIf { it >= 0 } ?: 0
             selectedIndex = primaryIndex
+            bindBoundedWidth(ComboBoxWidth.WIDE)
         }
     } else null
 

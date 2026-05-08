@@ -15,7 +15,9 @@ import com.workflow.orchestrator.core.model.jira.GroupOption
 import com.workflow.orchestrator.core.model.jira.RoleOption
 import com.workflow.orchestrator.core.model.jira.VisibilityType
 import com.workflow.orchestrator.core.services.JiraService
+import com.workflow.orchestrator.core.ui.ComboBoxWidth
 import com.workflow.orchestrator.core.ui.StatusColors
+import com.workflow.orchestrator.core.ui.bindBoundedWidth
 import com.workflow.orchestrator.handover.service.HandoverStateService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -66,6 +68,7 @@ class JiraCommentPanel(private val project: Project) : JPanel(BorderLayout()) {
     }
     private val visibilityCombo = JComboBox(visibilityModel).apply {
         toolTipText = "Restrict closure comment to a project role or group"
+        bindBoundedWidth(ComboBoxWidth.DEFAULT)
     }
 
     // Empty-state card shown when no ticket is active

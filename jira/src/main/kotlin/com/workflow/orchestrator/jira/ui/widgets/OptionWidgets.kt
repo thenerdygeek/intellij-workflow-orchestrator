@@ -7,6 +7,8 @@ import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.model.jira.FieldOption
 import com.workflow.orchestrator.core.model.jira.FieldValue
 import com.workflow.orchestrator.core.model.jira.TransitionField
+import com.workflow.orchestrator.core.ui.ComboBoxWidth
+import com.workflow.orchestrator.core.ui.bindBoundedWidth
 import javax.swing.DefaultListModel
 import javax.swing.JComponent
 import javax.swing.ListSelectionModel
@@ -24,7 +26,9 @@ class SingleSelectWidget(override val field: TransitionField) : FieldWidget {
     private val optionIds: List<String> = field.allowedValues.map { it.id }
     private val optionNames: Array<String> = field.allowedValues.map { it.value }.toTypedArray()
 
-    private val combo = ComboBox(optionNames)
+    private val combo = ComboBox(optionNames).apply {
+        bindBoundedWidth(ComboBoxWidth.DEFAULT)
+    }
     override val component: JComponent = combo
 
     override fun currentValue(): FieldValue? {
@@ -128,7 +132,9 @@ class CascadingSelectWidget(override val field: TransitionField) : FieldWidget {
     private val parentIds: List<String> = field.allowedValues.map { it.id }
     private val parentNames: Array<String> = field.allowedValues.map { it.value }.toTypedArray()
 
-    private val parentCombo = ComboBox(parentNames)
+    private val parentCombo = ComboBox(parentNames).apply {
+        bindBoundedWidth(ComboBoxWidth.DEFAULT)
+    }
     override val component: JComponent = parentCombo
 
     override fun currentValue(): FieldValue? {

@@ -21,6 +21,7 @@ import com.workflow.orchestrator.core.http.HttpClientFactory
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.ConnectionSettings
+import com.workflow.orchestrator.core.ui.bindBoundedWidth
 import com.workflow.orchestrator.core.settings.ConnectionStatusBanner
 import kotlinx.coroutines.*
 import java.awt.Component
@@ -94,7 +95,7 @@ class AgentParentConfigurable(
                     val combo = JComboBox(DefaultComboBoxModel<ModelItem>())
                     combo.renderer = ModelCellRenderer()
                     combo.isEditable = true
-                    combo.preferredSize = JBUI.size(350, 30)
+                    combo.bindBoundedWidth(350)
                     modelComboBox = combo
 
                     // Set current value

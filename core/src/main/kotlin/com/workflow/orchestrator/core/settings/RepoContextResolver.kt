@@ -151,6 +151,13 @@ class RepoContextResolver(private val project: Project) : Disposable {
      */
     fun resolvePrimaryGitRepo(): GitRepository? = materialize(getPrimary())
 
+    /**
+     * Returns the primary repo's current git branch name, or `null` if no repo is
+     * resolvable / detached HEAD. Avoids leaking the `GitRepository` type to
+     * feature modules that don't depend on git4idea (e.g. `:automation`).
+     */
+    fun getPrimaryBranchName(): String? = resolvePrimaryGitRepo()?.currentBranchName
+
     private fun materialize(repoConfig: RepoConfig?): GitRepository? {
         val repos = GitRepositoryManager.getInstance(project).repositories
         return repos.find { it.root.path == repoConfig?.localVcsRootPath } ?: repos.firstOrNull()

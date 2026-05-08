@@ -13,6 +13,8 @@ import com.workflow.orchestrator.core.model.jira.JiraFieldData
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.ConnectionStatusBanner
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.ui.ComboBoxWidth
+import com.workflow.orchestrator.core.ui.bindBoundedWidth
 import com.workflow.orchestrator.core.workflow.WorkflowIntent
 import com.workflow.orchestrator.jira.service.JiraServiceImpl
 import com.workflow.orchestrator.jira.workflow.TransitionMapping
@@ -119,6 +121,9 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
         val boardComboBox = javax.swing.JComboBox<JiraWorkflowBoardItem>()
         boardComboBox.renderer = com.intellij.ui.SimpleListCellRenderer.create("") { item ->
             if (item == null) "Select a board..." else "${item.board.name} (${item.board.type}, ID: ${item.board.id})"
+        }
+        boardComboBox.bindBoundedWidth(ComboBoxWidth.WIDE) { item ->
+            if (item == null) "" else "${item.board.name} (${item.board.type}, ID: ${item.board.id})"
         }
 
         // Pre-populate with current saved board
@@ -337,6 +342,7 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
                     }
                     isEnabled = false
                     toolTipText = "Custom field for Epic Link"
+                    bindBoundedWidth(ComboBoxWidth.WIDE)
                 }
                 val epicManualField = javax.swing.JTextField(20).apply {
                     text = settings.state.epicLinkFieldId ?: ""
@@ -361,6 +367,7 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
                     }
                     isEnabled = false
                     toolTipText = "Custom field for Acceptance Criteria"
+                    bindBoundedWidth(ComboBoxWidth.WIDE)
                 }
                 val acceptanceManualField = javax.swing.JTextField(20).apply {
                     text = settings.state.jiraAcceptanceCriteriaFieldId ?: ""

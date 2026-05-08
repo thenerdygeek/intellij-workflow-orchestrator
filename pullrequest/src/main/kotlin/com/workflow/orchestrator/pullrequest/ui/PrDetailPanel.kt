@@ -16,7 +16,9 @@ import com.intellij.openapi.ui.ComboBox
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
+import com.workflow.orchestrator.core.ui.ComboBoxWidth
 import com.workflow.orchestrator.core.ui.StatusColors
+import com.workflow.orchestrator.core.ui.bindBoundedWidth
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
@@ -163,6 +165,7 @@ class PrDetailPanel(
     }
     private val createTargetBranchCombo = ComboBox<String>().apply {
         isEditable = false
+        bindBoundedWidth(ComboBoxWidth.DEFAULT)
     }
     private val createTitleField = JBTextField().apply {
         emptyText.text = "PR title"

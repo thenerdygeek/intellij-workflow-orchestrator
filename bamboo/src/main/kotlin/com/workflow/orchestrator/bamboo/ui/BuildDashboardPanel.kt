@@ -40,6 +40,8 @@ import com.workflow.orchestrator.core.model.workflow.PrRef
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.settings.RepoContextResolver
+import com.workflow.orchestrator.core.ui.ComboBoxWidth
+import com.workflow.orchestrator.core.ui.bindBoundedWidth
 import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import com.workflow.orchestrator.core.workflow.OpenPrLister
 import com.workflow.orchestrator.core.workflow.WorkflowContextService
@@ -343,6 +345,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         ComboBox(DefaultComboBoxModel(allRepos.map { it.displayLabel }.toTypedArray())).apply {
             val primaryIndex = allRepos.indexOfFirst { it.isPrimary }.takeIf { it >= 0 } ?: 0
             selectedIndex = primaryIndex
+            bindBoundedWidth(ComboBoxWidth.WIDE)
         }
     } else null
 

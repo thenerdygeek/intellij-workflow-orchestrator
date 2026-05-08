@@ -16,7 +16,9 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketPrDetail
 import com.workflow.orchestrator.core.bitbucket.CreatePrLauncher
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
+import com.workflow.orchestrator.core.ui.ComboBoxWidth
 import com.workflow.orchestrator.core.ui.StatusColors
+import com.workflow.orchestrator.core.ui.bindBoundedWidth
 import com.workflow.orchestrator.core.model.workflow.PrRef
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoContextResolver
@@ -81,6 +83,7 @@ class PrDashboardPanel(
     private val repoFilterModel = DefaultComboBoxModel(arrayOf("All Repos"))
     private val repoFilter = JComboBox(repoFilterModel).apply {
         isVisible = false
+        bindBoundedWidth(ComboBoxWidth.WIDE)
     }
 
     // -- State --

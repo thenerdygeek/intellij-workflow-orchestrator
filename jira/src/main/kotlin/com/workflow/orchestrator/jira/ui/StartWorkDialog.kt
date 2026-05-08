@@ -12,7 +12,9 @@ import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.intellij.openapi.ui.ComboBox
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranch
 import com.workflow.orchestrator.core.settings.RepoConfig
+import com.workflow.orchestrator.core.ui.ComboBoxWidth
 import com.workflow.orchestrator.core.ui.StatusColors
+import com.workflow.orchestrator.core.ui.bindBoundedWidth
 import java.awt.BorderLayout
 import java.awt.FlowLayout
 import javax.swing.*
@@ -180,6 +182,7 @@ class StartWorkDialog(
                     log.info("[Jira:StartWork] Repo changed to index $newIdx (${repos.getOrNull(newIdx)?.displayLabel}) — refetching branches")
                     onRepoChanged?.invoke(newIdx)
                 }
+                bindBoundedWidth(ComboBoxWidth.WIDE)
             }
             repoRow.add(repoCombo)
             repoLoadingLabel = JBLabel("").apply {
@@ -234,6 +237,7 @@ class StartWorkDialog(
         }
         existingBranchCombo = JComboBox(existingBranches.toTypedArray()).apply {
             isVisible = existingBranches.isNotEmpty()
+            bindBoundedWidth(ComboBoxWidth.WIDE)
         }
         existingRow.add(existingBranchCombo)
         noExistingBranchesLabel = JBLabel("No linked branches for this repo").apply {
@@ -295,6 +299,7 @@ class StartWorkDialog(
                 if (ignoreComboEvents) return@addActionListener
                 selectedSourceBranch = selectedItem as? String ?: defaultSourceBranch
             }
+            bindBoundedWidth(ComboBoxWidth.WIDE)
         }
         sourceRow.add(sourceBranchCombo)
         panel.add(sourceRow)
