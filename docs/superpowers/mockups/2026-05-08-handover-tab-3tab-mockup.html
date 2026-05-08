@@ -1,0 +1,998 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<title>Handover Tab — 3-tab redesign</title>
+<style>
+  /* ---- Tokens derived from the Stitch design system (dark, TONAL_SPOT seed #1A73E8) ---- */
+  :root {
+    --base-surface:        #0B1326;
+    --container-surface:   #171F33;
+    --hover-surface:       #1C2740;
+    --raised-surface:      #1E2538;
+    --field-bg:            #14182a;
+    --field-border:        #2c3247;
+    --toolbar-bg:          #1B2238;
+    --toolbar-divider:     #283050;
+
+    --foreground:          #E2E6F0;
+    --secondary-text:      #8A93A8;
+    --tertiary-text:       #5e6a85;
+
+    --accent:              #5FA1F0;
+    --accent-strong:       #1A73E8;
+    --accent-bg:           rgba(95,161,240,0.18);
+
+    --success:             #5FB866;
+    --success-bg:          rgba(95,184,102,0.18);
+    --warning:             #D8A23C;
+    --warning-bg:          rgba(216,162,60,0.13);
+    --error:               #D36262;
+    --error-bg:            rgba(211,98,98,0.13);
+
+    --link:                #7DA6FF;
+
+    --button-bg:           #2A3148;
+    --button-bg-hover:     #364067;
+    --primary-bg:          var(--accent-strong);
+    --primary-bg-hover:    #1660cb;
+
+    --radius-sm: 4px;
+    --radius-md: 6px;
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #07090f;
+    color: var(--foreground);
+    font: 13px/1.45 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  }
+  code, .mono {
+    font-family: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+    font-size: 12px;
+  }
+
+  /* Outer IDE chrome (so the screenshot reads as a tool window) */
+  .ide-frame {
+    margin: 16px auto;
+    width: min(1200px, calc(100% - 32px));
+    height: calc(100% - 32px);
+    background: var(--toolbar-bg);
+    border: 1px solid #0e1224;
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+  }
+  .ide-tabs {
+    display: flex;
+    background: var(--toolbar-bg);
+    border-bottom: 1px solid var(--toolbar-divider);
+    padding: 0 8px;
+  }
+  .ide-tabs .tab {
+    padding: 8px 14px;
+    color: var(--secondary-text);
+    border-bottom: 2px solid transparent;
+    cursor: default;
+    font-size: 12px;
+  }
+  .ide-tabs .tab.active {
+    color: var(--foreground);
+    border-bottom-color: var(--accent);
+  }
+
+  /* Handover panel root */
+  .panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: var(--base-surface);
+    min-height: 0;
+  }
+
+  /* ===== Header: ticket context ===== */
+  .ticket-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--toolbar-divider);
+    background: var(--base-surface);
+  }
+  .ticket-key {
+    font-family: "JetBrains Mono", ui-monospace, Menlo, monospace;
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--accent);
+    background: var(--accent-bg);
+    padding: 3px 8px;
+    border-radius: var(--radius-sm);
+    letter-spacing: 0.3px;
+  }
+  .ticket-title {
+    flex: 1;
+    color: var(--foreground);
+    font-size: 13px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ticket-status {
+    font-size: 11px;
+    background: var(--warning-bg);
+    color: var(--warning);
+    padding: 3px 8px;
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+  }
+  .header-actions {
+    display: flex; gap: 4px;
+  }
+  .icon-btn {
+    background: transparent;
+    color: var(--secondary-text);
+    border: 0;
+    width: 26px; height: 26px;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .icon-btn:hover { background: var(--hover-surface); color: var(--foreground); }
+
+  /* ===== Tab navigation ===== */
+  .tabs {
+    display: flex;
+    background: var(--base-surface);
+    border-bottom: 1px solid var(--toolbar-divider);
+    padding: 0 8px;
+  }
+  .tab-btn {
+    background: transparent;
+    border: 0;
+    padding: 10px 16px;
+    color: var(--secondary-text);
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    font: 600 12px/1 "Inter", sans-serif;
+    letter-spacing: 0.2px;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .tab-btn:hover { color: var(--foreground); }
+  .tab-btn.active {
+    color: var(--foreground);
+    border-bottom-color: var(--accent);
+  }
+  .tab-badge {
+    font-size: 10px; font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 10px;
+    background: var(--container-surface);
+    color: var(--secondary-text);
+  }
+  .tab-btn.active .tab-badge.warn,
+  .tab-btn .tab-badge.warn {
+    background: var(--warning-bg);
+    color: var(--warning);
+  }
+
+  /* ===== Persistent override warning (between tabs and content) ===== */
+  .override {
+    margin: 10px 14px 0;
+    padding: 8px 12px;
+    background: var(--warning-bg);
+    border-left: 3px solid var(--warning);
+    border-radius: var(--radius-sm);
+    display: flex; gap: 10px; align-items: flex-start;
+    font-size: 12px;
+  }
+  .override .icon { color: var(--warning); flex-shrink: 0; padding-top: 1px; }
+  .override b { color: var(--foreground); }
+  .override a {
+    color: var(--link); text-decoration: underline;
+    cursor: pointer;
+  }
+
+  /* ===== Tab content panes ===== */
+  .tab-pane {
+    flex: 1;
+    overflow: auto;
+    padding: 12px 14px;
+    display: none;
+  }
+  .tab-pane.active { display: block; }
+
+  /* Cards */
+  .card {
+    background: var(--container-surface);
+    border: 1px solid var(--toolbar-divider);
+    border-radius: var(--radius-sm);
+    margin-bottom: 12px;
+    overflow: hidden;
+  }
+  .card-h {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--toolbar-divider);
+    background: var(--raised-surface);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card-h .name {
+    font-size: 12px; font-weight: 700;
+    color: var(--foreground);
+    flex: 1;
+    letter-spacing: 0.2px;
+  }
+  .card-body { padding: 10px 12px; }
+
+  /* ===== Section: Status checks (2-column grid) ===== */
+  .checks-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0;
+  }
+  .check-row {
+    display: flex; align-items: center;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--toolbar-divider);
+    gap: 8px;
+    font-size: 12px;
+  }
+  .check-row:nth-last-child(1),
+  .check-row:nth-last-child(2) { border-bottom: 0; }
+  .check-row .icon {
+    width: 14px; height: 14px;
+    flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .check-row .lbl { flex: 1; color: var(--foreground); }
+  .check-row .meta {
+    font-family: "JetBrains Mono", ui-monospace, Menlo, monospace;
+    font-size: 11px;
+    color: var(--secondary-text);
+  }
+  .check-row.ok    .icon { color: var(--success); }
+  .check-row.fail  .icon { color: var(--error); }
+  .check-row.fail  .lbl  { color: #ffb1b1; }
+  .check-row.fail  .meta { color: var(--error); font-weight: 700; }
+  .check-row.warn  .icon { color: var(--warning); }
+  .check-row.warn  .meta { color: var(--warning); font-weight: 700; }
+
+  /* Ritual checklist */
+  .checklist .item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+  .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: transparent;
+    border: 1.5px solid var(--tertiary-text);
+    display: inline-block;
+  }
+  .dot.done {
+    background: var(--success);
+    border-color: var(--success);
+  }
+  .checklist .item.done .text { color: var(--foreground); }
+  .checklist .item .text { color: var(--secondary-text); }
+  .checklist .item .badge-state {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--tertiary-text);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .checklist .item.done .badge-state { color: var(--success); }
+
+  /* ===== Copyright Fix ===== */
+  .file-list {
+    border: 1px solid var(--toolbar-divider);
+    border-radius: var(--radius-sm);
+    background: var(--field-bg);
+    overflow: hidden;
+    max-height: 220px;
+    overflow-y: auto;
+  }
+  .file-row {
+    display: flex; align-items: center;
+    gap: 10px;
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--toolbar-divider);
+    font-size: 12px;
+  }
+  .file-row:last-child { border-bottom: 0; }
+  .file-row .status {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .file-row .status.fix    { background: var(--warning); }
+  .file-row .status.insert { background: var(--accent); }
+  .file-row .status.clean  { background: var(--success); }
+  .file-row .path {
+    flex: 1;
+    font-family: "JetBrains Mono", ui-monospace, Menlo, monospace;
+    font-size: 11px;
+    color: var(--foreground);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .file-row .year-shift {
+    font-family: "JetBrains Mono", ui-monospace, Menlo, monospace;
+    font-size: 11px;
+    color: var(--secondary-text);
+    flex-shrink: 0;
+  }
+
+  .copyright-status {
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--secondary-text);
+  }
+  .copyright-actions { display: flex; gap: 8px; margin-top: 10px; }
+
+  /* ===== Buttons ===== */
+  .btn {
+    background: var(--button-bg);
+    border: 1px solid var(--field-border);
+    color: var(--foreground);
+    padding: 5px 12px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font: 600 12px/1 "Inter", sans-serif;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .btn:hover { background: var(--button-bg-hover); }
+  .btn.primary {
+    background: var(--primary-bg);
+    border-color: var(--primary-bg);
+    color: white;
+  }
+  .btn.primary:hover { background: var(--primary-bg-hover); border-color: var(--primary-bg-hover); }
+
+  /* ===== Time Log form ===== */
+  .form-row {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 8px;
+  }
+  .form-row label {
+    width: 70px;
+    font-size: 11px;
+    color: var(--secondary-text);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+  }
+  .form-row input,
+  .form-row textarea {
+    background: var(--field-bg);
+    border: 1px solid var(--field-border);
+    color: var(--foreground);
+    padding: 5px 8px;
+    border-radius: var(--radius-sm);
+    font: 12px "Inter", sans-serif;
+  }
+  .form-row .hours { width: 90px; font-family: "JetBrains Mono", Menlo, monospace; }
+  .form-row .date  { width: 140px; font-family: "JetBrains Mono", Menlo, monospace; }
+  .form-row .comment { flex: 1; min-width: 0; font-family: "Inter", sans-serif; }
+  .hint {
+    font-size: 11px;
+    color: var(--tertiary-text);
+    margin-top: 4px;
+    margin-left: 80px;
+  }
+  .timelog-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
+
+  /* ===== Share tab ===== */
+  .share-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .share-grid .full { grid-column: 1 / -1; }
+
+  .editor-card .picker-bar {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 10px;
+    background: var(--raised-surface);
+    border-bottom: 1px solid var(--toolbar-divider);
+  }
+  .picker {
+    flex: 1;
+    background: var(--field-bg);
+    border: 1px solid var(--field-border);
+    color: var(--foreground);
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    font: 12px "Inter", sans-serif;
+    appearance: none;
+    background-image: linear-gradient(45deg, transparent 50%, var(--secondary-text) 50%),
+                      linear-gradient(135deg, var(--secondary-text) 50%, transparent 50%);
+    background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%;
+    background-size: 5px 5px, 5px 5px;
+    background-repeat: no-repeat;
+    padding-right: 26px;
+    cursor: pointer;
+  }
+  .picker option { background: var(--field-bg); color: var(--foreground); }
+  .dirty-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--warning);
+    margin-left: 2px;
+    flex-shrink: 0;
+    box-shadow: 0 0 0 2px var(--raised-surface);
+  }
+  .format-pill {
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    background: var(--accent-bg);
+    color: var(--accent);
+    padding: 2px 7px;
+    border-radius: 10px;
+  }
+
+  .editor-pane, .preview-pane {
+    background: var(--field-bg);
+    border-bottom: 1px solid var(--toolbar-divider);
+  }
+  .pane-h {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 12px;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--secondary-text);
+    letter-spacing: 0.6px;
+    border-top: 1px solid var(--toolbar-divider);
+    background: var(--raised-surface);
+  }
+  .pane-h:first-child { border-top: 0; }
+  .pane-h .src-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    margin-left: auto;
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 500;
+    color: var(--secondary-text);
+    font-size: 10px;
+  }
+  .pane-h .src-badge .green-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--success);
+  }
+  .editor-content {
+    padding: 10px 12px;
+    font-family: "JetBrains Mono", ui-monospace, Menlo, monospace;
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--foreground);
+    white-space: pre-wrap;
+    max-height: 220px;
+    overflow: auto;
+  }
+  .editor-content .ph { color: var(--success); }
+  .editor-content .tag { color: var(--accent); }
+  .editor-content .attr { color: #b8b3ff; }
+
+  .preview-content {
+    padding: 12px;
+    font-family: "Inter", sans-serif;
+    font-size: 12px;
+    color: var(--foreground);
+    max-height: 220px;
+    overflow: auto;
+  }
+  .preview-content h2 {
+    font-size: 14px; margin: 0 0 8px;
+    color: var(--foreground);
+  }
+  .preview-content table {
+    border-collapse: collapse;
+    margin: 6px 0;
+    font-size: 11px;
+  }
+  .preview-content th, .preview-content td {
+    border: 1px solid var(--field-border);
+    padding: 3px 8px;
+    text-align: left;
+  }
+  .preview-content th {
+    background: var(--container-surface);
+    color: var(--secondary-text);
+    font-weight: 600;
+    font-size: 10px;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+  }
+  .preview-content .pass { color: var(--success); font-weight: 600; }
+  .preview-content .running { color: var(--warning); font-weight: 600; }
+  .preview-content .pr-link {
+    color: var(--link);
+    text-decoration: underline;
+  }
+  .preview-content .ai-summary {
+    color: var(--secondary-text);
+    font-style: italic;
+    font-size: 11.5px;
+    margin-top: 8px;
+  }
+  .preview-content .json {
+    font-family: "JetBrains Mono", Menlo, monospace;
+    font-size: 11px;
+    color: var(--foreground);
+    background: var(--field-bg);
+    padding: 4px 8px;
+    border-radius: 3px;
+    word-break: break-all;
+    margin-top: 4px;
+    border: 1px solid var(--field-border);
+  }
+  .preview-content p { margin: 6px 0; }
+
+  .editor-actions {
+    display: flex; gap: 8px; justify-content: flex-end;
+    padding: 8px 12px;
+    background: var(--raised-surface);
+    border-top: 1px solid var(--toolbar-divider);
+  }
+
+  /* ===== Quick Values ===== */
+  .qv-h {
+    display: flex; align-items: baseline; gap: 10px;
+    margin-bottom: 8px;
+  }
+  .qv-h h3 {
+    margin: 0;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    color: var(--secondary-text);
+  }
+  .qv-h .note {
+    font-size: 11px;
+    color: var(--tertiary-text);
+  }
+  .qv-h .note a { color: var(--link); text-decoration: underline; cursor: pointer; }
+
+  .chips {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+  .chip {
+    display: flex; align-items: center;
+    gap: 8px;
+    background: var(--field-bg);
+    border: 1px solid var(--field-border);
+    padding: 5px 10px;
+    border-radius: 14px;
+    cursor: pointer;
+    min-width: 0;
+    transition: background 80ms;
+  }
+  .chip:hover { background: var(--hover-surface); }
+  .chip:active { background: var(--accent-bg); border-color: var(--accent); }
+  .chip .k {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--secondary-text);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    flex-shrink: 0;
+  }
+  .chip .v {
+    flex: 1;
+    font-family: "JetBrains Mono", ui-monospace, Menlo, monospace;
+    font-size: 11px;
+    color: var(--foreground);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .chip .copy {
+    flex-shrink: 0;
+    color: var(--secondary-text);
+  }
+  .chip:hover .copy { color: var(--accent); }
+
+  /* tiny SVG icons */
+  svg { display: block; }
+
+  /* Highlight target tab in IDE strip */
+  .ide-tabs .tab.handover {
+    color: var(--foreground);
+    border-bottom-color: var(--accent);
+  }
+
+  /* tiny icon-only buttons in picker bar */
+  .picker-icon-btn {
+    background: transparent;
+    border: 0;
+    color: var(--secondary-text);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: var(--radius-sm);
+    line-height: 0;
+  }
+  .picker-icon-btn:hover { background: var(--hover-surface); color: var(--foreground); }
+</style>
+</head>
+<body>
+
+<div class="ide-frame">
+  <!-- Outer IDE tab strip so this reads as the "Workflow" tool window -->
+  <div class="ide-tabs">
+    <div class="tab">Sprint</div>
+    <div class="tab">PR</div>
+    <div class="tab">Build</div>
+    <div class="tab">Quality</div>
+    <div class="tab">Automation</div>
+    <div class="tab handover">Handover</div>
+  </div>
+
+  <div class="panel">
+
+    <!-- Ticket header -->
+    <div class="ticket-header">
+      <span class="ticket-key">AFTER8TE-912</span>
+      <span class="ticket-title">Cache dev-status responses for 60s</span>
+      <span class="ticket-status">In Progress</span>
+      <div class="header-actions">
+        <button class="icon-btn" title="Refresh">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 8a6 6 0 0 1 10.5-4M14 8a6 6 0 0 1-10.5 4"/><path d="M11 1.5L13 4l-2.5 2"/><path d="M5 14.5L3 12l2.5-2"/></svg>
+        </button>
+        <button class="icon-btn" title="Settings">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.2"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.2 3.2L4.6 4.6M11.4 11.4L12.8 12.8M3.2 12.8L4.6 11.4M11.4 4.6L12.8 3.2"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Tab nav -->
+    <div class="tabs">
+      <button class="tab-btn" data-tab="checks">Checks <span class="tab-badge warn">1 ⚠</span></button>
+      <button class="tab-btn" data-tab="actions">Actions</button>
+      <button class="tab-btn active" data-tab="share">Share</button>
+    </div>
+
+    <!-- Persistent override warning -->
+    <div class="override">
+      <span class="icon">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1L0.5 14.5h15L8 1zm0 5v4M8 11.5v.5"/></svg>
+      </span>
+      <span>
+        <b>1 check not green:</b> Quality gate FAILED. You can still hand off, but consider fixing first.
+        <a>View Quality tab</a>
+      </span>
+    </div>
+
+    <!-- ============ CHECKS TAB ============ -->
+    <div class="tab-pane" data-tab="checks">
+
+      <div class="card">
+        <div class="card-h"><span class="name">PRE-HANDOFF STATUS CHECKS</span><span class="meta tab-badge">7 / 8 green</span></div>
+        <div class="checks-grid">
+          <div class="check-row ok"><span class="icon">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l3.5 3.5L13 4"/></svg>
+          </span><span class="lbl">Copyright headers</span><span class="meta">12 files clean</span></div>
+
+          <div class="check-row ok"><span class="icon">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l3.5 3.5L13 4"/></svg>
+          </span><span class="lbl">Pull request</span><span class="meta">#1842</span></div>
+
+          <div class="check-row ok"><span class="icon">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l3.5 3.5L13 4"/></svg>
+          </span><span class="lbl">Build</span><span class="meta">ORCH-PIPE #438</span></div>
+
+          <div class="check-row fail"><span class="icon">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+          </span><span class="lbl">Quality gate</span><span class="meta">FAILED</span></div>
+
+          <div class="check-row ok"><span class="icon">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l3.5 3.5L13 4"/></svg>
+          </span><span class="lbl">Suite: API smoke</span><span class="meta">PASS</span></div>
+
+          <div class="check-row ok"><span class="icon">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l3.5 3.5L13 4"/></svg>
+          </span><span class="lbl">Suite: API integration</span><span class="meta">PASS</span></div>
+
+          <div class="check-row warn"><span class="icon">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l3 1.5"/></svg>
+          </span><span class="lbl">Suite: Web E2E</span><span class="meta">running</span></div>
+
+          <div class="check-row ok"><span class="icon">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8l3.5 3.5L13 4"/></svg>
+          </span><span class="lbl">Docker tags</span><span class="meta">3 repos</span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-h"><span class="name">RITUAL CHECKLIST</span><span class="meta tab-badge">2 / 4 done</span></div>
+        <div class="checklist">
+          <div class="item done">
+            <span class="dot done"></span>
+            <span class="text">Copyright fixed</span>
+            <span class="badge-state">DONE</span>
+          </div>
+          <div class="item done">
+            <span class="dot done"></span>
+            <span class="text">PR created</span>
+            <span class="badge-state">DONE</span>
+          </div>
+          <div class="item">
+            <span class="dot"></span>
+            <span class="text">Jira comment posted</span>
+            <span class="badge-state">PENDING</span>
+          </div>
+          <div class="item">
+            <span class="dot"></span>
+            <span class="text">Time logged</span>
+            <span class="badge-state">PENDING</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ ACTIONS TAB ============ -->
+    <div class="tab-pane" data-tab="actions">
+
+      <div class="card">
+        <div class="card-h"><span class="name">COPYRIGHT FIX</span><span class="meta tab-badge">3 fixes · 1 missing</span></div>
+        <div class="card-body">
+          <div class="file-list">
+            <div class="file-row">
+              <span class="status fix" title="needs-fix"></span>
+              <span class="path">core/src/main/kotlin/com/workflow/orchestrator/core/cache/HttpResponseCache.kt</span>
+              <span class="year-shift">2024 → 2024–2026</span>
+            </div>
+            <div class="file-row">
+              <span class="status fix" title="needs-fix"></span>
+              <span class="path">core/src/main/kotlin/com/workflow/orchestrator/core/services/JiraService.kt</span>
+              <span class="year-shift">2023 → 2023–2026</span>
+            </div>
+            <div class="file-row">
+              <span class="status insert" title="needs-insert"></span>
+              <span class="path">handover/src/main/kotlin/com/workflow/orchestrator/handover/ui/HandoverContextPanel.kt</span>
+              <span class="year-shift">— → 2026</span>
+            </div>
+            <div class="file-row">
+              <span class="status clean" title="clean"></span>
+              <span class="path">handover/src/main/kotlin/com/workflow/orchestrator/handover/ui/panels/JiraCommentPanel.kt</span>
+              <span class="year-shift">2026</span>
+            </div>
+          </div>
+          <div class="copyright-status">3 files need fixes · 1 missing header</div>
+          <div class="copyright-actions">
+            <button class="btn primary">Fix All</button>
+            <button class="btn">Rescan</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-h"><span class="name">TIME LOG</span></div>
+        <div class="card-body">
+          <div class="form-row">
+            <label>Hours</label>
+            <input type="text" class="hours" value="3.5" />
+          </div>
+          <div class="form-row">
+            <label>Date</label>
+            <input type="text" class="date" value="2026-05-08" />
+          </div>
+          <div class="form-row">
+            <label>Comment</label>
+            <input type="text" class="comment" value="" placeholder="Optional comment for the worklog…" />
+          </div>
+          <div class="hint">Suggested: 3h 47m since Start Work at 09:13</div>
+          <div class="timelog-actions">
+            <button class="btn primary">Log Work</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ SHARE TAB ============ -->
+    <div class="tab-pane active" data-tab="share">
+
+      <!-- Jira Comment editor -->
+      <div class="card editor-card">
+        <div class="card-h">
+          <span class="name">JIRA COMMENT</span>
+        </div>
+        <div class="picker-bar">
+          <select class="picker">
+            <option selected>Standard closure ★ (project)</option>
+            <option>Hotfix</option>
+            <option>Standard closure (global default)</option>
+            <option>+ New template…</option>
+          </select>
+          <button class="picker-icon-btn" title="Duplicate">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="9" height="11"/><path d="M5 1h8v11"/></svg>
+          </button>
+          <button class="picker-icon-btn" title="Delete">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 4h10M5 4V2.5h6V4M4.5 4l.7 9.5h5.6L11.5 4"/></svg>
+          </button>
+          <span class="dirty-dot" title="Unsaved changes"></span>
+        </div>
+
+        <div class="pane-h">WIKI MARKUP</div>
+        <div class="editor-pane">
+          <div class="editor-content"><span>h2. Handover — </span><span class="ph">{ticket.id}</span><span>
+
+|| Suite || Result || Docker tag ||
+| ORCH-API-SMOKE | {color:green}PASS{color} | </span><span class="ph">{docker.tag}</span><span> |
+| ORCH-WEB-E2E   | {color:orange}running{color} | — |
+
+PR: [#</span><span class="ph">{pr.id}</span><span>|</span><span class="ph">{pr.url}</span><span>]
+
+</span><span class="ph">{ai.changeSummary}</span></div>
+        </div>
+
+        <div class="pane-h">
+          PREVIEW
+          <span class="src-badge"><span class="green-dot"></span>Live preview (Jira) · cached</span>
+        </div>
+        <div class="preview-pane">
+          <div class="preview-content">
+            <h2>Handover — AFTER8TE-912</h2>
+            <table>
+              <tr><th>Suite</th><th>Result</th><th>Docker tag</th></tr>
+              <tr><td>ORCH-API-SMOKE</td><td class="pass">PASS</td><td><code>orch-api:2026.05.08-after8te-912-rc1</code></td></tr>
+              <tr><td>ORCH-WEB-E2E</td><td class="running">running</td><td>—</td></tr>
+            </table>
+            <p>PR: <span class="pr-link">#1842</span></p>
+            <p class="ai-summary">Switched the dev-status read path to a 60s cache invalidated by EventBus events; collapses self-action latency from 60s to ~0ms.</p>
+          </div>
+        </div>
+
+        <div class="editor-actions">
+          <button class="btn">Copy as wiki</button>
+          <button class="btn primary">Post Comment</button>
+        </div>
+      </div>
+
+      <!-- Email editor -->
+      <div class="card editor-card">
+        <div class="card-h">
+          <span class="name">EMAIL</span>
+          <span class="format-pill">HTML for Outlook</span>
+        </div>
+        <div class="picker-bar">
+          <select class="picker">
+            <option selected>QA handover</option>
+            <option>Release notes</option>
+            <option>+ New template…</option>
+          </select>
+          <button class="picker-icon-btn" title="Duplicate">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="9" height="11"/><path d="M5 1h8v11"/></svg>
+          </button>
+          <button class="picker-icon-btn" title="Delete">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 4h10M5 4V2.5h6V4M4.5 4l.7 9.5h5.6L11.5 4"/></svg>
+          </button>
+        </div>
+
+        <div class="pane-h">HTML SOURCE</div>
+        <div class="editor-pane">
+          <div class="editor-content"><span class="tag">&lt;h2&gt;</span>Handover: <span class="ph">{ticket.id}</span><span class="tag">&lt;/h2&gt;</span>
+<span class="tag">&lt;p&gt;</span><span class="ph">{ticket.summary}</span><span class="tag">&lt;/p&gt;</span>
+<span class="tag">&lt;table</span> <span class="attr">border=1</span><span class="tag">&gt;</span>
+  <span class="ph">{automation.suiteTable}</span>
+<span class="tag">&lt;/table&gt;</span>
+<span class="tag">&lt;p&gt;</span>Docker tags:<span class="tag">&lt;br/&gt;</span><span class="ph">{docker.tagsJson}</span><span class="tag">&lt;/p&gt;</span>
+<span class="tag">&lt;p&gt;</span><span class="ph">{ai.changeSummary}</span><span class="tag">&lt;/p&gt;</span></div>
+        </div>
+
+        <div class="pane-h">PREVIEW</div>
+        <div class="preview-pane">
+          <div class="preview-content">
+            <h2>Handover: AFTER8TE-912</h2>
+            <p>Cache dev-status responses for 60s</p>
+            <table>
+              <tr><th>Suite</th><th>Result</th></tr>
+              <tr><td>ORCH-API-SMOKE</td><td class="pass">PASS</td></tr>
+              <tr><td>ORCH-API-INTEG</td><td class="pass">PASS</td></tr>
+              <tr><td>ORCH-WEB-E2E</td><td class="running">running</td></tr>
+            </table>
+            <p>Docker tags:<br/>
+              <span class="json">{"orch-api":"2026.05.08-after8te-912-rc1","orch-web":"2026.05.08-after8te-912-rc1","orch-worker":"2026.05.08-after8te-912-rc1"}</span>
+            </p>
+            <p class="ai-summary">Switched the dev-status read path to a 60s cache invalidated by EventBus events; collapses self-action latency from 60s to ~0ms.</p>
+          </div>
+        </div>
+
+        <div class="editor-actions">
+          <button class="btn primary">Copy formatted</button>
+        </div>
+      </div>
+
+      <!-- Quick Values -->
+      <div class="card">
+        <div class="card-h">
+          <span class="name">QUICK VALUES</span>
+          <span class="meta tab-badge"><a style="color:var(--link); text-decoration:none;">customise in Settings</a></span>
+        </div>
+        <div class="card-body">
+          <div class="chips">
+            <div class="chip">
+              <span class="k">tag</span>
+              <span class="v">orch-api:2026.05.08-after8te-912-rc1</span>
+              <span class="copy"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="9" height="11"/><path d="M5 1h8v11"/></svg></span>
+            </div>
+            <div class="chip">
+              <span class="k">tags JSON</span>
+              <span class="v">{"orch-api":"2026.05.08-after8te-912-rc1","orch-web":"2026.05.08-after8te-912-rc1"}</span>
+              <span class="copy"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="9" height="11"/><path d="M5 1h8v11"/></svg></span>
+            </div>
+            <div class="chip">
+              <span class="k">PR url</span>
+              <span class="v">/projects/ORCH/repos/api/pull-requests/1842</span>
+              <span class="copy"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="9" height="11"/><path d="M5 1h8v11"/></svg></span>
+            </div>
+            <div class="chip">
+              <span class="k">build url</span>
+              <span class="v">/browse/ORCH-PIPE-438</span>
+              <span class="copy"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="9" height="11"/><path d="M5 1h8v11"/></svg></span>
+            </div>
+            <div class="chip">
+              <span class="k">automation</span>
+              <span class="v">/queue/run/9001</span>
+              <span class="copy"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="9" height="11"/><path d="M5 1h8v11"/></svg></span>
+            </div>
+            <div class="chip">
+              <span class="k">ticket id</span>
+              <span class="v">AFTER8TE-912</span>
+              <span class="copy"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="9" height="11"/><path d="M5 1h8v11"/></svg></span>
+            </div>
+            <div class="chip">
+              <span class="k">ai change summary</span>
+              <span class="v">Switched the dev-status read path to a 60s cache invalidated…</span>
+              <span class="copy"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="9" height="11"/><path d="M5 1h8v11"/></svg></span>
+            </div>
+            <div class="chip">
+              <span class="k">ai ticket summary</span>
+              <span class="v">Cache dev-status responses for 60s; goal is to reduce dashboard latency…</span>
+              <span class="copy"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="9" height="11"/><path d="M5 1h8v11"/></svg></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+  // Tab switching
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = btn.dataset.tab;
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.querySelectorAll('.tab-pane').forEach(p => {
+        p.classList.toggle('active', p.dataset.tab === target);
+      });
+    });
+  });
+
+  // Chip click feedback (visual hint that it copied)
+  document.querySelectorAll('.chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const v = chip.querySelector('.v').textContent;
+      navigator.clipboard?.writeText(v).catch(() => {});
+      const orig = chip.style.background;
+      chip.style.background = 'var(--accent-bg)';
+      chip.style.borderColor = 'var(--accent)';
+      setTimeout(() => { chip.style.background = orig; chip.style.borderColor = ''; }, 200);
+    });
+  });
+</script>
+</body>
+</html>
