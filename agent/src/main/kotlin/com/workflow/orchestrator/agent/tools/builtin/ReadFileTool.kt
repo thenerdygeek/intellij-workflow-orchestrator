@@ -8,6 +8,7 @@ import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.docs.Relationship
+import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
 import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
 import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
 import com.workflow.orchestrator.agent.tools.docs.toolDoc
@@ -34,6 +35,14 @@ class ReadFileTool : AgentTool {
             plain("Like opening a file in your editor — the agent gets to see the lines, numbered, so it can refer to them later. Will refuse to open giant files or things that aren't text (zips, images, etc.).")
         }
         whatLLMSees(description)
+        sideEffect(SideEffectKind.READ_ONLY)
+        counterfactual(
+            "Without read_file, the LLM falls back to `run_command cat <path>` — losing line-number prefixes (which breaks edit_file's exact-text matcher), losing visibility into unsaved editor changes, and bypassing PathValidator (so the LLM could `cat /etc/passwd` and exfiltrate it through the chat). Net cost: ~30% more failed edit_file rounds and a real security regression."
+        )
+        llmMistake("Includes the `123\\t` line-number prefix when crafting an edit_file SEARCH block — the prefix is metadata, not file content, so the exact-text match fails. Hardened by edit_file's whitespace-tolerant matcher, but still a recurring source of churn.")
+        llmMistake("Calls read_file on a directory (`read_file('src/')`) — returns a 'must point to a file' error. Should use glob_files for directory listing.")
+        llmMistake("Re-reads the same file multiple times within a session. ContextManager Stage 1 dedupes file reads after the fact (replaces older reads with placeholders), but the wasted bytes still cost an iteration.")
+        llmMistake("Forgets that offset is 1-based, not 0-based — sets `offset=0` and gets `offset=1` semantics due to coercion. Harmless but the LLM occasionally treats it as a 'feature' and writes confused follow-up code.")
         params {
             required("path", "string") {
                 llmSeesIt("The path of the file to read (absolute or relative to the project root).")

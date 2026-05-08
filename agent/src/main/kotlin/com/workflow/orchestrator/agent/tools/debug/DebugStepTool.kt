@@ -12,6 +12,7 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.builtin.PathValidator
 import com.workflow.orchestrator.agent.tools.docs.Relationship
+import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
 import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
 import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
 import com.workflow.orchestrator.agent.tools.docs.toolDoc
@@ -96,6 +97,15 @@ All actions accept optional session_id (defaults to active session).
             plain("The agent's debugger remote control. Once a debug session is paused at a breakpoint, the agent uses this tool to step through code line-by-line, walk into method calls, jump to a specific line, or stop the session — exactly like the buttons in IntelliJ's Debug toolbar, but driven by the LLM.")
         }
         whatLLMSees(description)
+        sideEffect(SideEffectKind.IDE_MUTATION)
+        counterfactual(
+            "Without debug_step, no programmatic debugging — the LLM cannot drive a paused session. The fallback is asking the user to manually step in IntelliJ's Debug toolbar and report what they see, which fragments the agent loop into 5-10 chat-like exchanges per debug interaction (vs 1-3 tool calls today). Whole 'debug this failing test' workflow degrades to copy-paste."
+        )
+        llmMistake("Skips `get_state` and steps blindly — calls step_over on a running session, gets NOT_PAUSED, then has to call pause + get_state + step_over (3 tool calls instead of 1). Mitigation: 'CALL THIS FIRST' nudge in the description. Still the most common failure pattern.")
+        llmMistake("Confuses `force_step_into` (bypasses step filters) with `force_step_over` (ignores breakpoints in callees) — picks the wrong one and gets unexpected pause locations.")
+        llmMistake("Calls `step_out` from `main()` — session terminates with SESSION_ENDED, then LLM tries to step_out again on a dead session and loops on NO_SESSION.")
+        llmMistake("Calls `run_to_cursor` on a running session expecting it to pause+go-to-line; instead gets NOT_PAUSED. The action name is misleading (it requires a paused session).")
+        llmMistake("Calls `pause` and assumes it took effect immediately — proceeds to `step_over` before pause has actually landed, gets NOT_PAUSED. Pause needs `get_state` polling because it's best-effort.")
         flowchart("""
             flowchart TD
                 A[LLM decides to debug] --> B[get_state — ALWAYS FIRST]
