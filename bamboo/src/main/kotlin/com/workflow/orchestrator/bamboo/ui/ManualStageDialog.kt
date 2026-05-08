@@ -52,7 +52,7 @@ class ManualStageDialog(
         scope.launch {
             val result = bambooService.getPlanVariables(planKey)
             if (!result.isError) {
-                variables = result.data
+                variables = result.data!!
             }
             isLoading = false
             invokeLater { rebuildForm() }

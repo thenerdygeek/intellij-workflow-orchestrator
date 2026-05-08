@@ -695,7 +695,7 @@ class SprintDashboardPanel(
                     }
                     return@launch
                 }
-                detail.data
+                detail.data!! // safe: detail.isError check above returns early
             } else filter
 
             val jql = resolvedFilter.jql

@@ -546,6 +546,11 @@ class AgentDashboardPanel(
         broadcast { it.finalizeToolChain() }
     }
 
+    fun appendThinking(text: String) {
+        cefPanel?.appendThinking(text) ?: fallbackPanel?.appendThinking(text)
+        broadcast { it.appendThinking(text) }
+    }
+
     fun appendCompletionCard(data: CompletionData) {
         cefPanel?.appendCompletionCard(data)
             ?: fallbackPanel?.appendStatus("Task completed: ${data.result}", RichStreamingPanel.StatusType.SUCCESS)

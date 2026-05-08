@@ -791,7 +791,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         panelScope.launch {
             val result = bambooService.getRecentBuilds(planKey, 10)
             if (!result.isError) {
-                val builds = result.data
+                val builds = result.data!!
                 invokeLater {
                     historyListModel.clear()
                     builds.forEach { historyListModel.addElement(it) }
@@ -827,7 +827,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         panelScope.launch {
             val buildResult = bambooService.getBuild(resultKey)
             if (!buildResult.isError) {
-                val data = buildResult.data
+                val data = buildResult.data!!
                 invokeLater {
                     statusLabel.text = "${data.state} — ${TimeFormatter.formatDurationMillis(data.durationSeconds * 1000)}"
 
@@ -1145,7 +1145,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             var buildLogText: String? = null
             val logResult = bambooService.getBuildLog(resultKey)
             if (!logResult.isError) {
-                buildLogText = logResult.data
+                buildLogText = logResult.data!!
                 log.info("[Build:Dashboard] Log loaded: ${buildLogText.length} chars")
                 // Cap the rendered string to LOG_RENDER_CAP_BYTES tail to avoid EDT jank on large logs.
                 // BuildLogParser below receives the full log separately.
@@ -1158,7 +1158,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             // Fetch test results for this job
             val testResult = bambooService.getTestResults(resultKey)
             if (!testResult.isError) {
-                val testData = testResult.data
+                val testData = testResult.data!!
                 if (testData.total > 0) {
                     log.info("[Build:Dashboard] Test results: ${testData.total} total, ${testData.failed} failed, ${testData.passed} passed")
                     // Convert to TeamCity messages for native test runner UI
@@ -1184,7 +1184,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             val logResult = bambooService.getBuildLog(resultKey)
             if (!logResult.isError) {
                 // Cap the rendered string to LOG_RENDER_CAP_BYTES tail to avoid EDT jank on large logs.
-                invokeLater { stageDetailPanel.showLog(capLogForDisplay(logResult.data), emptyList()) }
+                invokeLater { stageDetailPanel.showLog(capLogForDisplay(logResult.data!!), emptyList()) }
             } else {
                 invokeLater { stageDetailPanel.showLog("Failed to load log: ${logResult.summary}", emptyList()) }
             }

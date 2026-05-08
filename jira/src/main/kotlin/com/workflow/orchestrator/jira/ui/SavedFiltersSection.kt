@@ -59,7 +59,7 @@ class SavedFiltersSection(
             return
         }
         rowsPanel.removeAll()
-        for (filter in result.data) {
+        for (filter in result.data ?: emptyList()) {
             rowsPanel.add(buildRow(filter))
         }
         isVisible = true
@@ -114,7 +114,7 @@ class SavedFiltersSection(
         @JvmStatic
         fun shouldShowSection(result: ToolResult<List<FilterData>>): Boolean {
             if (result.isError) return false
-            return result.data.isNotEmpty()
+            return (result.data ?: emptyList()).isNotEmpty()
         }
     }
 }

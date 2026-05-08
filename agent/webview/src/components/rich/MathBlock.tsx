@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { RichBlock } from './RichBlock';
-import { kotlinBridge, isJcefEnvironment } from '@/bridge/jcef-bridge';
 
 // ── Singleton lazy-load for KaTeX ──
 
@@ -68,14 +67,6 @@ export function MathBlock({ latex, displayMode = true }: MathBlockProps) {
     void renderMath();
   }, [renderMath]);
 
-  const handleCopyLatex = useCallback(() => {
-    if (isJcefEnvironment()) {
-      kotlinBridge.copyToClipboard(latex);
-    } else {
-      void navigator.clipboard.writeText(latex);
-    }
-  }, [latex]);
-
   // Inline mode — render as span without RichBlock wrapper
   if (!displayMode) {
     if (isLoading) {
@@ -104,7 +95,9 @@ export function MathBlock({ latex, displayMode = true }: MathBlockProps) {
     );
   }
 
-  // Block mode — render inside RichBlock with Copy LaTeX button
+  // Block mode — render inside RichBlock. RichBlock's header provides the
+  // "Copy source" button (which copies the LaTeX `source` prop), so MathBlock
+  // doesn't add its own — see RichBlock.tsx:206.
   return (
     <RichBlock
       type="math"
@@ -113,20 +106,12 @@ export function MathBlock({ latex, displayMode = true }: MathBlockProps) {
       error={error}
       onRetry={() => void renderMath()}
     >
-      <div className="relative p-4">
+      <div className="p-4">
         <div
           ref={containerRef}
           className="flex items-center justify-center overflow-x-auto text-[var(--fg)]"
           dangerouslySetInnerHTML={{ __html: html ?? '' }}
         />
-        <button
-          onClick={handleCopyLatex}
-          title="Copy LaTeX"
-          aria-label="Copy LaTeX source"
-          className="absolute top-2 right-2 rounded px-2 py-1 text-xs text-[var(--fg-muted)] transition-colors hover:bg-[var(--hover-overlay)] hover:text-[var(--fg)]"
-        >
-          Copy LaTeX
-        </button>
       </div>
     </RichBlock>
   );

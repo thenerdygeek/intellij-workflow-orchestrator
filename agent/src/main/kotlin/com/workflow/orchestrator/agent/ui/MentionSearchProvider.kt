@@ -496,7 +496,7 @@ class MentionSearchProvider(private val project: Project) {
                 )
                 return null
             }
-            val suggestions: List<IssueSuggestion> = result.data
+            val suggestions: List<IssueSuggestion> = result.data ?: emptyList()
             LOG.info(
                 "MentionSearchProvider: issue-picker returned ${suggestions.size} suggestions for query '$query'"
             )
@@ -551,8 +551,8 @@ class MentionSearchProvider(private val project: Project) {
                 // Auto-discover board if not configured (same as Sprint tab)
                 if (boardId <= 0) {
                     val boards = jiraService.getBoards()
-                    if (!boards.isError && boards.data.isNotEmpty()) {
-                        val board = boards.data.firstOrNull { it.type == "scrum" } ?: boards.data.first()
+                    if (!boards.isError && boards.data!!.isNotEmpty()) {
+                        val board = boards.data!!.firstOrNull { it.type == "scrum" } ?: boards.data!!.first()
                         boardId = board.id
                         boardType = board.type
                         LOG.info("MentionSearchProvider: auto-discovered board ${board.name} (id=$boardId, type=$boardType)")
@@ -573,7 +573,7 @@ class MentionSearchProvider(private val project: Project) {
                         LOG.warn("MentionSearchProvider: getAvailableSprints failed: ${sprints.summary}")
                     }
                     val activeSprint = if (!sprints.isError) {
-                        sprints.data.firstOrNull { it.state == "active" }
+                        sprints.data!!.firstOrNull { it.state == "active" }
                     } else null
 
                     if (activeSprint != null) {
@@ -583,8 +583,8 @@ class MentionSearchProvider(private val project: Project) {
                             LOG.warn("MentionSearchProvider: getSprintIssues failed: ${issues.summary}")
                             emptyList()
                         } else {
-                            LOG.info("MentionSearchProvider: loaded ${issues.data.size} sprint tickets")
-                            issues.data
+                            LOG.info("MentionSearchProvider: loaded ${issues.data!!.size} sprint tickets")
+                            issues.data!!
                         }
                     } else {
                         // No active sprint — fall back to board issues
@@ -594,7 +594,7 @@ class MentionSearchProvider(private val project: Project) {
                             LOG.warn("MentionSearchProvider: getBoardIssues failed: ${issues.summary}")
                             emptyList()
                         } else {
-                            issues.data
+                            issues.data ?: emptyList()
                         }
                     }
                 } else {
@@ -605,7 +605,7 @@ class MentionSearchProvider(private val project: Project) {
                         LOG.warn("MentionSearchProvider: getBoardIssues failed: ${issues.summary}")
                         emptyList()
                     } else {
-                        issues.data
+                        issues.data ?: emptyList()
                     }
                 }
                 }.also { cachedSprintTickets = it }
@@ -688,15 +688,15 @@ class MentionSearchProvider(private val project: Project) {
             }
 
             if (!ticketResult.isError) {
-                val comments = if (!commentsResult.isError) commentsResult.data else emptyList()
+                val comments = if (!commentsResult.isError) commentsResult.data ?: emptyList() else emptyList()
                 // Cache for MentionContextBuilder to consume on send
                 ticketContextCache[ticketKey.uppercase()] = CachedTicketContext(
-                    ticket = ticketResult.data,
+                    ticket = ticketResult.data!!,
                     comments = comments
                 )
                 buildJsonObject {
                     put("valid", JsonPrimitive(true))
-                    put("summary", JsonPrimitive(ticketResult.data.summary))
+                    put("summary", JsonPrimitive(ticketResult.data!!.summary))
                 }.toString()
             } else {
                 """{"valid":false}"""

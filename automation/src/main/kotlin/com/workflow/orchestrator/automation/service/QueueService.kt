@@ -230,7 +230,7 @@ class QueueService {
         if (oldestWaiting?.id != entry.id) return entry
 
         val runningResult = bambooService.getRunningBuilds(planKey)
-        if (!runningResult.isError && runningResult.data.isEmpty()) {
+        if (!runningResult.isError && runningResult.data!!.isEmpty()) {
             val triggerResult = doTrigger(entry)
             return if (!triggerResult.isError) {
                 log.info("[Automation:Queue] Auto-triggered entry ${entry.id} on Bamboo, resultKey=${triggerResult.data}")
@@ -253,7 +253,7 @@ class QueueService {
         val result = bambooService.getBuild(resultKey)
         if (result.isError) return entry
 
-        val buildData = result.data
+        val buildData = result.data!!
         return when {
             buildData.state == "Successful" || buildData.state == "Failed" -> {
                 val passed = buildData.state == "Successful"
@@ -295,7 +295,7 @@ class QueueService {
 
         val result = bambooService.triggerBuild(entry.suitePlanKey, variables)
         return if (!result.isError) {
-            val buildKey = result.data.buildKey
+            val buildKey = result.data!!.buildKey
             log.info("[Automation:Queue] Build triggered successfully, buildKey=$buildKey")
             tagHistoryService.updateQueueEntryStatus(
                 entry.id, QueueEntryStatus.QUEUED_ON_BAMBOO, buildKey

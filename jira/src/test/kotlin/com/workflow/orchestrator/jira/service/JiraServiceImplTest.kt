@@ -60,11 +60,11 @@ class JiraServiceImplTest {
         val result = service.getMyPermissions("PROJ")
 
         assertFalse(result.isError)
-        assertEquals(2, result.data.permissions.size,
+        assertEquals(2, result.data!!.permissions.size,
             "Deprecated keys must be filtered out; expected EDIT_ISSUES + CREATE_ISSUES only.")
-        assertTrue(result.data.permissions.containsKey("EDIT_ISSUES"))
-        assertTrue(result.data.permissions.containsKey("CREATE_ISSUES"))
-        assertFalse(result.data.permissions.containsKey("EDIT_ISSUE"),
+        assertTrue(result.data!!.permissions.containsKey("EDIT_ISSUES"))
+        assertTrue(result.data!!.permissions.containsKey("CREATE_ISSUES"))
+        assertFalse(result.data!!.permissions.containsKey("EDIT_ISSUE"),
             "Deprecated EDIT_ISSUE must not be present.")
     }
 
@@ -119,8 +119,8 @@ class JiraServiceImplTest {
         assertFalse(first.isError)
         assertFalse(second.isError)
         assertEquals(1, server.requestCount, "Second call must hit the 5-min cache.")
-        assertEquals(1, second.data.size)
-        assertEquals("Summary", second.data[0].name)
+        assertEquals(1, second.data!!.size)
+        assertEquals("Summary", second.data!![0].name)
     }
 
     // ── getRemoteLinks: shape mapping ─────────────────────────────────────
@@ -138,8 +138,8 @@ class JiraServiceImplTest {
         val result = service.getRemoteLinks("PROJ-1")
 
         assertFalse(result.isError)
-        assertEquals(1, result.data.size)
-        val link = result.data[0]
+        assertEquals(1, result.data!!.size)
+        val link = result.data!![0]
         assertEquals(42L, link.id)
         assertEquals("com.atlassian.confluence", link.applicationType)
         assertEquals("Wiki", link.applicationName)
@@ -165,8 +165,8 @@ class JiraServiceImplTest {
         val result = service.getRemoteLinks("PROJ-1")
 
         assertFalse(result.isError)
-        assertEquals(1, result.data.size, "Only the link with a non-blank URL should be emitted.")
-        assertEquals(1L, result.data[0].id)
+        assertEquals(1, result.data!!.size, "Only the link with a non-blank URL should be emitted.")
+        assertEquals(1L, result.data!![0].id)
     }
 
     // ── getMyselfExpanded: flattens groups.items → list of names ──────────
@@ -184,8 +184,8 @@ class JiraServiceImplTest {
         val result = service.getMyselfExpanded()
 
         assertFalse(result.isError)
-        assertEquals(listOf("jira-users", "dev"), result.data.groups)
-        assertEquals(listOf("jira-software-users"), result.data.applicationRoles)
+        assertEquals(listOf("jira-users", "dev"), result.data!!.groups)
+        assertEquals(listOf("jira-software-users"), result.data!!.applicationRoles)
     }
 
     // ── getIssueSuggestions: flattens across sections ─────────────────────
@@ -209,10 +209,10 @@ class JiraServiceImplTest {
         val result = service.getIssueSuggestions("PROJ")
 
         assertFalse(result.isError)
-        assertEquals(3, result.data.size,
+        assertEquals(3, result.data!!.size,
             "All issues across all sections must be returned, not just one section.")
-        assertEquals(listOf("PROJ-1", "PROJ-2", "PROJ-3"), result.data.map { it.key })
-        assertEquals("S1", result.data[0].summaryText)
+        assertEquals(listOf("PROJ-1", "PROJ-2", "PROJ-3"), result.data!!.map { it.key })
+        assertEquals("S1", result.data!![0].summaryText)
     }
 
     // ── getFavouriteFilters / getFilter mapping ───────────────────────────
@@ -230,8 +230,8 @@ class JiraServiceImplTest {
         val result = service.getFavouriteFilters()
 
         assertFalse(result.isError)
-        assertEquals(1, result.data.size)
-        val f = result.data[0]
+        assertEquals(1, result.data!!.size)
+        val f = result.data!![0]
         assertEquals(91483L, f.id)
         assertEquals("My Sprint", f.name)
         assertEquals("Jane Doe", f.owner)
@@ -253,7 +253,7 @@ class JiraServiceImplTest {
         val result = service.getFilter(91483L)
 
         assertFalse(result.isError)
-        assertEquals("assignee=currentUser()", result.data.jql)
+        assertEquals("assignee=currentUser()", result.data!!.jql)
     }
 
     @Test
@@ -267,7 +267,7 @@ class JiraServiceImplTest {
         val result = service.getFilter(91483L)
 
         assertTrue(result.isError, "Malformed id should not be silently masked as success.")
-        assertEquals(91483L, result.data.id)
+        assertEquals(91483L, result.data!!.id)
     }
 
     // ── getTicketHistory: flattens (history, item) pairs ──────────────────
@@ -295,15 +295,15 @@ class JiraServiceImplTest {
         val result = service.getTicketHistory("PROJ-1")
 
         assertFalse(result.isError)
-        assertEquals(3, result.data.size,
+        assertEquals(3, result.data!!.size,
             "2 histories with 2+1 items must flatten to 3 entries.")
-        assertEquals("Jane", result.data[0].actorDisplayName)
-        assertEquals("status", result.data[0].field)
-        assertEquals("Open", result.data[0].oldValue)
-        assertEquals("In Progress", result.data[0].newValue)
-        assertEquals("assignee", result.data[1].field)
-        assertEquals("John", result.data[2].actorDisplayName)
-        assertEquals("resolution", result.data[2].field)
+        assertEquals("Jane", result.data!![0].actorDisplayName)
+        assertEquals("status", result.data!![0].field)
+        assertEquals("Open", result.data!![0].oldValue)
+        assertEquals("In Progress", result.data!![0].newValue)
+        assertEquals("assignee", result.data!![1].field)
+        assertEquals("John", result.data!![2].actorDisplayName)
+        assertEquals("resolution", result.data!![2].field)
     }
 
     @Test
@@ -317,7 +317,7 @@ class JiraServiceImplTest {
         val result = service.getTicketHistory("PROJ-1")
 
         assertFalse(result.isError)
-        assertTrue(result.data.isEmpty())
+        assertTrue(result.data.isNullOrEmpty())
     }
 
     // ── addWatcher / removeWatcher mapping ────────────────────────────────

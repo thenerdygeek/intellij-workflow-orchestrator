@@ -158,7 +158,7 @@ class TicketTransitionServiceImpl(
                 payload = all.payload
             )
         }
-        val meta = all.data.firstOrNull { it.id == transitionId }
+        val meta = all.data!!.firstOrNull { it.id == transitionId }
         return if (meta != null) {
             ToolResult.success(
                 data = meta,
@@ -168,7 +168,7 @@ class TicketTransitionServiceImpl(
             ToolResult(
                 data = sentinel(),
                 summary = "Transition $transitionId not available for $ticketKey from its current status. " +
-                    "Available: ${all.data.joinToString(", ") { "${it.name}(${it.id})" }.ifEmpty { "none" }}",
+                    "Available: ${all.data!!.joinToString(", ") { "${it.name}(${it.id})" }.ifEmpty { "none" }}",
                 isError = true,
                 hint = "Call getAvailableTransitions to see which transitions are currently valid."
             )
@@ -200,7 +200,7 @@ class TicketTransitionServiceImpl(
                 payload = prep.payload
             )
         }
-        val meta = prep.data
+        val meta = prep.data!!
 
         // Step 2: required-field preflight
         val missing = meta.fields.filter { it.required && input.fieldValues[it.id] == null }

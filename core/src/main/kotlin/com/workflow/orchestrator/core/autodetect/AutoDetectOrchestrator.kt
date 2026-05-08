@@ -343,7 +343,7 @@ class AutoDetectOrchestrator(private val project: Project, private val cs: Corou
             val repoRoot = Paths.get(gitRepo.root.path)
             val branchName = gitRepo.currentBranch?.name
             val result = bambooService.autoDetectPlan(repoRoot, remoteUrl, branchName)
-            if (result.isError || result.data.isBlank()) return
+            if (result.isError || result.data.isNullOrBlank()) return
             state.bambooPlanKey = result.data
             filled += "global.bambooPlanKey"
             return
@@ -357,7 +357,7 @@ class AutoDetectOrchestrator(private val project: Project, private val cs: Corou
             val repoRoot = Paths.get(gitRepo.root.path)
             val branchName = gitRepo.currentBranch?.name
             val result = bambooService.autoDetectPlan(repoRoot, remoteUrl, branchName)
-            if (result.isError || result.data.isBlank()) continue
+            if (result.isError || result.data.isNullOrBlank()) continue
             repoConfig.bambooPlanKey = result.data
             filled += "${repoLabel(repoConfig)}.bambooPlanKey"
         }

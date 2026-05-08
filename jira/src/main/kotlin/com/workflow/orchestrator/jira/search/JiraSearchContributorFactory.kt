@@ -87,7 +87,7 @@ private class JiraSearchContributor(
             if (result.isError) {
                 log.warn("[Jira:Search] Search failed: ${result.summary}")
             } else {
-                for (ticket in result.data) {
+                for (ticket in result.data!!) {
                     if (progressIndicator.isCanceled) return
                     consumer.process(FoundItemDescriptor(ticket, getSortWeight()))
                 }

@@ -101,7 +101,7 @@ class TagBuilderService {
             )
         }
 
-        val totalBuilds = buildsResult.data.size
+        val totalBuilds = buildsResult.data!!.size
         log.info("[Automation:Tags] Found $totalBuilds recent builds for '$suitePlanKey'")
         var buildsWithVars = 0
         var buildsWithTags = 0
@@ -112,7 +112,7 @@ class TagBuilderService {
         // mutable list with an early-exit instead of a lazy sequence to keep
         // the existing diagnostics counters intact.
         val ranked = mutableListOf<BaselineRun>()
-        for (build in buildsResult.data) {
+        for (build in buildsResult.data!!) {
             log.info("[Automation:Tags] Checking build #${build.buildNumber} (buildResultKey=${build.buildResultKey}, state=${build.state})")
 
             val resultKey = build.buildResultKey.ifBlank { "${suitePlanKey}-${build.buildNumber}" }
@@ -124,7 +124,7 @@ class TagBuilderService {
                 skippedReasons.add(reason)
                 continue
             }
-            val variables = varsResult.data.associate { it.name to it.value }
+            val variables = varsResult.data!!.associate { it.name to it.value }
             buildsWithVars++
             log.info("[Automation:Tags]   Build #${build.buildNumber}: fetched ${variables.size} variables: ${variables.keys}")
 
@@ -172,7 +172,7 @@ class TagBuilderService {
             // are accumulated. (See KDoc above.)
             if (ranked.size >= targetParseable) {
                 log.info("[Automation:Tags] Reached targetParseable=$targetParseable after walking " +
-                    "${buildsResult.data.indexOf(build) + 1} builds — stopping.")
+                    "${buildsResult.data!!.indexOf(build) + 1} builds — stopping.")
                 break
             }
         }
@@ -331,7 +331,7 @@ class TagBuilderService {
             return TagDetectionResult.noBuild(branchName)
         }
 
-        val resultKey = buildResult.data.buildResultKey
+        val resultKey = buildResult.data!!.buildResultKey
         log.info("[Automation:Tags] Found build $resultKey, fetching log...")
 
         val logResult = bambooService.getBuildLog(resultKey)
@@ -340,7 +340,7 @@ class TagBuilderService {
             return TagDetectionResult.logFetchFailed(resultKey)
         }
 
-        val tag = extractDockerTagFromLog(logResult.data)
+        val tag = extractDockerTagFromLog(logResult.data!!)
 
         return if (tag != null) {
             log.info("[Automation:Tags] Detected docker tag: '$tag' from $resultKey")

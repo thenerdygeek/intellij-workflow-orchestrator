@@ -67,10 +67,10 @@ class LinkedDocsSection(private val project: Project) : JPanel(BorderLayout()) {
                 if (result.isError) {
                     log.warn("[Jira:UI] Failed to load remote links for $issueKey: ${result.summary}")
                     hideSection()
-                } else if (result.data.isEmpty()) {
+                } else if (result.data!!.isEmpty()) {
                     hideSection()
                 } else {
-                    renderLinks(result.data)
+                    renderLinks(result.data!!)
                 }
             }
         }

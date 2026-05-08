@@ -62,10 +62,10 @@ class ChangelogSection(private val project: Project) : JPanel(BorderLayout()) {
                 if (result.isError) {
                     log.warn("[Jira:UI] Failed to load history for $issueKey: ${result.summary}")
                     showMessage("Could not load history.")
-                } else if (result.data.isEmpty()) {
+                } else if (result.data!!.isEmpty()) {
                     showMessage("No history yet.")
                 } else {
-                    renderEntries(result.data)
+                    renderEntries(result.data!!)
                 }
             }
         }

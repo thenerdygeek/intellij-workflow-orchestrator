@@ -471,11 +471,11 @@ class StageDetailPanel(
                         foreground = StatusColors.ERROR
                     }
                     artifactsPanel.add(errorLabel, BorderLayout.CENTER)
-                } else if (result.data.isEmpty()) {
+                } else if (result.data!!.isEmpty()) {
                     artifactsPanel.add(artifactsPlaceholder, BorderLayout.CENTER)
                 } else {
                     artifactsModel.clear()
-                    result.data.forEach { artifactsModel.addElement(it) }
+                    result.data!!.forEach { artifactsModel.addElement(it) }
                     val scrollPane = JScrollPane(artifactsList)
                     artifactsPanel.add(scrollPane, BorderLayout.CENTER)
                 }
@@ -495,7 +495,7 @@ class StageDetailPanel(
             val result = bambooService.downloadArtifact(artifact.downloadUrl, targetFile)
             invokeLater {
                 val ns = WorkflowNotificationService.getInstance(project)
-                if (result.data) {
+                if (result.data == true) {
                     ns.notifyInfo(
                         WorkflowNotificationService.GROUP_BUILD,
                         "Artifact Downloaded",

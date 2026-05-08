@@ -72,7 +72,7 @@ Returns structured problems with file path, problem type (DEPENDENCY, REPOSITORY
             )
         }
 
-        val filtered = coreResult.data
+        val filtered = coreResult.data!!
             .filter { source == "all" || matchesSource(it.source, source) }
             .filter { severity == "all" || matchesSeverity(it.severity, severity) }
 

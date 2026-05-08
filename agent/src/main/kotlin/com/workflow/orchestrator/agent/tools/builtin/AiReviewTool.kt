@@ -188,10 +188,11 @@ Actions:
                 "ai_review: add_finding failed"
             )
         } else {
-            val encoded = json.encodeToString(result.data)
+            val finding = result.data!!
+            val encoded = json.encodeToString(finding)
             ToolResult(
                 content = "Finding added.\n$encoded",
-                summary = "Added finding ${result.data.id} (${severity.name})",
+                summary = "Added finding ${finding.id} (${severity.name})",
                 tokenEstimate = encoded.length / 4,
             )
         }

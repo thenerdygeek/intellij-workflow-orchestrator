@@ -223,20 +223,21 @@ description optional: for approval dialog on write actions.
                         val blocks = mutableListOf(ticketAgent.content)
                         val summaries = mutableListOf(ticketAgent.summary)
 
-                        devStatusDeferred?.await()?.let { ds ->
-                            blocks += formatDevStatusBundle(key, ds.data)
-                            summaries += ds.data.summaryLine()
+                        devStatusDeferred?.await()?.takeIf { !it.isError }?.let { ds ->
+                            val data = ds.data!!
+                            blocks += formatDevStatusBundle(key, data)
+                            summaries += data.summaryLine()
                         }
-                        remoteLinksDeferred?.await()?.let { rl ->
-                            blocks += formatRemoteLinks(rl.data)
+                        remoteLinksDeferred?.await()?.takeIf { !it.isError }?.let { rl ->
+                            blocks += formatRemoteLinks(rl.data!!)
                             summaries += rl.summary
                         }
-                        historyDeferred?.await()?.let { h ->
-                            blocks += formatTicketHistory(h.data)
+                        historyDeferred?.await()?.takeIf { !it.isError }?.let { h ->
+                            blocks += formatTicketHistory(h.data!!)
                             summaries += h.summary
                         }
-                        permsDeferred?.await()?.let { p ->
-                            blocks += formatPermissions(p.data)
+                        permsDeferred?.await()?.takeIf { !it.isError }?.let { p ->
+                            blocks += formatPermissions(p.data!!)
                             summaries += p.summary
                         }
 
@@ -308,7 +309,7 @@ description optional: for approval dialog on write actions.
                             isError = true
                         )
                     } else {
-                        val outcome = result.data
+                        val outcome = result.data!!
                         val content = "Transitioned $key: ${outcome.fromStatus.name} → ${outcome.toStatus.name}. ${result.summary}"
                         ToolResult(
                             content = content,
@@ -327,13 +328,14 @@ description optional: for approval dialog on write actions.
                             isError = true
                         )
                     }
-                    val currentStatus = ticketResult.data.status
+                    val currentStatus = ticketResult.data!!.status
 
                     val transitionsResult = service.getTransitions(key)
                     if (!transitionsResult.isError) {
-                        val match = transitionsResult.data.find { it.id == transitionId }
+                        val transitions = transitionsResult.data!!
+                        val match = transitions.find { it.id == transitionId }
                         if (match == null) {
-                            val availableList = transitionsResult.data.joinToString("\n") { "  ID ${it.id}: ${it.name} → ${it.toStatus}" }
+                            val availableList = transitions.joinToString("\n") { "  ID ${it.id}: ${it.name} → ${it.toStatus}" }
                             val content = "Cannot transition $key: transition ID '$transitionId' is not available from current status '$currentStatus'.\n\nAvailable transitions:\n$availableList"
                             return ToolResult(
                                 content = content,
@@ -506,11 +508,12 @@ description optional: for approval dialog on write actions.
                 val coreResult = service.downloadAttachment(key, attachmentId)
                 val base = coreResult.toAgentToolResult()
                 if (base.isError) return base
+                val attachment = coreResult.data!!
                 val policy = resolveAutoLoadPolicy(project)
-                val withImages = autoLoadImageIfApplicable(coreResult.data, base, policy)
+                val withImages = autoLoadImageIfApplicable(attachment, base, policy)
                 // Append a read_document hint for document-class files so the LLM
                 // knows it can extract text content without guessing the next step.
-                val hint = buildReadDocumentHint(coreResult.data.mimeType, coreResult.data.filename, coreResult.data.filePath)
+                val hint = buildReadDocumentHint(attachment.mimeType, attachment.filename, attachment.filePath)
                 if (hint == null) withImages
                 else withImages.copy(content = withImages.content + "\n\n" + hint)
             }
@@ -606,8 +609,9 @@ description optional: for approval dialog on write actions.
         val coreResult = service.downloadAttachment(key, attachmentId)
         val base = coreResult.toAgentToolResult()
         if (base.isError) return base
-        val withImages = autoLoadImageIfApplicable(coreResult.data, base, policy)
-        val hint = buildReadDocumentHint(coreResult.data.mimeType, coreResult.data.filename, coreResult.data.filePath)
+        val attachment = coreResult.data!!
+        val withImages = autoLoadImageIfApplicable(attachment, base, policy)
+        val hint = buildReadDocumentHint(attachment.mimeType, attachment.filename, attachment.filePath)
         return if (hint == null) withImages else withImages.copy(content = withImages.content + "\n\n" + hint)
     }
 
@@ -811,20 +815,21 @@ description optional: for approval dialog on write actions.
             val blocks = mutableListOf(ticketAgent.content)
             val summaries = mutableListOf(ticketAgent.summary)
 
-            devStatusDeferred?.await()?.let { ds ->
-                blocks += formatDevStatusBundle(key, ds.data)
-                summaries += ds.data.summaryLine()
+            devStatusDeferred?.await()?.takeIf { !it.isError }?.let { ds ->
+                val data = ds.data!!
+                blocks += formatDevStatusBundle(key, data)
+                summaries += data.summaryLine()
             }
-            remoteLinksDeferred?.await()?.let { rl ->
-                blocks += formatRemoteLinks(rl.data)
+            remoteLinksDeferred?.await()?.takeIf { !it.isError }?.let { rl ->
+                blocks += formatRemoteLinks(rl.data!!)
                 summaries += rl.summary
             }
-            historyDeferred?.await()?.let { h ->
-                blocks += formatTicketHistory(h.data)
+            historyDeferred?.await()?.takeIf { !it.isError }?.let { h ->
+                blocks += formatTicketHistory(h.data!!)
                 summaries += h.summary
             }
-            permsDeferred?.await()?.let { p ->
-                blocks += formatPermissions(p.data)
+            permsDeferred?.await()?.takeIf { !it.isError }?.let { p ->
+                blocks += formatPermissions(p.data!!)
                 summaries += p.summary
             }
 

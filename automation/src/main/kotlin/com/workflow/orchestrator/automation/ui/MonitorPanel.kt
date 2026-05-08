@@ -159,7 +159,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
             try {
                 val result = bambooService.getBuild(entry.resultKey)
                 if (!result.isError) {
-                    val buildData = result.data
+                    val buildData = result.data!!
                     val stages = buildData.stages.map { stage ->
                         StageInfo(
                             name = stage.name,
@@ -181,7 +181,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
                     if (buildData.state in TERMINAL_STATUSES) {
                         val testResult = bambooService.getTestResults(entry.resultKey)
                         if (!testResult.isError) {
-                            val testData = testResult.data
+                            val testData = testResult.data!!
                             val failedNames = testData.failedTests.map {
                                 "${it.className.substringAfterLast('.')}.${it.methodName}"
                             }

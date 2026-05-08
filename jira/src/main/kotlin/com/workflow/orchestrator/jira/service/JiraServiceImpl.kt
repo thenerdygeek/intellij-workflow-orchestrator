@@ -765,7 +765,7 @@ class JiraServiceImpl(private val project: Project) : JiraService {
             if (avail.isError) {
                 log.warn("[JiraService] Could not fetch transitions for $issueKey: ${avail.summary}")
             } else {
-                val inProgress = avail.data.firstOrNull { t ->
+                val inProgress = avail.data!!.firstOrNull { t ->
                     t.toStatus.name.equals("In Progress", ignoreCase = true)
                 }
                 if (inProgress == null) {

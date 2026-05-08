@@ -62,7 +62,7 @@ class DevStatusSection(private val project: Project) : JPanel(BorderLayout()) {
                 if (result.isError) {
                     showMessage("Could not load dev status.")
                 } else {
-                    renderBundle(result.data)
+                    renderBundle(result.data!!)
                 }
             }
         }

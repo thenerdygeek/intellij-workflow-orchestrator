@@ -245,7 +245,7 @@ description optional: for approval dialog on trigger/stop/cancel.
             val changes = changesDeferred.await()
             if (buildResult.isError) return@coroutineScope buildResult.toAgentToolResult()
             val buildAgent = buildResult.toAgentToolResult()
-            val commitsBlock = formatBuildCommits(changes.data)
+            val commitsBlock = formatBuildCommits(changes.data ?: emptyList())
             val combined = buildAgent.content + "\n\n" + commitsBlock
             ToolResult(combined, "${buildAgent.summary} · ${changes.summary}", TokenEstimator.estimate(combined))
         }

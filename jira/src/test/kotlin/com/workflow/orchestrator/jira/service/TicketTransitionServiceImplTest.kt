@@ -100,8 +100,8 @@ class TicketTransitionServiceImplTest {
 
         assertFalse(r1.isError)
         assertFalse(r2.isError)
-        assertEquals(1, r1.data.size)
-        assertEquals(1, r2.data.size)
+        assertEquals(1, r1.data!!.size)
+        assertEquals(1, r2.data!!.size)
         coVerify(exactly = 1) { api.getTransitions("PROJ-1") }
     }
 
@@ -164,8 +164,8 @@ class TicketTransitionServiceImplTest {
         val result = svc.prepareTransition("PROJ-1", "11")
 
         assertFalse(result.isError)
-        assertEquals("11", result.data.id)
-        assertEquals("Start Progress", result.data.name)
+        assertEquals("11", result.data!!.id)
+        assertEquals("Start Progress", result.data!!.name)
     }
 
     // ── Test 4: executeTransition returns MissingFields for absent required ──
@@ -221,9 +221,9 @@ class TicketTransitionServiceImplTest {
         collectJob.cancel()
 
         assertFalse(result.isError, "Expected success but got: ${result.summary}")
-        assertEquals("PROJ-1", result.data.key)
-        assertEquals("11", result.data.transitionId)
-        assertEquals("In Progress", result.data.toStatus.name)
+        assertEquals("PROJ-1", result.data!!.key)
+        assertEquals("11", result.data!!.transitionId)
+        assertEquals("In Progress", result.data!!.toStatus.name)
 
         assertNotNull(emittedEvent, "Expected TicketTransitioned event to be emitted")
         assertEquals("PROJ-1", emittedEvent!!.key)
@@ -244,7 +244,7 @@ class TicketTransitionServiceImplTest {
 
         assertTrue(result.isError)
         assertTrue(result.summary.contains("Cannot reach Jira"), "Unexpected summary: ${result.summary}")
-        assertTrue(result.data.isEmpty())
+        assertTrue(result.data.isNullOrEmpty())
     }
 
     // ── Test 10: executeTransition with required field supplied succeeds ──────
@@ -263,7 +263,7 @@ class TicketTransitionServiceImplTest {
         val result = svc.executeTransition("PROJ-1", input)
 
         assertFalse(result.isError, "Expected success but got: ${result.summary}")
-        assertEquals("Done", result.data.toStatus.name)
+        assertEquals("Done", result.data!!.toStatus.name)
     }
 
     // ── Test 11: executeTransition propagates API error as InvalidTransition ──
@@ -316,6 +316,6 @@ class TicketTransitionServiceImplTest {
 
         // Should still succeed even though current status could not be fetched
         assertFalse(result.isError, "Expected success but got: ${result.summary}")
-        assertEquals("?", result.data.fromStatus.id, "Expected sentinel fromStatus id '?'")
+        assertEquals("?", result.data!!.fromStatus.id, "Expected sentinel fromStatus id '?'")
     }
 }

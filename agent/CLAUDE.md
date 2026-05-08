@@ -813,10 +813,11 @@ cd agent/webview && npm run build    # Output: agent/src/main/resources/webview/
 
 ## Streaming Text Pipeline
 
-Two layers between raw SSE token and rendered DOM:
+Three layers between raw SSE token and rendered DOM:
 
-1. **StreamBatcher** (Kotlin, `agent/ui/StreamBatcher.kt`): 16ms EDT timer coalesces rapid chunks into single bridge calls (~5000 → ~300 per response).
-2. **chatStore streaming-message model**: `appendToken()` creates/updates a placeholder `Message` in-place. `endStream()` just clears `activeStream`. Same `AgentMessage` component renders both streaming and finalized — no mount/unmount flash.
+1. **ThinkingTagSplitter** (Kotlin, `agent/ui/ThinkingTagSplitter.kt`): pure state machine that pulls `<thinking>...</thinking>` blocks out of the assistant text. Holds back potential tag-prefix bytes across chunk boundaries (`<thi` arriving alone doesn't leak as text). Text parts continue through `streamBatcher`; thinking blocks are buffered until the closing tag arrives, then routed via `dashboard.appendThinking()` → JS `appendThinking` → `chatStore.addThinking()` → `say: 'REASONING'` UiMessage → rendered via `<ThinkingView>` (prompt-kit `Reasoning` + `TextShimmer`). Lockstep flush/reset with `streamBatcher` via `AgentController.flushStream()` / `clearStream()`.
+2. **StreamBatcher** (Kotlin, `agent/ui/StreamBatcher.kt`): 16ms EDT timer coalesces rapid chunks into single bridge calls (~5000 → ~300 per response).
+3. **chatStore streaming-message model**: `appendToken()` creates/updates a placeholder `Message` in-place. `endStream()` just clears `activeStream`. Same `AgentMessage` component renders both streaming and finalized — no mount/unmount flash.
 
 **Incomplete code fences** render as plain `<pre class="streaming-code-plain">` until closed, then swap to Shiki-backed `CodeBlock`.
 **Module-scope invariant:** `MarkdownRenderer.tsx` declares `COMPONENTS`, `REMARK_PLUGINS`, `REHYPE_PLUGINS` at module scope (inline literals defeat Streamdown's per-block `React.memo`).

@@ -44,7 +44,7 @@ class AiReviewViewModel(
         } else {
             lastError = null
             _findings.clear()
-            _findings.addAll(result.data)
+            _findings.addAll(result.data!!)
         }
         fire()
     }

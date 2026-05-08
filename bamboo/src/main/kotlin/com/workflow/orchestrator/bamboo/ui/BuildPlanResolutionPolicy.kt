@@ -28,9 +28,9 @@ object BuildPlanResolutionPolicy {
         configuredMasterKey: String?,
     ): Resolution {
         val detected = detection.data
-        val waterfallHit = !detection.isError && detected.isNotBlank()
+        val waterfallHit = !detection.isError && !detected.isNullOrBlank()
 
-        if (waterfallHit) return Resolution.UseDetected(detected)
+        if (waterfallHit) return Resolution.UseDetected(detected!!)
 
         if (!configuredMasterKey.isNullOrBlank()) {
             return Resolution.UseConfigured(configuredMasterKey)

@@ -91,8 +91,8 @@ class BambooBuildProcessHandler(
             return
         }
 
-        val resultKey = triggerResult.data.buildKey
-        val buildNumber = triggerResult.data.buildNumber
+        val resultKey = triggerResult.data!!.buildKey
+        val buildNumber = triggerResult.data!!.buildNumber
         printOutput("Build triggered successfully. Result key: $resultKey (build #$buildNumber)\n\n")
         pollBuildStatus(bambooService, resultKey)
     }
@@ -105,7 +105,7 @@ class BambooBuildProcessHandler(
             if (result.isError) {
                 printOutput("WARNING: Failed to get build status: ${result.summary}\n")
             } else {
-                val data = result.data
+                val data = result.data!!
                 val state = data.state
 
                 printOutput("[${java.time.LocalTime.now()}] State: $state\n")

@@ -29,7 +29,7 @@ class UserPickerWidget(
         disposable = ctx.disposable,
         search = { q ->
             val result = ctx.search.searchAssignableUsers(ctx.ticketKey, q)
-            if (!result.isError) result.data else emptyList()
+            if (!result.isError) result.data ?: emptyList() else emptyList()
         },
         display = { "${it.displayName} (${it.name})" },
         multi = multi
@@ -102,7 +102,7 @@ class GroupPickerWidget(
         disposable = ctx.disposable,
         search = { q ->
             val result = ctx.search.searchGroups(q)
-            if (!result.isError) result.data else emptyList()
+            if (!result.isError) result.data ?: emptyList() else emptyList()
         },
         display = { it.name },
         multi = false   // v1: always single — see class kdoc
@@ -150,7 +150,7 @@ class VersionPickerWidget(
         search = { q ->
             val result = ctx.search.listVersions(ctx.projectKey)
             if (result.isError) return@SearchableChooser emptyList()
-            result.data.filter { it.name.contains(q, ignoreCase = true) }
+            (result.data ?: emptyList()).filter { it.name.contains(q, ignoreCase = true) }
         },
         display = { it.name },
         multi = multi
@@ -210,7 +210,7 @@ class ComponentPickerWidget(
         search = { q ->
             val result = ctx.search.listComponents(ctx.projectKey)
             if (result.isError) return@SearchableChooser emptyList()
-            result.data.filter { it.name.contains(q, ignoreCase = true) }
+            (result.data ?: emptyList()).filter { it.name.contains(q, ignoreCase = true) }
         },
         display = { it.name },
         multi = multi
@@ -268,7 +268,7 @@ class LabelPickerWidget(
         disposable = ctx.disposable,
         search = { q ->
             val result = ctx.search.suggestLabels(q)
-            if (!result.isError) result.data else emptyList()
+            if (!result.isError) result.data ?: emptyList() else emptyList()
         },
         display = { it.label },
         multi = true
@@ -318,7 +318,7 @@ class AutoCompleteWidget(
         disposable = ctx.disposable,
         search = { q ->
             val result = ctx.search.followAutoCompleteUrl(autoCompleteUrl, q)
-            if (!result.isError) result.data else emptyList()
+            if (!result.isError) result.data ?: emptyList() else emptyList()
         },
         display = { it.value },
         multi = multi

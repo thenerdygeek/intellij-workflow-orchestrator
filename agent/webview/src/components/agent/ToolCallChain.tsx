@@ -261,8 +261,7 @@ function TerminalContent({ toolCall }: { toolCall: ToolCall }) {
   return (
     <Terminal
       command={command}
-      stdout={isRunning ? streamOutput : (!isError ? completedOutput : streamOutput)}
-      stderr={isError ? (toolCall.output || toolCall.result) : undefined}
+      stdout={isRunning ? streamOutput : completedOutput}
       exitCode={isError ? 1 : toolCall.status === 'COMPLETED' ? 0 : undefined}
       durationMs={toolCall.durationMs}
       isRunning={isRunning}
@@ -282,8 +281,14 @@ const ToolCallItem = memo(function ToolCallItem({ tc }: { tc: ToolCall }) {
   const hasDiff = !!(tc.diff) && (category === 'EDIT' || category === 'WRITE');
   const isRolledBack = tc.rolledBack === true;
 
+  // Headline summary for the row's hover-only copy button.
+  // Format: `tool_name(target)` — concise, shareable, mirrors how a person
+  // would describe the call. The full JSON args are still available via the
+  // "Copy input" button inside the expanded panel.
+  const headlineSummary = target ? `${tc.name}(${target})` : tc.name;
+
   return (
-    <div className={cn('relative', isRolledBack && 'opacity-40')}>
+    <div className={cn('group/tool-row relative', isRolledBack && 'opacity-40')}>
       {isRolledBack && (
         <span
           className="absolute -top-1 -right-1 z-10 rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider"
@@ -372,6 +377,17 @@ const ToolCallItem = memo(function ToolCallItem({ tc }: { tc: ToolCall }) {
           </div>
         )}
       </ChainOfThoughtStep>
+      {/* Hover-only headline copy button. Sibling of the trigger (not nested
+          in its <button>) to keep HTML valid. Stops propagation so clicks on
+          this button don't toggle the collapsible. The chevron from
+          ChainOfThoughtTrigger sits at the row's far right; this button is
+          positioned to its left so they don't overlap. */}
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="absolute right-7 top-1 z-10 opacity-0 transition-opacity group-hover/tool-row:opacity-100"
+      >
+        <CopyButton text={headlineSummary} size="sm" label="Copy tool call summary" />
+      </div>
     </div>
   );
 });

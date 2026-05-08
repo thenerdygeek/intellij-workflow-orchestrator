@@ -52,7 +52,7 @@ class CommentsViewModel(
         } else {
             lastError = null
             _comments.clear()
-            _comments.addAll(result.data)
+            _comments.addAll(result.data!!)
             eventBus?.emit(
                 WorkflowEvent.PrCommentsUpdated(
                     projectKey = projectKey,

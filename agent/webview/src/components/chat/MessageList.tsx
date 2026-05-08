@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle, useMemo, useRef, type ReactNode } from 'react';
+import { forwardRef, useImperativeHandle, useRef, type ReactNode } from 'react';
 import { Virtuoso, type ItemProps, type VirtuosoHandle } from 'react-virtuoso';
 
 export interface MessageListHandle {
@@ -9,7 +9,7 @@ export interface MessageListHandle {
 interface MessageListProps {
   count: number;
   renderItem: (index: number) => ReactNode;
-  /** Trailing UI rendered below the last message (working indicator, scroll anchor, etc.). */
+  /** Trailing UI rendered below the virtualized list (streaming bubble, live ToolCallChain, approval gate, etc.). */
   footer?: ReactNode;
   /** Fires with `true` when the viewport reaches the bottom, `false` when the user scrolls up. */
   atBottomChange?: (atBottom: boolean) => void;
@@ -34,22 +34,29 @@ function HeaderSpacer() {
   return <div className="h-3" />;
 }
 
-// Dynamic footer content is delivered via Virtuoso's `context` prop, not by
-// rebuilding `components.Footer`. If we passed `() => <>{footer}</>` here,
-// React would see a different component type on every parent re-render and
-// unmount the entire footer subtree — collapsing any `useState` inside (e.g.
-// the expand/collapse state of the active ToolCallChain). Keeping `Footer`
-// stable lets re-renders propagate normally without a remount.
-type FooterContext = { footer: ReactNode };
-function StableFooter({ context }: { context?: FooterContext }) {
-  return <>{context?.footer ?? null}</>;
-}
-
 const STABLE_COMPONENTS = {
   Item: ItemContainer,
   Header: HeaderSpacer,
-  Footer: StableFooter,
 };
+
+// `footer` is rendered as a plain sibling below Virtuoso, not via
+// `components.Footer` + `context` plumbing. Reasoning:
+//   1. The Virtuoso `Footer` slot routes dynamic content through its urx
+//      reactive store, which under load (rapid `appendToolOutput` chunks
+//      every ~16ms) was failing to flush a fresh `context.footer` to the
+//      mounted Footer component — the active ToolCallChain's `TerminalContent`
+//      was Zustand-subscribed and updating internally, but its parent
+//      footer subtree never got the new ReactNode and the live tail
+//      appeared frozen.
+//   2. Putting `footer` outside the virtualized list keeps the no-remount
+//      property that the `StableFooter` pattern was trying to win
+//      (parent re-renders no longer recreate the footer's component type),
+//      while letting plain React reconciliation deliver the latest
+//      streaming bubble / ToolCallChain / approval gate.
+//   3. The original engineering intent — "Streaming bubble lives outside
+//      the virtualized list so per-token updates don't touch the message
+//      list" (see ChatView.tsx) — is preserved: the footer never enters
+//      Virtuoso's render pipeline.
 
 export const MessageList = forwardRef<MessageListHandle, MessageListProps>(function MessageList(
   { count, renderItem, footer, atBottomChange, ariaLabel },
@@ -74,23 +81,23 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     },
   }), []);
 
-  const context = useMemo<FooterContext>(() => ({ footer }), [footer]);
-
   return (
-    <Virtuoso<unknown, FooterContext>
-      ref={virtuosoRef}
-      className="flex-1 min-h-0"
-      role="log"
-      aria-live="polite"
-      aria-label={ariaLabel ?? 'Agent chat messages'}
-      totalCount={count}
-      itemContent={renderItem}
-      followOutput="auto"
-      atBottomThreshold={120}
-      atBottomStateChange={atBottomChange}
-      increaseViewportBy={{ top: 400, bottom: 400 }}
-      components={STABLE_COMPONENTS}
-      context={context}
-    />
+    <div className="flex-1 min-h-0 flex flex-col">
+      <Virtuoso
+        ref={virtuosoRef}
+        className="flex-1 min-h-0"
+        role="log"
+        aria-live="polite"
+        aria-label={ariaLabel ?? 'Agent chat messages'}
+        totalCount={count}
+        itemContent={renderItem}
+        followOutput="auto"
+        atBottomThreshold={120}
+        atBottomStateChange={atBottomChange}
+        increaseViewportBy={{ top: 400, bottom: 400 }}
+        components={STABLE_COMPONENTS}
+      />
+      {footer != null && <div className="shrink-0">{footer}</div>}
+    </div>
   );
 });

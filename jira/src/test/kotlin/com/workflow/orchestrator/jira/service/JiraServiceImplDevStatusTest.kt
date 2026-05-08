@@ -110,7 +110,7 @@ class JiraServiceImplDevStatusTest {
     fun `getFullDevStatus degrades single-fetch failure to empty list`() = runTest {
         val result = service().fetchFullDevStatus("TEST-1", buildsErrorFetcher())
         assertFalse(result.isError, "Expected isError=false when only one feed fails")
-        val bundle = result.data
+        val bundle = result.data!!
         assertTrue(bundle.builds.isEmpty(), "Builds should be empty when builds-fetch errored")
         assertFalse(bundle.branches.isEmpty(), "Branches should be populated")
         assertFalse(bundle.pullRequests.isEmpty(), "PRs should be populated")
@@ -123,7 +123,7 @@ class JiraServiceImplDevStatusTest {
     fun `getFullDevStatus aggregates total failure as empty bundle`() = runTest {
         val result = service().fetchFullDevStatus("TEST-1", errorFetcher())
         assertFalse(result.isError, "Overall result should be success even when all feeds fail")
-        val bundle = result.data
+        val bundle = result.data!!
         assertTrue(bundle.isEmpty, "Bundle should be empty when all feeds error")
         assertEquals(6, bundle.fetchErrors, "All 6 feeds errored so fetchErrors must be 6")
     }
@@ -132,6 +132,6 @@ class JiraServiceImplDevStatusTest {
     fun `getFullDevStatus reports zero fetch errors on full success`() = runTest {
         val result = service().fetchFullDevStatus("TEST-1", successFetcher())
         assertFalse(result.isError)
-        assertEquals(0, result.data.fetchErrors, "No errors expected on full success")
+        assertEquals(0, result.data!!.fetchErrors, "No errors expected on full success")
     }
 }

@@ -189,7 +189,7 @@ class JiraServiceImplCommentAndWorklogTest {
         val result = service.getCommentVisibilityOptions("PROJ")
 
         assertFalse(result.isError)
-        val data = result.data
+        val data = result.data!!
         assertEquals(3, data.roles.size, "Expected 3 roles; got: ${data.roles}")
         // Sorted alphabetically: Administrators, Developers, Users.
         assertEquals("Administrators", data.roles[0].name)

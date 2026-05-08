@@ -269,7 +269,7 @@ class AutomationPanel(
         scope.launch {
             // Fetch branches for this suite plan
             val branchesResult = bambooService.getPlanBranches(planKey)
-            val branches = if (!branchesResult.isError) branchesResult.data else emptyList()
+            val branches = if (!branchesResult.isError) branchesResult.data!! else emptyList()
             log.info("[Automation:UI] Found ${branches.size} branches for $planKey")
 
             invokeLater {
@@ -371,8 +371,9 @@ class AutomationPanel(
                 tagStagingPanel.updateTags(tags)
 
                 if (!varsResult.isError) {
-                    val varKeys = varsResult.data.map { it.name }
-                    val varValues = varsResult.data.associate { it.name to it.value }
+                    val vars = varsResult.data!!
+                    val varKeys = vars.map { it.name }
+                    val varValues = vars.associate { it.name to it.value }
                     suiteConfigPanel.setAvailableVariables(varKeys)
                     suiteConfigPanel.loadSuiteVariables(currentSuitePlanKey)
                     suiteConfigPanel.setVariableValues(varValues)
@@ -611,7 +612,7 @@ class AutomationPanel(
             val result = bambooService.triggerBuild(currentSuitePlanKey, variables)
             invokeLater {
                 if (!result.isError) {
-                    val resultKey = result.data.buildKey
+                    val resultKey = result.data!!.buildKey
                     log.info("[Automation:UI] Build triggered: $resultKey")
                     statusLabel.text = "\u25B6 Triggered \u2014 $resultKey"
                     statusLabel.foreground = StatusColors.LINK

@@ -239,9 +239,9 @@ class MentionContextBuilder(
                 return "<mentioned_ticket key=\"$ticketKey\">\nError fetching ticket: ${ticketResult.summary}\n</mentioned_ticket>\n\n"
             }
 
-            ticket = ticketResult.data
+            ticket = ticketResult.data!! // safe: ticketResult.isError check above returns early
             val commentsResult = jiraService.getComments(ticketKey)
-            comments = if (!commentsResult.isError) commentsResult.data else emptyList()
+            comments = if (!commentsResult.isError) commentsResult.data ?: emptyList() else emptyList()
         }
 
         val sb = StringBuilder()

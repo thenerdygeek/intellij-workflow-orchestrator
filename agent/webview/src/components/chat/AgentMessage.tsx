@@ -237,8 +237,9 @@ export const AgentMessage = memo(function AgentMessage({
           <MarkdownRenderer content={content} isStreaming={isStreaming} />
         )}
 
-        {/* Copy button (visible on hover) */}
-        {!isStreaming && content && (
+        {/* Copy button (visible on hover; available during streaming too —
+            captures whatever's been streamed so far, same pattern as CodeBlock). */}
+        {content && (
           <CopyButton
             text={content}
             hoverOnly

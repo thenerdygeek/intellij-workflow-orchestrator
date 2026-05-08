@@ -70,7 +70,7 @@ class JiraFieldsCacheInvalidateTest {
         assertEquals(2, server.requestCount,
             "Second call must hit MockWebServer again after invalidateFieldsCache(); got ${server.requestCount}.")
         // Cache eviction must surface the *new* response, not the stale first one.
-        assertEquals(1, second.data.size)
-        assertEquals("Acceptance Criteria", second.data[0].name)
+        assertEquals(1, second.data!!.size)
+        assertEquals("Acceptance Criteria", second.data!![0].name)
     }
 }

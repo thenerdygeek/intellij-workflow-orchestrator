@@ -183,7 +183,7 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
                                         type = NotificationType.ERROR
                                     )
                                 } else {
-                                    val boards = result.data
+                                    val boards = result.data!!
                                     log.info("[JiraWorkflow:Settings] Search '$searchText' returned ${boards.size} boards")
                                     boardComboBox.removeAllItems()
                                     if (boards.isEmpty()) {
@@ -440,7 +440,7 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
                     showFallback(epic = true, acceptance = true)
                     log.info("[JiraWorkflow:Settings] Field discovery failed: ${result.summary}")
                 } else {
-                    customFields = result.data
+                    customFields = result.data!!
                         .filter { it.isCustom }
                         .sortedBy { it.name.lowercase() }
                     populateFieldCombo(

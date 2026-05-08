@@ -456,7 +456,7 @@ class RepositoriesConfigurable(
                         sonarValidateStatusLabel.foreground = StatusColors.ERROR
                         return@platformInvokeLater
                     }
-                    val match = result.data.any { it.key == key }
+                    val match = result.data!!.any { it.key == key }
                     if (match) {
                         sonarValidateStatusLabel.text = "✓ Key found on server"
                         sonarValidateStatusLabel.foreground = StatusColors.SUCCESS

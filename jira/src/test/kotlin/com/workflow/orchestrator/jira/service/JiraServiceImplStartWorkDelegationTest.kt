@@ -120,8 +120,8 @@ class JiraServiceImplStartWorkDelegationTest {
         val result = service.startWork("PROJ-1", "feature/PROJ-1", "main")
 
         assertFalse(result.isError, "Expected success, got: ${result.summary}")
-        assertTrue(result.data.transitioned)
-        assertEquals("feature/PROJ-1", result.data.branchName)
+        assertTrue(result.data!!.transitioned)
+        assertEquals("feature/PROJ-1", result.data!!.branchName)
         assertTrue(
             result.summary.contains("transitioned to In Progress", ignoreCase = true),
             "Summary should mention the successful transition: ${result.summary}"
@@ -167,8 +167,8 @@ class JiraServiceImplStartWorkDelegationTest {
         val result = service.startWork("PROJ-1", "feature/PROJ-1", "main")
 
         assertTrue(result.isError, "Expected error result, got success: ${result.summary}")
-        assertFalse(result.data.transitioned, "transitioned flag must be false on a missing-fields block")
-        assertEquals("feature/PROJ-1", result.data.branchName)
+        assertFalse(result.data!!.transitioned, "transitioned flag must be false on a missing-fields block")
+        assertEquals("feature/PROJ-1", result.data!!.branchName)
         assertTrue(
             result.summary.contains("Story Points"),
             "Summary should name the missing field: ${result.summary}"
@@ -204,7 +204,7 @@ class JiraServiceImplStartWorkDelegationTest {
         // step is still reported as "started" (it's metadata — branch creation lives
         // elsewhere) but the transition message must include the underlying error.
         assertFalse(result.isError, "Generic transition errors should not block start_work")
-        assertFalse(result.data.transitioned)
+        assertFalse(result.data!!.transitioned)
         assertTrue(
             result.summary.contains("Insufficient Jira permissions"),
             "Server error must be surfaced, not swallowed: ${result.summary}"
@@ -220,7 +220,7 @@ class JiraServiceImplStartWorkDelegationTest {
         val result = service.startWork("PROJ-1", "feature/PROJ-1", "main")
 
         assertFalse(result.isError)
-        assertFalse(result.data.transitioned)
+        assertFalse(result.data!!.transitioned)
         assertTrue(
             result.summary.contains("no In Progress transition", ignoreCase = true),
             "Expected 'no In Progress transition' message, got: ${result.summary}"

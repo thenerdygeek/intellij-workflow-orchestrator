@@ -52,14 +52,14 @@ class JiraSearchServiceImplTest {
         val result = service.searchAssignableUsers(ticketKey = "ABC-1", query = "jd", limit = 20)
 
         assertFalse(result.isError)
-        assertEquals(2, result.data.size)
-        val first = result.data[0]
+        assertEquals(2, result.data!!.size)
+        val first = result.data!![0]
         assertEquals("jdoe", first.name)
         assertEquals("Jane Doe", first.displayName)
         assertEquals("jdoe@example.com", first.email)
         assertEquals("https://example.com/avatar.png", first.avatarUrl)
         assertTrue(first.active)
-        assertFalse(result.data[1].active)
+        assertFalse(result.data!![1].active)
 
         val request = server.takeRequest()
         assertTrue(request.path!!.startsWith("/rest/api/2/user/assignable/search"),
@@ -84,9 +84,9 @@ class JiraSearchServiceImplTest {
         val result = service.searchUsers(query = "alice", limit = 10)
 
         assertFalse(result.isError)
-        assertEquals(1, result.data.size)
-        assertEquals("alice", result.data[0].name)
-        assertEquals("Alice", result.data[0].displayName)
+        assertEquals(1, result.data!!.size)
+        assertEquals("alice", result.data!![0].name)
+        assertEquals("Alice", result.data!![0].displayName)
 
         val request = server.takeRequest()
         assertTrue(request.path!!.startsWith("/rest/api/2/user/search"),
@@ -110,10 +110,10 @@ class JiraSearchServiceImplTest {
         val result = service.suggestLabels(query = "back", limit = 20)
 
         assertFalse(result.isError)
-        assertEquals(3, result.data.size)
-        assertEquals("backend", result.data[0].label)
-        assertEquals("bug", result.data[1].label)
-        assertEquals("backend-api", result.data[2].label)
+        assertEquals(3, result.data!!.size)
+        assertEquals("backend", result.data!![0].label)
+        assertEquals("bug", result.data!![1].label)
+        assertEquals("backend-api", result.data!![2].label)
 
         val request = server.takeRequest()
         assertTrue(request.path!!.startsWith("/rest/api/1.0/labels/suggest"),
@@ -130,7 +130,7 @@ class JiraSearchServiceImplTest {
         val result = service.suggestLabels(query = "anything", limit = 20)
 
         assertFalse(result.isError, "404 on label suggest should be ToolResult.isError=false")
-        assertTrue(result.data.isEmpty(), "data should be empty list on 404")
+        assertTrue(result.data.isNullOrEmpty(), "data should be empty list on 404")
     }
 
     // ── 5. searchGroups ───────────────────────────────────────────────────────
@@ -147,9 +147,9 @@ class JiraSearchServiceImplTest {
         val result = service.searchGroups(query = "dev", limit = 20)
 
         assertFalse(result.isError)
-        assertEquals(2, result.data.size)
-        assertEquals("jira-software-users", result.data[0].name)
-        assertEquals("dev-team", result.data[1].name)
+        assertEquals(2, result.data!!.size)
+        assertEquals("jira-software-users", result.data!![0].name)
+        assertEquals("dev-team", result.data!![1].name)
 
         val request = server.takeRequest()
         assertTrue(request.path!!.startsWith("/rest/api/2/groups/picker"),
@@ -173,13 +173,13 @@ class JiraSearchServiceImplTest {
         val result = service.listVersions("MYPROJ")
 
         assertFalse(result.isError)
-        assertEquals(2, result.data.size)
-        assertEquals("10001", result.data[0].id)
-        assertEquals("1.0.0", result.data[0].name)
-        assertTrue(result.data[0].released)
-        assertFalse(result.data[0].archived)
-        assertEquals("10002", result.data[1].id)
-        assertFalse(result.data[1].released)
+        assertEquals(2, result.data!!.size)
+        assertEquals("10001", result.data!![0].id)
+        assertEquals("1.0.0", result.data!![0].name)
+        assertTrue(result.data!![0].released)
+        assertFalse(result.data!![0].archived)
+        assertEquals("10002", result.data!![1].id)
+        assertFalse(result.data!![1].released)
 
         val request = server.takeRequest()
         assertTrue(request.path!!.contains("/rest/api/2/project/MYPROJ/versions"),
@@ -201,9 +201,9 @@ class JiraSearchServiceImplTest {
 
         assertFalse(first.isError)
         assertFalse(second.isError)
-        assertEquals(1, first.data.size)
-        assertEquals(1, second.data.size)
-        assertEquals("1.0.0", second.data[0].name)
+        assertEquals(1, first.data!!.size)
+        assertEquals(1, second.data!!.size)
+        assertEquals("1.0.0", second.data!![0].name)
 
         // Only one request should have been made
         val request = server.takeRequest()
@@ -229,12 +229,12 @@ class JiraSearchServiceImplTest {
         val result = service.listComponents("MYPROJ")
 
         assertFalse(result.isError)
-        assertEquals(2, result.data.size)
-        assertEquals("20001", result.data[0].id)
-        assertEquals("Backend", result.data[0].name)
-        assertEquals("Server-side code", result.data[0].description)
-        assertEquals("20002", result.data[1].id)
-        assertNull(result.data[1].description)
+        assertEquals(2, result.data!!.size)
+        assertEquals("20001", result.data!![0].id)
+        assertEquals("Backend", result.data!![0].name)
+        assertEquals("Server-side code", result.data!![0].description)
+        assertEquals("20002", result.data!![1].id)
+        assertNull(result.data!![1].description)
 
         val request = server.takeRequest()
         assertTrue(request.path!!.contains("/rest/api/2/project/MYPROJ/components"),
@@ -257,9 +257,9 @@ class JiraSearchServiceImplTest {
         val result = service.followAutoCompleteUrl(url = autoCompleteUrl, query = "Hi")
 
         assertFalse(result.isError)
-        assertEquals(3, result.data.size)
-        assertEquals("High", result.data[0].id)   // id falls back to "value" field
-        assertEquals("High", result.data[0].value)
+        assertEquals(3, result.data!!.size)
+        assertEquals("High", result.data!![0].id)   // id falls back to "value" field
+        assertEquals("High", result.data!![0].value)
 
         val request = server.takeRequest()
         assertTrue(request.path!!.contains("query=Hi"),
@@ -283,9 +283,9 @@ class JiraSearchServiceImplTest {
         val result = service.followAutoCompleteUrl(url = autoCompleteUrl, query = "opt")
 
         assertFalse(result.isError)
-        assertEquals(2, result.data.size)
-        assertEquals("opt1", result.data[0].id)
-        assertEquals("Option 1", result.data[0].value)
+        assertEquals(2, result.data!!.size)
+        assertEquals("opt1", result.data!![0].id)
+        assertEquals("Option 1", result.data!![0].value)
 
         val request = server.takeRequest()
         assertTrue(request.path!!.contains("&query=opt"),
@@ -301,6 +301,6 @@ class JiraSearchServiceImplTest {
         val result = service.searchUsers(query = "anyone", limit = 5)
 
         assertTrue(result.isError, "Expected isError=true for 500 response")
-        assertTrue(result.data.isEmpty())
+        assertTrue(result.data.isNullOrEmpty())
     }
 }

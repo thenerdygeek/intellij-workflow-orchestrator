@@ -2,32 +2,23 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
 // Virtuoso uses urx reactive streams that require a real browser scroll model;
-// replace it with a minimal shim that exercices the same props contract.
-// Real Virtuoso renders `components.Footer` as a React component receiving
-// `{ context }`; the mock matches so the stable-Footer pattern in MessageList
-// (Footer reads dynamic content from `context.footer`) is exercised.
+// replace it with a minimal shim that exercises the same props contract.
+// MessageList renders `footer` as a plain sibling below Virtuoso (not via
+// `components.Footer`), so the mock just needs to render the virtualized rows.
 vi.mock('react-virtuoso', () => ({
   Virtuoso: ({
     totalCount,
     itemContent,
-    components,
-    context,
   }: {
     totalCount: number;
     itemContent: (i: number) => React.ReactNode;
-    components?: { Footer?: React.ComponentType<{ context?: unknown }> };
-    context?: unknown;
-  }) => {
-    const Footer = components?.Footer;
-    return (
-      <div role="log">
-        {Array.from({ length: totalCount }, (_, i) => (
-          <div key={i}>{itemContent(i)}</div>
-        ))}
-        {Footer ? <Footer context={context} /> : null}
-      </div>
-    );
-  },
+  }) => (
+    <div role="log">
+      {Array.from({ length: totalCount }, (_, i) => (
+        <div key={i}>{itemContent(i)}</div>
+      ))}
+    </div>
+  ),
 }));
 
 import { MessageList } from '@/components/chat/MessageList';
@@ -56,5 +47,46 @@ describe('MessageList', () => {
       </div>
     );
     expect(screen.getByTestId('footer')).toBeInTheDocument();
+  });
+
+  // Regression guard: pre-fix, the footer was passed through Virtuoso's
+  // `components.Footer` + `context` plumbing, and rapid re-renders during
+  // run_command streaming failed to flush a fresh `context.footer` to the
+  // mounted Footer — the live tail appeared frozen. Now that `footer`
+  // renders as a plain sibling of Virtuoso, plain React reconciliation
+  // must reflect updated content on every parent re-render.
+  it('reflects updated footer content on re-render (live-tail regression guard)', () => {
+    const { rerender } = render(
+      <div style={{ height: 400 }}>
+        <MessageList
+          count={1}
+          renderItem={() => <div>row</div>}
+          footer={<div data-testid="tail">first</div>}
+        />
+      </div>
+    );
+    expect(screen.getByTestId('tail').textContent).toBe('first');
+
+    rerender(
+      <div style={{ height: 400 }}>
+        <MessageList
+          count={1}
+          renderItem={() => <div>row</div>}
+          footer={<div data-testid="tail">first second</div>}
+        />
+      </div>
+    );
+    expect(screen.getByTestId('tail').textContent).toBe('first second');
+
+    rerender(
+      <div style={{ height: 400 }}>
+        <MessageList
+          count={1}
+          renderItem={() => <div>row</div>}
+          footer={<div data-testid="tail">first second third</div>}
+        />
+      </div>
+    );
+    expect(screen.getByTestId('tail').textContent).toBe('first second third');
   });
 });

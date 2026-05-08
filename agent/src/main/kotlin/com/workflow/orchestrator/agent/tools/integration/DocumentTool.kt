@@ -120,7 +120,7 @@ class DocumentTool(
                 isError = true,
             )
         } else {
-            val markdown = result.data.markdown
+            val markdown = result.data!!.markdown
             ToolResult(
                 content = markdown,
                 summary = result.summary,

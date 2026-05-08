@@ -339,7 +339,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                     log.warn("[Jira:UI] Failed to load watchers for ${issue.key}: ${result.summary}")
                     return@withContext
                 }
-                applyWatchState(btn, result.data.isWatching, result.data.watchCount)
+                applyWatchState(btn, result.data!!.isWatching, result.data!!.watchCount)
             }
         }
     }
@@ -365,13 +365,13 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                     withContext(Dispatchers.EDT) { btn.isEnabled = true }
                     return@launch
                 }
-                currentUserName.compareAndSet(null, me.data.name)
-                me.data.name
+                currentUserName.compareAndSet(null, me.data!!.name)
+                me.data!!.name
             }
 
             // Need current state to decide add vs remove
             val before = service.getWatchers(issue.key)
-            val isWatching = !before.isError && before.data.isWatching
+            val isWatching = !before.isError && before.data!!.isWatching
             val toggleResult = if (isWatching) {
                 service.removeWatcher(issue.key, username)
             } else {
@@ -385,7 +385,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
             val after = service.getWatchers(issue.key)
             withContext(Dispatchers.EDT) {
                 if (currentIssueKey == issue.key) {
-                    if (!after.isError) applyWatchState(btn, after.data.isWatching, after.data.watchCount)
+                    if (!after.isError) applyWatchState(btn, after.data!!.isWatching, after.data!!.watchCount)
                 }
                 btn.isEnabled = true
             }
@@ -758,8 +758,8 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                 val jiraService = project.getService(com.workflow.orchestrator.core.services.JiraService::class.java)
                 val result = jiraService.getComments(issueKey)
                 if (!result.isError) {
-                    cache.updateComments(issueKey, result.data)
-                    result.data
+                    cache.updateComments(issueKey, result.data!!)
+                    result.data!!
                 } else {
                     log.warn("[Jira:UI] Failed to load comments for $issueKey: ${result.summary}")
                     emptyList()

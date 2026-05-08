@@ -365,9 +365,10 @@ class IssueDetailPanel(
                 val sonarService = project.getService(SonarService::class.java)
                 val result = sonarService.getRule(ruleKey)
                 if (!result.isError) {
-                    ruleCache[ruleKey] = result.data
+                    val rule = result.data!!
+                    ruleCache[ruleKey] = rule
                     withContext(Dispatchers.Main) {
-                        displayRuleInfo(result.data)
+                        displayRuleInfo(rule)
                     }
                 } else {
                     withContext(Dispatchers.Main) {

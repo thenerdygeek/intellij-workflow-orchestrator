@@ -81,7 +81,7 @@ class BranchChangeTicketDetector(private val project: Project) : BranchChangeLis
                 log.warn("[Jira:Branch] Failed to fetch issue $ticketId: ${result.summary}")
                 return@launch
             }
-            val issue = result.data
+            val issue = result.data!!
             val summary = issue.summary
             val sprintName = issue.sprintName
             val assigneeName = issue.assignee

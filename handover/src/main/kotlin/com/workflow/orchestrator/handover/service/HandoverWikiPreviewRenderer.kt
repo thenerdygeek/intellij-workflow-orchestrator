@@ -87,8 +87,8 @@ class HandoverWikiPreviewRendererService(
 
         cs.launch {
             val toolResult = jiraService.renderWikiMarkup(resolvedMarkup, issueKey)
-            if (!toolResult.isError && toolResult.data != null) {
-                val html = toolResult.data
+            val html = toolResult.data
+            if (!toolResult.isError && html != null) {
                 val key = sha256(resolvedMarkup)
                 synchronized(cache) { cache[key] = html }
                 _liveResults.emit(resolvedMarkup to Result(html = html, source = Source.LIVE_FRESH))

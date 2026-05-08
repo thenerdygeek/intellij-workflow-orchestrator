@@ -47,7 +47,7 @@ class PostCommitTransitionHandler(private val project: Project) : CheckinHandler
                 if (issueResult.isError) {
                     log.debug("[Jira:PostCommit] Could not fetch $ticketId: ${issueResult.summary}")
                 } else {
-                    val currentStatus = issueResult.data.status
+                    val currentStatus = issueResult.data!!.status
                     if (PostCommitTransitionLogic.shouldSuggestTransition(currentStatus)) {
                         com.intellij.openapi.application.invokeLater {
                             val notification = com.intellij.notification.NotificationGroupManager.getInstance()

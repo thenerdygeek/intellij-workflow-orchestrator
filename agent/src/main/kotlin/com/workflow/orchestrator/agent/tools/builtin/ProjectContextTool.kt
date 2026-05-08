@@ -455,8 +455,8 @@ class ProjectContextTool : AgentTool {
         val bitbucket = ServiceLookup.bitbucket(project) ?: return ""
         return try {
             val result = bitbucket.getPullRequestsForBranch(currentBranch, repoName.takeIf { it.isNotBlank() })
-            if (result.isError || result.data.isEmpty()) return ""
-            val pr = result.data.first() // Most recent open PR for this branch
+            if (result.isError || result.data.isNullOrEmpty()) return ""
+            val pr = result.data!!.first() // Most recent open PR for this branch
             buildString {
                 appendLine("Current PR: #${pr.id} — ${pr.title}")
                 appendLine("  State: ${pr.state}")
@@ -471,8 +471,8 @@ class ProjectContextTool : AgentTool {
         val bitbucket = ServiceLookup.bitbucket(project) ?: return ""
         return try {
             val result = bitbucket.getPullRequestCommits(prId, repoName.takeIf { it.isNotBlank() })
-            if (result.isError || result.data.isEmpty()) return ""
-            val commits = result.data
+            if (result.isError || result.data.isNullOrEmpty()) return ""
+            val commits = result.data!!
             buildString {
                 appendLine("PR Commits (${commits.size}):")
                 commits.take(20).forEach { c ->
@@ -490,7 +490,7 @@ class ProjectContextTool : AgentTool {
         return try {
             val result = bamboo.getLatestBuild(planKey, branch)
             if (result.isError) return ""
-            val build = result.data
+            val build = result.data!!
             buildString {
                 appendLine("Bamboo Build: ${build.buildResultKey.ifBlank { "${build.planKey}-${build.buildNumber}" }}")
                 appendLine("  State: ${build.state}")
@@ -507,7 +507,7 @@ class ProjectContextTool : AgentTool {
         return try {
             val result = sonar.getQualityGateStatus(sonarKey, branch)
             if (result.isError) return ""
-            val qg = result.data
+            val qg = result.data!!
             buildString {
                 appendLine("Sonar Quality Gate: ${qg.status}")
                 if (qg.conditions.isNotEmpty()) {

@@ -15,8 +15,15 @@ import kotlinx.serialization.Transient
  */
 @Serializable
 data class ToolResult<T>(
-    /** Typed structured data — consumed by UI panels and programmatic code. */
-    val data: T,
+    /**
+     * Typed structured data — consumed by UI panels and programmatic code.
+     *
+     * Nullable so the [error] factory can return a result without smuggling `null`
+     * past the type system via an unchecked cast. When [isError] is `false`,
+     * [data] is non-null by convention (enforced at every successful construction
+     * site). Callers that have just verified `!isError` may safely use `data!!`.
+     */
+    val data: T?,
 
     /** LLM-optimized plain text summary — consumed by the AI agent's context window. */
     val summary: String,
@@ -77,8 +84,7 @@ data class ToolResult<T>(
         fun <T> success(data: T, summary: String, hint: String? = null): ToolResult<T> =
             ToolResult(data = data, summary = summary, hint = hint)
 
-        @Suppress("UNCHECKED_CAST")
         fun <T> error(summary: String, hint: String? = null): ToolResult<T> =
-            ToolResult(data = null as T, summary = summary, isError = true, hint = hint)
+            ToolResult(data = null, summary = summary, isError = true, hint = hint)
     }
 }

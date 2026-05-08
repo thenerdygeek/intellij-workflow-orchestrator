@@ -226,6 +226,14 @@ class AgentController(
         onFlush = { batched -> dashboard.appendStreamToken(batched) }
     )
 
+    /**
+     * Splits inline `<thinking>...</thinking>` blocks out of the assistant text
+     * so they render via the prompt-kit Reasoning collapsible (`<ThinkingView>`)
+     * instead of as raw XML in the chat. Lockstep with [streamBatcher] — flushed
+     * before the batcher and reset alongside it.
+     */
+    private val thinkingSplitter = ThinkingTagSplitter()
+
     /** Routes per-tool-call process output chunks to the tool's own Terminal block in the chat UI. */
     private val toolStreamBatcher = PerToolStreamBatcher(
         onFlush = { id, batched ->
@@ -751,7 +759,7 @@ class AgentController(
         com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.showSimpleQuestionCallback = { question, optionsJson ->
             LOG.info("ask_followup_question: callback fired (question=${question.take(80)}, hasOptions=${!optionsJson.isNullOrBlank()})")
             // Drain stream batcher before UI flush so buffered tokens appear before the question
-            streamBatcher.flush()
+            flushStream()
             invokeLater {
                 LOG.info("ask_followup_question: invokeLater running on EDT, dispatching to dashboard")
                 try {
@@ -1676,7 +1684,36 @@ class AgentController(
     private fun onStreamChunk(chunk: String) {
         // Capture a rolling snippet of the LLM's output for Haiku phrase context
         lastStreamSnippet = (lastStreamSnippet + chunk).takeLast(150)
-        streamBatcher.append(chunk)
+        dispatchSplitParts(thinkingSplitter.consume(chunk))
+    }
+
+    /**
+     * Routes parts from [thinkingSplitter] to their respective bridges.
+     * `Text` parts continue through the regular 16ms-batched stream pipe;
+     * `Thinking` parts go through `appendThinking`, which the webview renders
+     * via `<ThinkingView>` (prompt-kit `Reasoning` + `TextShimmer`).
+     */
+    private fun dispatchSplitParts(parts: List<ThinkingTagSplitter.Part>) {
+        for (part in parts) when (part) {
+            is ThinkingTagSplitter.Part.Text -> streamBatcher.append(part.text)
+            is ThinkingTagSplitter.Part.Thinking -> dashboard.appendThinking(part.text)
+        }
+    }
+
+    /**
+     * Drain both the thinking splitter and the stream batcher. Splitter goes
+     * first so any held-back text remainder lands in the batcher before its
+     * own flush — otherwise the tail tokens would be lost.
+     */
+    private fun flushStream() {
+        dispatchSplitParts(thinkingSplitter.flush())
+        streamBatcher.flush()
+    }
+
+    /** Reset both pre-bridge buffers — used on cancel / new task. */
+    private fun clearStream() {
+        thinkingSplitter.reset()
+        streamBatcher.clear()
     }
 
     /**
@@ -2041,7 +2078,7 @@ class AgentController(
         val durationMs = System.currentTimeMillis() - taskStartTime
 
         // Drain the stream batcher before UI flush so no buffered tokens are lost
-        streamBatcher.flush()
+        flushStream()
         toolStreamBatcher.flush()
 
         invokeLater {
@@ -2219,7 +2256,7 @@ class AgentController(
         loopWaitingForInput = false
         pendingUiMessageOverride.set(null)
         steeringQueue.clear()
-        streamBatcher.clear()
+        clearStream()
         toolStreamBatcher.flush()   // drain any buffered output on cancel
         firstFlushSeen.clear()
     }

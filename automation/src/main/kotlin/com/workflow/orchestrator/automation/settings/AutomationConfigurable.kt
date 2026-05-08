@@ -232,11 +232,12 @@ class AutomationConfigurable(private val project: Project) : SearchableConfigura
                 runOnEdt {
                     projectCombo.removeAllItems()
                     if (!result.isError) {
-                        if (result.data.isEmpty()) {
+                        val projects = result.data!!
+                        if (projects.isEmpty()) {
                             projectCombo.addItem(AutomationProjectItem("", "No projects found"))
                         } else {
                             projectCombo.addItem(AutomationProjectItem("", "Select a project..."))
-                            for (proj in result.data.sortedBy { it.name }) {
+                            for (proj in projects.sortedBy { it.name }) {
                                 projectCombo.addItem(AutomationProjectItem(proj.key, proj.name))
                             }
                         }
@@ -266,10 +267,11 @@ class AutomationConfigurable(private val project: Project) : SearchableConfigura
             runOnEdt {
                 planCombo.removeAllItems()
                 if (!result.isError) {
-                    if (result.data.isEmpty()) {
+                    val plans = result.data!!
+                    if (plans.isEmpty()) {
                         planCombo.addItem(AutomationPlanItem("", "No plans in this project"))
                     } else {
-                        for (plan in result.data.sortedBy { it.name }) {
+                        for (plan in plans.sortedBy { it.name }) {
                             val displayName = plan.name
                                 .removePrefix("$projectName - ")
                                 .removePrefix("$projectName-")
@@ -307,7 +309,7 @@ class AutomationConfigurable(private val project: Project) : SearchableConfigura
                     Regex(Regex.escape(pattern), RegexOption.IGNORE_CASE)
                 }
 
-                val matches = result.data.filter {
+                val matches = result.data!!.filter {
                     regex.containsMatchIn(it.key) || regex.containsMatchIn(it.name)
                 }
 

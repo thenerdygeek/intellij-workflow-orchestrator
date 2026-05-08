@@ -148,7 +148,7 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
             }
             invokeLater {
                 if (result.isError) return@invokeLater
-                val data = result.data
+                val data = result.data!!
                 val groups = data.groups.joinToString(", ")
                 val roles = data.applicationRoles.joinToString(", ")
                 if (groups.isBlank() && roles.isBlank()) return@invokeLater

@@ -868,9 +868,9 @@ class PrDetailPanel(
                 return@launch
             }
 
-            val diff = diffResult.data
+            val diff = diffResult.data!!
             val changedFiles = if (changesResult != null && !changesResult.isError) {
-                changesResult.data.map { it.path }
+                changesResult.data!!.map { it.path }
             } else {
                 emptyList()
             }

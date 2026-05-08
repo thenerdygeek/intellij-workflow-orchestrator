@@ -126,13 +126,14 @@ class SonarProjectPickerDialog(
                 listModel.clear()
                 loadingIcon.isVisible = false
                 if (!result.isError) {
-                    if (result.data.isEmpty()) {
+                    val projects = result.data!!
+                    if (projects.isEmpty()) {
                         statusLabel.text = "No projects found for '$query'"
                     } else {
-                        for (proj in result.data) {
+                        for (proj in projects) {
                             listModel.addElement(proj)
                         }
-                        statusLabel.text = "${result.data.size} project(s) found"
+                        statusLabel.text = "${projects.size} project(s) found"
                     }
                 } else {
                     statusLabel.text = "Error: ${result.summary}"

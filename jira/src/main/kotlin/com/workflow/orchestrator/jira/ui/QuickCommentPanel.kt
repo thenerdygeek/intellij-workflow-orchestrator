@@ -128,7 +128,7 @@ class QuickCommentPanel(private val project: Project) : JPanel(BorderLayout()), 
                 return@launch
             }
             withContext(Dispatchers.EDT) {
-                rebuildVisibilityModel(result.data.roles, result.data.groups)
+                rebuildVisibilityModel(result.data!!.roles, result.data!!.groups)
             }
         }
     }
