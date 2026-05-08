@@ -1,4 +1,4 @@
-package com.workflow.orchestrator.handover.ui.panels
+package com.workflow.orchestrator.handover.ui.cards
 
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
@@ -21,6 +21,7 @@ import com.workflow.orchestrator.handover.model.CopyrightFileEntry
 import com.workflow.orchestrator.handover.model.CopyrightStatus
 import com.workflow.orchestrator.handover.service.CopyrightFixService
 import com.workflow.orchestrator.handover.service.HandoverStateService
+import com.workflow.orchestrator.handover.ui.panels.handoverPanelHeader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -48,9 +49,9 @@ import javax.swing.SwingConstants
  * Fix All applies year-consolidation or template-insertion via a single
  * `WriteCommandAction` (so Cmd-Z reverses the whole batch).
  */
-class CopyrightPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
+class CopyrightFixCard(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
-    private val log = Logger.getInstance(CopyrightPanel::class.java)
+    private val log = Logger.getInstance(CopyrightFixCard::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val listModel = DefaultListModel<CopyrightFileEntry>()

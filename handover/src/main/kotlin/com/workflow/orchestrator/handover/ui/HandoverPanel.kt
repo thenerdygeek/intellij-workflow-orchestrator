@@ -8,7 +8,7 @@ import com.intellij.ui.JBSplitter
 import com.workflow.orchestrator.handover.service.HandoverStateService
 import com.workflow.orchestrator.handover.service.JiraClosureService
 import com.workflow.orchestrator.handover.service.QaClipboardService
-import com.workflow.orchestrator.handover.ui.panels.CopyrightPanel
+import com.workflow.orchestrator.handover.ui.cards.CopyrightFixCard
 import com.workflow.orchestrator.handover.ui.panels.JiraCommentPanel
 import com.workflow.orchestrator.handover.ui.panels.QaClipboardPanel
 import com.workflow.orchestrator.handover.ui.panels.TimeLogPanel
@@ -36,7 +36,7 @@ class HandoverPanel(private val project: Project) : JPanel(BorderLayout()), Disp
     private val toolbar: HandoverToolbar
 
     // Detail panels
-    private val copyrightPanel = CopyrightPanel(project)
+    private val copyrightCard = CopyrightFixCard(project)
     private val jiraCommentPanel = JiraCommentPanel(project)
     private val timeLogPanel = TimeLogPanel(project)
     private val qaClipboardPanel = QaClipboardPanel(project)
@@ -45,7 +45,7 @@ class HandoverPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         toolbar = HandoverToolbar { panelId -> switchPanel(panelId) }
 
         // Register detail panels in card layout
-        detailContainer.add(copyrightPanel, HandoverToolbar.PANEL_COPYRIGHT)
+        detailContainer.add(copyrightCard, HandoverToolbar.PANEL_COPYRIGHT)
         detailContainer.add(jiraCommentPanel, HandoverToolbar.PANEL_JIRA)
         detailContainer.add(timeLogPanel, HandoverToolbar.PANEL_TIME)
         detailContainer.add(qaClipboardPanel, HandoverToolbar.PANEL_QA)
@@ -59,9 +59,9 @@ class HandoverPanel(private val project: Project) : JPanel(BorderLayout()), Disp
         add(toolbar.createToolbar(), BorderLayout.NORTH)
         add(splitter, BorderLayout.CENTER)
 
-        // CopyrightPanel (Phase 2) and TimeLogPanel (Phase 3) both own a
+        // CopyrightFixCard (Phase 2) and TimeLogPanel (Phase 3) both own a
         // coroutine scope and need to be disposed when this panel goes away.
-        Disposer.register(this, copyrightPanel)
+        Disposer.register(this, copyrightCard)
         Disposer.register(this, timeLogPanel)
 
         // Single state-flow collector fans out to all panels that are wired.
