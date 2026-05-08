@@ -271,6 +271,21 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
          */
         var imageMimeWhitelist by list<String>()
 
+        // ── Handover: Quick Clipboard chips ──────────────────────────────────────
+
+        /**
+         * Ordered list of chip keys shown in the Handover → Share quick-clipboard grid.
+         * Each key maps to a runtime value provider (e.g. "docker.tag" → latest Docker tag).
+         * The default 8-item list covers the most commonly shared artefacts.
+         *
+         * Settings UI for this field is added in T25. The list is persisted via
+         * [by list<String>()][com.intellij.openapi.components.BaseState] so user
+         * edits survive IDE restarts.
+         *
+         * Populated in the `init` block below on first instantiation.
+         */
+        var quickClipboardChips by list<String>()
+
         // ── Tool-produced image auto-load (Phase 4 of multimodal-agent plan) ─────
         //
         // Controls whether tool results that produce image bytes (e.g. Jira
@@ -302,6 +317,15 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
             if (imageMimeWhitelist.isEmpty()) {
                 imageMimeWhitelist.addAll(
                     listOf("image/png", "image/jpeg", "image/webp")
+                )
+            }
+            // Populate quick-clipboard chip defaults on first instantiation.
+            if (quickClipboardChips.isEmpty()) {
+                quickClipboardChips.addAll(
+                    listOf(
+                        "docker.tag", "docker.tagsJson", "pr.url", "build.url",
+                        "automation.url", "ticket.id", "ai.changeSummary", "ai.ticketSummary"
+                    )
                 )
             }
         }
