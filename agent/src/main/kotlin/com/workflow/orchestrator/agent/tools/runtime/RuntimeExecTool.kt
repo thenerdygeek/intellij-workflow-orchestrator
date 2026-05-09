@@ -40,6 +40,11 @@ import com.workflow.orchestrator.agent.tools.TestConsoleUtils
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
+import com.workflow.orchestrator.agent.tools.docs.Relationship
+import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
+import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
+import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
+import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import com.workflow.orchestrator.agent.util.ReflectionUtils
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -174,6 +179,396 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
     override val allowedWorkers = setOf(
         WorkerType.CODER, WorkerType.REVIEWER, WorkerType.ANALYZER, WorkerType.ORCHESTRATOR, WorkerType.TOOLER
     )
+
+    override fun documentation(): ToolDocumentation = toolDoc("runtime_exec") {
+        summary {
+            technical("Single-tool dispatcher for IntelliJ run/debug surfaces: 3 observation actions (get_running_processes, get_run_output, get_test_results) anchored on RunContentManager + ExecutionConsole, and 2 launch actions (run_config, stop_run_config) anchored on ProgramRunnerUtil + ExecutionEnvironment. run_config drives a 5-stage state machine — pre-launch validation, idempotent stop-then-launch, ProgramRunner.Callback launch, readiness pipeline (http_probe / log_pattern / idle_stdout / explicit_pattern / process_started), and detach-on-ready — with 17 distinct error categories and OS-only port discovery (lsof / ss / netstat).")
+            plain("The agent's run/debug toolbar buttons, but scriptable. The LLM uses this to launch a Spring Boot app, wait until it's actually serving traffic, learn which port it bound, then keep working — and to read the console of any process the IDE knows about, including ones the user started by clicking the green Run arrow.")
+        }
+        whatLLMSees(description)
+        sideEffect(SideEffectKind.PROCESS_SPAWN)
+        counterfactual(
+            "Without runtime_exec, every action degrades to run_command. Whole 'launch app, wait until ready, query its endpoints' workflows degrade from 1 tool call into a brittle pipeline of `run_command 'gradle bootRun &'; sleep 30; curl …` that loses readiness detection, port discovery, idempotency, IDE Run-tool-window integration, and before-run tasks. Test-result reading degrades to manually parsing Surefire/Gradle XML. Console reading degrades to tailing log files (if you can find them) and misses sessions the user started via the gutter Run button entirely."
+        )
+        llmMistake("Confuses `run_config` with `run_command` — uses run_command to launch a server (`gradle bootRun &`), gets no readiness detection, no port info, and no IDE integration. The right move is run_config with the existing run configuration name.")
+        llmMistake("Sets `readiness_strategy=http_probe` on a non-Spring app without providing `ready_url` — gets `READINESS_DETECTION_FAILED` because http_probe needs either a Spring config (for actuator paths) or an explicit URL.")
+        llmMistake("Expects `readiness_strategy=auto` to work for non-Spring/non-HTTP apps — gets the idle_stdout heuristic, which fires after 2000ms of stdout silence and frequently fires too early on apps that pause output during startup. Fix: pass `readiness_strategy=explicit_pattern` with a known log line.")
+        llmMistake("Tries `mode=debug` on a config that wasn't designed as a debug config (e.g. a Maven goal) — this works but gives unexpected results because `wait_for_pause` only fires when an existing breakpoint is hit. Set breakpoints via `debug_breakpoints` first, or just use `mode=run`.")
+        llmMistake("Calls `run_config` twice without realizing the first call is idempotent — the first instance is stopped and replaced. Mostly harmless but the LLM is sometimes surprised when the second `READY` payload reports a different PID.")
+        llmMistake("Reads a port number out of `Tomcat started on port(s): 8080` in `get_run_output` and assumes it's authoritative — it isn't. The `Listening ports:` field on the run_config result is the only authoritative port source. Run-config overrides via VM options / env vars / profiles can shift the bound port away from the static log-banner number.")
+        llmMistake("Treats `STOP_FAILED` from the idempotent pre-launch stop as a retry-able error — it isn't. A force-kill that didn't kill is almost always a kernel- or OS-level problem; escalate to the user.")
+        llmMistake("Calls `get_test_results` on a non-test config — gets `No test data` because `findTestRoot` returns null. The action description doesn't gate on config type because the tool can't tell from the descriptor alone whether it's a test run.")
+        flowchart("""
+            flowchart TD
+                A[LLM wants to run/debug/observe] --> B{Already running?}
+                B -- check --> C[get_running_processes]
+                C --> D{What now?}
+                D -- launch fresh --> E[run_config]
+                D -- stop one --> F[stop_run_config]
+                D -- read console --> G[get_run_output]
+                D -- read tests --> H[get_test_results]
+                E --> I[Stage 1: validate config_name + check guards]
+                I --> J[Stage 2: idempotent stop existing]
+                J -- STOP_FAILED --> X[Error to LLM, abort]
+                J -- ok --> K[Stage 3: ProgramRunnerUtil.executeConfigurationAsync]
+                K --> L[Stage 4: readiness pipeline]
+                L -- http_probe --> M[OS port + actuator path → HTTP GET]
+                L -- log_pattern --> N[Spring banner regex on stdout]
+                L -- idle_stdout --> O[2000ms stdout silence]
+                L -- explicit_pattern --> P[user regex on stdout]
+                L -- process_started --> Q[return immediately]
+                M --> R[Stage 5: detach refs, return READY]
+                N --> R
+                O --> R
+                P --> R
+                Q --> R
+                R --> S[App keeps running across session resets]
+        """)
+        actions {
+            action("get_running_processes") {
+                description {
+                    technical("Enumerates active run+debug sessions via ExecutionManager.getRunningProcesses() and XDebuggerManager.debugSessions, returning name, type (Running|Debug), status, and PID where extractable.")
+                    plain("'What's alive in the IDE right now?' — like glancing at the Run tool window to see which tabs have green play dots.")
+                }
+                whenLLMUses("As a cheap state-check before deciding whether to launch a new instance, before calling stop_run_config, or to discover sessions the user started outside the agent (gutter Run button, run-config dropdown).")
+                params {}
+                rejectsParam("config_name", "Lists all sessions; doesn't filter by name.")
+                rejectsParam("mode", "No launch — read-only.")
+                rejectsParam("status_filter", "Filters test results, not process list.")
+                onSuccess("Returns a multi-line list — one block per session — with name, Type (Running|Debug), Status (Active|Paused at breakpoint), and optional PID. Empty list returns 'No active run/debug sessions.'")
+                onFailure("internal exception", "Returns 'Error listing processes: <msg>' with isError=true. Rare — usually means the IDE itself is in a bad state.")
+                example("check before launching") {
+                    param("action", "get_running_processes")
+                    outcome("LLM learns whether 'my-spring-boot-app' is already running before deciding between run_config and get_run_output.")
+                }
+                verdict {
+                    keep("Cheapest action in the tool. Often the difference between one tool call and three (LLM blindly calls run_config which then has to stop-and-relaunch).", VerdictSeverity.NORMAL)
+                }
+            }
+            action("get_run_output") {
+                description {
+                    technical("Reads the console buffer of a RunContentDescriptor matched by name (exact, then case-insensitive substring). Prefers live descriptors over terminated ones via selectDescriptorByName. Returns last N lines (default 200, max 1000), optionally regex-filtered.")
+                    plain("Reads the Console tab of a Run/Debug session — what the user would see if they clicked on that tab. Useful for checking startup logs, error messages, or fishing a port number out of a startup banner.")
+                }
+                whenLLMUses("After run_config to confirm the app actually started cleanly; after a test run to read uncategorized stdout/stderr; to follow up when readiness detection times out and the LLM needs to see what happened.")
+                params {
+                    required("config_name", "string") {
+                        llmSeesIt("Name of the run configuration")
+                        humanReadable("Which Run/Debug tab to read — matches the tab title.")
+                        whenPresent("Descriptor with that name (exact or substring) is selected; live descriptors preferred over terminated ones.")
+                        constraint("must match a registered or recently-active descriptor")
+                        example("MySpringApp")
+                    }
+                    optional("last_n_lines", "integer") {
+                        llmSeesIt("Number of lines to return from the end (default: 200, max: 1000) — for get_run_output")
+                        humanReadable("How much of the tail to return.")
+                        whenPresent("Returns at most that many lines from the end of the buffer.")
+                        whenAbsent("Defaults to 200 lines.")
+                        constraint("clamped to [1, 1000]")
+                        example("500")
+                    }
+                    optional("filter", "string") {
+                        llmSeesIt("Regex pattern to filter output lines — for get_run_output")
+                        humanReadable("Only return lines matching this regex — useful for fishing out errors or specific log lines.")
+                        whenPresent("Only matching lines are returned, then last_n_lines is applied to the filtered set.")
+                        whenAbsent("All lines from the buffer are considered.")
+                        constraint("must compile as a Java regex; invalid patterns return an error")
+                        example("ERROR|WARN")
+                    }
+                }
+                rejectsParam("status_filter", "Test-only param.")
+                rejectsParam("mode", "No launch.")
+                onSuccess("Returns a header (Console Output, Launch Mode, Status, optional Note about other matched sessions, optional Filter) followed by '---' and numbered lines. Output >30K is auto-spilled to disk via ToolOutputSpiller and a preview is returned.")
+                onFailure("no descriptor matches name", "Returns 'No run session found matching <name>' with the available session names listed.")
+                onFailure("descriptor found but console empty", "Returns '<name> found but console output is empty' (informational).")
+                onFailure("invalid regex in filter", "Returns 'Error: invalid regex pattern …'.")
+                example("read tail of running app") {
+                    param("action", "get_run_output")
+                    param("config_name", "MySpringApp")
+                    param("last_n_lines", "100")
+                    outcome("Returns the last 100 lines of the console — enough to see startup banner + recent activity.")
+                }
+                example("filter for errors") {
+                    param("action", "get_run_output")
+                    param("config_name", "MySpringApp")
+                    param("filter", "ERROR|FATAL")
+                    outcome("Returns only ERROR and FATAL lines — much smaller and more focused.")
+                }
+                verdict {
+                    keep("Only path to console buffers for sessions the user started outside the agent. The tail+filter combination keeps token cost manageable.", VerdictSeverity.STRONG)
+                }
+            }
+            action("get_test_results") {
+                description {
+                    technical("Reads structured test results from a recently-completed test run via TestConsoleUtils.findTestRoot + interpretTestRoot. Empty suites return NO_TESTS_FOUND (not PASSED). Failed runs propagate isError=true. Waits up to MAX_PROCESS_WAIT_SECONDS (600s) for process termination, TEST_TREE_FINALIZE_TIMEOUT_MS (10s) for the test tree to finalize.")
+                    plain("'How did the tests do?' — same data as the test results pane in IntelliJ, structured for the LLM. The LLM picks this over parsing console output because the tree gives it pass/fail/error/skipped counts plus per-test detail.")
+                }
+                whenLLMUses("After java_runtime_exec.run_tests / python_runtime_exec.run_tests / coverage.run_with_coverage finish, when the LLM needs structured pass/fail counts or wants to filter to FAILED only.")
+                params {
+                    optional("config_name", "string") {
+                        llmSeesIt("Name of the run configuration")
+                        humanReadable("Which test run to read.")
+                        whenPresent("That descriptor is selected (with the same exact-then-substring matching as get_run_output).")
+                        whenAbsent("First descriptor with test results is used; if none, the first running descriptor is tried.")
+                        example("MyTestSuite")
+                    }
+                    optional("status_filter", "string") {
+                        llmSeesIt("Filter by test status — for get_test_results")
+                        humanReadable("Show only tests with this status.")
+                        whenPresent("Output is restricted to tests with this status.")
+                        whenAbsent("All tests are shown.")
+                        enumValue("FAILED", "ERROR", "PASSED", "SKIPPED")
+                        example("FAILED")
+                    }
+                }
+                rejectsParam("last_n_lines", "Console-only param.")
+                rejectsParam("filter", "Console-only param.")
+                rejectsParam("mode", "No launch.")
+                precondition("a test run must exist (typically launched via java_runtime_exec.run_tests, python_runtime_exec.run_tests, or coverage.run_with_coverage)")
+                onSuccess("Returns counts (passed/failed/errored/skipped) plus per-test detail when status_filter narrows the set. Empty suites return NO_TESTS_FOUND with isError=true (not PASSED — historical bugfix). Output >30K is auto-spilled to disk.")
+                onFailure("process still running after 600s", "Returns 'Process for <name> is still running after 600s (may still be building/compiling). Try again later.' with isError=true.")
+                onFailure("descriptor found but no test data", "Returns '<name> found but no test results available. It may not be a test run.'")
+                onFailure("no descriptor matches", "Returns 'No test run found matching <name>' or 'No test run results available.'")
+                example("get only failures") {
+                    param("action", "get_test_results")
+                    param("config_name", "MyTestSuite")
+                    param("status_filter", "FAILED")
+                    outcome("Returns only failing tests — the typical post-run state the LLM cares about.")
+                }
+                verdict {
+                    keep("Empty-suite handling and structured tree access aren't recoverable via run_command parsing. The interpretTestRoot canonicalization is shared with java_runtime_exec and coverage, so the bugfix benefits all test paths.", VerdictSeverity.STRONG)
+                }
+            }
+            action("run_config") {
+                description {
+                    technical("Launches an existing run configuration with idempotent stop-then-launch (graceful → force kill of any existing instance), full readiness detection (http_probe / log_pattern / idle_stdout / explicit_pattern / process_started, auto-selected by config type), OS-only port discovery (lsof / ss / netstat), and detach-on-ready so the process survives across agent sessions. Drives a 5-stage state machine and emits results from a 17-category error taxonomy.")
+                    plain("Press the green Run arrow on a saved run configuration, but with a brain on top: it stops any duplicate instance first, waits until the app is actually serving traffic (not just 'JVM started'), tells you which port it bound, and lets the app keep running after the conversation ends. The single most useful action in the tool.")
+                }
+                whenLLMUses("To launch a Spring Boot app or other long-running service the user has a saved run configuration for, then immediately query its endpoints. Also for `mode=debug` to drive a debug session via debug_step / debug_inspect.")
+                params {
+                    required("config_name", "string") {
+                        llmSeesIt("Name of the run configuration")
+                        humanReadable("Which saved run configuration to launch.")
+                        whenPresent("Resolved against RunManager — exact name first, then case-sensitive unique substring.")
+                        constraint("must match exactly one config (substring matches that match >1 return AMBIGUOUS_MATCH)")
+                        constraint("must NOT be a Remote, JUnit, or TestNG config — those have dedicated tools")
+                        example("MySpringApp")
+                    }
+                    optional("mode", "string") {
+                        llmSeesIt("Launch mode — for run_config")
+                        humanReadable("Run normally, or under the debugger? `coverage` and `profile` are reserved but currently rejected (use coverage.run_with_coverage instead).")
+                        whenPresent("`run` uses DefaultRunExecutor; `debug` uses DefaultDebugExecutor and observes XDebuggerManager.TOPIC for session attach.")
+                        whenAbsent("Defaults to `run`.")
+                        enumValue("run", "debug", "coverage", "profile")
+                        example("debug")
+                    }
+                    optional("wait_for_ready", "boolean") {
+                        llmSeesIt("Wait until app signals readiness (default true) — for run_config")
+                        humanReadable("Should the tool block until the app is actually serving traffic, or return as soon as it's launched?")
+                        whenPresent("If true, the tool waits for the readiness pipeline before returning READY/DEBUG; on success, refs are nulled to detach the process.")
+                        whenAbsent("Defaults to true — the LLM almost always wants to know the app is ready.")
+                        example("true")
+                    }
+                    optional("wait_for_pause", "boolean") {
+                        llmSeesIt("Wait for first breakpoint pause in debug mode (default false) — for run_config")
+                        humanReadable("In debug mode only: should the tool also wait for the first breakpoint hit before returning?")
+                        whenPresent("After service-readiness, the tool subscribes to XDebugSessionListener.sessionPaused and waits up to ready_timeout_seconds for the first pause.")
+                        whenAbsent("Defaults to false — the tool returns once the debug session is established.")
+                        example("true")
+                    }
+                    optional("readiness_strategy", "string") {
+                        llmSeesIt("Override readiness detection strategy — for run_config")
+                        humanReadable("Pick how the tool decides 'ready'. `auto` does the right thing for Spring Boot and most JVM apps; the others are escape hatches.")
+                        whenPresent("Forces the corresponding strategy regardless of config type.")
+                        whenAbsent("`auto` — http_probe for Spring Boot configs, idle_stdout otherwise.")
+                        enumValue("auto", "process_started", "log_pattern", "idle_stdout", "explicit_pattern", "http_probe")
+                        example("explicit_pattern")
+                    }
+                    optional("ready_url", "string") {
+                        llmSeesIt("Full URL to probe for readiness (e.g. http://localhost:8080/health). Overrides auto-detection when readiness_strategy=http_probe — for run_config")
+                        humanReadable("Full URL to GET for readiness. The user owns correctness — no path-construction or port-discovery wrapping.")
+                        whenPresent("Used verbatim for the HTTP probe, bypassing OS port discovery and Spring actuator-path resolution.")
+                        whenAbsent("If http_probe is in effect, URL is composed from OS-discovered port + Spring actuator paths.")
+                        example("http://localhost:9090/actuator/health/readiness")
+                    }
+                    optional("ready_pattern", "string") {
+                        llmSeesIt("Custom regex to match readiness in stdout (required when readiness_strategy=explicit_pattern) — for run_config")
+                        humanReadable("Regex matched against the stdout buffer. The first match flips readiness to true.")
+                        whenPresent("Used as the readiness signal when readiness_strategy=explicit_pattern.")
+                        whenAbsent("Required when readiness_strategy=explicit_pattern; ignored otherwise.")
+                        constraint("must compile as a Java regex")
+                        example("Ready to accept connections")
+                    }
+                    optional("ready_timeout_seconds", "integer") {
+                        llmSeesIt("Timeout for readiness detection in seconds (default 120) — for run_config")
+                        humanReadable("How long to wait before giving up on readiness.")
+                        whenPresent("Caps the readiness wait at this many seconds; on timeout, returns TIMEOUT_WAITING_FOR_READY with the last lines of output.")
+                        whenAbsent("Defaults to 120s.")
+                        constraint("clamped to [1, 600]")
+                        example("180")
+                    }
+                    optional("wait_for_finish", "boolean") {
+                        llmSeesIt("Block until process exits (default false) — for run_config")
+                        humanReadable("Set true for short-lived processes (CLI tools, batch jobs) that should run to completion. Mutually exclusive in spirit with wait_for_ready, though both can be set (wait_for_ready is checked first).")
+                        whenPresent("After launch, the tool blocks up to timeout_seconds for the process to terminate.")
+                        whenAbsent("Defaults to false — fire-and-forget unless wait_for_ready is also set.")
+                        example("true")
+                    }
+                    optional("timeout_seconds", "integer") {
+                        llmSeesIt("Overall process timeout in seconds (default 600, only when wait_for_finish=true) — for run_config")
+                        humanReadable("Cap on how long to wait for the process to exit when wait_for_finish=true.")
+                        whenPresent("On timeout, returns TIMEOUT_WAITING_FOR_PROCESS with last output lines.")
+                        whenAbsent("Defaults to 600s.")
+                        constraint("clamped to [1, 3600]")
+                        example("900")
+                    }
+                    optional("tail_lines", "integer") {
+                        llmSeesIt("Lines of output to include in result (default 200) — for run_config")
+                        humanReadable("How many tail lines to include in TIMEOUT and finish payloads.")
+                        whenPresent("Cap on lines included in error/finish output.")
+                        whenAbsent("Defaults to 200 lines.")
+                        constraint("clamped to [1, 1000]")
+                        example("500")
+                    }
+                    optional("discover_ports", "boolean") {
+                        llmSeesIt("Attempt port discovery via log patterns and lsof/ss/netstat (default true) — for run_config")
+                        humanReadable("Try to learn which TCP ports the process bound. OS-only — never derived from static config.")
+                        whenPresent("Runs lsof / ss / netstat by PID after readiness; `Listening ports:` is added to the result on success.")
+                        whenAbsent("Defaults to true; set false if you don't care or the OS commands cost more than they're worth.")
+                        example("false")
+                    }
+                }
+                rejectsParam("status_filter", "Test-only param.")
+                rejectsParam("last_n_lines", "Read-only console param.")
+                rejectsParam("filter", "Read-only console param.")
+                precondition("indexing must be complete (smart mode) — DUMB_MODE error if not, after waiting up to 60s")
+                precondition("config must pass checkConfiguration() — RuntimeConfigurationError → INVALID_CONFIGURATION; warnings pass")
+                precondition("a ProgramRunner must be registered for executor + config-type — else NO_RUNNER_REGISTERED")
+                precondition("config must not be Remote, JUnit, or TestNG — those have dedicated tools")
+                onSuccess("Returns a multi-line block beginning with READY (run mode) or DEBUG (debug mode), with Config name, Type, Mode, PID, optional Listening ports, optional Ready signal, optional Status, and optional pre-launch note when an existing instance was stopped before relaunch. The process is detached from the agent session — it survives session resets.")
+                onFailure("idempotent stop fails", "Returns STOP_FAILED with the PIDs that didn't die. Do NOT retry — escalate.")
+                onFailure("indexing didn't finish in 60s", "Returns DUMB_MODE — wait and retry shortly.")
+                onFailure("checkConfiguration error", "Returns INVALID_CONFIGURATION with the underlying message.")
+                onFailure("no ProgramRunner registered", "Returns NO_RUNNER_REGISTERED — usually means the required plugin isn't installed.")
+                onFailure("before-run Build task fails", "Returns BEFORE_RUN_FAILED with per-file compile errors (path:line:col — message), via formatCompileErrors.")
+                onFailure("process exits before readiness", "Returns EXITED_BEFORE_READY with exit code. Inspect tail before retrying.")
+                onFailure("readiness signal never arrives", "Returns TIMEOUT_WAITING_FOR_READY with the last tail_lines of output.")
+                onFailure("http_probe selected without Spring config or ready_url", "Returns READINESS_DETECTION_FAILED — provide ready_url or pick another strategy.")
+                onFailure("mode=coverage", "Returns INVALID_CONFIGURATION pointing at coverage.run_with_coverage.")
+                onFailure("mode=profile", "Returns INVALID_CONFIGURATION — profile mode not yet implemented.")
+                onFailure("uncategorized exception", "Returns UNEXPECTED_ERROR with class name + message.")
+                example("launch Spring Boot app and wait for ready") {
+                    param("action", "run_config")
+                    param("config_name", "MySpringApp")
+                    outcome("Returns READY with PID, Listening ports (e.g. {8080, 9090}), and 'HTTP probe 200 OK: http://localhost:8080/actuator/health'. App keeps running after this tool returns; LLM can now curl endpoints.")
+                }
+                example("launch in debug mode and wait for first pause") {
+                    param("action", "run_config")
+                    param("config_name", "MySpringApp")
+                    param("mode", "debug")
+                    param("wait_for_pause", "true")
+                    outcome("Returns DEBUG with session name, PID, ports, ready signal, and paused_at: <file>:<line>. LLM can now drive the session via debug_step / debug_inspect.")
+                }
+                example("launch CLI tool and block until exit") {
+                    param("action", "run_config")
+                    param("config_name", "RunMigration")
+                    param("wait_for_ready", "false")
+                    param("wait_for_finish", "true")
+                    param("timeout_seconds", "300")
+                    outcome("Process runs to completion; returns 'Process RunMigration finished. Exit code: 0' with output tail.")
+                }
+                example("override readiness for a non-Spring app") {
+                    param("action", "run_config")
+                    param("config_name", "MyKafkaConsumer")
+                    param("readiness_strategy", "explicit_pattern")
+                    param("ready_pattern", "Subscribed to topic")
+                    outcome("Tool waits until the consumer logs 'Subscribed to topic …' before returning READY.")
+                }
+                verdict {
+                    keep("Irreplaceable. Every alternative loses readiness, ports, idempotency, or all three. The 5-stage state machine and 17-category error taxonomy together represent the most useful concentrated capability in the agent.", VerdictSeverity.STRONG)
+                }
+            }
+            action("stop_run_config") {
+                description {
+                    technical("Stops processes whose RunContentDescriptor.displayName matches config_name (case-insensitive substring or handler.toString contains). Graceful destroyProcess → poll → force destroyProcess → poll. Reuses the same StopOutcome state machine that run_config uses for its idempotent pre-launch stop.")
+                    plain("'Stop the running app cleanly, force-kill if it doesn't respond.' Lets the LLM tear down what it (or the user) launched, without the user having to click the IDE Stop button.")
+                }
+                whenLLMUses("After done with a server it launched via run_config; before relaunching when the LLM wants explicit ordering rather than the idempotent path; when get_running_processes shows a stale process the LLM doesn't need anymore.")
+                params {
+                    required("config_name", "string") {
+                        llmSeesIt("Name of the run configuration")
+                        humanReadable("Which session to stop — matched by descriptor display name (case-insensitive substring).")
+                        whenPresent("All matching running processes are stopped.")
+                        constraint("must match a running descriptor or process handler — else PROCESS_NOT_RUNNING")
+                        example("MySpringApp")
+                    }
+                    optional("graceful_timeout_seconds", "integer") {
+                        llmSeesIt("Seconds to wait for graceful shutdown before force-killing (default 10) — for stop_run_config")
+                        humanReadable("How long to give the process to shut down cleanly before force-killing.")
+                        whenPresent("Caps the graceful-destroy poll at this many seconds.")
+                        whenAbsent("Defaults to 10s.")
+                        constraint("clamped to [1, 300]")
+                        example("30")
+                    }
+                    optional("force_on_timeout", "boolean") {
+                        llmSeesIt("Force-kill if graceful timeout exceeded (default true) — for stop_run_config")
+                        humanReadable("If the graceful shutdown timeout passes, should the tool force-kill?")
+                        whenPresent("If false and graceful times out, returns STOP_FAILED instead of force-killing.")
+                        whenAbsent("Defaults to true — force-kill is the friendlier default for the agent loop.")
+                        example("false")
+                    }
+                }
+                rejectsParam("mode", "No launch.")
+                rejectsParam("wait_for_ready", "No launch.")
+                rejectsParam("readiness_strategy", "No launch.")
+                rejectsParam("ready_pattern", "No launch.")
+                rejectsParam("last_n_lines", "Read-only console param.")
+                rejectsParam("filter", "Read-only console param.")
+                onSuccess("Returns 'Stopped <N> process(es) matching <name>.' Process handler refs and descriptor are cleaned up via the per-launch RunInvocation.")
+                onFailure("no matching running process", "Returns PROCESS_NOT_RUNNING — treat as no-op.")
+                onFailure("graceful timeout and force_on_timeout=false", "Returns STOP_FAILED.")
+                onFailure("graceful + force kill both fail", "Returns STOP_FAILED with the count of processes still running. Kernel-level problem; escalate.")
+                example("clean stop") {
+                    param("action", "stop_run_config")
+                    param("config_name", "MySpringApp")
+                    outcome("Sends SIGTERM, waits 10s, force-kills if needed; returns 'Stopped 1 process(es) matching MySpringApp.'")
+                }
+                example("stop with longer graceful window") {
+                    param("action", "stop_run_config")
+                    param("config_name", "MyDatabaseApp")
+                    param("graceful_timeout_seconds", "60")
+                    outcome("Gives 60s for the DB to flush before force-killing — useful for stateful processes.")
+                }
+                verdict {
+                    keep("Stopping a launched server cleanly is the natural pair to run_config. The shared StopOutcome state machine eliminates duplication and keeps idempotency contract honest.", VerdictSeverity.STRONG)
+                }
+            }
+        }
+        verdict {
+            keep("5 actions consolidated into one tool keeps the schema lean while exposing the full IntelliJ run/debug surface area. run_config's readiness pipeline and idempotent stop-then-launch are irreplaceable; the observation actions are the only path to descriptor-anchored data without re-implementing IntelliJ's RunContentManager. Action enum + targeted state machine make this the highest-leverage tool in the runtime category.", VerdictSeverity.STRONG)
+        }
+        mergeOpportunity("`stop_run_config` could in principle be merged into `run_config` as a separate `mode=stop` — but the parameter shapes diverge sharply (graceful_timeout_seconds, force_on_timeout vs the readiness/launch cluster), so the merge would clutter run_config's parameter list. Keeping them separate preserves param locality.")
+        mergeOpportunity("`get_run_output` and `get_test_results` both pivot on selectDescriptorByName. They could plausibly be merged into a single `get_session_output(format=console|test_tree)` — net effect: -1 action, +1 enum param. Marginal at best; current form is clearer.")
+        observation("The launch / observe split mirrors IntelliJ's underlying API split (RunContentManager + ExecutionConsole vs ProgramRunnerUtil + ExecutionEnvironment). The actions can't be split into separate tools without duplicating the descriptor-resolution code in five places.")
+        observation("`mode=coverage` and `mode=profile` exist in the schema enum but currently return INVALID_CONFIGURATION pointing the LLM elsewhere. Acceptable surface area for the schema; could be removed once a profiler tool exists.")
+        observation("Port discovery is the most consequential design decision. Static port parsing was deliberately removed in favor of OS-only discovery — the tool reports nothing rather than reporting a wrong port. The Spring log banners are kept ONLY as readiness signals; the matched port number is intentionally discarded.")
+        observation("Detach-on-ready is what makes 'launch a server, then test it' workflows actually work. Without it, every server dies on session reset.")
+        related("run_command", Relationship.ALTERNATIVE, "Use run_command for ad-hoc shell invocations or commands not bound to a saved IntelliJ run configuration. Loses readiness, ports, idempotency, IDE integration.")
+        related("java_runtime_exec", Relationship.COMPLEMENT, "Java/Kotlin test running and module compilation. Use java_runtime_exec.run_tests instead of trying to run a JUnit/TestNG config via run_config (which is rejected with INVALID_CONFIGURATION).")
+        related("python_runtime_exec", Relationship.COMPLEMENT, "Python pytest running. Same rationale as java_runtime_exec — pytest configs go through python_runtime_exec.")
+        related("coverage", Relationship.COMPOSE_WITH, "Coverage uses the same runner machinery. mode=coverage on run_config currently redirects to coverage.run_with_coverage.")
+        related("debug_step", Relationship.COMPOSE_WITH, "After mode=debug returns DEBUG, debug_step navigates the session (step_over/into/out, run_to_cursor, resume, pause, stop).")
+        related("debug_inspect", Relationship.COMPOSE_WITH, "After mode=debug returns DEBUG and the session is paused, debug_inspect reads variables, evaluates expressions, lists frames.")
+        related("debug_breakpoints", Relationship.COMPOSE_WITH, "Set breakpoints first via debug_breakpoints, then run_config(mode=debug, wait_for_pause=true) to launch and stop at the first hit.")
+        related("runtime_config", Relationship.COMPLEMENT, "Use runtime_config to create/modify run configurations the LLM doesn't have yet, then run them via run_config.")
+        downside("Readiness detection has language and framework limits. http_probe wants a Spring config or explicit ready_url; log_pattern wants Spring banners or explicit_pattern; idle_stdout fires on 2000ms silence and can fire too early on apps that pause output during startup. Non-Spring HTTP services need explicit ready_url.")
+        downside("Port discovery requires lsof / ss / netstat to be available. In stripped containers (Alpine without lsof and ss) port info is silently absent — result has no Listening ports field.")
+        downside("The 17 error categories are documented but not enumerated in the schema. The LLM has to read the message prefix and remember to branch on it — easy to miss DUMB_MODE vs PROCESS_START_FAILED.")
+        downside("`get_test_results` waits up to 600s for a still-running process before giving up. For long-running test suites that's correct, but for the LLM iterating quickly it can stall an iteration boundary.")
+        downside("mode=coverage and mode=profile are enum values that don't actually work — they redirect via INVALID_CONFIGURATION. The LLM occasionally picks them and then has to re-pick.")
+        downside("Detach-on-ready transfers ownership to the IDE, but the IDE doesn't surface 'this was started by the agent' — the user can't tell which Run tabs are agent-started without context. Mostly cosmetic.")
+        narrative("runtime_exec")
+    }
 
     /** Resolve stream callback for live output. */
     private fun resolveStreamCallback(@Suppress("UNUSED_PARAMETER") project: Project): ((String, String) -> Unit)? {
