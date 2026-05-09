@@ -621,3 +621,54 @@ The standalone `send_stdin` and the action have semantically equal operations. F
 - **Three more concrete cleanup items.** The swarm continues to surface real merge candidates: `format_code`+`optimize_imports` (Batch 7), `task_list` redundancy (Batch 6), `send_stdin`↔`background_process` (Batch 10).
 - **Doc length record set:** `background_process` 610 lines for one tool's documentation. The 6-action surface and the merge-with-send_stdin analysis justify it; not padding.
 - **No race this batch (4 in a row since mitigation language landed).**
+
+---
+
+## Batch 11 — 2026-05-09 (runtime cluster)
+
+Tools: `run_command`, `runtime_exec`, `coverage`. The runtime/process tools — heaviest single batch by line count.
+
+### `run_command` — commit `b31289605`
+
+- **Verdict:** STRONG keep.
+- **Lines added:** 408 in `documentation()` + 233 lines narrative MD.
+- **Real role:** the only access to the long-tail CLI surface (git, docker, kubectl, jq, gh, find, …) that no dedicated tool covers.
+
+#### Surprising findings worth flagging
+1. **🚨 Two safety layers in same package, different layers.** `DefaultCommandFilter` (hard-block, runs in `RunCommandTool`) and `CommandSafetyAnalyzer` (risk classification, runs in `AgentLoop`) share the `agent/security/` package but execute at different points. Easy to mistake for redundancy; intentional defense-in-depth. **Worth a code comment.**
+2. **🚨 Approval policy hardcoded `ALWAYS_PER_INVOCATION`.** Other write tools (edit_file, create_file, revert_file) can be allow-listed for-session; `run_command` cannot. Sound trade-off (one-time approval would silently authorize every future command), but worth surfacing — users may try to find a way to disable this.
+3. **🚨 `OutputCollector.processOutputTailBiased` is run_command-specific.** Default tools use 60/40 middle-truncation, but `run_command` uses tail-biased because build/test output has exit summaries and failure traces at the tail. Different tool, different truncation strategy.
+4. **`ProcessEnvironment` reconciles three concerns in one file** — sensitive (35+ stripped), blocked (25 rejected from LLM env), anti-interactive (15 forced overrides). Easy to keep in sync.
+
+### `runtime_exec` — commit `8e61e45709`
+
+- **Verdict:** STRONG keep.
+- **Lines added:** 388 in `documentation()` + 269 lines narrative MD.
+- **Real role:** five actions that all anchor on `RunContentManager` / `ExecutionManager` and share descriptor-resolution code. Splitting would cost ~750 schema tokens every iteration with zero capability gain.
+
+#### Surprising findings worth flagging
+1. **🚨 Static config parsing for ports was deliberately removed on 2026-04-21.** `run_config` uses ONLY OS commands (`lsof` / `ss` / `netstat`) for port discovery. Rationale: run-config overrides (VM options, env vars, profiles, `server.port=0`) make log-scraped or YAML-scraped ports unreliable. **Design principle:** "no info > wrong info."
+2. **🚨 `mode=coverage` and `mode=profile` are dead schema entries.** Both exist in the `mode` enum but currently just redirect via `INVALID_CONFIGURATION`. Schematically harmless but could be removed. **Action item:** drop dead enum values.
+
+### `coverage` — commit `f21e645d21`
+
+- **Verdict:** STRONG keep.
+- **Lines added:** 177 in `documentation()` (2 actions).
+- **Real role:** the only path to branch-coverage + per-method rollups in a single tool result. Multi-method JUnit 5 PATTERNS path turns "cover this class with these three tests" into one round trip.
+
+#### Surprising findings worth flagging
+1. **🚨 Modal-suppression reflects into `com.intellij.coverage.CoverageOptionsProvider.setOptionsToReplace(int)`.** Fragile to Platform refactors — method rename or signature change silently makes the suppression a no-op (rest of the run still works, but the loop hangs on the first dialog). Pinned by source-contract test, but cannot validate the platform's contract.
+2. **🚨 TestNG with 2+ methods is a hard-error path** — no shell fallback because splitting would lose snapshot aggregation.
+
+### Action items surfaced by Batch 11
+
+- [ ] Add code comment in `run_command` source explaining the two-safety-layer split (DefaultCommandFilter vs CommandSafetyAnalyzer) is intentional, not redundant.
+- [ ] Drop `mode=coverage` and `mode=profile` from `runtime_exec`'s `mode` enum — they're dead schema entries that just return `INVALID_CONFIGURATION`.
+- [ ] Add a build-time check pinning `com.intellij.coverage.CoverageOptionsProvider.setOptionsToReplace(int)` signature — current source-contract test only validates our call shape, not the platform method's existence.
+
+### Cross-cutting observations from Batch 11
+
+- **Doc length pattern continues to track surface area.** 408 / 388 / 177 lines for this batch. The first two have narratives totalling 233+269=502 lines — when a tool deserves architectural prose, the swarm is delivering it.
+- **`run_command`'s "no allow-for-session" is the only tool with this constraint.** Worth highlighting in the Compare Tools view (Phase 7) — it's a unique design choice.
+- **Reflection-into-platform-internals is a recurring fragility pattern.** `coverage` reflects into `CoverageOptionsProvider`; `java_runtime_exec` reflects into JUnit 5 `PATTERNS` field. Both are pinned by source-contract tests but neither validates the platform side. Worth a more systematic test pattern.
+- **No race this batch (5 in a row).** Mitigation prompt is now battle-tested.
