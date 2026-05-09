@@ -672,3 +672,49 @@ Tools: `run_command`, `runtime_exec`, `coverage`. The runtime/process tools — 
 - **`run_command`'s "no allow-for-session" is the only tool with this constraint.** Worth highlighting in the Compare Tools view (Phase 7) — it's a unique design choice.
 - **Reflection-into-platform-internals is a recurring fragility pattern.** `coverage` reflects into `CoverageOptionsProvider`; `java_runtime_exec` reflects into JUnit 5 `PATTERNS` field. Both are pinned by source-contract tests but neither validates the platform side. Worth a more systematic test pattern.
 - **No race this batch (5 in a row).** Mitigation prompt is now battle-tested.
+
+---
+
+## Batch 12 — 2026-05-09 (database cluster)
+
+Tools: `db_query`, `db_schema`, `db_list_databases`. Read-mostly database tools.
+
+### `db_query` — commit `5d3a232b9` — STRONG keep, 121 lines
+
+**🚨 SELECT-only enforcement is four-layered defense:**
+1. Prefix allow-list (14 prefixes blocked) — but **first-keyword only**, so `WITH ... INSERT` slips THIS gate
+2. `Connection.isReadOnly = true`
+3. `autoCommit=false` + final `rollback()` in `finally`
+4. `queryTimeout = 30s`
+
+**Surprising findings:** `database` param silently ignored for SQLite/Generic profiles. Cell values truncated at 500 chars — LLM may parse truncated JSON as complete. No prepared statements, so SQL-injection from prompted user data is possible (mitigated to data-exfil only by read-only).
+
+### `db_schema` — commit `b6ab95ddd` — STRONG keep, 98 lines
+
+**Surprising findings:**
+1. **🚨 Level 3 silent empty result** when `(schema, table)` doesn't exist — empty markdown columns table with no error. LLM may misread as "table has no columns".
+2. **🚨 `NULLABLE` parsing reads JDBC column as `String == "1"`** — but spec returns int. Non-conformant driver could mislabel every column NOT NULL.
+3. **System-schema filter has hand-rolled allowlist** with `lower.startsWith("db_")` — user schema named `db_audit` gets silently filtered out.
+4. **FK/index queries wrapped in `runCatching {}`** — silent partial results.
+
+### `db_list_databases` — commit `bbd27d4ad` — KEEP NORMAL with WEAK drop case, 102 lines
+
+**🚨 MERGE_OPPORTUNITY with `db_schema`:** add level 0 ("databases on this server" when profile-is-server-type && schema/database both null) is a natural extension of db_schema's existing 3-level hierarchy.
+
+**🚨 NOT mergeable with `db_list_profiles`** — they look similar but are fundamentally different concerns. Profiles are configured (static config read, no network); databases are discovered at runtime via network query. Merging would force db_list_profiles to become a network-IO tool with all the failure modes that come with it.
+
+### Action items surfaced by Batch 12
+
+- [ ] **🚨 Fix `db_query` prefix-only check** — currently `WITH ... INSERT` could slip past prefix gate, falls back to layered defenses (driver-level + autoCommit + rollback). Tighten the prefix check or document the layered defense as canonical.
+- [ ] Surface explicit error for non-existent `(schema, table)` in `db_schema` instead of silent empty result.
+- [ ] Fix NULLABLE int-vs-String parsing in `db_schema` — use `getInt()` not `getString()`.
+- [ ] Make system-schema filter user-overridable in `db_schema`.
+- [ ] **Merge `db_list_databases` into `db_schema`** as level-0 hierarchy. Saves a schema slot for the common case where profiles pin a single database.
+- [ ] Add prepared-statement support to `db_query` for LLM-constructed queries (defense against SQL-injection from prompted user data).
+- [ ] Increase or surface `db_query` 500-char-per-cell truncation to LLM (current silent truncation can mislead JSON-column reads).
+
+### Cross-cutting observations from Batch 12
+
+- **Every database tool surfaces silent-truncation or silent-error patterns.** Three of three. Worth a unified error-discipline pass on the database family.
+- **Layered defense vs single check.** `db_query` exemplifies "defense in depth where the first layer is incomplete" — typical for security-critical paths but the LLM-facing description should explain the layered model.
+- **Merge candidate count: 4 now** (`format_code`+`optimize_imports`, `task_list`-redundancy, `send_stdin`↔`background_process`, `db_list_databases`↔`db_schema`). Phase 7 cleanup PR backlog is filling out.
