@@ -252,3 +252,69 @@ In a pure-Python project with `PythonProvider` registered but no Java plugin, th
 - **The "verify the bug" instruction in the swarm prompt worked.** All three subagents explicitly confirmed presence/absence with line cites — much more useful than a generic "look for bugs" instruction.
 - **Tool-family clustering pays off.** Reading `find_definition`'s sibling docs gave subagents a concrete reference for tone + structure, accelerating their work. Tighter clusters → faster batches.
 - **The 30-entry cap is a recurring pattern.** It's now showed up in `call_hierarchy` (callers, callees) and `type_hierarchy` (subtypes). Likely also in `find_references`, `find_implementations`. Worth a systematic audit.
+
+---
+
+## Batch 5 — 2026-05-09 (continue PSI audit + broaden)
+
+Tools: `search_code`, `diagnostics`, `find_implementations`. Mixed cluster — heavy-use READ_ONLY content tool, IDE state tool, one more PSI tool to verify the bug pattern.
+
+**Bug verdict (definitive):** the JAVA/kotlin hardcoded fallback is **isolated to `find_definition` + `find_references`**. The other 3 PSI tools surveyed (`call_hierarchy`, `type_hierarchy`, `find_implementations`) all use the correct `allProviders().firstNotNullOfOrNull` pattern. `find_implementations` is now the canonical reference template.
+
+### `search_code` — commit `5bffc24cc`
+
+- **Verdict:** KEEP STRONG.
+- **Lines added:** 155 in `documentation()` (longest doc so far after `edit_file`).
+- **Real role:** the only PSI-free content search; pairs with `glob_files` (paths) and `find_definition`/`find_references` (PSI). Counterfactual `run_command grep -r` is approval-gated per-call, format-divergent across BSD/GNU, bypasses PathValidator, and pollutes results with skip-list noise.
+
+#### Surprising findings worth flagging
+1. **🚨 Invalid regex silently degrades to literal match.** A typo'd pattern auto-falls-back to `Regex.escape(pattern)` literal-match with **no error surfaced to the LLM**. The LLM gets wrong results with no signal that its regex was broken. **Action item:** error on regex compile failure instead of silently degrading; OR include a "regex parse failed; falling back to literal match" line in the result so the LLM knows.
+2. **Per-line matching only.** No multi-line patterns supported. Means cross-line constructs (e.g. function declarations that span lines) can't be matched.
+3. **1MB per-file cap silently skips files.** Generated dumps, large fixtures, minified assets are invisible. **Action item:** surface skipped files in result metadata.
+4. **Walk order is alphabetical, NOT mtime-sorted.** Unlike `glob_files` which mtime-sorts within the cap. Inconsistency between sister tools.
+5. **Undocumented backward-compat aliases.** `query`→`pattern` and `scope`→`path` aliases exist but the LLM never sees them. Either remove or document.
+
+### `diagnostics` — commit `cdf106934`
+
+- **Verdict:** KEEP STRONG.
+- **Lines added:** 64 in `documentation()`.
+- **Real role:** replaces a 30-90s build cycle with sub-second PSI walk returning line-precise issues. Dominant reason edit-then-verify loops finish in seconds.
+
+#### Surprising findings worth flagging
+1. **🚨 `isError=false` semantics is load-bearing across an ENTIRE TOOL FAMILY.** `diagnostics`, `RunInspectionsTool`, `ListQuickFixesTool`, `ProblemViewTool` all share the same contract: `isError=false` means "tool ran successfully, here's the problem list" — NOT "no problems found." LLM may misinterpret. **Action item:** unify the contract (e.g. add a `problemCount` to each result so the LLM doesn't have to interpret `isError`); OR rename the field to make the meaning explicit.
+2. **DumbService blocks during indexing** — returns `isError=true`. LLM should wait, not retry immediately.
+3. **`start_line`/`end_line` must be paired** — silent fallthrough otherwise.
+4. **Unsupported languages return benign "not available" message** — JSON/YAML/Go/TS. LLMs sometimes retry interpreting it as a transient error.
+5. **Phase 7 follow-ups pinned in source:** `column=-1` and `hasQuickFix=false` are placeholders for future enrichment. Documenting these prevents them from being treated as bugs.
+
+### `find_implementations` — commit `72f9294e7`
+
+- **Verdict:** KEEP STRONG.
+- **Lines added:** 57 in `documentation()`.
+- **Real role:** PSI's `OverridingMethodsSearch` + `ClassInheritorsSearch` are the index-backed answers to "who satisfies this contract." No name-based substitute gets close on accuracy or token cost.
+
+#### ✅ Bug pattern absent — uses correct `allProviders` iteration
+
+`FindImplementationsTool.kt:38-59` uses `registry.allProviders()` then `allProviders.firstNotNullOfOrNull { p -> p.findSymbol(project, symbolName)?.let { p to it } }`. Pure-Python works correctly. **This file is now the canonical reference template** for fixing `find_definition` + `find_references`.
+
+#### Surprising findings worth flagging
+1. **40-result hard cap with no pagination.** Same shape as the 30-entry cap pattern in `call_hierarchy` / `type_hierarchy`. Hub interfaces silently truncate.
+2. **Project-only scope excludes JDK / library implementations.** Asking "who implements `Comparable`" returns project classes only, not the standard library. The LLM may not know.
+3. **Python Protocol invisible** — same Python asymmetry as `type_hierarchy`. Duck-typed implementations don't surface.
+4. **Silent element-kind filter** for non-method / non-class targets. Calling on a field or local variable returns empty — no error signal.
+
+### Action items surfaced by Batch 5
+
+- [ ] **🚨 Fix `search_code` silent regex-degrade.** Either error on invalid regex or surface "fell back to literal" in the result.
+- [ ] **🚨 Unify `isError=false` semantics** across the diagnostics tool family (`diagnostics`, `run_inspections`, `list_quickfixes`, `problem_view`). Most impactful API-clarity fix.
+- [ ] Make `search_code` walk order consistent with `glob_files` (either both alphabetical or both mtime-sorted).
+- [ ] Surface skipped files (1MB cap) in `search_code` result metadata.
+- [ ] Remove or document `search_code`'s backward-compat aliases (`query`→`pattern`, `scope`→`path`).
+- [ ] Address the 30/40-entry caps pattern systematically across all PSI hierarchy tools — pagination or truncated-flag.
+- [ ] Document Python Protocol asymmetry in `find_implementations` LLM-facing description (or filter for Python-only projects).
+
+### Cross-cutting observations from Batch 5
+
+- **PSI bug pattern is now closed.** 5 of 5 PSI tools surveyed; 2 have the bug, 3 don't. Single fix PR can close it.
+- **Cross-tool API drift surfaced.** `isError=false` semantics is shared across 4 tools but not documented uniformly. The swarm forces the question.
+- **`search_code`'s 155-line doc shows what mature documentation looks like.** Six commonLLMMistakes, six downsides, full param coverage — uses the DSL to its full extent. Future swarm dispatches for high-complexity tools should expect 100+ lines.
