@@ -407,6 +407,8 @@
             implementation="com.workflow.orchestrator.agent.ui.AgentChatEditorProvider"/>
         <fileEditorProvider
             implementation="com.workflow.orchestrator.agent.testing.ToolTestingEditorProvider"/>
+        <fileEditorProvider
+            implementation="com.workflow.orchestrator.agent.ui.tooldocs.ToolDocsEditorProvider"/>
 
         <!-- Commit Dialog: Jira Time Tracking -->
         <checkinHandlerFactory
@@ -468,6 +470,13 @@
             text="Agent Tool Testing"
             description="Open interactive agent tool testing harness"
             class="com.workflow.orchestrator.agent.testing.OpenToolTestingAction">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action
+            id="Workflow.ViewToolDocumentation"
+            text="View Tool Documentation"
+            description="Browse rich per-tool documentation for documented agent tools"
+            class="com.workflow.orchestrator.agent.ui.tooldocs.OpenToolDocsAction">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
         <action
