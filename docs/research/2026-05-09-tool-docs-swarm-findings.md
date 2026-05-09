@@ -318,3 +318,60 @@ Tools: `search_code`, `diagnostics`, `find_implementations`. Mixed cluster — h
 - **PSI bug pattern is now closed.** 5 of 5 PSI tools surveyed; 2 have the bug, 3 don't. Single fix PR can close it.
 - **Cross-tool API drift surfaced.** `isError=false` semantics is shared across 4 tools but not documented uniformly. The swarm forces the question.
 - **`search_code`'s 155-line doc shows what mature documentation looks like.** Six commonLLMMistakes, six downsides, full param coverage — uses the DSL to its full extent. Future swarm dispatches for high-complexity tools should expect 100+ lines.
+
+---
+
+## Batch 6 — 2026-05-09 (task management cluster)
+
+Tools: `task_create`, `task_update`, `task_list`. Cohesive AGENT_CONTROL cluster — all four task tools share `TaskStore`.
+
+**⚠️ Process incident:** parallel staging race. `task_update` and `task_list` ended up bundled in commit `8339e5e4e` because both subagents staged + committed concurrently to the same working tree. The bundled commit's message only mentions `task_update`, but both DSL blocks landed (verified via `git show --stat`). **Work is not lost.** Future batches should expect this risk; the swarm prompt template should be updated to mitigate (see action items).
+
+### `task_create` — commit `c20759a30`
+
+- **Verdict:** KEEP STRONG.
+- **Lines added:** 57 in `documentation()`.
+- **Real role:** TaskStore is the only durable progress signal that survives `ContextManager` compaction — Stages 1-3 all preserve it and `renderTaskProgressMarkdown()` re-injects current tasks into system-prompt Section 2 on every rebuild.
+
+#### Surprising findings worth flagging
+1. **🚨 `task_create` cannot set DAG edges.** The parameter schema is `subject` / `description` / `activeForm` only — **no `blocks` / `blockedBy`**. Dependency edges only enter via `task_update`'s `addBlocks` / `addBlockedBy` arrays. **Cycle errors are detected on update only, never on create.** My dispatcher prompt was wrong about this; the subagent corrected it.
+2. **🚨 CLAUDE.md status drift.** Project CLAUDE.md TaskStore section lists statuses as `TODO`/`IN_PROGRESS`/`DONE`/`BLOCKED`, but the source `TaskStatus` enum is `pending`/`in_progress`/`completed`/`deleted`. **Action item:** fix CLAUDE.md (this is a recurring class of drift).
+
+### `task_update` — commit `8339e5e4e` (bundled with task_list)
+
+- **Verdict:** KEEP STRONG.
+- **Lines added:** 117 in `documentation()`.
+- **Real role:** without `task_update`, multi-step plans cannot move past `pending` — the LLM either re-creates tasks (DAG churn, dangling `blockedBy` references) or loses progress visibility after compaction.
+
+#### Surprising findings worth flagging
+1. **🚨 NO BLOCKED status exists.** The four legal `TaskStatus` values are `pending` / `in_progress` / `completed` / `deleted`. **Blockage is purely structural** (the `blocks`/`blockedBy` edge graph). The "BLOCKED" status referenced in CLAUDE.md and earlier docs is fictitious.
+2. **🚨 Status changes do NOT propagate.** Completing task A does not auto-unblock anything that listed A in its `blockedBy`. The LLM has to manually walk the graph and update dependents — easy to miss.
+3. **`addBlocks`/`addBlockedBy` are additive only.** No remove or replace API. To break an edge, you have to delete the task and re-create it (which means re-creating downstream edges too).
+4. **DFS cycle check is mid-flight hard fail.** No preview / dry-run mode. Subagent's recommendation: provide a `validate_only` flag.
+
+### `task_list` — commit `8339e5e4e` (bundled with task_update due to race)
+
+- **Verdict:** WEAK keep / NORMAL drop. **The first non-STRONG-keep verdict in the entire swarm.**
+- **Lines added:** 116 in `documentation()`.
+- **Real role:** **questionable** — see findings.
+
+#### Surprising findings worth flagging
+1. **🚨 `task_list` is partially redundant with the system-prompt task render.** `EnvironmentDetailsBuilder.appendTasks` (line 109) injects `# Tasks\n- [id] [status] subject` into every user turn, AND `ContextManager.renderTaskProgressMarkdown` re-renders a checkbox view in Section 2 after every compaction. The LLM sees id+status+subject **three different ways** without ever calling `task_list`.
+2. **`task_list`'s only unique value is the `owner` and `blockedBy` fields.** Every other field is already in the model's context for free.
+3. **🚨 MERGE_OPPORTUNITY:** a 3-line patch to `EnvironmentDetailsBuilder.appendTasks` that appends `(owner: X, blockedBy: 1,2)` when present would render `task_list` functionally redundant. **This is the first concrete drop candidate the swarm has surfaced.**
+4. The tool's hook-exempt status, parameter-free schema, and lack of any filter param all reinforce: it's a pure summary affordance whose purpose has been partially absorbed by the system-prompt render.
+
+### Action items surfaced by Batch 6
+
+- [ ] **🚨 First concrete drop candidate identified — `task_list`.** Patch `EnvironmentDetailsBuilder.appendTasks` to include owner + blockedBy fields, then drop `task_list` from the registry. Saves a tool slot in the LLM's schema budget.
+- [ ] **🚨 Sweep CLAUDE.md for task-system drift** — TaskStatus enum values (TODO/IN_PROGRESS/DONE/BLOCKED ↔ pending/in_progress/completed/deleted), missing BLOCKED status, etc. Combined with the `edit_file.lastEditLineRanges` drift from Batch 3, CLAUDE.md needs an audit pass.
+- [ ] **Implement status-propagation in `task_update`** — completing task A should auto-mark dependents as no-longer-blocked-by-A.
+- [ ] **Add `removeBlocks` / `removeBlockedBy` to `task_update`** — current API is additive only, requiring delete-and-recreate to break an edge.
+- [ ] **Update the swarm prompt template** to mitigate parallel-staging races: either (a) instruct subagents to retry `git commit` if they see "nothing to commit" after their `git add` (suggesting another subagent committed in between), or (b) add a unique tag in commit message that lets us detect bundling, or (c) reduce parallel cap from 3 to 2 to reduce race probability.
+
+### Cross-cutting observations from Batch 6
+
+- **First non-STRONG-keep verdict.** `task_list` (WEAK keep / NORMAL drop) — the swarm is now finding actual drop candidates, which is the original motivation for the entire initiative.
+- **Parallel-staging race is real.** 1 of 6 batches so far has had a bundled commit. Risk grows with parallelism × commit frequency. Tolerable given the work survives in git, but worth mitigating.
+- **CLAUDE.md drift count: 3 instances now.** `edit_file.lastEditLineRanges` (Batch 3), task statuses (Batch 6), missing BLOCKED status (Batch 6). Pattern suggests CLAUDE.md was written aspirationally and then the implementation diverged. **Worth a dedicated audit pass after the swarm completes.**
+- **Subagents push back on the dispatcher prompt when wrong.** `task_create` subagent corrected my "blocks/blockedBy params" claim. Same with `edit_file` subagent on the matcher being whitespace-tolerant. The audit-the-dispatcher dynamic is healthy.
