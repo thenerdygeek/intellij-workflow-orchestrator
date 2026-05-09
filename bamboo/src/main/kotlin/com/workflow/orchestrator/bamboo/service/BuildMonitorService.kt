@@ -15,6 +15,7 @@ import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
+import com.workflow.orchestrator.core.services.BuildLogCache
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.polling.SmartPoller
 import kotlinx.coroutines.CancellationException
@@ -36,6 +37,7 @@ class BuildMonitorService {
     private var _apiClient: BambooApiClient? = null
     private var _eventBus: EventBus? = null
     private var _notificationService: WorkflowNotificationService? = null
+    private var _buildLogCache: BuildLogCache? = null
 
     private val apiClient: BambooApiClient get() = _apiClient ?: run {
         val p = _project!!
@@ -51,6 +53,8 @@ class BuildMonitorService {
     }
 
     private val eventBus: EventBus get() = _eventBus ?: _project!!.getService(EventBus::class.java).also { _eventBus = it }
+    private val buildLogCache: BuildLogCache get() = _buildLogCache
+        ?: BuildLogCache.getInstance(_project!!).also { _buildLogCache = it }
     private val cs: CoroutineScope
     private val notificationService: WorkflowNotificationService? get() {
         if (!_notificationServiceResolved) {
@@ -71,13 +75,15 @@ class BuildMonitorService {
         apiClient: BambooApiClient,
         eventBus: EventBus,
         scope: CoroutineScope,
-        notificationService: WorkflowNotificationService? = null
+        notificationService: WorkflowNotificationService? = null,
+        buildLogCache: BuildLogCache = BuildLogCache()
     ) {
         this._apiClient = apiClient
         this._eventBus = eventBus
         this.cs = scope
         this._notificationService = notificationService
         this._notificationServiceResolved = true
+        this._buildLogCache = buildLogCache
     }
 
     private val _stateFlow = MutableStateFlow<BuildState?>(null)
@@ -211,15 +217,17 @@ class BuildMonitorService {
                     }
                 }
                 log.info("[Bamboo:Monitor] Fetched ${logParts.size}/${keysToFetch.size} job logs for build $planKey-${dto.buildNumber}")
-                eventBus.emit(
-                    WorkflowEvent.BuildLogReady(
-                        planKey = planKey,
-                        buildNumber = dto.buildNumber,
-                        resultKey = resultKey,
-                        status = eventStatus,
-                        logText = logParts.joinToString("\n")
-                    )
+                val logEvent = WorkflowEvent.BuildLogReady(
+                    planKey = planKey,
+                    buildNumber = dto.buildNumber,
+                    resultKey = resultKey,
+                    status = eventStatus,
+                    logText = logParts.joinToString("\n")
                 )
+                // Cache before emit so a subscriber that mounts mid-emit and immediately
+                // queries the cache still sees a value.
+                buildLogCache.put(logEvent)
+                eventBus.emit(logEvent)
             }
 
             previousBuildNumber = dto.buildNumber

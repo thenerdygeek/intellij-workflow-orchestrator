@@ -16,6 +16,7 @@ import com.workflow.orchestrator.automation.service.*
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.services.BambooService
+import com.workflow.orchestrator.core.services.BuildLogCache
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.ui.ComboBoxWidth
 import com.workflow.orchestrator.core.ui.bindBoundedWidth
@@ -324,32 +325,43 @@ class AutomationPanel(
             // Step 3: Load plan variables for the suite (master plan key)
             val varsResult = bambooService.getPlanVariables(currentSuitePlanKey)
 
-            // Step 4: Pull-detect the current docker tag directly from the latest CI
-            // build's log. EventBus uses replay=0 and BuildMonitorService emits
-            // BuildLogReady only once per build (guarded by `lastLogFetchedForBuild`),
-            // so a panel constructed after the first emit never receives it. Fetching
-            // here gives us a definite answer instead of a permanent "Waiting…" state.
+            // Step 4: Resolve the current docker tag for the panel mount.
             //
-            // Branch source: prefer the user's explicit branchCombo selection
-            // (`branch.branchName`) so the pull-detect honors what they picked. The
-            // master entry's branchName is the placeholder "default" — for that case
-            // fall back to the git checkout (matches what `BuildMonitorStartupActivity`
+            // Cache-first (preferred): the Bamboo poller already fetched and cached
+            // the latest BuildLogReady in [BuildLogCache] every time it polled — if
+            // the panel is mounting after that, we reuse the cached log instead of
+            // burning another Bamboo round-trip. Backstops the EventBus replay=0
+            // semantics (a subscriber that joins after the emit otherwise misses it).
+            //
+            // REST fallback: when the cache is cold (e.g. plugin just started, no
+            // poll has fired yet for this plan) we fall back to a direct REST fetch
+            // via [TagBuilderService.detectDockerTag]. Branch source: prefer the
+            // user's explicit branchCombo selection; for the "default" master entry
+            // fall back to the git checkout (matches what BuildMonitorStartupActivity
             // polls with). The 15s timeout guards against a slow Bamboo locking up
-            // the panel at "Loading…"; on timeout we treat the result as null and
-            // the diagnostic banner shows the existing pending state.
+            // the panel at "Loading…".
+            //
+            // Live-update path is independent: [subscribeToBuildEvents] still
+            // overwrites this with whatever the next poll emits.
             val ciPlanKey = resolveServiceCiPlanKey()
             val branchForCi = branch.branchName.takeIf { it.isNotBlank() && it != "default" }
                 ?: runCatching {
                     com.workflow.orchestrator.core.settings.RepoContextResolver
                         .getInstance(project).getPrimaryBranchName()
                 }.getOrNull().orEmpty()
-            val tagDetection: TagDetectionResult? =
-                if (ciPlanKey.isNotBlank() && branchForCi.isNotBlank()) {
+            val cachedLog = if (ciPlanKey.isNotBlank()) {
+                BuildLogCache.getInstance(project).getLatest(ciPlanKey)
+            } else null
+            val tagDetection: TagDetectionResult? = when {
+                cachedLog != null -> tagDetectionFromCachedEvent(cachedLog)
+                ciPlanKey.isNotBlank() && branchForCi.isNotBlank() ->
                     withTimeoutOrNull(15_000L) {
                         tagBuilderService.detectDockerTag(ciPlanKey, branchForCi)
                     }
-                } else null
-            log.info("[Automation:UI] Direct tag detection: ciPlan='$ciPlanKey', branch='$branchForCi', " +
+                else -> null
+            }
+            log.info("[Automation:UI] Tag detection: ciPlan='$ciPlanKey', branch='$branchForCi', " +
+                "source=${if (cachedLog != null) "cache" else "rest"}, " +
                 "detected=${tagDetection?.detected}, tag=${tagDetection?.tag}, reason=${tagDetection?.reason}")
 
             val dockerTagKey = resolveDockerTagKey()
@@ -509,22 +521,7 @@ class AutomationPanel(
 
         log.info("[Automation:UI] BuildLogReady received: ${event.resultKey}, status=${event.status}")
 
-        val tagDetection = when (event.status) {
-            WorkflowEvent.BuildEventStatus.FAILED ->
-                TagDetectionResult.buildFailed(event.planKey, event.buildNumber)
-            WorkflowEvent.BuildEventStatus.SUCCESS -> {
-                if (event.logText.isEmpty()) {
-                    TagDetectionResult.logFetchFailed(event.resultKey)
-                } else {
-                    val tag = tagBuilderService.extractDockerTagFromLog(event.logText)
-                    if (tag != null) {
-                        TagDetectionResult.success(tag, event.resultKey)
-                    } else {
-                        TagDetectionResult.noTagInLog(event.resultKey)
-                    }
-                }
-            }
-        }
+        val tagDetection = tagDetectionFromCachedEvent(event)
 
         log.info("[Automation:UI] Docker tag detection from event: detected=${tagDetection.detected}, tag=${tagDetection.tag}, reason=${tagDetection.reason}")
 
@@ -552,6 +549,26 @@ class AutomationPanel(
             updateDockerTagBanner(tagDetection)
         }
     }
+
+    /**
+     * Converts a [WorkflowEvent.BuildLogReady] (live or cached) into a
+     * [TagDetectionResult] using the same regex pipeline the live-event handler
+     * uses. Pure function — no I/O.
+     */
+    private fun tagDetectionFromCachedEvent(event: WorkflowEvent.BuildLogReady): TagDetectionResult =
+        when (event.status) {
+            WorkflowEvent.BuildEventStatus.FAILED ->
+                TagDetectionResult.buildFailed(event.planKey, event.buildNumber)
+            WorkflowEvent.BuildEventStatus.SUCCESS -> {
+                if (event.logText.isEmpty()) {
+                    TagDetectionResult.logFetchFailed(event.resultKey)
+                } else {
+                    val tag = tagBuilderService.extractDockerTagFromLog(event.logText)
+                    if (tag != null) TagDetectionResult.success(tag, event.resultKey)
+                    else TagDetectionResult.noTagInLog(event.resultKey)
+                }
+            }
+        }
 
     /** Updates only the docker tag portion of the diagnostic banner. */
     private fun updateDockerTagBanner(tagDetection: TagDetectionResult) {

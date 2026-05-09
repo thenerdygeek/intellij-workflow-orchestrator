@@ -11,6 +11,7 @@ import com.workflow.orchestrator.bamboo.model.BuildStatus
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.services.BuildLogCache
 import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -23,6 +24,7 @@ class BuildMonitorServiceTest {
 
     private val apiClient = mockk<BambooApiClient>()
     private val eventBus = EventBus()
+    private val buildLogCache = BuildLogCache()
 
     private fun makeResult(state: String, lifeCycle: String, buildNumber: Int = 42): BambooResultDto {
         return BambooResultDto(
@@ -323,6 +325,28 @@ class BuildMonitorServiceTest {
 
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    @Test
+    fun `pollOnce caches BuildLogReady in BuildLogCache for late-subscribing readers`() = runTest {
+        // Backstop for EventBus replay=0: panels that mount AFTER the poll fires
+        // (Automation tab opened cold) must still be able to read the latest log.
+        val result = makeResult("Successful", "Finished")
+        coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(result)
+        mockJobLogs(
+            job1Log = ApiResult.Success("Compiling..."),
+            job2Log = ApiResult.Success("Unique Docker Tag : my-tag-123")
+        )
+
+        val service = BuildMonitorService(apiClient, eventBus, this, buildLogCache = buildLogCache)
+        service.pollOnce("PROJ-BUILD", "main")
+
+        val cached = buildLogCache.getLatest("PROJ-BUILD")
+        assertNotNull(cached)
+        assertEquals("PROJ-BUILD", cached!!.planKey)
+        assertEquals(42, cached.buildNumber)
+        assertEquals(WorkflowEvent.BuildEventStatus.SUCCESS, cached.status)
+        assertTrue(cached.logText.contains("Unique Docker Tag : my-tag-123"))
     }
 
     @Test
