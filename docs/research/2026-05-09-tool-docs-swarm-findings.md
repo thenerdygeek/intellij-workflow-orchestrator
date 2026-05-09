@@ -375,3 +375,73 @@ Tools: `task_create`, `task_update`, `task_list`. Cohesive AGENT_CONTROL cluster
 - **Parallel-staging race is real.** 1 of 6 batches so far has had a bundled commit. Risk grows with parallelism × commit frequency. Tolerable given the work survives in git, but worth mitigating.
 - **CLAUDE.md drift count: 3 instances now.** `edit_file.lastEditLineRanges` (Batch 3), task statuses (Batch 6), missing BLOCKED status (Batch 6). Pattern suggests CLAUDE.md was written aspirationally and then the implementation diverged. **Worth a dedicated audit pass after the swarm completes.**
 - **Subagents push back on the dispatcher prompt when wrong.** `task_create` subagent corrected my "blocks/blockedBy params" claim. Same with `edit_file` subagent on the matcher being whitespace-tolerant. The audit-the-dispatcher dynamic is healthy.
+
+---
+
+## Batch 7 — 2026-05-09 (FILE_WRITE IDE + task_get)
+
+Tools: `format_code`, `optimize_imports`, `task_get`. Two near-twin IDE write tools + the last of the task family.
+No parallel-staging race this batch (mitigation prompt language seems to have helped, or just luck).
+
+### `format_code` — commit `e9c011e1`
+
+- **Verdict:** KEEP NORMAL.
+- **Lines added:** 63 in `documentation()`.
+- **Real role:** counterfactual is materially worse — approval-gated `spotlessApply`/`prettier` shell-outs with whole-project blast radius, plus error-prone hand-formatting in `edit_file`.
+
+### `optimize_imports` — commit `36f214c58`
+
+- **Verdict:** KEEP NORMAL.
+- **Lines added:** 78 in `documentation()`.
+- **Real role:** hand-rolled import management via `edit_file` is one of the highest-failure-rate operations in agentic coding (multi-line whitespace, project import-grouping rules, conflict resolution between same-named classes the IDE knows about).
+
+#### 🚨 Strongest MERGE_OPPORTUNITY surfaced so far
+
+`format_code` and `optimize_imports` are near-twins. They share ~80% scaffolding:
+- Both take exactly one parameter (`path`)
+- Both gate on `DumbService.isDumb(project)` with identical error semantics
+- Both run inside `withContext(Dispatchers.EDT) { WriteCommandAction.runWriteCommandAction(...) }`
+- Both implement no-op detection by comparing `textBefore == textAfter`
+- Both return identical `ToolResult` shapes (`artifacts = listOf(path)`, same token estimate)
+- Both belong to `WRITE_TOOLS` in `AgentLoop` and `CODER` worker only
+- **The dispatch difference is one line:** `optimizer.processFile(psiFile).run()` vs `CodeStyleManager.getInstance(project).reformat(psiFile)`
+
+**Action item:** unify into `transform(path, kind: imports|format|both)`. Halves schema cost (~50 tokens × 2). Lets LLM combine post-`edit_file` cleanup chain into one tool call. Trade-off (separate tools make LLM intent self-documenting in traces) is preserved by the `kind` parameter.
+
+This is the **second concrete merge candidate** the swarm has surfaced — first was `task_list` (drop) in Batch 6.
+
+#### Surprising findings (`optimize_imports`)
+1. **DumbService check is load-bearing.** Without it, removing "unused" imports during indexing could remove imports the IDE just hasn't resolved yet — silent data loss.
+2. **Side-effect imports get dropped.** Scala implicits, TS reflect-metadata, anything imported only for side effects (e.g. registering a parser) — the optimizer treats as unused. Worth a `commonLLMMistakes` entry in any project that uses these patterns.
+
+### `task_get` — commit `7451af529`
+
+- **Verdict:** STRONG keep.
+- **Lines added:** 165 in `documentation()` (longest doc in the swarm so far).
+- **Real role:** the **only** path to a task's `description`, `blocks` (downstream dependents), `activeForm`, `owner`, and timestamps.
+
+#### Direct contrast with `task_list` — `task_get` is NOT redundant
+
+`EnvironmentDetailsBuilder.appendTasks` (lines 109-124, format `"- [${t.id}] [$status] ${t.subject}"`) emits **only** `id + status + subject`. It deliberately omits:
+- `description` (the full body the LLM wrote at task_create time)
+- `blocks` (downstream dependents — `task_list` only carries `blockedBy`)
+- `activeForm`
+- `owner`
+- timestamps
+
+Inlining full descriptions into Section 2 would balloon every prompt rebuild linearly with task count — defeating the per-turn render's purpose. **An on-demand fetch is the right shape.** The `task_list` redundancy doesn't apply here.
+
+#### Other findings
+- Param naming inconsistency: `taskId` here vs `id` on `task_update`. Low-priority cosmetic, logged as `removableParam` audit note.
+
+### Action items surfaced by Batch 7
+
+- [ ] **🚨 Merge `format_code` + `optimize_imports` into `transform(path, kind: imports|format|both)`** — the dispatch difference is literally one line; sharing the rest is pure overhead. Halves schema cost.
+- [ ] Document Scala implicits / TS reflect-metadata side-effect-import gotcha in `optimize_imports` LLM-facing description (or filter for those project shapes).
+- [ ] Rename `task_get`'s `taskId` param to `id` for consistency with `task_update`.
+
+### Cross-cutting observations from Batch 7
+
+- **Two concrete cleanup PRs surfaced now:** drop `task_list` (Batch 6) + merge `format_code`/`optimize_imports` (Batch 7). Phase 7's Compare Tools view will need both to be acted on before publishing.
+- **No race this batch.** Race mitigation language in the dispatch prompt seems to have helped — or it was probabilistic noise. Will keep the language in future batches.
+- **Doc length distribution is widening.** 63 / 78 / 165 lines for this batch. The 165-line `task_get` is heavier than expected — the subagent leaned into the contrast-with-task_list framing, which produced a lot of useful prose. Worth keeping that pattern.
