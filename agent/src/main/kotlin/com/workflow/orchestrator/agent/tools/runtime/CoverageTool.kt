@@ -27,6 +27,11 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolOutputConfig
 import com.workflow.orchestrator.agent.tools.TestConsoleUtils
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.docs.Relationship
+import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
+import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
+import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
+import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import com.workflow.orchestrator.agent.util.ReflectionUtils
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -123,6 +128,184 @@ Actions and their parameters:
     /** Diagnostic info from the last extraction attempt — included in error responses. */
     @Volatile
     internal var lastExtractionDiag: String? = null
+
+    override fun documentation(): ToolDocumentation = toolDoc("coverage") {
+        summary {
+            technical("Two-action wrapper around IntelliJ's Coverage executor: `run_with_coverage` launches a JUnit/TestNG test (via reflective JUnit 5 PATTERNS for multi-method runs) under the Coverage runner and harvests the resulting ProjectData via `CoverageDataManager` reflection — line hits, jump branches, switch cases, and per-method rollups; `get_file_coverage` re-reads that cached snapshot for one class without rerunning. All run paths route through `RunInvocation` for leak-free disposal and reflectively flip `CoverageOptionsProvider.setOptionsToReplace(int)` to suppress the IDE's replace-or-append dialog before launch (restored in `finally`).")
+            plain("Like clicking IntelliJ's 'Run with Coverage' button and then reading the green/red gutter — but as data the agent can reason about. Tells the LLM exactly which lines, branches, and methods were exercised by a test, so it can write tests that actually cover the code instead of guessing.")
+        }
+        whatLLMSees(description)
+        sideEffect(SideEffectKind.PROCESS_SPAWN)
+        counterfactual(
+            "Without `coverage`, the LLM runs tests via `java_runtime_exec(action=run_tests)` and never sees coverage data — at best it knows the tests passed. To get coverage the user has to manually run `mvn jacoco:report` (or the Gradle equivalent), open `build/reports/jacoco/test/html/index.html`, and copy-paste the missing lines back into chat. That round-trip turns a 1-tool-call workflow into a 5-message back-and-forth, and the LLM still ends up reasoning over rendered HTML instead of structured per-line data."
+        )
+        llmMistake("Runs `run_with_coverage` with `method=testFoo` (a single method) and concludes 'low coverage' from the sparse snapshot — single-method runs only cover the lines reachable from that one test, not the whole class. Mitigation: omit `method` to cover the class, or list multiple methods comma-separated.")
+        llmMistake("Calls `run_with_coverage` on a TestNG class with `method='testA,testB'` — returns a hard 'config creation failed' error because TestNG has no JUnit 5 PATTERNS equivalent and the tool refuses to split (splitting would lose the merged snapshot). LLM must either pick a single method or switch to JUnit.")
+        llmMistake("Skips `on_existing_suite` and the IDE pops the 'replace or append coverage suite?' modal mid-run — the agent loop hangs waiting for a click that will never come. The default policy is now `replace`, but LLMs that explicitly pass `on_existing_suite='ask'` re-introduce the freeze.")
+        llmMistake("Calls `get_file_coverage` before `run_with_coverage` and gets 'No coverage data available' — the snapshot is in-memory only, populated by the most recent run. There is no persistence across plugin restarts.")
+        llmMistake("Passes a file path with extension (`MyService.java`) to `get_file_coverage` and assumes the tool re-reads disk; in fact it matches against fully-qualified class names harvested from the snapshot — falls back to suffix match on simple class name, but the LLM sometimes tries paths like `src/main/java/...` that don't resolve.")
+        flowchart("""
+            flowchart TD
+                A[LLM wants coverage] --> B{First call?}
+                B -- yes --> C[run_with_coverage]
+                B -- already ran --> D[get_file_coverage]
+                C --> E[applyCoverageOptionProviderPolicy<br/>flip dialog policy via reflection]
+                E --> F[RunInvocation.attachListener<br/>build env + Coverage executor]
+                F --> G[Test process runs]
+                G --> H[CoverageSuiteListener.coverageDataCalculated<br/>or fallback poll]
+                H --> I[extractCoverageSnapshot<br/>reflective ProjectData walk]
+                I --> J[Cache as lastSnapshot]
+                J --> K[Format summary + return]
+                K --> Z[finally:<br/>restore policy + Disposer.dispose]
+                D --> M{lastSnapshot present?}
+                M -- yes --> N[Look up by FQ class name]
+                M -- no --> O[Try extractCoverageSnapshot one more time]
+                N --> P[formatFileCoverageDetail]
+                O -- still empty --> Q[Return 'No coverage data' error]
+                O -- found --> P
+        """)
+        actions {
+            action("run_with_coverage") {
+                description {
+                    technical("Builds a transient JUnit/TestNG run config (class mode for 0 methods, method mode for 1, JUnit 5 PATTERNS mode for 2+), launches it via `ProgramRunnerUtil.executeConfigurationAsync` with the Coverage executor, suspends until `TestResultsViewer.onTestingFinished` (or `processTerminated` fallback), then extracts a `CoverageSnapshot` via reflection over `CoverageDataManager` → suite bundle → `ProjectData.getClasses`. Per-line hits, FULL/PARTIAL/NONE status, jump branches, switch cases, and per-method rollups all returned. Suppresses the replace-or-append modal via `CoverageOptionsProvider.setOptionsToReplace(int)` and restores the user's saved policy in `finally`.")
+                    plain("'Run this test (or this whole class) and tell me what got covered.' The agent gets back both the test result (passed/failed) and a coverage report keyed by class — line %, branch %, plus a list of every uncovered or partially-covered line with method names. Multi-method runs are merged into one snapshot — useful for 'cover this class with these three tests'.")
+                }
+                whenLLMUses("After writing or modifying tests, when the LLM wants to verify it actually exercises the new code paths — or when asked 'what's the coverage of class X?'")
+                params {
+                    required("test_class", "string") {
+                        llmSeesIt("Fully qualified test class name — for run_with_coverage")
+                        humanReadable("Which test class to run, by full name (`com.example.MyServiceTest`).")
+                        whenPresent("The class is resolved via `JavaPsiFacade`; if found, the run config targets it.")
+                        constraint("must be resolvable in the project's `GlobalSearchScope`")
+                        example("com.example.OrderServiceTest")
+                        example("com.acme.payment.PaymentProcessorTest")
+                    }
+                    optional("method", "string") {
+                        llmSeesIt("Test method name(s) — for run_with_coverage. Single: 'testFoo'. Multiple methods from the same class in one coverage run: 'testFoo,testBar,testBaz' (comma-separated, whitespace around commas trimmed). Requires JUnit 5 — TestNG multi-method returns a hard error (coverage aggregates only within one run; splitting would lose the merged snapshot).")
+                        humanReadable("Run only specific test method(s) instead of the whole class — comma-separated for batch. Whitespace around commas is fine.")
+                        whenPresent("Methods are validated against `METHOD_NAME_REGEX`; 1 method → method-mode config, 2+ methods → JUnit 5 `bePatternConfiguration` setPatterns reflection (TestNG rejected with 'config creation failed').")
+                        whenAbsent("Whole class is run.")
+                        constraint("each name must match the Java identifier regex — no spaces, no '#', no '.', no ';'")
+                        constraint("max 50 methods per run (MAX_METHODS_PER_RUN)")
+                        constraint("TestNG + 2+ methods is rejected (no shell fallback — splitting loses snapshot aggregation)")
+                        example("testCreateOrder")
+                        example("testCreateOrder,testCancelOrder,testRefund")
+                    }
+                    optional("timeout", "integer") {
+                        llmSeesIt("Seconds before test process is killed (default: 300, max: 900) — for run_with_coverage")
+                        humanReadable("How long to wait for the test process before giving up. Coverage runs are slower than plain test runs.")
+                        whenPresent("`timeoutSeconds` is coerced to [1, 900]; the suspendable launch is wrapped in `withTimeoutOrNull(timeoutSeconds * 1000)`.")
+                        whenAbsent("Defaults to 300s (5 minutes).")
+                        constraint("clamped to 1..900")
+                        example("60")
+                        example("600")
+                    }
+                    optional("on_existing_suite", "string") {
+                        llmSeesIt("What to do when a previous coverage suite is already active — for run_with_coverage. 'replace' (default): silently swap in the new run's data — fresh measurement. 'append' / 'add' / 'merge': merge into existing suite — use for incremental coverage across many classes. 'ignore': silently discard the new run's data. 'ask': surface IntelliJ's native merge dialog (will block the agent until the user clicks). Default 'replace' prevents the merge dialog from freezing the agent loop.")
+                        humanReadable("Which IntelliJ policy to use when there's already coverage data from a prior run. The IDE normally pops a 'replace or append' modal — this param suppresses it.")
+                        whenPresent("Maps to REPLACE_SUITE=0 / ADD_SUITE=1 / IGNORE_SUITE=2 — applied via `CoverageOptionsProvider.setOptionsToReplace(int)` reflection. Prior value snapshotted and restored in `finally` (success / exception / timeout / cancel — all paths).")
+                        whenAbsent("Defaults to 'replace' — the safest default for an LLM-driven loop. NOT 'ask', because that re-introduces the modal freeze.")
+                        constraint("'ask' will block the agent loop on the IDE modal — only use when a human is actively watching")
+                        constraint("unknown values silently fall back to 'replace' (defense against LLM typos)")
+                        enumValue("replace", "append", "ignore", "ask")
+                        example("replace")
+                        example("append")
+                    }
+                }
+                rejectsParam("file_path", "Only `get_file_coverage` reads `file_path` — `run_with_coverage` ignores it.")
+                precondition("Coverage plugin must be enabled — `ExecutorRegistry.getExecutorById(\"Coverage\")` must resolve")
+                precondition("project must be out of dumb mode (`waitForSmartModeOrTimeout` 60s ceiling) — a recent `run_command` may have triggered reindexing")
+                precondition("`test_class` must resolve via JavaPsiFacade in `GlobalSearchScope.projectScope`")
+                onSuccess("Returns a 2-section text result: first the test outcome (PASSED/FAILED/NO_TESTS_FOUND with stack traces if any — same classifier as `java_runtime_exec`), then a coverage block listing every covered file with line % and branch %, sorted by line coverage ascending. The summary line includes file count: `5 tests passed | 3 files covered`. The full snapshot is also cached in `lastSnapshot` for subsequent `get_file_coverage` calls.")
+                onFailure("DUMB_MODE — indexing did not complete within 60s", "Returns DUMB_MODE error; the LLM should wait or re-trigger after VFS settles.")
+                onFailure("missing test_class param", "Returns 'test_class parameter is required' validation error.")
+                onFailure("invalid method name (spaces, '#', '.', ';')", "Returns 'invalid method name' error pointing at the offending name.")
+                onFailure("too many methods (>50)", "Returns 'too many methods' error suggesting the LLM split into multiple calls.")
+                onFailure("TestNG with 2+ methods", "createJUnitRunSettings returns null → tool returns 'config creation failed' with a hint that multi-method coverage requires JUnit 5. NO shell fallback (would lose snapshot aggregation).")
+                onFailure("Coverage executor not registered (plugin disabled)", "Returns 'Coverage executor not available. Ensure the Coverage plugin is enabled.'")
+                onFailure("test process build failure (BUILD FAILED before run)", "ExecutionListener.processNotStarted fires → tool returns 'BUILD FAILED — coverage run did not start' with `isError=true`.")
+                onFailure("timeout", "Returns `[TIMEOUT] Coverage run timed out after Ns`; the outer `finally` disposes the invocation (kills handler, removes descriptor, restores policy).")
+                onFailure("snapshot extraction returned no data", "Test result still returned, but coverage section reads 'No coverage data available' with extraction diagnostics. The IDE's coverage tab may still show data — `get_file_coverage` can re-read.")
+                example("cover whole class") {
+                    param("action", "run_with_coverage")
+                    param("test_class", "com.example.OrderServiceTest")
+                    outcome("Whole class runs under coverage; tool returns test outcome + line/branch % for every class touched. `lastSnapshot` is populated for follow-up `get_file_coverage` calls.")
+                }
+                example("multi-method JUnit 5 batch") {
+                    param("action", "run_with_coverage")
+                    param("test_class", "com.example.OrderServiceTest")
+                    param("method", "testCreateOrder, testCancelOrder, testRefund")
+                    outcome("All three methods run in one coverage session via JUnit 5 PATTERNS; one merged snapshot returned. Useful when the LLM wants 'these three tests, together, cover what?'.")
+                    notes("Whitespace around commas is trimmed. TestNG multi-method would return a hard error here.")
+                }
+                example("incremental coverage across multiple classes") {
+                    param("action", "run_with_coverage")
+                    param("test_class", "com.example.PaymentServiceTest")
+                    param("on_existing_suite", "append")
+                    outcome("New run merges into the prior suite — useful for building a cumulative picture across many test classes. The IDE's coverage tab now shows the union.")
+                }
+                verdict {
+                    keep("Single-call replacement for: build run config + launch under Coverage + parse JaCoCo XML + diff against source. Nothing else exposes branch coverage and per-method rollups in a single tool result.", VerdictSeverity.STRONG)
+                }
+            }
+            action("get_file_coverage") {
+                description {
+                    technical("Re-reads the in-memory `lastSnapshot` (or one-shot `extractCoverageSnapshot` retry) for a single class. Matches input by exact FQ class name, then PSI-resolved class name (resolves a relative source path → FQ name via `LocalFileSystem` + `PsiJavaFile`), then suffix match on simple class name. Returns the same `formatFileCoverageDetail` block as `run_with_coverage` but for one class only — with FULL/PARTIAL/NONE per-line lists, jump/switch branch detail, and per-method rollups. No process spawn.")
+                    plain("'I already ran coverage — show me just the missing lines for this one file.' Avoids paying for a full test rerun when the agent only needs to see uncovered branches in one class. Cheap.")
+                }
+                whenLLMUses("After a `run_with_coverage` call, when the LLM wants to drill into a specific class to find uncovered branches and methods to write follow-up tests for.")
+                params {
+                    required("file_path", "string") {
+                        llmSeesIt("File path (e.g. 'src/main/java/com/example/ServiceImpl.java') or fully qualified class name (e.g. 'com.example.ServiceImpl') — for get_file_coverage")
+                        humanReadable("Either a relative source path or a class FQN. The tool tries both.")
+                        whenPresent("Resolved via three-step lookup: exact match on snapshot keys → PSI-resolved FQ name from path → suffix match on simple class name.")
+                        constraint("must reference a class that was instrumented during the most recent `run_with_coverage` call")
+                        example("com.example.OrderService")
+                        example("src/main/java/com/example/OrderService.java")
+                        example("OrderService.kt")
+                    }
+                }
+                rejectsParam("test_class", "Only `run_with_coverage` reads `test_class` — `get_file_coverage` operates on the cached snapshot.")
+                rejectsParam("method", "Only `run_with_coverage` reads `method`.")
+                rejectsParam("timeout", "`get_file_coverage` does not spawn a process — no timeout needed.")
+                rejectsParam("on_existing_suite", "Only `run_with_coverage` flips the IDE's suite policy.")
+                precondition("a `run_with_coverage` call must have populated `lastSnapshot`, OR the IDE's CoverageDataManager must still hold a current suites bundle from a prior IDE-side run")
+                onSuccess("Returns `=== ClassName ===` block with line %, branch %, uncovered/partial methods (sorted by lowest coverage first), and individual line entries for every PARTIAL or NONE line. Consecutive NONE lines with no branches and the same method are range-collapsed (`lines 43–45 [NONE]`). Capped at 50 line entries with overflow note.")
+                onFailure("missing file_path param", "Returns 'file_path parameter is required' validation error.")
+                onFailure("no snapshot cached and CoverageDataManager has no current suite", "Returns 'No coverage data available. Run run_with_coverage first.' with extraction diagnostics.")
+                onFailure("class not found in snapshot", "Returns 'No coverage data found for X' along with the resolved FQ class name (if any) and the full list of available class keys, so the LLM can pick the right name.")
+                example("drill into a specific class after a class-wide run") {
+                    param("action", "get_file_coverage")
+                    param("file_path", "com.example.OrderService")
+                    outcome("Returns full per-line detail for `OrderService` — every uncovered line with its method, every partial branch (`if[0] → true=3, false=0`), every uncovered method. No new test process spawned.")
+                }
+                example("path-based lookup") {
+                    param("action", "get_file_coverage")
+                    param("file_path", "src/main/java/com/example/OrderService.java")
+                    outcome("PSI resolves the path to `com.example.OrderService` and looks up the snapshot — returns the same detail as the FQN form.")
+                }
+                verdict {
+                    keep("Cheap follow-up to `run_with_coverage` — no process spawn, no compile, just a Map lookup + format. Required to avoid expensive reruns when the LLM iterates on test gaps.", VerdictSeverity.STRONG)
+                }
+            }
+        }
+        verdict {
+            keep("Two actions consolidate launch+harvest and re-read of the IDE's coverage data into a single tool. The LLM gets structured per-line/per-branch/per-method coverage that no shell command can replicate (mvn jacoco:report → HTML → manual parse) in one round trip. Multi-method JUnit 5 PATTERNS support is a real productivity win for 'cover this class with these tests' workflows.", VerdictSeverity.STRONG)
+        }
+        observation("`run_with_coverage` and `get_file_coverage` are bound by a single-tool cache (`lastSnapshot`, `@Volatile`). Tool instances are session-scoped; cross-session coverage is invisible to `get_file_coverage` unless the IDE's `CoverageDataManager` still holds a current suite. Worth flagging in the description.")
+        observation("Reflection into `com.intellij.coverage.CoverageOptionsProvider.setOptionsToReplace(int)` is fragile — IntelliJ Platform refactors the Coverage plugin every few releases. The apply-then-restore pattern is pinned by `apply and restore calls are balanced and restore lives in finally` source-contract test, but a method rename or signature change will silently make the modal-suppression a no-op (the rest of the run still works — the loop just hangs on the first dialog). Re-validate on every Platform bump.")
+        observation("`run_with_coverage` returns the test outcome AND the coverage block in one `ToolResult`. There is no way to suppress the test stdout — high-output tests will exercise the spill path (`ToolOutputConfig.COMMAND` cap=100K) and the LLM will read the spill file via `read_file`.")
+        related("java_runtime_exec", Relationship.ALTERNATIVE, "Use `java_runtime_exec(action=run_tests)` when the LLM only cares about pass/fail and does NOT need coverage data — same multi-method JUnit 5 PATTERNS support, but no instrumentation overhead, no IDE Coverage plugin requirement.")
+        related("python_runtime_exec", Relationship.ALTERNATIVE, "Same role for Python projects — `coverage.py` integration goes through pytest, not this tool. CoverageTool is Java/Kotlin/Groovy only (PSI lookup is JavaPsiFacade).")
+        related("runtime_exec", Relationship.COMPLEMENT, "Use `runtime_exec(action=get_test_results)` to re-read structured test outcomes from a previous coverage run without a fresh process — pairs with `get_file_coverage` for low-cost iteration.")
+        related("read_file", Relationship.COMPOSE_WITH, "After `get_file_coverage` reports uncovered lines `42–45`, the LLM typically follows with `read_file` on the source to see what those lines actually do — then writes a test.")
+        downside("IntelliJ-IDEA-only — the Coverage executor is a JetBrains platform plugin, and the reflective `CoverageDataManager` / `ProjectData` extraction path is JVM-coverage specific. PyCharm's pytest-cov is a different runner; this tool will return 'no coverage data' for Python projects.")
+        downside("Reflection into `CoverageOptionsProvider.setOptionsToReplace(int)` is fragile to platform-version changes. If the API renames/disappears, the modal-suppression silently no-ops and the agent loop will hang on the dialog. Source-contract test pins the call site shape but cannot validate the platform's contract.")
+        downside("Snapshot aggregation only works within a single `run_with_coverage` call — multi-method runs aggregate, but two separate runs do not (unless `on_existing_suite=append` is used, which relies on IntelliJ's internal merge logic).")
+        downside("TestNG with 2+ methods is a hard error with no shell fallback. The LLM occasionally hits this and has to either pick a single method or migrate the test class to JUnit 5.")
+        downside("`lastSnapshot` is in-memory only — restarting the plugin/IDE wipes it. `get_file_coverage` will retry one extraction from the live `CoverageDataManager` but cannot recover snapshots from killed sessions.")
+        downside("Heavy output — full coverage detail for a large class can run hundreds of lines (uncovered lines + branch detail). Mitigated by `MAX_UNCOVERED_ENTRIES=50` cap and `ToolOutputConfig.COMMAND` (100K) spill, but still costly to context.")
+    }
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         coroutineContext.ensureActive()
