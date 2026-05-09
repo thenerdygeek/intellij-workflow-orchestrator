@@ -492,3 +492,68 @@ Tools: `plan_mode_respond`, `enable_plan_mode`, `use_skill`. All AGENT_CONTROL.
 
 - **No race this batch (2 in a row).** Race mitigation in dispatch prompt is helping.
 - **Two more tools surfacing schema design gaps** — `use_skill` lacks the `arguments` param the substitution machinery expects; `plan_mode_respond` has loose boolean coercion. These are the kind of issues only per-tool documentation review surfaces.
+
+---
+
+## Batch 9 — 2026-05-09 (sub-agent / handoff cluster)
+
+Tools: `task_report`, `new_task`, `agent` (SpawnAgentTool). Three architectural-control tools — easily the heaviest batch by line count.
+
+### `task_report` — commit `f6dbad6f5`
+
+- **Verdict:** STRONG keep.
+- **Lines added:** 99 in `documentation()`.
+- **Real role:** the architectural mirror of `attempt_completion` at the sub-agent boundary. Without it, every sub-agent round-trip terminates with free-form text the parent must parse, collapsing the value of spawn-and-await delegation.
+
+#### Surprising findings worth flagging
+1. **🚨 Schema-level under-enforcement.** Only `summary` is required; `findings`/`files`/`next_steps`/`issues` are all optional. **The "structured report" contract is intent-only**, enforced solely by the persona prompt footer (`COMPLETING_YOUR_TASK_SECTION`). A sub-agent emitting `summary: "done"` and nothing else terminates cleanly — the **most common failure mode**. **Action item:** make `findings` required (or at least `findings || issues` required).
+2. **🚨 Silent `attempt_completion` → `task_report` substitution.** `SpawnAgentTool.resolveConfigToolsTiered` filters `attempt_completion` out of `config.tools` and injects `task_report` with no log warning. Persona-YAML authors cannot tell from the file alone what completion tool the sub-agent actually has. **Action item:** log a warning when this substitution happens.
+
+### `new_task` — commit `12b4a1abb`
+
+- **Verdict:** NORMAL keep with real WEAK drop case.
+- **Lines added:** 139 in `documentation()` + 183 lines narrative MD.
+- **Real role:** clean handoff with focused brief vs ContextManager's degrade-to-summary-of-summaries. The implementation is ~100 lines but the niche is narrow.
+
+#### Surprising findings worth flagging
+1. **🚨 Naming collision is THE biggest source of LLM mistakes.** `task_create` adds an in-session Kanban card; `new_task` ENDS the session and starts a fresh one. **Same name root, opposite scope.** The Cline-faithful description ("Request to create a new task with preloaded context...") reinforces the confusion. **Action item:** add "NOT for adding a TODO item" to the LLM-facing description.
+2. **`new_task` vs `agent` differentiation is real.** `agent` spawns a worker; orchestrator stays alive and receives `task_report`. `new_task` ENDS the orchestrator — fresh session IS the new orchestrator. Heuristic: same agent continues → `new_task`; different agent reports back → `agent`.
+
+### `agent` (SpawnAgentTool) — commit `33cc59152`
+
+- **Verdict:** STRONG keep tool-level.
+- **Lines added:** 406 in `documentation()` + 194 lines narrative MD. **Longest doc in the swarm by far.**
+- **Real role:** architectural keystone for context management at scale. Without sub-agent delegation, the orchestrator's 150K window is the entire session's budget, parallelism disappears, persona system collapses.
+
+#### 🚨🚨🚨 MAJOR CLAUDE.md DRIFT — entire section is aspirational
+
+**The `:agent` CLAUDE.md "Agent Tool" section describes 5 actions** — `spawn` (default), `run_in_background`, `resume`, `kill`, `send` — **NONE of which are exposed as parameters in the source.** The actual params are only:
+- `description`, `prompt`
+- `prompt_2..5`, `description_2..5` (parallel-fanout, plan-mode only)
+- `agent_type`, `model`
+
+`cancelAgent(agentId)` exists but is called from the UI Kill button via `AgentController`, **not by the LLM**. Either the docs are aspirational design notes that never landed, or the features were removed and the docs weren't updated. **This is the largest CLAUDE.md drift surfaced by the swarm so far.** **Action item:** rewrite the CLAUDE.md "Agent Tool" section to match the actual API.
+
+#### Other surprising findings
+1. **🚨 Silent parallel-fanout downgrade.** If the LLM sends `prompt_2..5` to a write-capable persona, `inferPlanMode()` returns false and parallel mode silently downgrades to single mode, discarding extra prompts with no warning in the result content.
+2. **🚨 No wall-clock timeout** (`timeoutMs = Long.MAX_VALUE`). Only iteration cap (200), context budget (150K), and user Kill button can stop a stuck worker.
+3. **File ownership is whole-file granularity.** Two parallel sub-agents editing different methods in the same file conflict.
+4. **`WorkerMessageBus` uses `Channel(20, DROP_OLDEST)`.** Inter-agent messaging is best-effort lossy.
+5. **🚨 Sub-agent default model hard-coded to `pickSonnetNonThinking`.** Drops a tier from an Opus orchestrator unless the persona's YAML overrides it. **Action item:** make sub-agent default model match orchestrator's tier (or document the asymmetry).
+
+### Action items surfaced by Batch 9
+
+- [ ] **🚨 Rewrite `:agent` CLAUDE.md "Agent Tool" section** — current text describes 5 actions that aren't actual params. Major drift.
+- [ ] **🚨 Make `task_report.findings` (or `findings || issues`) required** — current schema-level under-enforcement defeats the structured-report contract.
+- [ ] Log a warning when `SpawnAgentTool` silently substitutes `attempt_completion` → `task_report` in a config.
+- [ ] Add "NOT for adding a TODO item" disambiguation to `new_task` LLM-facing description.
+- [ ] Surface a result-content warning when `agent` silently downgrades parallel-fanout to single mode.
+- [ ] Make sub-agent default model match orchestrator's tier (or document the asymmetry explicitly).
+- [ ] Consider sub-method file ownership granularity for `agent` (instead of whole-file) to enable concurrent edits to different methods.
+
+### Cross-cutting observations from Batch 9
+
+- **CLAUDE.md drift count: 4 instances now.** `edit_file.lastEditLineRanges`, task-statuses, missing BLOCKED status, and now the entire "Agent Tool" section. **The CLAUDE.md audit is no longer optional — it's a real maintenance backlog item.**
+- **Doc length tracks architectural load-bearing.** 406 lines for `agent` is justified by its complexity; 99 for `task_report` is exactly right; 139 for `new_task` reflects its dual-narrative (verdict + naming-collision callout).
+- **The `agent` tool's silent failure modes are concerning.** Three separate "no warning when X" findings (parallel downgrade, attempt_completion substitution, model tier drop). Worth a dedicated reliability pass.
+- **No race this batch (3 in a row since the mitigation prompt landed).**
