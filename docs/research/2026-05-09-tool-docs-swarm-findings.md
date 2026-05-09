@@ -118,3 +118,65 @@ All landed clean; one **real bug** surfaced (see `find_definition` below).
 - **Doc length scales with surface area.** 51-63 lines for these tools vs 27 for `current_time`. Consistent ramp; no padding observed.
 - **Adjacent-tool flags continue to be valuable.** Two of three subagents independently noted the dirty working tree (BuildLogCache et al.) and correctly left it alone.
 - **Counterfactual is doing real work.** Two of three counterfactuals surfaced security or correctness regressions (PathValidator bypass for `glob_files`, regex misclassification for `find_definition`). This field is justifying its weight.
+
+---
+
+## Batch 3 — 2026-05-09 (FILE_WRITE cluster)
+
+Tools: `edit_file`, `create_file`, `revert_file`. All FILE_WRITE, all WRITE_TOOLS, all approval-gated.
+Findings include a **real bug** in `revert_file` (PathValidator bypass) and a **CLAUDE.md ↔ source mismatch** on `edit_file`.
+
+### `edit_file` — commit `60dab5070`
+
+- **Verdict:** KEEP STRONG.
+- **Lines added:** 106 in `documentation()` + 138 lines narrative MD at `tool-docs/edit_file.md` (most extensive doc so far).
+- **Real role:** the agent's primary code-modification primitive. Counterfactual is genuinely bad: `create_file` overwrites whole files, `run_command sed` bypasses VFS undo + editor sync + PathValidator (sed will edit `~/.ssh/`) + trips on macOS-vs-GNU sed flag differences.
+
+#### Surprising findings worth flagging
+1. **🚨 Matcher is character-strict, NOT whitespace-tolerant.** The DSL author corrected my (dispatcher's) wrong description in the prompt — `String.indexOf` / `String.replaceFirst`, no fuzzy fallback. Single different space/tab/CRLF returns 0 occurrences. **The swarm prompt template should be corrected** so future PSI / file-tool dispatches don't propagate this misconception.
+2. **🚨 CLAUDE.md ↔ source mismatch.** `:agent` CLAUDE.md mentions `EditFileTool.lastEditLineRanges` "keyed by `sessionId:canonicalPath` to prevent cross-session contamination" — this **does not exist** in the actual source (`grep -rn` confirmed). CLAUDE.md is documenting something not implemented. **Action item:** sweep CLAUDE.md for other phantom references, or remove this one.
+3. **Format clarification.** `edit_file` is **Claude Code-style `old_string`/`new_string`**, NOT Cline-style SEARCH/REPLACE blocks (the class KDoc explicitly calls this out). Documenting the format clearly in the swarm prompt would prevent future drift.
+4. **Syntax validation is warn-not-block.** Kotlin/Java edits run through `SyntaxValidator` after writing, but errors are reported as a `WARNING:` block alongside the success result. The file is already on disk; the LLM must follow up with a fix or `revert_file`. Worth surfacing in the LLM-facing `description`.
+5. **Three-tier write fallback.** Document API + WriteCommandAction → VFS `setBinaryContent` → `java.io.File.writeText`. Captured in mermaid flowchart.
+
+### `create_file` — commit `85b761290`
+
+- **Verdict:** KEEP STRONG.
+- **Lines added:** 83 in `documentation()`.
+- **Real role:** the only path combining PathValidator's project-root sandbox + WriteCommandAction (IDE undo) + parent-dir auto-creation + VFS refresh + unified-diff approval artifact. Counterfactual is `run_command` heredoc, regressing on every axis.
+
+#### Surprising findings worth flagging
+1. **🚨 Charset asymmetry — same call, different bytes.** The VFS write path encodes via `VirtualFile.charset`, but the I/O fallback hardcodes `Charsets.UTF_8`. On a non-UTF-8 project (e.g. Shift_JIS, CP1252), the same call writes different bytes depending on which path triggered. **Real correctness bug** for non-UTF-8 projects. **Action item:** unify on `VirtualFile.charset` (or document the asymmetry).
+2. **🚨 `overwrite=true` produces a misleading approval diff.** The unified diff is always `""` → new content (full-file addition), so reviewers can't see what's actually changing on a rewrite. **Action item:** consider splitting into `overwrite_file` with a real diff, or compute the actual diff for the approval gate.
+3. **Param name shadowing.** The `description` parameter (approval-dialog blurb) shares its name with the tool's LLM-facing `description` field — genuinely confusing in source. Worth renaming to `intent` or `reason`.
+
+### `revert_file` — commit `bf41eabc0`
+
+- **Verdict:** KEEP NORMAL (with a WEAK drop case noted — articulated below).
+- **Lines added:** 56 in `documentation()`.
+- **Real role:** thin wrapper around `git checkout -- <path>` via `ProcessBuilder`. Buys a session-approvable approval gate (vs `run_command`'s per-invocation gate) and a hook point for the deferred destructive-git-policy layer.
+
+#### Surprising findings worth flagging
+1. **🚨 `revert_file` does NOT use `PathValidator`.** Does its own naive `startsWith("/")` resolution + canonicalisation, then hands the path straight to `git checkout`. **Every other file tool in the codebase routes through `PathValidator.resolveAndValidateForRead` / `…ForWrite` — `revert_file` is the lone exception.** This is a real **security regression** vs the rest of the file-tool suite: `revert_file ../../../etc/foo` could potentially escape the project sandbox if git checkout follows it. **Action item:** route `revert_file` through `PathValidator.resolveAndValidateForWrite`.
+2. **🚨 No VFS / Document refresh after checkout.** Open editor tabs may show stale pre-revert content until the IDE notices the on-disk change. The agent's own subsequent `read_file` may also see Document-cached pre-revert text via `FileDocumentManager.getCachedDocument()` in `ReadFileTool`. **Action item:** add explicit `LocalFileSystem.refreshAndFindFileByPath()` + `FileDocumentManager.reloadFromDisk()` after the git checkout.
+3. **Required `description` parameter.** Unusual for write tools (edit_file/create_file have no analogous required justification). Embedded into the audit trail. Positive pattern worth keeping for destructive tools — possibly worth back-porting to `edit_file` / `create_file`.
+4. **Behaviorally has zero IDE integration.** No VFS refresh, no editor reload, no LocalHistory, no PathValidator. The case for a WEAK drop is real if `run_command git checkout` could grow a session-approval modifier — but that's a bigger change.
+
+### Action items surfaced by Batch 3
+
+- [ ] **🚨 Fix `revert_file` PathValidator bypass** — route through `PathValidator.resolveAndValidateForWrite`. Real security regression.
+- [ ] **🚨 Add VFS / Document refresh in `revert_file`** after the checkout completes.
+- [ ] **🚨 Fix `create_file` charset asymmetry** — unify on `VirtualFile.charset` or document the divergence.
+- [ ] **🚨 Fix `create_file` `overwrite=true` diff misleading display** — show actual diff in approval modal.
+- [ ] **Sweep CLAUDE.md for phantom references** — `edit_file.lastEditLineRanges` is one example; there may be others.
+- [ ] **Correct the swarm prompt template** — clarify `edit_file` is Claude-Code style `old_string`/`new_string`, character-strict matcher (not whitespace-tolerant). Prevents future doc drift.
+- [ ] Consider renaming `create_file`'s `description` param to `intent` or `reason` to avoid shadowing the tool's `description` field.
+- [ ] Consider surfacing `edit_file`'s warn-not-block syntax validation behavior in the LLM-facing `description`.
+- [ ] Consider adding required `description` / `intent` param to `edit_file` and `create_file` (back-port from `revert_file`).
+
+### Cross-cutting observations from Batch 3
+
+- **Subagents found two more real bugs.** `revert_file` PathValidator bypass + `create_file` charset asymmetry. Combined with Batch 2's `find_definition` Java/Kotlin fallback bug, the swarm has now surfaced **three actionable defects** in 9 documented tools.
+- **CLAUDE.md ↔ source drift is a real problem.** Catching it once (in `edit_file`) suggests there are other instances. Worth a dedicated audit pass.
+- **The dispatcher prompt has bugs too.** I told the `edit_file` subagent the matcher was whitespace-tolerant — wrong. The subagent corrected it. Future dispatches should be lighter on prescriptive claims about behavior; let the subagent discover it from source.
+- **Doc length keeps tracking complexity.** 106 + 138 (narrative) for `edit_file`, 83 for `create_file`, 56 for `revert_file`. The tool's load-bearingness is reflected in the doc surface.
