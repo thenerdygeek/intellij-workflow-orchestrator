@@ -718,3 +718,45 @@ Tools: `db_query`, `db_schema`, `db_list_databases`. Read-mostly database tools.
 - **Every database tool surfaces silent-truncation or silent-error patterns.** Three of three. Worth a unified error-discipline pass on the database family.
 - **Layered defense vs single check.** `db_query` exemplifies "defense in depth where the first layer is incomplete" — typical for security-critical paths but the LLM-facing description should explain the layered model.
 - **Merge candidate count: 4 now** (`format_code`+`optimize_imports`, `task_list`-redundancy, `send_stdin`↔`background_process`, `db_list_databases`↔`db_schema`). Phase 7 cleanup PR backlog is filling out.
+
+---
+
+## Batch 13 — 2026-05-09 (jira + db_explain + changelist_shelve)
+
+⚠️ **Process incident:** parallel-staging race recurred. `db_explain` (123 lines) and `changelist_shelve` (178 lines) both ended up in commit `f8062ff94`. Commit message references `changelist_shelve` only. Both DSL blocks are in git — work not lost.
+
+### `jira` — commit `2d9c5f339` — STRONG keep, 785 lines doc + 257 lines narrative
+
+**Real role:** the counterfactual is `run_command curl` with the user's bearer token in the command line — leaks tokens to shell history, bypasses `ProcessEnvironment`'s sensitive-vars stripper (env-only, not args). 17 actions in one slot saves ~3-5K tokens per iteration vs separate tools.
+
+**🚨 Drop candidates surfaced (action-level):**
+1. **`get_worklogs`** — NORMAL drop. Time-log readback rarely the LLM's job; users open Jira directly.
+2. **`get_board_issues`** — NORMAL drop. Semantically dominated by `search_tickets` (JQL > board filter).
+3. **`get_dev_branches` + `get_linked_prs`** — WEAK drop. Both are narrower slices of `get_ticket(include_dev_status=true)`. Foldable into the include flag.
+
+**The `transition` action's `MissingFields` typed contract is the second-best argument to keep this tool.** Lets the LLM call `ask_followup_question` per missing field and retry, instead of parsing raw 400 bodies and guessing custom-field IDs.
+
+### `db_explain` — commit `f8062ff94` (bundled with changelist_shelve) — NORMAL keep, 118 lines
+
+**🚨 Surprising finding: PostgreSQL with `analyze=true` DOES execute the SELECT.** Safety is NOT from "EXPLAIN doesn't execute the query" but from `autoCommit=false` + always-rollback. **Sharp edge:** a side-effecting function call inside a SELECT (e.g. `SELECT my_logging_proc()`) would execute under `analyze=true` — and a function with non-transactional side effects (writes to a foreign DB, network calls, file I/O) would fire even though the rollback prevents committed writes.
+
+### `changelist_shelve` — commit `f8062ff94` (bundled with db_explain) — NORMAL keep / WEAK drop, 178 lines
+
+**Real role:** only IDE-native VCS operation the agent has. **But mostly redundant with `run_command git stash`.**
+
+**🚨 Per-action analysis: `create` is the conceptually odd one out.** Changelists are organisational buckets for uncommitted changes; shelves are parked snapshots. Bundling under one schema slot is technically defensible (both go through `ChangeListManager`) but conceptually two tools wearing one hat.
+
+**Storage divergence:** IDE-Shelf vs git-stash are different stores. A user who shelves via the agent and later runs `git stash list` sees nothing — and vice versa.
+
+### Action items surfaced by Batch 13
+
+- [ ] **🚨 Drop or fold these jira actions:** `get_worklogs` (drop), `get_board_issues` (drop, redirect to `search_tickets`), `get_dev_branches` + `get_linked_prs` (fold into `get_ticket(include_dev_status=true)`).
+- [ ] Document the autoCommit-rollback safety model in `db_explain`'s LLM-facing description so the LLM knows side-effecting function calls in SELECTs can still fire.
+- [ ] Consider dropping `changelist_shelve.create` action — it's conceptually a changelist op, not a shelf op. The other 4 actions form a coherent shelf workflow.
+- [ ] Update the swarm prompt template to add stronger race mitigation: e.g. "wait 2s and retry if `git commit` shows no changes, since another subagent may have just committed."
+
+### Cross-cutting observations from Batch 13
+
+- **`jira`'s 785-line doc is the swarm's largest single-tool block.** Justified by 17 actions × per-action quality bar. Sets the bar for upcoming integration tools (`bitbucket_pr` 18 actions will be similar).
+- **Drop candidate count keeps growing.** The swarm has now identified ~7 concrete drop/merge candidates across the documented tools. Phase 7's Compare Tools view will need a real prioritization scheme.
+- **🚨 Race recurred (1 in 6 batches now).** The mitigation language was helpful but not bulletproof. Stronger mitigation: ask subagents to add a small randomized sleep before `git commit` (cheap, breaks tight collisions), or pre-acquire a lock file. Or accept it — work always lands in git, only commit messages drift.
