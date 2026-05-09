@@ -180,3 +180,75 @@ Findings include a **real bug** in `revert_file` (PathValidator bypass) and a **
 - **CLAUDE.md ↔ source drift is a real problem.** Catching it once (in `edit_file`) suggests there are other instances. Worth a dedicated audit pass.
 - **The dispatcher prompt has bugs too.** I told the `edit_file` subagent the matcher was whitespace-tolerant — wrong. The subagent corrected it. Future dispatches should be lighter on prescriptive claims about behavior; let the subagent discover it from source.
 - **Doc length keeps tracking complexity.** 106 + 138 (narrative) for `edit_file`, 83 for `create_file`, 56 for `revert_file`. The tool's load-bearingness is reflected in the doc surface.
+
+---
+
+## Batch 4 — 2026-05-09 (PSI cluster — bug-pattern verification)
+
+Tools: `find_references`, `call_hierarchy`, `type_hierarchy`. Goal: verify whether the `find_definition` Java/Kotlin hardcoded-fallback bug spread to sibling PSI tools.
+
+**Result:** bug is **isolated to `find_definition` + `find_references`**. Two siblings (`call_hierarchy`, `type_hierarchy`) use the correct pattern. The fix shape is now clear: switch to `registry.allProviders().firstNotNullOfOrNull { ... }` (which `call_hierarchy:41` and `type_hierarchy:35-48` already do).
+
+### `find_references` — commit `fc2cf016d`
+
+- **Verdict:** KEEP STRONG.
+- **Lines added:** 69 in `documentation()`.
+- **Real role:** the inverse-direction half of the find_definition pair. Counterfactual is unusually compelling — `search_code` for symbol name pollutes results with imports, comments, string literals, same-named-different-symbol matches that PSI references-search excludes by construction.
+
+#### 🚨 Hardcoded fallback bug — CONFIRMED PRESENT
+
+`FindReferencesTool.kt:151-155`, `resolveSearchTarget()` no-file-context branch:
+```kotlin
+// Global resolution via provider (fall back to hardcoded language IDs when no file context)
+val provider = registry.forLanguageId("JAVA") ?: registry.forLanguageId("kotlin")
+if (provider != null) {
+    provider.findSymbol(project, symbol)?.let { return it }
+}
+```
+
+In a pure-Python project with `PythonProvider` registered but no Java plugin, the global lookup skips `PythonProvider` entirely. Results come back only via the `PsiShortNamesCache` last-resort fallback (lines 158-160) — incidental, not designed.
+
+**Workaround for users today:** pass `file` parameter to route through the file-scoped resolver (which iterates correctly).
+
+### `call_hierarchy` — commit `ee0c8c5f4`
+
+- **Verdict:** KEEP NORMAL.
+- **Lines added:** 83 in `documentation()`.
+- **Real role:** two genuine wins over repeated `find_references` calls — (1) IdentityHashMap-keyed cycle detection an LLM cannot reliably reproduce by hand on mutual call chains (A→B→A), and (2) the callee direction, for which `find_references` has no substitute (call-OUT vs reference-IN).
+
+#### ✅ Bug pattern absent — uses correct `allProviders` iteration
+
+`CallHierarchyTool.kt:41` uses `registry.allProviders()`. Lines 53-55 pick the first via `allProviders.firstNotNullOfOrNull { p -> p.findSymbol(...)?.let { p to it } }`. Pure-Python works correctly.
+
+#### Surprising findings worth flagging
+1. **🚨 Silent 30-entry cap in BOTH directions, with no truncation signal.** Caller chain and callee chain are both hardcoded-capped at 30 entries. Hub methods (logger.info, etc.) get 30 random callers and the LLM has no way to know whether that's "all" or "0.001%". **Action item:** either page (`offset`/`limit`) or return `truncated: true` flag.
+2. **Callee direction is not recursive.** Returns direct callees only — to walk further, the LLM has to chain calls per node. Inverse of the caller direction's transitive walk.
+3. **Lambda / method-reference resolution gaps.** Indirect calls via `::method` or lambda-captured methods are missed.
+
+### `type_hierarchy` — commit `be5d27cc9`
+
+- **Verdict:** KEEP STRONG (Java/Kotlin) / NORMAL or weak-drop (pure-Python).
+- **Lines added:** 52 in `documentation()`.
+- **Real role:** hierarchy queries are a daily navigation primitive in OO codebases. Counterfactual (parsing `extends`/`implements` across many files) scales 10-20× worse for deep trees.
+
+#### ✅ Bug pattern absent — uses correct `allProviders` iteration
+
+`TypeHierarchyTool.kt:35-48` uses `registry.allProviders().firstNotNullOfOrNull { p -> p.findSymbol(...)?.let { p to it } }`. Pure-Python works correctly.
+
+#### Surprising findings worth flagging
+1. **🚨 Asymmetric Java vs Python value.** Static PSI hierarchy is a *lower bound* in Python — metaclasses, `__init_subclass__`, dataclass-synthesized bases are invisible. The provider's declaration-walk does **not** match Python's C3 MRO, which the LLM may misuse when reasoning about method resolution order. **Action item:** either document this asymmetry in the LLM-facing `description`, or filter type_hierarchy out of the schema for Python-only projects.
+2. **🚨 Subtype list silently capped at 30 with no paging.** Hub interfaces (`Runnable`, `Serializable`, popular event listeners) silently truncate. Same shape as `call_hierarchy`'s cap. **Action item:** likely the same fix shape — paging or truncated-flag.
+
+### Action items surfaced by Batch 4
+
+- [ ] **🚨 Fix the JAVA/kotlin hardcoded fallback in `FindDefinitionTool` AND `FindReferencesTool`** — switch to `registry.allProviders().firstNotNullOfOrNull { ... }`. The fix shape is canonical (`call_hierarchy` and `type_hierarchy` already do this correctly). Single PR can fix both tools.
+- [ ] **Audit remaining PSI tools** for the same bug pattern: `find_implementations`, `file_structure`, `type_inference`, `dataflow_analysis`, `get_method_body`, `get_annotations`, `test_finder`, `structural_search`, `read_write_access`. Batch 5 should hit at least `find_implementations` and `file_structure`.
+- [ ] **🚨 Address the silent 30-entry caps in `call_hierarchy` and `type_hierarchy`.** Either page (offset/limit) or return a `truncated: true` flag so the LLM knows when results are partial.
+- [ ] Document (or filter) `type_hierarchy`'s asymmetric Java/Kotlin vs Python value.
+
+### Cross-cutting observations from Batch 4
+
+- **Bug pattern is isolated, not endemic.** 2 of 4 PSI tools so far have the bug. The fix shape is canonical and can be applied uniformly.
+- **The "verify the bug" instruction in the swarm prompt worked.** All three subagents explicitly confirmed presence/absence with line cites — much more useful than a generic "look for bugs" instruction.
+- **Tool-family clustering pays off.** Reading `find_definition`'s sibling docs gave subagents a concrete reference for tone + structure, accelerating their work. Tighter clusters → faster batches.
+- **The 30-entry cap is a recurring pattern.** It's now showed up in `call_hierarchy` (callers, callees) and `type_hierarchy` (subtypes). Likely also in `find_references`, `find_implementations`. Worth a systematic audit.
