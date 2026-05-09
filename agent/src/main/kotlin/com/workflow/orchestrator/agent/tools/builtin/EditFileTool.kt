@@ -17,6 +17,11 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
+import com.workflow.orchestrator.agent.tools.docs.Relationship
+import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
+import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
+import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
+import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonPrimitive
@@ -42,6 +47,113 @@ class EditFileTool : AgentTool {
         required = listOf("path", "old_string", "new_string", "description")
     )
     override val allowedWorkers = setOf(WorkerType.CODER)
+
+    override fun documentation(): ToolDocumentation = toolDoc("edit_file") {
+        summary {
+            technical("Targeted in-place edit via Claude Code-style exact-string replacement (old_string -> new_string, optional replace_all). Routed through Document API + WriteCommandAction for undo support, with VFS and java.io.File fallbacks. Strict character-for-character match — no whitespace tolerance, no fuzzy matching. Kotlin/Java edits run a non-blocking syntax-validator gate that warns but does not roll back.")
+            plain("Like a precise find-and-replace that refuses to guess. You give it the exact text you want to change (copied from what read_file showed) plus its replacement, and it makes the swap. If the old text appears in two places, it stops and asks you to be more specific instead of picking one at random.")
+        }
+        whatLLMSees(description)
+        sideEffect(SideEffectKind.FILE_WRITE)
+        counterfactual(
+            "Without edit_file the LLM has two bad options. (1) `create_file` overwrites the whole file — destroys unsaved editor changes, dilutes the approval gate (user has to read 500 lines to approve a 3-line change), and any LLM truncation in mid-stream silently nukes the back half of the file. (2) `run_command sed -i ...` bypasses VFS (no undo, no editor sync, IDE diagnostics go stale until refresh), bypasses PathValidator (sed will happily edit ~/.ssh/config), and fails on macOS-vs-GNU sed flag differences ~10% of the time. edit_file is the only call site that gives the user a granular, line-level approval prompt with a unified diff."
+        )
+        llmMistake("Includes the `42\\t` line-number prefix from `read_file` output in `old_string` — the prefix is metadata, not file content, so the exact-text match returns 0 occurrences. The matcher is character-strict; it can't see through the prefix. Recovery: re-craft `old_string` with raw file bytes only.")
+        llmMistake("Provides too little context in `old_string` (e.g. just `return null`) — the same line appears 12 times in the file, so the unique-match check fails with `old_string found 12 times`. Recovery: add 3-5 surrounding lines for uniqueness, or set `replace_all=true` only when the goal is genuinely 'every occurrence'.")
+        llmMistake("Guesses at whitespace — e.g. assumes 4-space indent when the file uses tabs, or omits trailing whitespace the file actually has. The matcher is character-for-character, so even a single different space returns 0 occurrences. Recovery: paste raw bytes from a fresh `read_file`, do not retype.")
+        llmMistake("Uses `replace_all=true` to rename a symbol across a file — works for the literal string but breaks when the same identifier appears as a substring of another (e.g. renaming `User` also rewrites `UserProfile`). Recovery: use `refactor_rename` (deferred tool) for symbol-level renames; reserve `edit_file replace_all` for genuinely string-level changes.")
+        llmMistake("Skips `read_file` and edits based on what it 'remembers' the file looks like from a few iterations ago. Another tool, another sub-agent, or the user may have changed the file since. The match still works if the bytes still match, but when they don't, the LLM has to debug a stale-content failure that wouldn't have happened with a fresh read.")
+        llmMistake("Assumes a syntax warning rolled back the edit. It did not — the file is already on disk with the broken content. The LLM must either follow up with a fixing edit or call `revert_file` to restore the previous version.")
+        params {
+            required("path", "string") {
+                llmSeesIt("The path of the file to modify (absolute or relative to the project root).")
+                humanReadable("Where the file lives. Relative paths resolve against the project root; absolute paths must canonicalise to inside the project root or the agent's memory directory.")
+                whenPresent("The path is canonicalised, validated against the project root + `{agentDir}/memory/` allow-list via PathValidator, and the file is opened for editing.")
+                constraint("must point inside the project root or `{agentDir}/memory/` — `../etc/passwd`-style traversal is rejected before any file I/O")
+                constraint("must be an existing file — edit_file does not create files; use create_file for that")
+                example("src/main/kotlin/Foo.kt")
+                example("/Users/me/projects/myrepo/build.gradle")
+            }
+            required("old_string", "string") {
+                llmSeesIt("The exact text to find in the file. Must match character-for-character including whitespace, indentation, and line endings. Include just enough lines to uniquely match the section that needs to change. If the file content came from read_file with line numbers (e.g., '42\\tconst x = 1'), do NOT include the line number prefix — match only the raw file text.")
+                humanReadable("The exact bytes you want replaced — copied verbatim from what `read_file` showed (without the `N\\t` line-number prefix). The matcher uses `String.indexOf` — there is no whitespace tolerance, no fuzzy matching, and no re-indentation. If a single character differs, the match fails with 0 occurrences.")
+                whenPresent("The file is searched for this exact byte sequence. Found exactly once: edit proceeds. Found zero times: error 'old_string not found'. Found 2+ times with `replace_all=false`: error 'old_string not unique'.")
+                constraint("character-for-character literal match — whitespace, tabs, CRLF/LF line endings all matter")
+                constraint("must NOT include the `N\\t` line-number prefix from read_file output")
+                constraint("must occur exactly once in the file unless `replace_all=true`")
+                example("    val foo = computeFoo()\n    return foo")
+            }
+            required("new_string", "string") {
+                llmSeesIt("The new content to replace old_string with. To delete code, use an empty string.")
+                humanReadable("The replacement bytes. Indentation and line endings should match the surrounding file style — the tool does not re-indent for you. Pass `\"\"` (empty string) to delete the matched region.")
+                whenPresent("Each occurrence (one, or all if `replace_all=true`) of `old_string` is replaced by this content. The result is written back through Document API → VFS → file I/O fallback chain.")
+                constraint("preserve the file's existing indentation style (tabs vs spaces, depth) — the tool will not normalise it")
+                example("    val foo = computeFoo()\n    require(foo != null)\n    return foo")
+                example("")
+            }
+            required("description", "string") {
+                llmSeesIt("Brief description of what this edit does and why (shown to user in approval dialog).")
+                humanReadable("The one-liner the user sees in the approval dialog. Vague descriptions ('edit file') give the user nothing actionable; specific ones ('inline getFoo() into bar since it's only called once') let them decide quickly. The tool itself does not read this — it's purely UX glue.")
+                whenPresent("Surfaced in the approval dialog and the chat history's tool-call bubble. Stored on the ToolResult for trace replay.")
+                constraint("required — no default, no fallback")
+                example("Inline getFoo() into bar — only call site")
+                example("Add null-check before dereferencing user.profile")
+            }
+            optional("replace_all", "boolean") {
+                llmSeesIt("Replace all occurrences of old_string instead of requiring a unique match. Default: false.")
+                humanReadable("Switches from 'unique match required' mode to 'replace every occurrence' mode. Useful for genuinely repetitive changes (e.g. updating every `TODO(2024)` to `TODO(2026)`). Brittle for symbol renames — prefer `refactor_rename` for those.")
+                whenPresent("All occurrences of `old_string` are replaced in a single write. The Document-API path replaces from end-to-start to preserve offsets. Result summary includes the count: `Replaced 47 chars with 52 chars in foo.kt (3 occurrences)`.")
+                whenAbsent("Defaults to false — a non-unique `old_string` returns an error rather than guessing which occurrence to replace.")
+                constraint("must be a JSON boolean (`true` / `false`), not a string")
+                example("true")
+                example("false")
+            }
+        }
+        verdict {
+            keep(
+                "The agent's primary code-modification primitive. Removing it would force overwrite-the-whole-file edits via create_file (destroys precision and the granular approval gate) or shell-out via `run_command sed` (bypasses VFS undo, editor sync, PathValidator, and the IDE diagnostics integration). The character-strict matcher is also a feature, not a bug — it makes edits deterministic and reviewable.",
+                VerdictSeverity.STRONG,
+            )
+        }
+        related("read_file", Relationship.COMPOSE_WITH, "ALWAYS read first — edit_file's matcher is character-strict, so the `old_string` must come from a fresh read of the actual file bytes (without the `N\\t` line-number prefix).")
+        related("create_file", Relationship.ALTERNATIVE, "Use instead when the file does not yet exist, or when the change is so sweeping that an in-place edit would be more disruptive than just rewriting.")
+        related("revert_file", Relationship.FALLBACK, "Use to undo a bad edit (e.g. one that introduced a syntax error the LLM can't fix in another round). Single-file revert via VCS history.")
+        related("refactor_rename", Relationship.ALTERNATIVE, "Use instead for symbol-level renames — understands scope, references, and language semantics. `edit_file replace_all` is string-level and will rewrite substrings of unrelated identifiers.")
+        related("diagnostics", Relationship.COMPLEMENT, "Call after editing non-Java/Kotlin files to catch errors the syntax validator can't see (Python typos, broken JSON, malformed YAML).")
+        downside("`old_string` must be unique in the file unless `replace_all=true` — a too-small snippet errors out with 'old_string not unique'. Forces the LLM to add 3-5 lines of surrounding context, which slightly inflates token cost on every edit.")
+        downside("Character-strict matcher with no whitespace tolerance: a single different space, tab, or CRLF/LF mismatch makes the match fail with 0 occurrences. The error message says 'verify exact text', but the LLM cannot fix a content drift it doesn't know about.")
+        downside("Whole-file rewrites are not the use case — for those, `create_file` (overwrite-with-confirmation) is the right tool. edit_file silently struggles when `old_string` is the entire file and `new_string` is also the entire file.")
+        downside("Syntax validation is Java/Kotlin-only and best-effort — Python, JS, JSON, YAML, Markdown all bypass the gate. Failures only surface when the LLM (or user) later runs `diagnostics` or build/test tools.")
+        downside("Syntax warnings do NOT roll back the edit — the file is already on disk with the broken content. The LLM must follow up with a fix or `revert_file`.")
+        downside("`description` is a required parameter even when the user has approved the tool for the whole session and won't see the dialog — burns tokens on every call regardless.")
+        flowchart("""
+            flowchart TD
+                A[LLM calls edit_file] --> B{Path validates?}
+                B -- no --> X1[Return path-outside-project error]
+                B -- yes --> C{File exists?}
+                C -- no --> X2[Return file-not-found error]
+                C -- yes --> D[Read content via Document then VFS then java.io.File]
+                D --> E[Count occurrences of old_string]
+                E --> F{Occurrences?}
+                F -- 0 --> X3[Return old_string-not-found error]
+                F -- 2+ and not replace_all --> X4[Return not-unique error]
+                F -- 1 or replace_all --> G{Kotlin/Java?}
+                G -- yes --> H[SyntaxValidator.validate]
+                H --> I{errors?}
+                I -- yes --> J[Capture warning, do NOT roll back]
+                I -- no --> K[Try Document API + WriteCommandAction]
+                G -- no --> K
+                J --> K
+                K -- failed --> L[Try VFS setBinaryContent]
+                L -- failed --> M[Try java.io.File.writeText]
+                K -- success --> N[Build context + diff]
+                L -- success --> N
+                M -- success --> N
+                M -- failed --> X5[Return write-failed error]
+                N --> O[Return summary + context + diff + optional warning]
+        """)
+        narrative("edit_file")
+    }
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val rawPath = params["path"]?.jsonPrimitive?.content
