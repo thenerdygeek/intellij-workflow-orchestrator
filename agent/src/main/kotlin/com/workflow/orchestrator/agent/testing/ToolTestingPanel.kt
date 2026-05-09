@@ -14,6 +14,7 @@ import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.ui.tooldocs.ToolDocsEditor
 import com.workflow.orchestrator.core.ui.ClipboardUtil
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
@@ -60,6 +61,10 @@ class ToolTestingPanel(
     private val copyButton = JButton("Copy Output").apply {
         icon = com.intellij.icons.AllIcons.Actions.Copy
         isEnabled = false
+    }
+    private val viewDocsButton = JButton("View Documentation").apply {
+        icon = com.intellij.icons.AllIcons.Toolwindows.Documentation
+        toolTipText = "Open this tool's full documentation in a new editor tab"
     }
 
     // Result display
@@ -129,6 +134,18 @@ class ToolTestingPanel(
                 toolList.selectedValue?.let { onToolSelected(it) }
             }
         }
+        // Double-click any row to open its full documentation in a new editor tab.
+        toolList.addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mouseClicked(e: java.awt.event.MouseEvent) {
+                if (e.clickCount == 2 && javax.swing.SwingUtilities.isLeftMouseButton(e)) {
+                    val idx = toolList.locationToIndex(e.point)
+                    if (idx >= 0 && toolList.getCellBounds(idx, idx).contains(e.point)) {
+                        val entry = toolListModel.getElementAt(idx) as? ToolEntry ?: return
+                        ToolDocsEditor.open(project, entry.tool.name)
+                    }
+                }
+            }
+        })
         panel.add(JBScrollPane(toolList), BorderLayout.CENTER)
 
         // Tool count label
@@ -172,9 +189,13 @@ class ToolTestingPanel(
         executeButton.addActionListener { executeSelectedTool() }
         clearButton.addActionListener { clearResult() }
         copyButton.addActionListener { copyOutput() }
+        viewDocsButton.addActionListener {
+            selectedTool?.let { ToolDocsEditor.open(project, it.name) }
+        }
         buttonPanel.add(executeButton)
         buttonPanel.add(clearButton)
         buttonPanel.add(copyButton)
+        buttonPanel.add(viewDocsButton)
 
         panel.add(infoPanel, BorderLayout.NORTH)
         panel.add(paramScroll, BorderLayout.CENTER)
@@ -548,7 +569,15 @@ class ToolTestingPanel(
                 else -> UIUtil.getLabelForeground()
             }
 
-            text = "<html><b>${entry.tool.name}</b> <font color='${colorToHex(tierColor)}'>[${entry.tier}]</font></html>"
+            // ⓘ glyph signals docs availability (lit when documentation() is non-null).
+            // Double-click anywhere on the row opens the doc tab; the explicit
+            // "View Documentation" button in the middle pane is the keyboard-discoverable path.
+            val docsGlyph = if (entry.tool.documentation() != null) {
+                "  <font color='${colorToHex(tierColor)}'>ⓘ</font>"
+            } else {
+                ""
+            }
+            text = "<html><b>${entry.tool.name}</b> <font color='${colorToHex(tierColor)}'>[${entry.tier}]</font>$docsGlyph</html>"
 
             return this
         }
