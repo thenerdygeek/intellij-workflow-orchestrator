@@ -445,3 +445,50 @@ Inlining full descriptions into Section 2 would balloon every prompt rebuild lin
 - **Two concrete cleanup PRs surfaced now:** drop `task_list` (Batch 6) + merge `format_code`/`optimize_imports` (Batch 7). Phase 7's Compare Tools view will need both to be acted on before publishing.
 - **No race this batch.** Race mitigation language in the dispatch prompt seems to have helped — or it was probabilistic noise. Will keep the language in future batches.
 - **Doc length distribution is widening.** 63 / 78 / 165 lines for this batch. The 165-line `task_get` is heavier than expected — the subagent leaned into the contrast-with-task_list framing, which produced a lot of useful prose. Worth keeping that pattern.
+
+---
+
+## Batch 8 — 2026-05-09 (agent-control mode tools)
+
+Tools: `plan_mode_respond`, `enable_plan_mode`, `use_skill`. All AGENT_CONTROL.
+
+### `plan_mode_respond` — commit `8f5a50ad2`
+
+- **Verdict:** STRONG keep.
+- **Lines added:** 68 in `documentation()`.
+- **Real role:** the only primitive that combines (a) emitting a structured plan as a `ToolResultType.PlanResponse`, (b) suspending the loop on `userInputChannel.receive()` so only the user can transition out, and (c) persisting as a `PLAN_UPDATE` UI message so the plan card survives session resume.
+
+#### Surprising findings worth flagging
+1. **🚨 Loop suspension is one-way with no timeout.** If the user goes idle, the agent sits on the channel forever. No programmatic retry / self-rescue affordance.
+2. **🚨 Boolean-coercion bug on `needs_more_exploration`.** Silently treats `"True"` as truthy but `"yes"` as false. Subtle string-to-boolean coercion edge case. **Action item:** tighten coercion to reject non-canonical bools or accept any truthy-string.
+
+### `enable_plan_mode` — commit `42e1c6a4a`
+
+- **Verdict:** STRONG keep.
+- **Lines added:** 70 in `documentation()`.
+- **Real role:** asymmetric on/off is intentional safety — LLM-callable enable, user-only disable enforces a human review checkpoint the LLM cannot route around when it hits the write-tool wall.
+
+#### Surprising findings worth flagging
+1. **Schema filter removes `enable_plan_mode` once plan mode is active.** No programmatic refresh / re-entry. Only `AgentLoop`'s execution guard sees attempted re-toggles via cached/stale tool calls.
+
+### `use_skill` — commit `08f55dd01`
+
+- **Verdict:** STRONG keep.
+- **Lines added:** 69 in `documentation()` + 124 lines narrative MD.
+- **Real role:** the only LLM-callable entry to the compaction-survivable procedure store. Without it, skills devolve to user-only slash commands.
+
+#### Surprising findings worth flagging
+1. **🚨 Substitution scaffolding silently fires empty on the LLM-tool path.** `$ARGUMENTS`, `$1`-`$N`, `${CLAUDE_SKILL_DIR}` were designed for chat slash-command invocation, but the LLM tool schema does **NOT** currently expose an `arguments` parameter — so when the LLM calls `use_skill(skill_name="tdd")`, all positional substitutions resolve to empty strings. **Skill authors must design defaults that work without args.** **Action item:** add an optional `arguments` parameter to the LLM schema OR document the gap explicitly.
+2. **Only one skill is active at a time.** No stack. Re-activation silently replaces the previous active skill.
+3. **Sub-agents cannot call `use_skill`** (orchestrator-only `allowedWorkers`). Subagent procedures must be wired through the persona's `skills:` YAML at config-load time.
+
+### Action items surfaced by Batch 8
+
+- [ ] **🚨 `use_skill` schema gap** — add an optional `arguments` parameter to the LLM-facing schema, OR document explicitly that the LLM path doesn't support positional args (forcing skill authors to design no-args-required skills).
+- [ ] **🚨 `plan_mode_respond` boolean coercion** — tighten `needs_more_exploration` parsing (reject non-canonical bools or accept any truthy-string consistently).
+- [ ] Consider a programmatic timeout on `plan_mode_respond`'s loop suspension to prevent indefinite hangs on user-idle.
+
+### Cross-cutting observations from Batch 8
+
+- **No race this batch (2 in a row).** Race mitigation in dispatch prompt is helping.
+- **Two more tools surfacing schema design gaps** — `use_skill` lacks the `arguments` param the substitution machinery expects; `plan_mode_respond` has loose boolean coercion. These are the kind of issues only per-tool documentation review surfaces.
