@@ -8,6 +8,11 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.docs.Relationship
+import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
+import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
+import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
+import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.int
@@ -32,6 +37,162 @@ class SearchCodeTool : AgentTool {
         required = listOf("pattern")
     )
     override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.REVIEWER, WorkerType.ANALYZER)
+
+    override fun documentation(): ToolDocumentation = toolDoc("search_code") {
+        summary {
+            technical("Recursive regex search over files under a directory using Kotlin's `Regex` engine (java.util.regex). Returns one of three output modes — 'files' (default — distinct matching paths), 'content' (line-numbered matches with optional before/after context), or 'count' (per-file match tallies). Streams files line-by-line for the no-context path; reads whole files into memory only when context is requested. Hard-coded skip-list (.git, build, node_modules, target, .gradle, .idea, etc.), per-file 1MB cap, binary-extension filter. PathValidator-restricted to the project root or `~/.workflow-orchestrator/`. Auto-falls back to `Regex.escape()` when the pattern is invalid regex, so literal strings 'just work'.")
+            plain("Like `grep -rE` in a terminal, but it knows to skip junk folders (.git, build, node_modules), caps each file at 1MB, and gives you a choice of three output styles — just paths (cheap discovery), full matching lines (with context, like `grep -C 2`), or per-file counts. Good for 'where in the codebase do we call this method?' or 'which files mention this error string?'.")
+        }
+        whatLLMSees(description)
+        sideEffect(SideEffectKind.READ_ONLY)
+        counterfactual(
+            "Without search_code, the LLM falls back to `run_command grep -r 'pat' .` (or `Select-String` on Windows), which: (1) is approval-gated per invocation because run_command is `ALWAYS_PER_INVOCATION` — a 5-search exploration costs 5 user clicks, (2) emits divergent output between BSD grep (macOS) and GNU grep (Linux/CI) — `-E` flags, color codes, byte offsets all differ — making downstream parsing fragile, (3) bypasses PathValidator (the LLM can grep `/etc` or arbitrary user dirs), (4) doesn't honor the build/VCS skip-list, so output explodes with build/, .git/, node_modules/ noise on real projects, and (5) bypasses ToolOutputSpiller — large match sets just truncate instead of spilling to disk for follow-up. Net: ~5x more shell calls per investigation plus a real security regression."
+        )
+        llmMistake("Uses an unanchored pattern that matches too broadly — e.g. `pattern='User'` returns thousands of hits across `UserService`, `userId`, `user.name`, comments, etc. Should add word boundaries (`\\bUser\\b`), file_type filter, or scope via `path=` to the relevant module.")
+        llmMistake("Passes a literal string with regex metacharacters un-escaped — e.g. `pattern='List<String>'` is interpreted as a regex with a character class. The tool auto-falls back to `Regex.escape()` when the pattern is invalid, but a *valid-but-wrong* regex (e.g. `'a.b.c'` matching `axbyc`) silently does the wrong thing. The LLM should escape literal dots/parens/brackets explicitly.")
+        llmMistake("Uses search_code when find_definition / find_references / find_implementations would be more precise — regex sees `class Foo`, `// Foo is`, and `String foo = \"Foo\"` as equivalent hits. PSI-aware tools resolve symbols and skip comments/strings.")
+        llmMistake("Picks `output_mode='content'` for a sweeping pattern with no `max_results` cap, then has the result truncated mid-match by ToolOutputSpiller. Should start with `output_mode='files'` (default — lightweight) to bound the search, then `output_mode='content'` with a tighter `path=`/`file_type=` once the candidate set is small.")
+        llmMistake("Forgets that `context_lines` only applies in `output_mode='content'` — setting it under `output_mode='files'` or `'count'` is silently dropped (no warning, no error). Wastes a parameter slot in the tool call.")
+        llmMistake("Uses search_code on a directory that requires globally-deterministic results (e.g. enforcing CI-vs-local parity) — the walk visits files in alphabetical order per directory but `max_results` early-terminates, so a broad pattern returns a different first-50 across machines if `mtime` or filesystem layout differs.")
+        params {
+            required("pattern", "string") {
+                llmSeesIt("The regular expression pattern to search for. Uses standard regex syntax. Literal strings are also accepted and will be auto-escaped if they contain invalid regex.")
+                humanReadable("The regex (or literal string) to search for. Same syntax as `java.util.regex` — `\\b` for word boundaries, `(?i)` for inline case-insensitive, `(?m)` for multi-line anchors. If the pattern fails to compile, the tool falls back to a `Regex.escape()`'d literal match instead of erroring — so plain strings like `List<String>` work without manual escaping.")
+                whenPresent("Compiled to a `kotlin.text.Regex` (with `IGNORE_CASE` if `case_insensitive=true`). Tested against each line via `containsMatchIn` — matching is per-line, not multi-line — so `\\n` in the pattern will never match. On a `PatternSyntaxException` the pattern is silently re-compiled as `Regex.escape(pattern)` so literals always work.")
+                constraint("standard `java.util.regex` syntax — `\\b`, `\\s`, `\\d`, lookahead, named groups all supported")
+                constraint("matched per-line — anchors `^` and `\$` bind to line start/end, not file start/end; `.` does NOT match newlines unless you use `(?s)` (which is moot here since each line is matched separately)")
+                constraint("invalid regex auto-falls-back to escaped-literal match — no error surfaced to the LLM, so a typo'd pattern can silently match the wrong thing")
+                example("\\bclass\\s+UserService\\b")
+                example("TODO\\(.*\\)")
+                example("(?i)deprecated")
+                example("List<String>")
+            }
+            optional("path", "string") {
+                llmSeesIt("The path of the directory to search in (absolute or relative to the project root). May also point under ~/.workflow-orchestrator/ (e.g. agent session tool-output dir) to search spilled output. This directory will be recursively searched. Defaults to project root.")
+                humanReadable("Where to start the recursive search. Relative paths anchor on the project root; absolute paths must still resolve under the project (or under the agent's `~/.workflow-orchestrator/` data dir). Narrowing this is the single biggest lever for keeping the result set small — `path='src/main'` excludes tests, `path='agent'` excludes other modules.")
+                whenPresent("Resolved + canonicalized via `PathValidator.resolveAndValidateForRead`. The walk descends from this directory; emitted match paths are relative-to-project for files inside the project, absolute canonical otherwise.")
+                whenAbsent("Defaults to the project root.")
+                constraint("must be a directory — pointing to a file returns 'Search path not found'")
+                constraint("must resolve under the project root or `~/.workflow-orchestrator/` — paths outside both are rejected by PathValidator before any walk")
+                example("src/main/kotlin")
+                example("agent/src/main")
+            }
+            optional("output_mode", "string") {
+                llmSeesIt("Output mode: 'files' (file paths only, default — lightweight for discovery), 'content' (matching lines with surrounding context), 'count' (match counts per file).")
+                humanReadable("Three styles — pick by how much detail you actually need. 'files' is just a deduped list of matching paths (cheapest, like `grep -l`). 'content' shows each matching line with optional before/after context (like `grep -nC 2`). 'count' returns one `path: N matches` per file (like `grep -c`).")
+                whenPresent("Switches the formatter: 'files' → distinct relative paths joined by newline; 'content' → `path:line: text` per match (or `path:line:> text` for the match line and `path:line:  text` for context lines, with `---` separators between match groups); 'count' → `path: N matches` per file.")
+                whenAbsent("Defaults to 'files' — the lightweight path-only mode.")
+                enumValue("files", "content", "count")
+                constraint("any value other than the three enums silently falls through to 'files' (default branch in `when`) — no error, but unexpected if the LLM typos `'contents'` or `'list'`")
+                example("files")
+                example("content")
+                example("count")
+            }
+            optional("file_type", "string") {
+                llmSeesIt("File extension filter (e.g., 'kt' for Kotlin files, 'java' for Java files). If not provided, it will search all files.")
+                humanReadable("Restrict to one extension — like `find . -name '*.kt' -exec grep` but baked in. Massively cuts noise on polyglot projects (e.g. limit to `kt` to skip `.md`/`.html` matches).")
+                whenPresent("Lower-cased and compared with `file.extension.lowercase()` — only files whose extension matches exactly are searched.")
+                whenAbsent("All non-binary files under 1MB are searched.")
+                constraint("single extension only — no comma-separated list, no glob (use multiple search_code calls or `path=` narrowing instead)")
+                constraint("compared exact-match against `file.extension` — `'kotlin'` will match nothing because the extension is `'kt'`")
+                example("kt")
+                example("java")
+                example("py")
+            }
+            optional("case_insensitive", "boolean") {
+                llmSeesIt("Case-insensitive search. Default: false.")
+                humanReadable("If true, `User` matches `user` and `USER`. Equivalent to inlining `(?i)` at the start of the pattern.")
+                whenPresent("`RegexOption.IGNORE_CASE` is added to the compiled regex.")
+                whenAbsent("Defaults to false — case-sensitive match.")
+                example("true")
+            }
+            optional("context_lines", "integer") {
+                llmSeesIt("Lines of context before and after each match (only for output_mode='content'). Default: 0.")
+                humanReadable("Like `grep -C N` — emit N lines before and N lines after each match line. Helps the LLM see surrounding code without a follow-up read_file. Only meaningful with `output_mode='content'`.")
+                whenPresent("Triggers the slower whole-file-into-memory read path (instead of the streaming line-by-line path), so each match is bracketed by N lines of context with `---` separators between match groups.")
+                whenAbsent("Defaults to 0 — no context, streaming line-by-line read (cheaper).")
+                constraint("only honored under `output_mode='content'` — silently ignored otherwise")
+                constraint("each context line counts toward the default 50K output cap, so wide context (e.g. `context_lines=20`) on a broad pattern can blow the budget fast")
+                example("2")
+                example("5")
+            }
+            optional("max_results", "integer") {
+                llmSeesIt("Maximum matches to return. Default: 50.")
+                humanReadable("Caps the result count — like `head -50` on a long match list. The walk early-terminates as soon as this many matches are collected (alphabetical order per directory).")
+                whenPresent("Search aborts as soon as `matches.size >= maxResults`; result includes a `... (results limited to N)` footer in 'content' mode when the cap clips.")
+                whenAbsent("Defaults to 50.")
+                constraint("early-termination is in walk order (alphabetical per directory), NOT relevance order — a broad pattern returns 'first 50 we hit' which may not be the most useful 50")
+                example("20")
+                example("200")
+            }
+            optional("grep_pattern", "string") {
+                llmSeesIt("Regex pattern to filter output lines. Only lines matching this pattern are returned. Use when you only need specific information from a potentially large output.")
+                humanReadable("Auto-injected by AgentLoop because search_code is in `OUTPUT_FILTERABLE_TOOLS`. A second-stage filter applied to the formatted result lines AFTER the main search runs — like piping `search_code | grep <grep_pattern>`. Useful for narrowing 'content' mode output to just lines containing a secondary keyword without a follow-up call.")
+                whenPresent("After search_code formats its result, lines not matching `grep_pattern` are dropped before the result reaches the LLM. Filtering is applied pre-spill, so it also reduces the size of any spilled file.")
+                whenAbsent("No second-stage filter — full formatted result is returned (subject to ToolOutputSpiller).")
+                constraint("does NOT replace `pattern` — the main search still runs in full; this is post-formatting line filtering only")
+                example("ERROR|WARN")
+                example("class\\s+\\w+Service")
+            }
+            optional("output_file", "boolean") {
+                llmSeesIt("If true, save full output to a file and return a preview with the file path. Use for large outputs you may need to search later. Read the file with read_file or search_code.")
+                humanReadable("Auto-injected by AgentLoop. When `true`, the full search result is spilled to `{sessionDir}/tool-output/search_code-<epoch>-output.txt` and the LLM gets a head-20 + tail-10 preview plus the file path. Lets the LLM run a broad search once, then re-grep the saved file with read_file/search_code instead of re-running the search.")
+                whenPresent("Result is spilled to disk and the LLM receives only a preview (head 20 lines + tail 10 lines + file reference). Subsequent calls can `read_file` the spill or `search_code` it with a tighter pattern.")
+                whenAbsent("Output is returned inline; if it exceeds 30K chars, ToolOutputSpiller spills it automatically anyway.")
+                example("true")
+            }
+        }
+        verdict {
+            keep(
+                "Foundational discovery primitive and the only PSI-free content search the LLM has. It complements glob_files (paths) and find_definition/find_references (PSI) by covering the case where you don't know enough to ask PSI: searching string literals, comments, log messages, configuration values, error strings, TODO markers — anything that lives in file bytes rather than language semantics. Removing this would force every content search through `run_command grep`, which is approval-gated per invocation, format-divergent across BSD/GNU grep, bypasses PathValidator, and pollutes the chat with build/ and node_modules/ noise. The three output modes (files/content/count) earn their slots — 'files' is the cheap default for narrowing, 'content' is for inspection, 'count' is for triaging hot spots before drilling in.",
+                VerdictSeverity.STRONG,
+            )
+        }
+        related("glob_files", Relationship.COMPLEMENT, "Use when matching on file NAMES rather than file CONTENTS — `**/*Test.kt` is a glob_files job, `class.*Test` inside files is a search_code job. Often paired: glob to narrow candidate files, then search_code with `path=` on the result.")
+        related("find_definition", Relationship.ALTERNATIVE, "Use instead when you want a symbol's source — PSI resolves `class Foo` precisely whereas search_code returns every textual `Foo` including comments, strings, and unrelated identifiers.")
+        related("find_references", Relationship.ALTERNATIVE, "Use instead when you want callers/usages of a known symbol — PSI follows imports, generics, and overloads; search_code can't distinguish `foo.bar()` (method call) from `// foo.bar` (comment).")
+        related("read_file", Relationship.COMPOSE_WITH, "Use after search_code locates the right file — `output_mode='files'` to find candidates, then read_file to inspect the full surrounding code.")
+        related("structural_search", Relationship.ALTERNATIVE, "Use for AST-shape queries (e.g. 'all `try { } catch (Exception) { }` blocks') — search_code's regex can't see code structure, structural_search can.")
+        downside("Regex-only — no PSI semantics. Hits inside comments, string literals, and unrelated identifiers are all returned equally. For a precise symbol-shaped search prefer find_definition / find_references / structural_search.")
+        downside("Hard-coded skip-list. There is no way to opt-in to scanning `.gradle/` or `node_modules/` even when the user explicitly wants to (e.g. greppinng a vendored dep for a known string). The LLM has to fall back to `run_command grep` for those cases.")
+        downside("Per-file 1MB cap means generated SQL dumps, large JSON fixtures, and minified bundles are silently skipped — no warning surfaces to the LLM that the file was excluded. A search that 'finds nothing' may actually be missing the file entirely.")
+        downside("Per-line matching only — patterns spanning newlines (`function foo\\(\\) {\\n  return`) will never match. The regex sees one line at a time. For multi-line patterns, use structural_search or read_file + manual inspection.")
+        downside("Invalid regex silently auto-escapes via `Regex.escape(pattern)` — no error surfaces to the LLM. A pattern with a typo'd backslash falls back to literal-string match, which can silently return the wrong results.")
+        downside("Walk order is alphabetical per directory and `max_results` early-terminates, so a broad pattern returns 'first 50 we hit', NOT the most-relevant 50 or the most-recently-modified 50. Differs from glob_files which sorts by mtime DESC.")
+        downside("`.gitignore` is not honored — generated files outside the fixed skip-list (e.g. `vendor/`, custom output dirs, `target/generated-sources/` once the path crosses outside `target/`) appear in matches.")
+        downside("Backward-compat aliases `query`→`pattern` and `scope`→`path` are accepted but undocumented in the description — the LLM never learns they exist, so they only help on replayed sessions or hand-edited tool calls.")
+        flowchart("""
+            flowchart TD
+                A[LLM calls search_code] --> B{path validates?}
+                B -- no --> X1[Return path-traversal error]
+                B -- yes --> C{searchRoot is directory?}
+                C -- no --> X2[Return path-not-found error]
+                C -- yes --> D{Compile regex}
+                D -- invalid --> E[Fall back to Regex.escape literal]
+                D -- valid --> F[Walk searchRoot]
+                E --> F
+                F --> G{In SKIP_DIRS?}
+                G -- yes --> F
+                G -- no --> H{Binary ext or >1MB?}
+                H -- yes --> F
+                H -- no --> I{file_type matches?}
+                I -- no --> F
+                I -- yes --> J{output_mode=content with context?}
+                J -- yes --> K[Read full file, collect ctxBefore+ctxAfter]
+                J -- no --> L[Stream lines, collect matches only]
+                K --> M{matches >= max_results?}
+                L --> M
+                M -- no --> F
+                M -- yes --> N[Stop walk]
+                N --> O{output_mode}
+                O -- files --> P1[Distinct paths]
+                O -- content --> P2[path:line: text + context]
+                O -- count --> P3[path: N matches]
+                P1 --> Q[Apply grep_pattern + spill if output_file or >30K]
+                P2 --> Q
+                P3 --> Q
+        """)
+    }
 
     companion object {
         private const val DEFAULT_MAX_RESULTS = 50
