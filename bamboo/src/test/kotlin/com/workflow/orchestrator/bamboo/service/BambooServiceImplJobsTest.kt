@@ -96,7 +96,7 @@ class BambooServiceImplJobsTest {
         val result = service.getBuild("PROJ-PLAN138-4")
 
         assertFalse(result.isError, "Expected success, got: ${result.summary}")
-        val data = result.data
+        val data = result.data!!
         assertEquals(2, data.stages.size, "Expected 2 stages")
 
         val buildStage = data.stages[0]
@@ -121,7 +121,7 @@ class BambooServiceImplJobsTest {
 
         val result = service.getBuild("PROJ-PLAN138-4")
 
-        assertEquals("PROJ-PLAN138-4", result.data.buildResultKey,
+        assertEquals("PROJ-PLAN138-4", result.data!!.buildResultKey,
             "buildResultKey was historically dropped by mapBuildResult — Task 2.3 fixes this")
     }
 }

@@ -58,8 +58,8 @@ class BambooServiceImplBranchFallbackTest {
         val result = service.getLatestBuild("PROJ-PLAN", branch = "develop")
 
         assertFalse(result.isError, "Expected success after fallback, got: ${result.summary}")
-        assertEquals(42, result.data.buildNumber)
-        assertEquals("Successful", result.data.state)
+        assertEquals(42, result.data!!.buildNumber)
+        assertEquals("Successful", result.data!!.state)
 
         // Verify the unbranched fallback was called
         coVerify { mockClient.getLatestResult("PROJ-PLAN") }

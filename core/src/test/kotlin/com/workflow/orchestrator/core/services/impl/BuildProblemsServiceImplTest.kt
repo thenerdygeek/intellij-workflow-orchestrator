@@ -36,7 +36,7 @@ class BuildProblemsServiceImplTest {
     fun `empty probe yields empty problems and no-error summary`() = runTest {
         val result = service(probe()).getRecentBuildProblems()
         assertFalse(result.isError)
-        assertTrue(result.data.isEmpty())
+        assertTrue(result.data!!.isEmpty())
         assertEquals("No build/import problems.", result.summary)
     }
 
@@ -48,8 +48,8 @@ class BuildProblemsServiceImplTest {
             typeName = "DEPENDENCY",
         )
         val result = service(probe(raw)).getRecentBuildProblems()
-        assertEquals(1, result.data.size)
-        val p = result.data.first()
+        assertEquals(1, result.data!!.size)
+        val p = result.data!!.first()
         assertEquals(BuildSource.MAVEN_IMPORT, p.source)
         assertEquals(ProblemType.DEPENDENCY, p.type)
         assertEquals(Severity.ERROR, p.severity)
@@ -65,7 +65,7 @@ class BuildProblemsServiceImplTest {
             typeName = "PARENT",
         )
         val result = service(probe(raw)).getRecentBuildProblems()
-        val p = result.data.single()
+        val p = result.data!!.single()
         assertEquals(ProblemType.PARENT, p.type)
         assertNull(p.artifactCoords)
     }
@@ -78,7 +78,7 @@ class BuildProblemsServiceImplTest {
             typeName = "NEW_FUTURE_TYPE",
         )
         val result = service(probe(raw)).getRecentBuildProblems()
-        assertEquals(ProblemType.OTHER, result.data.single().type)
+        assertEquals(ProblemType.OTHER, result.data!!.single().type)
     }
 
     @Test
@@ -89,7 +89,7 @@ class BuildProblemsServiceImplTest {
             typeName = null,
         )
         val result = service(probe(raw)).getRecentBuildProblems()
-        assertEquals(ProblemType.OTHER, result.data.single().type)
+        assertEquals(ProblemType.OTHER, result.data!!.single().type)
     }
 
     @Test
@@ -100,7 +100,7 @@ class BuildProblemsServiceImplTest {
             MavenProblemsProbe.RawProblem("/a/pom.xml", "z", "PARENT"),
         )
         val result = service(probe(*raws)).getRecentBuildProblems()
-        assertEquals(3, result.data.size)
+        assertEquals(3, result.data!!.size)
         assertTrue(result.summary.startsWith("3 build/import problem(s)"), "summary was: ${result.summary}")
         assertTrue(result.summary.contains("MAVEN_IMPORT"))
     }
@@ -113,7 +113,7 @@ class BuildProblemsServiceImplTest {
             typeName = "SETTINGS_OR_PROFILES",
         )
         val result = service(probe(raw)).getRecentBuildProblems()
-        assertEquals(ProblemType.SETTINGS, result.data.single().type)
+        assertEquals(ProblemType.SETTINGS, result.data!!.single().type)
     }
 
     @Test
@@ -155,7 +155,7 @@ class BuildProblemsServiceImplTest {
             MavenProblemsProbe.RawProblem("/a/pom.xml", "y", "STRUCTURE"),
         )
         val result = service(probe(*raws)).getRecentBuildProblems()
-        assertTrue(result.data.all { it.severity == Severity.ERROR })
+        assertTrue(result.data!!.all { it.severity == Severity.ERROR })
     }
 
     @Test

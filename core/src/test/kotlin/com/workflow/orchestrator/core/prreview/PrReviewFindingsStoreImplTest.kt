@@ -39,8 +39,8 @@ class PrReviewFindingsStoreImplTest {
         val store = mkStore(tempDir)
         val result = store.add(sample())
         assertFalse(result.isError, "add should succeed")
-        assertTrue(result.data.id.isNotBlank(), "id should be generated")
-        assertEquals("sample", result.data.message)
+        assertTrue(result.data!!.id.isNotBlank(), "id should be generated")
+        assertEquals("sample", result.data!!.message)
     }
 
     @Test
@@ -50,18 +50,18 @@ class PrReviewFindingsStoreImplTest {
         store.add(sample())
         val result = store.list("PROJ/repo/PR-1", "s1")
         assertFalse(result.isError)
-        assertEquals(2, result.data.size)
+        assertEquals(2, result.data!!.size)
     }
 
     @Test
     fun `discard marks finding as discarded`(@TempDir tempDir: Path) = runBlocking {
         val store = mkStore(tempDir)
         val added = store.add(sample())
-        val id = added.data.id
+        val id = added.data!!.id
         val discardResult = store.discard(id)
         assertFalse(discardResult.isError)
         val listed = store.list("PROJ/repo/PR-1", "s1")
-        assertTrue(listed.data.first { it.id == id }.discarded)
+        assertTrue(listed.data!!.first { it.id == id }.discarded)
     }
 
     @Test
@@ -72,21 +72,21 @@ class PrReviewFindingsStoreImplTest {
         val archiveResult = store.archiveSession("PROJ/repo/PR-1", "s1")
         assertFalse(archiveResult.isError)
         val withoutArchived = store.list("PROJ/repo/PR-1", "s1", includeArchived = false)
-        assertEquals(0, withoutArchived.data.size, "Archived findings should be hidden by default")
+        assertEquals(0, withoutArchived.data!!.size, "Archived findings should be hidden by default")
         val withArchived = store.list("PROJ/repo/PR-1", "s1", includeArchived = true)
-        assertEquals(2, withArchived.data.size, "All findings should appear with includeArchived=true")
-        assertTrue(withArchived.data.all { it.archived }, "All findings should have archived=true")
+        assertEquals(2, withArchived.data!!.size, "All findings should appear with includeArchived=true")
+        assertTrue(withArchived.data!!.all { it.archived }, "All findings should have archived=true")
     }
 
     @Test
     fun `markPushed records bitbucket comment id and pushedAt`(@TempDir tempDir: Path) = runBlocking {
         val store = mkStore(tempDir)
         val added = store.add(sample())
-        val id = added.data.id
+        val id = added.data!!.id
         val pushResult = store.markPushed(id, "bb-123", 2000L)
         assertFalse(pushResult.isError)
         val listed = store.list("PROJ/repo/PR-1", "s1")
-        val finding = listed.data.first { it.id == id }
+        val finding = listed.data!!.first { it.id == id }
         assertTrue(finding.pushed)
         assertEquals("bb-123", finding.pushedCommentId)
         assertEquals(2000L, finding.pushedAt)
@@ -101,6 +101,6 @@ class PrReviewFindingsStoreImplTest {
         jobs.awaitAll()
         val result = store.list("PROJ/repo/PR-1", "s1")
         assertFalse(result.isError)
-        assertEquals(20, result.data.size, "All 20 concurrent adds should be persisted")
+        assertEquals(20, result.data!!.size, "All 20 concurrent adds should be persisted")
     }
 }
